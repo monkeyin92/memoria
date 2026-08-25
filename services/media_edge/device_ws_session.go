@@ -78,11 +78,12 @@ type DeviceConnection struct {
 
 	lane *devicePriorityLane
 
-	stateMu          sync.Mutex
-	runtime          *VoiceCoreMediaRuntime
-	session          *Session
-	currentFence     deviceFence
-	serverControlSeq uint64
+	stateMu            sync.Mutex
+	runtime            *VoiceCoreMediaRuntime
+	session            *Session
+	currentFence       deviceFence
+	sessionCloseQueued bool
+	serverControlSeq   uint64
 
 	downlinkClockMu            sync.Mutex
 	downlinkClockFence         deviceFence
