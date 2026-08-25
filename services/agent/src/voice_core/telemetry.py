@@ -67,6 +67,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "voice_turn_uncertain_total",
         "voice_backchannel_filtered_total",
         "voice_acoustic_only_cancel_blocked_total",
+        "voice_conversation_standby_total",
         "voice_stale_asr_result_dropped_total",
         "voice_stale_audio_frame_dropped_total",
         "voice_old_epoch_event_dropped_total",

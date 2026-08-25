@@ -119,6 +119,9 @@ async def run() -> None:
     output_generation_timeout_s = float(
         getattr(settings, "media_output_generation_timeout_s", 45.0)
     )
+    owner_silence_timeout_s = float(
+        getattr(settings, "media_owner_silence_timeout_s", 10.0)
+    )
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -157,6 +160,7 @@ async def run() -> None:
                 bridge=server,
                 session_factory=session_factory,
                 output_generation_timeout_s=output_generation_timeout_s,
+                owner_silence_timeout_s=owner_silence_timeout_s,
                 reply_delivery_publisher=(
                     reply_delivery_reporter.submit
                     if reply_delivery_reporter is not None
@@ -175,6 +179,7 @@ async def run() -> None:
                     provider_factory=provider_factory,
                     runtime_factory=runtime_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
+                    owner_silence_timeout_s=owner_silence_timeout_s,
                     reply_delivery_publisher=(
                         reply_delivery_reporter.submit
                         if reply_delivery_reporter is not None

@@ -178,6 +178,42 @@ _COMPLETION_ACK_ONLY = frozenset(
     }
 )
 
+# Exact, control-only phrases that end the active device conversation.  Keep
+# this list separate from interruption commands: an interrupt hands the floor
+# back and continues listening, while these phrases return the device to
+# standby.  Exact matching prevents sentences such as「我知道了怎么做」or
+#「再见是什么意思」from closing a live conversation.
+_CONVERSATION_CLOSE_ONLY = frozenset(
+    {
+        "再见",
+        "拜拜",
+        "拜拜了",
+        "下次见",
+        "回头见",
+        "知道了",
+        "我知道了",
+        "好的知道了",
+        "好的我知道了",
+        "好了知道了",
+        "好了我知道了",
+        "退下",
+        "退下吧",
+        "你退下吧",
+        "先这样",
+        "先这样吧",
+        "今天先这样",
+        "就这样",
+        "就这样吧",
+        "聊到这里",
+        "聊到这吧",
+        "待命吧",
+        "去待命吧",
+        "休息吧",
+        "你休息吧",
+        "不用陪我了",
+    }
+)
+
 _NON_TARGET_SCRIPT = re.compile(r"[\u3040-\u30ff\uac00-\ud7af]")
 _CANTONESE_MARKERS = frozenset("佢嘅咁冇喺啲咗嚟噉唔仲俾")
 _LANGUAGE_ACTION = r"(?:学|教|练|说|用|翻译|切换|作为|充当|培训|教学|老师)"
@@ -215,6 +251,12 @@ def is_completion_ack_only(text: str) -> bool:
     """True for an explicit acknowledgement that ends the current reply."""
 
     return _compact_interrupt_text(text) in _COMPLETION_ACK_ONLY
+
+
+def is_conversation_close_only(text: str) -> bool:
+    """Return whether one exact owner utterance requests device standby."""
+
+    return _compact_interrupt_text(text) in _CONVERSATION_CLOSE_ONLY
 
 
 def _strip_leading_interrupt_fillers(text: str) -> str:

@@ -52,6 +52,10 @@ class MediaSessionProjectionMixin:
             self, context: _MediaVoiceSession, stream_epoch: int
         ) -> bool: ...
 
+        def _sync_owner_silence_phase(
+            self, context: _MediaVoiceSession, phase: str
+        ) -> None: ...
+
         async def _enqueue_output_work(
             self, context: _MediaVoiceSession, work: _OutputWork
         ) -> bool: ...
@@ -282,6 +286,7 @@ class MediaSessionProjectionMixin:
         task_epoch, context_version = self._event_versions(context, fence)
         if event_type == "assistant_state":
             phase = str(event.get("phase") or event.get("state") or "")
+            self._sync_owner_silence_phase(context, phase)
             await self._emit_floor_effect(
                 context,
                 source_event_id=f"assistant_state:{phase}",

@@ -30,6 +30,15 @@ class MediaSessionConnectionMixin:
 
         async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None: ...
 
+        def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
+
+        def _cancel_owner_silence_timer(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            preserve_remaining: bool,
+        ) -> None: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
@@ -134,6 +143,9 @@ class MediaSessionConnectionMixin:
 
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
         session_id = session.identity.session_id
+        context = self._sessions.get(session_id)
+        if context is not None:
+            self._pause_owner_silence_timer(context)
         if session.state == "closed":
             await self._finalize_session(session_id)
             return
@@ -185,6 +197,7 @@ class MediaSessionConnectionMixin:
             self._sessions.pop(session_id, None)
             context_stream_epoch = context.stream_epoch
             context.closed = True
+            self._cancel_owner_silence_timer(context, preserve_remaining=False)
             context.projection.discard_provisional(None, "session_closed")
             context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)

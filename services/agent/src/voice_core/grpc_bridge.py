@@ -200,7 +200,7 @@ class _PriorityOutgoing:
         if message is None:
             return "critical"
         kind = message.WhichOneof("event")
-        if kind in {"generation", "realtime_effect", "floor_effect", "error"}:
+        if kind in {"generation", "realtime_effect", "floor_effect", "state", "error"}:
             return "critical"
         if kind == "shadow_observation":
             return "coalescing"
@@ -1433,6 +1433,46 @@ class MediaBridgeGrpcServer:
                 tool_epoch=tool_epoch,
             )
         return enqueued
+
+    async def emit_conversation_state(
+        self,
+        session_id: str,
+        state: int,
+        *,
+        fence: GenerationFence,
+        reason: str,
+        task_epoch: int = 0,
+        context_version: int = 0,
+    ) -> bool:
+        """Project one typed authoritative conversation state to Media Edge."""
+
+        connection = self._connections.get(session_id)
+        if (
+            connection is None
+            or not reason
+            or len(reason) > 128
+            or not connection.session.generation.accept(fence)
+        ):
+            return False
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
+        return await self._enqueue(
+            connection,
+            media_pb2.CoreToMedia(
+                state=media_pb2.StateEvent(
+                    identity=_identity_to_proto(connection.session.identity),
+                    state=state,
+                    turn_id=fence.turn_id,
+                    generation_id=fence.generation_id,
+                    reason=reason,
+                    tool_epoch=fence.tool_epoch,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                )
+            ),
+        )
 
     def _emit_floor_decision_shadow(
         self,

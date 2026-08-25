@@ -171,6 +171,12 @@ class AgentSettings(BaseSettings):
         le=300.0,
         alias="MEDIA_OUTPUT_GENERATION_TIMEOUT_S",
     )
+    media_owner_silence_timeout_s: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=300.0,
+        alias="MEDIA_OWNER_SILENCE_TIMEOUT_S",
+    )
     media_slo_report_enabled: bool = Field(
         default=False, alias="MEDIA_SLO_REPORT_ENABLED"
     )

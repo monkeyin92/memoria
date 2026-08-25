@@ -7,6 +7,7 @@ from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputGuard,
     is_backchannel,
     is_completion_ack_only,
+    is_conversation_close_only,
     is_explicit_interrupt,
 )
 
@@ -24,6 +25,19 @@ def test_explicit_interrupt_prefixes() -> None:
     assert is_explicit_interrupt("别说了")
     assert is_explicit_interrupt("好了，知道了")
     assert is_completion_ack_only("好了，知道了。")
+
+
+def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
+    for phrase in ("再见", "拜拜", "知道了", "我知道了", "退下吧", "先这样吧"):
+        assert is_conversation_close_only(phrase), phrase
+
+    for sentence in (
+        "再见是什么意思",
+        "下次见到小明要说再见",
+        "我知道了怎么做",
+        "茉莉花茶怎么做",
+    ):
+        assert not is_conversation_close_only(sentence), sentence
 
 
 def test_interrupt_ack_phrase_by_semantics() -> None:

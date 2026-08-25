@@ -73,6 +73,7 @@ class MediaSessionLifecycleMixin:
         turn_endpoint_absolute_timeout_s: float
         output_generation_timeout_s: float
         delegation_initial_decision_timeout_s: float
+        owner_silence_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -152,6 +153,14 @@ class MediaSessionLifecycleMixin:
             self, context: _MediaVoiceSession, event: dict[str, Any]
         ) -> None: ...
 
+        def _arm_owner_silence_timer(
+            self, context: _MediaVoiceSession, *, reset: bool
+        ) -> None: ...
+
+        def _resume_owner_silence_after_reconnect(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
     def __post_init__(self) -> None:
         if self.provider_factory is None and self.session_factory is None:
             raise ValueError("media provider_factory or session_factory is required")
@@ -181,6 +190,8 @@ class MediaSessionLifecycleMixin:
             or self.delegation_initial_decision_timeout_s <= 0
         ):
             raise ValueError("delegation_initial_decision_timeout_s must be finite and positive")
+        if not math.isfinite(self.owner_silence_timeout_s) or self.owner_silence_timeout_s < 0:
+            raise ValueError("owner_silence_timeout_s must be finite and non-negative")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -244,6 +255,8 @@ class MediaSessionLifecycleMixin:
         current: _MediaVoiceSession,
         identity: SessionIdentity,
     ) -> _MediaVoiceSession:
+        if current.closed or current.standby_requested:
+            raise ValueError("media conversation is already closed")
         if current.identity.account_id != identity.account_id:
             raise ValueError("media session account identity changed")
         if (
@@ -312,6 +325,7 @@ class MediaSessionLifecycleMixin:
             await self._emit_projection_patch(current, discarded)
         if reconnected:
             await self._emit_floor_effect(current, source_event_id="media_session_reconnected")
+        self._resume_owner_silence_after_reconnect(current)
         return current
 
     @staticmethod
@@ -366,6 +380,7 @@ class MediaSessionLifecycleMixin:
                 stream_epoch=identity.stream_epoch,
                 ingress=MediaAudioIngressState.create(self.audio_ingress_max_frames),
             )
+            runtime.set_device_conversation_controls(identity.client_type == "device")
 
             def observe_output_intent(admission: OutputIntentAdmission) -> None:
                 self.bridge.emit_output_intent_decision(identity.session_id, admission)
@@ -525,6 +540,7 @@ class MediaSessionLifecycleMixin:
             future.set_result(created)
             self.metrics.inc_media_session_started()
             self.metrics.set_media_active_sessions(len(self._sessions))
+            self._arm_owner_silence_timer(created, reset=True)
             return created
         except BaseException as exc:
             if created is not None:
