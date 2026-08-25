@@ -74,4 +74,11 @@ class MediaVoiceSessionState:
     turn_commit_retry_endpoint_sample: int | None = None
     observed_within_turn_pause_s: float | None = None
     pending_partial: ASRResult | None = None
+    owner_silence_task: asyncio.Task[None] | None = None
+    owner_silence_deadline: float | None = None
+    owner_silence_remaining_s: float | None = None
+    owner_silence_grace_used: bool = False
+    standby_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    standby_requested: bool = False
+    standby_reason: str | None = None
     closed: bool = False

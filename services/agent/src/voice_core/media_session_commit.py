@@ -81,6 +81,14 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _finish_owner_silence_turn(
+            self, context: _MediaVoiceSession, *, accepted: bool
+        ) -> None: ...
+
+        async def _request_device_standby(
+            self, context: _MediaVoiceSession, *, reason: str
+        ) -> bool: ...
+
         def _observe_partial_asr_result(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -190,7 +198,7 @@ class MediaSessionCommitMixin:
         async with context.turn_commit_lock:
             if not self._stream_epoch_is_current(context, stream_epoch):
                 return None, "stale_stream_epoch"
-            return await self._commit_user_turn_locked(
+            result = await self._commit_user_turn_locked(
                 context,
                 session_id=session_id,
                 stream_epoch=stream_epoch,
@@ -199,6 +207,12 @@ class MediaSessionCommitMixin:
                 retire_sample=retire_sample,
                 provider_final_missing=provider_final_missing,
             )
+        fence, reason = result
+        if reason == "conversation_end_explicit":
+            await self._request_device_standby(context, reason=reason)
+        else:
+            self._finish_owner_silence_turn(context, accepted=fence is not None)
+        return result
 
     async def _commit_media_input_range(
         self,

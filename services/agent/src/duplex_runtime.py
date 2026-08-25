@@ -282,6 +282,7 @@ class DuplexRuntime:
     _target_focus_epoch: int | None = None
     _target_focus_pending_epoch: int | None = None
     _target_speaker_interrupt: Callable[[], Awaitable[None]] | None = None
+    _device_conversation_controls_enabled: bool = False
     _sticky_interrupt_epoch: int | None = None
     _sticky_interrupt_route: UtteranceRoute | None = None
     _sticky_interrupt_text: str = ""
@@ -923,6 +924,11 @@ class DuplexRuntime:
 
         self._target_speaker_focus_enabled = enabled
 
+    def set_device_conversation_controls(self, enabled: bool) -> None:
+        """Enable hardware-only Router controls such as terminal standby phrases."""
+
+        self._device_conversation_controls_enabled = bool(enabled)
+
     def set_reject_non_owner_voice(self, reject: bool) -> None:
         self._reject_non_owner_voice = reject
 
@@ -1459,7 +1465,11 @@ class DuplexRuntime:
         *,
         binding: KeywordSpotterBinding,
     ) -> bool:
-        route = route_utterance(keyword, speaker_state=self.speaker_verifier.state)
+        route = route_utterance(
+            keyword,
+            speaker_state=self.speaker_verifier.state,
+            device_conversation=self._device_conversation_controls_enabled,
+        )
         interaction = self.decide_interaction(
             InteractionSnapshot(
                 event=InteractionEvent.KEYWORD,
@@ -1900,6 +1910,7 @@ class DuplexRuntime:
             ),
             semantic_verdict=semantic_verdict,
             session_focus=self._mode_policy.session_focus,
+            device_conversation=self._device_conversation_controls_enabled,
         )
 
     def _is_explicit_owner_interrupt_cmd(self) -> bool:
@@ -2805,7 +2816,11 @@ class DuplexRuntime:
         final: bool,
         now_ns: int | None = None,
     ) -> PlaybackInputDecision:
-        raw_route = route_utterance(text, speaker_state=self.speaker_verifier.state)
+        raw_route = route_utterance(
+            text,
+            speaker_state=self.speaker_verifier.state,
+            device_conversation=self._device_conversation_controls_enabled,
+        )
         barge_in_blocked = not self.barge_in_enabled and (
             self._assistant_response_blocks_barge_in()
             or self.input_guard.candidate_reason == "barge_in_disabled"
@@ -3229,6 +3244,38 @@ class DuplexRuntime:
         if not target_route.allow_input:
             self._reject_target_speaker(context="turn_commit", route=target_route)
             return False, target_route.reason
+        if route.intent is UtteranceIntent.END_SESSION:
+            # The Media Voice registry owns the terminal session projection.
+            # Runtime only suppresses chat/control side effects after the
+            # target-speaker gate has authorized this exact close phrase.
+            if (
+                self.current_speaker_class != "owner"
+                or not self.current_speaker_authority_verified
+            ):
+                self.orchestrator.metrics.inc_guarded_user_input(
+                    "conversation_end_owner_unverified"
+                )
+                self.mark_audio_event(
+                    "conversation_end_owner_unverified",
+                    status="ignored",
+                    detail={"reason_code": self.current_speaker_reason_code},
+                )
+                return False, "conversation_end_owner_unverified"
+            self.input_guard.candidate_text = text
+            self.orchestrator.metrics.inc_guarded_user_input(route.reason)
+            self.mark_audio_event(
+                "conversation_end_turn_suppressed",
+                detail={
+                    "text_len": len(text),
+                    "intent": route.intent,
+                    "reason": route.reason,
+                },
+            )
+            self._clear_control_user_turn(
+                cause="conversation_end_turn",
+                speech_epoch=canonical_speech_epoch,
+            )
+            return False, route.reason
         if route.should_interrupt and not route.enter_chat:
             # Control-plane routes never become LLM user turns.
             self.input_guard.candidate_text = text

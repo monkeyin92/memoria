@@ -17,6 +17,7 @@ from services.agent.src.orchestration.interruption_guard import (
     interrupt_ack_phrase,
     is_backchannel,
     is_completion_ack_only,
+    is_conversation_close_only,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_resume_command_only,
@@ -31,6 +32,8 @@ class UtteranceIntent(StrEnum):
 
     # Voiceprint collection — never becomes a chat turn.
     ENROLL = "enroll"
+    # Explicit end-of-conversation phrase — close the media session and standby.
+    END_SESSION = "end_session"
     # Pure stop/wait command (等等 / 停一下 / 别说了) — ack only, no LLM.
     INTERRUPT_COMMAND = "interrupt_command"
     # Explicit interrupt wording plus real content (等一下我想问…) — interrupt then chat.
@@ -77,10 +80,15 @@ def route_playback_utterance(
     *,
     duration_ms: int,
     speaker_state: SpeakerGateState | str | None = None,
+    device_conversation: bool = False,
 ) -> PlaybackUtteranceRoute:
     """Project playback-time text without assigning acoustic authority."""
 
-    utterance = route_utterance(text, speaker_state=speaker_state)
+    utterance = route_utterance(
+        text,
+        speaker_state=speaker_state,
+        device_conversation=device_conversation,
+    )
     return PlaybackUtteranceRoute(
         utterance=utterance,
         backchannel=(
@@ -276,20 +284,22 @@ def route_utterance(
     previous_committed_text_normalized: str = "",
     semantic_verdict: InterruptSemanticVerdict | None = None,
     session_focus: SessionFocus | None = None,
+    device_conversation: bool = False,
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
     Priority (high → low):
       1. speaker PENDING → enroll (blocks all chat, including stop phrases)
       2. resume command while a reply is paused → resume
-      3. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
-      4. sticky interrupt exact replay → interrupt_replay
-      5. semantic control-only evidence → interrupt_command
-      6. explicit interrupt + content → interrupt_then_chat
-      7. remaining sticky interrupt → monotonic prior route
-      8. empty text → empty
-      9. frozen tutor-focus rule table → tutor learning intent
-      10. default → chat
+      3. exact conversation-close phrase → end_session (no chat, no ack)
+      4. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      5. sticky interrupt exact replay → interrupt_replay
+      6. semantic control-only evidence → interrupt_command
+      7. explicit interrupt + content → interrupt_then_chat
+      8. remaining sticky interrupt → monotonic prior route
+      9. empty text → empty
+      10. frozen tutor-focus rule table → tutor learning intent
+      11. default → chat
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
@@ -319,7 +329,21 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 3) Pure control phrases — do not let LLM answer「怎么了？」.  A
+    # 3) Conversation terminal phrases are not ordinary interruption commands.
+    # They require the normal target-speaker gate and never produce an LLM turn
+    # or a fixed acknowledgement before the device returns to standby.
+    if device_conversation and is_conversation_close_only(text):
+        return UtteranceRoute(
+            intent=UtteranceIntent.END_SESSION,
+            reason="conversation_end_explicit",
+            enter_chat=False,
+            should_interrupt=True,
+            speaker_gate_override=False,
+            ack_phrase=None,
+            normalized_text=normalized,
+        )
+
+    # 4) Pure control phrases — do not let LLM answer「怎么了？」.  A
     # completion acknowledgement such as「好了，知道了」also ends playback.
     if is_interrupt_command_only(text) or is_completion_ack_only(text):
         return UtteranceRoute(
@@ -332,7 +356,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 4) Streaming ASR may first hear「停一下」and later endpoint only the
+    # 5) Streaming ASR may first hear「停一下」and later endpoint only the
     # previous user question after playback contamination. Keep the interrupt
     # monotonic, but do not create a duplicate LLM turn for that replay.
     if (
@@ -351,7 +375,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 5) A small model may only provide evidence for an already-ambiguous
+    # 6) A small model may only provide evidence for an already-ambiguous
     # sticky interrupt. The Router remains the sole owner of side effects.
     if (
         sticky_interrupt_route is not None
@@ -381,7 +405,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 6) Interrupt wording with real content → barge-in then chat
+    # 7) Interrupt wording with real content → barge-in then chat
     if is_explicit_interrupt(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_THEN_CHAT,
@@ -393,11 +417,11 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 7) Preserve any remaining accepted interrupt across ASR revisions.
+    # 8) Preserve any remaining accepted interrupt across ASR revisions.
     if sticky_interrupt_route is not None and sticky_interrupt_route.should_interrupt:
         return replace(sticky_interrupt_route, normalized_text=normalized)
 
-    # 8) Empty
+    # 9) Empty
     if not normalized:
         return UtteranceRoute(
             intent=UtteranceIntent.EMPTY,
@@ -409,12 +433,12 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 9) Tutor semantics are focus-scoped and never execute side effects here.
+    # 10) Tutor semantics are focus-scoped and never execute side effects here.
     tutor_route = _tutor_route(text, normalized, session_focus)
     if tutor_route is not None:
         return tutor_route
 
-    # 10) Normal chat
+    # 11) Normal chat
     return UtteranceRoute(
         intent=UtteranceIntent.CHAT,
         reason="chat",

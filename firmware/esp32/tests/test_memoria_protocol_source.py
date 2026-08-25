@@ -144,8 +144,8 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
     assert 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' in BUILD_SCRIPT
     sdkconfig = BOARD_CONFIG["builds"][0]["sdkconfig_append"]
     assert "CONFIG_USE_CUSTOM_WAKE_WORD=y" in sdkconfig
-    assert 'CONFIG_CUSTOM_WAKE_WORD="mei mo li ya"' in sdkconfig
-    assert 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="Memoria"' in sdkconfig
+    assert 'CONFIG_CUSTOM_WAKE_WORD="mo li"' in sdkconfig
+    assert 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="茉莉"' in sdkconfig
     assert "CONFIG_SEND_WAKE_WORD_DATA=n" in sdkconfig
     assert "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n" in sdkconfig
     assert "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n" in sdkconfig
@@ -1408,7 +1408,7 @@ def test_transport_attempt_fence_blocks_late_old_websocket_callbacks() -> None:
     assert open_channel.count("websocket_attempt != websocket_attempt_id_.load()") == 2
     assert "WebSocket* const websocket = websocket_.get()" in open_channel
     assert "OnData([this, websocket, websocket_attempt]" in open_channel
-    assert "OnDisconnected([this, websocket_attempt]" in open_channel
+    assert "OnDisconnected([this, websocket, websocket_attempt]" in open_channel
     assert "OnError([this, websocket_attempt]" in open_channel
     assert "websocket->Close()" not in open_channel
     assert "not call WebSocket::Close from its receive callback" in open_channel

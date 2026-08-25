@@ -298,6 +298,32 @@ async def test_shadow_queue_overflow_never_cancels_authoritative_delivery() -> N
     assert queued.client.type == "still-authoritative"
 
 
+@pytest.mark.asyncio
+async def test_closed_conversation_state_preempts_reliable_output() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=4)
+    identity = SessionIdentity("conversation-close", account_id="account", device_id="device")
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    assert await bridge.emit_event("conversation-close", "assistant_state", {})
+
+    fence = connection.session.fence
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=fence,
+        reason="owner_silence_timeout",
+        task_epoch=2,
+        context_version=3,
+    )
+
+    closed = connection.outgoing.get_nowait()
+    assert closed.WhichOneof("event") == "state"
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "owner_silence_timeout"
+    assert closed.state.task_epoch == 2
+    assert closed.state.context_version == 3
+    assert connection.outgoing.get_nowait().client.type == "assistant_state"
+
+
 def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=4)
     connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test

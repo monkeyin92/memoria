@@ -6,7 +6,7 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-08-24
+as_of_date: 2026-08-25
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -63,14 +63,35 @@ Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose 
 
 这些证据只达到 `identity-safe flash + board boot/activation`，不等于完整设备媒体或 Actual Heard。
 
+## 茉莉唤醒与自动待命候选
+
+```yaml
+candidate: jasmine_wake_and_owner_standby
+as_of_date: 2026-08-25
+code: complete
+wired: esp_sr_kws_to_python_owner_authority_to_typed_closed_to_edge_session_close
+enabled: false
+deployed: false
+verified: local_agent_regression_go_media_edge_firmware_contract_overlay_and_full_build
+direct_real_device_verified: false
+wake_word: 茉莉
+owner_silence_timeout_s: 10
+```
+
+固件只在本地 KWS 用 `mo li` 唤醒，仍不上传唤醒词音频。设备会话中的“再见”“知道了”“退下吧”等精确结束语只有通过目标说话人权威判定后才关闭；带后续内容的句子不会误触发。无主人语音计时只由 Python Voice Core 的权威会话状态管理：助手输出和传输断开期间暂停，回到聆听时开启 10 秒窗口，裸 VAD/环境声不能重置主人计时。关闭通过 typed `CONVERSATION_STATE_CLOSED` 进入 Go Media Edge，再下发设备 `session.close` 回到 Idle，不新增第二套聆听状态机。
+
+本地验证不等于已启用：候选尚未发布到生产 Agent/Bridge，也尚未写入当前板卡。两音节“茉莉”相较原四音节唤醒词有更高误唤醒风险，必须在安静、电视人声和家庭噪声三种环境做真机阈值验收后才能更新 `enabled` 或 `direct_real_device_verified`。
+
 ## 下一轮真实设备验收
 
-用户方便时只做以下两轮，期间不要按 BOOT/RESET：
+先发布同一候选的 Agent/Bridge 并以 identity-safe app-only 方式写入板卡，期间不要按 BOOT/RESET。按顺序只做以下验收：
 
-1. 在正常 30–60 cm、正常音量说“今天天气怎么样”，等待回答自然结束。
-2. 随后说“今天星期几”，确认仍能识别和回答。
+1. 待机状态下以正常 30–60 cm、正常音量说“茉莉”，确认只创建一个会话并进入聆听；重复 10 次记录漏唤醒/误唤醒。
+2. 唤醒后问“今天天气怎么样”，等待回答自然结束，再说“再见”，确认收到 owner final、typed CLOSED、设备 `session.close` 并回到 Idle；随后再次说“茉莉”确认可开启新会话。
+3. 再次唤醒并保持安静，确认从权威 listening 窗口起约 10 秒后自动回到 Idle；电视人声或非主人说话不得无限续期。
+4. 最后连续问“今天天气怎么样”和“今天星期几”，确认正常距离识别、回答与自然播放仍然成立。
 
-验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、WSS close cause，以及用户听到的内容。两轮都自然完成后才可更新 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
+验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、speaker authority、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、typed CLOSED、设备 `session.close`、WSS close cause，以及用户听到的内容。四项都自然完成后才可更新该候选的 `enabled` 和 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
 
 ## 实时话轮状态层候选
 

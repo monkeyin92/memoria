@@ -39,6 +39,7 @@ from services.agent.src.voice_core.media_session_output import MediaOutputMixin
 from services.agent.src.voice_core.media_session_projection import (
     MediaSessionProjectionMixin,
 )
+from services.agent.src.voice_core.media_session_standby import MediaSessionStandbyMixin
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -66,6 +67,7 @@ def _default_runtime_factory(session_id: str) -> DuplexRuntime:
 
 @dataclass(slots=True)
 class MediaVoiceCoreRegistry(
+    MediaSessionStandbyMixin,
     MediaSessionLifecycleMixin,
     MediaSessionConnectionMixin,
     MediaSessionProjectionMixin,
@@ -98,6 +100,9 @@ class MediaVoiceCoreRegistry(
     turn_endpoint_absolute_timeout_s: float = 2.5
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
+    # Disabled for direct library construction; the production bridge wires
+    # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (10s by default).
+    owner_silence_timeout_s: float = 0.0
     reply_delivery_publisher: Callable[[dict[str, Any]], bool] | None = None
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
@@ -113,7 +118,11 @@ class MediaVoiceCoreRegistry(
 
     def context(self, session_id: str) -> DuplexRuntime | None:
         current = self._sessions.get(session_id)
-        return current.runtime if current is not None and not current.closed else None
+        return (
+            current.runtime
+            if current is not None and not current.closed and not current.standby_requested
+            else None
+        )
 
 
 __all__ = [

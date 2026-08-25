@@ -119,6 +119,19 @@ class FakeMediaProvider(MediaVoiceProvider):
         self.closed = True
 
 
+def _verified_owner_decision() -> SpeakerDecision:
+    return SpeakerDecision(
+        classification="owner",
+        score=0.95,
+        quality_score=0.95,
+        reason_code="owner_match",
+        model_version="speaker-test-v1",
+        template_version=1,
+        profile_id="owner-profile",
+        permissions=permissions_for_speaker("owner"),
+    )
+
+
 def test_pcm_output_pacer_spaces_frames_and_does_not_burst_after_a_stall() -> None:
     delay, next_send_at = _next_pcm_send_slot(
         now=10.0,
@@ -244,6 +257,14 @@ async def _next_event(call, kind: str):
     raise AssertionError(f"bridge did not emit {kind}")
 
 
+def _queued_event(connection: Any, kind: str) -> Any:
+    while not connection.outgoing.empty():
+        event = connection.outgoing.get_nowait()
+        if event is not None and event.WhichOneof("event") == kind:
+            return event
+    raise AssertionError(f"bridge queue did not contain {kind}")
+
+
 @pytest.mark.asyncio
 async def test_media_registry_builds_one_shared_async_session_resource() -> None:
     identity = SessionIdentity("shared-media-session")
@@ -290,6 +311,140 @@ async def test_media_registry_builds_one_shared_async_session_resource() -> None
     assert speaker_pcm == [b"\x00\x00\x01\x00"]
     session.close()
     await registry.on_session_closed(session)
+
+
+@pytest.mark.asyncio
+async def test_verified_owner_close_phrase_projects_closed_and_returns_device_to_standby() -> None:
+    identity = SessionIdentity(
+        "owner-explicit-standby",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="再见")
+
+    async def classify_owner(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _verified_owner_decision()
+
+    context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+
+    assert fence is None
+    assert reason == "conversation_end_explicit"
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "conversation_end_explicit"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
+async def test_guest_close_phrase_is_rejected_before_device_standby() -> None:
+    identity = SessionIdentity(
+        "guest-cannot-close",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="再见")
+
+    async def classify_guest(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return replace(
+            _verified_owner_decision(),
+            classification="guest",
+            reason_code="owner_mismatch",
+            permissions=permissions_for_speaker("guest"),
+        )
+
+    context.runtime.set_speaker_classifier(classify_guest, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+
+    assert fence is None
+    assert reason == "target_non_owner"
+    assert all(
+        event.WhichOneof("event") != "state"
+        for event in tuple(connection.outgoing._critical)  # noqa: SLF001 - queue seam under test
+    )
+    assert registry.context(identity.session_id) is context.runtime
+    assert provider.closed is False
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_owner_silence_timeout_closes_only_after_listening_window() -> None:
+    identity = SessionIdentity(
+        "owner-silence-standby",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        owner_silence_timeout_s=0.03,
+    )
+    context = await registry._get_or_create(identity)
+
+    registry._sync_owner_silence_phase(context, "speaking")
+    await asyncio.sleep(0.05)
+    assert registry.context(identity.session_id) is context.runtime
+    assert provider.closed is False
+
+    registry._sync_owner_silence_phase(context, "listening")
+    await asyncio.sleep(0.06)
+
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "owner_silence_timeout"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
 
 
 @pytest.mark.asyncio

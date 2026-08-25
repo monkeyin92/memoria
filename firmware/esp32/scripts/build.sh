@@ -14,7 +14,7 @@ usage() {
     cat <<'EOF'
 Usage: build.sh [--clean] [--language LOCALE] [--wake-word MODEL|disabled] [--no-idf-install]
 
-The product build uses zh-CN and the board's Memoria wake word ("梅莫里亚") by
+The product build uses zh-CN and the board's Memoria wake word ("茉莉") by
 default. Pass --wake-word disabled only for an explicit bring-up diagnostic
 build, or pass an upstream ESP-SR model to override the product default. The
 upstream build.py still performs the real merge-bin.
