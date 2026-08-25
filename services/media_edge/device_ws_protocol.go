@@ -485,6 +485,16 @@ type deviceSessionError struct {
 	Retryable         bool   `json:"retryable"`
 }
 
+type deviceServerSessionClose struct {
+	Type              string `json:"type"`
+	Version           uint64 `json:"version"`
+	SessionID         string `json:"session_id"`
+	StreamEpoch       uint64 `json:"stream_epoch"`
+	ControlSequence   uint64 `json:"control_sequence"`
+	ServerMonotonicMS uint64 `json:"server_monotonic_ms"`
+	Reason            string `json:"reason,omitempty"`
+}
+
 type deviceRuntimeProfileInvalidated struct {
 	Type              string `json:"type"`
 	Version           uint64 `json:"version"`

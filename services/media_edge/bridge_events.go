@@ -196,6 +196,11 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		if !s.identity.equal(state.GetIdentity()) {
 			return fmt.Errorf("state event identity does not match")
 		}
+		if len(state.GetReason()) > 128 ||
+			(state.GetState() == mediav1.ConversationState_CONVERSATION_STATE_CLOSED &&
+				state.GetReason() == "") {
+			return fmt.Errorf("state event reason is invalid")
+		}
 		return s.acceptEventSequence(state.GetSequence())
 	}
 	if client := event.GetClient(); client != nil {
