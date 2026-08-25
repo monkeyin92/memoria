@@ -55,6 +55,19 @@ _IDENTITY_CONFUSION_REASONS = frozenset(
     }
 )
 
+# DuplexPO/FCDR-inspired observation labels. These are bounded proxies derived
+# from the existing authoritative conversation and playback events; they are
+# not the paper's learned reward or an offline quality score.
+_CONVERSATION_INITIATION_ENTRIES = frozenset({"vad_first", "asr_direct"})
+_CONVERSATION_INITIATION_STATES = frozenset({"open_floor", "assistant_overlap"})
+_CONVERSATION_BACKCHANNEL_STATUSES = frozenset(
+    {"detected", "continued", "promoted"}
+)
+_CONVERSATION_YIELD_STATUSES = frozenset(
+    {"candidate", "confirmed", "continued", "indeterminate"}
+)
+_CONVERSATION_PARTICIPATION_KINDS = frozenset({"owner", "assistant"})
+
 
 @dataclass
 class MetricsRegistry:
@@ -119,6 +132,57 @@ class MetricsRegistry:
                 "to": to_phase,
                 "cause": (cause or "unspecified")[:48],
             },
+        )
+
+    def inc_conversation_turn_initiation(self, entry: str, state: str) -> None:
+        """Count one turn onset relative to the assistant floor."""
+
+        if entry not in _CONVERSATION_INITIATION_ENTRIES:
+            raise ValueError("conversation initiation entry is not allowlisted")
+        if state not in _CONVERSATION_INITIATION_STATES:
+            raise ValueError("conversation initiation state is not allowlisted")
+        self.inc_media_metric(
+            "voice_conversation_turn_initiation_total",
+            labels={"kind": entry, "state": state},
+        )
+
+    def inc_conversation_backchannel(self, status: str) -> None:
+        """Count bounded backchannel lifecycle events without transcript labels."""
+
+        if status not in _CONVERSATION_BACKCHANNEL_STATUSES:
+            raise ValueError("conversation backchannel status is not allowlisted")
+        self.inc_media_metric(
+            "voice_conversation_backchannel_total",
+            labels={"status": status},
+        )
+
+    def inc_conversation_yield(self, status: str) -> None:
+        """Count a semantic-overlap yield proxy and its terminal outcome."""
+
+        if status not in _CONVERSATION_YIELD_STATUSES:
+            raise ValueError("conversation yield status is not allowlisted")
+        self.inc_media_metric(
+            "voice_conversation_yield_proxy_total",
+            labels={"status": status},
+        )
+
+    def add_conversation_participation_ms(self, kind: str, milliseconds: float) -> None:
+        """Accumulate owner speech and exact acknowledged assistant audio time."""
+
+        if kind not in _CONVERSATION_PARTICIPATION_KINDS:
+            raise ValueError("conversation participation kind is not allowlisted")
+        if (
+            milliseconds < 0
+            or milliseconds != milliseconds
+            or milliseconds in {float("inf"), float("-inf")}
+        ):
+            raise ValueError("conversation participation must be finite and non-negative")
+        if milliseconds == 0:
+            return
+        self.inc_media_metric(
+            "voice_conversation_participation_proxy_ms_total",
+            amount=milliseconds,
+            labels={"kind": kind},
         )
 
     def inc_interruptions_confirmed(self) -> None:

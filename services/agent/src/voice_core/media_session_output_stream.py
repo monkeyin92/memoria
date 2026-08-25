@@ -140,6 +140,7 @@ class MediaOutputStreamMixin:
             tool_epoch=progress.tool_epoch,
             session_epoch=progress.session_epoch,
         )
+        previously_rendered = context.playback.rendered_sample_end(fence)
         stale_ack_count = context.playback.stale_ack_count
         acknowledged = context.playback.acknowledge(
             fence,
@@ -151,6 +152,12 @@ class MediaOutputStreamMixin:
         )
         if context.playback.stale_ack_count != stale_ack_count:
             return
+        rendered = context.playback.rendered_sample_end(fence)
+        if rendered > previously_rendered:
+            self.metrics.add_conversation_participation_ms(
+                "assistant",
+                (rendered - previously_rendered) * 1_000 / _DOWNLINK_PCM_SAMPLE_RATE,
+            )
         self._observe_projection_playback_evidence(context, fence, progress.event_type)
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients

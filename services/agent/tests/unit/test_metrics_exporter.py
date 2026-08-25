@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import urllib.request
+from collections.abc import Callable
 
+import pytest
 from services.agent.src.observability.metrics import MetricsRegistry
 
 
@@ -143,3 +145,70 @@ def test_trust_metrics_reject_unknown_label_values() -> None:
         except ValueError:
             continue
         raise AssertionError("unknown trust-metric label value must be rejected")
+
+
+def test_conversation_dynamics_proxies_are_bounded_and_exported() -> None:
+    metrics = MetricsRegistry()
+    metrics.inc_conversation_turn_initiation("vad_first", "open_floor")
+    metrics.inc_conversation_turn_initiation("asr_direct", "assistant_overlap")
+    metrics.inc_conversation_backchannel("detected")
+    metrics.inc_conversation_backchannel("continued")
+    metrics.inc_conversation_yield("candidate")
+    metrics.inc_conversation_yield("confirmed")
+    metrics.add_conversation_participation_ms("owner", 500)
+    metrics.add_conversation_participation_ms("assistant", 250.5)
+    metrics.add_conversation_participation_ms("owner", 0)
+
+    assert metrics.get(
+        "voice_conversation_turn_initiation_total",
+        {"kind": "vad_first", "state": "open_floor"},
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_turn_initiation_total",
+        {"kind": "asr_direct", "state": "assistant_overlap"},
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_backchannel_total", {"status": "continued"}
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_yield_proxy_total", {"status": "confirmed"}
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "owner"}
+    ) == 500
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}
+    ) == 250.5
+
+    body = metrics.render_prometheus().decode()
+    assert (
+        'voice_conversation_turn_initiation_total{kind="vad_first",state="open_floor"}'
+        " 1.0" in body
+    )
+    assert 'voice_conversation_backchannel_total{status="detected"} 1.0' in body
+    assert 'voice_conversation_yield_proxy_total{status="candidate"} 1.0' in body
+    assert (
+        'voice_conversation_participation_proxy_ms_total{kind="assistant"} 250.5'
+        in body
+    )
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda metrics: metrics.inc_conversation_turn_initiation("unknown", "open_floor"),
+        lambda metrics: metrics.inc_conversation_turn_initiation("vad_first", "unknown"),
+        lambda metrics: metrics.inc_conversation_backchannel("unknown"),
+        lambda metrics: metrics.inc_conversation_yield("unknown"),
+        lambda metrics: metrics.add_conversation_participation_ms("guest", 1),
+        lambda metrics: metrics.add_conversation_participation_ms("owner", -1),
+        lambda metrics: metrics.add_conversation_participation_ms("owner", float("nan")),
+        lambda metrics: metrics.add_conversation_participation_ms("owner", float("inf")),
+    ],
+)
+def test_conversation_dynamics_proxies_reject_unbounded_values(
+    call: Callable[[MetricsRegistry], None],
+) -> None:
+    metrics = MetricsRegistry()
+    with pytest.raises(ValueError):
+        call(metrics)

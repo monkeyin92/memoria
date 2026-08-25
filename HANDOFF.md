@@ -107,9 +107,16 @@ production_release_commit: fa4a500318720a81b48bf13c4d54e64eb2cfbc97
 deployed_at_utc: 2026-08-25T03:14:09Z
 verified: unit_replay_cpu_memory_health_readiness_and_provider_smoke
 side_effects: none
+fcdr_proxy_code: complete
+fcdr_proxy_wired: authoritative_projection_commit_and_exact_playback_ack_shadow_metrics
+fcdr_proxy_enabled: false
+fcdr_proxy_deployed: false
+fcdr_proxy_verified: local_agent_full_regression_mypy_and_low_cardinality_contracts
 ```
 
 `TurnPhase` 目前只作为 `ConversationProjection` 内部证据和低基数 telemetry 产出，不改变 endpoint/interrupt/commit 决策。固定 80 ms sample 窗口、late ASR endpoint fence、phase/floor 原子更新和权威 playback ACK 接线已通过单元、确定性 replay 与 CPU/内存预算。2026-08-25 的 production shadow 发布同时通过 Agent/Media Bridge 同镜像 healthy、restart=0、Bridge gRPC、LiveKit、FunASR、QwenRealtimeSearch、DeepSeek、Doubao、InterruptSemantic、私有 readiness 和外部 Host/SNI 门禁；这仍不是阶段 C 策略启用或真实设备误聆听、打断、Actual Heard、全双工验收。
+
+新增的 FCDR/DuplexPO 启发式四维影子指标只统计话轮发起、回应性短语、语义重叠后的让渡终态，以及主人已提交语音/助手精确播放 ACK 的参与时长。所有标签均为固定枚举，不包含 session、person 或文本；主人时长缺少正式 speaker authority 时不计，设备近似 ACK 不计助手时长。它们只是现有权威事件的 proxy，不是论文中的学习奖励或对话质量分，也尚未发布到生产；不得据此调整 endpoint、interrupt、commit 策略或宣称真实设备效果提升。
 
 ## 生产拓扑
 

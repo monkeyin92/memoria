@@ -81,4 +81,6 @@ class MediaVoiceSessionState:
     standby_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     standby_requested: bool = False
     standby_reason: str | None = None
+    conversation_initiation_provisional_id: str | None = None
+    conversation_yield_candidate_fence: GenerationFence | None = None
     closed: bool = False

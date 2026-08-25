@@ -85,6 +85,13 @@ class MediaOutputDispatchMixin:
             fence: GenerationFence,
         ) -> tuple[int, int]: ...
 
+        def _observe_conversation_yield_delivery(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            event: ReplyDeliveryEvent,
+        ) -> None: ...
+
         @staticmethod
         def _acquire_output_owner(
             context: _MediaVoiceSession,
@@ -233,6 +240,7 @@ class MediaOutputDispatchMixin:
         snapshot, changed = context.reply_delivery.record(fence, event, reason=reason)
         if not changed:
             return
+        self._observe_conversation_yield_delivery(context, fence, event)
         labels = {"status": event.value}
         if reason:
             labels["reason"] = reason

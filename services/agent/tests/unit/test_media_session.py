@@ -2700,9 +2700,11 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
 
     provider = FakeMediaProvider()
     bridge = CapturingBridge()
+    metrics = MetricsRegistry()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
+        metrics=metrics,
     )
     registry.install()
     identity = SessionIdentity("main-output-owner")
@@ -2743,6 +2745,9 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     assert bridge.output_admissions[-1].consumed is True
     assert bridge.output_admissions[-1].reason == "playback_completed"
     assert bridge.output_admissions[-1].authoritative_candidates == ()
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}
+    ) == pytest.approx(2 * 1_000 / 24_000)
     delivery = context.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
@@ -3200,6 +3205,53 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
         floor_allows_output=True,
         now_ms=now_ms + 2,
     )
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> None:
+    bridge = MediaBridgeGrpcServer()
+    metrics = MetricsRegistry()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        metrics=metrics,
+    )
+    identity = SessionIdentity("conversation-yield-terminal")
+    context = await registry._get_or_create(identity)
+    candidate = GenerationFence(identity.session_id, 1, 1, 0)
+    unrelated = GenerationFence(identity.session_id, 2, 1, 0)
+    context.conversation_yield_candidate_fence = candidate
+
+    registry._record_reply_delivery_event(
+        context,
+        unrelated,
+        ReplyDeliveryEvent.PREEMPTED,
+        "unrelated_generation",
+    )
+    registry._record_reply_delivery_event(
+        context,
+        candidate,
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        "still_speaking",
+    )
+
+    assert context.conversation_yield_candidate_fence == candidate
+    assert metrics.get(
+        "voice_conversation_yield_proxy_total", {"status": "confirmed"}
+    ) == 0
+
+    registry._record_reply_delivery_event(
+        context,
+        candidate,
+        ReplyDeliveryEvent.PREEMPTED,
+        "semantic_overlap",
+    )
+
+    assert context.conversation_yield_candidate_fence is None
+    assert metrics.get(
+        "voice_conversation_yield_proxy_total", {"status": "confirmed"}
+    ) == 1
     await registry._finalize_session(identity.session_id)
 
 
@@ -6024,9 +6076,11 @@ async def test_media_assistant_state_emits_typed_floor_effect() -> None:
 @pytest.mark.asyncio
 async def test_media_backchannel_restores_without_persisting_a_turn() -> None:
     bridge = MediaBridgeGrpcServer()
+    metrics = MetricsRegistry()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: FakeMediaProvider(),
+        metrics=metrics,
     )
     registry.install()
     effects: list[tuple[int, dict[str, object]]] = []
@@ -6046,20 +6100,34 @@ async def test_media_backchannel_restores_without_persisting_a_turn() -> None:
     bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
-    assert context.runtime.ingest_media_speech_segment(
-        SpeechSegment(
-            session_id=identity.session_id,
-            stream_epoch=1,
-            provider_task_epoch=1,
-            segment_id="backchannel",
-            revision=1,
-            kind=SegmentKind.ASR_FINAL,
-            capture_start_sample=0,
-            capture_end_sample=320,
-            text="嗯嗯",
-            final=True,
-        )
+    vad_segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=1,
+        provider_task_epoch=1,
+        segment_id="backchannel-vad",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="",
+        final=False,
     )
+    assert context.runtime.ingest_media_speech_segment(vad_segment)
+    await registry._apply_projection_segment(context, vad_segment)
+    asr_segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=1,
+        provider_task_epoch=1,
+        segment_id="backchannel",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="嗯嗯",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(asr_segment)
+    await registry._apply_projection_segment(context, asr_segment)
 
     fence, reason = await registry.commit_user_turn(
         identity.session_id,
@@ -6076,14 +6144,29 @@ async def test_media_backchannel_restores_without_persisting_a_turn() -> None:
         and payload["action"] == "restore"
         for effect_kind, payload in effects
     )
+    assert metrics.get(
+        "voice_conversation_turn_initiation_total",
+        {"kind": "vad_first", "state": "assistant_overlap"},
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_backchannel_total", {"status": "detected"}
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_backchannel_total", {"status": "continued"}
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "owner"}
+    ) == 0
 
 
 @pytest.mark.asyncio
 async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
     bridge = MediaBridgeGrpcServer()
+    metrics = MetricsRegistry()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: FakeMediaProvider(),
+        metrics=metrics,
     )
     registry.install()
     effects: list[tuple[int, dict[str, object]]] = []
@@ -6103,6 +6186,24 @@ async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
     bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
     await context.runtime.on_assistant_speaking("还在播放的回答")
+    bind_owner_policy(context.runtime)
+
+    async def classify_owner(_pcm: bytes, sample_rate: int) -> SpeakerDecision:
+        assert sample_rate == 16_000
+        return SpeakerDecision(
+            classification="owner",
+            score=0.95,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="test-owner-v1",
+            template_version=1,
+            profile_id="owner-profile",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+    context.runtime.on_user_voice_started()
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
     assert context.runtime.ingest_media_speech_segment(
         SpeechSegment(
             session_id=identity.session_id,
@@ -6133,6 +6234,16 @@ async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
         and payload["action"] == "restore"
         for effect_kind, payload in effects
     )
+    assert metrics.get(
+        "voice_conversation_turn_initiation_total",
+        {"kind": "asr_direct", "state": "assistant_overlap"},
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_yield_proxy_total", {"status": "candidate"}
+    ) == 1
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "owner"}
+    ) == 500
 
 
 @pytest.mark.asyncio
@@ -6541,10 +6652,12 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
 async def test_approximate_device_progress_completes_without_actual_heard() -> None:
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
+    metrics = MetricsRegistry()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
         turn_endpoint_grace_s=0.01,
+        metrics=metrics,
     )
     registry.install()
     identity = SessionIdentity(
@@ -6600,6 +6713,9 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is False
+    assert metrics.get(
+        "voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}
+    ) == 0
 
 
 @pytest.mark.asyncio

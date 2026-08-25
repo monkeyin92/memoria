@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
+    CommittedTurn,
+    FloorState,
     ProjectionPatch,
     SpeakerEvidence,
     TurnPhase,
@@ -32,6 +34,7 @@ from services.agent.src.voice_core.media_session_state import (
 )
 from services.agent.src.voice_core.media_session_types import DelegationOutputClaim
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
+from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
 
 if TYPE_CHECKING:
@@ -444,6 +447,23 @@ class MediaSessionProjectionMixin:
             labels={"from_state": previous_phase.value, "to_state": current.value},
         )
         reason = context.projection.phase_reason.value
+        frame = context.projection.current_frame
+        provisional = context.projection.provisional
+        assistant_overlap = context.runtime.assistant_speaking or (
+            frame is not None and frame.floor_state is FloorState.OVERLAP
+        )
+        if (
+            previous_phase is TurnPhase.IDLE
+            and current in {TurnPhase.ACOUSTIC_ONLY, TurnPhase.SEMANTIC_SPEAKING}
+            and provisional is not None
+            and context.conversation_initiation_provisional_id
+            != provisional.provisional_id
+        ):
+            context.conversation_initiation_provisional_id = provisional.provisional_id
+            self.metrics.inc_conversation_turn_initiation(
+                "vad_first" if current is TurnPhase.ACOUSTIC_ONLY else "asr_direct",
+                "assistant_overlap" if assistant_overlap else "open_floor",
+            )
         if current is TurnPhase.UNCERTAIN:
             self.metrics.inc_media_metric(
                 "voice_turn_uncertain_total",
@@ -451,6 +471,25 @@ class MediaSessionProjectionMixin:
             )
         if current is TurnPhase.BACKCHANNEL:
             self.metrics.inc_media_metric("voice_backchannel_filtered_total")
+            self.metrics.inc_conversation_backchannel("detected")
+        if previous_phase is TurnPhase.BACKCHANNEL:
+            if current is TurnPhase.SEMANTIC_SPEAKING:
+                self.metrics.inc_conversation_backchannel("promoted")
+            elif current is TurnPhase.IDLE:
+                self.metrics.inc_conversation_backchannel("continued")
+        if (
+            current is TurnPhase.SEMANTIC_SPEAKING
+            and assistant_overlap
+        ):
+            candidate = context.playback.current_fence or (
+                frame.captured_fence if frame is not None else None
+            )
+            if (
+                candidate is not None
+                and context.conversation_yield_candidate_fence != candidate
+            ):
+                context.conversation_yield_candidate_fence = candidate
+                self.metrics.inc_conversation_yield("candidate")
         if previous_phase is TurnPhase.END_CANDIDATE and current is TurnPhase.SEMANTIC_SPEAKING:
             self.metrics.inc_media_metric(
                 "voice_turn_end_candidate_retracted_total",
@@ -464,3 +503,43 @@ class MediaSessionProjectionMixin:
                     "voice_turn_end_candidate_latency_ms",
                     (latest - voiced) * 1_000 / 16_000,
                 )
+
+    def _observe_committed_conversation_turn(
+        self,
+        context: _MediaVoiceSession,
+        committed: CommittedTurn,
+        previous_phase: TurnPhase,
+    ) -> None:
+        """Project one authoritative owner turn into FCDR-style proxies."""
+
+        self._observe_turn_phase(context, previous_phase)
+        if not committed.history_eligible:
+            return
+        duration_ms = (
+            committed.capture_end_sample - committed.capture_start_sample
+        ) * 1_000 / 16_000
+        self.metrics.add_conversation_participation_ms("owner", duration_ms)
+
+    def _observe_conversation_yield_delivery(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        event: ReplyDeliveryEvent,
+    ) -> None:
+        """Resolve one semantic-overlap yield proxy at the delivery terminal."""
+
+        candidate = context.conversation_yield_candidate_fence
+        if candidate is None or not candidate.matches(fence):
+            return
+        status = {
+            ReplyDeliveryEvent.PREEMPTED: "confirmed",
+            ReplyDeliveryEvent.PLAYBACK_ENDED: "continued",
+            ReplyDeliveryEvent.TRANSPORT_REJECTED: "indeterminate",
+            ReplyDeliveryEvent.ERROR: "indeterminate",
+            ReplyDeliveryEvent.SKIPPED: "indeterminate",
+            ReplyDeliveryEvent.NO_AUDIO: "indeterminate",
+        }.get(event)
+        if status is None:
+            return
+        context.conversation_yield_candidate_fence = None
+        self.metrics.inc_conversation_yield(status)

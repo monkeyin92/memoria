@@ -16,6 +16,7 @@ from services.agent.src.orchestration.conversation_projection import (
     ProjectionPatch,
     ProjectionRejectReason,
     SpeakerEvidence,
+    TurnPhase,
 )
 from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
@@ -83,6 +84,13 @@ class MediaSessionCommitMixin:
 
         def _finish_owner_silence_turn(
             self, context: _MediaVoiceSession, *, accepted: bool
+        ) -> None: ...
+
+        def _observe_committed_conversation_turn(
+            self,
+            context: _MediaVoiceSession,
+            committed: CommittedTurn,
+            previous_phase: TurnPhase,
         ) -> None: ...
 
         async def _request_device_standby(
@@ -451,6 +459,7 @@ class MediaSessionCommitMixin:
                     context_version = context.runtime.orchestrator.context_version_for_fence(
                         prepared_fence
                     )
+                    previous_phase = context.projection.phase
                     recovered = context.projection.commit_turn(
                         replace(
                             commit_evidence,
@@ -459,6 +468,11 @@ class MediaSessionCommitMixin:
                         )
                     )
                     if isinstance(recovered, CommittedTurn):
+                        self._observe_committed_conversation_turn(
+                            context,
+                            recovered,
+                            previous_phase,
+                        )
                         await self.bridge.emit_context_activated(session_id, context_version)
                         if self._stream_epoch_is_current(context, stream_epoch):
                             task_epoch, _ = self._event_versions(context, prepared_fence)
@@ -509,6 +523,7 @@ class MediaSessionCommitMixin:
             retire_end=retire_end,
         )
         context_version = context.runtime.orchestrator.context_version_for_fence(fence)
+        previous_phase = context.projection.phase
         projection_result = context.projection.commit_turn(
             replace(
                 commit_evidence,
@@ -524,6 +539,11 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, projection_result.value)
             return None, projection_result.value
         committed: CommittedTurn = projection_result
+        self._observe_committed_conversation_turn(
+            context,
+            committed,
+            previous_phase,
+        )
         if not self._stream_epoch_is_current(context, stream_epoch):
             await context.runtime.on_assistant_reply_aborted(
                 fence,

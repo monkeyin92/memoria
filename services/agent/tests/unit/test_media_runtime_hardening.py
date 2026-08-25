@@ -313,12 +313,26 @@ def test_hardware_metric_names_are_allowlisted_without_identifier_labels() -> No
         "voice_turn_uncertain_total",
         "voice_backchannel_filtered_total",
         "voice_acoustic_only_cancel_blocked_total",
+        "voice_conversation_turn_initiation_total",
+        "voice_conversation_backchannel_total",
+        "voice_conversation_yield_proxy_total",
+        "voice_conversation_participation_proxy_ms_total",
     ):
         metrics.inc(name)
     metrics.observe_ms("voice_turn_end_candidate_latency_ms", 12.0)
     metrics.inc(
         "voice_turn_state_transition_total",
         labels={"from_state": "idle", "to_state": "acoustic_only"},
+    )
+    metrics.inc(
+        "voice_conversation_turn_initiation_total",
+        labels={"kind": "vad_first", "state": "assistant_overlap"},
+    )
+    metrics.inc("voice_conversation_backchannel_total", labels={"status": "detected"})
+    metrics.inc("voice_conversation_yield_proxy_total", labels={"status": "confirmed"})
+    metrics.inc(
+        "voice_conversation_participation_proxy_ms_total",
+        labels={"kind": "assistant"},
     )
     with pytest.raises(ValueError, match="not allowlisted"):
         metrics.inc("stale_generation_drop_total", labels={"device_id": "device-1"})
