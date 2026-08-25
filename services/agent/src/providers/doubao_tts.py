@@ -864,6 +864,17 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 and not isinstance(exc, DoubaoBeforeAudioError)
             ):
                 raise DoubaoBeforeAudioError(str(exc)) from exc
+            if not got_audio and isinstance(exc, websockets.exceptions.ConnectionClosed):
+                # An idle pooled socket can be closed normally by Doubao
+                # between sessions. Classify that transport failure as
+                # retryable only before any PCM reached the emitter so
+                # LiveKit can replay the buffered text on a fresh connection.
+                # Once audio starts, replaying the phrase would duplicate
+                # speech and must remain fail-closed.
+                raise APIConnectionError(
+                    "Doubao TTS connection closed before first audio",
+                    retryable=True,
+                ) from exc
             raise
         finally:
             self._tts_instance.trace("doubao_pcm_summary", detail=pcm_guard.summary())

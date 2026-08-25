@@ -114,6 +114,38 @@ async def test_first_audio_timeout_retries_with_a_fresh_connection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_livekit_stream_retries_expired_pooled_connection_before_audio() -> None:
+    server = MockDoubaoServer(scenario="expire_after_first")
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    try:
+        await tts.pool.warm(1)
+        primed = await tts.synthesize_stream_text(
+            ["先建立一个可复用连接"],
+            fence=GenerationFence("expired-pool", 1, 1, 0),
+        )
+        assert primed.pcm and primed.words
+
+        # Let the provider's normal close handshake reach the idle pooled
+        # socket before the next session attempts START_SESSION.
+        await asyncio.sleep(0.05)
+        async with tts.stream(
+            conn_options=APIConnectOptions(max_retry=1, retry_interval=0.01)
+        ) as stream:
+            stream.push_text("过期连接必须在首帧前安全重试")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        assert events
+        assert server.connections == 2
+        assert server.sessions == 2
+        assert tts.pool.discarded_count == 1
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
 async def test_cancel_sends_cancel_session_and_clears_fence() -> None:
     server = MockDoubaoServer(scenario="slow")
     server.start()
