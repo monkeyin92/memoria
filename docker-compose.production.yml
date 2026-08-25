@@ -304,7 +304,6 @@ services:
       MEDIA_BRIDGE_MTLS: "true"
       MEDIA_BRIDGE_SESSION_FACTORY: "services.agent.src.media_agent_factory:build_production_media_session_factory"
       MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
-      MEDIA_OWNER_SILENCE_TIMEOUT_S: "10"
     command:
       - -m
       - scripts.run_media_bridge
