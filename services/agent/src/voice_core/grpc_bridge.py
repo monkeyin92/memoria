@@ -1451,9 +1451,19 @@ class MediaBridgeGrpcServer:
             connection is None
             or not reason
             or len(reason) > 128
-            or not connection.session.generation.accept(fence)
+            or fence.session_id != session_id
         ):
             return False
+        # CLOSED revokes every in-flight generation. A device runtime profile
+        # may advance the authoritative session epoch before the first turn,
+        # while the transport GenerationController is still at epoch zero.
+        # Accept that monotonic advance, but continue to reject stale terminal
+        # tasks that point behind the transport's current fence.
+        try:
+            connection.session.generation.advance(fence)
+        except ValueError:
+            return False
+        connection.session.generation_active = False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
             context_version,

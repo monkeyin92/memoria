@@ -305,7 +305,7 @@ async def test_closed_conversation_state_preempts_reliable_output() -> None:
     connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
     assert await bridge.emit_event("conversation-close", "assistant_state", {})
 
-    fence = connection.session.fence
+    fence = connection.session.fence.with_session_epoch(1)
     assert await bridge.emit_conversation_state(
         identity.session_id,
         media_pb2.CONVERSATION_STATE_CLOSED,
@@ -321,7 +321,16 @@ async def test_closed_conversation_state_preempts_reliable_output() -> None:
     assert closed.state.reason == "owner_silence_timeout"
     assert closed.state.task_epoch == 2
     assert closed.state.context_version == 3
+    assert connection.session.fence == fence
+    assert connection.session.generation_active is False
     assert connection.outgoing.get_nowait().client.type == "assistant_state"
+
+    assert not await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=fence.with_session_epoch(0),
+        reason="stale_owner_silence_timeout",
+    )
 
 
 def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None:
