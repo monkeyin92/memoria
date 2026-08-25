@@ -13,9 +13,10 @@ Usage: deploy_agent_component.sh \
   [--remote-root /opt/memoria/component-releases] \
   [--dry-run] [--cutover]
 
-The fast lane is intentionally limited to services/agent/** code changes.
-Dependency-lock, Dockerfile, shared-service, packages, or runtime-script changes
-fail closed and must use the full image release path.
+The fast lane is intentionally limited to services/agent/** and the Voice Core
+bridge launcher that wires that package. Dependency-lock, shared-service,
+packages, or other runtime-script changes fail closed and must use the full
+image release path.
 EOF
 }
 
@@ -133,7 +134,7 @@ scope_rejections=()
 while IFS= read -r changed; do
   [[ -z "$changed" ]] && continue
   case "$changed" in
-    services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh)
+    services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh|scripts/run_media_bridge.py)
       ;;
     *) scope_rejections+=("$changed") ;;
   esac
@@ -155,6 +156,7 @@ git -C "$ROOT" archive \
   --prefix=memoria/ \
   "$expected_commit" \
   services/agent/__init__.py services/agent/src services/agent/models \
+  scripts/run_media_bridge.py \
   >"$artifact"
 git -C "$ROOT" show \
   "$expected_commit:infra/Dockerfile.agent-source-overlay" \
