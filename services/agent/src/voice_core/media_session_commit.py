@@ -65,17 +65,13 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, segment: SpeechSegment
         ) -> None: ...
 
-        async def _discard_projection(
-            self, context: _MediaVoiceSession, reason: str
-        ) -> None: ...
+        async def _discard_projection(self, context: _MediaVoiceSession, reason: str) -> None: ...
 
         def _event_versions(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
 
-        def _projection_speaker_evidence(
-            self, context: _MediaVoiceSession
-        ) -> SpeakerEvidence: ...
+        def _projection_speaker_evidence(self, context: _MediaVoiceSession) -> SpeakerEvidence: ...
 
         async def _emit_projection_patch(
             self, context: _MediaVoiceSession, patch: ProjectionPatch
@@ -315,6 +311,7 @@ class MediaSessionCommitMixin:
                 guarded_reason=guarded_reason,
                 semantic_evidence=True,
                 utterance_route=route,
+                turn_phase=context.projection.phase,
             )
         )
         if was_assistant_speaking and guarded_reason is None:
@@ -341,9 +338,7 @@ class MediaSessionCommitMixin:
                         evidence_segment,
                         active_generation_id=max(
                             1,
-                            (
-                                context.playback.current_fence or context.runtime.fence
-                            ).generation_id,
+                            (context.playback.current_fence or context.runtime.fence).generation_id,
                         ),
                         duration_ms=elapsed_ms,
                     ),

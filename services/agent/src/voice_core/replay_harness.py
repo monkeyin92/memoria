@@ -13,6 +13,9 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 
+from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.conversation_projection import ConversationProjection
+from services.agent.src.orchestration.speech_timeline import SpeechSegment, SpeechTimeline
 from services.agent.src.voice_core.adaptive_vad import (
     AdaptiveEnergyVAD,
     AdaptiveVADConfig,
@@ -85,6 +88,54 @@ class ReplayResult:
     observed_interrupt: bool
     passed: bool
     reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TurnPhaseReplayResult:
+    fixture_id: str
+    phases: tuple[str, ...]
+    reasons: tuple[str, ...]
+    frame_count: int
+
+
+def replay_turn_phases(
+    segments: tuple[SpeechSegment, ...],
+    *,
+    fixture_id: str = "anonymous",
+    session_id: str = "session",
+    playback_active: bool = False,
+    fence: GenerationFence | None = None,
+) -> TurnPhaseReplayResult:
+    """Deterministic CPU replay of TurnPhase; no provider or timer side effects."""
+
+    timeline = SpeechTimeline()
+    projection = ConversationProjection(session_id, timeline)
+    phases: list[str] = [projection.phase.value]
+    reasons: list[str] = [projection.phase_reason.value]
+    frames = 0
+    for segment in segments:
+        if timeline.stream_epoch != segment.stream_epoch:
+            if not timeline.start_stream_epoch(segment.stream_epoch):
+                continue
+        if not timeline.add(segment):
+            continue
+        previous = projection.phase
+        projection.apply_continuous_event(
+            segment,
+            turn_id_hint=1,
+            playback_active=playback_active,
+            fence=fence,
+        )
+        frames += 1
+        if projection.phase is not previous or phases[-1] != projection.phase.value:
+            phases.append(projection.phase.value)
+            reasons.append(projection.phase_reason.value)
+    return TurnPhaseReplayResult(
+        fixture_id=fixture_id,
+        phases=tuple(phases),
+        reasons=tuple(reasons),
+        frame_count=frames,
+    )
 
 
 class AudioReplayHarness:
@@ -163,7 +214,14 @@ class ChaosRunner:
         stale = sum(event.kind in {"late_final", "late_tts"} for event in ordered)
         reconnects = sum(
             event.kind
-            in {"asr_disconnect", "tts_disconnect", "edge_restart", "background_resume", "bluetooth_switch", "wifi_roam"}
+            in {
+                "asr_disconnect",
+                "tts_disconnect",
+                "edge_restart",
+                "background_resume",
+                "bluetooth_switch",
+                "wifi_roam",
+            }
             for event in ordered
         )
         # The contract is pass/fail only when every disruptive event is bounded
@@ -220,5 +278,7 @@ __all__ = [
     "LoadScenario",
     "ReplayResult",
     "SyntheticFixture",
+    "TurnPhaseReplayResult",
     "estimate_load",
+    "replay_turn_phases",
 ]

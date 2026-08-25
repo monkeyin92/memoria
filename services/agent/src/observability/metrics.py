@@ -27,6 +27,7 @@ _GAUGES = {
     "asr_send_lag_ms",
     "asr_partial_age_ms",
     "tts_frame_age_ms",
+    "voice_turn_end_candidate_latency_ms",
 }
 
 _SUBJECT_RESOLUTION_STATUSES = frozenset({"confirmed", "unknown"})
@@ -182,21 +183,27 @@ class MetricsRegistry:
         """
 
         if status not in _SUBJECT_RESOLUTION_STATUSES:
-            raise ValueError(f"subject resolution status must be one of {sorted(_SUBJECT_RESOLUTION_STATUSES)}")
+            raise ValueError(
+                f"subject resolution status must be one of {sorted(_SUBJECT_RESOLUTION_STATUSES)}"
+            )
         self._inc("subject_resolution_total", {"status": status})
 
     def inc_runtime_profile_expired_use_attempt(self, reason: str) -> None:
         """Count any attempt to keep using an expired runtime profile."""
 
         if reason not in _RUNTIME_PROFILE_EXPIRED_REASONS:
-            raise ValueError(f"expired-use reason must be one of {sorted(_RUNTIME_PROFILE_EXPIRED_REASONS)}")
+            raise ValueError(
+                f"expired-use reason must be one of {sorted(_RUNTIME_PROFILE_EXPIRED_REASONS)}"
+            )
         self._inc("runtime_profile_expired_use_attempts_total", {"reason": reason})
 
     def inc_runtime_profile_refresh_failure(self, reason: str) -> None:
         """Count an authority-refresh failure (timeout vs unexpected error)."""
 
         if reason not in _RUNTIME_PROFILE_REFRESH_FAILURE_REASONS:
-            raise ValueError(f"refresh-failure reason must be one of {sorted(_RUNTIME_PROFILE_REFRESH_FAILURE_REASONS)}")
+            raise ValueError(
+                f"refresh-failure reason must be one of {sorted(_RUNTIME_PROFILE_REFRESH_FAILURE_REASONS)}"
+            )
         self._inc("runtime_profile_refresh_failures_total", {"reason": reason})
 
     def inc_runtime_profile_capability_denied(self, reason: str) -> None:
@@ -214,7 +221,9 @@ class MetricsRegistry:
         rendered by the persona renderer (never per-turn mechanical prompts)."""
 
         if reason not in _IDENTITY_CONFUSION_REASONS:
-            raise ValueError(f"identity confusion reason must be one of {sorted(_IDENTITY_CONFUSION_REASONS)}")
+            raise ValueError(
+                f"identity confusion reason must be one of {sorted(_IDENTITY_CONFUSION_REASONS)}"
+            )
         self._inc("persona_identity_confusion_events_total", {"reason": reason})
 
     def set_media_active_sessions(self, count: int) -> None:
@@ -280,6 +289,26 @@ class MetricsRegistry:
         if amount < 0:
             raise ValueError("counter increment must be non-negative")
         self._inc(name, labels, amount)
+
+    def observe_media_metric(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: dict[str, str] | None = None,
+    ) -> None:
+        """Record an allowlisted media latency sample without identifier labels."""
+
+        if name not in MEDIA_METRIC_NAMES:
+            raise ValueError(f"media metric is not allowlisted: {name}")
+        if value < 0 or value != value or value in {float("inf"), float("-inf")}:
+            raise ValueError("media observation must be finite and non-negative")
+        self._set(name, value, labels)
+        with self._lock:
+            samples = self.latency_samples[name]
+            if len(samples) >= 256:
+                samples.pop(0)
+            samples.append(float(value))
 
     def set_media_metric(
         self,

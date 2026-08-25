@@ -72,6 +72,20 @@ Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose 
 
 验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、WSS close cause，以及用户听到的内容。两轮都自然完成后才可更新 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
 
+## 实时话轮状态层候选
+
+```yaml
+candidate: cpu_only_turn_phase
+as_of_date: 2026-08-24
+code: complete
+wired: conversation_projection_and_media_session_shadow
+enabled: false
+verified: unit_and_deterministic_replay_only
+side_effects: none
+```
+
+`TurnPhase` 目前只作为 `ConversationProjection` 内部证据和低基数 telemetry 产出，不改变 endpoint/interrupt/commit 决策。阶段 C 单一策略切换前不得宣称误聆听、打断或全双工改善。
+
 ## 生产拓扑
 
 - H5：`https://aigcnice.com:8443/`；Control API：同源 `/memoria-api/`。

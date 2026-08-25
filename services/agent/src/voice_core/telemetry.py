@@ -61,6 +61,12 @@ MEDIA_METRIC_NAMES = frozenset(
         "voice_interrupt_success_total",
         "voice_false_interrupt_total",
         "voice_kws_hits_total",
+        "voice_turn_state_transition_total",
+        "voice_turn_end_candidate_latency_ms",
+        "voice_turn_end_candidate_retracted_total",
+        "voice_turn_uncertain_total",
+        "voice_backchannel_filtered_total",
+        "voice_acoustic_only_cancel_blocked_total",
         "voice_stale_asr_result_dropped_total",
         "voice_stale_audio_frame_dropped_total",
         "voice_old_epoch_event_dropped_total",
@@ -99,6 +105,8 @@ MEDIA_SPAN_NAMES = frozenset(
         "asr.partial",
         "asr.final",
         "turn.commit",
+        "turn.state_changed",
+        "turn.end_candidate",
         "llm.first_token",
         "tts.first_audio",
         "audio.encode",
@@ -133,7 +141,9 @@ GOLDEN_TRACE_INTERRUPT_EVENTS = (
 )
 
 _SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_ALLOWED_LABELS = frozenset({"runtime", "state", "source", "reason", "kind", "status"})
+_ALLOWED_LABELS = frozenset(
+    {"runtime", "state", "source", "reason", "kind", "status", "from_state", "to_state"}
+)
 _ALLOWED_TRACE_EVENT_FIELDS = frozenset(
     {
         "approximate",
@@ -141,7 +151,11 @@ _ALLOWED_TRACE_EVENT_FIELDS = frozenset(
         "capture_end_sample",
         "capture_start_sample",
         "device_sequence",
+        "discontinuity",
+        "frame_index",
         "frame_samples",
+        "from_state",
+        "loss_concealed",
         "playback_sample_end",
         "playback_sample_start",
         "queue_ms",
@@ -149,7 +163,9 @@ _ALLOWED_TRACE_EVENT_FIELDS = frozenset(
         "received_sequence",
         "sample_position",
         "source",
+        "state",
         "status",
+        "to_state",
         "voiced_end_sample",
     }
 )

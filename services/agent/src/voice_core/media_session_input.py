@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.conversation_projection import TurnPhase
 from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
@@ -188,9 +189,15 @@ class MediaSessionInputMixin:
                         event=InteractionEvent.VAD_START,
                         assistant_speaking=context.runtime.assistant_speaking,
                         has_speech_energy=True,
+                        turn_phase=context.projection.phase,
                     )
                 )
                 if interruption is not None:
+                    if (
+                        interruption.cancel_generation
+                        and context.projection.phase is TurnPhase.ACOUSTIC_ONLY
+                    ):
+                        self.metrics.inc_media_metric("voice_acoustic_only_cancel_blocked_total")
                     interaction = replace(
                         interaction,
                         reason=interruption.reason,

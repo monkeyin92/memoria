@@ -5,6 +5,7 @@ import hashlib
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from services.agent.src.observability.media_otel import configure_otel
+from services.agent.src.orchestration.speech_timeline import SegmentKind, SpeechSegment
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
 from services.agent.src.voice_core.device_runtime import (
     AudioDeviceConfig,
@@ -28,6 +29,7 @@ from services.agent.src.voice_core.replay_harness import (
     LoadScenario,
     SyntheticFixture,
     estimate_load,
+    replay_turn_phases,
 )
 from services.agent.src.voice_core.telemetry import (
     GOLDEN_TRACE_BASE_EVENTS,
@@ -116,6 +118,64 @@ def test_replay_chaos_and_load_are_deterministic() -> None:
     assert load.passed and load.frames == 100
 
 
+def test_turn_phase_replay_is_deterministic_for_child_pause() -> None:
+    segments = (
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=320,
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="asr",
+            revision=1,
+            kind=SegmentKind.ASR_PARTIAL,
+            capture_start_sample=0,
+            capture_end_sample=1600,
+            text="我想",
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=1600,
+            capture_end_sample=1601,
+            final=True,
+            voiced_end_sample=1600,
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-resume",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=8000,
+            capture_end_sample=8320,
+        ),
+    )
+    first = replay_turn_phases(segments, fixture_id="child_pause")
+    second = replay_turn_phases(segments, fixture_id="child_pause")
+    assert first == second
+    assert first.phases == (
+        "idle",
+        "acoustic_only",
+        "semantic_speaking",
+        "end_candidate",
+        "semantic_speaking",
+    )
+
+
 def test_telemetry_redacts_labels_and_bounds_timeline() -> None:
     metrics = MediaTelemetry(max_series=4)
     metrics.inc("voice_kws_hits_total", labels={"kind": "hard_stop"})
@@ -184,7 +244,17 @@ def test_hardware_metric_names_are_allowlisted_without_identifier_labels() -> No
         "aec_far_end_false_vad_total",
         "aec_double_talk_asr_error_rate",
         "runtime_profile_version_lag",
+        "voice_turn_state_transition_total",
+        "voice_turn_end_candidate_retracted_total",
+        "voice_turn_uncertain_total",
+        "voice_backchannel_filtered_total",
+        "voice_acoustic_only_cancel_blocked_total",
     ):
         metrics.inc(name)
+    metrics.observe_ms("voice_turn_end_candidate_latency_ms", 12.0)
+    metrics.inc(
+        "voice_turn_state_transition_total",
+        labels={"from_state": "idle", "to_state": "acoustic_only"},
+    )
     with pytest.raises(ValueError, match="not allowlisted"):
         metrics.inc("stale_generation_drop_total", labels={"device_id": "device-1"})
