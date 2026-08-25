@@ -146,11 +146,24 @@ class MediaTurnEndpointMixin:
             else result.capture_start_sample,
         )
         context.turn_end_sample = max(result.capture_end_sample, context.turn_end_sample or 0)
-        if context.pending_partial is not None and (
-            context.pending_partial.sentence_id == result.sentence_id
-            and context.pending_partial.task_epoch <= result.task_epoch
+        partial = context.pending_partial
+        if partial is not None and (
+            partial.sentence_id == result.sentence_id and partial.task_epoch <= result.task_epoch
         ):
-            context.pending_partial = None
+            if (
+                partial.task_epoch == result.task_epoch
+                and partial.capture_end_sample > result.capture_end_sample
+            ):
+                # FunASR can shorten the final word-timing range after a live
+                # partial already covered the device VAD endpoint. Preserve
+                # that bounded fallback, but advance its revision baseline so
+                # a tail-timeout promotion supersedes this accepted final.
+                context.pending_partial = replace(
+                    partial,
+                    revision=max(partial.revision, result.revision),
+                )
+            else:
+                context.pending_partial = None
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
         if context.turn_endpoint_sample is not None:
@@ -177,13 +190,9 @@ class MediaTurnEndpointMixin:
     ) -> bool:
         if result_end_sample is None:
             return False
-        return (
-            result_end_sample >= endpoint_sample
-            or (
-                context.ingress.last_finalized_audio_watermark >= endpoint_sample
-                and endpoint_sample - result_end_sample
-                <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
-            )
+        return result_end_sample >= endpoint_sample or (
+            context.ingress.last_finalized_audio_watermark >= endpoint_sample
+            and endpoint_sample - result_end_sample <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
         )
 
     def _adaptive_endpoint_grace(self, context: _MediaVoiceSession) -> float:
@@ -324,9 +333,8 @@ class MediaTurnEndpointMixin:
         ):
             return
         retry_task = context.turn_commit_retry_task
-        if (
-            retry_task is not None
-            and self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample)
+        if retry_task is not None and self._turn_commit_retry_matches(
+            context, stream_epoch, endpoint_sample
         ):
             try:
                 await asyncio.shield(retry_task)
@@ -518,8 +526,7 @@ class MediaTurnEndpointMixin:
         # The range was consumed even when Router turns it into a low-risk
         # control action rather than a chat generation.
         prepare_retryable = (
-            reason == "provider_prepare_failed"
-            and context.projection.provisional is not None
+            reason == "provider_prepare_failed" and context.projection.provisional is not None
         )
         if prepare_retryable and schedule_prepare_retry:
             self._schedule_turn_prepare_retry(
