@@ -12,9 +12,11 @@ USER root
 WORKDIR /app
 
 # Replace the complete Agent package so deleted or renamed Python files cannot
-# survive from the dependency base image. The build context is a commit-bound
-# git archive containing only this runtime package.
+# survive from the dependency base image. The Voice Core bridge launcher is
+# part of the same runtime boundary: it wires Agent settings into that package
+# and must move atomically with it.
 RUN rm -rf /app/services/agent
 COPY --chown=65532:65532 memoria/services/agent /app/services/agent
+COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py /app/scripts/run_media_bridge.py
 
 USER 65532:65532
