@@ -637,7 +637,7 @@ def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, A
 class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|empty_ts|scaled_ts|degraded_ts
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
     connections: int = 0
     sessions: int = 0
     task_requests: list[list[str]] = field(default_factory=list)
@@ -754,6 +754,9 @@ class MockDoubaoServer:
                     await self._send_session_result(ws, active_session, active_texts)
                     active_session = ""
                     active_texts = None
+                    if self.scenario == "expire_after_first" and self.sessions == 1:
+                        await ws.close(code=1000, reason="connection expired")
+                        return
                 elif event == EventType.FINISH_CONNECTION:
                     await ws.send(
                         _doubao_server_frame(
