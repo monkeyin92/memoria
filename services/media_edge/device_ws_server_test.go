@@ -313,6 +313,16 @@ func deviceGenerationEvent(sessionID string, epoch uint64, sequence uint64, turn
 	}}
 }
 
+func deviceClosedStateEvent(sessionID string, epoch uint64, sequence uint64, reason string) *mediav1.CoreToMedia {
+	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_State{
+		State: &mediav1.StateEvent{
+			Identity: deviceCoreIdentity(sessionID, epoch), Sequence: sequence,
+			State:  mediav1.ConversationState_CONVERSATION_STATE_CLOSED,
+			Reason: reason,
+		},
+	}}
+}
+
 func deviceAudioEvent(sessionID string, epoch uint64, sequence uint64, sourceStart uint64, samples []int16, turnID, generationID uint64) *mediav1.CoreToMedia {
 	payload := int16ToLittleEndian(samples)
 	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Audio{

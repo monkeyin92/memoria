@@ -346,6 +346,30 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			}
 			c.sendControl(deviceControlPriority("playback.duck"), payload)
 		}
+	case event.GetState() != nil:
+		state := event.GetState()
+		if state.GetState() != mediav1.ConversationState_CONVERSATION_STATE_CLOSED {
+			return
+		}
+		// Voice Core is the interaction authority. A terminal CLOSED state
+		// revokes the device generation before the P0 close is queued, so
+		// concurrent/late PCM cannot slip behind the standby transition.
+		c.setCurrentFence(deviceFence{})
+		reason := state.GetReason()
+		if reason == "" {
+			reason = "conversation_closed"
+		}
+		payload, err := marshalDeviceControl(deviceServerSessionClose{
+			Type: "session.close", Version: 2,
+			SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
+			ControlSequence:   c.nextServerSequence(),
+			ServerMonotonicMS: now,
+			Reason:            reason,
+		})
+		if err != nil {
+			return
+		}
+		c.sendControl(deviceControlPriority("session.close"), payload)
 	case event.GetError() != nil:
 		coreError := event.GetError()
 		payload, err := marshalDeviceControl(deviceSessionError{

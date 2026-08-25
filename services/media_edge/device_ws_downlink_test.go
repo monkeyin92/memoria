@@ -3,6 +3,7 @@ package mediaedge
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,5 +110,39 @@ func TestDeviceWSSDownlinkClockResetsForGenerationTwoWithoutReconnect(t *testing
 	}
 	if env.server.metrics.downlinkFrames.Load() != 5 {
 		t.Fatalf("downlink frames = %d, want 5", env.server.metrics.downlinkFrames.Load())
+	}
+}
+
+func TestDeviceWSSClosedConversationEntersStandbyAndRejectsLateAudio(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	env.mu.Lock()
+	core := env.cores["session_1"]
+	env.mu.Unlock()
+
+	core.inject(deviceGenerationEvent(
+		"session_1", 18, 1, 1, 1,
+		mediav1.GenerationAction_GENERATION_ACTION_START,
+	))
+	readGenerationStarted(t, connection, 1)
+	core.inject(deviceClosedStateEvent("session_1", 18, 2, "owner_silence_timeout"))
+
+	messageType, payload, err := readDeviceMessage(connection, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage ||
+		!strings.Contains(string(payload), `"type":"session.close"`) ||
+		!strings.Contains(string(payload), `"reason":"owner_silence_timeout"`) {
+		t.Fatalf("unexpected standby control: type=%d payload=%s", messageType, payload)
+	}
+
+	core.inject(deviceAudioEvent(
+		"session_1", 18, 0, 0, downlinkTestSamples(), 1, 1,
+	))
+	if _, _, err := readDeviceMessage(connection, 300*time.Millisecond); err == nil {
+		t.Fatal("late audio reached the device after conversation close")
 	}
 }
