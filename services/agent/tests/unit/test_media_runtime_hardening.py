@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import gc
 import hashlib
+import time
+import tracemalloc
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from services.agent.src.observability.media_otel import configure_otel
+from services.agent.src.orchestration.conversation_projection import ConversationProjection
+from services.agent.src.orchestration.speech_timeline import (
+    SegmentKind,
+    SpeechSegment,
+    SpeechTimeline,
+)
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
 from services.agent.src.voice_core.device_runtime import (
     AudioDeviceConfig,
@@ -28,6 +37,7 @@ from services.agent.src.voice_core.replay_harness import (
     LoadScenario,
     SyntheticFixture,
     estimate_load,
+    replay_turn_phases,
 )
 from services.agent.src.voice_core.telemetry import (
     GOLDEN_TRACE_BASE_EVENTS,
@@ -116,6 +126,120 @@ def test_replay_chaos_and_load_are_deterministic() -> None:
     assert load.passed and load.frames == 100
 
 
+def test_turn_phase_replay_is_deterministic_for_child_pause() -> None:
+    segments = (
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=320,
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="asr",
+            revision=1,
+            kind=SegmentKind.ASR_PARTIAL,
+            capture_start_sample=0,
+            capture_end_sample=1600,
+            text="我想",
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=1600,
+            capture_end_sample=1601,
+            final=True,
+            voiced_end_sample=1600,
+        ),
+        SpeechSegment(
+            session_id="session",
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-resume",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=8000,
+            capture_end_sample=8320,
+        ),
+    )
+    first = replay_turn_phases(segments, fixture_id="child_pause")
+    second = replay_turn_phases(segments, fixture_id="child_pause")
+    assert first == second
+    assert first.phases == (
+        "idle",
+        "acoustic_only",
+        "semantic_speaking",
+        "end_candidate",
+        "semantic_speaking",
+    )
+    # Only the ASR fact covers one complete 80ms bucket. The far-ahead 20ms VAD
+    # resume jumps the cursor without backfilling nonexistent historical frames.
+    assert first.frame_count == 1
+
+
+def test_turn_phase_projection_meets_cpu_and_memory_budget() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("resource-budget", timeline)
+    vad = SpeechSegment(
+        session_id="resource-budget",
+        stream_epoch=1,
+        provider_task_epoch=0,
+        segment_id="vad",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=0,
+        capture_end_sample=320,
+    )
+    assert timeline.add(vad)
+    projection.apply_continuous_event(vad, turn_id_hint=1)
+    revisions = tuple(
+        SpeechSegment(
+            session_id="resource-budget",
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="asr",
+            revision=revision,
+            kind=SegmentKind.ASR_PARTIAL,
+            capture_start_sample=0,
+            capture_end_sample=1_280 + revision * 32,
+            text="性能预算测试内容",
+        )
+        for revision in range(1, 501)
+    )
+
+    latencies_ns: list[int] = []
+    tracemalloc.start()
+    gc.collect()
+    baseline_bytes = tracemalloc.get_traced_memory()[0]
+    try:
+        for segment in revisions:
+            assert timeline.add(segment)
+            started_ns = time.perf_counter_ns()
+            projection.apply_continuous_event(segment, turn_id_hint=1)
+            latencies_ns.append(time.perf_counter_ns() - started_ns)
+        gc.collect()
+        current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    latencies_ns.sort()
+    p95_ns = latencies_ns[int(len(latencies_ns) * 0.95) - 1]
+    assert p95_ns < 2_000_000
+    assert current_bytes - baseline_bytes < 65_536
+    assert peak_bytes - baseline_bytes < 65_536
+
+
 def test_telemetry_redacts_labels_and_bounds_timeline() -> None:
     metrics = MediaTelemetry(max_series=4)
     metrics.inc("voice_kws_hits_total", labels={"kind": "hard_stop"})
@@ -184,7 +308,17 @@ def test_hardware_metric_names_are_allowlisted_without_identifier_labels() -> No
         "aec_far_end_false_vad_total",
         "aec_double_talk_asr_error_rate",
         "runtime_profile_version_lag",
+        "voice_turn_state_transition_total",
+        "voice_turn_end_candidate_retracted_total",
+        "voice_turn_uncertain_total",
+        "voice_backchannel_filtered_total",
+        "voice_acoustic_only_cancel_blocked_total",
     ):
         metrics.inc(name)
+    metrics.observe_ms("voice_turn_end_candidate_latency_ms", 12.0)
+    metrics.inc(
+        "voice_turn_state_transition_total",
+        labels={"from_state": "idle", "to_state": "acoustic_only"},
+    )
     with pytest.raises(ValueError, match="not allowlisted"):
         metrics.inc("stale_generation_drop_total", labels={"device_id": "device-1"})

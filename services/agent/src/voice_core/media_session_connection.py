@@ -26,9 +26,7 @@ class MediaSessionConnectionMixin:
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
 
-        async def _get_or_create(
-            self, identity: SessionIdentity
-        ) -> _MediaVoiceSession: ...
+        async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _cancel_audio_pump(self, context: _MediaVoiceSession) -> None: ...
 
@@ -134,7 +132,6 @@ class MediaSessionConnectionMixin:
         context.output_complete_emitted = False
         await self._cancel_reply_task(context, previous_fence)
 
-
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
         session_id = session.identity.session_id
         if session.state == "closed":
@@ -189,6 +186,7 @@ class MediaSessionConnectionMixin:
             context_stream_epoch = context.stream_epoch
             context.closed = True
             context.projection.discard_provisional(None, "session_closed")
+            context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)
         finally:
             context.turn_commit_lock.release()

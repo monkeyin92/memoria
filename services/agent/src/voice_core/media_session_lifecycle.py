@@ -84,17 +84,13 @@ class MediaSessionLifecycleMixin:
             self, session_id: str, result: ASRResult
         ) -> ASRAcceptDecision: ...
 
-        async def _discard_projection(
-            self, context: _MediaVoiceSession, reason: str
-        ) -> None: ...
+        async def _discard_projection(self, context: _MediaVoiceSession, reason: str) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
-        async def on_audio_frame(
-            self, session: MediaBridgeSession, frame: AudioFrame
-        ) -> None: ...
+        async def on_audio_frame(self, session: MediaBridgeSession, frame: AudioFrame) -> None: ...
 
         async def on_speech_segment(
             self,
@@ -175,15 +171,16 @@ class MediaSessionLifecycleMixin:
             or self.turn_endpoint_absolute_timeout_s <= self.turn_endpoint_max_grace_s
         ):
             raise ValueError("media endpoint grace and tail timeouts are invalid")
-        if not math.isfinite(self.output_generation_timeout_s) or self.output_generation_timeout_s <= 0:
+        if (
+            not math.isfinite(self.output_generation_timeout_s)
+            or self.output_generation_timeout_s <= 0
+        ):
             raise ValueError("output_generation_timeout_s must be finite and positive")
         if (
             not math.isfinite(self.delegation_initial_decision_timeout_s)
             or self.delegation_initial_decision_timeout_s <= 0
         ):
-            raise ValueError(
-                "delegation_initial_decision_timeout_s must be finite and positive"
-            )
+            raise ValueError("delegation_initial_decision_timeout_s must be finite and positive")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -285,6 +282,7 @@ class MediaSessionLifecycleMixin:
                         None,
                         "stream_epoch_changed",
                     )
+                    current.projection.reset_phase(stream_epoch=identity.stream_epoch)
                     current.identity = identity
                     current.stream_epoch = identity.stream_epoch
                     current.floor_epoch = 0
@@ -406,22 +404,18 @@ class MediaSessionLifecycleMixin:
                     _run_deep_work,
                 )
 
-
                 def _start_delegation(
                     text: str,
                     fence: GenerationFence,
                 ) -> Coroutine[Any, Any, None] | None:
-                    if (
-                        not requires_realtime_lookup(text)
-                        or not current.runtime.fence.matches(fence)
+                    if not requires_realtime_lookup(text) or not current.runtime.fence.matches(
+                        fence
                     ):
                         return None
                     existing = current.delegation_output_claims.get(fence)
                     if existing is not None:
                         return None
-                    for old_fence, old_claim in tuple(
-                        current.delegation_output_claims.items()
-                    ):
+                    for old_fence, old_claim in tuple(current.delegation_output_claims.items()):
                         if old_fence.matches(fence):
                             continue
                         old_claim.release()
@@ -449,11 +443,7 @@ class MediaSessionLifecycleMixin:
                 if current.closed:
                     return
                 owner = current.output_owner
-                old_fence = (
-                    owner.fence
-                    if owner is not None
-                    else current.playback.current_fence
-                )
+                old_fence = owner.fence if owner is not None else current.playback.current_fence
                 if old_fence is None:
                     return
 
@@ -491,9 +481,7 @@ class MediaSessionLifecycleMixin:
                     task_epoch=task_epoch,
                     context_version=context_version,
                 ):
-                    raise RuntimeError(
-                        "Direct playback stop did not reach the Media Edge"
-                    )
+                    raise RuntimeError("Direct playback stop did not reach the Media Edge")
 
             runtime.set_playback_stop_seam(stop_direct_playback)
             return current

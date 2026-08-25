@@ -14,6 +14,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     ProjectionPatch,
     SpeakerEvidence,
+    TurnPhase,
 )
 from services.agent.src.orchestration.delegation_coordinator import (
     DelegationEventKind,
@@ -33,6 +34,9 @@ from services.agent.src.voice_core.media_session_types import DelegationOutputCl
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
 
+if TYPE_CHECKING:
+    from services.agent.src.observability.metrics import MetricsRegistry
+
 logger = logging.getLogger(__name__)
 media_pb2: Any = _media_pb2
 
@@ -42,6 +46,7 @@ class MediaSessionProjectionMixin:
 
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
+        metrics: MetricsRegistry
 
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
@@ -157,18 +162,14 @@ class MediaSessionProjectionMixin:
                 coordinator.admit_output_intent(
                     acknowledgement,
                     current_fence=runtime.fence,
-                    current_context_version=coordinator.current_context_version(
-                        fence.session_id
-                    ),
+                    current_context_version=coordinator.current_context_version(fence.session_id),
                     floor_allows_output=runtime.output_floor_allows_assistant,
                     now_ms=now_ms,
                 )
                 if coordinator.output_intent_is_active(
                     acknowledgement,
                     current_fence=runtime.fence,
-                    current_context_version=coordinator.current_context_version(
-                        fence.session_id
-                    ),
+                    current_context_version=coordinator.current_context_version(fence.session_id),
                     floor_allows_output=runtime.output_floor_allows_assistant,
                     now_ms=now_ms,
                 ):
@@ -179,12 +180,8 @@ class MediaSessionProjectionMixin:
             terminal_kind: DelegationEventKind | None = None
             async for event in coordinator.events(handle):
                 terminal_kind = event.kind
-            if (
-                terminal_kind is not DelegationEventKind.RESULT_CANDIDATE
-                or (
-                    isinstance(handle.record.result, dict)
-                    and "error" in handle.record.result
-                )
+            if terminal_kind is not DelegationEventKind.RESULT_CANDIDATE or (
+                isinstance(handle.record.result, dict) and "error" in handle.record.result
             ):
                 await self._release_media_delegation_claim(
                     context,
@@ -198,9 +195,7 @@ class MediaSessionProjectionMixin:
                 handle,
                 current_fence=runtime.fence,
                 current_task_epoch=handle.request.task_epoch,
-                current_context_version=coordinator.current_context_version(
-                    fence.session_id
-                ),
+                current_context_version=coordinator.current_context_version(fence.session_id),
                 relevant=runtime.fence.matches(fence),
             )
             if intent is None:
@@ -215,17 +210,13 @@ class MediaSessionProjectionMixin:
             coordinator.admit_output_intent(
                 intent,
                 current_fence=runtime.fence,
-                current_context_version=coordinator.current_context_version(
-                    fence.session_id
-                ),
+                current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=runtime.output_floor_allows_assistant,
             )
             if not coordinator.output_intent_is_active(
                 intent,
                 current_fence=runtime.fence,
-                current_context_version=coordinator.current_context_version(
-                    fence.session_id
-                ),
+                current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=runtime.output_floor_allows_assistant,
             ):
                 await self._release_media_delegation_claim(
@@ -338,9 +329,7 @@ class MediaSessionProjectionMixin:
     ) -> bool:
         if not self._stream_epoch_is_current(context, context.stream_epoch):
             return False
-        floor_state = floor_state_for_phase(
-            phase or context.runtime.interaction_phase.value
-        )
+        floor_state = floor_state_for_phase(phase or context.runtime.interaction_phase.value)
         if floor_state is None:
             return False
         current_fence = fence or context.runtime.fence
@@ -400,11 +389,29 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         segment: SpeechSegment,
     ) -> None:
+        previous_phase = context.projection.phase
+        aec_verified = all(
+            value is not None
+            for value in (
+                segment.near_end_rms,
+                segment.far_end_rms,
+                segment.residual_echo_score,
+            )
+        )
+        loss_concealed = segment.loss_concealed or any(
+            start < segment.capture_end_sample and end > segment.capture_start_sample
+            for start, end in context.ingress.loss_concealed_ranges
+        )
         patch = context.projection.apply_continuous_event(
             segment,
             turn_id_hint=context.runtime.fence.turn_id + 1,
             speaker_evidence=self._projection_speaker_evidence(context),
+            playback_active=context.runtime.assistant_speaking,
+            fence=context.playback.current_fence or context.runtime.fence,
+            aec_verified=aec_verified or None,
+            discontinuity=context.ingress.discontinuity_pending or loss_concealed,
         )
+        self._observe_turn_phase(context, previous_phase)
         if patch is not None:
             await self._emit_projection_patch(context, patch)
 
@@ -413,6 +420,42 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         reason: str,
     ) -> None:
+        previous_phase = context.projection.phase
         patch = context.projection.discard_provisional(None, reason)
+        self._observe_turn_phase(context, previous_phase)
         if patch is not None:
             await self._emit_projection_patch(context, patch)
+
+    def _observe_turn_phase(
+        self,
+        context: _MediaVoiceSession,
+        previous_phase: TurnPhase,
+    ) -> None:
+        current = context.projection.phase
+        if current is previous_phase:
+            return
+        self.metrics.inc_media_metric(
+            "voice_turn_state_transition_total",
+            labels={"from_state": previous_phase.value, "to_state": current.value},
+        )
+        reason = context.projection.phase_reason.value
+        if current is TurnPhase.UNCERTAIN:
+            self.metrics.inc_media_metric(
+                "voice_turn_uncertain_total",
+                labels={"reason": reason},
+            )
+        if current is TurnPhase.BACKCHANNEL:
+            self.metrics.inc_media_metric("voice_backchannel_filtered_total")
+        if previous_phase is TurnPhase.END_CANDIDATE and current is TurnPhase.SEMANTIC_SPEAKING:
+            self.metrics.inc_media_metric(
+                "voice_turn_end_candidate_retracted_total",
+                labels={"reason": reason},
+            )
+        if current is TurnPhase.END_CANDIDATE:
+            voiced = context.projection.voiced_end_sample
+            latest = context.projection.latest_capture_sample
+            if voiced is not None and latest >= voiced:
+                self.metrics.observe_media_metric(
+                    "voice_turn_end_candidate_latency_ms",
+                    (latest - voiced) * 1_000 / 16_000,
+                )

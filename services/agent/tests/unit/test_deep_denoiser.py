@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import struct
 from pathlib import Path
@@ -25,7 +26,28 @@ def _sine_frame(*, frame_index: int, samples: int = 320) -> bytes:
 
 def test_pinned_dtln_models_have_expected_provenance_and_contract() -> None:
     model_dir = Path(__file__).resolve().parents[2] / "models" / "dtln"
+    provenance = json.loads((model_dir / "provenance.json").read_text(encoding="utf-8"))
     assert _MODEL_SOURCE_COMMIT == "1de1f15a8b5b7e1c44905618ff2ef70ca8277fbc"
+    assert provenance == {
+        "schema_version": 1,
+        "upstream": "https://github.com/breizhn/DTLN",
+        "commit": _MODEL_SOURCE_COMMIT,
+        "license": "MIT",
+        "license_file": "LICENSE",
+        "sample_rate_hz": 16_000,
+        "channels": 1,
+        "block_samples": 512,
+        "shift_samples": 128,
+        "state_scope": "per_media_session",
+        "models": {
+            name: {
+                "upstream_path": f"pretrained_model/{name}",
+                "sha256": digest,
+            }
+            for name, digest in _MODEL_SHA256.items()
+        },
+    }
+    assert (model_dir / provenance["license_file"]).is_file()
     for name, expected in _MODEL_SHA256.items():
         with (model_dir / name).open("rb") as model_file:
             assert hashlib.file_digest(model_file, "sha256").hexdigest() == expected

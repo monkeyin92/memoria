@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from services.agent.src.orchestration.conversation_projection import TurnPhase
 from services.agent.src.orchestration.interruption_guard import (
     ChineseInterruptionGuard,
     InterruptDecision,
@@ -36,6 +37,7 @@ class InteractionSnapshot:
     keyword_confidence: float = 0.0
     semantic_evidence: bool = False
     turn_committed: bool = False
+    turn_phase: TurnPhase | None = None
 
 
 @dataclass(frozen=True, slots=True)
