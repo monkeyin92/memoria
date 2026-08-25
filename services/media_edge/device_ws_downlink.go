@@ -359,16 +359,18 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		if reason == "" {
 			reason = "conversation_closed"
 		}
+		controlSequence := c.nextServerSequence()
 		payload, err := marshalDeviceControl(deviceServerSessionClose{
 			Type: "session.close", Version: 2,
 			SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
-			ControlSequence:   c.nextServerSequence(),
+			ControlSequence:   controlSequence,
 			ServerMonotonicMS: now,
 			Reason:            reason,
 		})
 		if err != nil {
 			return
 		}
+		log.Printf("media edge projected conversation close session=%s device=%s epoch=%d reason=%s control_sequence=%d", c.sessionID, c.deviceID, c.epoch, reason, controlSequence)
 		c.sendControl(deviceControlPriority("session.close"), payload)
 	case event.GetError() != nil:
 		coreError := event.GetError()
