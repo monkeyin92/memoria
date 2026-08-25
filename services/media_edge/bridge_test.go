@@ -323,6 +323,48 @@ func TestVoiceCoreSessionAdmitsOnlyCurrentPythonRealtimeEffects(t *testing.T) {
 	}
 }
 
+func TestVoiceCoreSessionDropsStaleFloorEpochWithoutLosingConversationClose(t *testing.T) {
+	identity := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "device", StreamEpoch: 1,
+		BindingID: "binding", BindingVersion: 1, RuntimeProfileVersion: 1,
+	}
+	fence := Fence{SessionID: "s", TurnID: 4, GenerationID: 5, ToolEpoch: 6}
+	session := &VoiceCoreSession{
+		identity: identity, current: fence,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+	}
+	floor := func(sequence, epoch uint64) *mediav1.CoreToMedia {
+		return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_FloorEffect{
+			FloorEffect: &mediav1.FloorEffect{
+				EffectId: "floor-effect", Identity: identity.proto(), Sequence: sequence,
+				FloorState: mediav1.FloorState_FLOOR_STATE_USER_HOLDS_FLOOR,
+				FloorEpoch: epoch, SourceEventId: "assistant_state:user_speaking",
+				TurnId: fence.TurnID, GenerationId: fence.GenerationID,
+				ToolEpoch: fence.ToolEpoch, ExpiresAtMs: uint64(time.Now().Add(time.Second).UnixMilli()),
+			},
+		}}
+	}
+	if err := session.validateCoreEvent(floor(1, 2)); err != nil {
+		t.Fatalf("current floor effect rejected: %v", err)
+	}
+	if err := session.validateCoreEvent(floor(2, 2)); !errors.Is(err, errDropFloorEffect) {
+		t.Fatalf("duplicate floor epoch error=%v, want lossy drop", err)
+	}
+	if session.lastEventSequence != 1 {
+		t.Fatalf("dropped floor effect poisoned event sequence: %d", session.lastEventSequence)
+	}
+	closed := &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_State{
+		State: &mediav1.StateEvent{
+			Identity: identity.proto(), Sequence: 2,
+			State:  mediav1.ConversationState_CONVERSATION_STATE_CLOSED,
+			Reason: "owner_silence_timeout",
+		},
+	}}
+	if err := session.validateCoreEvent(closed); err != nil {
+		t.Fatalf("typed CLOSED after dropped floor effect was lost: %v", err)
+	}
+}
+
 func TestVoiceCoreBridgeFailsClosedForUnprovenGoAuthority(t *testing.T) {
 	service := &fakeVoiceCore{
 		received:           make(chan *mediav1.MediaToCore, 1),

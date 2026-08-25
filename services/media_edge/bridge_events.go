@@ -159,7 +159,16 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 			return fmt.Errorf("floor effect fence is stale")
 		}
 		if s.hasFloorEpoch && effect.GetFloorEpoch() <= s.lastFloorEpoch {
-			return fmt.Errorf("floor effect epoch is stale")
+			// The current floor projection already dominates this duplicate or
+			// late event. Drop it without advancing the shared event sequence;
+			// closing the stream here would also discard a following typed CLOSED
+			// state and strand the device in listening mode.
+			return fmt.Errorf(
+				"%w: floor effect epoch is stale: got=%d last=%d",
+				errDropFloorEffect,
+				effect.GetFloorEpoch(),
+				s.lastFloorEpoch,
+			)
 		}
 		if err := s.acceptEventSequence(effect.GetSequence()); err != nil {
 			return err
