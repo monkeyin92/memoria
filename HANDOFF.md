@@ -84,14 +84,14 @@ owner_silence_timeout_s: 10
 
 ## 下一轮真实设备验收
 
-先发布同一候选的 Agent/Bridge 并以 identity-safe app-only 方式写入板卡，期间不要按 BOOT/RESET。按顺序只做以下验收：
+当前候选已经发布并以 identity-safe app-only 方式写入板卡，后续只补主人权限和环境验收，期间不要按 BOOT/RESET。按顺序只做以下验收：
 
 1. 完成当前账户的主人声纹/subject profile capability 初始化后，唤醒并说“再见”，确认 `conversation_end_explicit`、typed CLOSED、设备 `session.close` 并回到 Idle；随后再次说“茉莉”确认可开启新会话。
 2. 待机状态下以正常 30–60 cm、正常音量说“茉莉”，重复 10 次记录漏唤醒/误唤醒。
 3. 在安静、电视人声和家庭噪声三种环境测试，确认非主人声音不重置主人静默窗口。
 4. 最后连续问“今天天气怎么样”和“今天星期几”，确认正常距离识别、回答与自然播放仍然成立。
 
-验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、speaker authority、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、typed CLOSED、设备 `session.close`、WSS close cause，以及用户听到的内容。四项都自然完成后才可更新该候选的 `enabled` 和 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
+验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、speaker authority、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、typed CLOSED、设备 `session.close`、WSS close cause，以及用户听到的内容。四项都自然完成后才可更新该候选的 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
 
 ## 实时话轮状态层候选
 
