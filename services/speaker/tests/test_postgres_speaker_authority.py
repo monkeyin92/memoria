@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import uuid
 
 import asyncpg
 import pytest
@@ -123,3 +125,46 @@ async def test_postgres_speaker_authority_matches_the_public_contract() -> None:
     await connection.close()
     assert ciphertext is None
     await authority.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL speaker contract test",
+)
+async def test_postgres_create_enrollment_intent_reuses_pending_intent_under_concurrency() -> (
+    None
+):
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    authority = PostgresSpeakerAuthority(
+        dsn,
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    await authority.initialize()
+    account_id = f"postgres-enrollment-intent-{uuid.uuid4()}"
+    now = "2026-08-27T09:00:00+00:00"
+    expires_at = "2026-08-27T10:00:00+00:00"
+    try:
+        intents = await asyncio.gather(
+            *(
+                authority.create_enrollment_intent(
+                    account_id=account_id,
+                    consent_policy_version="speaker-consent-v1",
+                    now=now,
+                    expires_at=expires_at,
+                )
+                for _ in range(8)
+            )
+        )
+    finally:
+        connection = await asyncpg.connect(dsn)
+        await connection.execute(
+            "DELETE FROM speaker_enrollment_intents WHERE account_id = $1",
+            account_id,
+        )
+        await connection.close()
+        await authority.close()
+
+    assert len({intent.intent_id for intent in intents}) == 1
+    assert all(intent.state == "requested" for intent in intents)

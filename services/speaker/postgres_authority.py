@@ -411,23 +411,23 @@ class PostgresSpeakerAuthority:
             if row is not None:
                 return self._intent(row)
             intent_id = str(uuid.uuid4())
-            try:
-                row = await connection.fetchrow(
-                    """
-                    INSERT INTO speaker_enrollment_intents (
-                        intent_id, account_id, consent_policy_version, state,
-                        created_at, expires_at
-                    ) VALUES ($1, $2, $3, 'requested', $4, $5)
-                    RETURNING intent_id, account_id, consent_policy_version, state,
-                              created_at, expires_at
-                    """,
-                    intent_id,
-                    account_id,
-                    consent_policy_version,
-                    now,
-                    expires_at,
-                )
-            except asyncpg.UniqueViolationError:
+            row = await connection.fetchrow(
+                """
+                INSERT INTO speaker_enrollment_intents (
+                    intent_id, account_id, consent_policy_version, state,
+                    created_at, expires_at
+                ) VALUES ($1, $2, $3, 'requested', $4, $5)
+                ON CONFLICT (account_id) WHERE (state = 'requested') DO NOTHING
+                RETURNING intent_id, account_id, consent_policy_version, state,
+                          created_at, expires_at
+                """,
+                intent_id,
+                account_id,
+                consent_policy_version,
+                now,
+                expires_at,
+            )
+            if row is None:
                 row = await connection.fetchrow(
                     """
                     SELECT intent_id, account_id, consent_policy_version, state,
@@ -440,9 +440,7 @@ class PostgresSpeakerAuthority:
                     now,
                 )
                 if row is None:  # pragma: no cover
-                    raise
-        if row is None:  # pragma: no cover
-            raise RuntimeError("speaker enrollment intent creation failed")
+                    raise RuntimeError("speaker enrollment intent creation failed")
         return self._intent(row)
 
     async def pending_enrollment_intent(
