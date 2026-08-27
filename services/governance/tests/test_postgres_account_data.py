@@ -31,7 +31,6 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
     try:
         for schema in (
             root / "archive" / "postgres_schema.sql",
-            root / "archive" / "postgres_memory_schema.sql",
             root / "persona" / "postgres_schema.sql",
             root / "digital_self" / "postgres_schema.sql",
             root / "self_model" / "postgres_schema.sql",
@@ -328,6 +327,18 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
             account_id,
             "d" * 64,
         )
+        await connection.execute(
+            """
+            INSERT INTO speaker_enrollment_intents (
+                intent_id, account_id, consent_policy_version, state,
+                created_at, expires_at
+            ) VALUES ($1, $2, 'speaker-consent-v1', 'requested', $3, $4)
+            """,
+            f"intent-{uuid.uuid4()}",
+            account_id,
+            datetime.now(UTC).isoformat(),
+            datetime.now(UTC).isoformat(),
+        )
 
         archive = PostgresAccountRepository.archive(dsn)
         speaker = PostgresAccountRepository.speaker(dsn)
@@ -345,6 +356,7 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
         assert "account lifecycle" in serialized
         assert "provider_voice_id" not in serialized
         assert "template_ciphertext" not in serialized
+        assert "speaker_enrollment_intents" in serialized
         references = await archive.object_references(account_id)
         assert [reference.object_key for reference in references] == ["archive/test-object.fernet"]
 

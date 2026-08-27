@@ -11,14 +11,8 @@ from typing import Any
 
 import pytest
 from livekit.agents import llm
-from services.agent.src.agent import (
-    DuplexVoiceAgent,
-    _heard_only_chat_context,
-    build_session_kwargs,
-    build_turn_handling_config,
-    create_runtime_for_tests,
-)
-from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
+from services.agent.src.agent import DuplexVoiceAgent, _heard_only_chat_context
+from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
@@ -34,6 +28,12 @@ from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoic
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
+from services.agent.src.runtime_speaker import KeywordSpotterBinding
+from services.agent.src.session_entrypoint import (
+    build_session_kwargs,
+    build_turn_handling_config,
+    create_runtime_for_tests,
+)
 from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,

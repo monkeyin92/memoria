@@ -544,3 +544,64 @@ def test_activation_evaluation_requires_real_sample_scale_and_passed_report() ->
             unknown_rejection=0.4,
             passed=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_create_enrollment_intent_reuses_pending_intent_under_concurrency(
+    tmp_path: Path,
+) -> None:
+    authority = SpeakerAuthority.sqlite(
+        tmp_path / "speaker.sqlite",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    now = "2026-08-27T09:00:00+00:00"
+    expires_at = "2026-08-27T10:00:00+00:00"
+
+    intents = await asyncio.gather(
+        *(
+            authority.create_enrollment_intent(
+                account_id="account-001",
+                consent_policy_version="speaker-consent-v1",
+                now=now,
+                expires_at=expires_at,
+            )
+            for _ in range(8)
+        )
+    )
+
+    assert len({intent.intent_id for intent in intents}) == 1
+    assert all(intent.state == "requested" for intent in intents)
+
+
+@pytest.mark.asyncio
+async def test_create_enrollment_intent_revokes_expired_pending_before_reuse(
+    tmp_path: Path,
+) -> None:
+    authority = SpeakerAuthority.sqlite(
+        tmp_path / "speaker.sqlite",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    expired = await authority.create_enrollment_intent(
+        account_id="account-001",
+        consent_policy_version="speaker-consent-v1",
+        now="2026-08-27T08:00:00+00:00",
+        expires_at="2026-08-27T09:00:00+00:00",
+    )
+    fresh = await authority.create_enrollment_intent(
+        account_id="account-001",
+        consent_policy_version="speaker-consent-v2",
+        now="2026-08-27T09:30:00+00:00",
+        expires_at="2026-08-27T10:30:00+00:00",
+    )
+
+    assert fresh.intent_id != expired.intent_id
+    assert fresh.consent_policy_version == "speaker-consent-v2"
+    with sqlite3.connect(tmp_path / "speaker.sqlite") as connection:
+        row = connection.execute(
+            "SELECT state FROM speaker_enrollment_intents WHERE intent_id = ?",
+            (expired.intent_id,),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "revoked"

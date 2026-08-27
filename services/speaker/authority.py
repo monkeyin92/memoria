@@ -103,6 +103,10 @@ CREATE TABLE IF NOT EXISTS speaker_enrollment_intents (
 
 CREATE INDEX IF NOT EXISTS idx_speaker_enrollment_intents_account
 ON speaker_enrollment_intents(account_id, state, expires_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_speaker_one_pending_enrollment_intent
+ON speaker_enrollment_intents(account_id)
+WHERE state = 'requested';
 """
 
 
@@ -187,6 +191,13 @@ class SpeakerAuthority:
                         "ALTER TABLE speaker_enrollment_samples ADD COLUMN "
                         "risk_assessment TEXT NOT NULL DEFAULT 'unavailable'"
                     )
+                connection.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_speaker_one_pending_enrollment_intent
+                    ON speaker_enrollment_intents(account_id)
+                    WHERE state = 'requested'
+                    """
+                )
             self._initialized = True
 
     def _connect(self) -> sqlite3.Connection:
@@ -217,6 +228,14 @@ class SpeakerAuthority:
         expires_at: str,
     ) -> SpeakerEnrollmentIntent:
         with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE speaker_enrollment_intents
+                SET state = 'revoked'
+                WHERE account_id = ? AND state = 'requested' AND expires_at <= ?
+                """,
+                (account_id, now),
+            )
             existing = connection.execute(
                 """
                 SELECT intent_id, account_id, consent_policy_version, state,
@@ -230,15 +249,30 @@ class SpeakerAuthority:
             if existing is not None:
                 return self._intent(existing)
             intent_id = str(uuid.uuid4())
-            connection.execute(
-                """
-                INSERT INTO speaker_enrollment_intents (
-                    intent_id, account_id, consent_policy_version, state,
-                    created_at, expires_at
-                ) VALUES (?, ?, ?, 'requested', ?, ?)
-                """,
-                (intent_id, account_id, consent_policy_version, now, expires_at),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO speaker_enrollment_intents (
+                        intent_id, account_id, consent_policy_version, state,
+                        created_at, expires_at
+                    ) VALUES (?, ?, ?, 'requested', ?, ?)
+                    """,
+                    (intent_id, account_id, consent_policy_version, now, expires_at),
+                )
+            except sqlite3.IntegrityError:
+                existing = connection.execute(
+                    """
+                    SELECT intent_id, account_id, consent_policy_version, state,
+                           created_at, expires_at
+                    FROM speaker_enrollment_intents
+                    WHERE account_id = ? AND state = 'requested' AND expires_at > ?
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (account_id, now),
+                ).fetchone()
+                if existing is None:  # pragma: no cover
+                    raise
+                return self._intent(existing)
             row = connection.execute(
                 """
                 SELECT intent_id, account_id, consent_policy_version, state,

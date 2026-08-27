@@ -65,9 +65,9 @@ class PostgresPersonaEngine:
         pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL persona pool")
-        archive_schema = (Path(__file__).parents[1] / "archive" / "postgres_schema.sql").read_text(
-            encoding="utf-8"
-        )
+        archive_schema = (
+            Path(__file__).parents[1] / "archive" / "postgres_archive_schema.sql"
+        ).read_text(encoding="utf-8")
         persona_schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")
         async with pool.acquire() as connection:
             await connection.execute(archive_schema)

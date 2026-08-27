@@ -569,7 +569,15 @@ class _SubjectStore:
 
     def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None:
         del user_id
-        return {"subject_category": self.category} if self.category is not None else None
+        if self.category is None:
+            return None
+        # Speaker enrollment additionally requires verified adult age evidence;
+        # model a realistic profile where only adults carry it.
+        return {
+            "subject_category": self.category,
+            "birth_year_band": "adult" if self.category == "adult" else "unknown",
+            "age_evidence_status": "verified" if self.category == "adult" else "unverified",
+        }
 
 
 @pytest.mark.parametrize("capability", tuple(SUBJECT_CAPABILITY_RULES))

@@ -45,7 +45,7 @@ def main() -> None:
 
     from livekit import agents
 
-    from services.agent.src.agent import entrypoint, prewarm
+    from services.agent.src.session_entrypoint import entrypoint, prewarm
 
     server = agents.AgentServer(setup_fnc=prewarm)
     server.rtc_session(

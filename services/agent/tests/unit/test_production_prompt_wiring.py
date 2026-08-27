@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from services.agent.src import agent as agent_module
 from services.agent.src import media_agent_factory as factory_module
+from services.agent.src import session_entrypoint as entrypoint_module
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.prompt_composition import compose_production_prompt
@@ -112,7 +113,7 @@ def _runtime(monkeypatch: pytest.MonkeyPatch) -> DuplexRuntime:
 def test_production_prompt_is_the_shared_seam_for_cascade_and_omni() -> None:
     """Both production call sites consume the exact same function object."""
 
-    assert agent_module.production_system_prompt is production_system_prompt
+    assert entrypoint_module.production_system_prompt is production_system_prompt
     assert factory_module.production_system_prompt is production_system_prompt
 
 

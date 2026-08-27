@@ -9,11 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-from services.agent.src.agent import (
-    DuplexVoiceAgent,
-    _apply_cached_voice_profile,
-    should_enable_legacy_speaker_verifier,
-)
+from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicyClient, ModePolicyClientConfig
@@ -34,6 +30,7 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClientConfig,
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
+from services.agent.src.session_entrypoint import should_enable_legacy_speaker_verifier
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaSessionResources

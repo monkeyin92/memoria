@@ -135,8 +135,7 @@ class PostgresSelfModelRegistry:
             raise RuntimeError("failed to create PostgreSQL self model pool")
         root = Path(__file__).parents[1]
         schemas = (
-            root / "archive" / "postgres_schema.sql",
-            root / "archive" / "postgres_memory_schema.sql",
+            root / "archive" / "postgres_archive_schema.sql",
             Path(__file__).with_name("postgres_schema.sql"),
         )
         try:

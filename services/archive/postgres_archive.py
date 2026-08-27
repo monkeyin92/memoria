@@ -45,7 +45,7 @@ class PostgresLifeArchive:
         pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=10)
         if pool is None:  # pragma: no cover - asyncpg returns a pool outside its context manager
             raise RuntimeError("failed to create PostgreSQL pool")
-        schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")
+        schema = Path(__file__).with_name("postgres_archive_schema.sql").read_text(encoding="utf-8")
         async with pool.acquire() as connection:
             await connection.execute(schema)
         self._pool = pool

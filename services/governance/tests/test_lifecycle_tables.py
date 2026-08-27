@@ -20,14 +20,16 @@ _CREATE_TABLE = re.compile(
     r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\);",
     re.DOTALL,
 )
+# Dollar-quoted DO/EXECUTE bodies can embed CREATE TABLE statements whose
+# bodies do not end with ");"; strip them so the flat regex cannot bleed
+# across statement or file boundaries.
+_DOLLAR_QUOTED = re.compile(r"\$(?P<tag>[A-Za-z0-9_]*)\$.*?\$(?P=tag)\$", re.DOTALL)
 
 
 def test_lifecycle_catalog_covers_every_account_scoped_postgres_table() -> None:
     root = Path(__file__).parents[3]
     schema_paths = (
         root / "services/archive/postgres_schema.sql",
-        root / "services/archive/postgres_memory_schema.sql",
-        root / "services/archive/postgres_skill_schema.sql",
         root / "services/persona/postgres_schema.sql",
         root / "services/digital_self/postgres_schema.sql",
         root / "services/self_model/postgres_schema.sql",
@@ -37,13 +39,14 @@ def test_lifecycle_catalog_covers_every_account_scoped_postgres_table() -> None:
     )
     discovered: set[str] = set()
     for path in schema_paths:
-        schema = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
+        schema = _DOLLAR_QUOTED.sub(" ", raw)
         discovered.update(
             name
             for name, definition in _CREATE_TABLE.findall(schema)
             if re.search(r"\baccount_id\b", definition)
         )
-        if "CREATE TABLE IF NOT EXISTS memory_vector_documents" in schema:
+        if "CREATE TABLE IF NOT EXISTS memory_vector_documents" in raw:
             discovered.add("memory_vector_documents")
 
     # Validation, activation, lifecycle, and sleep-receipt rows inherit the

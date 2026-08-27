@@ -15,14 +15,8 @@ import pytest
 from livekit.agents import FlushSentinel, StopResponse, llm
 from livekit.agents.types import TimedString
 from services.agent.src import agent as agent_mod
-from services.agent.src.agent import (
-    DuplexVoiceAgent,
-    apply_miniprogram_session_audio_policy,
-    build_keyword_spotter_pcm_observer,
-    is_device_session,
-    is_miniprogram_session,
-    should_enable_legacy_speaker_verifier,
-)
+from services.agent.src import session_entrypoint as entrypoint_mod
+from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
@@ -49,6 +43,13 @@ from services.agent.src.response_planner_client import (
     ResponsePlanFetch,
     ResponseProvenance,
     ResponseVoiceTarget,
+)
+from services.agent.src.session_entrypoint import (
+    apply_miniprogram_session_audio_policy,
+    build_keyword_spotter_pcm_observer,
+    is_device_session,
+    is_miniprogram_session,
+    should_enable_legacy_speaker_verifier,
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
@@ -423,13 +424,13 @@ def test_miniprogram_audio_policy_identifies_plain_and_aec_sessions() -> None:
         MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     )
     assert miniprogram_kwargs["aec_warmup_duration"] is None
-    assert agent_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
-    assert agent_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
+    assert entrypoint_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
+    assert entrypoint_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
 
 
 def test_miniprogram_turn_handling_disables_barge_in_without_changing_h5() -> None:
-    h5 = agent_mod.build_turn_handling_config("cn_self_hosted")
-    miniprogram = agent_mod.build_turn_handling_config(
+    h5 = entrypoint_mod.build_turn_handling_config("cn_self_hosted")
+    miniprogram = entrypoint_mod.build_turn_handling_config(
         "cn_self_hosted",
         interruptions_enabled=False,
     )
@@ -2940,7 +2941,7 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
     assert agent_mod._message_text("plain") == "plain"
     assert agent_mod._message_text(SimpleNamespace(content=["a", 1, "b"])) == "a\nb"
     assert agent_mod._message_text(SimpleNamespace(content=12)) == "12"
-    assert "session.history" not in inspect.getsource(agent_mod.entrypoint)
+    assert "session.history" not in inspect.getsource(entrypoint_mod.entrypoint)
 
     loaded: dict[str, Any] = {}
 
@@ -2948,32 +2949,32 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
         loaded.update(kwargs)
         return "vad"
 
-    monkeypatch.setattr(agent_mod.silero.VAD, "load", fake_load)
+    monkeypatch.setattr(entrypoint_mod.silero.VAD, "load", fake_load)
     proc = SimpleNamespace(userdata={})
-    agent_mod.prewarm(proc)
+    entrypoint_mod.prewarm(proc)
     assert proc.userdata["vad"] == "vad"
     assert loaded["min_silence_duration"] == 0.30
 
     monkeypatch.setenv("LIVEKIT_TURN_DETECTOR_VERSION", "v1-mini")
-    options = agent_mod.build_turn_handling_options("livekit_cloud")
+    options = entrypoint_mod.build_turn_handling_options("livekit_cloud")
     assert options["interruption"]["mode"] == "adaptive"
     assert options["preemptive_generation"]["enabled"] is False
     assert (
-        agent_mod.build_turn_handling_config("livekit_cloud")["preemptive_generation"]["enabled"]
+        entrypoint_mod.build_turn_handling_config("livekit_cloud")["preemptive_generation"]["enabled"]
         is False
     )
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "false")
-    options = agent_mod.build_turn_handling_options("livekit_cloud")
+    options = entrypoint_mod.build_turn_handling_options("livekit_cloud")
     assert options["interruption"]["mode"] == "vad"
     monkeypatch.delenv("LIVEKIT_ADAPTIVE_INTERRUPTION", raising=False)
     # Self-hosted: adaptive needs LiveKit Cloud gateway — default VAD.
-    assert agent_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"] == "vad"
+    assert entrypoint_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"] == "vad"
     assert (
-        agent_mod.build_turn_handling_config("cn_self_hosted")["stream_speak_while_think"] is True
+        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["stream_speak_while_think"] is True
     )
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
     assert (
-        agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"] == "adaptive"
+        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"] == "adaptive"
     )
 
     def fail_options(
@@ -2984,9 +2985,9 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
         _ = interruptions_enabled
         raise ValueError("bad api")
 
-    monkeypatch.setattr(agent_mod, "build_turn_handling_options", fail_options)
+    monkeypatch.setattr(entrypoint_mod, "build_turn_handling_options", fail_options)
     monkeypatch.setenv("ENVIRONMENT", "development")
-    kwargs = agent_mod.build_session_kwargs(
+    kwargs = entrypoint_mod.build_session_kwargs(
         vad=None,
         stt="stt",
         llm="llm",
@@ -2997,7 +2998,7 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
     assert "turn_handling_config" in kwargs
     monkeypatch.setenv("ENVIRONMENT", "production")
     with pytest.raises(ValueError, match="bad api"):
-        agent_mod.build_session_kwargs(
+        entrypoint_mod.build_session_kwargs(
             vad=None,
             stt="stt",
             llm="llm",
@@ -3008,7 +3009,7 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
 
 
 def test_cascade_audio_output_uses_high_quality_opus_bitrate() -> None:
-    options = agent_mod.build_cascade_audio_output_options()
+    options = entrypoint_mod.build_cascade_audio_output_options()
 
     assert options.sample_rate == 24000
     assert options.num_channels == 1
@@ -3027,7 +3028,7 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     ):
         monkeypatch.delenv(name, raising=False)
 
-    options = agent_mod.build_turn_handling_options("cn_self_hosted")
+    options = entrypoint_mod.build_turn_handling_options("cn_self_hosted")
     assert options["endpointing"] == {
         "mode": "dynamic",
         "min_delay": 1.50,
@@ -3041,11 +3042,11 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
         options["interruption"]["false_interruption_timeout"] >= options["endpointing"]["min_delay"]
     )
     assert (
-        agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]
+        entrypoint_mod.build_turn_handling_config("cn_self_hosted")["interruption"]
         == options["interruption"]
     )
 
-    cloud = agent_mod.build_turn_handling_config("livekit_cloud")
+    cloud = entrypoint_mod.build_turn_handling_config("livekit_cloud")
     assert cloud["endpointing"]["min_delay"] == 0.30
     assert cloud["interruption"]["min_duration"] == 0.25
     assert cloud["interruption"]["min_words"] == 0
@@ -3056,7 +3057,7 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     monkeypatch.setenv("ENDPOINTING_ALPHA", "0.75")
     monkeypatch.setenv("INTERRUPTION_MIN_DURATION_S", "0.52")
     monkeypatch.setenv("FALSE_INTERRUPTION_TIMEOUT_S", "0.93")
-    overridden = agent_mod.build_turn_handling_options("cn_self_hosted")
+    overridden = entrypoint_mod.build_turn_handling_options("cn_self_hosted")
     assert overridden["endpointing"] == {
         "mode": "dynamic",
         "min_delay": 0.61,
@@ -3294,15 +3295,15 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
     monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
     monkeypatch.setattr(policy_runtime_wiring, "ModePolicyClient", FakeModePolicyClient)
-    monkeypatch.setattr(agent_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
-    monkeypatch.setattr(agent_mod, "AgentSession", _FakeSession)
+    monkeypatch.setattr(entrypoint_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(entrypoint_mod, "AgentSession", _FakeSession)
     session_builds: list[dict[str, Any]] = []
 
     def _build_session_kwargs(**kwargs: Any) -> dict[str, Any]:
         session_builds.append(kwargs)
         return {key: kwargs[key] for key in ("vad", "stt", "llm", "tts")}
 
-    monkeypatch.setattr(agent_mod, "build_session_kwargs", _build_session_kwargs)
+    monkeypatch.setattr(entrypoint_mod, "build_session_kwargs", _build_session_kwargs)
 
     room = _FakeRoom()
     shutdown_callbacks: list[Any] = []
@@ -3313,7 +3314,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         connect=lambda: asyncio.sleep(0),
         add_shutdown_callback=shutdown_callbacks.append,
     )
-    await agent_mod.entrypoint(ctx)
+    await entrypoint_mod.entrypoint(ctx)
     session = _FakeSession.last
     assert session is not None and session.started is not None
     assert session_builds[0]["interruptions_enabled"] is False

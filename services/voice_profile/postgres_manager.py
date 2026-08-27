@@ -80,9 +80,9 @@ class PostgresVoiceProfileManager:
         )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL voice profile pool")
-        archive_schema = (Path(__file__).parents[1] / "archive" / "postgres_schema.sql").read_text(
-            encoding="utf-8"
-        )
+        archive_schema = (
+            Path(__file__).parents[1] / "archive" / "postgres_archive_schema.sql"
+        ).read_text(encoding="utf-8")
         voice_schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")
         async with pool.acquire() as connection:
             await connection.execute(archive_schema)

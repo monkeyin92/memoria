@@ -169,10 +169,12 @@ _SPEAKER_EXPORT_TABLES = (
     TableSpec("speaker_identities"),
     TableSpec("speaker_profiles", excluded_columns=frozenset({"template_ciphertext"})),
     TableSpec("speaker_enrollment_samples"),
+    TableSpec("speaker_enrollment_intents"),
 )
 
 _SPEAKER_DELETE_ORDER = (
     "speaker_enrollment_samples",
+    "speaker_enrollment_intents",
     "speaker_profiles",
     "speaker_identities",
 )

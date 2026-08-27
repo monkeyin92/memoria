@@ -17,6 +17,7 @@ from services.speaker.domain import (
     RevokeSpeakerProfile,
     SpeakerDecision,
     SpeakerEmbeddingAdapter,
+    SpeakerEnrollmentIntent,
     SpeakerEvaluation,
     SpeakerProfileNotFoundError,
     SpeakerProfileSummary,
@@ -364,6 +365,144 @@ class PostgresSpeakerAuthority:
             )
         if status != "UPDATE 1":
             raise SpeakerProfileNotFoundError(request.profile_id)
+
+    @staticmethod
+    def _intent(row: asyncpg.Record) -> SpeakerEnrollmentIntent:
+        return SpeakerEnrollmentIntent(
+            intent_id=str(row["intent_id"]),
+            account_id=str(row["account_id"]),
+            consent_policy_version=str(row["consent_policy_version"]),
+            state=cast(Any, row["state"]),
+            created_at=str(row["created_at"]),
+            expires_at=str(row["expires_at"]),
+        )
+
+    async def create_enrollment_intent(
+        self,
+        *,
+        account_id: str,
+        consent_policy_version: str,
+        now: str,
+        expires_at: str,
+    ) -> SpeakerEnrollmentIntent:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            await connection.execute(
+                """
+                UPDATE speaker_enrollment_intents
+                SET state = 'revoked'
+                WHERE account_id = $1 AND state = 'requested' AND expires_at <= $2
+                """,
+                account_id,
+                now,
+            )
+            row = await connection.fetchrow(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents
+                WHERE account_id = $1 AND state = 'requested' AND expires_at > $2
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                account_id,
+                now,
+            )
+            if row is not None:
+                return self._intent(row)
+            intent_id = str(uuid.uuid4())
+            try:
+                row = await connection.fetchrow(
+                    """
+                    INSERT INTO speaker_enrollment_intents (
+                        intent_id, account_id, consent_policy_version, state,
+                        created_at, expires_at
+                    ) VALUES ($1, $2, $3, 'requested', $4, $5)
+                    RETURNING intent_id, account_id, consent_policy_version, state,
+                              created_at, expires_at
+                    """,
+                    intent_id,
+                    account_id,
+                    consent_policy_version,
+                    now,
+                    expires_at,
+                )
+            except asyncpg.UniqueViolationError:
+                row = await connection.fetchrow(
+                    """
+                    SELECT intent_id, account_id, consent_policy_version, state,
+                           created_at, expires_at
+                    FROM speaker_enrollment_intents
+                    WHERE account_id = $1 AND state = 'requested' AND expires_at > $2
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    account_id,
+                    now,
+                )
+                if row is None:  # pragma: no cover
+                    raise
+        if row is None:  # pragma: no cover
+            raise RuntimeError("speaker enrollment intent creation failed")
+        return self._intent(row)
+
+    async def pending_enrollment_intent(
+        self,
+        account_id: str,
+        *,
+        now: str,
+    ) -> SpeakerEnrollmentIntent | None:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            row = await connection.fetchrow(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents
+                WHERE account_id = $1 AND state = 'requested' AND expires_at > $2
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                account_id,
+                now,
+            )
+        return self._intent(row) if row is not None else None
+
+    async def consume_enrollment_intent(
+        self,
+        *,
+        intent_id: str,
+        account_id: str,
+        now: str,
+    ) -> SpeakerEnrollmentIntent:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            status = await connection.execute(
+                """
+                UPDATE speaker_enrollment_intents
+                SET state = 'consumed', consumed_at = $1
+                WHERE intent_id = $2 AND account_id = $3
+                  AND state = 'requested' AND expires_at > $1
+                """,
+                now,
+                intent_id,
+                account_id,
+            )
+            if status != "UPDATE 1":
+                raise ValueError(
+                    "speaker enrollment intent is missing, expired or already used"
+                )
+            row = await connection.fetchrow(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents WHERE intent_id = $1
+                """,
+                intent_id,
+            )
+        if row is None:  # pragma: no cover
+            raise RuntimeError("speaker enrollment intent disappeared")
+        return self._intent(row)
 
     def _uncertain(
         self,

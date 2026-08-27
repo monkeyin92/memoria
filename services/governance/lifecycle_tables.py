@@ -39,6 +39,7 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
     "speaker_identities",
     "speaker_profiles",
     "speaker_enrollment_samples",
+    "speaker_enrollment_intents",
     "voice_clone_consents",
     "voice_samples",
     "voice_enrollment_operations",
