@@ -6,7 +6,7 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-08-25
+as_of_date: 2026-08-27
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -20,7 +20,7 @@ livekit_room_allowed: false
 code: complete
 wired: esp32_to_go_media_edge_to_python_voice_core_agent
 enabled: production_agent_bridge_edge_and_current_firmware_true
-verified: production_runtime_provider_model_inference_identity_safe_board_boot_and_owner_silence_standby
+verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_and_owner_silence_standby
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -34,10 +34,11 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `aff2f7cc878d69aed9e1399b464c1aa26b3a0b87`，Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`，主线最新修复提交为 `84dd132`：
+当前 Agent/Bridge 发布提交为 `aff2f7cc878d69aed9e1399b464c1aa26b3a0b87`，Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`，Control API 当前部署提交为 `54d9162bba3347fe1e726bbd4e1d614140b4e3fd`，主线最新提交为 `84efb8b046cdf8aaaa0de479a45954db6727f45b`：
 
 - Agent 与 Voice Core Media Bridge：`memoria-agent:20260825-1606-jasmine-standby-prod-agent-component-v2`，image `sha256:8afcd17345299c9fc371709396e0b267b39313bc937a07f5a1a3337a648bf678`。
 - Media Edge：`memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`，image `sha256:230f94b8e1d0839827b9c5cd3c0c8bbbdf526d7b34e8cf59f3c688f6a71c9513`。
+- Control API：`memoria-control-api:20260827-identity-binding-version-v3`，image `sha256:876b0e3e53c7402c7ec87734fb0e48840ff2db0921c94351eb7f27647c54aadf`，revision `54d9162bba3347fe1e726bbd4e1d614140b4e3fd`，容器 healthy。
 - 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
 - 普通 Agent component 目录已收敛为当前 `1912` 与紧邻回滚 `1843`；当前回滚标签均解析到 `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
@@ -51,14 +52,36 @@ Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose 
 
 服务器普通制品只保留当前运行版本和一个已确认可运行的紧邻回滚。执行任何回滚前必须现场读取容器 image ID、Compose override 和证据目录，不从本文猜测标签；数据库、WAL、MinIO、安全与合规备份不属于该两版本清理策略。
 
+## 设备首次启用与安全配网
+
+```yaml
+candidate: secure_device_onboarding_activation
+as_of_date: 2026-08-27
+code: complete
+wired: miniprogram_protocomm_security1_to_control_api_claim_binding_to_esp32_activation_ack
+enabled: production_control_api_and_flashed_board_true
+verified: 2026-08-27_server_ack_and_miniprogram_device_ready
+device_id: dev_atk_a4cb8fd6095c
+firmware_version: 2.4.2
+miniprogram_experience_version: 0.8.73
+```
+
+本轮已打通并验证以下顺序：二维码 introspect → BLE Protocomm Security 1（X25519、PoP、AES-256-CTR）→ 设备 online-proof → claim/binding → Activation Manifest → 设备 ACK → `ready_for_conversation`。小程序不采集声纹或实时语音；Wi-Fi 密码只在已认证的 BLE 会话中写入设备，不经过 Control API 日志或小程序普通请求。
+
+设备第一次在绑定完成前收到激活 `409` 时，会继续显示附近配网入口并在后台每 5 秒重试 Activation Manifest；绑定完成后设备拉取清单、返回 ACK，并停止配网二维码入口。相同二维码从新页面重试时复用原 onboarding session，避免误报“设备正在被其他账号设置”。
+
+真实证据：设备 `dev_atk_a4cb8fd6095c`（BLE `MEM-095C`）的最新激活记录为 `activation_version=3`、`status=ready_for_conversation`，`acknowledged_at=2026-08-27 06:34:45.034649+00`（UTC，即 14:34:45 CST）。Nginx 记录设备于 14:34:44 拉取 manifest 200，14:34:45 提交 activation-ack 200；小程序随后显示“在线，可直接对话”和“激活状态：可开始对话”。
+
+这证明了服务端和控制面激活闭环，不等于真实语音对话、AEC、双讲、连续轮次或完整屏幕物理显示验收。当前已通过串口确认固件 2.4.2、Wi-Fi、Manifest v3 和稳定运行；板屏是否已由二维码切换到正常界面尚未单独留存最新照片，不能用小程序页面替代该物理证据。
+
 ## 当前板卡与固件
 
 - 固件 app version：2.4.2；ES8388 输入增益：18 dB。
-- app SHA-256：`416af6d28840992d2381e6d068ed146dadebf33ac8ebc28ba21c5377e487e59d`。
-- merged SHA-256：`09058a6af251d68116fc6d16e627174997de456e99dd725f29a946dd94634d69`。
-- overlay SHA-256：`b7edb27723138d89681e5633464b3c0fa2236b0343206e7a098320432c6deba2`。
+- app SHA-256：`f15a3b356f3eed604673da1f08afc784832be4e36fa44642ac9dc8d359d03115`。
+- merged SHA-256：`73a92c2dcda5be860761e40ccad3bca361db8da40e0f98ce02f36e0062ec9419`。
+- overlay SHA-256：`4df9c49cf823cc07e1b6e13a4c3cb4c6efd7b684370e8ba8baaace7c25ab0ca0`。
 - `memoria_identity` 刷前/刷后 SHA-256：`b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，逐字节一致。
-- 最终固件以 app-only 方式写入 `0x20000`；串口确认 Wi-Fi、Activation Manifest v2、idle、1MIC/0 playback AFE 与 KWS 初始化，无 brownout 或重启循环。
+- 本轮使用 `scripts/flash.sh --port /dev/cu.usbmodem101` 写入 bootloader、partition table、OTA data 和 app，未写入 `0x10000..0x1ffff` 身份区；串口确认 Wi-Fi、Activation Manifest activation_version=3、idle、1MIC/0 playback AFE 与 KWS 初始化，无 brownout 或重启循环。
 - Speaking 期间关闭 KWS 并忽略迟到 wake event；回到 idle 后恢复。BOOT 始终是本地物理硬停止。
 
 这些证据只达到 `identity-safe flash + board boot/activation`，不等于完整设备媒体或 Actual Heard。
@@ -84,14 +107,15 @@ owner_silence_timeout_s: 10
 
 ## 下一轮真实设备验收
 
-当前候选已经发布并以 identity-safe app-only 方式写入板卡，后续只补主人权限和环境验收，期间不要按 BOOT/RESET。按顺序只做以下验收：
+设备启用控制面已经闭环；当前只补用户发起的真实对话、主人权限和环境验收，期间不要按 BOOT/RESET。按顺序只做以下验收：
 
-1. 完成当前账户的主人声纹/subject profile capability 初始化后，唤醒并说“再见”，确认 `conversation_end_explicit`、typed CLOSED、设备 `session.close` 并回到 Idle；随后再次说“茉莉”确认可开启新会话。
-2. 待机状态下以正常 30–60 cm、正常音量说“茉莉”，重复 10 次记录漏唤醒/误唤醒。
-3. 在安静、电视人声和家庭噪声三种环境测试，确认非主人声音不重置主人静默窗口。
-4. 最后连续问“今天天气怎么样”和“今天星期几”，确认正常距离识别、回答与自然播放仍然成立。
+1. 从小程序设备页返回首页，实际发起一次对话，记录设备串口、Edge/Bridge/Agent 日志和用户是否听到完整回答；激活成功本身不替代这项验证。
+2. 完成当前账户的主人声纹/subject profile capability 初始化后，唤醒并说“再见”，确认 `conversation_end_explicit`、typed CLOSED、设备 `session.close` 并回到 Idle；随后再次说“茉莉”确认可开启新会话。
+3. 待机状态下以正常 30–60 cm、正常音量说“茉莉”，重复 10 次记录漏唤醒/误唤醒。
+4. 在安静、电视人声和家庭噪声三种环境测试，确认非主人声音不重置主人静默窗口。
+5. 最后连续问“今天天气怎么样”和“今天星期几”，确认正常距离识别、回答与自然播放仍然成立。
 
-验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、speaker authority、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、typed CLOSED、设备 `session.close`、WSS close cause，以及用户听到的内容。四项都自然完成后才可更新该候选的 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
+验收需按同一候选收集：设备串口、Edge/Bridge/Agent 日志、session/stream/turn/generation fence、speaker authority、ASR final、首个 0/0 下行帧、`playback.started/progress/ended/error`、typed CLOSED、设备 `session.close`、WSS close cause，以及用户听到的内容。五项都自然完成后才可更新该候选的 `direct_real_device_verified`；这仍不自动更新 AEC、双讲或 `full_duplex_verified`。
 
 ## 实时话轮状态层候选
 

@@ -107,6 +107,24 @@ node --test apps/miniprogram/tests/*.test.js
 
 学生账号能力以 `services/control_api/app/account_gate.py` 为唯一规则表。任何端点必须在读取私有资源或产生写副作用前完成 capability 检查；未声明能力默认拒绝。
 
+## ESP32 首次启用与安全配网
+
+首次启用使用“二维码确认设备身份、BLE 近场安全配网、HTTPS 设备认领与激活”的单一路径：
+
+1. ESP32 显示签名的 `memoria-bootstrap:v1:` 二维码并广播 `MEM-XXXX` BLE 名称。
+2. 小程序把原始二维码交给 Control API introspect，取得一次性 onboarding session 和设备 provisioning 契约。
+3. 小程序与设备建立 Protocomm Security 1 会话，使用 X25519、PoP 和 AES-256-CTR；只有会话认证成功后才允许写入 Wi-Fi SSID/密码。
+4. 设备联网后自行提交 online-proof；小程序完成 claim、binding 和授权确认。
+5. 服务端生成签名 Activation Manifest；设备拉取、验签并 ACK。只有服务端状态达到 `device_acknowledged` 或 `ready_for_conversation`，小程序才显示启用完成。
+
+Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业务请求或服务端日志。蓝牙本身不是互联网通道，也不会自动把手机蜂窝网络桥接给 ESP32；附近没有路由器时，可以先开启手机热点，再把该热点的 SSID/密码通过上述 BLE 流程交给设备。
+
+绑定完成前设备拉取 Activation Manifest 得到 `409` 属于正常中间态：固件保持二维码/BLE 入口并后台重试，绑定完成后停止配网入口。相同二维码从新页面再次扫码会复用原 onboarding session；安全会话已经释放时必须重新扫码，不能复用旧内存会话发送网络信息。
+
+小程序仍是控制面：手机不采集声纹，不参与机器人实时对话。主人声纹登记由小程序记录明确授权，再由已绑定设备采集有界语音样本并提交 Speaker Authority；`requested`、`pending`、`active` 是服务端权威状态，shadow 档案未激活前不得宣传为主人认证。
+
+当前启用链路的线上、板卡和小程序证据以及仍待完成的真实对话验收见 `HANDOFF.md`。
+
 ## 实时话轮状态设计（CPU-only）
 
 本节定义 Memoria 的实时话轮状态层。它借鉴流式 ASR 与 turn-state 同步建模的设计理念，但不引入 X2-Turn 的代码、模型、权重、Tokenizer、vLLM patch、容器或运行时依赖。当前没有 GPU 服务器，本方案只使用既有 16 kHz PCM、20 ms VAD、FunASR partial/final、播放状态、说话人结论和 generation fence，在 Python Voice Core 内以确定性 CPU 规则运行。
@@ -348,7 +366,7 @@ Replay 使用现有 `adult_clean`、`child_clean`、`child_pause`、`tv_backgrou
 
 ## UI 产品约束
 
-新账号先选择星澜、桃喜、绵绵、阿序或玄墨，再完成自然、轻声、带笑、认真四种说话状态的可撤销声纹登记。当前登记只生成 shadow 档案，不得宣传为已启用主人认证，也不得与声音克隆混为一谈。
+新账号先选择星澜、桃喜、绵绵、阿序或玄墨。主人声纹由小程序记录授权、机器人端采集，手机不获取录音；当前登记先生成 shadow 档案，只有 Speaker Authority 返回 `active` 后才能作为主人认证，也不得与声音克隆混为一谈。
 
 称呼仅在注册时设置，字段为“怎么称呼你？”；“我的/个人信息”不再提供称呼或陪伴方式编辑入口。伙伴音色只通过服务器批准的稳定目录键解析供应商 `voice_id`。
 
@@ -357,6 +375,8 @@ Replay 使用现有 `adult_clean`、`child_clean`、`child_pause`、`tv_backgrou
 ## ESP32 固件
 
 固件以固定 `78/xiaozhi-esp32` upstream 加小型 overlay 维护。锁定版本、commit、ESP-IDF 和传递依赖分别以 `firmware/esp32/upstream.lock` 与 `overlay/files/dependencies.lock` 为准；缓存、工具链和构建产物不提交。
+
+`MemoriaBootstrap` 负责签名二维码、Protocomm Security 1、Wi-Fi 写入、online-proof 和 Activation 重试。设备未绑定时保持附近配网入口；收到并确认 Activation Manifest 后停止二维码/BLE 配网面并进入正常会话状态。小程序端的对应实现位于 `apps/miniprogram/utils/device-onboarding`，跨端响应结构以 `packages/contracts/device-onboarding-v1.json` 为准。
 
 ```bash
 cd firmware/esp32
