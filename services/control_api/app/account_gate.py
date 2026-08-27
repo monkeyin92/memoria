@@ -120,6 +120,20 @@ def require_capability_for_account_id(
         profile.get("subject_category"),
         capability,
     )
+    if capability == "speaker_enrollment":
+        # A speaker profile is biometric identity authority.  Category alone
+        # is not sufficient: historical/default adult rows and accounts whose
+        # age evidence is still pending must remain fail-closed until the
+        # verified subject profile is committed by the trusted identity path.
+        if (
+            profile.get("subject_category") != "adult"
+            or profile.get("birth_year_band") != "adult"
+            or profile.get("age_evidence_status") != "verified"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "subject_capability_forbidden", "capability": capability},
+            )
     return profile
 
 

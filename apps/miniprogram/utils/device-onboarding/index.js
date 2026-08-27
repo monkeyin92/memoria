@@ -11,4 +11,6 @@ module.exports = {
   ...require("./session-store"),
   ...require("./wifi-model"),
   ...require("./sensitive-buffer"),
+  ...require("./crypto"),
+  ...require("./protocomm-codec"),
 };

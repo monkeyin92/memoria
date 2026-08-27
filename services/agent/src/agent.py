@@ -66,6 +66,10 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.agent.src.speaker_authority_client import (
+    SpeakerAuthorityClient,
+    SpeakerEnrollmentSample,
+)
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
@@ -383,6 +387,85 @@ def should_enable_legacy_speaker_verifier(settings: Any, *, offline: bool) -> bo
             "legacy speaker enrollment disabled because formal speaker authority is enabled"
         )
     return enabled and not authority_enabled and not offline
+
+
+async def run_formal_speaker_enrollment(
+    *,
+    runtime: DuplexRuntime,
+    fixed_speech: FixedSpeechPlayer,
+    authority: SpeakerAuthorityClient,
+    intent_id: str,
+    sample_count: int = 4,
+    sample_timeout_s: float = 15.0,
+) -> dict[str, Any]:
+    """Collect device endpoint samples and submit one formal enrollment.
+
+    This is intentionally session-scoped.  The device supplies PCM through
+    the existing Agent audio path; the control plane resolves account identity
+    from ``session_id`` and owns all biometric templates and activation gates.
+    """
+
+    if not 3 <= sample_count <= 4:
+        raise ValueError("formal speaker enrollment currently supports 3 or 4 samples")
+    samples: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=sample_count)
+    collected: list[tuple[bytes, int]] = []
+
+    async def _receive_sample(pcm: bytes, sample_rate: int) -> None:
+        if samples.full():
+            return
+        await samples.put((pcm, sample_rate))
+
+    runtime.set_formal_speaker_enrollment_sample_sink(_receive_sample)
+    runtime.begin_formal_speaker_enrollment(target_samples=sample_count)
+    prompts = (
+        "请说第一段，使用自然语气介绍一下自己。",
+        "请说第二段，换成柔和一点的语气。",
+        "请说第三段，带一点微笑地说一句话。",
+        "请说第四段，用平时认真说话的语气说一句话。",
+    )
+    try:
+        for index in range(sample_count):
+            await fixed_speech.say(
+                prompts[index],
+                interruptible=False,
+                restore_state="speaker_enroll",
+            )
+            try:
+                collected.append(await asyncio.wait_for(samples.get(), timeout=sample_timeout_s))
+            except TimeoutError:
+                runtime.publish_formal_speaker_enrollment_result(
+                    accepted=False,
+                    reason="sample_timeout",
+                )
+                return {"status": "failed", "reason": "sample_timeout"}
+        payload = await authority.enroll(
+            session_id=runtime.session_id,
+            intent_id=intent_id,
+            samples=[
+                SpeakerEnrollmentSample(pcm=pcm, sample_rate=sample_rate)
+                for pcm, sample_rate in collected
+            ],
+        )
+        runtime.publish_formal_speaker_enrollment_result(
+            accepted=True,
+            reason="submitted",
+            profile_id=str(payload.get("profile_id")),
+            status=str(payload.get("status")),
+        )
+        return payload
+    except Exception:
+        logger.warning(
+            "formal speaker enrollment failed session_id=%s",
+            runtime.session_id,
+            exc_info=True,
+        )
+        runtime.publish_formal_speaker_enrollment_result(
+            accepted=False,
+            reason="authority_error",
+        )
+        return {"status": "failed", "reason": "authority_error"}
+    finally:
+        runtime.end_formal_speaker_enrollment(reason="completed")
 
 
 def _heard_only_chat_context(chat_ctx: Any, heard_assistant: list[str]) -> Any:
@@ -3277,6 +3360,40 @@ async def entrypoint(ctx: Any) -> None:
     welcome_emotion = companion.default_voice_emotion if companion is not None else "neutral"
     welcome_rate = companion.default_voice_rate if companion is not None else 1.0
     welcome_instruction = companion.voice_instruction if companion is not None else ""
+
+    # Formal biometric setup is device-only.  The control API resolves the
+    # account from this active voice session; the Mini Program only displays
+    # the resulting status and never supplies PCM.
+    if device_session and runtime_settings.speaker_authority_enabled and not offline:
+        try:
+            formal_authority = SpeakerAuthorityClient(
+                SpeakerAuthorityClientConfig(
+                    endpoint=runtime_settings.speaker_authority_url,
+                    internal_token=runtime_settings.speaker_internal_token.get_secret_value(),
+                    timeout_s=runtime_settings.speaker_authority_timeout_s,
+                )
+            )
+            enrollment_status = await formal_authority.enrollment_status(
+                session_id=runtime.session_id,
+            )
+            enrollment_state = str(
+                (enrollment_status.get("enrollment") or {}).get("state") or "blocked"
+            )
+            if enrollment_state in {"requested", "required"}:
+                intent_id = str((enrollment_status.get("enrollment") or {}).get("intent_id") or "")
+                if intent_id:
+                    await run_formal_speaker_enrollment(
+                        runtime=runtime,
+                        fixed_speech=fixed_speech,
+                        authority=formal_authority,
+                        intent_id=intent_id,
+                    )
+        except Exception:
+            logger.warning(
+                "formal speaker enrollment setup unavailable session_id=%s",
+                runtime.session_id,
+                exc_info=True,
+            )
 
     if runtime.speaker_verifier.enabled:
         # Fixed single-stream prompt (not generate_reply) so TTS does not

@@ -68,6 +68,7 @@ Page({
   onLoad(options = {}) {
     this._unloaded = false;
     this._mode = options.mode === "reprovision" ? "reprovision" : "add";
+    this._freshStart = options.fresh === "1" || options.fresh === 1 || options.fresh === true;
     this._initialSessionId =
       typeof options.session_id === "string" && options.session_id ? options.session_id : "";
     this._controller = new OnboardingController({
@@ -81,7 +82,7 @@ Page({
     if (this._initialSessionId && !this._resumed) {
       this._resumed = true;
       await this._controller.resume(this._initialSessionId);
-    } else if (!this._resumed) {
+    } else if (!this._freshStart && !this._resumed) {
       let storedSessionId = "";
       try {
         storedSessionId = readOnboardingSessionId();
@@ -155,8 +156,13 @@ Page({
       },
       fail: (error) => {
         if (!this._unloaded) {
-          const code = error?.errCode === 2 ? "QR_INVALID" : "QR_INVALID";
-          this.setData({ errorCode: code, error: "扫码未完成，请重新扫描机器人屏幕上的二维码。" });
+          const errCode = Number.isFinite(Number(error?.errCode)) ? `微信错误码 ${error.errCode}` : "";
+          const errMsg = typeof error?.errMsg === "string" ? error.errMsg.slice(0, 96) : "";
+          const detail = [errCode, errMsg].filter(Boolean).join("，");
+          this.setData({
+            errorCode: "QR_INVALID",
+            error: `扫码未完成，请重新扫描机器人屏幕上的二维码。${detail ? `（${detail}）` : ""}`,
+          });
         }
       },
       complete: () => {

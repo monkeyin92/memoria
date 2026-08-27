@@ -565,6 +565,30 @@ BEGIN
 END
 $$;
 
+-- Binding versions are device-global, but an API actor may not be allowed to
+-- read another owner's revoked binding under FORCE RLS.  Allocate the next
+-- version through this narrow owner-owned port so a new owner cannot mistake
+-- an invisible historical version for version 1.  The advisory lock is held
+-- for the caller's transaction and matches the store's device lock.
+CREATE OR REPLACE FUNCTION identity_next_binding_version(p_device_id text)
+RETURNS integer
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE
+    v_next integer;
+BEGIN
+    IF p_device_id IS NULL OR char_length(p_device_id) NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION 'identity_next_binding_version: invalid device_id';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_device_id, 0));
+    SELECT COALESCE(MAX(binding_version), 0) + 1
+    INTO v_next
+    FROM identity_device_bindings
+    WHERE device_id = p_device_id;
+    RETURN v_next;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION identity_relationship_active(
     p_source text, p_target text, p_relation_type text, p_at timestamptz
 ) RETURNS boolean
@@ -1477,6 +1501,7 @@ REVOKE ALL ON FUNCTION identity_audit_transfer_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_person_update_event() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION identity_person_exists(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_next_binding_version(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_relationship_active(
     text, text, text, timestamptz
 ) FROM PUBLIC;
@@ -1534,6 +1559,8 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE ON identity_relationships TO memoria_identity;
         GRANT SELECT, INSERT, UPDATE ON identity_device_bindings TO memoria_identity;
         GRANT SELECT, INSERT, UPDATE ON identity_device_binding_roles
+            TO memoria_identity;
+        GRANT EXECUTE ON FUNCTION identity_next_binding_version(text)
             TO memoria_identity;
         GRANT SELECT, INSERT, UPDATE ON identity_transfer_intents TO memoria_identity;
         -- Audit, outbox and idempotency writes go through the SECURITY

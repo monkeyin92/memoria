@@ -1,0 +1,167 @@
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -31,11 +31,12 @@
+             "protocols/protocol.cc"
+             "protocols/text_glyph_payload.cc"
+             "protocols/mqtt_protocol.cc"
+             "protocols/websocket_protocol.cc"
+             "memoria/device_identity.cc"
+             "memoria/memoria_audio_frame.cc"
+             "memoria/memoria_activation_client.cc"
+             "memoria/memoria_protocol.cc"
++            "memoria/memoria_bootstrap.cc"
+             "mcp_server.cc"
+             "system_info.cc"
+             "application.cc"
+@@ -1079,5 +1080,6 @@ idf_component_register(SRCS ${SOURCES}
+                         nvs_flash
+                         libsodium
++                        protocomm
+                         console
+                         efuse
+                         bt
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -8,4 +8,6 @@
+ #include "mqtt_protocol.h"
+ #include "memoria_protocol.h"
++#include "memoria_bootstrap.h"
++#include "display/lcd_display.h"
+ #include "settings.h"
+ #include "system_info.h"
+@@ -44,6 +45,15 @@ void Application::Initialize() {
+     auto display = board.GetDisplay();
+     display->SetupUI();
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+     display->ShowNotification("Memoria", 1500);
++    {
++        Settings runtime("memoria_runtime", true);
++        if (runtime.GetInt("activation_v", 0) == 0) {
++            auto* lcd_display = dynamic_cast<LcdDisplay*>(display);
++            if (lcd_display != nullptr) {
++                memoria::MemoriaBootstrap::GetInstance().Start(lcd_display);
++            }
++        }
++    }
+ #endif
+     // Print board name/version info
+diff --git a/main/display/lcd_display.h b/main/display/lcd_display.h
+--- a/main/display/lcd_display.h
++++ b/main/display/lcd_display.h
+@@ -7,6 +7,7 @@
+ #include <esp_lcd_panel_io.h>
+ #include <esp_lcd_panel_ops.h>
+ #include <atomic>
+ #include <memory>
++#include <string>
+ 
+ #define PREVIEW_IMAGE_DURATION_MS 5000
+@@ -31,6 +32,9 @@ class LcdDisplay : public LvglDisplay {
+     esp_timer_handle_t preview_timer_ = nullptr;
+     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
+     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
++    lv_obj_t* qr_overlay_ = nullptr;
++    lv_obj_t* qr_code_ = nullptr;
++    lv_obj_t* qr_caption_ = nullptr;
+ 
+     void InitializeLcdThemes();
+     virtual bool Lock(int timeout_ms = 0) override;
+@@ -54,4 +55,6 @@
+ 
+     // Set whether to hide chat messages/subtitles
+     void SetHideSubtitle(bool hide);
++    bool ShowQrCode(const std::string& payload, const char* caption);
++    void ClearQrCode();
+ };
+diff --git a/main/display/lcd_display.cc b/main/display/lcd_display.cc
+--- a/main/display/lcd_display.cc
++++ b/main/display/lcd_display.cc
+@@ -5,10 +5,11 @@
+ #include "lvgl_theme.h"
+ #include "settings.h"
+ 
+ #include <esp_err.h>
+ #include <esp_log.h>
+ #include <esp_lvgl_port.h>
+ #include <esp_psram.h>
+ #include <material_symbols.h>
+ #include <noto_emoji.h>
++#include <widgets/canvas/lv_canvas.h>
+ #include <src/misc/cache/lv_cache.h>
+@@ -351,5 +352,74 @@
+ bool LcdDisplay::Lock(int timeout_ms) { return lvgl_port_lock(timeout_ms); }
+ 
+ void LcdDisplay::Unlock() { lvgl_port_unlock(); }
++
++bool LcdDisplay::ShowQrCode(const std::string& payload, const char* caption) {
++    if (!setup_ui_called_ || payload.empty() || !Lock(1000)) {
++        return false;
++    }
++    if (qr_overlay_ != nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        qr_caption_ = nullptr;
++    }
++    qr_overlay_ = lv_obj_create(lv_screen_active());
++    if (qr_overlay_ == nullptr) {
++        Unlock();
++        return false;
++    }
++    lv_obj_set_size(qr_overlay_, LV_HOR_RES, LV_VER_RES);
++    lv_obj_set_style_radius(qr_overlay_, 0, 0);
++    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_COVER, 0);
++    lv_obj_set_style_bg_color(qr_overlay_, lv_color_white(), 0);
++    lv_obj_set_style_border_width(qr_overlay_, 0, 0);
++    lv_obj_set_style_pad_all(qr_overlay_, 0, 0);
++    qr_code_ = lv_qrcode_create(qr_overlay_);
++    if (qr_code_ == nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        Unlock();
++        return false;
++    }
++    lv_qrcode_set_size(qr_code_, 190);
++    lv_qrcode_set_dark_color(qr_code_, lv_color_black());
++    lv_qrcode_set_light_color(qr_code_, lv_color_white());
++    lv_qrcode_set_quiet_zone(qr_code_, true);
++    if (lv_qrcode_update(qr_code_, payload.data(), payload.size()) != LV_RESULT_OK) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        Unlock();
++        return false;
++    }
++    lv_obj_center(qr_code_);
++    lv_obj_set_y(qr_code_, -17);
++    qr_caption_ = lv_label_create(qr_overlay_);
++    if (qr_caption_ == nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        Unlock();
++        return false;
++    }
++    lv_label_set_text(qr_caption_, caption == nullptr ? "微信扫码绑定" : caption);
++    lv_obj_set_style_text_color(qr_caption_, lv_color_black(), 0);
++    lv_obj_align(qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -4);
++    Unlock();
++    return true;
++}
++
++void LcdDisplay::ClearQrCode() {
++    if (!Lock(1000)) {
++        return;
++    }
++    if (qr_overlay_ != nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        qr_caption_ = nullptr;
++    }
++    Unlock();
++}
+ 
+ #if CONFIG_USE_WECHAT_MESSAGE_STYLE

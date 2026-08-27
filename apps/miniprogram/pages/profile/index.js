@@ -87,6 +87,9 @@ Page({
     guardianEntryAllowed: false,
     rawVoiceEntryAllowed: false,
     profileUnavailableReason: "",
+    speakerEnrollmentState: "blocked",
+    speakerEnrollmentBlockReason: "",
+    speakerEnrollmentProfileCount: 0,
   },
 
   onLoad() {
@@ -135,6 +138,9 @@ Page({
       guardianEntryAllowed: false,
       rawVoiceEntryAllowed: false,
       profileUnavailableReason: "",
+      speakerEnrollmentState: "blocked",
+      speakerEnrollmentBlockReason: "",
+      speakerEnrollmentProfileCount: 0,
     });
   },
 
@@ -146,19 +152,66 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const capabilityState = await this.loadRuntimeCapabilities();
+      const [capabilityState, speakerState] = await Promise.all([
+        this.loadRuntimeCapabilities(),
+        this.loadSpeakerEnrollmentStatus(),
+      ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         profile,
         profileFaceStyle: profileFaceStyleFor(profile.companion_id),
         isMinor: profile.subject_category === "minor",
         ...capabilityState,
+        ...speakerState,
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "个人资料无法加载。" });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ loading: false });
+    }
+  },
+
+  async loadSpeakerEnrollmentStatus() {
+    try {
+      const status = await api.getSpeakerEnrollmentStatus();
+      const enrollment = status?.enrollment || {};
+      const blockReason = {
+        account_not_registered: "当前账户还没有完成注册。",
+        subject_category_unavailable: "服务端还没有确认当前主体，需先完成主体资料认证。",
+        subject_capability_forbidden: "当前主体尚未满足主人声纹所需的已验证成人条件。",
+        minor_forbidden: "未成年人主体不能登记主人声纹。",
+      }[status?.block_code] || "服务端暂未授权主人声纹能力。";
+      return {
+        speakerEnrollmentState: enrollment.state || "blocked",
+        speakerEnrollmentBlockReason:
+          enrollment.state === "blocked" ? blockReason : "",
+        speakerEnrollmentProfileCount: Number(enrollment.profile_count || 0),
+      };
+    } catch (error) {
+      return {
+        speakerEnrollmentState: "blocked",
+        speakerEnrollmentBlockReason: error?.message || "主人声纹状态暂时无法获取。",
+        speakerEnrollmentProfileCount: 0,
+      };
+    }
+  },
+
+  async startSpeakerEnrollment() {
+    if (!(await requireLogin({ reason: "start_speaker_enrollment" }))) return;
+    const binding = readBindingManifest();
+    if (!binding || typeof binding.device_id !== "string") {
+      wx.showToast({ title: "请先绑定设备", icon: "none" });
+      this.openDevice();
+      return;
+    }
+    try {
+      await api.createSpeakerEnrollmentIntent();
+      wx.showToast({ title: "已请求设备登记", icon: "success" });
+      const status = await this.loadSpeakerEnrollmentStatus();
+      this.setData(status);
+    } catch (error) {
+      wx.showToast({ title: error?.message || "暂时无法请求设备登记", icon: "none" });
     }
   },
 

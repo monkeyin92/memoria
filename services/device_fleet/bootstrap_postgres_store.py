@@ -804,6 +804,24 @@ class PostgresBootstrapStore(BootstrapStorePort):
 
         return self._call(self._transaction(scope, operation))
 
+    def find_session_by_qr(
+        self, *, device_id: str, qr_nonce_hash: str
+    ) -> BootstrapSession | None:
+        scope = self._scope(device_id=device_id)
+
+        async def operation(connection: asyncpg.Connection) -> BootstrapSession | None:
+            row = await connection.fetchrow(
+                """
+                SELECT * FROM device_onboarding_sessions
+                WHERE device_id = $1 AND qr_nonce_hash = $2
+                """,
+                device_id,
+                qr_nonce_hash,
+            )
+            return self._session(row) if row is not None else None
+
+        return self._call(self._transaction(scope, operation))
+
     def get_session(self, onboarding_session_id: str) -> BootstrapSession | None:
         scope = self._scope(
             lookup_kind="session", lookup_id=onboarding_session_id

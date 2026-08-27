@@ -253,7 +253,8 @@ bool HttpRequest(const std::string& method,
                  const std::string& url,
                  const std::vector<std::pair<std::string, std::string>>& headers,
                  std::string body,
-                 std::string* response) {
+                 std::string* response,
+                 int* status_code = nullptr) {
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
     if (http == nullptr) {
@@ -273,6 +274,9 @@ bool HttpRequest(const std::string& method,
         return false;
     }
     const int status = http->GetStatusCode();
+    if (status_code != nullptr) {
+        *status_code = status;
+    }
     if (status != 200) {
         ESP_LOGE(kTag, "Activation HTTP rejected, status=%d", status);
         http->Close();
@@ -447,10 +451,21 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     }
     const std::string path = "/v1/devices/" + identity_.device_id() + "/activation-manifest";
     std::string response;
+    int manifest_status = 0;
     if (!HttpRequest("GET", JoinUrl(identity_.control_api_url(), path),
                      {{"X-Device-Certificate-ID", identity_.certificate_id()},
                       {"X-Device-Signature", request_signature}},
-                     {}, &response)) {
+                     {}, &response, &manifest_status)) {
+        if (manifest_status == 409) {
+            // A released device is intentionally not bound yet.  Do not let
+            // the previous activation version strand the board in an error
+            // screen; keep activation_ctr so the next binding cannot replay
+            // the device's monotonic activation counter.
+            Settings runtime("memoria_runtime", true);
+            runtime.SetInt("activation_v", 0);
+            ESP_LOGW(kTag, "Activation unavailable while device is unbound; bootstrap required");
+            return ESP_ERR_INVALID_STATE;
+        }
         return ESP_FAIL;
     }
     ScopedJson manifest{cJSON_ParseWithLength(response.data(), response.size())};

@@ -63,6 +63,7 @@ const ERROR_MESSAGES = Object.freeze({
   BLE_DEVICE_NOT_FOUND: "没有找到屏幕上的机器人，请靠近设备并重试。",
   BLE_CONNECTION_FAILED: "机器人连接失败，请确认设备已通电并重试。",
   BLE_SESSION_REJECTED: "机器人安全会话未通过，请刷新二维码后重试。",
+  BLE_REAUTH_REQUIRED: "蓝牙安全会话已失效，请重新扫描机器人二维码后连接。",
   BLE_DISCONNECTED: "机器人蓝牙连接中断，可以从当前启用会话继续。",
   WIFI_AUTH_FAILED: "Wi‑Fi 密码可能不正确，请重新输入。",
   WIFI_AP_NOT_FOUND: "没有找到这个 Wi‑Fi，请选择其他网络或检查路由器。",
@@ -123,6 +124,9 @@ function isExpired(expiresAt, now = Date.now()) {
 
 function errorMessage(error, fallback = "启用流程没有完成，请稍后重试。") {
   const code = error?.code || error?.detail?.code;
+  if (code === "QR_INVALID" && typeof error?.clientDetail === "string" && error.clientDetail) {
+    return `无法识别设备码：${error.clientDetail}。`;
+  }
   return (code && ERROR_MESSAGES[code]) || error?.message || fallback;
 }
 

@@ -294,6 +294,109 @@ async def test_anonymous_or_untrusted_call_cannot_manage_biometric_profiles(
 
 
 @pytest.mark.asyncio
+async def test_speaker_status_explains_verified_subject_gate_without_audio_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.speaker_authority = SpeakerAuthority.sqlite(
+        tmp_path / "speakers.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "speaker-status", "password": "safe-password"},
+            )
+        ).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        status_response = await client.get("/v1/speakers/status", headers=headers)
+
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        "capability": "speaker_enrollment",
+        "capability_allowed": False,
+        "block_code": "subject_capability_forbidden",
+        "subject": {
+            "subject_category": "unknown",
+            "birth_year_band": "unknown",
+            "age_evidence_status": "unverified",
+            "subject_revision": 0,
+        },
+        "enrollment": {
+            "state": "blocked",
+            "profile_count": 0,
+            "active_profile_id": None,
+            "intent_id": None,
+            "intent_expires_at": None,
+            "profiles": [],
+        },
+        "capture_location": "device",
+        "phone_realtime_capture_allowed": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_internal_device_enrollment_resolves_account_from_voice_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.speaker_authority = SpeakerAuthority.sqlite(
+        tmp_path / "speakers.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    internal = {"X-Memoria-Speaker-Token": "test-speaker-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="speaker-device-enroll",
+        )
+        owner_headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        intent_response = await client.post(
+            "/v1/speakers/enrollment-intents",
+            headers=owner_headers,
+            json={
+                "consent_policy_version": "speaker-biometric-v1",
+                "consent_accepted": True,
+            },
+        )
+        assert intent_response.status_code == 201, intent_response.text
+        _add_voice_session(
+            app,
+            user_id=identity["user_id"],
+            session_id="device-enroll-session",
+        )
+        response = await client.post(
+            "/v1/speakers/enrollments/internal",
+            headers=internal,
+            json={
+                "session_id": "device-enroll-session",
+                "intent_id": intent_response.json()["intent_id"],
+                "samples": [
+                    {
+                        "audio_base64": _audio(value),
+                        "sample_rate": 16000,
+                        "device": "esp32",
+                        "scene": "device_voiceprint_setup",
+                    }
+                    for value in (b"owner-01", b"owner-02", b"owner-03")
+                ],
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "shadow"
+    assert response.json()["sample_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_speaker_classify_subject_capability_matrix_blocks_before_authority(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

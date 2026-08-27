@@ -318,6 +318,38 @@ class DeviceOnboardingService:
         if device.lifecycle_status is DeviceLifecycle.BOUND:
             raise DeviceAlreadyBound()
         qr_nonce_hash = hash_b64url(payload.bootstrap_nonce, field="bootstrap_nonce")
+
+        # The board keeps one signed QR visible for the current bootstrap
+        # window.  A page retry can therefore submit the same QR with a new
+        # client onboarding id.  Reuse the existing session for the same actor
+        # instead of letting the database uniqueness constraint surface as a
+        # misleading "another account" conflict.  The stored client id lets
+        # us deterministically derive the original mobile nonce without
+        # persisting its plaintext.
+        existing_qr = self.store.find_session_by_qr(  # type: ignore[attr-defined]
+            device_id=device.device_id, qr_nonce_hash=qr_nonce_hash
+        )
+        if existing_qr is not None:
+            existing_qr = self._expire_session_if_needed(existing_qr)
+            if existing_qr.actor_id != actor_id:
+                raise ClaimConflict("device QR is already used by another actor")
+            if existing_qr.state in {
+                BootstrapState.EXPIRED,
+                BootstrapState.CANCELLED,
+                BootstrapState.FAILED,
+                BootstrapState.REVOKED,
+                BootstrapState.CONFLICT,
+                BootstrapState.ACTIVATED,
+            }:
+                raise SessionExpired("device QR session is no longer resumable")
+            existing_mobile_nonce = self._mobile_nonce(
+                actor_id=existing_qr.actor_id,
+                client_onboarding_id=existing_qr.client_onboarding_id,
+                device_id=existing_qr.device_id,
+                qr_nonce_hash=existing_qr.qr_nonce_hash,
+            )
+            return self._session_view(existing_qr, mobile_nonce=existing_mobile_nonce)
+
         mobile_nonce = self._mobile_nonce(
             actor_id=actor_id,
             client_onboarding_id=client_onboarding_id,
@@ -392,6 +424,7 @@ class DeviceOnboardingService:
             "onboarding_session_id": session.onboarding_session_id,
             "state": session.state.value,
             "state_version": session.state_version,
+            "activation_version": device.activation_version,
             "expires_at": _rfc3339(session.expires_at),
             "device": {
                 "device_id": device.device_id,

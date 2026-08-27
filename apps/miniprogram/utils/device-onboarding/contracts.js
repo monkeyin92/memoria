@@ -219,20 +219,42 @@ function normalizeIntrospectResponse(payload) {
   const keys = [
     "onboarding_session_id",
     "state",
+    "state_version",
+    "activation_version",
     "expires_at",
     "device",
     "provisioning",
     "mobile_nonce",
+    "claim_id",
+    "binding_id",
+    "activation_status",
   ];
   assertExactKeys(value, keys, "introspect 响应");
-  assertRequiredKeys(value, keys, "introspect 响应");
+  assertRequiredKeys(value, [
+    "onboarding_session_id",
+    "state",
+    "state_version",
+    "activation_version",
+    "expires_at",
+    "device",
+    "provisioning",
+    "mobile_nonce",
+  ], "introspect 响应");
   return {
     onboarding_session_id: requiredId(value.onboarding_session_id, "onboarding_session_id"),
     state: requiredEnum(value.state, "state", BOOTSTRAP_STATES),
+    state_version: requiredInteger(value.state_version, "state_version"),
+    activation_version: requiredInteger(value.activation_version, "activation_version", { min: 0 }),
     expires_at: requiredTime(value.expires_at, "expires_at"),
     device: normalizeDeviceInfo(value.device),
     provisioning: normalizeProvisioning(value.provisioning),
     mobile_nonce: requiredBase64Url(value.mobile_nonce, "mobile_nonce"),
+    claim_id: optionalString(value.claim_id, "claim_id", { max: 256, pattern: ID_PATTERN }),
+    binding_id: optionalString(value.binding_id, "binding_id", { max: 256, pattern: ID_PATTERN }),
+    activation_status:
+      value.activation_status === undefined || value.activation_status === null
+        ? null
+        : requiredEnum(value.activation_status, "activation_status", ACTIVATION_STATES),
   };
 }
 
@@ -267,6 +289,7 @@ function normalizeOnboardingSession(payload) {
     "provisioning",
     "mobile_nonce",
     "state_version",
+    "activation_version",
     "last_error_code",
     "last_error_message",
     "claim_id",
@@ -276,7 +299,15 @@ function normalizeOnboardingSession(payload) {
     "updated_at",
   ];
   assertExactKeys(value, keys, "onboarding session 响应");
-  assertRequiredKeys(value, ["onboarding_session_id", "state", "expires_at", "device", "provisioning"], "onboarding session 响应");
+  assertRequiredKeys(value, [
+    "onboarding_session_id",
+    "state",
+    "state_version",
+    "activation_version",
+    "expires_at",
+    "device",
+    "provisioning",
+  ], "onboarding session 响应");
   return {
     onboarding_session_id: requiredId(value.onboarding_session_id, "onboarding_session_id"),
     state: requiredEnum(value.state, "state", BOOTSTRAP_STATES),
@@ -284,14 +315,16 @@ function normalizeOnboardingSession(payload) {
     device: normalizeDeviceInfo(value.device),
     provisioning: normalizeProvisioning(value.provisioning),
     mobile_nonce: optionalString(value.mobile_nonce, "mobile_nonce", { max: 4096 }),
-    state_version: optionalInteger(value.state_version, "state_version"),
+    state_version: requiredInteger(value.state_version, "state_version"),
+    activation_version: requiredInteger(value.activation_version, "activation_version", { min: 0 }),
     last_error_code: optionalString(value.last_error_code, "last_error_code", { max: 64 }),
     last_error_message: optionalString(value.last_error_message, "last_error_message", { max: 512 }),
     claim_id: optionalString(value.claim_id, "claim_id", { max: 256, pattern: ID_PATTERN }),
     binding_id: optionalString(value.binding_id, "binding_id", { max: 256, pattern: ID_PATTERN }),
-    activation_status: value.activation_status
-      ? requiredEnum(value.activation_status, "activation_status", ACTIVATION_STATES)
-      : null,
+    activation_status:
+      value.activation_status === undefined || value.activation_status === null
+        ? null
+        : requiredEnum(value.activation_status, "activation_status", ACTIVATION_STATES),
     network_status: normalizeNetwork(value.network_status, "network_status"),
     updated_at: optionalTime(value.updated_at, "updated_at"),
   };

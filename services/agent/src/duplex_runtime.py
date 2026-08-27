@@ -62,6 +62,9 @@ from services.agent.src.orchestration.emotion import (
     EmotionSmoother,
     aggregate_acoustic_segments,
 )
+from services.agent.src.orchestration.formal_speaker_enrollment import (
+    FormalSpeakerEnrollment,
+)
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interaction_plane import (
     InteractionDecision,
@@ -336,6 +339,12 @@ class DuplexRuntime:
     _listener_cue_candidate_task: asyncio.Task[Any] | None = None
     _listener_cue_aec_healthy: bool = False
     _enroll_fence: GenerationFence | None = None
+    _formal_enrollment: FormalSpeakerEnrollment = field(
+        default_factory=FormalSpeakerEnrollment
+    )
+    _formal_enrollment_sample_sink: (
+        Callable[[bytes, int], Awaitable[None]] | None
+    ) = None
     _emotion_turn_observer: Callable[[int], None] | None = None
     _speech_segment_finalizers: list[Callable[..., None]] = field(default_factory=list)
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
@@ -1570,7 +1579,16 @@ class DuplexRuntime:
             self.mark_audio_event("last_user_audio")
         self._speaker_collecting = False
         self.speaker_verifier.mark_utterance_end()
-        self._start_speaker_classification()
+        if self.formal_speaker_enrollment_active:
+            sample = self._formal_enrollment.add_endpoint(bytes(self._speaker_pcm))
+            if sample is not None and self._formal_enrollment_sample_sink is not None:
+                self._spawn(
+                    self._formal_enrollment_sample_sink(sample, self._speaker_sample_rate),
+                    name="formal-speaker-enrollment-sample",
+                )
+            self.publish_formal_speaker_enrollment_progress()
+        else:
+            self._start_speaker_classification()
         for finalizer in self._speech_segment_finalizers:
             try:
                 finalizer(keyword_binding)
@@ -1824,6 +1842,73 @@ class DuplexRuntime:
         self.speaker_verifier.begin_enrollment()
         self.publish_assistant_state("speaker_enroll")
         self.mark_audio_event("speaker_enroll_started")
+
+    @property
+    def formal_speaker_enrollment_active(self) -> bool:
+        return self._formal_enrollment.active
+
+    def set_formal_speaker_enrollment_sample_sink(
+        self,
+        sink: Callable[[bytes, int], Awaitable[None]] | None,
+    ) -> None:
+        self._formal_enrollment_sample_sink = sink
+
+    def begin_formal_speaker_enrollment(self, *, target_samples: int = 4) -> None:
+        if target_samples != self._formal_enrollment.target_samples:
+            self._formal_enrollment = FormalSpeakerEnrollment(
+                target_samples=target_samples,
+                sample_rate=self._speaker_sample_rate,
+            )
+        self._was_speaking = False
+        self._formal_enrollment.begin()
+        self.publish_assistant_state("speaker_enroll")
+        self.mark_audio_event(
+            "formal_speaker_enroll_started",
+            detail={"target_samples": self._formal_enrollment.target_samples},
+        )
+        self.publish_formal_speaker_enrollment_progress()
+
+    def end_formal_speaker_enrollment(self, *, reason: str = "completed") -> None:
+        self._formal_enrollment.cancel()
+        self._formal_enrollment_sample_sink = None
+        self.mark_audio_event("formal_speaker_enroll_finished", detail={"reason": reason})
+
+    def publish_formal_speaker_enrollment_progress(self) -> asyncio.Task[Any] | None:
+        state = "complete" if self._formal_enrollment.complete else "collecting"
+        return self._publish(
+            {
+                "type": "speaker_enroll_progress",
+                "session_id": self.session_id,
+                "state": state,
+                "sample_index": self._formal_enrollment.sample_count,
+                "sample_count": self._formal_enrollment.sample_count,
+                "target_samples": self._formal_enrollment.target_samples,
+                "at": datetime.now(UTC).isoformat(),
+            },
+            fence=self.fence,
+        )
+
+    def publish_formal_speaker_enrollment_result(
+        self,
+        *,
+        accepted: bool,
+        reason: str,
+        profile_id: str | None = None,
+        status: str | None = None,
+    ) -> asyncio.Task[Any] | None:
+        return self._publish(
+            {
+                "type": "speaker_enroll_result",
+                "session_id": self.session_id,
+                "accepted": accepted,
+                "reason": reason,
+                "profile_id": profile_id,
+                "status": status,
+                "sample_count": self._formal_enrollment.sample_count,
+                "at": datetime.now(UTC).isoformat(),
+            },
+            fence=self.fence,
+        )
 
     def poll_speaker_enrollment(self, *, force: bool = False) -> dict[str, object] | None:
         wall_ms: int | None = None
@@ -2816,6 +2901,14 @@ class DuplexRuntime:
         final: bool,
         now_ns: int | None = None,
     ) -> PlaybackInputDecision:
+        if self.formal_speaker_enrollment_active:
+            if final:
+                self._speech_epoch_assembler.observe_final(
+                    text,
+                    accepted=False,
+                    contaminated=True,
+                )
+            return PlaybackInputDecision.IGNORE
         raw_route = route_utterance(
             text,
             speaker_state=self.speaker_verifier.state,
@@ -3165,6 +3258,9 @@ class DuplexRuntime:
         canonical_snapshot_bound: bool | None = None,
         semantic_verdict: InterruptSemanticVerdict | None = None,
     ) -> tuple[bool, str | None]:
+        if self.formal_speaker_enrollment_active:
+            self.speaker_verifier.mark_utterance_end()
+            return False, "speaker_enrolling"
         self.speaker_verifier.mark_utterance_end()
         self._persona_evidence_eligible = False
         if self.mode_policy_enforced and not self._mode_policy.allows_conversation():

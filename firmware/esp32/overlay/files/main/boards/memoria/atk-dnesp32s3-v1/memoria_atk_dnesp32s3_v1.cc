@@ -6,6 +6,8 @@
 #include "config.h"
 #include "i2c_device.h"
 #include "led/single_led.h"
+#include "memoria_bootstrap.h"
+#include "settings.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
@@ -138,6 +140,19 @@ private:
                 app.ToggleChatState();
                 app.Schedule([this]() { EnterWifiConfigMode(); });
                 return;
+            }
+            if (state == kDeviceStateStarting || state == kDeviceStateIdle) {
+                Settings runtime("memoria_runtime", true);
+                if (state == kDeviceStateIdle || runtime.GetInt("activation_v", 0) == 0) {
+                    Application::GetInstance().Schedule([this]() {
+                        if (memoria::MemoriaBootstrap::GetInstance().Start(display_) == ESP_OK) {
+                            return;
+                        }
+                        GetDisplay()->ShowNotification("正在进入配网", 1500);
+                        EnterWifiConfigMode();
+                    });
+                    return;
+                }
             }
             GetDisplay()->ShowNotification("正在进入配网", 1500);
             EnterWifiConfigMode();

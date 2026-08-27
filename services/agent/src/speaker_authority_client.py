@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -31,13 +32,32 @@ class SpeakerAuthorityClientConfig:
     endpoint: str
     internal_token: str
     timeout_s: float = 0.4
+    enrollment_timeout_s: float = 10.0
 
     def __post_init__(self) -> None:
         url = httpx.URL(self.endpoint)
         if url.scheme not in {"http", "https"} or not url.host:
             raise ValueError("speaker authority endpoint must be HTTP(S)")
-        if not self.internal_token.strip() or self.timeout_s <= 0:
+        if (
+            not self.internal_token.strip()
+            or self.timeout_s <= 0
+            or self.enrollment_timeout_s <= 0
+        ):
             raise ValueError("speaker authority token and timeout are required")
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerEnrollmentSample:
+    """One device-captured PCM segment; account identity stays server-side."""
+
+    pcm: bytes
+    sample_rate: int
+    device: str = "esp32"
+    scene: str = "device_voiceprint_setup"
+
+    def __post_init__(self) -> None:
+        if not self.pcm or len(self.pcm) % 2 or self.sample_rate < 8000:
+            raise ValueError("speaker enrollment sample must contain supported PCM")
 
 
 class SpeakerAuthorityClient:
@@ -98,6 +118,85 @@ class SpeakerAuthorityClient:
         # validation. A malformed authority result must leave the policy strict.
         self.reject_non_owner_voice = requested_policy
         return decision
+
+    async def enroll(
+        self,
+        *,
+        session_id: str,
+        intent_id: str,
+        samples: Sequence[SpeakerEnrollmentSample],
+    ) -> dict[str, Any]:
+        """Submit device samples through the session-scoped internal route.
+
+        The request deliberately contains no account_id.  Control API resolves
+        the account from the active voice session before applying the same
+        adult/verified subject gate as the public enrollment route.
+        """
+
+        if not session_id.strip() or not intent_id.strip() or not 3 <= len(samples) <= 10:
+            raise ValueError("speaker enrollment requires session, intent and 3 to 10 samples")
+        client = self._client or httpx.AsyncClient()
+        try:
+            response = await client.post(
+                self._enrollment_endpoint(),
+                headers={"X-Memoria-Speaker-Token": self._config.internal_token},
+                json={
+                    "session_id": session_id,
+                    "intent_id": intent_id,
+                    "samples": [
+                        {
+                            "audio_base64": base64.b64encode(sample.pcm).decode("ascii"),
+                            "sample_rate": sample.sample_rate,
+                            "device": sample.device,
+                            "scene": sample.scene,
+                        }
+                        for sample in samples
+                    ],
+                },
+                timeout=self._config.enrollment_timeout_s,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("profile_id"), str):
+                raise ValueError("invalid speaker enrollment response")
+            return payload
+        finally:
+            if self._client is None:
+                await client.aclose()
+
+    async def enrollment_status(self, *, session_id: str) -> dict[str, Any]:
+        """Read whether this active session needs device-side enrollment."""
+
+        if not session_id.strip():
+            raise ValueError("session_id is required")
+        client = self._client or httpx.AsyncClient()
+        try:
+            response = await client.get(
+                self._status_endpoint(),
+                params={"session_id": session_id},
+                headers={"X-Memoria-Speaker-Token": self._config.internal_token},
+                timeout=self._config.timeout_s,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("enrollment"), dict):
+                raise ValueError("invalid speaker enrollment status response")
+            return payload
+        finally:
+            if self._client is None:
+                await client.aclose()
+
+    def _enrollment_endpoint(self) -> str:
+        endpoint = self._config.endpoint.rstrip("/")
+        if endpoint.endswith("/classify"):
+            return f"{endpoint[:-len('/classify')]}/enrollments/internal"
+        return f"{endpoint}/enrollments/internal"
+
+    def _status_endpoint(self) -> str:
+        endpoint = self._config.endpoint.rstrip("/")
+        if endpoint.endswith("/classify"):
+            return f"{endpoint[:-len('/classify')]}/status/internal"
+        return f"{endpoint}/status/internal"
 
     @staticmethod
     def _policy_denial_code(response: httpx.Response) -> str | None:

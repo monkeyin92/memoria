@@ -1,6 +1,5 @@
 "use strict";
 
-const { FrameReassembler, fragmentFrame } = require("./packet-framer");
 const { SensitiveBuffer } = require("./sensitive-buffer");
 
 const ENDPOINTS = Object.freeze(["proto-ver", "proto-session", "prov-scan", "prov-config", "prov-status", "memoria-bootstrap"]);
@@ -25,10 +24,8 @@ function encodeUtf8(value) {
  *   writeWifiCredentials({ ssid, password })
  *   dispose()
  *
- * The default implementation intentionally has no securityAdapter or
- * protobuf codec.  This means the production path stops before the first
- * credential write until an audited Protocomm Security 1/2 implementation
- * and generated protocol codec are injected.
+ * The production factory injects the audited Protocomm Security 1 adapter and
+ * codec. Test doubles may still omit them and must fail closed before writes.
  */
 class BleProvisioningTransport {
   constructor({
@@ -37,6 +34,7 @@ class BleProvisioningTransport {
     serviceId,
     writeCharacteristicId,
     notifyCharacteristicId,
+    endpointCharacteristics = null,
     epoch,
     mtu = 20,
     securityAdapter = null,
@@ -47,14 +45,13 @@ class BleProvisioningTransport {
     this.serviceId = serviceId;
     this.writeCharacteristicId = writeCharacteristicId;
     this.notifyCharacteristicId = notifyCharacteristicId;
+    this.endpointCharacteristics = endpointCharacteristics || {};
     this.epoch = epoch;
     this.mtu = mtu;
     this.securityAdapter = securityAdapter;
     this.codec = codec;
     this._secureSession = null;
     this._writeQueue = Promise.resolve();
-    this._unsubscribeValue = null;
-    this._reassembler = new FrameReassembler();
   }
 
   _requireAdapter() {
@@ -65,7 +62,7 @@ class BleProvisioningTransport {
 
   _requireSecureSession() {
     if (!this._secureSession?.authenticated) {
-      throw protocolError("Protocomm 安全会话尚未建立，已停止发送网络信息");
+      throw protocolError("Protocomm 安全会话已失效，需要重新扫描二维码", "BLE_REAUTH_REQUIRED");
     }
   }
 
@@ -85,6 +82,7 @@ class BleProvisioningTransport {
       serviceId: this.serviceId,
       writeCharacteristicId: this.writeCharacteristicId,
       notifyCharacteristicId: this.notifyCharacteristicId,
+      endpointCharacteristics: this.endpointCharacteristics,
       epoch: this.epoch,
     });
     if (!session || session.authenticated !== true) {
@@ -106,27 +104,40 @@ class BleProvisioningTransport {
     return encoded instanceof Uint8Array ? encoded : new Uint8Array(encoded);
   }
 
-  async _writeFrameBytes(bytes) {
-    this._requireAdapter();
-    const frames = fragmentFrame(bytes, { mtu: this.mtu });
-    for (const frame of frames) {
-      this._writeQueue = this._writeQueue.then(() =>
-        this.adapter.write({
-          deviceId: this.deviceId,
-          serviceId: this.serviceId,
-          characteristicId: this.writeCharacteristicId,
-          value: frame,
-          epoch: this.epoch,
-        }),
-      );
-      await this._writeQueue;
+  _endpoint(endpoint) {
+    const descriptor = this.endpointCharacteristics?.[endpoint];
+    if (descriptor?.writeCharacteristicId) return descriptor;
+    if (this.writeCharacteristicId) {
+      return {
+        writeCharacteristicId: this.writeCharacteristicId,
+        readCharacteristicId: this.notifyCharacteristicId || this.writeCharacteristicId,
+      };
     }
+    throw protocolError(`缺少 Protocomm 端点 ${endpoint}`);
+  }
+
+  async _writeFrameBytes(endpoint, bytes) {
+    this._requireAdapter();
+    if (bytes.byteLength > this.mtu) {
+      throw protocolError("Protocomm 数据超过已协商的 BLE MTU", "BLE_MTU_TOO_SMALL");
+    }
+    const characteristic = this._endpoint(endpoint).writeCharacteristicId;
+    this._writeQueue = this._writeQueue.then(() =>
+      this.adapter.write({
+        deviceId: this.deviceId,
+        serviceId: this.serviceId,
+        characteristicId: characteristic,
+        value: bytes.buffer,
+        epoch: this.epoch,
+      }),
+    );
+    await this._writeQueue;
   }
 
   async send(endpoint, payload) {
     this._requireSecureSession();
     const encoded = this._encode(endpoint, payload);
-    await this._writeFrameBytes(encoded);
+    await this._writeFrameBytes(endpoint, encoded);
   }
 
   async request(endpoint, payload) {
@@ -135,9 +146,14 @@ class BleProvisioningTransport {
       throw protocolError("缺少经审计的 Protocomm protobuf codec，已停止读取 BLE 响应");
     }
     await this.send(endpoint, payload);
-    // A real codec/adapter implementation owns response correlation and
-    // notification decoding.  The default path never reaches this branch.
-    throw protocolError("Protocomm response correlation 尚未接入", "PROTOCOL_UNSUPPORTED");
+    const characteristic = this._endpoint(endpoint).readCharacteristicId;
+    const response = await this.adapter.read({
+      deviceId: this.deviceId,
+      serviceId: this.serviceId,
+      characteristicId: characteristic,
+      epoch: this.epoch,
+    });
+    return this.codec.decode(endpoint, new Uint8Array(response), this._secureSession);
   }
 
   async writeWifiCredentials({ ssid, password } = {}) {
@@ -150,7 +166,7 @@ class BleProvisioningTransport {
     const sensitive = new SensitiveBuffer();
     sensitive.setText(password);
     try {
-      await this.send("prov-config", {
+      await this.request("prov-config", {
         ssid,
         // The codec must consume this only inside the protected session. It
         // is never sent through api.js or serialized into a log/error.
@@ -164,9 +180,6 @@ class BleProvisioningTransport {
   dispose() {
     this._secureSession?.dispose?.();
     this._secureSession = null;
-    this._reassembler.reset();
-    this._unsubscribeValue?.();
-    this._unsubscribeValue = null;
     this._writeQueue = Promise.resolve();
   }
 }

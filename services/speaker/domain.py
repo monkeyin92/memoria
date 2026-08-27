@@ -78,6 +78,16 @@ class EnrollmentResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeakerEnrollmentIntent:
+    intent_id: str
+    account_id: str
+    consent_policy_version: str
+    state: Literal["requested", "consumed", "revoked"]
+    created_at: str
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class SpeakerEvaluation:
     report_ref: str
     sample_count: int
@@ -184,6 +194,30 @@ class SpeakerProfileNotFoundError(LookupError):
 
 
 class SpeakerAuthorityPort(Protocol):
+    async def create_enrollment_intent(
+        self,
+        *,
+        account_id: str,
+        consent_policy_version: str,
+        now: str,
+        expires_at: str,
+    ) -> SpeakerEnrollmentIntent: ...
+
+    async def pending_enrollment_intent(
+        self,
+        account_id: str,
+        *,
+        now: str,
+    ) -> SpeakerEnrollmentIntent | None: ...
+
+    async def consume_enrollment_intent(
+        self,
+        *,
+        intent_id: str,
+        account_id: str,
+        now: str,
+    ) -> SpeakerEnrollmentIntent: ...
+
     async def enroll(self, request: EnrollmentRequest) -> EnrollmentResult: ...
 
     async def activate(

@@ -177,6 +177,7 @@ private:
     std::function<void(uint32_t)> on_local_flush_requested_;
     std::function<void(uint32_t volume_limit, uint32_t screen_brightness)>
         on_device_settings_received_;
+    TaskHandle_t activation_retry_task_ = nullptr;
 
     // Session/epoch scoped state; reset by ResetSessionState().
     uint32_t stream_epoch_ = 0;
@@ -226,6 +227,9 @@ private:
     // order device control events.
     uint32_t control_sequence_ = 0;
 
+    void StartActivationRetry();
+    void RunActivationRetry();
+    static void ActivationRetryTask(void* context);
     bool CreateMediaSession(MediaSession* session);
     bool HandleServerText(const char* data, size_t size);
     bool HandleDownlink(const uint8_t* data, size_t size);

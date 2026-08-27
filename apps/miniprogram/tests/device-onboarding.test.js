@@ -10,6 +10,8 @@ const {
   FrameReassembler,
   SensitiveBuffer,
   fragmentFrame,
+  endpointUuid,
+  endpointUuidCandidates,
   parseDeviceQr,
   isActivationReady,
 } = require("../utils/device-onboarding");
@@ -41,6 +43,8 @@ function introspectResponse(overrides = {}) {
   return {
     onboarding_session_id: "onb_01",
     state: "qr_verified",
+    state_version: 2,
+    activation_version: 2,
     expires_at: new Date(Date.now() + 600_000).toISOString(),
     device: {
       device_id: "dev_01",
@@ -56,6 +60,9 @@ function introspectResponse(overrides = {}) {
       protocol_version: 1,
     },
     mobile_nonce: "mobile_nonce",
+    claim_id: "claim_01",
+    binding_id: "binding_01",
+    activation_status: "device_acknowledged",
     ...overrides,
   };
 }
@@ -66,6 +73,7 @@ function makeSession(overrides = {}) {
     state: "claim_reserved",
     expires_at: new Date(Date.now() + 600_000).toISOString(),
     state_version: 2,
+    activation_version: 2,
     device: {
       device_id: "dev_01",
       display_tail: "ABCD",
@@ -144,12 +152,99 @@ test("default provisioning transport fails closed before any Wi-Fi write without
   );
   await assert.rejects(
     transport.writeWifiCredentials({ ssid: "家庭网络", password: "not-sent" }),
-    (error) => error.code === "PROTOCOL_UNSUPPORTED",
+    (error) => error.code === "BLE_REAUTH_REQUIRED",
   );
   assert.equal(writes, 0);
 });
 
-function makeBleWx() {
+test("provisioning asks for a fresh QR when the in-memory BLE session was released", async () => {
+  const { OnboardingController } = require("../utils/device-onboarding/onboarding-controller");
+  const controller = new OnboardingController();
+  controller._session = makeSession({ state: "wifi_configuring" });
+  const result = await controller.provisionWifi({ ssid: "915", password: "password" });
+  assert.equal(result, false);
+  assert.equal(controller.snapshot().state, "scan");
+  assert.equal(controller.snapshot().errorCode, "BLE_REAUTH_REQUIRED");
+  controller.dispose();
+});
+
+test("Protocomm Security 1 completes the X25519, PoP, and AES-CTR proof exchange", async () => {
+  const { Aes256Ctr, nacl, sha256 } = require("../utils/device-onboarding/crypto");
+  const { Security1Adapter, readFields } = require("../utils/device-onboarding/protocomm-codec");
+  const concat = (...parts) => {
+    const output = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+    let offset = 0;
+    parts.forEach((part) => { output.set(part, offset); offset += part.length; });
+    return output;
+  };
+  const varint = (value) => {
+    const output = [];
+    let current = value;
+    do {
+      const byte = current & 0x7f;
+      current = Math.floor(current / 128);
+      output.push(byte | (current ? 0x80 : 0));
+    } while (current);
+    return Uint8Array.from(output);
+  };
+  const fieldBytes = (field, value) => concat(varint((field << 3) | 2), varint(value.length), value);
+  const fieldVarint = (field, value) => concat(varint(field << 3), varint(value));
+  const response0 = (devicePublicKey, deviceRandom) => {
+    const response = concat(fieldBytes(2, devicePublicKey), fieldBytes(3, deviceRandom));
+    const sec = concat(fieldVarint(1, 1), fieldBytes(21, response));
+    return concat(fieldVarint(2, 1), fieldBytes(11, sec));
+  };
+  const response1 = (deviceVerifyData) => {
+    const response = fieldBytes(3, deviceVerifyData);
+    const sec = concat(fieldVarint(1, 3), fieldBytes(23, response));
+    return concat(fieldVarint(2, 1), fieldBytes(11, sec));
+  };
+  const serverSecret = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+  const serverKeyPair = nacl.box.keyPair.fromSecretKey(serverSecret);
+  const deviceRandom = Uint8Array.from({ length: 16 }, (_, index) => 0xa0 + index);
+  let request = null;
+  let clientPublicKey = null;
+  let serverCipher = null;
+  const adapter = new Security1Adapter({ pop: "pop" });
+  const transportAdapter = {
+    async write({ value }) { request = new Uint8Array(value); },
+    async read() {
+      const outer = readFields(request);
+      const sec = readFields(outer.get(11)[0].value);
+      const message = sec.get(1)[0].value;
+      if (message === 0) {
+        const command = readFields(sec.get(20)[0].value);
+        clientPublicKey = command.get(1)[0].value;
+        const shared = nacl.scalarMult(serverSecret, clientPublicKey);
+        const popKey = sha256("pop");
+        for (let index = 0; index < shared.length; index += 1) shared[index] ^= popKey[index];
+        serverCipher = new Aes256Ctr(shared, deviceRandom);
+        return response0(serverKeyPair.publicKey, deviceRandom).buffer;
+      }
+      assert.equal(message, 2);
+      const command = readFields(sec.get(22)[0].value);
+      const encryptedClientKey = command.get(2)[0].value;
+      const decryptedClientKey = serverCipher.update(encryptedClientKey);
+      assert.deepEqual(decryptedClientKey, serverKeyPair.publicKey);
+      return response1(serverCipher.update(clientPublicKey)).buffer;
+    },
+  };
+  const session = await adapter.establishSession({
+    adapter: transportAdapter,
+    deviceId: "dev_01",
+    serviceId: "service",
+    endpointCharacteristics: { "proto-session": { writeCharacteristicId: "session" } },
+    epoch: 1,
+  });
+  assert.equal(session.authenticated, true);
+  session.dispose();
+});
+
+function makeBleWx({
+  serviceUuid = "12345678-1234-4234-8234-1234567890ab",
+  characteristicUuid = endpointUuid,
+  readValue = null,
+} = {}) {
   const listeners = {
     found: new Set(),
     connection: new Set(),
@@ -157,28 +252,36 @@ function makeBleWx() {
     adapter: new Set(),
   };
   const calls = [];
+  const discoveryOptions = [];
+  const endpointIds = [0xff50, 0xff51, 0xff52, 0xff53, 0xff54, 0xff55];
   const wxApi = {
     calls,
     listeners,
     openBluetoothAdapter(options) { calls.push("open"); options.success(); },
-    startBluetoothDevicesDiscovery(options) { calls.push("discover"); options.success(); },
+    startBluetoothDevicesDiscovery(options) { calls.push("discover"); discoveryOptions.push(options); options.success(); },
     stopBluetoothDevicesDiscovery(options) { calls.push("stop-discovery"); options.complete?.(); },
     createBLEConnection(options) { calls.push("connect"); options.success(); },
     getBLEDeviceServices(options) {
       calls.push("services");
-      options.success({ services: [{ uuid: "12345678-1234-4234-8234-1234567890ab" }] });
+      options.success({ services: [{ uuid: serviceUuid }] });
     },
     getBLEDeviceCharacteristics(options) {
       calls.push("characteristics");
       options.success({
         characteristics: [
-          { uuid: "write", properties: { write: true } },
-          { uuid: "notify", properties: { notify: true } },
+          ...endpointIds.map((id) => ({
+            uuid: characteristicUuid(serviceUuid, id),
+            properties: { write: true, read: true },
+          })),
         ],
       });
     },
     notifyBLECharacteristicValueChanged(options) { calls.push("notify"); options.success(); },
     writeBLECharacteristicValue(options) { calls.push("write"); options.success(); },
+    readBLECharacteristicValue(options) {
+      calls.push("read");
+      options.success(readValue || {});
+    },
     closeBLEConnection(options) { calls.push("close"); options.complete?.(); },
     closeBluetoothAdapter(options) { calls.push("close-adapter"); options.complete?.(); },
     onBluetoothDeviceFound(callback) { listeners.found.add(callback); },
@@ -190,6 +293,7 @@ function makeBleWx() {
     onBluetoothAdapterStateChange(callback) { listeners.adapter.add(callback); },
     offBluetoothAdapterStateChange(callback) { listeners.adapter.delete(callback); calls.push("off-adapter"); },
   };
+  wxApi.discoveryOptions = discoveryOptions;
   return wxApi;
 }
 
@@ -208,6 +312,7 @@ test("BLE adapter calls the real wx lifecycle and clears listeners on dispose", 
   foundCallback = [...wxApi.listeners.found][0];
   foundCallback({ devices: [{ deviceId: "wx-device-1", name: "MEM-ABCD" }] });
   await discovery;
+  assert.deepEqual(wxApi.discoveryOptions[0].services, []);
   const connection = await adapter.connect("wx-device-1", {
     serviceUuid: "12345678-1234-4234-8234-1234567890ab",
     epoch,
@@ -218,7 +323,7 @@ test("BLE adapter calls the real wx lifecycle and clears listeners on dispose", 
     epoch,
   });
   assert.deepEqual(
-    ["open", "discover", "off-found", "stop-discovery", "connect", "services", "characteristics", "notify", "off-connection"],
+    ["open", "discover", "off-found", "stop-discovery", "connect", "services", "characteristics", "off-connection", "write"],
     wxApi.calls.slice(0, 9),
   );
 
@@ -232,6 +337,65 @@ test("BLE adapter calls the real wx lifecycle and clears listeners on dispose", 
   assert.ok(wxApi.calls.includes("close-adapter"));
   [...wxApi.listeners.value].forEach((callback) => callback({ value: new ArrayBuffer(0) }));
   assert.equal(valueEvents, 1);
+});
+
+test("BLE adapter uses the iOS negotiated ATT payload as the conservative default", async () => {
+  const wxApi = makeBleWx();
+  wxApi.getSystemInfoSync = () => ({ platform: "ios" });
+  const adapter = new WxBleAdapter(wxApi);
+  const epoch = await adapter.open();
+  const connection = await adapter.connect("wx-device-1", {
+    serviceUuid: "12345678-1234-4234-8234-1234567890ab",
+    epoch,
+  });
+  assert.equal(connection.mtu, 182);
+  adapter.dispose();
+});
+
+test("BLE adapter ignores empty read results until the non-empty GATT value event arrives", async () => {
+  const wxApi = makeBleWx({ readValue: { value: new ArrayBuffer(0) } });
+  const adapter = new WxBleAdapter(wxApi);
+  const epoch = await adapter.open();
+  const promise = adapter.read({
+    deviceId: "wx-device-1",
+    serviceId: "12345678-1234-4234-8234-1234567890ab",
+    characteristicId: "session",
+    epoch,
+    timeoutMs: 1000,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const event = [...wxApi.listeners.value][0];
+  event({
+    deviceId: "wx-device-1",
+    characteristicId: "session",
+    value: new Uint8Array([1, 2, 3]).buffer,
+  });
+  assert.deepEqual(new Uint8Array(await promise), new Uint8Array([1, 2, 3]));
+  adapter.dispose();
+});
+
+test("BLE adapter accepts CoreBluetooth byte-reversed Protocomm endpoint UUIDs", () => {
+  assert.deepEqual(
+    endpointUuidCandidates("3D981E4A-31EB-42B4-8A68-75BD8D3BD521", 0xff50),
+    [
+      "3d981e4a-31eb-42b4-8a68-75bd50ffd521",
+      "3d98ff50-31eb-42b4-8a68-75bd8d3bd521",
+    ],
+  );
+});
+
+test("BLE adapter resolves the real CoreBluetooth GATT characteristic set", async () => {
+  const serviceUuid = "3D981E4A-31EB-42B4-8A68-75BD8D3BD521";
+  const wxApi = makeBleWx({
+    serviceUuid,
+    characteristicUuid: (service, id) => endpointUuidCandidates(service, id)[1],
+  });
+  const adapter = new WxBleAdapter(wxApi);
+  const epoch = await adapter.open();
+  const connection = await adapter.connect("wx-device-1", { serviceUuid, epoch });
+  assert.equal(connection.endpointCharacteristics["proto-session"].writeCharacteristicId,
+    "3d98ff51-31eb-42b4-8a68-75bd8d3bd521");
+  adapter.dispose();
 });
 
 test("BLE discovery invalidates a previous attempt and drops its late event", async () => {
@@ -387,8 +551,8 @@ test("onboarding API sends raw QR and uses the planned paths with strict respons
     },
   };
   const rawQr = ` ${makeQr()} `;
-  await api.introspectDeviceQr({ qrPayload: rawQr, clientOnboardingId: "client_onb_01" });
-  await api.getOnboardingSession("onb_01");
+  const introspected = await api.introspectDeviceQr({ qrPayload: rawQr, clientOnboardingId: "client_onb_01" });
+  const fetchedSession = await api.getOnboardingSession("onb_01");
   await api.cancelOnboardingSession("onb_01");
   await api.reserveDeviceClaim({
     onboardingSessionId: "onb_01",
@@ -398,6 +562,11 @@ test("onboarding API sends raw QR and uses the planned paths with strict respons
   });
   await api.getDeviceClaim("claim_01");
   await api.getActivationStatus("dev_01");
+  assert.equal(introspected.activation_version, 2);
+  assert.equal(introspected.activation_status, "device_acknowledged");
+  assert.equal(introspected.claim_id, "claim_01");
+  assert.equal(introspected.binding_id, "binding_01");
+  assert.equal(fetchedSession.activation_version, 2);
   assert.deepEqual(
     calls.map((call) => `${call.method} ${call.path}`),
     [

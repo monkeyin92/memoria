@@ -47,6 +47,62 @@ function characteristicIsNotifiable(characteristic) {
   return characteristic?.properties?.notify === true || characteristic?.properties?.indicate === true;
 }
 
+function initialAttPayload(wxApi) {
+  try {
+    // iOS/CoreBluetooth negotiates ATT MTU automatically and commonly exposes
+    // a 185-byte MTU (182-byte value payload). WeChat does not provide
+    // setBLEMTU on iOS, so defaulting to 20 locally rejects Security 1's
+    // 43-byte command before it can reach an otherwise compatible robot.
+    if (wxApi?.getSystemInfoSync?.()?.platform === "ios") return 182;
+  } catch {
+    // Unknown runtimes retain the BLE 4.0-safe 20-byte payload below.
+  }
+  return 20;
+}
+
+function normalizeUuid(value) {
+  return String(value || "").replace(/-/g, "").toLowerCase();
+}
+
+function toArrayBuffer(value) {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+  }
+  return null;
+}
+
+function hasBleValue(value) {
+  const buffer = toArrayBuffer(value);
+  return buffer && buffer.byteLength > 0 ? buffer : null;
+}
+
+function endpointUuid(serviceUuid, endpointId) {
+  const normalized = normalizeUuid(serviceUuid);
+  if (normalized.length !== 32 || !Number.isInteger(endpointId)) return "";
+  const low = (endpointId & 0xff).toString(16).padStart(2, "0");
+  const high = ((endpointId >>> 8) & 0xff).toString(16).padStart(2, "0");
+  const bytes = `${normalized.slice(0, 24)}${low}${high}${normalized.slice(28)}`;
+  return `${bytes.slice(0, 8)}-${bytes.slice(8, 12)}-${bytes.slice(12, 16)}-${bytes.slice(16, 20)}-${bytes.slice(20)}`;
+}
+
+function reversedEndpointUuid(serviceUuid, endpointId) {
+  const normalized = normalizeUuid(serviceUuid);
+  if (normalized.length !== 32 || !Number.isInteger(endpointId)) return "";
+  const low = (endpointId & 0xff).toString(16).padStart(2, "0");
+  const high = ((endpointId >>> 8) & 0xff).toString(16).padStart(2, "0");
+  // CoreBluetooth exposes the NimBLE UUID bytes in reverse order.  The
+  // endpoint's little-endian uint16 therefore appears in bytes 2..3 of the
+  // textual UUID, rather than at the same offset as the service UUID.
+  const bytes = `${normalized.slice(0, 4)}${high}${low}${normalized.slice(8)}`;
+  return `${bytes.slice(0, 8)}-${bytes.slice(8, 12)}-${bytes.slice(12, 16)}-${bytes.slice(16, 20)}-${bytes.slice(20)}`;
+}
+
+function endpointUuidCandidates(serviceUuid, endpointId) {
+  return [endpointUuid(serviceUuid, endpointId), reversedEndpointUuid(serviceUuid, endpointId)]
+    .filter(Boolean);
+}
+
 class WxBleAdapter {
   constructor(wxApi = globalThis.wx) {
     this.wx = wxApi;
@@ -157,7 +213,12 @@ class WxBleAdapter {
         return;
       }
       this.wx.startBluetoothDevicesDiscovery({
-        services: serviceUuid ? [serviceUuid] : [],
+        // Do not rely on the platform-level service filter here.  iOS/CoreBluetooth
+        // can expose ESP-IDF's little-endian UUID bytes in reversed textual order,
+        // which makes a valid Protocomm advertisement invisible to discovery.
+        // The device name is filtered above; connect() still validates the exact
+        // service and every required characteristic before any protocol request.
+        services: [],
         allowDuplicatesKey: false,
         success: () => {
           if (!this.isCurrent(epoch)) finish(reject, bleError("BLE 搜索已过期", "BLE_ATTEMPT_STALE"));
@@ -222,22 +283,50 @@ class WxBleAdapter {
       const characteristics = Array.isArray(characteristicsResult?.characteristics)
         ? characteristicsResult.characteristics
         : [];
-      const writable = characteristics.filter(characteristicIsWritable);
-      const notifiable = characteristics.filter(characteristicIsNotifiable);
-      if (writable.length !== 1 || notifiable.length !== 1) {
-        throw bleError("机器人 BLE 特征不明确，已停止兼容性尝试", "PROTOCOL_UNSUPPORTED");
+      const endpointIds = {
+        "proto-ver": 0xff50,
+        "proto-session": 0xff51,
+        "prov-scan": 0xff52,
+        "prov-config": 0xff53,
+        "prov-status": 0xff54,
+        "memoria-bootstrap": 0xff55,
+      };
+      const endpointCharacteristics = {};
+      for (const [name, id] of Object.entries(endpointIds)) {
+        const expectedUuids = new Set(endpointUuidCandidates(service.uuid, id).map(normalizeUuid));
+        const characteristic = characteristics.find((item) => expectedUuids.has(normalizeUuid(item.uuid)));
+        if (!characteristic || !characteristicIsWritable(characteristic)) {
+          throw bleError(`机器人缺少 Protocomm 端点 ${name}`, "PROTOCOL_UNSUPPORTED");
+        }
+        endpointCharacteristics[name] = {
+          writeCharacteristicId: characteristic.uuid,
+          readCharacteristicId: characteristic.uuid,
+        };
       }
-      await this.notify({
-        deviceId,
-        serviceId: service.uuid,
-        characteristicId: notifiable[0].uuid,
-        epoch,
-      });
+      let mtu = initialAttPayload(this.wx);
+      if (typeof this.wx?.setBLEMTU === "function") {
+        try {
+          const mtuResult = await callWx(this.wx, "setBLEMTU", { deviceId, mtu: 247 }, "BLE_CONNECTION_FAILED");
+          mtu = Math.max(20, Number(mtuResult?.mtu || 247) - 3);
+        } catch {
+          // The default ATT payload remains valid for small version/session reads.
+        }
+      }
+      if (typeof this.wx?.getBLEMTU === "function") {
+        try {
+          const mtuResult = await callWx(this.wx, "getBLEMTU", { deviceId, writeType: "write" }, "BLE_CONNECTION_FAILED");
+          if (Number.isFinite(Number(mtuResult?.mtu))) {
+            mtu = Math.max(20, Number(mtuResult.mtu) - 3);
+          }
+        } catch {
+          // Older base libraries and iOS may not expose a readable MTU.
+        }
+      }
       return {
         deviceId,
         serviceId: service.uuid,
-        writeCharacteristicId: writable[0].uuid,
-        notifyCharacteristicId: notifiable[0].uuid,
+        endpointCharacteristics,
+        mtu,
         epoch,
       };
     } finally {
@@ -275,6 +364,56 @@ class WxBleAdapter {
       value,
     }, "BLE_CONNECTION_FAILED");
     this._assertCurrent(epoch);
+  }
+
+  async read({ deviceId = this._deviceId, serviceId, characteristicId, epoch = this._epoch, timeoutMs = 5000 } = {}) {
+    this._assertCurrent(epoch);
+    if (typeof this.wx?.readBLECharacteristicValue !== "function") {
+      throw bleError("当前微信运行时不支持 BLE 读取", "BLUETOOTH_UNSUPPORTED");
+    }
+    const value = await new Promise((resolve, reject) => {
+      let timer = null;
+      let settled = false;
+      const finish = (callback, result) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        removeListener?.();
+        callback(result);
+      };
+      const onValue = (event) => {
+        if (!this.isCurrent(epoch) || event?.deviceId !== deviceId || event?.characteristicId !== characteristicId) return;
+        // WeChat's read success callback may be emitted before the actual GATT
+        // value-change event, and some iOS base libraries also emit an empty
+        // value-change event first. Never let an empty/stale value terminate a
+        // Protocomm response read; the response itself is always non-empty.
+        const value = hasBleValue(event?.value);
+        if (value) finish(resolve, value);
+      };
+      let removeListener = () => {};
+      try {
+        removeListener = this._register("onBLECharacteristicValueChange", "offBLECharacteristicValueChange", onValue);
+      } catch (error) {
+        finish(reject, error);
+        return;
+      }
+      timer = setTimeout(() => finish(reject, bleError("读取 Protocomm 响应超时", "BLE_RESPONSE_TIMEOUT")), timeoutMs);
+      this.wx.readBLECharacteristicValue({
+        deviceId,
+        serviceId,
+        characteristicId,
+        success: (result) => {
+          // The documented success result normally contains only errMsg. If a
+          // platform supplies a value here, accept it only when it is a real,
+          // non-empty ArrayBuffer; otherwise wait for onBLECharacteristicValueChange.
+          const value = hasBleValue(result?.value);
+          if (value) finish(resolve, value);
+        },
+        fail: (error) => finish(reject, Object.assign(bleError(error?.errMsg || "BLE 读取失败"), { cause: error })),
+      });
+    });
+    this._assertCurrent(epoch);
+    return toArrayBuffer(value) || value;
   }
 
   async disconnect() {
@@ -323,5 +462,7 @@ class WxBleAdapter {
 module.exports = {
   WxBleAdapter,
   bleError,
+  endpointUuid,
+  endpointUuidCandidates,
   matchesDevice,
 };

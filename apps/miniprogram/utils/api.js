@@ -198,6 +198,16 @@ function errorFromResponse(response) {
                               ? "这项授权已经存在，请刷新后再试。"
                               : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
+                                : code === "CLAIM_CONFLICT"
+                                  ? "设备认领状态已变化，请刷新二维码后重试。"
+                                  : code === "BINDING_CONFLICT" || code === "binding_conflict"
+                                    ? "设备绑定状态发生冲突，请刷新二维码后重试。"
+                                    : code === "DEVICE_ALREADY_BOUND"
+                                      ? "这台机器人已经绑定，请先解除原绑定或更换设备。"
+                                      : code === "STATE_VERSION_CONFLICT"
+                                        ? "启用状态已更新，请返回设备页刷新后再提交。"
+                                        : code === "INVALID_STATE_TRANSITION"
+                                          ? "启用流程状态已变化，请返回设备页重新进入。"
                   : response.statusCode === 429
                     ? "操作太频繁，请稍后再试。"
                     : `请求未完成（${response.statusCode || 0}）`;
@@ -348,6 +358,24 @@ async function requestAccountDeletion({ confirmation }) {
 
 function getProfile(userId) {
   return rawRequest(`/v1/memory/profile/${encodeURIComponent(userId)}`);
+}
+
+/*
+ * 主人声纹初始化只读取服务端状态。原始 PCM 和声纹模板不进入小程序；
+ * 设备端登记完成后，页面重新拉取这里的权威结果。
+ */
+function getSpeakerEnrollmentStatus() {
+  return rawRequest("/v1/speakers/status");
+}
+
+function createSpeakerEnrollmentIntent() {
+  return rawRequest("/v1/speakers/enrollment-intents", {
+    method: "POST",
+    data: {
+      consent_policy_version: "speaker-biometric-v1",
+      consent_accepted: true,
+    },
+  });
 }
 
 function getGuardianLinks() {
@@ -809,6 +837,8 @@ module.exports = {
   logoutAllDevices,
   requestAccountDeletion,
   getProfile,
+  getSpeakerEnrollmentStatus,
+  createSpeakerEnrollmentIntent,
   getGuardianLinks,
   getGuardianSummary,
   createGuardianLink,

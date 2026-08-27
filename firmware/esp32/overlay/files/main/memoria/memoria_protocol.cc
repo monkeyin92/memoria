@@ -13,8 +13,10 @@
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "display/lcd_display.h"
 #include "http.h"
 #include "memoria_audio_frame.h"
+#include "memoria_bootstrap.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -26,6 +28,7 @@ constexpr int kHttpTimeoutMs = 10000;
 constexpr int kSessionReadyTimeoutMs = 10000;
 constexpr int64_t kTransportPingIntervalUs = 30LL * 1000LL * 1000LL;
 constexpr int64_t kTransportPongTimeoutUs = 10LL * 1000LL * 1000LL;
+constexpr uint32_t kActivationRetryDelayMs = 5000;
 constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate24k = 24000;
 constexpr uint32_t kDownlinkSampleRate16k = 16000;
@@ -301,6 +304,11 @@ MemoriaProtocol::~MemoriaProtocol() {
     on_audio_channel_closed_ = nullptr;
     on_disconnected_ = nullptr;
     on_transport_action_ready_ = nullptr;
+    if (activation_retry_task_ != nullptr &&
+        activation_retry_task_ != xTaskGetCurrentTaskHandle()) {
+        vTaskDelete(activation_retry_task_);
+        activation_retry_task_ = nullptr;
+    }
     CloseAudioChannel(false);
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
@@ -318,14 +326,70 @@ bool MemoriaProtocol::Start() {
     MemoriaActivationClient activation_client(identity_);
     const esp_err_t activation_result = activation_client.Activate(&activation_);
     if (activation_result != ESP_OK) {
+        if (activation_result == ESP_ERR_INVALID_STATE) {
+            auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
+            if (display != nullptr &&
+                MemoriaBootstrap::GetInstance().Start(display) == ESP_OK) {
+                StartActivationRetry();
+                ESP_LOGW(kTag, "Device is unbound; nearby bootstrap remains available");
+                return false;
+            }
+        }
         ESP_LOGE(kTag, "Memoria activation failed, code=%s", esp_err_to_name(activation_result));
         SetError("Memoria 激活失败");
         return false;
     }
+    // A successful retry may be the first activation after nearby bootstrap.
+    // Clear its BLE/QR surface before advertising normal conversation state.
+    MemoriaBootstrap::GetInstance().Stop();
     if (on_connected_ != nullptr) {
         on_connected_();
     }
     return true;
+}
+
+void MemoriaProtocol::StartActivationRetry() {
+    if (activation_retry_task_ != nullptr) {
+        return;
+    }
+    const BaseType_t created = xTaskCreate(
+        &MemoriaProtocol::ActivationRetryTask, "memoria_activation_retry", 8192, this, 2,
+        &activation_retry_task_);
+    if (created != pdPASS) {
+        activation_retry_task_ = nullptr;
+        ESP_LOGE(kTag, "Unable to start activation retry task");
+    }
+}
+
+void MemoriaProtocol::ActivationRetryTask(void* context) {
+    auto* protocol = static_cast<MemoriaProtocol*>(context);
+    if (protocol != nullptr) {
+        protocol->RunActivationRetry();
+        protocol->activation_retry_task_ = nullptr;
+    }
+    vTaskDelete(nullptr);
+}
+
+void MemoriaProtocol::RunActivationRetry() {
+    // Binding is committed by the Mini Program after online-proof acceptance,
+    // so the first activation attempt can legitimately precede the manifest.
+    // Keep the retry on its own task; never block Application's main loop on
+    // the 10-second HTTPS timeout while the phone completes binding.
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(kActivationRetryDelayMs));
+
+        MemoriaActivationClient activation_client(identity_);
+        const esp_err_t result = activation_client.Activate(&activation_);
+        if (result == ESP_OK) {
+            MemoriaBootstrap::GetInstance().Stop();
+            ESP_LOGI(kTag, "Activation completed after nearby bootstrap");
+            if (on_connected_ != nullptr) {
+                on_connected_();
+            }
+            return;
+        }
+        ESP_LOGW(kTag, "Activation retry pending, code=%s", esp_err_to_name(result));
+    }
 }
 
 bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {

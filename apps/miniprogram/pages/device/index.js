@@ -335,7 +335,7 @@ Page({
   },
 
   openOnboarding() {
-    wx.navigateTo({ url: "/pages/device-onboarding/index" });
+    wx.navigateTo({ url: "/pages/device-onboarding/index?fresh=1" });
   },
 
   resumeOnboarding() {

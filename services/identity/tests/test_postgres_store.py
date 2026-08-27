@@ -282,11 +282,12 @@ async def test_schema_roles_rls_and_version_chain() -> None:
                         'identity_patch_idempotency_result',
                         'identity_self_update_profile',
                         'identity_declare_age_evidence',
-                        'identity_verify_age_evidence'
+                        'identity_verify_age_evidence',
+                        'identity_next_binding_version'
                       )
                     """
                 )
-                assert len(definer_ports) == 11
+                assert len(definer_ports) == 12
                 for row in definer_ports:
                     assert str(row["owner"]) == "memoria_identity_owner"
                     assert bool(row["prosecdef"])
@@ -379,6 +380,10 @@ async def test_schema_roles_rls_and_version_chain() -> None:
                     )
                     assert gone is True, f"generic port {port} must be removed"
                 for port, signature in (
+                    (
+                        "identity_next_binding_version",
+                        "identity_next_binding_version(text)",
+                    ),
                     (
                         "identity_write_idempotency",
                         "identity_write_idempotency(text,text,text,text,jsonb,"
@@ -502,6 +507,87 @@ async def test_schema_roles_rls_and_version_chain() -> None:
         finally:
             await store.close()
     finally:
+        await _drop_database(database)
+
+
+@pytest.mark.asyncio
+async def test_new_owner_binding_version_allocation_sees_revoked_history() -> None:
+    """Version allocation must not be narrowed by the new owner's RLS view."""
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=UTC)
+        first_owner = (
+            await service.register_person(
+                display_name="原所有者",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-first-owner",
+                now=now,
+            )
+        ).person_id
+        second_owner = (
+            await service.register_person(
+                display_name="新所有者",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-second-owner",
+                now=now,
+            )
+        ).person_id
+        first = await service.create_binding(
+            device_id="dev-pg-rebind",
+            declared_mode="self_use",
+            account_owner_person_id=first_owner,
+            primary_subject_ids=(first_owner,),
+            service_profile_version="self-v1",
+            policy_bundle_version="policy-self-v1",
+            now=now,
+        )
+        await service.revoke_binding(
+            device_id="dev-pg-rebind",
+            actor_person_id=first_owner,
+            now=now + timedelta(minutes=1),
+        )
+
+        rebound = await service.create_binding(
+            device_id="dev-pg-rebind",
+            declared_mode="self_use",
+            account_owner_person_id=second_owner,
+            primary_subject_ids=(second_owner,),
+            service_profile_version="self-v1",
+            policy_bundle_version="policy-self-v1",
+            now=now + timedelta(minutes=2),
+        )
+        assert first.binding_version == 1
+        assert rebound.binding_version == 2
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            versions = await admin.fetch(
+                """
+                SELECT binding_version, status, account_owner_person_id
+                FROM identity_device_bindings
+                WHERE device_id = $1
+                ORDER BY binding_version
+                """,
+                "dev-pg-rebind",
+            )
+            assert [(row["binding_version"], row["status"]) for row in versions] == [
+                (1, "revoked"),
+                (2, "active"),
+            ]
+            assert versions[1]["account_owner_person_id"] == second_owner
+        finally:
+            await admin.close()
+    finally:
+        if store is not None:
+            await store.close()
         await _drop_database(database)
 
 

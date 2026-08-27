@@ -3,6 +3,7 @@
 const defaultApi = require("../api");
 const { WxBleAdapter } = require("./ble-adapter");
 const { createProvisioningTransport } = require("./provisioning-transport");
+const { Security1Adapter, codec } = require("./protocomm-codec");
 const { parseDeviceQr } = require("./qr-code");
 const { SensitiveBuffer } = require("./sensitive-buffer");
 const { normalizeWifiNetworks, getConnectedWifi } = require("./wifi-model");
@@ -34,14 +35,18 @@ class OnboardingController {
   constructor({
     apiClient = defaultApi,
     bleAdapterFactory = () => new WxBleAdapter(),
-    transportFactory = (options) => createProvisioningTransport(options),
+    transportFactory = null,
     clientOnboardingId = operationId("client_onb"),
     now = () => Date.now(),
     onChange = null,
   } = {}) {
     this.api = apiClient;
     this.bleAdapterFactory = bleAdapterFactory;
-    this.transportFactory = transportFactory;
+    this.transportFactory = transportFactory || ((options) => createProvisioningTransport({
+      ...options,
+      securityAdapter: new Security1Adapter({ pop: options.pop }),
+      codec,
+    }));
     this.clientOnboardingId = clientOnboardingId;
     this.now = now;
     this.onChange = onChange;
@@ -61,6 +66,7 @@ class OnboardingController {
     this._wifiPassword = new SensitiveBuffer();
     this._wifiSsid = "";
     this._activationTimer = null;
+    this._bootstrapPop = "";
     this._disposed = false;
     this._emit();
   }
@@ -156,7 +162,19 @@ class OnboardingController {
     try {
       // Local parsing is only a shape/version gate.  The exact raw payload is
       // sent unchanged to the server for signature and revocation checks.
-      parseDeviceQr(rawPayload);
+      let parsedQr;
+      try {
+        parsedQr = parseDeviceQr(rawPayload);
+      } catch (error) {
+        // Keep the public message generic by default, but retain the local
+        // protocol reason so the device onboarding screen can distinguish a
+        // malformed scanner result from a camera failure without exposing QR
+        // contents, the PoP, or the device signature.
+        if (error?.code === "QR_INVALID" && !error.clientDetail) {
+          error.clientDetail = error.message;
+        }
+        throw error;
+      }
       const session = await this.api.introspectDeviceQr({
         qrPayload: rawPayload,
         clientOnboardingId: this.clientOnboardingId,
@@ -166,13 +184,13 @@ class OnboardingController {
       this._claim = null;
       this._binding = null;
       this._activation = null;
-      this._qrPayload = "";
+      this._bootstrapPop = parsedQr.payload.pop;
       saveOnboardingSessionId(session.onboarding_session_id);
       this._setState("device_verified", { force: true });
       return session;
     } catch (error) {
       if (this._isCurrent(epoch)) {
-        this._qrPayload = "";
+        this._bootstrapPop = "";
         this._setError(error, { keepState: false });
       }
       return null;
@@ -213,9 +231,14 @@ class OnboardingController {
         adapter,
         ...connection,
         protocolVersion: this._session.provisioning.protocol_version,
+        pop: this._bootstrapPop,
       });
       this._transport = transport;
       await transport.establishSecureSession();
+      await transport.request("memoria-bootstrap", {
+        onboarding_session_id: this._session.onboarding_session_id,
+        mobile_nonce: this._session.mobile_nonce,
+      });
       if (!this._isCurrent(epoch)) return null;
       this._setState("wifi", { force: true });
       await this.loadWifiNetworks();
@@ -269,8 +292,8 @@ class OnboardingController {
     try {
       this.setWifiCredentials({ ssid, password });
       if (!this._transport) {
-        const error = new Error("BLE 安全配网会话不可用");
-        error.code = "PROTOCOL_UNSUPPORTED";
+        const error = new Error("BLE 安全会话已失效，需要重新扫描二维码");
+        error.code = "BLE_REAUTH_REQUIRED";
         throw error;
       }
       await this._transport.writeWifiCredentials({
@@ -283,7 +306,9 @@ class OnboardingController {
       await this.refreshSession({ preserveProgress: true });
       return true;
     } catch (error) {
-      if (this._isCurrent(epoch)) this._setError(error);
+      if (this._isCurrent(epoch)) {
+        this._setError(error, { keepState: error?.code !== "BLE_REAUTH_REQUIRED" });
+      }
       return false;
     } finally {
       // Passwords are cleared even on failure; a retry re-enters them in the
@@ -439,6 +464,7 @@ class OnboardingController {
     this._attemptEpoch += 1;
     this.stopActivationPolling();
     this.clearSensitiveInput();
+    this._bootstrapPop = "";
     this._disposeBle();
   }
 
@@ -454,6 +480,7 @@ class OnboardingController {
       this._claim = null;
       this._binding = null;
       this._activation = null;
+      this._bootstrapPop = "";
       this._setState("prepare", { force: true });
       return true;
     } catch (error) {
@@ -524,6 +551,7 @@ class OnboardingController {
     this._attemptEpoch += 1;
     this.stopActivationPolling();
     this.clearSensitiveInput();
+    this._bootstrapPop = "";
     this._disposeBle();
     this.onChange = null;
   }

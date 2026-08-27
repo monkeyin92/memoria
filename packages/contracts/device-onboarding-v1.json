@@ -391,6 +391,7 @@
         "onboarding_session_id",
         "state",
         "state_version",
+        "activation_version",
         "expires_at",
         "device",
         "provisioning"
@@ -399,8 +400,24 @@
         "onboarding_session_id": { "$ref": "#/$defs/identifier" },
         "state": { "type": "string", "minLength": 1, "maxLength": 64 },
         "state_version": { "type": "integer", "minimum": 1 },
+        "activation_version": { "type": "integer", "minimum": 0 },
         "expires_at": { "$ref": "#/$defs/rfc3339" },
         "mobile_nonce": { "$ref": "#/$defs/base64url", "minLength": 43, "maxLength": 43 },
+        "claim_id": { "$ref": "#/$defs/identifier" },
+        "binding_id": { "$ref": "#/$defs/identifier" },
+        "activation_status": {
+          "enum": [
+            "pending_manifest",
+            "manifest_ready",
+            "device_downloading",
+            "device_applied",
+            "device_acknowledged",
+            "ready_for_conversation",
+            "failed",
+            "expired",
+            "unknown"
+          ]
+        },
         "device": {
           "type": "object",
           "additionalProperties": false,

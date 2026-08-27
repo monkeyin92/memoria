@@ -394,6 +394,38 @@ class PostgresIdentityStore:
                 raise RuntimeError(
                     "identity store role must be LOGIN NOSUPERUSER NOBYPASSRLS"
                 )
+            version_port = await connection.fetchval(
+                """
+                SELECT pg_get_userbyid(p.proowner) = 'memoria_identity_owner'
+                       AND p.prosecdef
+                       AND 'row_security=on' = ANY(p.proconfig)
+                FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.oid = to_regprocedure(
+                      'identity_next_binding_version(text)'
+                  )
+                """
+            )
+            if not version_port:
+                raise RuntimeError(
+                    "identity_next_binding_version must be SECURITY DEFINER "
+                    "owned by memoria_identity_owner with row_security=on"
+                )
+            version_exec = await connection.fetchval(
+                """
+                SELECT has_function_privilege(
+                    current_user,
+                    to_regprocedure('identity_next_binding_version(text)'),
+                    'EXECUTE'
+                )
+                """
+            )
+            if not version_exec:
+                raise RuntimeError(
+                    "identity API role must be able to EXECUTE "
+                    "identity_next_binding_version"
+                )
         if self._registration_dsn is None:
             raise RuntimeError(
                 "PostgresIdentityStore requires an explicit registration "
@@ -985,14 +1017,10 @@ class PostgresIdentityStore:
                     )
                 else:
                     version_row = await connection.fetchrow(
-                        """
-                        SELECT COALESCE(MAX(binding_version), 0) AS version
-                        FROM identity_device_bindings
-                        WHERE device_id = $1
-                        """,
+                        "SELECT identity_next_binding_version($1) AS version",
                         binding.device_id,
                     )
-                    version = int(version_row["version"]) + 1
+                    version = int(version_row["version"])
                 try:
                     await connection.execute(
                         """

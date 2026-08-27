@@ -179,6 +179,19 @@ def test_memoria_activation_applies_assets_before_audio_engine_can_load_models()
     assert "Memoria assets partition/model load failed" in PATCH_0014
 
 
+def test_unbound_activation_retries_after_nearby_binding_and_clears_qr() -> None:
+    assert "TaskHandle_t activation_retry_task_ = nullptr;" in PROTOCOL_HEADER
+    assert "void StartActivationRetry();" in PROTOCOL_HEADER
+    assert "StartActivationRetry();" in SOURCE
+    assert "void MemoriaProtocol::RunActivationRetry()" in SOURCE
+    retry = SOURCE[SOURCE.index("void MemoriaProtocol::RunActivationRetry") :]
+    retry = retry[: retry.index("bool MemoriaProtocol::CreateMediaSession")]
+    assert "MemoriaActivationClient activation_client(identity_);" in retry
+    assert "activation_client.Activate(&activation_)" in retry
+    assert "MemoriaBootstrap::GetInstance().Stop();" in retry
+    assert "Activation completed after nearby bootstrap" in retry
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)

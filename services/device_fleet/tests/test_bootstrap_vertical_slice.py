@@ -159,6 +159,18 @@ def test_qr_is_strict_and_screenshot_without_nearby_proof_cannot_claim() -> None
     )
     assert replay["onboarding_session_id"] == session["onboarding_session_id"]
     assert replay["mobile_nonce"] == session["mobile_nonce"]
+    retried_from_new_page = service.introspect(
+        actor_id="person_a",
+        qr_payload=qr,
+        client_onboarding_id="client_a_retry",
+        client={
+            "platform": "wechat-miniprogram",
+            "app_version": "0.1.0",
+            "base_library_version": "3.0.0",
+        },
+    )
+    assert retried_from_new_page["onboarding_session_id"] == session["onboarding_session_id"]
+    assert retried_from_new_page["mobile_nonce"] == session["mobile_nonce"]
     session_row = store.get_session(str(session["onboarding_session_id"]))
     assert session_row is not None
     assert session_row.pop_hash != payload.pop

@@ -1,0 +1,218 @@
+diff --git a/main/display/lcd_display.h b/main/display/lcd_display.h
+--- a/main/display/lcd_display.h
++++ b/main/display/lcd_display.h
+@@ -35,6 +35,7 @@ class LcdDisplay : public LvglDisplay {
+     lv_obj_t* qr_overlay_ = nullptr;
+     lv_obj_t* qr_code_ = nullptr;
+     lv_obj_t* qr_caption_ = nullptr;
++    void* qr_buffer_ = nullptr;
+ 
+     void InitializeLcdThemes();
+     virtual bool Lock(int timeout_ms = 0) override;
+diff --git a/main/display/lcd_display.cc b/main/display/lcd_display.cc
+--- a/main/display/lcd_display.cc
++++ b/main/display/lcd_display.cc
+@@ -12,7 +12,8 @@
+ #include <material_symbols.h>
+ #include <noto_emoji.h>
+ #include <widgets/canvas/lv_canvas.h>
+ #include <src/misc/cache/lv_cache.h>
+ #include <algorithm>
++#include <array>
+ #include <cstring>
+ #include <vector>
+@@ -353,58 +354,122 @@ bool LcdDisplay::Lock(int timeout_ms) { return lvgl_port_lock(timeout_ms); }
+ void LcdDisplay::Unlock() { lvgl_port_unlock(); }
+ 
+-bool LcdDisplay::ShowQrCode(const std::string& payload, const char* caption) {
+-    if (!setup_ui_called_ || payload.empty() || !Lock(1000)) {
+-        return false;
+-    }
+-    if (qr_overlay_ != nullptr) {
+-        lv_obj_del(qr_overlay_);
+-        qr_overlay_ = nullptr;
+-        qr_code_ = nullptr;
+-        qr_caption_ = nullptr;
+-    }
+-    qr_overlay_ = lv_obj_create(lv_screen_active());
+-    if (qr_overlay_ == nullptr) {
+-        Unlock();
+-        return false;
+-    }
+-    lv_obj_set_size(qr_overlay_, LV_HOR_RES, LV_VER_RES);
+-    lv_obj_set_style_radius(qr_overlay_, 0, 0);
+-    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_COVER, 0);
+-    lv_obj_set_style_bg_color(qr_overlay_, lv_color_white(), 0);
+-    lv_obj_set_style_border_width(qr_overlay_, 0, 0);
+-    lv_obj_set_style_pad_all(qr_overlay_, 0, 0);
+-    qr_code_ = lv_qrcode_create(qr_overlay_);
+-    if (qr_code_ == nullptr) {
+-        lv_obj_del(qr_overlay_);
+-        qr_overlay_ = nullptr;
+-        Unlock();
+-        return false;
+-    }
+-    lv_qrcode_set_size(qr_code_, 190);
+-    lv_qrcode_set_dark_color(qr_code_, lv_color_black());
+-    lv_qrcode_set_light_color(qr_code_, lv_color_white());
+-    lv_qrcode_set_quiet_zone(qr_code_, true);
+-    if (lv_qrcode_update(qr_code_, payload.data(), payload.size()) != LV_RESULT_OK) {
+-        lv_obj_del(qr_overlay_);
+-        qr_overlay_ = nullptr;
+-        qr_code_ = nullptr;
+-        Unlock();
+-        return false;
+-    }
+-    lv_obj_center(qr_code_);
+-    lv_obj_set_y(qr_code_, -17);
+-    qr_caption_ = lv_label_create(qr_overlay_);
+-    if (qr_caption_ == nullptr) {
+-        lv_obj_del(qr_overlay_);
+-        qr_overlay_ = nullptr;
+-        qr_code_ = nullptr;
+-        Unlock();
+-        return false;
+-    }
+-    lv_label_set_text(qr_caption_, caption == nullptr ? "微信扫码绑定" : caption);
+-    lv_obj_set_style_text_color(qr_caption_, lv_color_black(), 0);
+-    lv_obj_align(qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -4);
+-    Unlock();
+-    return true;
+-}
++namespace {
++extern "C" {
++bool qrcodegen_encodeText(const char* text, uint8_t temp_buffer[], uint8_t qr_code[],
++                          int ecc, int min_version, int max_version, int mask, bool boost_ecc);
++int qrcodegen_getSize(const uint8_t qr_code[]);
++bool qrcodegen_getModule(const uint8_t qr_code[], int x, int y);
++}
++constexpr size_t kQrBufferLen = 3918;  // qrcodegen_BUFFER_LEN_FOR_VERSION(40)
++}
++
++bool LcdDisplay::ShowQrCode(const std::string& payload, const char* caption) {
++    // The production payload selects a 93-module QR symbol.  At 190 px the
++    // integer scale collapses to one LCD pixel per module; keep two pixels per
++    // module on the 320x240 panel so phone cameras can decode it reliably.
++    constexpr int kQrPixels = 220;
++    if (!setup_ui_called_ || payload.empty() || !Lock(1000)) {
++        return false;
++    }
++    if (qr_overlay_ != nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        qr_caption_ = nullptr;
++    }
++    if (qr_buffer_ != nullptr) {
++        lv_free(qr_buffer_);
++        qr_buffer_ = nullptr;
++    }
++    auto* temp_buffer = static_cast<uint8_t*>(lv_malloc(kQrBufferLen));
++    auto* qr_data = static_cast<uint8_t*>(lv_malloc(kQrBufferLen));
++    if (temp_buffer == nullptr || qr_data == nullptr) {
++        lv_free(temp_buffer);
++        lv_free(qr_data);
++        Unlock();
++        return false;
++    }
++    std::memset(temp_buffer, 0, kQrBufferLen);
++    std::memset(qr_data, 0, kQrBufferLen);
++    if (!qrcodegen_encodeText(payload.c_str(), temp_buffer, qr_data,
++                              1, 1, 40, -1, true)) {
++        lv_free(temp_buffer);
++        lv_free(qr_data);
++        Unlock();
++        return false;
++    }
++    const int qr_modules = qrcodegen_getSize(qr_data);
++    if (qr_modules <= 0 || qr_modules > kQrPixels - 8) {
++        lv_free(temp_buffer);
++        lv_free(qr_data);
++        Unlock();
++        return false;
++    }
++    qr_overlay_ = lv_obj_create(lv_screen_active());
++    if (qr_overlay_ == nullptr) {
++        lv_free(temp_buffer);
++        lv_free(qr_data);
++        Unlock();
++        return false;
++    }
++    lv_obj_set_size(qr_overlay_, LV_HOR_RES, LV_VER_RES);
++    lv_obj_set_style_radius(qr_overlay_, 0, 0);
++    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_COVER, 0);
++    lv_obj_set_style_bg_color(qr_overlay_, lv_color_white(), 0);
++    lv_obj_set_style_border_width(qr_overlay_, 0, 0);
++    lv_obj_set_style_pad_all(qr_overlay_, 0, 0);
++    qr_buffer_ = lv_malloc(kQrPixels * kQrPixels * sizeof(lv_color_t));
++    qr_code_ = lv_canvas_create(qr_overlay_);
++    if (qr_buffer_ == nullptr || qr_code_ == nullptr) {
++        if (qr_code_ != nullptr) {
++            lv_obj_del(qr_code_);
++        }
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        lv_free(qr_buffer_);
++        qr_buffer_ = nullptr;
++        lv_free(temp_buffer);
++        lv_free(qr_data);
++        Unlock();
++        return false;
++    }
++    lv_canvas_set_buffer(qr_code_, qr_buffer_, kQrPixels, kQrPixels, LV_COLOR_FORMAT_RGB565);
++    const int scale = (kQrPixels - 8) / qr_modules;
++    const int scaled = scale * qr_modules;
++    const int margin = (kQrPixels - scaled) / 2;
++    lv_display_enable_invalidation(lv_obj_get_display(qr_code_), false);
++    const lv_color_t black = lv_color_black();
++    const lv_color_t white = lv_color_white();
++    for (int y = 0; y < kQrPixels; ++y) {
++        for (int x = 0; x < kQrPixels; ++x) {
++            bool dark = false;
++            if (x >= margin && x < margin + scaled && y >= margin && y < margin + scaled) {
++                dark = qrcodegen_getModule(qr_data, (x - margin) / scale,
++                                            (y - margin) / scale);
++            }
++            lv_canvas_set_px(qr_code_, x, y, dark ? black : white, LV_OPA_COVER);
++        }
++    }
++    lv_free(temp_buffer);
++    lv_free(qr_data);
++    lv_display_enable_invalidation(lv_obj_get_display(qr_code_), true);
++    lv_obj_center(qr_code_);
++    lv_obj_set_y(qr_code_, -8);
++    qr_caption_ = lv_label_create(qr_overlay_);
++    if (qr_caption_ == nullptr) {
++        lv_obj_del(qr_overlay_);
++        qr_overlay_ = nullptr;
++        qr_code_ = nullptr;
++        lv_free(qr_buffer_);
++        qr_buffer_ = nullptr;
++        Unlock();
++        return false;
++    }
++    lv_label_set_text(qr_caption_, caption == nullptr ? "微信扫码绑定" : caption);
++    lv_obj_set_style_text_color(qr_caption_, lv_color_black(), 0);
++    lv_obj_align(qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -4);
++    Unlock();
++    return true;
++}
+ 
+@@ -412,12 +456,16 @@ void LcdDisplay::ClearQrCode() {
+ void LcdDisplay::ClearQrCode() {
+     if (!Lock(1000)) {
+         return;
+     }
+     if (qr_overlay_ != nullptr) {
+         lv_obj_del(qr_overlay_);
+         qr_overlay_ = nullptr;
+         qr_code_ = nullptr;
+         qr_caption_ = nullptr;
+     }
++    if (qr_buffer_ != nullptr) {
++        lv_free(qr_buffer_);
++        qr_buffer_ = nullptr;
++    }
+     Unlock();
+ }

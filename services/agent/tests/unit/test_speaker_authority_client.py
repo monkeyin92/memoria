@@ -9,6 +9,7 @@ import pytest
 from services.agent.src.speaker_authority_client import (
     SpeakerAuthorityClient,
     SpeakerAuthorityClientConfig,
+    SpeakerEnrollmentSample,
 )
 
 
@@ -66,6 +67,71 @@ async def test_client_classifies_session_audio_without_sending_account_id() -> N
     assert decision.permissions.normal_conversation is True
     assert decision.permissions.read_private_memory is False
     assert client.reject_non_owner_voice is False
+
+
+@pytest.mark.asyncio
+async def test_client_enrolls_device_samples_without_sending_account_id() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={"profile_id": "profile-shadow", "status": "shadow", "sample_count": 3},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        result = await client.enroll(
+            session_id="session-001",
+            intent_id="intent-001",
+            samples=[
+                SpeakerEnrollmentSample(pcm=value, sample_rate=16000)
+                for value in (b"one-01", b"two-02", b"three-03")
+            ],
+        )
+
+    assert observed["path"] == "/v1/speakers/enrollments/internal"
+    body = observed["body"]
+    assert isinstance(body, dict)
+    assert body["session_id"] == "session-001"
+    assert body["intent_id"] == "intent-001"
+    assert "account_id" not in body
+    assert len(body["samples"]) == 3
+    assert result["profile_id"] == "profile-shadow"
+
+
+@pytest.mark.asyncio
+async def test_client_reads_session_scoped_enrollment_status() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["session_id"] = request.url.params["session_id"]
+        return httpx.Response(200, json={"enrollment": {"state": "required"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        status = await client.enrollment_status(session_id="session-001")
+
+    assert observed == {
+        "path": "/v1/speakers/status/internal",
+        "session_id": "session-001",
+    }
+    assert status["enrollment"] == {"state": "required"}
 
 
 @pytest.mark.asyncio

@@ -596,6 +596,19 @@ class SQLiteBootstrapStore(BootstrapStorePort):
             ).fetchone()
         return self._session(row) if row is not None else None
 
+    def find_session_by_qr(
+        self, *, device_id: str, qr_nonce_hash: str
+    ) -> BootstrapSession | None:
+        with self._read() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM device_onboarding_sessions
+                WHERE device_id = ? AND qr_nonce_hash = ?
+                """,
+                (device_id, qr_nonce_hash),
+            ).fetchone()
+        return self._session(row) if row is not None else None
+
     def transition_session(
         self,
         onboarding_session_id: str,

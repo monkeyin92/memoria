@@ -18,6 +18,7 @@ from services.speaker.domain import (
     RevokeSpeakerProfile,
     SpeakerDecision,
     SpeakerEmbeddingAdapter,
+    SpeakerEnrollmentIntent,
     SpeakerEvaluation,
     SpeakerProfileNotFoundError,
     SpeakerProfileSummary,
@@ -89,6 +90,19 @@ CREATE TABLE IF NOT EXISTS speaker_enrollment_samples (
     created_at TEXT NOT NULL,
     FOREIGN KEY (profile_id) REFERENCES speaker_profiles(profile_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS speaker_enrollment_intents (
+    intent_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    consent_policy_version TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('requested', 'consumed', 'revoked')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_speaker_enrollment_intents_account
+ON speaker_enrollment_intents(account_id, state, expires_at);
 """
 
 
@@ -182,6 +196,110 @@ class SpeakerAuthority:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
+
+    @staticmethod
+    def _intent(row: sqlite3.Row) -> SpeakerEnrollmentIntent:
+        return SpeakerEnrollmentIntent(
+            intent_id=str(row["intent_id"]),
+            account_id=str(row["account_id"]),
+            consent_policy_version=str(row["consent_policy_version"]),
+            state=str(row["state"]),  # type: ignore[arg-type]
+            created_at=str(row["created_at"]),
+            expires_at=str(row["expires_at"]),
+        )
+
+    async def create_enrollment_intent(
+        self,
+        *,
+        account_id: str,
+        consent_policy_version: str,
+        now: str,
+        expires_at: str,
+    ) -> SpeakerEnrollmentIntent:
+        with self._connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents
+                WHERE account_id = ? AND state = 'requested' AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (account_id, now),
+            ).fetchone()
+            if existing is not None:
+                return self._intent(existing)
+            intent_id = str(uuid.uuid4())
+            connection.execute(
+                """
+                INSERT INTO speaker_enrollment_intents (
+                    intent_id, account_id, consent_policy_version, state,
+                    created_at, expires_at
+                ) VALUES (?, ?, ?, 'requested', ?, ?)
+                """,
+                (intent_id, account_id, consent_policy_version, now, expires_at),
+            )
+            row = connection.execute(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents WHERE intent_id = ?
+                """,
+                (intent_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover
+            raise RuntimeError("speaker enrollment intent creation failed")
+        return self._intent(row)
+
+    async def pending_enrollment_intent(
+        self,
+        account_id: str,
+        *,
+        now: str,
+    ) -> SpeakerEnrollmentIntent | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents
+                WHERE account_id = ? AND state = 'requested' AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (account_id, now),
+            ).fetchone()
+        return self._intent(row) if row is not None else None
+
+    async def consume_enrollment_intent(
+        self,
+        *,
+        intent_id: str,
+        account_id: str,
+        now: str,
+    ) -> SpeakerEnrollmentIntent:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE speaker_enrollment_intents
+                SET state = 'consumed', consumed_at = ?
+                WHERE intent_id = ? AND account_id = ?
+                  AND state = 'requested' AND expires_at > ?
+                """,
+                (now, intent_id, account_id, now),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("speaker enrollment intent is missing, expired or already used")
+            row = connection.execute(
+                """
+                SELECT intent_id, account_id, consent_policy_version, state,
+                       created_at, expires_at
+                FROM speaker_enrollment_intents WHERE intent_id = ?
+                """,
+                (intent_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover
+            raise RuntimeError("speaker enrollment intent disappeared")
+        return self._intent(row)
 
     async def enroll(self, request: EnrollmentRequest) -> EnrollmentResult:
         embedded = [

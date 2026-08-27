@@ -32,7 +32,7 @@ test("student notice and tutor focus remain explicit client choices", () => {
 
   // 敏感入口只能由 Runtime Profile capabilities 驱动，WXML 不得按本地年龄显示。
   assert.match(profile, /guardianEntryAllowed/);
-  assert.match(profile, /speakerEntryAllowed/);
+  assert.match(profile, /speakerEnrollmentState/);
   assert.match(profile, /digitalSelfEntryAllowed/);
   assert.match(profile, /rawVoiceEntryAllowed/);
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);

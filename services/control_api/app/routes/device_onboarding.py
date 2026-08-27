@@ -119,6 +119,7 @@ class BootstrapSessionResponse(BaseModel):
     onboarding_session_id: str
     state: str
     state_version: int
+    activation_version: int
     expires_at: str
     device: DeviceSummaryResponse
     provisioning: ProvisioningResponse
