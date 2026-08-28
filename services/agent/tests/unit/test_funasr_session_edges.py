@@ -1264,3 +1264,22 @@ async def test_wait_for_nonempty_final_gives_up_after_empty_grace() -> None:
         is False
     )
     assert funasr_stt.monotonic() - started < 1.0
+
+
+@pytest.mark.asyncio
+async def test_wait_for_nonempty_final_does_not_extend_grace_on_later_empties() -> None:
+    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    since = funasr_stt.monotonic()
+    plugin.trace_result(_final_sentence(""), task_epoch=1)
+    started = funasr_stt.monotonic()
+
+    async def _later_empty() -> None:
+        await asyncio.sleep(0.03)
+        plugin.trace_result(_final_sentence(""), task_epoch=2)
+
+    asyncio.create_task(_later_empty())
+    assert (
+        await plugin.wait_for_nonempty_final(since=since, timeout=8.0, empty_grace_s=0.08)
+        is False
+    )
+    assert funasr_stt.monotonic() - started < 0.5

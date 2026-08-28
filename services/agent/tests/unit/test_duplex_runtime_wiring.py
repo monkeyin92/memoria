@@ -3144,6 +3144,35 @@ async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> Non
 
 
 @pytest.mark.asyncio
+async def test_device_capture_release_is_held_after_speaking() -> None:
+    runtime = DuplexRuntime.create(
+        session_id="device-capture-holdoff",
+        barge_in_enabled=False,
+        capture_release_holdoff_s=0.05,
+    )
+    published: list[dict[str, Any]] = []
+
+    async def publish(event: dict[str, Any]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    await runtime.publish_assistant_state("speaking")
+    await runtime.publish_assistant_state("listening")
+
+    policies = [event for event in published if event["type"] == "input_policy"]
+    assert [(event["capture_allowed"], event["reason"]) for event in policies] == [
+        (False, "assistant_speaking"),
+    ]
+
+    await asyncio.sleep(0.08)
+    policies = [event for event in published if event["type"] == "input_policy"]
+    assert [(event["capture_allowed"], event["reason"]) for event in policies] == [
+        (False, "assistant_speaking"),
+        (True, "assistant_listening"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_controlled_state_completion_waits_for_state_and_input_policy() -> None:
     runtime = DuplexRuntime.create(session_id="mini-state-barrier", barge_in_enabled=False)
     state_release = asyncio.Event()

@@ -203,6 +203,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
     interaction_plane: InteractionPlane = field(default_factory=InteractionPlane)
     trusted_aec_playback_control: bool = False
     barge_in_enabled: bool = True
+    capture_release_holdoff_s: float = 0.0
     latency_trace: LatencyTrace = field(default_factory=LatencyTrace)
     cue_scheduler: CueScheduler = field(default_factory=CueScheduler)
     emotion_smoother: EmotionSmoother = field(default_factory=EmotionSmoother)
@@ -218,6 +219,9 @@ class DuplexRuntime(DuplexSpeakerMixin):
     _pending_realtime_request: PendingRealtimeRequest | None = None
     _pending_assistant_text_epoch: int = 0
     _input_policy_epoch: int = 0
+    _capture_blocked: bool = False
+    _capture_release_task: asyncio.Task[Any] | None = None
+    _phase_listener: Callable[["InteractionPhase", "InteractionPhase"], None] | None = None
     _transcript_revisions: TurnRevisionTracker = field(default_factory=TurnRevisionTracker)
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"
@@ -365,6 +369,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
         input_guard_enabled: bool = False,
         trusted_aec_playback_control: bool = False,
         barge_in_enabled: bool = True,
+        capture_release_holdoff_s: float = 0.0,
         listener_cues_enabled: bool = False,
         use_paralinguistic_tags: bool = False,
         speaker_verifier: SpeakerVerifier | None = None,
@@ -380,6 +385,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
             input_guard=PlaybackInputGuard(enabled=input_guard_enabled),
             trusted_aec_playback_control=trusted_aec_playback_control,
             barge_in_enabled=barge_in_enabled,
+            capture_release_holdoff_s=capture_release_holdoff_s,
             cue_scheduler=CueScheduler(enabled=listener_cues_enabled),
             use_paralinguistic_tags=use_paralinguistic_tags,
             speaker_verifier=speaker_verifier
@@ -1688,6 +1694,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
             self.fence.turn_id,
             self.fence.generation_id,
         )
+        self._notify_phase(previous, phase)
         self.orchestrator.metrics.inc_interaction_phase(
             previous.value,
             phase.value,
@@ -1727,6 +1734,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
                 fence.turn_id,
                 fence.generation_id,
             )
+            self._notify_phase(previous, mapped_phase)
         state_task = self._publish(
             {
                 "type": "assistant_state",
@@ -1746,8 +1754,53 @@ class DuplexRuntime(DuplexSpeakerMixin):
         if policy is None:
             return state_task
         capture_allowed, reason = policy
+        if capture_allowed:
+            if self._capture_blocked and self.capture_release_holdoff_s > 0:
+                self._schedule_capture_release(reason)
+                return state_task
+            self._capture_blocked = False
+            self._cancel_capture_release()
+        else:
+            self._cancel_capture_release()
+            self._capture_blocked = True
         policy_task = self.publish_input_policy(capture_allowed=capture_allowed, reason=reason)
         return join_ui_publishes(self, state_task, policy_task)
+
+    def set_phase_listener(
+        self,
+        listener: Callable[[InteractionPhase, InteractionPhase], None] | None,
+    ) -> None:
+        self._phase_listener = listener
+
+    def _notify_phase(self, previous: InteractionPhase, phase: InteractionPhase) -> None:
+        listener = self._phase_listener
+        if listener is None:
+            return
+        try:
+            listener(phase, previous)
+        except Exception:
+            logger.warning("interaction phase listener failed", exc_info=True)
+
+    def _cancel_capture_release(self) -> None:
+        task = self._capture_release_task
+        self._capture_release_task = None
+        if task is not None:
+            task.cancel()
+
+    def _schedule_capture_release(self, reason: str) -> None:
+        self._cancel_capture_release()
+        delay = self.capture_release_holdoff_s
+
+        async def _release() -> None:
+            await asyncio.sleep(delay)
+            self._capture_blocked = False
+            self._capture_release_task = None
+            self.publish_input_policy(capture_allowed=True, reason=reason)
+
+        self._capture_release_task = self._spawn(
+            _release(),
+            name="capture-release-holdoff",
+        )
 
     def publish_input_policy(
         self,

@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
+from time import monotonic
 from typing import Any
 
 from livekit import rtc
@@ -17,6 +18,7 @@ DEVICE_MICROPHONE_TRACK_NAME = "device-microphone"
 # keeps a nonempty FINAL if it lands before transcript_timeout.
 DEVICE_TURN_TRANSCRIPT_TIMEOUT_S = 8.0
 DEVICE_EMPTY_FINAL_GRACE_S = 2.0
+DEVICE_POST_PLAYBACK_HOLDOFF_S = 2.0
 DEVICE_ENDPOINTING_MIN_DELAY_S = 0.05
 DEVICE_ENDPOINTING_MAX_DELAY_S = 0.40
 
@@ -95,11 +97,33 @@ class DeviceVadProjector:
     _active: bool = False
     _participant_sid: str | None = None
     _participant_identity: str | None = None
+    _holdoff_until: float = 0.0
+
+    def begin_playback_holdoff(
+        self,
+        duration_s: float = DEVICE_POST_PLAYBACK_HOLDOFF_S,
+    ) -> None:
+        """Ignore board VAD until on-device playback has had time to finish."""
+
+        self._holdoff_until = monotonic() + duration_s
+        if self._active:
+            self._active = False
+            logger.info(
+                "device VAD holdoff cancelled active speech session_id=%s",
+                self.session_id,
+            )
+        logger.info(
+            "device VAD holdoff_s=%.2f session_id=%s",
+            duration_s,
+            self.session_id,
+        )
 
     def accept(self, packet: Any) -> bool:
         if getattr(packet, "topic", None) != DEVICE_VAD_TOPIC:
             return False
         if getattr(packet, "kind", None) != rtc.DataPacketKind.KIND_RELIABLE:
+            return True
+        if monotonic() < self._holdoff_until:
             return True
         participant = getattr(packet, "participant", None)
         if not _owns_device_microphone(participant):
@@ -175,6 +199,7 @@ __all__ = [
     "DEVICE_ENDPOINTING_MAX_DELAY_S",
     "DEVICE_ENDPOINTING_MIN_DELAY_S",
     "DEVICE_MICROPHONE_TRACK_NAME",
+    "DEVICE_POST_PLAYBACK_HOLDOFF_S",
     "DEVICE_TURN_TRANSCRIPT_TIMEOUT_S",
     "DEVICE_VAD_TOPIC",
     "DeviceVadProjector",
