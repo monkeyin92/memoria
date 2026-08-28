@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,10 +25,38 @@ _BLOCK_LEN = 512
 _BLOCK_SHIFT = 128
 _INITIAL_OUTPUT_DELAY = _BLOCK_SHIFT - 1
 # The board microphone is pinned at 18 dB to keep its raw noise floor below
-# the DTLN input. Restore 12 dB after suppression so FunASR sees enough
+# the DTLN input. Restore 18 dB after suppression so FunASR sees enough
 # energy at normal speaking distance, with the PCM conversion below providing
-# a hard saturation fence.
-_OUTPUT_MAKEUP_GAIN = 4.0
+# a hard saturation fence. 2026-08-28 real-board testing showed 12 dB still
+# leaves normal-volume turns near FunASR's detection floor (empty finals while
+# louder repeats transcribe), so the default rose to 8.0x; tune per site with
+# MEMORIA_DTLN_MAKEUP_GAIN using PCM tap evidence, never above the clamp.
+_DEFAULT_OUTPUT_MAKEUP_GAIN = 8.0
+_MAKEUP_GAIN_ENV = "MEMORIA_DTLN_MAKEUP_GAIN"
+_makeup_gain_warned = False
+
+
+def _output_makeup_gain() -> float:
+    global _makeup_gain_warned
+    raw = os.getenv(_MAKEUP_GAIN_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_OUTPUT_MAKEUP_GAIN
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or not 1.0 <= value <= 32.0:
+        if not _makeup_gain_warned:
+            _makeup_gain_warned = True
+            logger.warning(
+                "invalid %s=%r; clamping to default %.1f",
+                _MAKEUP_GAIN_ENV,
+                raw,
+                _DEFAULT_OUTPUT_MAKEUP_GAIN,
+            )
+        return _DEFAULT_OUTPUT_MAKEUP_GAIN
+    return value
+
 
 FloatArray = NDArray[np.float32]
 
@@ -67,6 +97,8 @@ class DeepDenoiser:
         self._ready_output = np.zeros(_INITIAL_OUTPUT_DELAY, dtype=np.float32)
 
         if self.config.enabled:
+            gain = _output_makeup_gain()
+            logger.info("dtln output makeup gain=%.1f (%.0f dB)", gain, 20 * math.log10(gain))
             self._initialize_models()
 
     @property
@@ -165,7 +197,7 @@ class DeepDenoiser:
         output = self._ready_output[:requested]
         self._ready_output = self._ready_output[requested:]
         pcm = np.clip(
-            output * (32768.0 * _OUTPUT_MAKEUP_GAIN),
+            output * (32768.0 * _output_makeup_gain()),
             -32768,
             32767,
         ).astype("<i2")
