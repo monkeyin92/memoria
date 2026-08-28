@@ -6,13 +6,12 @@ from types import SimpleNamespace
 import pytest
 from livekit import rtc
 from services.agent.src.device_vad import (
-    DEVICE_EMPTY_TRANSCRIPT_PHRASE,
     DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
     DEVICE_VAD_TOPIC,
     DeviceVadProjector,
-    apply_device_input_gate,
     commit_device_user_turn,
     commit_device_user_turn_after_asr,
+    device_turn_commit_busy,
 )
 
 
@@ -238,10 +237,6 @@ async def test_commit_after_asr_skips_empty_transcript() -> None:
             return False
 
     session = SessionWithCommit()
-    spoken: list[str] = []
-
-    async def _on_empty() -> None:
-        spoken.append(DEVICE_EMPTY_TRANSCRIPT_PHRASE)
 
     assert (
         await commit_device_user_turn_after_asr(
@@ -249,29 +244,21 @@ async def test_commit_after_asr_skips_empty_transcript() -> None:
             session_id="session-1",
             stt=EmptySTT(),
             since=10.0,
-            on_empty=_on_empty,
         )
         is False
     )
     assert session.commits == []
-    assert spoken == [DEVICE_EMPTY_TRANSCRIPT_PHRASE]
 
 
-def test_device_input_gate_mutes_while_assistant_occupies_the_floor() -> None:
-    class Input:
-        def __init__(self) -> None:
-            self.enabled: list[bool] = []
+def test_device_turn_commit_busy_while_a_wait_is_running() -> None:
+    class Running:
+        def done(self) -> bool:
+            return False
 
-        def set_audio_enabled(self, enabled: bool) -> None:
-            self.enabled.append(enabled)
+    class Finished:
+        def done(self) -> bool:
+            return True
 
-    class SessionWithInput:
-        def __init__(self) -> None:
-            self.input = Input()
-
-    session = SessionWithInput()
-
-    assert apply_device_input_gate(session, agent_state="speaking", session_id="s") is False
-    assert apply_device_input_gate(session, agent_state="thinking", session_id="s") is False
-    assert apply_device_input_gate(session, agent_state="listening", session_id="s") is True
-    assert session.input.enabled == [False, False, True]
+    assert device_turn_commit_busy(None) is False
+    assert device_turn_commit_busy(Finished()) is False
+    assert device_turn_commit_busy(Running()) is True

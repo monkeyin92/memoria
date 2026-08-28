@@ -15,12 +15,11 @@ from typing import Any, Literal, cast
 from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
 from services.agent.src.config import load_turn_timing
 from services.agent.src.device_vad import (
-    DEVICE_EMPTY_TRANSCRIPT_PHRASE,
     DEVICE_ENDPOINTING_MAX_DELAY_S,
     DEVICE_ENDPOINTING_MIN_DELAY_S,
     DeviceVadProjector,
-    apply_device_input_gate,
     commit_device_user_turn_after_asr,
+    device_turn_commit_busy,
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.fixed_speech import FixedSpeechPlayer
@@ -647,17 +646,6 @@ async def entrypoint(ctx: Any) -> None:
 
     runtime.set_event_publisher(_publish_ui_event)
     runtime.attach_session_events(session)
-    if device_session:
-
-        def _on_device_agent_state(ev: Any) -> None:
-            state = str(getattr(ev, "new_state", None) or getattr(ev, "state", "") or "")
-            apply_device_input_gate(
-                session,
-                agent_state=state,
-                session_id=runtime_session_id,
-            )
-
-        session.on("agent_state_changed", _on_device_agent_state)
 
     original_interrupt = session.interrupt
     runtime.set_playback_stop_seam(lambda: original_interrupt())
@@ -817,14 +805,22 @@ async def entrypoint(ctx: Any) -> None:
 
     runtime.set_false_interrupt_recover(_false_interrupt_recover)
 
+    device_turn_commit_task: asyncio.Task[Any] | None = None
+
     def _on_device_endpoint() -> None:
-        runtime._spawn(
+        nonlocal device_turn_commit_task
+        if device_turn_commit_busy(device_turn_commit_task):
+            logger.info(
+                "device VAD end skipped commit_in_flight session_id=%s",
+                runtime_session_id,
+            )
+            return
+        device_turn_commit_task = runtime._spawn(
             commit_device_user_turn_after_asr(
                 session,
                 session_id=runtime_session_id,
                 stt=stt_plugin,
                 since=monotonic(),
-                on_empty=lambda: _say_control_ack(DEVICE_EMPTY_TRANSCRIPT_PHRASE),
             ),
             name="device-vad-turn-commit",
         )
