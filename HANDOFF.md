@@ -42,6 +42,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 - 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
 - 2026-08-28 15:40 CST 切流后复测：Qwen Realtime Search 与 Doubao 稳定 PASS；**FunASR 间歇失败**，4 次中 1 次 PASS，报 `FunASR returned no interim transcript`。定性依据：用切流前镜像 `rollback-…-pre-agent` 做 A/B 对比同样失败；且该 smoke 直接调用 `FunASRSession`，不经过 device VAD 门控或本次改动的任何代码路径。判定为供应商侧抖动，**与本次发布无关**，因此不构成回滚理由（回滚同样失败且会丢失修复）。FunASR 恢复前真实识别率会受影响，需另行跟进供应商。
+- **发布链阻断（待处理）**：本轮发布后仓库已整理为单一 `main`，修复的 commit 由 `c3fb7fd` 变为 `bea8bb6`（rebase 到原 `9d81061` 链）。已核对：生产容器内 `services/agent/src/{device_vad,session_entrypoint,duplex_runtime}.py` 与当前 `main` HEAD 的 sha256 **逐字节一致**，即生产已经在跑这份修复，无需重新部署。但生产镜像的 `revision` 标签仍是被 rebase 掉的 `c3fb7fd`，且服务器上现存所有 `memoria-agent` 镜像的 revision（`8f3af6e`、`5be6792`、`dee4264`、`d2fa737`、`f21d521`、`834fdf6`、`18d33b6`、`c3fb7fd`）都不在当前 `main` 的祖先链上。`deploy_agent_component.sh` 硬性校验 `merge-base --is-ancestor base_commit expected_commit`，因此 **Agent component 快速路径当前不可用**。下次需要发布 `services/agent` 变更时，必须先走一次完整镜像发布路径重建可追溯基线；不得手工 retag 现有镜像绕过该校验。
 - 普通 Agent component 目录已收敛为当前 `1912` 与紧邻回滚 `1843`；当前回滚标签均解析到 `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
 - Agent/Bridge 内 DTLN 完成 ONNX checksum/contract 初始化和 7,680-byte PCM 实推，输出非零；后级固定补偿为 `2.0x`，PCM 转换保持饱和防削波。
 
