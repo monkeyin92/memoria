@@ -244,6 +244,7 @@ def build_turn_handling_options(
     profile: str,
     *,
     interruptions_enabled: bool = True,
+    device_vad: bool = False,
 ) -> Any:
     """Build TurnHandlingOptions; raises on API mismatch (no silent swallow)."""
     from livekit.agents import TurnHandlingOptions, inference
@@ -251,10 +252,16 @@ def build_turn_handling_options(
     config = build_turn_handling_config(
         profile,
         interruptions_enabled=interruptions_enabled,
+        device_vad=device_vad,
     )
-    turn_detector_version = cast(Literal["v1", "v1-mini"], config["turn_detection"]["version"])
+    turn_detection = config["turn_detection"]
+    if isinstance(turn_detection, str):
+        turn_detection_mode: Any = turn_detection
+    else:
+        turn_detector_version = cast(Literal["v1", "v1-mini"], turn_detection["version"])
+        turn_detection_mode = inference.TurnDetector(version=turn_detector_version)
     return TurnHandlingOptions(
-        turn_detection=inference.TurnDetector(version=turn_detector_version),
+        turn_detection=turn_detection_mode,
         endpointing=config["endpointing"],
         interruption=config["interruption"],
         preemptive_generation=config["preemptive_generation"],
@@ -270,6 +277,7 @@ def build_session_kwargs(
     profile: str,
     offline: bool,
     interruptions_enabled: bool = True,
+    device_vad: bool = False,
 ) -> dict[str, Any]:
     _ = offline
     session_kwargs: dict[str, Any] = {
@@ -282,6 +290,7 @@ def build_session_kwargs(
         session_kwargs["turn_handling"] = build_turn_handling_options(
             profile,
             interruptions_enabled=interruptions_enabled,
+            device_vad=device_vad,
         )
     except Exception as exc:
         logger.error(
@@ -292,6 +301,7 @@ def build_session_kwargs(
         session_kwargs["turn_handling_config"] = build_turn_handling_config(
             profile,
             interruptions_enabled=interruptions_enabled,
+            device_vad=device_vad,
         )
         if os.getenv("ENVIRONMENT", "development") == "production":
             raise
@@ -608,6 +618,7 @@ async def entrypoint(ctx: Any) -> None:
         profile=profile,
         offline=offline,
         interruptions_enabled=not controlled_half_duplex_session,
+        device_vad=device_session,
     )
     session_kwargs.pop("turn_handling_config", None)
     if apply_miniprogram_session_audio_policy(session_kwargs, dispatch_metadata):
@@ -1096,6 +1107,7 @@ def build_turn_handling_config(
     profile: str = "livekit_cloud",
     *,
     interruptions_enabled: bool = True,
+    device_vad: bool = False,
 ) -> dict[str, Any]:
     """Pure config dict for tests without LiveKit types."""
     self_hosted = profile == "cn_self_hosted"
@@ -1120,8 +1132,13 @@ def build_turn_handling_config(
     preemptive_default = "false" if self_hosted else "false"
     preemptive_enabled = os.getenv("PREEMPTIVE_GENERATION", preemptive_default).lower() == "true"
     preemptive_tts = os.getenv("PREEMPTIVE_TTS", "false").lower() == "true"
+    # Device sessions receive authoritative VAD boundaries from the hardware
+    # gateway. FunASR emits END_OF_SPEECH after each gateway flush, so use STT
+    # end-of-speech handling as the single AgentSession turn-commit path. The
+    # LiveKit streaming turn detector has no visibility into device VAD packets.
+    turn_detection: Any = "stt" if device_vad else {"version": turn_version}
     return {
-        "turn_detection": {"version": turn_version},
+        "turn_detection": turn_detection,
         "endpointing": {
             "mode": "dynamic",
             # Production 20260730 observed a provider transcript 2.05s after

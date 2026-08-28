@@ -439,6 +439,20 @@ def test_miniprogram_turn_handling_disables_barge_in_without_changing_h5() -> No
     assert miniprogram["interruption"]["enabled"] is False
 
 
+def test_device_turn_handling_uses_funasr_end_of_speech() -> None:
+    config = entrypoint_mod.build_turn_handling_config(
+        "cn_self_hosted",
+        device_vad=True,
+    )
+    options = entrypoint_mod.build_turn_handling_options(
+        "cn_self_hosted",
+        device_vad=True,
+    )
+
+    assert config["turn_detection"] == "stt"
+    assert options["turn_detection"] == "stt"
+
+
 def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:
     binding = KeywordSpotterBinding(
         speaker_epoch=3,
@@ -2981,8 +2995,10 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
         _profile: str,
         *,
         interruptions_enabled: bool = True,
+        device_vad: bool = False,
     ) -> Any:
         _ = interruptions_enabled
+        _ = device_vad
         raise ValueError("bad api")
 
     monkeypatch.setattr(entrypoint_mod, "build_turn_handling_options", fail_options)
