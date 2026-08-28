@@ -6,8 +6,8 @@ import json
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from types import SimpleNamespace
 from time import monotonic
+from types import SimpleNamespace
 from typing import Any
 
 from livekit import rtc
@@ -94,37 +94,85 @@ class DeviceVadProjector:
     session_id: str
     on_start: Callable[[], None] | None = None
     on_endpoint: Callable[[], None] | None = None
+    on_endpoint_deferred: Callable[[float], None] | None = None
     _last_sample: int = 0
     _active: bool = False
     _participant_sid: str | None = None
     _participant_identity: str | None = None
     _holdoff_until: float = 0.0
+    _speech_started_at: float = 0.0
+    _deferred_endpoint: bool = False
+    _playback_active: bool = False
+    _speech_started_during_playback: bool = False
 
     def begin_playback_holdoff(
         self,
         duration_s: float = DEVICE_POST_PLAYBACK_HOLDOFF_S,
     ) -> None:
-        """Ignore board VAD until on-device playback has had time to finish."""
+        """Defer turn commits until on-device playback has had time to finish.
+
+        This must never drop ``vad.start``/``vad.end``. The board only emits
+        them on state changes, so a dropped pair leaves this projector
+        permanently desynchronised from the board and gates the FunASR uplink
+        off for the rest of the session. Only the commit is deferred.
+        """
 
         self._holdoff_until = monotonic() + duration_s
-        if self._active:
-            self._active = False
-            logger.info(
-                "device VAD holdoff cancelled active speech session_id=%s",
-                self.session_id,
-            )
         logger.info(
             "device VAD holdoff_s=%.2f session_id=%s",
             duration_s,
             self.session_id,
         )
 
+    @property
+    def speech_started_at(self) -> float:
+        """Monotonic timestamp of the ``vad.start`` that opened the uplink."""
+
+        return self._speech_started_at
+
+    @property
+    def holdoff_remaining_s(self) -> float:
+        return max(0.0, self._holdoff_until - monotonic())
+
+    def set_playback_active(self, active: bool) -> None:
+        """Track whether the device speaker is still emitting audio.
+
+        The board has no hardware AEC reference, so speech that begins while
+        the speaker is live is treated as loudspeaker echo. Device sessions are
+        controlled half-duplex and never accept barge-in, so discarding it
+        matches the product contract instead of losing a real turn.
+        """
+
+        self._playback_active = bool(active)
+
+    @property
+    def speech_started_during_playback(self) -> bool:
+        return self._speech_started_during_playback
+
+    def _emit_endpoint(self) -> None:
+        """Commit now, or once the playback holdoff has elapsed."""
+
+        remaining = self.holdoff_remaining_s
+        if remaining <= 0.0:
+            self._deferred_endpoint = False
+            if self.on_endpoint is not None:
+                self.on_endpoint()
+            return
+        if self.on_endpoint_deferred is not None:
+            self._deferred_endpoint = True
+            self.on_endpoint_deferred(remaining)
+            return
+        logger.warning(
+            "device VAD endpoint deferred without handler session_id=%s",
+            self.session_id,
+        )
+        if self.on_endpoint is not None:
+            self.on_endpoint()
+
     def accept(self, packet: Any) -> bool:
         if getattr(packet, "topic", None) != DEVICE_VAD_TOPIC:
             return False
         if getattr(packet, "kind", None) != rtc.DataPacketKind.KIND_RELIABLE:
-            return True
-        if monotonic() < self._holdoff_until:
             return True
         participant = getattr(packet, "participant", None)
         if not _owns_device_microphone(participant):
@@ -163,6 +211,10 @@ class DeviceVadProjector:
             self._participant_sid = participant_sid
             self._participant_identity = participant_identity
             self._active = True
+            self._speech_started_at = monotonic()
+            self._speech_started_during_playback = self._playback_active
+            # A new utterance supersedes a commit still waiting out the holdoff.
+            self._deferred_endpoint = False
             state = "speaking"
         else:
             if not self._active:
@@ -172,10 +224,11 @@ class DeviceVadProjector:
             self._active = False
             state = "listening"
         self._last_sample = sample_position
-        if state == "speaking" and self.on_start is not None:
-            self.on_start()
-        elif state == "listening" and self.on_endpoint is not None:
-            self.on_endpoint()
+        if state == "speaking":
+            if self.on_start is not None:
+                self.on_start()
+        else:
+            self._emit_endpoint()
         update_state = getattr(self.session, "_update_user_state", None)
         if callable(update_state):
             update_state(state)

@@ -18,6 +18,7 @@ from services.agent.src.device_vad import (
     DEVICE_ENDPOINTING_MAX_DELAY_S,
     DEVICE_ENDPOINTING_MIN_DELAY_S,
     DEVICE_POST_PLAYBACK_HOLDOFF_S,
+    DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
     DeviceVadProjector,
     commit_device_user_turn_after_asr,
     device_turn_commit_busy,
@@ -823,8 +824,9 @@ async def entrypoint(ctx: Any) -> None:
 
     def _on_device_start() -> None:
         nonlocal device_turn_commit_task
-        if device_turn_commit_busy(device_turn_commit_task):
-            device_turn_commit_task.cancel()
+        task = device_turn_commit_task
+        if task is not None and device_turn_commit_busy(task):
+            task.cancel()
             device_turn_commit_task = None
             logger.info(
                 "device VAD start cancelled commit_in_flight session_id=%s",
@@ -832,8 +834,11 @@ async def entrypoint(ctx: Any) -> None:
             )
         _set_device_uplink(True)
 
-    def _on_device_endpoint() -> None:
+    def _commit_device_turn(*, delay_s: float) -> None:
         nonlocal device_turn_commit_task
+        vad = device_vad
+        if vad is None:
+            return
         _set_device_uplink(False)
         if device_turn_commit_busy(device_turn_commit_task):
             logger.info(
@@ -841,15 +846,42 @@ async def entrypoint(ctx: Any) -> None:
                 runtime_session_id,
             )
             return
-        device_turn_commit_task = runtime._spawn(
-            commit_device_user_turn_after_asr(
+        now = monotonic()
+        # Anchor the ASR wait to the start of the utterance. A commit deferred
+        # past the playback holdoff would otherwise run after FunASR already
+        # returned its final and mistake real speech for an empty transcript.
+        since = vad.speech_started_at or now
+        timeout = DEVICE_TURN_TRANSCRIPT_TIMEOUT_S + max(0.0, now - since)
+
+        async def _commit() -> None:
+            if delay_s > 0.0:
+                await asyncio.sleep(delay_s)
+                if vad.speech_started_during_playback:
+                    # Whole utterance sat inside the playback tail window and
+                    # began while the speaker was live: echo, not a user turn.
+                    logger.info(
+                        "user_turn_ignored reason=echo_during_playback "
+                        "session_id=%s",
+                        runtime_session_id,
+                    )
+                    return
+            await commit_device_user_turn_after_asr(
                 session,
                 session_id=runtime_session_id,
                 stt=stt_plugin,
-                since=monotonic(),
-            ),
-            name="device-vad-turn-commit",
+                since=since,
+                timeout=timeout,
+            )
+
+        device_turn_commit_task = runtime._spawn(
+            _commit(), name="device-vad-turn-commit"
         )
+
+    def _on_device_endpoint() -> None:
+        _commit_device_turn(delay_s=0.0)
+
+    def _on_device_endpoint_deferred(delay_s: float) -> None:
+        _commit_device_turn(delay_s=max(0.0, delay_s))
 
     device_vad = (
         DeviceVadProjector(
@@ -857,6 +889,7 @@ async def entrypoint(ctx: Any) -> None:
             runtime_session_id,
             on_start=_on_device_start,
             on_endpoint=_on_device_endpoint,
+            on_endpoint_deferred=_on_device_endpoint_deferred,
         )
         if device_session
         else None
@@ -871,13 +904,17 @@ async def entrypoint(ctx: Any) -> None:
             phase_name = getattr(phase, "value", str(phase))
             previous_name = getattr(previous, "value", str(previous))
             if phase_name == "speaking":
+                device_vad.set_playback_active(True)
                 _set_device_uplink(False)
                 flush = getattr(stt_plugin, "flush_speech_segment", None)
                 if callable(flush):
                     flush()
-                device_vad.begin_playback_holdoff()
                 return
-            if previous_name == "speaking" and phase_name == "listening":
+            # Only arm the tail window when playback actually ends. Timing it
+            # from the start of playback cannot cover a long reply and has
+            # already expired before the speaker goes quiet.
+            if previous_name == "speaking":
+                device_vad.set_playback_active(False)
                 device_vad.begin_playback_holdoff()
 
         runtime.set_phase_listener(_on_device_phase)

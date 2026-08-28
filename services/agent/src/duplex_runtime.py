@@ -221,7 +221,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
     _input_policy_epoch: int = 0
     _capture_blocked: bool = False
     _capture_release_task: asyncio.Task[Any] | None = None
-    _phase_listener: Callable[["InteractionPhase", "InteractionPhase"], None] | None = None
+    _phase_listener: Callable[[InteractionPhase, InteractionPhase], None] | None = None
     _transcript_revisions: TurnRevisionTracker = field(default_factory=TurnRevisionTracker)
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"

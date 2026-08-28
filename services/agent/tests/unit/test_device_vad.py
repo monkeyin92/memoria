@@ -167,15 +167,19 @@ def test_device_vad_start_invokes_start_callback_after_speaking() -> None:
     assert session.transitions == ["speaking", "listening"]
 
 
-def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
+def test_device_vad_holdoff_defers_echo_commit_until_playback_finishes() -> None:
+    """Echo inside the holdoff must not form a turn, but must not desync either."""
+
     session = Session()
     starts: list[str] = []
     endpoints: list[str] = []
+    deferred: list[float] = []
     projector = DeviceVadProjector(
         session,
         "session-1",
         on_start=lambda: starts.append("start"),
         on_endpoint=lambda: endpoints.append("end"),
+        on_endpoint_deferred=lambda delay: deferred.append(delay),
     )
     projector.begin_playback_holdoff(duration_s=60.0)
 
@@ -185,9 +189,11 @@ def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
     assert projector.accept(
         _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
     )
-    assert session.transitions == []
-    assert starts == []
+    assert session.transitions == ["speaking", "listening"]
+    assert starts == ["start"]
     assert endpoints == []
+    assert len(deferred) == 1
+    assert deferred[0] > 1.0
 
     projector._holdoff_until = 0.0
     assert projector.accept(
@@ -196,9 +202,117 @@ def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
     assert projector.accept(
         _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 1280})
     )
-    assert session.transitions == ["speaking", "listening"]
-    assert starts == ["start"]
+    assert session.transitions == ["speaking", "listening", "speaking", "listening"]
+    assert starts == ["start", "start"]
     assert endpoints == ["end"]
+    assert len(deferred) == 1
+
+
+def test_device_vad_holdoff_defers_endpoint_instead_of_dropping_the_turn() -> None:
+    """An utterance inside the playback holdoff must still reach ASR.
+
+    The board only emits ``vad.start``/``vad.end`` on state changes, so dropping
+    them inside the holdoff window left the FunASR uplink gated off forever:
+    the user heard nothing and no ``没听清`` fallback could ever fire.
+    """
+
+    session = Session()
+    seen: list[str] = []
+    deferred: list[float] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_start=lambda: seen.append("start"),
+        on_endpoint=lambda: seen.append("end"),
+        on_endpoint_deferred=lambda delay: deferred.append(delay),
+    )
+    projector.begin_playback_holdoff(duration_s=2.0)
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+
+    assert seen == ["start"]
+    assert len(deferred) == 1
+    assert 0.0 < deferred[0] <= 2.0
+    assert session.transitions == ["speaking", "listening"]
+
+
+def test_device_vad_endpoint_commits_immediately_once_holdoff_expires() -> None:
+    session = Session()
+    seen: list[str] = []
+    deferred: list[float] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_start=lambda: seen.append("start"),
+        on_endpoint=lambda: seen.append("end"),
+        on_endpoint_deferred=lambda delay: deferred.append(delay),
+    )
+    projector.begin_playback_holdoff(duration_s=2.0)
+    projector._holdoff_until = 0.0
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+
+    assert seen == ["start", "end"]
+    assert deferred == []
+
+
+def test_device_vad_new_speech_supersedes_a_deferred_endpoint() -> None:
+    session = Session()
+    seen: list[str] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_start=lambda: seen.append("start"),
+        on_endpoint=lambda: seen.append("end"),
+        on_endpoint_deferred=lambda delay: None,
+    )
+    projector.begin_playback_holdoff(duration_s=2.0)
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+    assert projector._deferred_endpoint is True
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 960})
+    )
+    assert projector._deferred_endpoint is False
+    assert seen == ["start", "start"]
+
+
+def test_device_vad_flags_speech_that_begins_while_the_speaker_is_live() -> None:
+    """Speech starting during playback is echo evidence for the deferred commit."""
+
+    session = Session()
+    projector = DeviceVadProjector(session, "session-1")
+
+    projector.set_playback_active(True)
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.speech_started_during_playback is True
+
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+    projector.set_playback_active(False)
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 960})
+    )
+    assert projector.speech_started_during_playback is False
 
 
 def test_commit_device_user_turn_skips_assistant_output() -> None:
