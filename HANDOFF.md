@@ -34,13 +34,14 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `aff2f7cc878d69aed9e1399b464c1aa26b3a0b87`，Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`，Control API 当前部署提交为 `54d9162bba3347fe1e726bbd4e1d614140b4e3fd`，主线最新提交为 `84efb8b046cdf8aaaa0de479a45954db6727f45b`：
+当前 Agent/Bridge 发布提交为 `c3fb7fd181794204b97207cfef0015aa0106bde4`（2026-08-28 15:38 CST 切流），Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`，Control API 当前部署提交为 `54d9162bba3347fe1e726bbd4e1d614140b4e3fd`：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260825-1606-jasmine-standby-prod-agent-component-v2`，image `sha256:8afcd17345299c9fc371709396e0b267b39313bc937a07f5a1a3337a648bf678`。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260828-1537-device-vad-uplink-deadlock-agent-component`，image `sha256:111713ced6abc3cdbca6a6b3e9065f6b48015f0c33c877685a7c5c580f2ce544`，revision `c3fb7fd181794204b97207cfef0015aa0106bde4`。两个容器 healthy、restart=0、无 error/traceback 日志，容器内代码已核验（新门控逻辑在位、旧丢弃逻辑已移除）。紧邻回滚点 `memoria-agent:rollback-20260828-1537-device-vad-uplink-deadlock-agent-component-pre-agent` 与 `-pre-bridge`。
 - Media Edge：`memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`，image `sha256:230f94b8e1d0839827b9c5cd3c0c8bbbdf526d7b34e8cf59f3c688f6a71c9513`。
 - Control API：`memoria-control-api:20260827-identity-binding-version-v3`，image `sha256:876b0e3e53c7402c7ec87734fb0e48840ff2db0921c94351eb7f27647c54aadf`，revision `54d9162bba3347fe1e726bbd4e1d614140b4e3fd`，容器 healthy。
 - 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
+- 2026-08-28 15:40 CST 切流后复测：Qwen Realtime Search 与 Doubao 稳定 PASS；**FunASR 间歇失败**，4 次中 1 次 PASS，报 `FunASR returned no interim transcript`。定性依据：用切流前镜像 `rollback-…-pre-agent` 做 A/B 对比同样失败；且该 smoke 直接调用 `FunASRSession`，不经过 device VAD 门控或本次改动的任何代码路径。判定为供应商侧抖动，**与本次发布无关**，因此不构成回滚理由（回滚同样失败且会丢失修复）。FunASR 恢复前真实识别率会受影响，需另行跟进供应商。
 - 普通 Agent component 目录已收敛为当前 `1912` 与紧邻回滚 `1843`；当前回滚标签均解析到 `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
 - Agent/Bridge 内 DTLN 完成 ONNX checksum/contract 初始化和 7,680-byte PCM 实推，输出非零；后级固定补偿为 `2.0x`，PCM 转换保持饱和防削波。
 
@@ -112,9 +113,13 @@ candidate: device_post_playback_vad_uplink
 as_of_date: 2026-08-28
 code: complete
 wired: device_vad_projection_plus_session_entrypoint_deferred_commit
-enabled: false
-deployed: false
-verified: unit_1732_e2e_offline_mypy_strict_ruff
+enabled: true
+deployed: production_agent_bridge
+production_release_tag: 20260828-1537-device-vad-uplink-deadlock-agent-component
+production_release_commit: c3fb7fd181794204b97207cfef0015aa0106bde4
+deployed_at_utc: 2026-08-28T07:38:58Z
+rollback_point: memoria-agent:rollback-20260828-1537-device-vad-uplink-deadlock-agent-component-pre-agent
+verified: unit_1732_e2e_offline_mypy_strict_ruff_cutover_healthy_restart0_bridge_grpc_in_container_code_attested
 direct_real_device_verified: false
 ```
 
@@ -124,7 +129,7 @@ direct_real_device_verified: false
 
 已确认无效链路：`input_policy` / `capture_allowed` 在 Go Media Edge 与 ESP32 固件中均无消费者，只对 H5 生效。`Hold device capture closed until on-device playback can finish` 对设备链路是空操作，不要再沿这条链补防回声逻辑。
 
-未验证：真实设备连续多轮、欢迎语后立即提问、播放尾音误触发率仍需板卡证据，不得据此更新 `direct_real_device_verified`。
+未验证：真实设备连续多轮、欢迎语后立即提问、播放尾音误触发率仍需板卡证据，不得据此更新 `direct_real_device_verified`。切流后的 provider smoke 中 FunASR 间歇失败已判定为供应商侧问题（见「当前生产」），FunASR 恢复前无法用真机区分“死锁已修复”与“供应商识别不出”。
 
 ## 下一轮真实设备验收
 
