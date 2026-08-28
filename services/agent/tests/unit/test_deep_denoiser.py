@@ -71,7 +71,7 @@ def test_dtln_stream_preserves_pcm_length_and_reset_is_session_local() -> None:
     assert b"".join(first.process(frame) for frame in frames) == first_output
 
 
-def test_dtln_applies_bounded_six_db_output_makeup(
+def test_dtln_applies_bounded_twelve_db_output_makeup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     denoiser = DeepDenoiser.__new__(DeepDenoiser)
@@ -85,7 +85,7 @@ def test_dtln_applies_bounded_six_db_output_makeup(
 
     output = np.frombuffer(denoiser.process(samples.tobytes()), dtype="<i2")
 
-    assert output[:4].tolist() == [2000, -2000, 32767, -32768]
+    assert output[:4].tolist() == [4000, -4000, 32767, -32768]
 
 
 def test_required_dtln_fails_closed_when_models_are_missing(tmp_path: Path) -> None:

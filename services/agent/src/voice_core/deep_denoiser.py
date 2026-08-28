@@ -23,9 +23,10 @@ _BLOCK_LEN = 512
 _BLOCK_SHIFT = 128
 _INITIAL_OUTPUT_DELAY = _BLOCK_SHIFT - 1
 # The board microphone is pinned at 18 dB to keep its raw noise floor below
-# the DTLN input. Restore the remaining 6 dB after suppression, with the PCM
-# conversion below providing a hard saturation fence.
-_OUTPUT_MAKEUP_GAIN = 2.0
+# the DTLN input. Restore 12 dB after suppression so FunASR sees enough
+# energy at normal speaking distance, with the PCM conversion below providing
+# a hard saturation fence.
+_OUTPUT_MAKEUP_GAIN = 4.0
 
 FloatArray = NDArray[np.float32]
 
