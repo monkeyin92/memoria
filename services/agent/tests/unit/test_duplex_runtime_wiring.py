@@ -1948,6 +1948,29 @@ async def test_orphan_final_without_current_vad_stays_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_snapshot_bound_accepts_without_livekit_metrics() -> None:
+    """Device LiveKit sessions may omit timing metrics while the assembler still binds a VAD epoch."""
+    runtime = DuplexRuntime.create(
+        session_id="snapshot-bound-fail-open",
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started()
+    runtime.on_user_voice_started()
+
+    accepted, reason = runtime.accept_user_turn(
+        "今天星期几",
+        speech_anchored=False,
+        canonical_speech_epoch=1,
+        canonical_snapshot_bound=True,
+    )
+
+    assert accepted is True
+    assert reason is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_stop_talking_phrase_acks_quietly() -> None:
     """「别说了 / 暂停」must ack「好的。」not invite「嗯，你说。」"""
     said: list[str] = []

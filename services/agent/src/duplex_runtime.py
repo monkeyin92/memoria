@@ -2854,7 +2854,12 @@ class DuplexRuntime(DuplexSpeakerMixin):
             # LiveKit can emit a real endpointed final without timing metrics.
             # The current VAD epoch plus its collected PCM is still an
             # authoritative live-speech anchor; a bare orphan final is not.
-            missing_anchor = not (speech_anchored or current_vad_has_pcm)
+            assembler_bound = bool(
+                canonical_snapshot_bound and canonical_speech_epoch is not None
+            )
+            missing_anchor = not (
+                speech_anchored or current_vad_has_pcm or assembler_bound
+            )
             if missing_anchor:
                 # Prod: after「停一下」LiveKit often emits orphan FINAL without
                 # started/stopped speaking metrics → session goes permanently silent.
