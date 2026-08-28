@@ -55,6 +55,12 @@ logger = logging.getLogger(__name__)
 _WS_TRACE_MAX_PER_WINDOW = 20
 
 
+def _is_empty_audio_error(error_code: object) -> bool:
+    """Return whether FunASR rejected one task because it found no usable audio."""
+
+    return str(error_code or "").strip().casefold() == "emptyaudio"
+
+
 @dataclass
 class FunASRConfig:
     api_key: str
@@ -243,6 +249,15 @@ class FunASRSession:
             return False
         return failure.task_epoch == max(1, self._task_epoch) and (
             not self.task_id or failure.task_id == self.task_id
+        )
+
+    def _has_replaceable_empty_audio_failure(self) -> bool:
+        failure = self._last_task_failure
+        return bool(
+            self._replaceable_provider_failure
+            and failure is not None
+            and _is_empty_audio_error(failure.error_code)
+            and self._failure_matches_current_task()
         )
 
     def _record_task_failure(
@@ -694,9 +709,11 @@ class FunASRSession:
                         )
                         continue
                     if ev.event == "task-failed":
+                        empty_audio = _is_empty_audio_error(ev.error_code)
                         self._failed = True
                         self._replaceable_provider_failure = True
-                        self._breaker.record_failure()
+                        if not empty_audio:
+                            self._breaker.record_failure()
                         self._record_task_failure(
                             task_id=ev.task_id,
                             error_code=ev.error_code,
@@ -706,6 +723,16 @@ class FunASRSession:
                         self._task_failed_event.set()
                         self._mark_ws_disconnected()
                         self._ready.clear()
+                        if empty_audio:
+                            logger.info(
+                                "FunASR empty-audio task will be replaced on next PCM "
+                                "task_id=%s task_epoch=%s sends=%s peak=%s rms=%s",
+                                ev.task_id,
+                                self._task_epoch,
+                                self._task_audio_send_count,
+                                self.task_pcm_peak_abs,
+                                self.task_pcm_rms,
+                            )
                     elif (
                         ev.event == "task-started"
                         and ev.task_id == self.task_id
@@ -1020,6 +1047,12 @@ class FunASRSession:
             raise self._failure_exception("FunASR cannot send PCM")
 
         failed_task_id = self.task_id or ""
+        empty_audio = self._has_replaceable_empty_audio_failure()
+        if empty_audio:
+            # The provider has conclusively rejected this task as empty.  Its
+            # bounded ring belongs to the discarded segment and must not be
+            # replayed into the next user turn.
+            self._clear_pcm_ring()
         replay_start = self.replay_start_sample()
         replay = self._replay_pcm()
         failed_ws = self._ws
@@ -1191,6 +1224,8 @@ class FunASRSession:
         if self._closed:
             raise APIConnectionError("FunASR session closed before task boundary")
         if self._failed or self._task_failed_event.is_set():
+            if self._has_replaceable_empty_audio_failure():
+                return
             raise self._failure_exception("FunASR task failed before task boundary")
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.config.result_timeout_s
@@ -1211,6 +1246,8 @@ class FunASRSession:
                         "FunASR session closed before task boundary"
                     )
                 if self._task_failed_event.is_set():
+                    if self._has_replaceable_empty_audio_failure():
+                        return
                     raise self._failure_exception(
                         "FunASR task failed before task boundary"
                     )
@@ -1245,15 +1282,18 @@ class FunASRSession:
                 return
             if self._finishing:
                 raise APIConnectionError("FunASR task rotation already in progress")
-            if self._failed:
+            empty_audio_boundary = self._has_replaceable_empty_audio_failure()
+            if self._failed and not empty_audio_boundary:
                 raise self._failure_exception(
                     "FunASR task rotation requires a healthy session"
                 )
-            boundary_observed = self._task_boundary_observed()
+            boundary_observed = self._task_boundary_observed() or empty_audio_boundary
             if boundary_observed:
                 logger.info(
-                    "FunASR rotation reuses task without finish: boundary already observed task_id=%s",
+                    "FunASR rotation reuses task without finish: boundary already observed "
+                    "task_id=%s empty_audio=%s",
                     self.task_id,
+                    empty_audio_boundary,
                 )
             self._rotation_pending = True
             try:
@@ -1658,6 +1698,25 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         with contextlib.suppress(asyncio.CancelledError):
                             await task
             if ev.event == "task-failed":
+                if _is_empty_audio_error(ev.error_code):
+                    if (
+                        pending_boundary_task_id
+                        and ev.task_id != pending_boundary_task_id
+                        and finish_pending_boundary()
+                    ):
+                        return
+                    if self._speaking:
+                        self._event_ch.send_nowait(
+                            stt.SpeechEvent(type=stt.SpeechEventType.END_OF_SPEECH)
+                        )
+                        self._speaking = False
+                    # EmptyAudio is a task-local no-speech outcome.  The
+                    # provider closes this WebSocket, but the send side keeps
+                    # the long-lived stream alive and replaces the task on the
+                    # next PCM frame.  A terminal empty task can end cleanly.
+                    if session.finishing and not session.rotation_pending:
+                        return
+                    continue
                 raise session._failure_exception("FunASR task failed")
             if ev.event == "task-finished":
                 if (
