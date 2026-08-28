@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 
 import pytest
-from livekit.agents import APIConnectionError
+from livekit.agents import APIConnectionError, stt
+from livekit.agents.utils import aio
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers import funasr_stt
+from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import (
     _WS_TRACE_MAX_PER_WINDOW,
     FunASRConfig,
@@ -794,6 +798,73 @@ async def test_funasr_recv_loop_preserves_final_on_both_sides_of_task_finished(
     assert (context.task_epoch, context.segment_epoch, context.sample_origin) == (3, 5, 320)
     assert context.boundary_observed is True
     assert session.last_emitted_final_sample == 640
+
+
+@pytest.mark.asyncio
+async def test_funasr_recv_events_waits_for_late_final_after_prior_final() -> None:
+    config = FunASRConfig(
+        api_key="test",
+        ws_url="ws://unused",
+        post_finish_tail_grace_s=0.01,
+    )
+    # Construct the stream without starting RecognizeStream's background
+    # network task; this test drives only the provider event consumer.
+    stream = object.__new__(funasr_stt.FunASRRecognizeStream)
+    stream._config = config
+    stream._stt_instance = FunASRSTT(config)
+    stream._event_ch = aio.Chan()
+    stream._prefix_tracker = StablePrefixTracker()
+    stream._speaking = False
+    stream._final_sentence_ids = set()
+    stream._sentence_revisions = {}
+    stream._provider_task_id = ""
+    stream._provider_task_epoch = 0
+    stream._asr_results = collections.deque(maxlen=64)
+    stream._stream_epoch = 1
+    stream._last_emitted_final_sample = 0
+    session = FunASRSession(config)
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._segment_epoch = 1
+    session._task_sample_origin = 0
+    session._task_audio_end_sample = 640
+    session._last_sent_sample = 640
+    session._rotation_pending = True
+    session._idle_terminal_event.set()
+
+    def final(sentence_id: int, text: str) -> FunASRServerEvent:
+        return FunASRServerEvent(
+            event="result-generated",
+            task_id="task-1",
+            sentence=FunASRSentence(
+                sentence_id=sentence_id,
+                text=text,
+                begin_ms=0,
+                end_ms=sentence_id * 20,
+                sentence_end=True,
+                heartbeat=False,
+                words=(),
+            ),
+        )
+
+    # The second final models the provider tail observed after task-finished.
+    session.events.put_nowait(final(1, "今天"))
+    session.events.put_nowait(FunASRServerEvent(event="task-finished", task_id="task-1"))
+    session.events.put_nowait(final(2, "今天星期几"))
+
+    await stream._recv_events(session)
+    events = [
+        await asyncio.wait_for(stream._event_ch.recv(), timeout=0.5)
+        for _ in range(4)
+    ]
+
+    assert [event.type for event in events] == [
+        stt.SpeechEventType.START_OF_SPEECH,
+        stt.SpeechEventType.FINAL_TRANSCRIPT,
+        stt.SpeechEventType.FINAL_TRANSCRIPT,
+        stt.SpeechEventType.END_OF_SPEECH,
+    ]
+    assert [event.alternatives[0].text for event in events[1:3]] == ["今天", "今天星期几"]
 
 
 @pytest.mark.asyncio
