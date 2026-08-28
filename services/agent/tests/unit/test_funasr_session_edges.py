@@ -211,6 +211,63 @@ async def test_funasr_first_pcm_replaces_failed_provider_task_with_bounded_repla
 
 
 @pytest.mark.asyncio
+async def test_funasr_empty_audio_boundary_replaces_without_replaying_discarded_pcm() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+            self.closed = False
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    old_websocket = FakeWebSocket()
+    replacement = FakeWebSocket()
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = old_websocket  # type: ignore[assignment]
+    session.task_id = "task-empty"
+    session._task_epoch = 1
+    discarded = b"\x00\x00" * 4
+    session._last_sent_sample = 4
+    session._push_ring(discarded, start_sample=0)
+    session._record_task_audio_send(pcm=discarded, start_sample=0, end_sample=4)
+    session._failed = True
+    session._replaceable_provider_failure = True
+    session._task_failed_event.set()
+    session._record_task_failure(
+        task_id="task-empty",
+        error_code="EmptyAudio",
+        error_message="No effective audio received",
+    )
+
+    async def open_replacement() -> tuple[FakeWebSocket, str, tuple[object, ...]]:
+        return replacement, "task-replacement", ()
+
+    async def receive_until_closed() -> None:
+        await session._idle_terminal_event.wait()
+
+    session._open_with_retry = open_replacement  # type: ignore[method-assign]
+    session._recv_loop = receive_until_closed  # type: ignore[method-assign]
+
+    await session.rotate_task(require_consumed=True)
+    assert session.rotation_pending is True
+
+    next_turn = b"\x02\x00" * 4
+    await session.send_pcm(next_turn, capture_start_sample=4)
+
+    assert old_websocket.closed is True
+    assert replacement.sent == [next_turn]
+    assert session.task_id == "task-replacement"
+    assert session.task_sample_origin == 4
+    assert session.last_sent_sample == 8
+    assert session.failed is False
+    assert session._task_failed_event.is_set() is False
+    await session.aclose()
+
+
+@pytest.mark.asyncio
 async def test_funasr_does_not_replace_internal_failed_task_fence() -> None:
     class FakeWebSocket:
         async def send(self, _payload: object) -> None:
@@ -868,6 +925,41 @@ async def test_funasr_recv_events_waits_for_late_final_after_prior_final() -> No
 
 
 @pytest.mark.asyncio
+async def test_funasr_recv_events_treats_terminal_empty_audio_as_clean_no_speech() -> None:
+    config = FunASRConfig(api_key="test", ws_url="ws://unused")
+    stream = object.__new__(funasr_stt.FunASRRecognizeStream)
+    stream._config = config
+    stream._stt_instance = FunASRSTT(config)
+    stream._event_ch = aio.Chan()
+    stream._prefix_tracker = StablePrefixTracker()
+    stream._speaking = False
+    stream._final_sentence_ids = set()
+    stream._sentence_revisions = {}
+    stream._provider_task_id = ""
+    stream._provider_task_epoch = 0
+    stream._asr_results = collections.deque(maxlen=64)
+    stream._stream_epoch = 1
+    stream._last_emitted_final_sample = 0
+    session = FunASRSession(config)
+    session.task_id = "task-empty"
+    session._finishing = True
+    session._terminal_finishing = True
+    session.events.put_nowait(
+        FunASRServerEvent(
+            event="task-failed",
+            task_id="task-empty",
+            error_code="EmptyAudio",
+            error_message="No effective audio received",
+        )
+    )
+
+    await asyncio.wait_for(stream._recv_events(session), timeout=0.5)
+
+    assert stream._speaking is False
+    assert stream._event_ch.empty()
+
+
+@pytest.mark.asyncio
 async def test_funasr_recv_loop_keeps_old_final_after_new_task_starts() -> None:
     old_final = {
         "header": {"event": "result-generated", "task_id": "task-1"},
@@ -972,6 +1064,49 @@ async def test_funasr_recv_loop_ignores_old_failure_after_new_task_starts() -> N
     assert session._task_failed_event.is_set() is False
     assert session._ready.is_set() is True
     assert session.events.empty()
+
+
+@pytest.mark.asyncio
+async def test_funasr_empty_audio_failure_is_replaceable_without_tripping_breaker() -> None:
+    class EmptyAudioWebSocket:
+        def __init__(self) -> None:
+            self.messages = [
+                {
+                    "header": {
+                        "event": "task-failed",
+                        "task_id": "task-empty",
+                        "error_code": "EmptyAudio",
+                        "error_message": "No effective audio received",
+                    },
+                    "payload": {},
+                }
+            ]
+
+        def __aiter__(self) -> EmptyAudioWebSocket:
+            return self
+
+        async def __anext__(self) -> object:
+            if not self.messages:
+                raise StopAsyncIteration
+            return self.messages.pop(0)
+
+        async def close(self) -> None:
+            return None
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = EmptyAudioWebSocket()  # type: ignore[assignment]
+    session.task_id = "task-empty"
+    session._task_epoch = 2
+
+    await session._recv_loop()
+
+    assert session.failed is True
+    assert session._replaceable_provider_failure is True
+    assert session._task_failed_event.is_set() is True
+    assert session._breaker.consecutive_failures == 0
+    failure = session.last_task_failure
+    assert failure is not None
+    assert failure.error_code == "EmptyAudio"
 
 
 @pytest.mark.asyncio
