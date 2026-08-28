@@ -92,6 +92,7 @@ class DeviceVadProjector:
 
     session: Any
     session_id: str
+    on_start: Callable[[], None] | None = None
     on_endpoint: Callable[[], None] | None = None
     _last_sample: int = 0
     _active: bool = False
@@ -171,13 +172,15 @@ class DeviceVadProjector:
             self._active = False
             state = "listening"
         self._last_sample = sample_position
+        if state == "speaking" and self.on_start is not None:
+            self.on_start()
+        elif state == "listening" and self.on_endpoint is not None:
+            self.on_endpoint()
         update_state = getattr(self.session, "_update_user_state", None)
         if callable(update_state):
             update_state(state)
         else:
             self.session.emit("user_state_changed", SimpleNamespace(new_state=state))
-        if state == "listening" and self.on_endpoint is not None:
-            self.on_endpoint()
         return True
 
 

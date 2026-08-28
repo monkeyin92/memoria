@@ -811,8 +811,30 @@ async def entrypoint(ctx: Any) -> None:
 
     device_turn_commit_task: asyncio.Task[Any] | None = None
 
+    def _set_device_uplink(enabled: bool) -> None:
+        setter = getattr(stt_plugin, "set_pcm_enabled", None)
+        if callable(setter):
+            setter(enabled)
+        logger.info(
+            "device uplink_pcm enabled=%s session_id=%s",
+            enabled,
+            runtime_session_id,
+        )
+
+    def _on_device_start() -> None:
+        nonlocal device_turn_commit_task
+        if device_turn_commit_busy(device_turn_commit_task):
+            device_turn_commit_task.cancel()
+            device_turn_commit_task = None
+            logger.info(
+                "device VAD start cancelled commit_in_flight session_id=%s",
+                runtime_session_id,
+            )
+        _set_device_uplink(True)
+
     def _on_device_endpoint() -> None:
         nonlocal device_turn_commit_task
+        _set_device_uplink(False)
         if device_turn_commit_busy(device_turn_commit_task):
             logger.info(
                 "device VAD end skipped commit_in_flight session_id=%s",
@@ -833,32 +855,22 @@ async def entrypoint(ctx: Any) -> None:
         DeviceVadProjector(
             session,
             runtime_session_id,
+            on_start=_on_device_start,
             on_endpoint=_on_device_endpoint,
         )
         if device_session
         else None
     )
     if device_vad is not None:
-        uplink_release_task: asyncio.Task[Any] | None = None
-
-        def _set_device_uplink(enabled: bool) -> None:
-            setter = getattr(stt_plugin, "set_pcm_enabled", None)
-            if callable(setter):
-                setter(enabled)
-            logger.info(
-                "device uplink_pcm enabled=%s session_id=%s",
-                enabled,
-                runtime_session_id,
-            )
+        _set_device_uplink(False)
+        clearer = getattr(stt_plugin, "clear_pcm_drain", None)
+        if callable(clearer):
+            clearer()
 
         def _on_device_phase(phase: Any, previous: Any) -> None:
-            nonlocal uplink_release_task
             phase_name = getattr(phase, "value", str(phase))
             previous_name = getattr(previous, "value", str(previous))
             if phase_name == "speaking":
-                if uplink_release_task is not None:
-                    uplink_release_task.cancel()
-                    uplink_release_task = None
                 _set_device_uplink(False)
                 flush = getattr(stt_plugin, "flush_speech_segment", None)
                 if callable(flush):
@@ -867,15 +879,6 @@ async def entrypoint(ctx: Any) -> None:
                 return
             if previous_name == "speaking" and phase_name == "listening":
                 device_vad.begin_playback_holdoff()
-
-                async def _release() -> None:
-                    await asyncio.sleep(DEVICE_POST_PLAYBACK_HOLDOFF_S)
-                    _set_device_uplink(True)
-
-                uplink_release_task = runtime._spawn(
-                    _release(),
-                    name="device-uplink-holdoff",
-                )
 
         runtime.set_phase_listener(_on_device_phase)
 

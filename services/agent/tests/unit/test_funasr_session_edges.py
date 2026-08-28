@@ -5,6 +5,7 @@ import collections
 import logging
 
 import pytest
+from livekit import rtc
 from livekit.agents import APIConnectionError, stt
 from livekit.agents.utils import aio
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -1283,3 +1284,140 @@ async def test_wait_for_nonempty_final_does_not_extend_grace_on_later_empties() 
         is False
     )
     assert funasr_stt.monotonic() - started < 0.5
+
+
+def test_set_pcm_enabled_drains_only_when_turning_active_uplink_off() -> None:
+    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    assert plugin.pcm_enabled is True
+    assert plugin.pcm_draining is False
+
+    plugin.set_pcm_enabled(False)
+    assert plugin.pcm_enabled is False
+    assert plugin.pcm_draining is True
+
+    plugin.set_pcm_enabled(False)
+    assert plugin.pcm_draining is True
+
+    plugin.clear_pcm_drain()
+    assert plugin.pcm_draining is False
+
+    plugin.set_pcm_enabled(False)
+    assert plugin.pcm_draining is False
+
+    plugin.set_pcm_enabled(True)
+    assert plugin.pcm_enabled is True
+    assert plugin.pcm_draining is False
+
+
+def _pcm_frame(marker: int, samples: int = 1280) -> rtc.AudioFrame:
+    return rtc.AudioFrame(
+        data=bytes((marker, 0)) * samples,
+        sample_rate=16000,
+        num_channels=1,
+        samples_per_channel=samples,
+    )
+
+
+class _FakeFunASRSession:
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+        self.rotations = 0
+        self.finished = False
+
+    async def send_pcm(self, pcm: bytes, capture_start_sample: int | None = None) -> None:
+        _ = capture_start_sample
+        self.sent.append(pcm)
+
+    async def rotate_task(self) -> None:
+        self.rotations += 1
+
+    async def finish(self) -> None:
+        self.finished = True
+
+    async def wait_for_task_finished(self) -> None:
+        return None
+
+
+class _ScriptedInput:
+    def __init__(self, items: list[object]) -> None:
+        self._items = list(items)
+        self.closed = False
+
+    def __aiter__(self) -> _ScriptedInput:
+        return self
+
+    async def __anext__(self) -> object:
+        while self._items:
+            item = self._items.pop(0)
+            if callable(item):
+                item()
+                continue
+            return item
+        raise StopAsyncIteration
+
+
+@pytest.mark.asyncio
+async def test_disabled_pcm_holds_preroll_until_uplink_enables() -> None:
+    plugin = FunASRSTT(
+        FunASRConfig(
+            api_key="test",
+            ws_url="ws://unused",
+            reconnect_audio_ms=80,
+        )
+    )
+    stream = plugin.stream()
+    plugin.set_pcm_enabled(False)
+    plugin.clear_pcm_drain()
+    session = _FakeFunASRSession()
+    silence = _pcm_frame(1)
+    speech = _pcm_frame(2)
+    original_ch = stream._input_ch
+    stream._input_ch = _ScriptedInput(
+        [
+            silence,
+            silence,
+            lambda: plugin.set_pcm_enabled(True),
+            speech,
+            stream._FlushSentinel(),
+        ]
+    )
+    try:
+        await stream._send_audio(session)
+    finally:
+        stream._input_ch = original_ch
+        await stream.aclose()
+        await plugin.aclose()
+
+    assert session.sent == [bytes(silence.data), bytes(speech.data)]
+    assert session.rotations == 1
+    assert session.finished is True
+
+
+@pytest.mark.asyncio
+async def test_disabled_pcm_drains_until_flush_then_drops() -> None:
+    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    stream = plugin.stream()
+    session = _FakeFunASRSession()
+    first = _pcm_frame(3)
+    tail = _pcm_frame(4)
+    dropped = _pcm_frame(5)
+    original_ch = stream._input_ch
+    stream._input_ch = _ScriptedInput(
+        [
+            first,
+            lambda: plugin.set_pcm_enabled(False),
+            tail,
+            stream._FlushSentinel(),
+            dropped,
+        ]
+    )
+    try:
+        await stream._send_audio(session)
+    finally:
+        stream._input_ch = original_ch
+        await stream.aclose()
+        await plugin.aclose()
+
+    assert session.sent == [bytes(first.data), bytes(tail.data)]
+    assert session.rotations == 1
+    assert plugin.pcm_draining is False
