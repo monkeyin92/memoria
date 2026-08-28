@@ -894,6 +894,40 @@ async def test_agent_disconnect_restarts_gateway_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_join_timeout_restarts_gateway_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    disconnected = False
+
+    class Room:
+        async def disconnect(self) -> None:
+            nonlocal disconnected
+            disconnected = True
+
+    monkeypatch.setattr(bridge_module, "AGENT_JOIN_TIMEOUT_S", 0.0)
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = Room()
+
+    await bridge._watch_for_agent_join()
+
+    assert disconnected is True
+    await bridge.close()
+
+
+@pytest.mark.asyncio
 async def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
     sent: list[tuple[str, str]] = []
 

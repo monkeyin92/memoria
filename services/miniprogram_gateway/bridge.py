@@ -40,6 +40,7 @@ TELEMETRY_TOPIC = "voice-agent.telemetry"
 DEVICE_VAD_TOPIC = "voice-agent.device-vad"
 CONTROL_ACK_TRACK_NAME = "memoria-ack"
 CLIENT_AUDIO_TRACE_MIN_INTERVAL_S = 0.5
+AGENT_JOIN_TIMEOUT_S = 30.0
 
 
 class GatewayMediaError(ValueError):
@@ -167,6 +168,7 @@ class MiniProgramLiveKitBridge:
         self._aec_suppressed_generation_id: int | None = None
         self._outbound_ready = asyncio.Event()
         self._room_disconnected = asyncio.Event()
+        self._agent_joined = asyncio.Event()
         self._audio_streams: set[Any] = set()
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._closed = False
@@ -224,6 +226,13 @@ class MiniProgramLiveKitBridge:
             )
             self._audio_source = source
             self._subscribe_existing_agent_audio(room)
+            if any(self._is_agent(participant) for participant in room.remote_participants.values()):
+                self._agent_joined.set()
+            else:
+                self._spawn(
+                    self._watch_for_agent_join(),
+                    name="mini-program-agent-watchdog",
+                )
         except Exception as exc:
             await self.close()
             raise GatewayMediaError("could not connect gateway participant to LiveKit") from exc
@@ -556,6 +565,7 @@ class MiniProgramLiveKitBridge:
         room.on("track_subscribed", self._on_track_subscribed)
         room.on("data_received", self._on_data_received)
         room.on("transcription_received", self._on_transcription_received)
+        room.on("participant_connected", self._on_participant_connected)
         room.on("participant_disconnected", self._on_participant_disconnected)
         room.on("reconnecting", self._on_room_reconnecting)
         room.on("reconnected", self._on_room_reconnected)
@@ -784,6 +794,10 @@ class MiniProgramLiveKitBridge:
             GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnected"})
         )
 
+    def _on_participant_connected(self, participant: Any) -> None:
+        if not self._closed and self._is_agent(participant):
+            self._agent_joined.set()
+
     def _on_participant_disconnected(self, participant: Any) -> None:
         """Force gateway re-authentication when the Agent leaves its room.
 
@@ -809,6 +823,18 @@ class MiniProgramLiveKitBridge:
             return
         with contextlib.suppress(Exception):
             await room.disconnect()
+
+    async def _watch_for_agent_join(self) -> None:
+        try:
+            await asyncio.wait_for(self._agent_joined.wait(), timeout=AGENT_JOIN_TIMEOUT_S)
+        except TimeoutError:
+            if self._closed:
+                return
+            logger.warning(
+                "mini_program_agent_join_timeout reconnecting_gateway session_id=%s",
+                self._claims.session_id,
+            )
+            await self._disconnect_after_agent_loss()
 
     def _on_room_disconnected(self, _reason: Any) -> None:
         if not self._closed:
