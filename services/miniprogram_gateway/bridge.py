@@ -556,6 +556,7 @@ class MiniProgramLiveKitBridge:
         room.on("track_subscribed", self._on_track_subscribed)
         room.on("data_received", self._on_data_received)
         room.on("transcription_received", self._on_transcription_received)
+        room.on("participant_disconnected", self._on_participant_disconnected)
         room.on("reconnecting", self._on_room_reconnecting)
         room.on("reconnected", self._on_room_reconnected)
         room.on("disconnected", self._on_room_disconnected)
@@ -782,6 +783,32 @@ class MiniProgramLiveKitBridge:
         self._enqueue_event(
             GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnected"})
         )
+
+    def _on_participant_disconnected(self, participant: Any) -> None:
+        """Force gateway re-authentication when the Agent leaves its room.
+
+        A gateway participant can outlive the Agent worker during a deploy or
+        a worker crash.  Keeping that room open leaves the device sending
+        audio into a room with no response owner; closing the gateway socket
+        makes the device obtain a fresh session and dispatch when it reconnects.
+        """
+        if self._closed or not self._is_agent(participant):
+            return
+        logger.warning(
+            "mini_program_agent_disconnected reconnecting_gateway session_id=%s",
+            self._claims.session_id,
+        )
+        self._spawn(
+            self._disconnect_after_agent_loss(),
+            name="mini-program-agent-disconnect",
+        )
+
+    async def _disconnect_after_agent_loss(self) -> None:
+        room = self._room
+        if room is None:
+            return
+        with contextlib.suppress(Exception):
+            await room.disconnect()
 
     def _on_room_disconnected(self, _reason: Any) -> None:
         if not self._closed:

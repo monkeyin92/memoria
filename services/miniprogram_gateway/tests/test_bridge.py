@@ -859,6 +859,41 @@ async def test_device_vad_publish_failure_disconnects_the_room() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_disconnect_restarts_gateway_session() -> None:
+    disconnected = False
+
+    class Room:
+        async def disconnect(self) -> None:
+            nonlocal disconnected
+            disconnected = True
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = Room()
+
+    bridge._on_participant_disconnected(
+        SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert disconnected is True
+    await bridge.close()
+
+
+@pytest.mark.asyncio
 async def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
     sent: list[tuple[str, str]] = []
 
