@@ -1469,7 +1469,6 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._asr_results: deque[ASRResult] = deque(maxlen=64)
         self._stream_epoch = 1
         self._last_emitted_final_sample = 0
-        self._last_final_task_id = ""
 
     @property
     def asr_results(self) -> tuple[ASRResult, ...]:
@@ -1673,11 +1672,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                     raise APIConnectionError(
                         "FunASR task finished without a client boundary"
                     )
-                if ev.task_id == self._last_final_task_id:
-                    pending_terminal_return = terminal_return
-                    if finish_pending_boundary():
-                        return
-                    continue
+                # A single provider task can emit more than one sentence-end
+                # result.  Seeing an earlier final is not proof that the last
+                # final has crossed the queue, so always leave a bounded tail
+                # window before publishing END_OF_SPEECH.
                 pending_boundary_task_id = ev.task_id
                 pending_boundary_deadline = (
                     asyncio.get_running_loop().time()
@@ -1781,15 +1779,19 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         alternatives=[sd],
                     )
                 )
-                self._last_final_task_id = request_id
                 self._stt_instance.trace_result(
                     sent,
                     task_epoch=max(1, self._provider_task_epoch),
                 )
                 self._prefix_tracker.on_final(sent.sentence_id)
                 if ev.task_id == pending_boundary_task_id:
-                    if finish_pending_boundary():
-                        return
+                    # Reset the bounded tail window after every final in the
+                    # provider's finished task so multiple late finals stay
+                    # ahead of END_OF_SPEECH.
+                    pending_boundary_deadline = (
+                        asyncio.get_running_loop().time()
+                        + self._config.post_finish_tail_grace_s
+                    )
             else:
                 self._event_ch.send_nowait(
                     stt.SpeechEvent(
