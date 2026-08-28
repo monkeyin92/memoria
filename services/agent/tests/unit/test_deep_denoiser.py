@@ -71,29 +71,59 @@ def test_dtln_stream_preserves_pcm_length_and_reset_is_session_local() -> None:
     assert b"".join(first.process(frame) for frame in frames) == first_output
 
 
-def test_dtln_applies_bounded_twelve_db_output_makeup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _identity_denoiser() -> DeepDenoiser:
     denoiser = DeepDenoiser.__new__(DeepDenoiser)
     denoiser.config = DeepDenoiserConfig()
     denoiser._model_available = True
     denoiser._pending_input = np.empty(0, dtype=np.float32)
     denoiser._ready_output = np.empty(0, dtype=np.float32)
-    monkeypatch.setattr(denoiser, "_process_shift", lambda shift: shift)
+    return denoiser
+
+
+def _makeup_samples() -> bytes:
     samples = np.zeros(128, dtype="<i2")
     samples[:4] = (1000, -1000, 20_000, -20_000)
+    return samples.tobytes()
 
-    output = np.frombuffer(denoiser.process(samples.tobytes()), dtype="<i2")
 
-    assert output[:4].tolist() == [4000, -4000, 32767, -32768]
+def test_dtln_applies_bounded_eighteen_db_output_makeup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    denoiser = _identity_denoiser()
+    monkeypatch.setattr(denoiser, "_process_shift", lambda shift: shift)
+
+    output = np.frombuffer(denoiser.process(_makeup_samples()), dtype="<i2")
+
+    assert output[:4].tolist() == [8000, -8000, 32767, -32768]
+
+
+def test_dtln_makeup_gain_env_override_is_clamped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    denoiser = _identity_denoiser()
+    monkeypatch.setattr(denoiser, "_process_shift", lambda shift: shift)
+
+    def first_sample(value: str) -> int:
+        monkeypatch.setenv("MEMORIA_DTLN_MAKEUP_GAIN", value)
+        output = np.frombuffer(denoiser.process(_makeup_samples()), dtype="<i2")
+        return int(output[0])
+
+    assert first_sample("16") == 16_000
+    assert first_sample("1") == 1_000
+    # Out-of-range and unparseable values fall back to the 8.0 default.
+    assert first_sample("0.5") == 8_000
+    assert first_sample("64") == 8_000
+    assert first_sample("not-a-number") == 8_000
+
+    monkeypatch.delenv("MEMORIA_DTLN_MAKEUP_GAIN")
+    output = np.frombuffer(denoiser.process(_makeup_samples()), dtype="<i2")
+    assert int(output[0]) == 8_000
 
 
 def test_required_dtln_fails_closed_when_models_are_missing(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="required DTLN model unavailable"):
         DeepDenoiser(DeepDenoiserConfig(model_dir=tmp_path))
 
-    optional = DeepDenoiser(
-        DeepDenoiserConfig(model_dir=tmp_path, required=False)
-    )
+    optional = DeepDenoiser(DeepDenoiserConfig(model_dir=tmp_path, required=False))
     pcm = _sine_frame(frame_index=0)
     assert optional.process(pcm) == pcm
