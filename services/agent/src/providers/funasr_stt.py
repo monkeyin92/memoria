@@ -1906,6 +1906,7 @@ class FunASRSTT(stt.STT[Any]):
         self._nonempty_final: asyncio.Event | None = None
         self._nonempty_seq = 0
         self._last_nonempty_at = 0.0
+        self._last_final_at = 0.0
 
     @classmethod
     def from_env(cls) -> FunASRSTT:
@@ -1990,7 +1991,13 @@ class FunASRSTT(stt.STT[Any]):
             self._nonempty_final = event
         return event
 
-    async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+    async def wait_for_nonempty_final(
+        self,
+        *,
+        since: float,
+        timeout: float,
+        empty_grace_s: float = 2.0,
+    ) -> bool:
         """Return whether a nonempty FunASR final arrived at or after ``since``."""
 
         start_seq = self._nonempty_seq
@@ -1999,7 +2006,10 @@ class FunASRSTT(stt.STT[Any]):
         while True:
             if self._last_nonempty_at >= since or self._nonempty_seq > start_seq:
                 return True
-            remaining = deadline - monotonic()
+            now = monotonic()
+            remaining = deadline - now
+            if self._last_final_at >= since:
+                remaining = min(remaining, empty_grace_s - (now - self._last_final_at))
             if remaining <= 0:
                 return False
             event.clear()
@@ -2012,10 +2022,11 @@ class FunASRSTT(stt.STT[Any]):
 
     def trace_result(self, sentence: FunASRSentence, *, task_epoch: int) -> None:
         metrics = result_trace_metrics(sentence, task_epoch=task_epoch)
+        self._last_final_at = monotonic()
+        self._nonempty_event().set()
         if metrics["text_len"]:
-            self._last_nonempty_at = monotonic()
+            self._last_nonempty_at = self._last_final_at
             self._nonempty_seq += 1
-            self._nonempty_event().set()
         logger.info(
             "funasr_final text_len=%s task_epoch=%s",
             metrics["text_len"],

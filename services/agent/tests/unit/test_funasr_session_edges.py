@@ -1233,7 +1233,9 @@ async def test_wait_for_nonempty_final_accepts_text_after_vad_end() -> None:
     since = plugin._last_nonempty_at + 0.001
     plugin.trace_result(_final_sentence(""), task_epoch=2)
 
-    waiting = asyncio.create_task(plugin.wait_for_nonempty_final(since=since, timeout=0.2))
+    waiting = asyncio.create_task(
+        plugin.wait_for_nonempty_final(since=since, timeout=0.2, empty_grace_s=0.2)
+    )
     await asyncio.sleep(0)
     assert not waiting.done()
 
@@ -1248,3 +1250,17 @@ async def test_wait_for_nonempty_final_times_out_without_text() -> None:
     plugin.trace_result(_final_sentence(""), task_epoch=1)
 
     assert await plugin.wait_for_nonempty_final(since=since, timeout=0.05) is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_nonempty_final_gives_up_after_empty_grace() -> None:
+    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    since = funasr_stt.monotonic()
+    plugin.trace_result(_final_sentence(""), task_epoch=1)
+    started = funasr_stt.monotonic()
+
+    assert (
+        await plugin.wait_for_nonempty_final(since=since, timeout=8.0, empty_grace_s=0.05)
+        is False
+    )
+    assert funasr_stt.monotonic() - started < 1.0

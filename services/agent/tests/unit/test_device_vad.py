@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 from livekit import rtc
 from services.agent.src.device_vad import (
+    DEVICE_EMPTY_TRANSCRIPT_PHRASE,
     DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
     DEVICE_VAD_TOPIC,
     DeviceVadProjector,
+    apply_device_input_gate,
     commit_device_user_turn,
     commit_device_user_turn_after_asr,
 )
@@ -185,9 +187,16 @@ async def test_commit_after_asr_waits_for_nonempty_final() -> None:
             self.commits.append(kwargs)
 
     class ReadySTT:
-        async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+        async def wait_for_nonempty_final(
+            self,
+            *,
+            since: float,
+            timeout: float,
+            empty_grace_s: float = 2.0,
+        ) -> bool:
             assert since == 10.0
             assert timeout == DEVICE_TURN_TRANSCRIPT_TIMEOUT_S
+            assert empty_grace_s == 2.0
             return True
 
     session = SessionWithCommit()
@@ -219,10 +228,20 @@ async def test_commit_after_asr_skips_empty_transcript() -> None:
             self.commits.append(kwargs)
 
     class EmptySTT:
-        async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+        async def wait_for_nonempty_final(
+            self,
+            *,
+            since: float,
+            timeout: float,
+            empty_grace_s: float = 2.0,
+        ) -> bool:
             return False
 
     session = SessionWithCommit()
+    spoken: list[str] = []
+
+    async def _on_empty() -> None:
+        spoken.append(DEVICE_EMPTY_TRANSCRIPT_PHRASE)
 
     assert (
         await commit_device_user_turn_after_asr(
@@ -230,7 +249,29 @@ async def test_commit_after_asr_skips_empty_transcript() -> None:
             session_id="session-1",
             stt=EmptySTT(),
             since=10.0,
+            on_empty=_on_empty,
         )
         is False
     )
     assert session.commits == []
+    assert spoken == [DEVICE_EMPTY_TRANSCRIPT_PHRASE]
+
+
+def test_device_input_gate_mutes_while_assistant_occupies_the_floor() -> None:
+    class Input:
+        def __init__(self) -> None:
+            self.enabled: list[bool] = []
+
+        def set_audio_enabled(self, enabled: bool) -> None:
+            self.enabled.append(enabled)
+
+    class SessionWithInput:
+        def __init__(self) -> None:
+            self.input = Input()
+
+    session = SessionWithInput()
+
+    assert apply_device_input_gate(session, agent_state="speaking", session_id="s") is False
+    assert apply_device_input_gate(session, agent_state="thinking", session_id="s") is False
+    assert apply_device_input_gate(session, agent_state="listening", session_id="s") is True
+    assert session.input.enabled == [False, False, True]
