@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -19,36 +19,15 @@ DEVICE_TURN_TRANSCRIPT_TIMEOUT_S = 8.0
 DEVICE_EMPTY_FINAL_GRACE_S = 2.0
 DEVICE_ENDPOINTING_MIN_DELAY_S = 0.05
 DEVICE_ENDPOINTING_MAX_DELAY_S = 0.40
-DEVICE_EMPTY_TRANSCRIPT_PHRASE = "刚才没听清，你再说一遍。"
-_DEVICE_INPUT_MUTE_STATES = frozenset({"speaking", "thinking"})
 
 logger = logging.getLogger(__name__)
 
 
-def apply_device_input_gate(
-    session: Any,
-    *,
-    agent_state: str,
-    session_id: str,
-) -> bool | None:
-    """Mute LiveKit input while the device assistant occupies the floor.
+def device_turn_commit_busy(task: Any) -> bool:
+    """Return whether a device VAD wait-then-commit is already running."""
 
-    The board has no AEC. FunASR hearing TTS on the same task as the next
-    user turn returns empty finals despite high uplink energy.
-    """
-
-    setter = getattr(getattr(session, "input", None), "set_audio_enabled", None)
-    if not callable(setter):
-        return None
-    enabled = str(agent_state or "") not in _DEVICE_INPUT_MUTE_STATES
-    setter(enabled)
-    logger.info(
-        "device input_audio enabled=%s agent_state=%s session_id=%s",
-        enabled,
-        agent_state,
-        session_id,
-    )
-    return enabled
+    done = getattr(task, "done", None)
+    return task is not None and not (callable(done) and done())
 
 
 async def commit_device_user_turn_after_asr(
@@ -58,7 +37,6 @@ async def commit_device_user_turn_after_asr(
     stt: Any,
     since: float,
     timeout: float = DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
-    on_empty: Callable[[], Awaitable[None] | None] | None = None,
 ) -> bool:
     """Wait for a nonempty FunASR final, then commit the LiveKit user turn."""
 
@@ -75,10 +53,6 @@ async def commit_device_user_turn_after_asr(
                 "user_turn_ignored reason=empty_transcript session_id=%s",
                 session_id,
             )
-            if on_empty is not None:
-                maybe = on_empty()
-                if maybe is not None:
-                    await maybe
             return False
     return commit_device_user_turn(session, session_id=session_id)
 
@@ -198,14 +172,13 @@ def _owns_device_microphone(participant: Any) -> bool:
 
 __all__ = [
     "DEVICE_EMPTY_FINAL_GRACE_S",
-    "DEVICE_EMPTY_TRANSCRIPT_PHRASE",
     "DEVICE_ENDPOINTING_MAX_DELAY_S",
     "DEVICE_ENDPOINTING_MIN_DELAY_S",
     "DEVICE_MICROPHONE_TRACK_NAME",
     "DEVICE_TURN_TRANSCRIPT_TIMEOUT_S",
     "DEVICE_VAD_TOPIC",
     "DeviceVadProjector",
-    "apply_device_input_gate",
     "commit_device_user_turn",
     "commit_device_user_turn_after_asr",
+    "device_turn_commit_busy",
 ]
