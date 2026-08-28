@@ -451,6 +451,10 @@ def test_device_turn_handling_uses_manual_commit() -> None:
 
     assert config["turn_detection"] == "manual"
     assert options["turn_detection"] == "manual"
+    assert config["endpointing"]["min_delay"] == 0.05
+    assert config["endpointing"]["max_delay"] == 0.40
+    assert options["endpointing"]["min_delay"] == 0.05
+    assert options["endpointing"]["max_delay"] == 0.40
 
 
 def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:

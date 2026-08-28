@@ -9,11 +9,17 @@ import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
+from time import monotonic
 from typing import Any, Literal, cast
 
 from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
 from services.agent.src.config import load_turn_timing
-from services.agent.src.device_vad import DeviceVadProjector, commit_device_user_turn
+from services.agent.src.device_vad import (
+    DEVICE_ENDPOINTING_MAX_DELAY_S,
+    DEVICE_ENDPOINTING_MIN_DELAY_S,
+    DeviceVadProjector,
+    commit_device_user_turn_after_asr,
+)
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.fixed_speech import FixedSpeechPlayer
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
@@ -797,13 +803,23 @@ async def entrypoint(ctx: Any) -> None:
         await _say_control_ack("我继续。")
 
     runtime.set_false_interrupt_recover(_false_interrupt_recover)
+
+    def _on_device_endpoint() -> None:
+        runtime._spawn(
+            commit_device_user_turn_after_asr(
+                session,
+                session_id=runtime_session_id,
+                stt=stt_plugin,
+                since=monotonic(),
+            ),
+            name="device-vad-turn-commit",
+        )
+
     device_vad = (
         DeviceVadProjector(
             session,
             runtime_session_id,
-            on_endpoint=lambda: commit_device_user_turn(
-                session, session_id=runtime_session_id
-            ),
+            on_endpoint=_on_device_endpoint,
         )
         if device_session
         else None
@@ -1145,7 +1161,7 @@ def build_turn_handling_config(
     # Device sessions receive authoritative VAD boundaries from the hardware
     # gateway. FunASR END_OF_SPEECH is not a reliable commit signal: empty
     # finals never raise the STT speaking flag, so stt-mode EOU never fires.
-    # Manual mode plus commit_device_user_turn on vad.end is the only path.
+    # Manual mode plus wait-for-ASR then commit_device_user_turn is the only path.
     turn_detection: Any = "manual" if device_vad else {"version": turn_version}
     return {
         "turn_detection": turn_detection,
@@ -1154,8 +1170,14 @@ def build_turn_handling_config(
             # Production 20260730 observed a provider transcript 2.05s after
             # turn commit. Keep the prior conservative window so natural pauses
             # do not start playback on the first incomplete final.
-            "min_delay": endpointing_min_delay,
-            "max_delay": endpointing_max_delay,
+            # Device VAD already waited for the FunASR final; do not add the
+            # self-hosted 1.5s EOU sleep on top of that.
+            "min_delay": (
+                DEVICE_ENDPOINTING_MIN_DELAY_S if device_vad else endpointing_min_delay
+            ),
+            "max_delay": (
+                DEVICE_ENDPOINTING_MAX_DELAY_S if device_vad else endpointing_max_delay
+            ),
             "alpha": float(os.getenv("ENDPOINTING_ALPHA", "0.85")),
         },
         "interruption": {

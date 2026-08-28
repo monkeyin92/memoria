@@ -301,6 +301,7 @@ def test_result_trace_metrics_expose_timing_without_transcript_text() -> None:
         "begin_ms": 120,
         "end_ms": 980,
         "duration_ms": 860,
+        "text_len": 13,
     }
     assert "text" not in metrics
     assert "task_id" not in metrics

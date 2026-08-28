@@ -1903,6 +1903,9 @@ class FunASRSTT(stt.STT[Any]):
         self._streams: weakref.WeakSet[FunASRRecognizeStream] = weakref.WeakSet()
         self._pcm_observer: Callable[[bytes], None] | None = None
         self._trace_callback: Callable[[str, str, dict[str, int]], None] | None = None
+        self._nonempty_final: asyncio.Event | None = None
+        self._nonempty_seq = 0
+        self._last_nonempty_at = 0.0
 
     @classmethod
     def from_env(cls) -> FunASRSTT:
@@ -1980,15 +1983,48 @@ class FunASRSTT(stt.STT[Any]):
                 {"active_streams": flushed},
             )
 
+    def _nonempty_event(self) -> asyncio.Event:
+        event = self._nonempty_final
+        if event is None:
+            event = asyncio.Event()
+            self._nonempty_final = event
+        return event
+
+    async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+        """Return whether a nonempty FunASR final arrived at or after ``since``."""
+
+        start_seq = self._nonempty_seq
+        event = self._nonempty_event()
+        deadline = since + timeout
+        while True:
+            if self._last_nonempty_at >= since or self._nonempty_seq > start_seq:
+                return True
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return False
+            event.clear()
+            if self._last_nonempty_at >= since or self._nonempty_seq > start_seq:
+                return True
+            try:
+                await asyncio.wait_for(event.wait(), timeout=remaining)
+            except TimeoutError:
+                return self._last_nonempty_at >= since or self._nonempty_seq > start_seq
+
     def trace_result(self, sentence: FunASRSentence, *, task_epoch: int) -> None:
+        metrics = result_trace_metrics(sentence, task_epoch=task_epoch)
+        if metrics["text_len"]:
+            self._last_nonempty_at = monotonic()
+            self._nonempty_seq += 1
+            self._nonempty_event().set()
+        logger.info(
+            "funasr_final text_len=%s task_epoch=%s",
+            metrics["text_len"],
+            task_epoch,
+        )
         callback = self._trace_callback
         if callback is None:
             return
-        callback(
-            "funasr_final",
-            "ok",
-            result_trace_metrics(sentence, task_epoch=task_epoch),
-        )
+        callback("funasr_final", "ok", metrics)
 
     def observe_pcm(self, pcm: bytes) -> None:
         if self._pcm_observer is None:

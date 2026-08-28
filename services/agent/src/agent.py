@@ -1395,9 +1395,17 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         canonical_text = self._runtime.consume_canonical_user_turn(raw_text)
         canonical_speech_epoch = self._runtime.consumed_canonical_speech_epoch
         if canonical_text is None:
+            logger.info(
+                "user_turn_ignored reason=no_canonical_turn session_id=%s",
+                self._runtime.session_id,
+            )
             raise StopResponse()
         text = canonical_text
         if not text.strip():
+            logger.info(
+                "user_turn_ignored reason=empty_transcript session_id=%s",
+                self._runtime.session_id,
+            )
             raise StopResponse()
         if new_message is not None and text != raw_text.strip() and hasattr(new_message, "content"):
             new_message.content = [text]

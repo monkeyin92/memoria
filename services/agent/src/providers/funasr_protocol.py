@@ -332,6 +332,7 @@ def result_trace_metrics(
         "begin_ms": max(0, sentence.begin_ms),
         "end_ms": max(0, end_ms),
         "duration_ms": max(0, end_ms - sentence.begin_ms),
+        "text_len": len((sentence.text or "").strip()),
     }
 
 
