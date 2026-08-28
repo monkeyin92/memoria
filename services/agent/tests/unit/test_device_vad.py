@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 from livekit import rtc
 from services.agent.src.device_vad import (
     DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
     DEVICE_VAD_TOPIC,
     DeviceVadProjector,
     commit_device_user_turn,
+    commit_device_user_turn_after_asr,
 )
 
 
@@ -170,3 +172,65 @@ def test_commit_device_user_turn_commits_while_listening() -> None:
             "stt_flush_duration": 0.0,
         }
     ]
+    assert DEVICE_TURN_TRANSCRIPT_TIMEOUT_S == 8.0
+
+
+@pytest.mark.asyncio
+async def test_commit_after_asr_waits_for_nonempty_final() -> None:
+    class SessionWithCommit:
+        agent_state = "listening"
+        commits: list[dict[str, float]] = []
+
+        def commit_user_turn(self, **kwargs: float) -> None:
+            self.commits.append(kwargs)
+
+    class ReadySTT:
+        async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+            assert since == 10.0
+            assert timeout == DEVICE_TURN_TRANSCRIPT_TIMEOUT_S
+            return True
+
+    session = SessionWithCommit()
+
+    assert (
+        await commit_device_user_turn_after_asr(
+            session,
+            session_id="session-1",
+            stt=ReadySTT(),
+            since=10.0,
+        )
+        is True
+    )
+    assert session.commits == [
+        {
+            "transcript_timeout": DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
+            "stt_flush_duration": 0.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_commit_after_asr_skips_empty_transcript() -> None:
+    class SessionWithCommit:
+        agent_state = "listening"
+        commits: list[dict[str, float]] = []
+
+        def commit_user_turn(self, **kwargs: float) -> None:
+            self.commits.append(kwargs)
+
+    class EmptySTT:
+        async def wait_for_nonempty_final(self, *, since: float, timeout: float) -> bool:
+            return False
+
+    session = SessionWithCommit()
+
+    assert (
+        await commit_device_user_turn_after_asr(
+            session,
+            session_id="session-1",
+            stt=EmptySTT(),
+            since=10.0,
+        )
+        is False
+    )
+    assert session.commits == []

@@ -13,9 +13,36 @@ from livekit import rtc
 
 DEVICE_VAD_TOPIC = "voice-agent.device-vad"
 DEVICE_MICROPHONE_TRACK_NAME = "device-microphone"
-DEVICE_TURN_TRANSCRIPT_TIMEOUT_S = 1.5
+# FunASR finals on this path often arrive 7s after vad.end. LiveKit only
+# keeps a nonempty FINAL if it lands before transcript_timeout.
+DEVICE_TURN_TRANSCRIPT_TIMEOUT_S = 8.0
+DEVICE_ENDPOINTING_MIN_DELAY_S = 0.05
+DEVICE_ENDPOINTING_MAX_DELAY_S = 0.40
 
 logger = logging.getLogger(__name__)
+
+
+async def commit_device_user_turn_after_asr(
+    session: Any,
+    *,
+    session_id: str,
+    stt: Any,
+    since: float,
+    timeout: float = DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
+) -> bool:
+    """Wait for a nonempty FunASR final, then commit the LiveKit user turn."""
+
+    waiter = getattr(stt, "wait_for_nonempty_final", None)
+    if callable(waiter):
+        ready = await waiter(since=since, timeout=timeout)
+        logger.info("device VAD asr_ready=%s session_id=%s", ready, session_id)
+        if not ready:
+            logger.info(
+                "user_turn_ignored reason=empty_transcript session_id=%s",
+                session_id,
+            )
+            return False
+    return commit_device_user_turn(session, session_id=session_id)
 
 
 def commit_device_user_turn(session: Any, *, session_id: str) -> bool:
@@ -132,9 +159,12 @@ def _owns_device_microphone(participant: Any) -> bool:
 
 
 __all__ = [
+    "DEVICE_ENDPOINTING_MAX_DELAY_S",
+    "DEVICE_ENDPOINTING_MIN_DELAY_S",
     "DEVICE_MICROPHONE_TRACK_NAME",
     "DEVICE_TURN_TRANSCRIPT_TIMEOUT_S",
     "DEVICE_VAD_TOPIC",
     "DeviceVadProjector",
     "commit_device_user_turn",
+    "commit_device_user_turn_after_asr",
 ]
