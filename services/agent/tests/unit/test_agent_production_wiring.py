@@ -439,7 +439,7 @@ def test_miniprogram_turn_handling_disables_barge_in_without_changing_h5() -> No
     assert miniprogram["interruption"]["enabled"] is False
 
 
-def test_device_turn_handling_uses_funasr_end_of_speech() -> None:
+def test_device_turn_handling_uses_manual_commit() -> None:
     config = entrypoint_mod.build_turn_handling_config(
         "cn_self_hosted",
         device_vad=True,
@@ -449,8 +449,8 @@ def test_device_turn_handling_uses_funasr_end_of_speech() -> None:
         device_vad=True,
     )
 
-    assert config["turn_detection"] == "stt"
-    assert options["turn_detection"] == "stt"
+    assert config["turn_detection"] == "manual"
+    assert options["turn_detection"] == "manual"
 
 
 def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:

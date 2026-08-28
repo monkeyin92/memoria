@@ -1397,6 +1397,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if canonical_text is None:
             raise StopResponse()
         text = canonical_text
+        if not text.strip():
+            raise StopResponse()
         if new_message is not None and text != raw_text.strip() and hasattr(new_message, "content"):
             new_message.content = [text]
         if text.strip():

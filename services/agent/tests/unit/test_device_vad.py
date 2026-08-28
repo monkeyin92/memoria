@@ -4,7 +4,12 @@ import json
 from types import SimpleNamespace
 
 from livekit import rtc
-from services.agent.src.device_vad import DEVICE_VAD_TOPIC, DeviceVadProjector
+from services.agent.src.device_vad import (
+    DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
+    DEVICE_VAD_TOPIC,
+    DeviceVadProjector,
+    commit_device_user_turn,
+)
 
 
 class Session:
@@ -113,3 +118,55 @@ def test_device_vad_deduplicates_a_later_livekit_vad_transition() -> None:
     session._update_user_state("speaking")
 
     assert session.transitions == ["speaking"]
+
+
+def test_device_vad_end_invokes_endpoint_callback_after_listening() -> None:
+    session = Session()
+    endpoints: list[str] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_endpoint=lambda: endpoints.append(session.user_state),
+    )
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+
+    assert endpoints == ["listening"]
+
+
+def test_commit_device_user_turn_skips_assistant_output() -> None:
+    class SessionWithCommit:
+        agent_state = "speaking"
+        commits: list[dict[str, float]] = []
+
+        def commit_user_turn(self, **kwargs: float) -> None:
+            self.commits.append(kwargs)
+
+    session = SessionWithCommit()
+
+    assert commit_device_user_turn(session, session_id="session-1") is False
+    assert session.commits == []
+
+
+def test_commit_device_user_turn_commits_while_listening() -> None:
+    class SessionWithCommit:
+        agent_state = "listening"
+        commits: list[dict[str, float]] = []
+
+        def commit_user_turn(self, **kwargs: float) -> None:
+            self.commits.append(kwargs)
+
+    session = SessionWithCommit()
+
+    assert commit_device_user_turn(session, session_id="session-1") is True
+    assert session.commits == [
+        {
+            "transcript_timeout": DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
+            "stt_flush_duration": 0.0,
+        }
+    ]

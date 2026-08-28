@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +13,36 @@ from livekit import rtc
 
 DEVICE_VAD_TOPIC = "voice-agent.device-vad"
 DEVICE_MICROPHONE_TRACK_NAME = "device-microphone"
+DEVICE_TURN_TRANSCRIPT_TIMEOUT_S = 1.5
+
+logger = logging.getLogger(__name__)
+
+
+def commit_device_user_turn(session: Any, *, session_id: str) -> bool:
+    """Commit one LiveKit user turn after an authoritative device VAD end.
+
+    Device sessions cannot wait for FunASR ``END_OF_SPEECH``: empty or
+    unusable finals never set the STT speaking flag, so ``turn_detection=stt``
+    leaves the AgentSession stuck in ``user_speaking``.
+    """
+
+    agent_state = str(getattr(session, "agent_state", "") or "")
+    if agent_state in {"speaking", "thinking"}:
+        logger.info(
+            "device VAD end skipped turn commit agent_state=%s session_id=%s",
+            agent_state,
+            session_id,
+        )
+        return False
+    commit = getattr(session, "commit_user_turn", None)
+    if not callable(commit):
+        return False
+    commit(
+        transcript_timeout=DEVICE_TURN_TRANSCRIPT_TIMEOUT_S,
+        stt_flush_duration=0.0,
+    )
+    logger.info("device VAD committed user turn session_id=%s", session_id)
+    return True
 
 
 @dataclass(slots=True)
@@ -20,6 +51,7 @@ class DeviceVadProjector:
 
     session: Any
     session_id: str
+    on_endpoint: Callable[[], None] | None = None
     _last_sample: int = 0
     _active: bool = False
     _participant_sid: str | None = None
@@ -81,6 +113,8 @@ class DeviceVadProjector:
             update_state(state)
         else:
             self.session.emit("user_state_changed", SimpleNamespace(new_state=state))
+        if state == "listening" and self.on_endpoint is not None:
+            self.on_endpoint()
         return True
 
 
@@ -97,4 +131,10 @@ def _owns_device_microphone(participant: Any) -> bool:
     )
 
 
-__all__ = ["DEVICE_MICROPHONE_TRACK_NAME", "DEVICE_VAD_TOPIC", "DeviceVadProjector"]
+__all__ = [
+    "DEVICE_MICROPHONE_TRACK_NAME",
+    "DEVICE_TURN_TRANSCRIPT_TIMEOUT_S",
+    "DEVICE_VAD_TOPIC",
+    "DeviceVadProjector",
+    "commit_device_user_turn",
+]
