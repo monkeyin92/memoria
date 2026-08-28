@@ -1576,8 +1576,57 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
     async def _send_audio(self, session: FunASRSession) -> None:
         samples_per_chunk = max(1, self._config.sample_rate * self._config.chunk_ms // 1000)
+        chunk_bytes = samples_per_chunk * 2
         byte_stream = bytearray()
         capture_sample = 0
+        preroll: deque[bytes] = deque()
+        preroll_bytes = 0
+        preroll_limit = max(
+            chunk_bytes,
+            self._config.sample_rate * 2 * self._config.reconnect_audio_ms // 1000,
+        )
+
+        def _keep_preroll(chunk: bytes) -> None:
+            nonlocal preroll_bytes
+            preroll.append(chunk)
+            preroll_bytes += len(chunk)
+            while preroll_bytes > preroll_limit and preroll:
+                preroll_bytes -= len(preroll.popleft())
+
+        def _clear_preroll() -> None:
+            nonlocal preroll_bytes
+            preroll.clear()
+            preroll_bytes = 0
+
+        def _sending() -> bool:
+            return self._stt_instance.pcm_enabled or self._stt_instance.pcm_draining
+
+        async def _send_pcm(chunk: bytes, *, start: int) -> None:
+            self._stt_instance.observe_pcm(chunk)
+            await session.send_pcm(chunk, capture_start_sample=start)
+
+        async def _flush_preroll() -> None:
+            nonlocal preroll_bytes
+            if not preroll:
+                return
+            start = capture_sample - preroll_bytes // 2
+            while preroll:
+                chunk = preroll.popleft()
+                preroll_bytes -= len(chunk)
+                await _send_pcm(chunk, start=start)
+                start += len(chunk) // 2
+
+        async def _emit_or_hold(chunk: bytes) -> None:
+            nonlocal capture_sample
+            if self._stt_instance.pcm_enabled:
+                await _flush_preroll()
+                await _send_pcm(chunk, start=capture_sample)
+            elif self._stt_instance.pcm_draining:
+                await _send_pcm(chunk, start=capture_sample)
+            else:
+                _keep_preroll(chunk)
+            capture_sample += len(chunk) // 2
+
         async for data in self._input_ch:
             if isinstance(data, rtc.AudioFrame):
                 pcm = bytes(data.data)
@@ -1586,34 +1635,28 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         pcm, src_rate=data.sample_rate, dst_rate=self._config.sample_rate
                     )
                 byte_stream.extend(pcm)
-                chunk_bytes = samples_per_chunk * 2
                 while len(byte_stream) >= chunk_bytes:
                     chunk = bytes(byte_stream[:chunk_bytes])
                     del byte_stream[:chunk_bytes]
-                    if not self._stt_instance.pcm_enabled:
-                        capture_sample += len(chunk) // 2
-                        continue
-                    self._stt_instance.observe_pcm(chunk)
-                    await session.send_pcm(chunk, capture_start_sample=capture_sample)
-                    capture_sample += len(chunk) // 2
+                    await _emit_or_hold(chunk)
             elif isinstance(data, self._FlushSentinel):
+                sending = _sending()
                 if byte_stream:
                     remaining = bytes(byte_stream)
                     byte_stream.clear()
-                    capture_sample += len(remaining) // 2
-                    if self._stt_instance.pcm_enabled:
-                        self._stt_instance.observe_pcm(remaining)
-                        await session.send_pcm(
-                            remaining,
-                            capture_start_sample=capture_sample - len(remaining) // 2,
-                        )
+                    if sending:
+                        await _emit_or_hold(remaining)
+                    else:
+                        capture_sample += len(remaining) // 2
+                if not sending:
+                    _clear_preroll()
+                self._stt_instance.clear_pcm_drain()
                 if not self._input_ch.closed:
                     await session.rotate_task()
         if byte_stream:
             remaining = bytes(byte_stream)
-            if self._stt_instance.pcm_enabled:
-                self._stt_instance.observe_pcm(remaining)
-                await session.send_pcm(remaining, capture_start_sample=capture_sample)
+            if _sending():
+                await _emit_or_hold(remaining)
         await session.finish()
         await session.wait_for_task_finished()
 
@@ -1912,13 +1955,28 @@ class FunASRSTT(stt.STT[Any]):
         self._last_nonempty_at = 0.0
         self._last_final_at = 0.0
         self._pcm_enabled = True
+        self._pcm_draining = False
 
     def set_pcm_enabled(self, enabled: bool) -> None:
-        self._pcm_enabled = bool(enabled)
+        enabled = bool(enabled)
+        if enabled:
+            self._pcm_enabled = True
+            self._pcm_draining = False
+            return
+        if self._pcm_enabled:
+            self._pcm_draining = True
+        self._pcm_enabled = False
 
     @property
     def pcm_enabled(self) -> bool:
         return self._pcm_enabled
+
+    @property
+    def pcm_draining(self) -> bool:
+        return self._pcm_draining
+
+    def clear_pcm_drain(self) -> None:
+        self._pcm_draining = False
 
     @classmethod
     def from_env(cls) -> FunASRSTT:

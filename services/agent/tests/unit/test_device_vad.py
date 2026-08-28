@@ -129,7 +129,7 @@ def test_device_vad_end_invokes_endpoint_callback_after_listening() -> None:
     projector = DeviceVadProjector(
         session,
         "session-1",
-        on_endpoint=lambda: endpoints.append(session.user_state),
+        on_endpoint=lambda: endpoints.append("end"),
     )
 
     assert projector.accept(
@@ -139,16 +139,43 @@ def test_device_vad_end_invokes_endpoint_callback_after_listening() -> None:
         _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
     )
 
-    assert endpoints == ["listening"]
+    assert endpoints == ["end"]
+    assert session.transitions == ["speaking", "listening"]
+
+
+def test_device_vad_start_invokes_start_callback_after_speaking() -> None:
+    session = Session()
+    seen: list[str] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_start=lambda: seen.append("start"),
+        on_endpoint=lambda: seen.append("end"),
+    )
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 321})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+
+    assert seen == ["start", "end"]
+    assert session.transitions == ["speaking", "listening"]
 
 
 def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
     session = Session()
+    starts: list[str] = []
     endpoints: list[str] = []
     projector = DeviceVadProjector(
         session,
         "session-1",
-        on_endpoint=lambda: endpoints.append(session.user_state),
+        on_start=lambda: starts.append("start"),
+        on_endpoint=lambda: endpoints.append("end"),
     )
     projector.begin_playback_holdoff(duration_s=60.0)
 
@@ -159,6 +186,7 @@ def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
         _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
     )
     assert session.transitions == []
+    assert starts == []
     assert endpoints == []
 
     projector._holdoff_until = 0.0
@@ -169,7 +197,8 @@ def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
         _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 1280})
     )
     assert session.transitions == ["speaking", "listening"]
-    assert endpoints == ["listening"]
+    assert starts == ["start"]
+    assert endpoints == ["end"]
 
 
 def test_commit_device_user_turn_skips_assistant_output() -> None:
