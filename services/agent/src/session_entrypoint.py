@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
 from services.agent.src.config import load_turn_timing
-from services.agent.src.device_vad import DeviceVadProjector
+from services.agent.src.device_vad import DeviceVadProjector, commit_device_user_turn
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.fixed_speech import FixedSpeechPlayer
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
@@ -797,7 +797,17 @@ async def entrypoint(ctx: Any) -> None:
         await _say_control_ack("我继续。")
 
     runtime.set_false_interrupt_recover(_false_interrupt_recover)
-    device_vad = DeviceVadProjector(session, runtime_session_id) if device_session else None
+    device_vad = (
+        DeviceVadProjector(
+            session,
+            runtime_session_id,
+            on_endpoint=lambda: commit_device_user_turn(
+                session, session_id=runtime_session_id
+            ),
+        )
+        if device_session
+        else None
+    )
 
     def _on_control_packet(packet: Any) -> None:
         if device_vad is not None and device_vad.accept(packet):
@@ -1133,10 +1143,10 @@ def build_turn_handling_config(
     preemptive_enabled = os.getenv("PREEMPTIVE_GENERATION", preemptive_default).lower() == "true"
     preemptive_tts = os.getenv("PREEMPTIVE_TTS", "false").lower() == "true"
     # Device sessions receive authoritative VAD boundaries from the hardware
-    # gateway. FunASR emits END_OF_SPEECH after each gateway flush, so use STT
-    # end-of-speech handling as the single AgentSession turn-commit path. The
-    # LiveKit streaming turn detector has no visibility into device VAD packets.
-    turn_detection: Any = "stt" if device_vad else {"version": turn_version}
+    # gateway. FunASR END_OF_SPEECH is not a reliable commit signal: empty
+    # finals never raise the STT speaking flag, so stt-mode EOU never fires.
+    # Manual mode plus commit_device_user_turn on vad.end is the only path.
+    turn_detection: Any = "manual" if device_vad else {"version": turn_version}
     return {
         "turn_detection": turn_detection,
         "endpointing": {

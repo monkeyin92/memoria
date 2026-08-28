@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from livekit.agents import llm
+from livekit.agents import StopResponse, llm
 from services.agent.src.agent import DuplexVoiceAgent, _heard_only_chat_context
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
@@ -3065,6 +3065,21 @@ async def test_duplex_voice_agent_commits_fence_on_user_turn() -> None:
     await agent.on_user_turn_completed(None, Msg())
     assert runtime.fence.turn_id == 1
     assert runtime.orchestrator.context.turns[-1].content == "订下周三的票"
+
+
+@pytest.mark.asyncio
+async def test_empty_user_turn_does_not_generate_a_reply() -> None:
+    runtime = DuplexRuntime.create()
+    await runtime.orchestrator.ready()
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    class Msg:
+        def text_content(self) -> str:
+            return ""
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(None, Msg())
+    assert runtime.fence.turn_id == 0
 
 
 def test_cn_self_hosted_turn_config() -> None:
