@@ -17,6 +17,7 @@ from services.agent.src.config import load_turn_timing
 from services.agent.src.device_vad import (
     DEVICE_ENDPOINTING_MAX_DELAY_S,
     DEVICE_ENDPOINTING_MIN_DELAY_S,
+    DEVICE_POST_PLAYBACK_HOLDOFF_S,
     DeviceVadProjector,
     commit_device_user_turn_after_asr,
     device_turn_commit_busy,
@@ -375,6 +376,9 @@ async def entrypoint(ctx: Any) -> None:
         input_guard_enabled=profile == "cn_self_hosted" or miniprogram_aec_session,
         trusted_aec_playback_control=miniprogram_aec_session,
         barge_in_enabled=not controlled_half_duplex_session,
+        capture_release_holdoff_s=(
+            DEVICE_POST_PLAYBACK_HOLDOFF_S if device_session else 0.0
+        ),
         listener_cues_enabled=cues_on,
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
@@ -834,6 +838,46 @@ async def entrypoint(ctx: Any) -> None:
         if device_session
         else None
     )
+    if device_vad is not None:
+        uplink_release_task: asyncio.Task[Any] | None = None
+
+        def _set_device_uplink(enabled: bool) -> None:
+            setter = getattr(stt_plugin, "set_pcm_enabled", None)
+            if callable(setter):
+                setter(enabled)
+            logger.info(
+                "device uplink_pcm enabled=%s session_id=%s",
+                enabled,
+                runtime_session_id,
+            )
+
+        def _on_device_phase(phase: Any, previous: Any) -> None:
+            nonlocal uplink_release_task
+            phase_name = getattr(phase, "value", str(phase))
+            previous_name = getattr(previous, "value", str(previous))
+            if phase_name == "speaking":
+                if uplink_release_task is not None:
+                    uplink_release_task.cancel()
+                    uplink_release_task = None
+                _set_device_uplink(False)
+                flush = getattr(stt_plugin, "flush_speech_segment", None)
+                if callable(flush):
+                    flush()
+                device_vad.begin_playback_holdoff()
+                return
+            if previous_name == "speaking" and phase_name == "listening":
+                device_vad.begin_playback_holdoff()
+
+                async def _release() -> None:
+                    await asyncio.sleep(DEVICE_POST_PLAYBACK_HOLDOFF_S)
+                    _set_device_uplink(True)
+
+                uplink_release_task = runtime._spawn(
+                    _release(),
+                    name="device-uplink-holdoff",
+                )
+
+        runtime.set_phase_listener(_on_device_phase)
 
     def _on_control_packet(packet: Any) -> None:
         if device_vad is not None and device_vad.accept(packet):

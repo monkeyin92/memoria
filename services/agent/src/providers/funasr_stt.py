@@ -1590,26 +1590,30 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 while len(byte_stream) >= chunk_bytes:
                     chunk = bytes(byte_stream[:chunk_bytes])
                     del byte_stream[:chunk_bytes]
+                    if not self._stt_instance.pcm_enabled:
+                        capture_sample += len(chunk) // 2
+                        continue
                     self._stt_instance.observe_pcm(chunk)
                     await session.send_pcm(chunk, capture_start_sample=capture_sample)
                     capture_sample += len(chunk) // 2
             elif isinstance(data, self._FlushSentinel):
                 if byte_stream:
                     remaining = bytes(byte_stream)
-                    self._stt_instance.observe_pcm(remaining)
-                    await session.send_pcm(remaining, capture_start_sample=capture_sample)
-                    capture_sample += len(remaining) // 2
                     byte_stream.clear()
-                # end_input() flushes and closes the channel; that is the
-                # terminal task boundary handled below. A live flush comes
-                # from the authoritative VAD endpoint and rotates to a fresh
-                # provider task on the same WebSocket.
+                    capture_sample += len(remaining) // 2
+                    if self._stt_instance.pcm_enabled:
+                        self._stt_instance.observe_pcm(remaining)
+                        await session.send_pcm(
+                            remaining,
+                            capture_start_sample=capture_sample - len(remaining) // 2,
+                        )
                 if not self._input_ch.closed:
                     await session.rotate_task()
         if byte_stream:
             remaining = bytes(byte_stream)
-            self._stt_instance.observe_pcm(remaining)
-            await session.send_pcm(remaining, capture_start_sample=capture_sample)
+            if self._stt_instance.pcm_enabled:
+                self._stt_instance.observe_pcm(remaining)
+                await session.send_pcm(remaining, capture_start_sample=capture_sample)
         await session.finish()
         await session.wait_for_task_finished()
 
@@ -1907,6 +1911,14 @@ class FunASRSTT(stt.STT[Any]):
         self._nonempty_seq = 0
         self._last_nonempty_at = 0.0
         self._last_final_at = 0.0
+        self._pcm_enabled = True
+
+    def set_pcm_enabled(self, enabled: bool) -> None:
+        self._pcm_enabled = bool(enabled)
+
+    @property
+    def pcm_enabled(self) -> bool:
+        return self._pcm_enabled
 
     @classmethod
     def from_env(cls) -> FunASRSTT:
@@ -2003,13 +2015,16 @@ class FunASRSTT(stt.STT[Any]):
         start_seq = self._nonempty_seq
         event = self._nonempty_event()
         deadline = since + timeout
+        empty_deadline: float | None = None
         while True:
             if self._last_nonempty_at >= since or self._nonempty_seq > start_seq:
                 return True
             now = monotonic()
             remaining = deadline - now
-            if self._last_final_at >= since:
-                remaining = min(remaining, empty_grace_s - (now - self._last_final_at))
+            if self._last_final_at >= since and empty_deadline is None:
+                empty_deadline = self._last_final_at + empty_grace_s
+            if empty_deadline is not None:
+                remaining = min(remaining, empty_deadline - now)
             if remaining <= 0:
                 return False
             event.clear()

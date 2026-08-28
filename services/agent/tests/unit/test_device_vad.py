@@ -142,6 +142,36 @@ def test_device_vad_end_invokes_endpoint_callback_after_listening() -> None:
     assert endpoints == ["listening"]
 
 
+def test_device_vad_holdoff_ignores_echo_until_playback_finishes() -> None:
+    session = Session()
+    endpoints: list[str] = []
+    projector = DeviceVadProjector(
+        session,
+        "session-1",
+        on_endpoint=lambda: endpoints.append(session.user_state),
+    )
+    projector.begin_playback_holdoff(duration_s=60.0)
+
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 320})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 640})
+    )
+    assert session.transitions == []
+    assert endpoints == []
+
+    projector._holdoff_until = 0.0
+    assert projector.accept(
+        _packet({"type": "vad.start", "session_id": "session-1", "sample_position": 960})
+    )
+    assert projector.accept(
+        _packet({"type": "vad.end", "session_id": "session-1", "sample_position": 1280})
+    )
+    assert session.transitions == ["speaking", "listening"]
+    assert endpoints == ["listening"]
+
+
 def test_commit_device_user_turn_skips_assistant_output() -> None:
     class SessionWithCommit:
         agent_state = "speaking"
