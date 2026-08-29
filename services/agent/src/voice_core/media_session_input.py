@@ -12,6 +12,7 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
+from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.interruption import (
     InterruptionPolicy,
@@ -227,7 +228,11 @@ class MediaSessionInputMixin:
                     # One accepted range-stamped start opens the Runtime's
                     # speaker fence. Resumed VAD segments keep the same fence;
                     # sample ranges still decide the eventual turn boundary.
-                    context.runtime.on_user_voice_started()
+                    voice_decision = context.runtime.on_user_voice_started()
+                    if voice_decision is PlaybackInputDecision.IGNORE:
+                        # Half-duplex OWNED/tool wait: do not open a user turn
+                        # or preempt the successor generation.
+                        return
                 interaction = context.runtime.decide_interaction(
                     InteractionSnapshot(
                         event=InteractionEvent.VAD_START,

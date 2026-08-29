@@ -4648,6 +4648,69 @@ async def test_half_duplex_owned_wait_ignores_user_speech_and_keeps_weather() ->
 
 
 @pytest.mark.asyncio
+async def test_half_duplex_media_vad_does_not_preempt_owned_weather_successor() -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "half-duplex-vad-hold",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    context = None
+    try:
+        context, ack_fence = await _ack_owned_filler_then_wait(
+            registry,
+            identity,
+            provider,
+            bridge,
+        )
+        session = bridge.bridge.get(identity.session_id)
+        assert session is not None
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="owned-wait-vad",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=32_000,
+                capture_end_sample=32_160,
+                final=False,
+            ),
+        )
+        assert context.turn_start_sample is None
+        assert context.runtime.orchestrator.state is ConversationState.TOOL_WAITING
+        claim = context.delegation_output_claims[ack_fence]
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
+        assert claim.state is not DelegationOutputState.RELEASED
+        deep_owner = context.output_owner
+        assert deep_owner is not None
+        assert deep_owner.fence.turn_id == ack_fence.turn_id
+        assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
+    finally:
+        provider.release.set()
+        if context is not None:
+            await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_media_provider_does_not_install_an_unavailable_delegation_seam() -> None:
     class UnsupportedProvider(FakeMediaProvider):
         supports_delegation = False

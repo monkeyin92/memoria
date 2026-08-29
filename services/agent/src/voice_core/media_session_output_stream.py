@@ -20,7 +20,7 @@ from services.agent.src.voice_core.media_session_types import (
     MediaTextSpan,
     OutputDispatchResult,
     OutputDispatchStatus,
-    owned_delegation_holds_turn,
+    same_turn_followup_output_pending,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -630,8 +630,9 @@ class MediaOutputStreamMixin:
         await context.runtime.on_media_playback_done(
             fence,
             context.playback.actual_heard_text(fence),
-            tools_active=owned_delegation_holds_turn(
+            tools_active=same_turn_followup_output_pending(
                 context.delegation_output_claims,
+                context.output_work,
                 fence,
             ),
         )

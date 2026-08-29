@@ -283,6 +283,25 @@ def owned_delegation_holds_turn(
     )
 
 
+def same_turn_followup_output_pending(
+    claims: Mapping[GenerationFence, DelegationOutputClaim],
+    output_work: Mapping[str, OutputWork],
+    fence: GenerationFence,
+) -> bool:
+    """True while filler playback must not return the device to listening.
+
+    The OWNED claim is marked COMPLETED as soon as the tool result is
+    enqueued, so successor work on the same turn also holds the floor.
+    """
+
+    if owned_delegation_holds_turn(claims, fence):
+        return True
+    return any(
+        work.fence.session_id == fence.session_id and work.fence.turn_id == fence.turn_id
+        for work in output_work.values()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class OutputOwnerLease:
     intent: Any
