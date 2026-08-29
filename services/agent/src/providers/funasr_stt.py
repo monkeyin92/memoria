@@ -48,6 +48,10 @@ from services.agent.src.providers.funasr_protocol import (
     sentence_to_asr_result,
 )
 from services.agent.src.providers.reliability import CircuitBreaker
+from services.agent.src.providers.sensevoice import (
+    SenseVoiceRescue,
+    SenseVoiceRescueConfig,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 logger = logging.getLogger(__name__)
@@ -80,6 +84,7 @@ class FunASRConfig:
     vocabulary_id: str | None = None
     speech_noise_threshold: float | None = None
     ws_trace: bool = False
+    rescue_config: SenseVoiceRescueConfig | None = None
 
     def __post_init__(self) -> None:
         threshold = self.speech_noise_threshold
@@ -98,6 +103,7 @@ class FunASRConfig:
         e = env or dict(os.environ)
         vocabulary_id = e.get("FUNASR_VOCABULARY_ID", "").strip() or None
         threshold_raw = e.get("FUNASR_SPEECH_NOISE_THRESHOLD", "").strip()
+        rescue_url = e.get("SENSEVOICE_URL", "").strip()
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("FUNASR_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
@@ -120,6 +126,9 @@ class FunASRConfig:
             vocabulary_id=vocabulary_id,
             speech_noise_threshold=(float(threshold_raw) if threshold_raw else None),
             ws_trace=e.get("FUNASR_WS_TRACE", "false").lower() == "true",
+            rescue_config=(
+                SenseVoiceRescueConfig.from_env(e) if rescue_url else None
+            ),
         )
 
 
@@ -180,6 +189,25 @@ class FunASRSession:
         self._pcm_ring_ranges: collections.deque[tuple[int, int]] = collections.deque()
         self._pcm_ring_bytes = 0
         self._max_ring_bytes = int(config.sample_rate * 2 * config.reconnect_audio_ms / 1000)
+        # SenseVoice rescue evidence, scoped to one VAD segment (between two
+        # rotate_task calls).  Unlike the reconnect ring this buffer keeps the
+        # whole segment audio so an empty turn can still be transcribed
+        # offline.  Task replacements inside a segment never clear it.
+        rescue_config = config.rescue_config
+        self._rescue = SenseVoiceRescue(rescue_config) if rescue_config is not None else None
+        self._max_segment_samples = (
+            int(rescue_config.max_audio_s * config.sample_rate)
+            if rescue_config is not None
+            else 0
+        )
+        self._segment_pcm: collections.deque[bytes] = collections.deque()
+        self._segment_pcm_ranges: collections.deque[tuple[int, int]] = collections.deque()
+        self._segment_pcm_samples = 0
+        self._segment_pcm_start_sample: int | None = None
+        self._segment_pcm_end_sample: int | None = None
+        self._segment_pcm_gaps = 0
+        self._segment_nonempty_final_seen = False
+        self._rescue_deadline: float | None = None
         self._context: tuple[dict[str, object], ...] = ()
         self._task_epoch = 0
         self._segment_epoch = 1
@@ -322,6 +350,41 @@ class FunASRSession:
         self._pcm_ring.clear()
         self._pcm_ring_ranges.clear()
         self._pcm_ring_bytes = 0
+
+    def _reset_segment_evidence(self) -> None:
+        """Drop the current VAD segment's rescue evidence (segment boundary)."""
+
+        self._segment_pcm.clear()
+        self._segment_pcm_ranges.clear()
+        self._segment_pcm_samples = 0
+        self._segment_pcm_start_sample = None
+        self._segment_pcm_end_sample = None
+        self._segment_pcm_gaps = 0
+        self._segment_nonempty_final_seen = False
+
+    def _remember_segment_pcm(self, pcm: bytes, *, start_sample: int, end_sample: int) -> None:
+        if self._segment_pcm_start_sample is None:
+            self._segment_pcm_start_sample = start_sample
+        elif start_sample > (self._segment_pcm_end_sample or start_sample):
+            # A capture discontinuity inside the segment; keep the bytes but
+            # remember that the offline transcript may span a gap.
+            self._segment_pcm_gaps += 1
+        self._segment_pcm.append(pcm)
+        self._segment_pcm_ranges.append((start_sample, end_sample))
+        self._segment_pcm_samples += len(pcm) // 2
+        self._segment_pcm_end_sample = max(self._segment_pcm_end_sample or 0, end_sample)
+        while self._segment_pcm and self._segment_pcm_samples > self._max_segment_samples:
+            # Keep the most recent tail: an over-long empty segment is rescued
+            # with its newest audio, matching what the provider dropped last.
+            dropped = self._segment_pcm.popleft()
+            _, drop_end = self._segment_pcm_ranges.popleft()
+            self._segment_pcm_samples -= len(dropped) // 2
+            self._segment_pcm_start_sample = drop_end
+
+    def pending_rescue_deadline(self) -> float | None:
+        """Loop-time deadline of an in-flight offline segment rescue, if any."""
+
+        return self._rescue_deadline
 
     def _remember_current_task_event_context(self) -> None:
         task_id = self.task_id or ""
@@ -554,6 +617,8 @@ class FunASRSession:
         self._task_epoch += 1
         self._task_sample_origin = 0
         self._reset_task_audio_evidence()
+        self._reset_segment_evidence()
+        self._rescue_deadline = None
         self._failed = False
         self._replaceable_provider_failure = False
         self._finishing = False
@@ -775,6 +840,10 @@ class FunASRSession:
                                 self._last_emitted_final_sample,
                                 min(ack, ack_ceiling),
                             )
+                            if ev.sentence.text.strip():
+                                # Any usable final in this VAD segment makes the
+                                # offline rescue unnecessary for the whole turn.
+                                self._segment_nonempty_final_seen = True
                     elif ev.event == "task-finished" and ev.task_id == self.task_id:
                         self._finished_task_id = ev.task_id
                         self._ready.clear()
@@ -1015,6 +1084,11 @@ class FunASRSession:
                         self._clear_pcm_ring()
                     self._push_ring(pcm, start_sample=start)
                     self._last_sent_sample = end
+                    self._remember_segment_pcm(
+                        pcm,
+                        start_sample=start,
+                        end_sample=end,
+                    )
             except Exception as exc:
                 if self._failed or self._task_failed_event.is_set():
                     raise
@@ -1272,6 +1346,130 @@ class FunASRSession:
         if task_id and task_id == self.task_id:
             self._task_finished_consumed.set()
 
+    async def _maybe_rescue_segment(self) -> None:
+        """Rescue an empty VAD segment through the offline SenseVoice fallback.
+
+        Fires only when the provider produced no nonempty final for the whole
+        segment while real speech energy was captured.  The transcript is
+        enqueued as a normal provider final (plus a synthetic boundary when
+        the provider rejected the task as empty audio), so timeline, fence
+        and commit logic stay on their existing paths.  Never raises.
+        """
+
+        try:
+            await self._rescue_segment_once()
+        except Exception:
+            self._rescue_deadline = None
+            logger.warning("funasr segment rescue failed", exc_info=True)
+            if self.metrics is not None:
+                self.metrics.inc_funasr_rescue("failed")
+
+    async def _rescue_segment_once(self) -> None:
+        self._rescue_deadline = None
+        rescue_config = self.config.rescue_config
+        if (
+            self._rescue is None
+            or rescue_config is None
+            or self._closed
+            or self._segment_nonempty_final_seen
+            or not self._segment_pcm
+        ):
+            return
+        pcm = b"".join(self._segment_pcm)
+        rms = audioop.rms(pcm, 2)
+        if rms < rescue_config.min_rms:
+            logger.info(
+                "funasr segment rescue skipped: no speech energy rms=%s task_id=%s",
+                rms,
+                self.task_id or "unknown",
+            )
+            if self.metrics is not None:
+                self.metrics.inc_funasr_rescue("skipped")
+            return
+        task_id = self.task_id or ""
+        boundary = self._task_boundary_observed()
+        empty_audio_boundary = self._has_replaceable_empty_audio_failure()
+        if not task_id or not (boundary or empty_audio_boundary):
+            return
+        # Snapshot every timing input before the network call: a concurrent
+        # recovery may rotate the provider task while the rescue is in flight.
+        task_origin = self._task_sample_origin
+        segment_start = self._segment_pcm_start_sample
+        segment_end = self._segment_pcm_end_sample or segment_start
+        if segment_start is None or segment_end is None:
+            return
+        loop = asyncio.get_running_loop()
+        self._rescue_deadline = loop.time() + rescue_config.timeout_s
+        try:
+            text = await self._rescue.transcribe(
+                pcm,
+                sample_rate=self.config.sample_rate,
+                language=self.config.language,
+            )
+        finally:
+            self._rescue_deadline = None
+        if self._closed or self._segment_nonempty_final_seen:
+            # A late provider final crossed the queue while the rescue was in
+            # flight; the provider result stays authoritative.
+            return
+        text = (text or "").strip()
+        if len(text) < rescue_config.min_text_chars:
+            logger.info(
+                "funasr segment rescue produced no text task_id=%s rms=%s pcm_ms=%s",
+                task_id,
+                rms,
+                round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
+            )
+            if self.metrics is not None:
+                self.metrics.inc_funasr_rescue("no_text")
+            return
+        begin_ms = max(
+            0,
+            round((segment_start - task_origin) * 1000 / self.config.sample_rate),
+        )
+        end_ms = max(
+            begin_ms + 1,
+            round((segment_end - task_origin) * 1000 / self.config.sample_rate),
+        )
+        sentence = FunASRSentence(
+            sentence_id=0,
+            text=text,
+            begin_ms=begin_ms,
+            end_ms=end_ms,
+            sentence_end=True,
+            heartbeat=False,
+            words=(),
+        )
+        if empty_audio_boundary and not boundary:
+            # The provider rejected the task as empty audio, so no
+            # task-finished will ever arrive.  Synthesize the whole boundary
+            # sequence and drop the queued task-failed so both consumers see
+            # a normal final + boundary pair.
+            self._discard_queued_task_failure(task_id)
+            self._finished_task_id = task_id
+            self._task_finished_received.set()
+            await self.events.put(
+                FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
+            )
+            await self.events.put(FunASRServerEvent(event="task-finished", task_id=task_id))
+        else:
+            # Normal boundary: task-finished is already queued; the synthetic
+            # final becomes the provider's last tail final.
+            await self.events.put(
+                FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
+            )
+        self._segment_nonempty_final_seen = True
+        if self.metrics is not None:
+            self.metrics.inc_funasr_rescue("rescued")
+        logger.info(
+            "funasr segment rescued offline task_id=%s text_len=%s rms=%s pcm_ms=%s gaps=%s",
+            task_id,
+            len(text),
+            rms,
+            round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
+            self._segment_pcm_gaps,
+        )
+
     async def rotate_task(self, *, require_consumed: bool = True) -> None:
         """Finish one VAD segment and arm lazy reuse for the next PCM frame."""
 
@@ -1305,15 +1503,18 @@ class FunASRSession:
                 # event has crossed the consumer barrier.  Direct adapters
                 # pass require_consumed=False and retain their task-id snapshots.
                 await self.wait_for_task_finished(require_consumed=require_consumed)
+                await self._maybe_rescue_segment()
                 self._last_rotation_sample = self._last_sent_sample
                 self._finishing = False
                 self._terminal_finishing = False
+                self._reset_segment_evidence()
             except BaseException:
                 self._rotation_pending = False
                 self._failed = True
                 self._task_failed_event.set()
                 self._ready.clear()
                 self._clear_pcm_ring()
+                self._reset_segment_evidence()
                 raise
 
     async def _start_task_for_pcm_if_needed(self, *, next_origin: int) -> None:
@@ -1411,6 +1612,8 @@ class FunASRSession:
 
     async def aclose(self) -> None:
         self._closed = True
+        self._rescue_deadline = None
+        self._reset_segment_evidence()
         if self._ws_trace_enabled and self._trace_suppressed_total:
             logger.info(
                 "funasr_ws_trace closing suppressed_total=%s task_id=%s",
@@ -1684,6 +1887,12 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
         while True:
             loop = asyncio.get_running_loop()
+            if pending_boundary_deadline is not None:
+                rescue_deadline = session.pending_rescue_deadline()
+                if rescue_deadline is not None and rescue_deadline > pending_boundary_deadline:
+                    # The session is transcribing an empty segment offline;
+                    # keep the bounded tail window open until it settles.
+                    pending_boundary_deadline = rescue_deadline
             if (
                 pending_boundary_deadline is not None
                 and loop.time() >= pending_boundary_deadline
@@ -1720,6 +1929,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 idle_timeouts = 0
             except TimeoutError:
                 if pending_boundary_deadline is not None:
+                    rescue_deadline = session.pending_rescue_deadline()
+                    if rescue_deadline is not None and rescue_deadline > pending_boundary_deadline:
+                        pending_boundary_deadline = rescue_deadline
+                        continue
                     if loop.time() >= pending_boundary_deadline:
                         if finish_pending_boundary():
                             return

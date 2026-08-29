@@ -21,7 +21,7 @@ _LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
 class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|task_reuse|task_reuse_inverted_tail|task_reuse_late_event|heartbeat_stall|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+    scenario: str = "happy"  # happy|task_reuse|task_reuse_inverted_tail|task_reuse_late_event|heartbeat_stall|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect|disconnect_once|silent|emptyaudio
     connections_closed: int = 0
     connections_started: int = 0
     tasks_started: list[str] = field(default_factory=list)
@@ -142,6 +142,25 @@ class MockFunASRServer:
                 self.connections_closed += 1
                 return
 
+            if self.scenario == "emptyaudio":
+                # Provider rejects the whole task as having no usable audio.
+                # The realtime path treats EmptyAudio as a task-local no-speech
+                # outcome and replaces the task on the next PCM frame.
+                await ws.send(
+                    json.dumps(
+                        {
+                            "header": {"event": "task-failed", "task_id": task_id},
+                            "payload": {
+                                "error_code": "EmptyAudio",
+                                "message": "no usable audio in task",
+                            },
+                        }
+                    )
+                )
+                await ws.close()
+                self.connections_closed += 1
+                return
+
             if self.scenario == "heartbeat":
                 await ws.send(_result(task_id, "", sentence_end=False, heartbeat=True, words=[]))
 
@@ -205,11 +224,17 @@ class MockFunASRServer:
                     )
                 )
             else:
-                text = "你好，这是实时语音测试。"
-                await ws.send(
-                    _result(task_id, text[:4], sentence_end=False, words=_chars(text[:4]))
-                )
-                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
+                if self.scenario == "silent":
+                    # A task that completes its full lifecycle with zero
+                    # result events: the intermittent provider failure the
+                    # offline SenseVoice rescue exists to cover.
+                    pass
+                else:
+                    text = "你好，这是实时语音测试。"
+                    await ws.send(
+                        _result(task_id, text[:4], sentence_end=False, words=_chars(text[:4]))
+                    )
+                    await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
 
             # wait finish-task if not already
             try:
@@ -225,6 +250,11 @@ class MockFunASRServer:
                     {"header": {"event": "task-finished", "task_id": task_id}, "payload": {}}
                 )
             )
+            if self.scenario == "silent":
+                # Real DashScope keeps the WebSocket open between tasks; mirror
+                # that so the mock itself does not trigger session recovery.
+                await ws.wait_closed()
+                return
         finally:
             self.connections_closed += 1
             self.connection_closed.set()
@@ -962,6 +992,74 @@ class MockDeepSeekServer:
             self.cancelled = True
             raise
         return resp
+
+
+@dataclass
+class MockSenseVoiceServer:
+    host: str = "127.0.0.1"
+    port: int = 0
+    scenario: str = "happy"  # happy|empty|error
+    delay_s: float = 0.0
+    requests: int = 0
+    received_bytes: int = 0
+    sample_rates: list[str] = field(default_factory=list)
+    formats: list[str] = field(default_factory=list)
+    _runner: web.AppRunner | None = None
+    _site: web.TCPSite | None = None
+    _thread: threading.Thread | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def url(self) -> str:
+        return f"http://{_LOOPBACK_CLIENT_HOST}:{self.port}/asr"
+
+    def start(self) -> None:
+        ready = threading.Event()
+
+        def _run() -> None:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
+            async def _main() -> Any:
+                app = web.Application()
+                app.router.add_post("/asr", self._asr)
+                self._runner = web.AppRunner(app)
+                await self._runner.setup()
+                self._site = web.TCPSite(self._runner, self.host, self.port)
+                await self._site.start()
+                server = getattr(self._site, "_server", None)
+                assert server is not None
+                self.port = int(server.sockets[0].getsockname()[1])
+                ready.set()
+
+            self._loop.run_until_complete(_main())
+            self._loop.run_forever()
+            if self._runner is not None:
+                self._loop.run_until_complete(self._runner.cleanup())
+            self._loop.close()
+
+        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread.start()
+        ready.wait(timeout=5)
+
+    def stop(self) -> None:
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    async def _asr(self, request: web.Request) -> web.StreamResponse:
+        self.requests += 1
+        body = await request.read()
+        self.received_bytes += len(body)
+        self.sample_rates.append(str(request.query.get("sample_rate") or ""))
+        self.formats.append(str(request.query.get("format") or ""))
+        if self.scenario == "error":
+            return web.Response(status=503, text="unavailable")
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        text = "兜底识别成功。" if self.scenario == "happy" else ""
+        return web.json_response({"text": text})
 
 
 def free_port() -> int:
