@@ -1326,6 +1326,61 @@ async def test_prepare_failure_leaves_media_turn_retryable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vad_empty_provisional_resyncs_timeline_asr_instead_of_text_mismatch() -> None:
+    identity = SessionIdentity("weather-projection-resync", stream_epoch=1)
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    context = await registry._get_or_create(identity)
+    vad = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=1,
+        provider_task_epoch=2,
+        segment_id="weather-vad",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=320_000,
+        capture_end_sample=663_360,
+        text="",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(vad)
+    await registry._apply_projection_segment(context, vad)
+    assert context.projection.provisional is not None
+    assert context.projection.provisional.text == ""
+    asr = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=1,
+        provider_task_epoch=2,
+        segment_id="weather-asr",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=320_000,
+        capture_end_sample=648_960,
+        text="南京今天天气怎么样",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(asr)
+    assert context.projection.provisional.text == ""
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=1,
+        start_sample=320_000,
+        end_sample=663_360,
+    )
+
+    assert fence is not None
+    assert reason is None
+    assert context.runtime.orchestrator.context.turns[-1].content == "南京今天天气怎么样"
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
     identity = SessionIdentity("prepare-failure-auto-retry")
     runtime = DuplexRuntime.create(session_id=identity.session_id)

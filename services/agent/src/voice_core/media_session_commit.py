@@ -251,6 +251,23 @@ class MediaSessionCommitMixin:
             latest_task_epoch=context.asr.latest_authoritative_task_epoch,
         )
 
+    async def _reproject_timeline_range(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> None:
+        """Patch the live provisional from pending timeline facts in range."""
+
+        for segment in context.runtime.speech_timeline.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        ):
+            await self._apply_projection_segment(context, segment)
+
     async def _commit_user_turn_locked(
         self,
         context: _MediaVoiceSession,
@@ -267,13 +284,12 @@ class MediaSessionCommitMixin:
         # Compatibility callers may have populated the authoritative Timeline
         # directly before invoking this seam. Re-project those already-
         # accepted facts rather than letting a valid turn bypass Projection.
-        if context.projection.provisional is None:
-            for segment in context.runtime.speech_timeline.segments_in_range(
-                stream_epoch=stream_epoch,
-                start_sample=start_sample,
-                end_sample=end_sample,
-            ):
-                await self._apply_projection_segment(context, segment)
+        await self._reproject_timeline_range(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
         text = context.runtime.project_media_user_turn(
             stream_epoch=stream_epoch,
             start_sample=start_sample,
@@ -296,6 +312,32 @@ class MediaSessionCommitMixin:
         was_assistant_speaking = context.runtime.assistant_speaking
         context.runtime.on_user_voice_stopped()
         await context.runtime.await_speaker_classification()
+        # Speaker classify yields. A late ASR final can land on the timeline
+        # (or a VAD-first empty provisional can still be stale vs timeline
+        # text). Refresh both sides from the same range before validate, or
+        # commit dies as projection_text_mismatch with a usable transcript.
+        await self._reproject_timeline_range(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        text = context.runtime.project_media_user_turn(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if not text:
+            await self._commit_media_input_range(
+                context,
+                session_id=session_id,
+                stream_epoch=stream_epoch,
+                start_sample=start_sample,
+                end_sample=end_sample,
+                retire_end=end_sample,
+            )
+            await self._discard_projection(context, "empty_media_turn")
+            return None, "empty_media_turn"
         speaker_evidence = self._projection_speaker_evidence(context)
         history_eligible = context.runtime.current_history_eligible
         commit_evidence = CommitEvidence(
