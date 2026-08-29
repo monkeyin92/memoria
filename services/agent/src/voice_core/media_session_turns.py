@@ -277,6 +277,15 @@ class MediaTurnEndpointMixin:
 
     @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
+        max_speech_task = context.max_user_speech_task
+        context.max_user_speech_task = None
+        context.max_user_speech_deadline = None
+        if (
+            max_speech_task is not None
+            and max_speech_task is not asyncio.current_task()
+            and not max_speech_task.done()
+        ):
+            max_speech_task.cancel()
         if context.turn_endpoint_timeout_handle is not None:
             context.turn_endpoint_timeout_handle.cancel()
             context.turn_endpoint_timeout_handle = None

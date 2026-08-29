@@ -74,6 +74,7 @@ class MediaSessionLifecycleMixin:
         output_generation_timeout_s: float
         delegation_initial_decision_timeout_s: float
         owner_silence_timeout_s: float
+        max_user_speech_duration_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -161,6 +162,10 @@ class MediaSessionLifecycleMixin:
             self, context: _MediaVoiceSession
         ) -> None: ...
 
+        def _cancel_max_user_speech_watchdog(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
     def __post_init__(self) -> None:
         if self.provider_factory is None and self.session_factory is None:
             raise ValueError("media provider_factory or session_factory is required")
@@ -192,6 +197,11 @@ class MediaSessionLifecycleMixin:
             raise ValueError("delegation_initial_decision_timeout_s must be finite and positive")
         if not math.isfinite(self.owner_silence_timeout_s) or self.owner_silence_timeout_s < 0:
             raise ValueError("owner_silence_timeout_s must be finite and non-negative")
+        if (
+            not math.isfinite(self.max_user_speech_duration_s)
+            or self.max_user_speech_duration_s < 0
+        ):
+            raise ValueError("max_user_speech_duration_s must be finite and non-negative")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -236,12 +246,13 @@ class MediaSessionLifecycleMixin:
         bridge_session = self.bridge.bridge.get(context.identity.session_id)
         return bool(
             not context.closed
+            and not context.standby_requested
             and context.stream_epoch == stream_epoch
             and context.identity.stream_epoch == stream_epoch
             and (
                 bridge_session is None
                 or (
-                    bridge_session.state != "closed"
+                    bridge_session.accepts_input()
                     and bridge_session.identity.stream_epoch == stream_epoch
                 )
             )
@@ -275,6 +286,10 @@ class MediaSessionLifecycleMixin:
         discarded: ProjectionPatch | None = None
         reconnected = False
         if identity.stream_epoch > current.stream_epoch:
+            # The pending turn is discarded at an epoch boundary.  Do not let
+            # its absolute speech watchdog fire against the replacement
+            # transport while the old provider task is being rotated.
+            self._cancel_max_user_speech_watchdog(current)
             await self._cancel_audio_pump(current)
             async with current.ingress.finalize_lock:
                 async with current.turn_commit_lock:
@@ -505,6 +520,17 @@ class MediaSessionLifecycleMixin:
             raise
 
     async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession:
+        bridge_session = self.bridge.bridge.get(identity.session_id)
+        if self.bridge.bridge.is_terminal(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+        ) or (
+            bridge_session is not None and not bridge_session.accepts_input()
+        ):
+            # A terminal bridge session may already have been removed from its
+            # live map.  Refuse creation before factories run so stale input
+            # cannot recreate a runtime under the same session id.
+            raise ValueError("media session is terminal")
         current = self._sessions.get(identity.session_id)
         if current is not None:
             return await self._reuse_session(current, identity)
@@ -535,6 +561,14 @@ class MediaSessionLifecycleMixin:
                 created = await self._build_session(identity)
                 await self._emit_floor_effect(created, source_event_id="media_session_ready")
             async with self._lock:
+                bridge_session = self.bridge.bridge.get(identity.session_id)
+                if self.bridge.bridge.is_terminal(
+                    identity.session_id,
+                    stream_epoch=identity.stream_epoch,
+                ) or (
+                    bridge_session is not None and not bridge_session.accepts_input()
+                ):
+                    raise ValueError("media session is terminal")
                 self._sessions[identity.session_id] = created
                 self._creation_futures.pop(identity.session_id, None)
             future.set_result(created)

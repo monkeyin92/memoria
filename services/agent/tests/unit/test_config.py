@@ -26,6 +26,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VAD_MIN_SILENCE_DURATION_S", "0.30")
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
+    monkeypatch.delenv("MEDIA_MAX_USER_SPEECH_DURATION_S", raising=False)
     s = AgentSettings(_env_file=None)
     assert s.funasr_sample_rate == 16000
     assert s.funasr_context_enabled is False
@@ -51,6 +52,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_go_shadow_enabled is False
     assert s.media_output_generation_timeout_s == 45.0
     assert s.media_owner_silence_timeout_s == 10.0
+    assert s.media_max_user_speech_duration_s == 60.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0
@@ -115,6 +117,7 @@ def test_media_bridge_limits_and_tls_paths_are_loaded(
     monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES", "64")
     monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_MESSAGES", "256")
     monkeypatch.setenv("MEDIA_BRIDGE_GO_SHADOW_ENABLED", "true")
+    monkeypatch.setenv("MEDIA_MAX_USER_SPEECH_DURATION_S", "42.5")
 
     settings = AgentSettings()
 
@@ -123,6 +126,18 @@ def test_media_bridge_limits_and_tls_paths_are_loaded(
     assert settings.media_bridge_max_pending_audio_frames == 64
     assert settings.media_bridge_max_pending_messages == 256
     assert settings.media_bridge_go_shadow_enabled is True
+    assert settings.media_max_user_speech_duration_s == 42.5
+
+
+@pytest.mark.parametrize("value", ["-0.1", "600.1"])
+def test_media_max_user_speech_duration_rejects_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("MEDIA_MAX_USER_SPEECH_DURATION_S", value)
+
+    with pytest.raises(ValidationError):
+        AgentSettings(_env_file=None)
 
 
 def test_funasr_vocabulary_and_noise_threshold_are_explicit(

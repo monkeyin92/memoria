@@ -177,6 +177,16 @@ class AgentSettings(BaseSettings):
         le=300.0,
         alias="MEDIA_OWNER_SILENCE_TIMEOUT_S",
     )
+    # Hard upper bound for one device utterance when the edge never emits VAD
+    # end.  Registry direct/library callers retain their own disabled (0s)
+    # default; normal AgentSettings-based bridge startup uses a bounded 60s
+    # default and can explicitly set zero to disable it.
+    media_max_user_speech_duration_s: float = Field(
+        default=60.0,
+        ge=0.0,
+        le=600.0,
+        alias="MEDIA_MAX_USER_SPEECH_DURATION_S",
+    )
     media_slo_report_enabled: bool = Field(
         default=False, alias="MEDIA_SLO_REPORT_ENABLED"
     )

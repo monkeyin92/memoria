@@ -640,7 +640,21 @@ class MediaBridgeGrpcServer:
         traceparent: str = "",
         interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
     ) -> _Connection:
+        if self.bridge.is_terminal(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+        ):
+            # ``MediaBridgeServer.close_if_epoch`` removes the live object
+            # after registry teardown. Reject the closed epoch before any
+            # runtime lookup, while allowing a strictly newer reconnect epoch.
+            raise ValueError("media session is terminal")
         session = self.bridge.get(identity.session_id)
+        if session is not None and session.terminal_requested:
+            # The lifecycle may still be draining the provider/runtime after a
+            # typed CLOSED was queued.  Do not let a reconnect claim that
+            # tombstoned transport epoch and recreate the runtime underneath
+            # the pending teardown.
+            raise ValueError("media session is terminal")
         if session is not None and not session.identity.has_same_reconnect_authority(identity):
             raise ValueError("media session reconnect authority changed")
         existing = self._connections.get(identity.session_id)
@@ -709,7 +723,25 @@ class MediaBridgeGrpcServer:
     ) -> None:
         event_name = request.WhichOneof("event")
         if event_name is None:
+            if not connection.session.accepts_input():
+                # A terminal stream may still deliver an in-flight malformed
+                # packet while the CLOSED control is draining.  Do not emit a
+                # second downlink error after terminal state.
+                return
             await self._error(connection, "invalid_media_event", "media event is required")
+            return
+        if (
+            event_name in {"audio", "vad", "keyword", "device", "playback"}
+            and not connection.session.accepts_input()
+        ):
+            # CLOSED is projected before lifecycle teardown completes.  Late
+            # media must be dropped at the transport boundary so no callback
+            # can call the registry's _get_or_create and resurrect a runtime.
+            logger.info(
+                "media input rejected session=%s event=%s reason=terminal",
+                connection.session.identity.session_id,
+                event_name,
+            )
             return
         if event_name == "audio":
             audio = request.audio
@@ -781,6 +813,8 @@ class MediaBridgeGrpcServer:
                 final=speech_end,
                 voiced_end_sample=voiced_end_sample,
             )
+            if not connection.session.accepts_input():
+                return
             accepted = connection.session.timeline.add(segment)
             if (
                 accepted
@@ -814,6 +848,8 @@ class MediaBridgeGrpcServer:
                 confidence=float(event.confidence),
                 hard_stop=bool(event.hard_stop),
             )
+            if not connection.session.accepts_input():
+                return
             accepted = connection.session.timeline.add(segment)
             if (
                 accepted
@@ -958,9 +994,24 @@ class MediaBridgeGrpcServer:
     async def _enqueue(self, connection: _Connection, message: media_pb2.CoreToMedia) -> bool:
         if connection.closed:
             return False
+        if connection.session.terminal_requested:
+            # A terminal CLOSED control is the sole message allowed after the
+            # transport tombstone is installed.  Provider callbacks racing
+            # teardown must not publish late transcript/audio/events behind it.
+            if not (
+                message.WhichOneof("event") == "state"
+                and message.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+            ):
+                return False
         try:
             connection.outgoing.put_nowait(message)
         except asyncio.QueueFull:
+            if self._is_terminal_message(message):
+                # CLOSED is the terminal receipt, not another overflow victim.
+                # A full reliable lane may be discarded, but the typed close
+                # must remain queued so Edge can return to standby.
+                self._terminate_outgoing(connection, message)
+                return True
             if self._evict_shadow_observation(connection):
                 connection.outgoing.put_nowait(message)
                 return True
@@ -979,6 +1030,14 @@ class MediaBridgeGrpcServer:
         return True
 
     @staticmethod
+    def _is_terminal_message(message: media_pb2.CoreToMedia | None) -> bool:
+        return bool(
+            message is not None
+            and message.WhichOneof("event") == "state"
+            and message.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+        )
+
+    @staticmethod
     def _evict_shadow_observation(connection: _Connection) -> bool:
         removed = connection.outgoing.evict_coalescing()
         if removed is None:
@@ -992,7 +1051,7 @@ class MediaBridgeGrpcServer:
         connection: _Connection,
         message: media_pb2.CoreToMedia,
     ) -> bool:
-        if connection.closed:
+        if connection.closed or not connection.session.accepts_input():
             return False
         try:
             connection.outgoing.put_nowait(message)
@@ -1122,7 +1181,7 @@ class MediaBridgeGrpcServer:
                 if self._connections.get(session_id) is connection and not connection.closed:
                     return False
             session = self.bridge.get(session_id)
-            if session is None or session.state == "closed" or not session.generation_active:
+            if session is None or not session.accepts_input() or not session.generation_active:
                 return False
             # A session inserted directly into the state gate (unit/local
             # adapter paths) was never attached to a gRPC transport. Preserve
@@ -1146,10 +1205,10 @@ class MediaBridgeGrpcServer:
         context_version: int = 0,
     ) -> bool:
         connection = self._connections.get(session_id)
-        if connection is None:
+        if connection is None or connection.closed or not connection.session.accepts_input():
             logger.warning(
                 "media generation control rejected session=%s action=%s reason=%s "
-                "cause=connection_missing fence=turn=%s/gen=%s/epoch=%s",
+                "cause=connection_missing_or_terminal fence=turn=%s/gen=%s/epoch=%s",
                 session_id,
                 action,
                 reason,
@@ -1239,6 +1298,7 @@ class MediaBridgeGrpcServer:
         if (
             connection is None
             or connection.closed
+            or not connection.session.accepts_input()
             or not source_event_id.strip()
             or not can_execute_realtime_effect(
                 connection.session.interaction_authority,
@@ -1321,6 +1381,7 @@ class MediaBridgeGrpcServer:
         if (
             connection is None
             or connection.closed
+            or not connection.session.accepts_input()
             or floor_epoch <= 0
             or not source_event_id.strip()
             or floor_state
@@ -1378,7 +1439,7 @@ class MediaBridgeGrpcServer:
         context_version: int = 0,
     ) -> bool:
         connection = self._connections.get(session_id)
-        if connection is None:
+        if connection is None or connection.closed or not connection.session.accepts_input():
             return False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
@@ -1449,6 +1510,8 @@ class MediaBridgeGrpcServer:
         connection = self._connections.get(session_id)
         if (
             connection is None
+            or connection.closed
+            or not connection.session.accepts_input()
             or not reason
             or len(reason) > 128
             or fence.session_id != session_id
@@ -1463,6 +1526,11 @@ class MediaBridgeGrpcServer:
             connection.session.generation.advance(fence)
         except ValueError:
             return False
+        if state == media_pb2.CONVERSATION_STATE_CLOSED:
+            # Mark the transport before enqueueing CLOSED.  The writer remains
+            # alive long enough to deliver that terminal control, while every
+            # concurrently arriving audio/VAD/KWS event is rejected.
+            connection.session.mark_terminal()
         connection.session.generation_active = False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
@@ -1590,7 +1658,7 @@ class MediaBridgeGrpcServer:
         """Publish one range-stamped transcript under the current fence."""
 
         connection = self._connections.get(session_id)
-        if connection is None:
+        if connection is None or connection.closed or not connection.session.accepts_input():
             return False
         fence = connection.session.fence
         if (
@@ -1754,6 +1822,8 @@ class MediaBridgeGrpcServer:
         connection = self._connections.get(session_id)
         if (
             connection is None
+            or connection.closed
+            or not connection.session.accepts_input()
             or connection.session.interaction_authority is not InteractionAuthority.GO_SHADOW
         ):
             return None

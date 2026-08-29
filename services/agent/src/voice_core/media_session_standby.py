@@ -28,6 +28,7 @@ class MediaSessionStandbyMixin:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
         owner_silence_timeout_s: float
+        max_user_speech_duration_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
         async def _finalize_session(self, session_id: str) -> None: ...
@@ -40,6 +41,76 @@ class MediaSessionStandbyMixin:
 
     def _owner_silence_enabled(self, context: _MediaVoiceSession) -> bool:
         return self.owner_silence_timeout_s > 0 and context.identity.client_type == "device"
+
+    def _max_user_speech_enabled(self, context: _MediaVoiceSession) -> bool:
+        return (
+            self.max_user_speech_duration_s > 0
+            and context.identity.client_type == "device"
+        )
+
+    def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None:
+        """Cancel the one-utterance watchdog and clear its deadline."""
+
+        task = context.max_user_speech_task
+        context.max_user_speech_task = None
+        context.max_user_speech_deadline = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    def _arm_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None:
+        """Bound one accepted VAD turn independently of owner-silence timing."""
+
+        if (
+            not self._max_user_speech_enabled(context)
+            or context.closed
+            or context.standby_requested
+            or context.turn_start_sample is None
+            or self._sessions.get(context.identity.session_id) is not context
+        ):
+            return
+        task = context.max_user_speech_task
+        if task is not None and not task.done():
+            # The deadline is intentionally absolute for this turn. Repeated
+            # VAD observations must not extend a stuck stream indefinitely.
+            return
+        if task is not None:
+            context.max_user_speech_task = None
+        delay = float(self.max_user_speech_duration_s)
+        loop = asyncio.get_running_loop()
+        context.max_user_speech_deadline = loop.time() + delay
+        context.max_user_speech_task = asyncio.create_task(
+            self._max_user_speech_watch(context, delay),
+            name=f"media-max-user-speech-{context.identity.session_id}",
+        )
+
+    async def _max_user_speech_watch(
+        self,
+        context: _MediaVoiceSession,
+        delay: float,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if (
+            context.max_user_speech_task is not asyncio.current_task()
+            or context.closed
+            or context.standby_requested
+            or context.turn_start_sample is None
+            or self._sessions.get(context.identity.session_id) is not context
+        ):
+            return
+        context.max_user_speech_task = None
+        context.max_user_speech_deadline = None
+        logger.warning(
+            "media user speech watchdog expired session=%s duration_s=%.3f",
+            context.identity.session_id,
+            delay,
+        )
+        await self._request_device_standby(
+            context,
+            reason="max_user_speech_duration_timeout",
+        )
 
     def _cancel_owner_silence_timer(
         self,
@@ -107,7 +178,10 @@ class MediaSessionStandbyMixin:
             # configured interval. Ambient VAD never reaches this reset seam.
             self._arm_owner_silence_timer(context, reset=True)
             context.owner_silence_grace_used = False
-        elif phase != "user_speaking":
+        else:
+            # Silence is measured only while the authority is listening.  In
+            # particular, an open VAD turn must not consume the owner's
+            # post-reply window while its endpoint is still pending.
             self._pause_owner_silence_timer(context)
 
     def _finish_owner_silence_turn(
@@ -118,6 +192,7 @@ class MediaSessionStandbyMixin:
     ) -> None:
         """Resume a paused window after endpointing without trusting bare VAD."""
 
+        self._cancel_max_user_speech_watchdog(context)
         if not self._owner_silence_enabled(context) or context.standby_requested:
             return
         owner_verified = (
@@ -199,6 +274,7 @@ class MediaSessionStandbyMixin:
             context.standby_requested = True
             context.standby_reason = reason
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
+            self._cancel_max_user_speech_watchdog(context)
             fence = context.runtime.fence
             task_epoch, context_version = self._event_versions(context, fence)
             emitted = await self.bridge.emit_conversation_state(

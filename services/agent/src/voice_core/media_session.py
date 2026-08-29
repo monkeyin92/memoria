@@ -103,6 +103,10 @@ class MediaVoiceCoreRegistry(
     # Disabled for direct library construction; the production bridge wires
     # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (10s by default).
     owner_silence_timeout_s: float = 0.0
+    # Hard upper bound for one device utterance when Edge never emits VAD end.
+    # Keep direct/library construction fail-safe by defaulting to disabled;
+    # production startup supplies the bounded AgentSettings value explicitly.
+    max_user_speech_duration_s: float = 0.0
     reply_delivery_publisher: Callable[[dict[str, Any]], bool] | None = None
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
