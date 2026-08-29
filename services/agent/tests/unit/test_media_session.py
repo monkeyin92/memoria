@@ -448,6 +448,195 @@ async def test_device_owner_silence_timeout_closes_only_after_listening_window()
 
 
 @pytest.mark.asyncio
+async def test_device_owner_silence_timer_pauses_while_user_is_speaking() -> None:
+    identity = SessionIdentity(
+        "owner-silence-user-speaking",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        owner_silence_timeout_s=0.03,
+    )
+    context = await registry._get_or_create(identity)
+
+    # The owner-silence window is armed by session creation.  A speaking
+    # turn must suspend that window even if the asynchronous assistant-state
+    # projection has not run yet.
+    registry._sync_owner_silence_phase(context, "user_speaking")
+    await asyncio.sleep(0.06)
+    assert registry.context(identity.session_id) is context.runtime
+    assert provider.closed is False
+
+    registry._sync_owner_silence_phase(context, "listening")
+    await asyncio.sleep(0.06)
+
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "owner_silence_timeout"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
+async def test_max_user_speech_watchdog_closes_a_stuck_vad_turn() -> None:
+    identity = SessionIdentity(
+        "max-user-speech-watchdog",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        max_user_speech_duration_s=0.03,
+    )
+    session = connection.session
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="stuck-vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+            final=False,
+        ),
+    )
+    await asyncio.sleep(0.08)
+
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "max_user_speech_duration_timeout"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
+async def test_max_user_speech_watchdog_is_cancelled_by_vad_end() -> None:
+    identity = SessionIdentity(
+        "max-user-speech-vad-end",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        max_user_speech_duration_s=0.03,
+    )
+    context = await registry._get_or_create(identity)
+    session = connection.session
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="vad-end-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+            final=False,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="vad-end-final",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=160,
+            capture_end_sample=161,
+            final=True,
+            voiced_end_sample=160,
+        ),
+    )
+    await asyncio.sleep(0.08)
+
+    assert registry.context(identity.session_id) is context.runtime
+    assert provider.closed is False
+    assert all(
+        event.WhichOneof("event") != "state"
+        for event in tuple(connection.outgoing._critical)  # noqa: SLF001 - queue seam under test
+    )
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_registry_rejects_late_audio_after_terminal_cleanup() -> None:
+    identity = SessionIdentity(
+        "terminal-registry-input",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    await registry._get_or_create(identity)
+    await registry._finalize_session(identity.session_id)
+
+    assert bridge.bridge.is_terminal(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+    )
+    await registry.on_audio_frame(
+        connection.session,
+        AudioFrame(
+            identity=identity,
+            sequence=0,
+            capture_start_sample=0,
+            frame_samples=2,
+            payload=b"\x00\x00\x01\x00",
+        ),
+    )
+    assert registry.context(identity.session_id) is None
+    with pytest.raises(ValueError, match="media session is terminal"):
+        await registry._get_or_create(identity)
+
+
+@pytest.mark.asyncio
 async def test_media_registry_closes_unpublished_factory_resources_on_wiring_failure() -> None:
     identity = SessionIdentity("factory-wiring-failure")
     runtime = DuplexRuntime.create(session_id=identity.session_id)

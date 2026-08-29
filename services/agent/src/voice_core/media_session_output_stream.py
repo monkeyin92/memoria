@@ -130,8 +130,11 @@ class MediaOutputStreamMixin:
         session: MediaBridgeSession,
         progress: PlaybackProgress,
     ) -> None:
+        accepts_input = getattr(session, "accepts_input", None)
+        if callable(accepts_input) and not accepts_input():
+            return
         context = self._sessions.get(session.identity.session_id)
-        if context is None or context.closed:
+        if context is None or context.closed or getattr(context, "standby_requested", False):
             return
         fence = GenerationFence(
             session_id=context.identity.session_id,

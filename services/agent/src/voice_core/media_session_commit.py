@@ -113,7 +113,7 @@ class MediaSessionCommitMixin:
         result: ASRResult,
     ) -> ASRAcceptDecision:
         context = self._sessions.get(session_id)
-        if context is None or context.closed:
+        if context is None or context.closed or context.standby_requested:
             return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
@@ -199,7 +199,7 @@ class MediaSessionCommitMixin:
         """Commit one explicit sample range, then create its authoritative turn."""
 
         context = self._sessions.get(session_id)
-        if context is None or context.closed:
+        if context is None or context.closed or context.standby_requested:
             return None, "session_not_found"
         if start_sample < 0 or end_sample <= start_sample:
             return None, "invalid_media_range"

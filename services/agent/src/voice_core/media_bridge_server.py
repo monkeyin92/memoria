@@ -95,6 +95,11 @@ class MediaBridgeSession:
     _downlink_fence: GenerationFence | None = field(default=None, init=False)
     _last_downlink_source_end_sample: int = 0
     generation_active: bool = True
+    # A terminal conversation state is projected before the registry-owned
+    # runtime is fully torn down.  Keep this transport tombstone separate from
+    # ``state`` so the still-open gRPC stream cannot admit late input or revive
+    # a cancelled downlink generation during that teardown window.
+    terminal_requested: bool = False
     stale_downlink_count: int = 0
     overflow_count: int = 0
     task_epoch: int = 0
@@ -127,8 +132,23 @@ class MediaBridgeSession:
     def fence(self) -> GenerationFence:
         return self.generation.current
 
+    def accepts_input(self) -> bool:
+        """Return whether this transport epoch may accept media input.
+
+        ``CONVERSATION_STATE_CLOSED`` is delivered over the same stream before
+        the lifecycle registry closes the bridge session.  A separate terminal
+        marker lets every inbound path fail closed during that bounded window.
+        """
+
+        return self.state != "closed" and not self.terminal_requested
+
+    def mark_terminal(self) -> None:
+        """Revoke all subsequent input for this session epoch."""
+
+        self.terminal_requested = True
+
     def accept_uplink(self, frame: AudioFrame) -> bool:
-        if self.state == "closed" or frame.identity != self.identity:
+        if not self.accepts_input() or frame.identity != self.identity:
             return False
         if frame.sequence <= self.last_uplink_sequence:
             return False
@@ -195,7 +215,7 @@ class MediaBridgeSession:
     def reset_downlink_generation(self, fence: GenerationFence) -> bool:
         """Reset output sequence/sample watermarks at an announced fence."""
 
-        if self.state == "closed" or not self.generation.accept(fence):
+        if not self.accepts_input() or not self.generation.accept(fence):
             return False
         if self._downlink_fence == fence:
             return True
@@ -209,7 +229,7 @@ class MediaBridgeSession:
     def accept_client_stop(self, event: MediaEnvelope) -> bool:
         """Apply one idempotent client stop to the authoritative generation."""
 
-        if self.state == "closed" or event.session_id != self.identity.session_id:
+        if not self.accepts_input() or event.session_id != self.identity.session_id:
             return False
         if (
             event.stream_epoch != self.identity.stream_epoch
@@ -266,7 +286,7 @@ class MediaBridgeSession:
         """Fence DataChannel playback progress before it reaches Voice Core."""
 
         if (
-            self.state == "closed"
+            not self.accepts_input()
             or not self.generation_active
             or event.session_id != self.identity.session_id
             or event.stream_epoch != self.identity.stream_epoch
@@ -325,7 +345,7 @@ class MediaBridgeSession:
     ) -> GenerationFence | None:
         """Close the Edge generation gate before forwarding a hard-stop KWS hit."""
 
-        if self.state == "closed" or self.generation_active is False or confidence < min_confidence:
+        if not self.accepts_input() or self.generation_active is False or confidence < min_confidence:
             return None
         next_fence = self.generation.cancel(self.generation.current)
         if next_fence is None:
@@ -373,9 +393,14 @@ class MediaBridgeSession:
         )
 
     def accept_downlink(self, frame: PCMFrame) -> bool:
-        if self.state == "closed" or frame.identity != self.identity:
+        if not self.accepts_input() or frame.identity != self.identity:
             self.stale_downlink_count += 1
-            self._log_downlink_reject("closed_or_identity_mismatch", frame)
+            reason = (
+                "terminal_or_closed"
+                if frame.identity == self.identity
+                else "closed_or_identity_mismatch"
+            )
+            self._log_downlink_reject(reason, frame)
             return False
         expected = self.fence
         actual = GenerationFence(
@@ -470,7 +495,7 @@ class MediaBridgeSession:
         return True
 
     def reconnect(self, identity: SessionIdentity) -> bool:
-        if self.state == "closed" or not self.identity.has_same_reconnect_authority(identity):
+        if not self.accepts_input() or not self.identity.has_same_reconnect_authority(identity):
             return False
         if identity.stream_epoch <= self.identity.stream_epoch:
             return False
@@ -497,6 +522,7 @@ class MediaBridgeSession:
         return True
 
     def close(self) -> None:
+        self.mark_terminal()
         self.state = "closed"
         self.uplink.clear()
         self.downlink.clear()
@@ -506,6 +532,11 @@ class MediaBridgeSession:
 class MediaBridgeServer:
     max_pending_audio_frames: int = 100
     sessions: dict[str, MediaBridgeSession] = field(default_factory=dict)
+    # Device session ids are stable across reconnects; stream epochs are the
+    # takeover fence.  Keep the highest terminal epoch after teardown so late
+    # input from that epoch cannot recreate a runtime, while a strictly newer
+    # epoch can establish the next transport session.
+    _terminal_stream_epochs: dict[str, int] = field(default_factory=dict, init=False)
 
     def open(
         self,
@@ -516,6 +547,8 @@ class MediaBridgeServer:
     ) -> MediaBridgeSession:
         if identity.session_id in self.sessions:
             raise ValueError("media session already exists")
+        if self.is_terminal(identity.session_id, stream_epoch=identity.stream_epoch):
+            raise ValueError("media session is terminal")
         session = MediaBridgeSession(
             identity=identity,
             max_pending_audio_frames=self.max_pending_audio_frames,
@@ -528,6 +561,37 @@ class MediaBridgeServer:
     def get(self, session_id: str) -> MediaBridgeSession | None:
         return self.sessions.get(session_id)
 
+    def is_terminal(self, session_id: str, *, stream_epoch: int | None = None) -> bool:
+        """Return whether an epoch is covered by the durable terminal fence."""
+
+        terminal_epoch = self._terminal_stream_epochs.get(session_id)
+        if terminal_epoch is None:
+            return False
+        return stream_epoch is None or stream_epoch <= terminal_epoch
+
+    def _record_terminal_epoch(self, session_id: str, stream_epoch: int) -> None:
+        terminal_epoch = self._terminal_stream_epochs.get(session_id, 0)
+        self._terminal_stream_epochs[session_id] = max(terminal_epoch, stream_epoch)
+
+    def mark_terminal(self, session_id: str, *, stream_epoch: int | None = None) -> bool:
+        """Install a terminal tombstone before asynchronous resource teardown."""
+
+        session = self.sessions.get(session_id)
+        if session is None:
+            # The live transport may have been detached before the registry's
+            # asynchronous cleanup reaches this seam.  The context still
+            # supplies its authoritative epoch, so retain that fence even
+            # without a live object to mutate.
+            if stream_epoch is None:
+                return False
+            self._record_terminal_epoch(session_id, stream_epoch)
+            return True
+        if stream_epoch is not None and session.identity.stream_epoch != stream_epoch:
+            return False
+        session.mark_terminal()
+        self._record_terminal_epoch(session_id, session.identity.stream_epoch)
+        return True
+
     def accept_client_event(self, event: MediaEnvelope) -> bool:
         session = self.sessions.get(event.session_id)
         return session is not None and session.accept_client_stop(event)
@@ -536,6 +600,7 @@ class MediaBridgeServer:
         session = self.sessions.pop(session_id, None)
         if session is None:
             return False
+        self._record_terminal_epoch(session_id, session.identity.stream_epoch)
         session.close()
         return True
 
@@ -546,6 +611,7 @@ class MediaBridgeServer:
         if session is None or session.identity.stream_epoch != stream_epoch:
             return False
         self.sessions.pop(session_id, None)
+        self._record_terminal_epoch(session_id, stream_epoch)
         session.close()
         return True
 

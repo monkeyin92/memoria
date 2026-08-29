@@ -6,7 +6,7 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-08-27
+as_of_date: 2026-08-29
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -20,7 +20,7 @@ livekit_room_allowed: false
 code: complete
 wired: esp32_to_go_media_edge_to_python_voice_core_agent
 enabled: production_agent_bridge_edge_and_current_firmware_true
-verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_and_owner_silence_standby
+verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_media_watchdog_cutover
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -34,9 +34,9 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `9420525456e6b14a4dd53ce7951a4a9e42be27c8`（2026-08-29 09:16 CST 切流，发布分支 `release/agent-sensevoice-rescue`，已合回 main；含 DTLN 8.0x 增益与 SenseVoice 离线兜底），Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`（镜像不变，2026-08-28 19:17 CST 完成直连 env 修复后重建），Control API 当前部署提交为 `349a3a3c5a40e350b82fb16f23e5f33e482a3f81`：
+当前 Agent/Bridge 发布提交为 `a0c7cd8c75ab085ef471c91324ba8eb6d03a8877`（2026-08-29 15:38 CST 切流，Agent-only source overlay；基于线上 `9420525e99d4fdccd2b2001a1a073cefc5321b63`，保留 DTLN 8.0x 增益与 SenseVoice 离线兜底），Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`（镜像不变，2026-08-28 19:17 CST 完成直连 env 修复后重建），Control API 当前部署提交为 `349a3a3c5a40e350b82fb16f23e5f33e482a3f81`：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260829-0859-sensevoice-rescue-agent-component`，image `sha256:02f734c959821c5fdb01be9f216620ca0362b84b24037611d6eb27698dbd53b1`，revision `af3fab87ff23f66ea4e9ea5ee8756a2d5c5aeadf`。两个容器 healthy、bridge gRPC PASS。本次变更：DTLN 输出补偿默认 `8.0x`（18 dB），可用 `MEMORIA_DTLN_MAKEUP_GAIN`（1.0–32.0 线性，越界回退默认）按站点调整；`MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（4 MB/会话上限）已在 agent/bridge env 打开用于电平取证。紧邻回滚点 `memoria-agent:rollback-20260828-1938-normal-distance-gain-agent-component-pre-agent` 与 `-pre-bridge`。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260829-1535-media-watchdog-agent-component`，image `sha256:12f6a7ae0afa5feb3d9b8752152f202e07ed1b23b83b922b920fb2788b88361e`，revision `a0c7cd8c75ab085ef471c91324ba8eb6d03a8877`。两个容器 healthy、bridge gRPC PASS、restart=0。本次变更：`user_speaking` 暂停 owner-silence timer；设备 VAD turn 增加 60 秒最长讲话 watchdog；`standby_requested`/terminal transport 拒绝迟到音频并保留 epoch-aware terminal fence，typed CLOSED 在有界下行队列满时仍优先送达。DTLN 输出补偿默认 `8.0x`（18 dB）、`MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（4 MB/会话上限）保持不变。紧邻回滚点 `memoria-agent:rollback-20260829-1535-media-watchdog-agent-component-pre-agent` 与 `-pre-bridge`。
 - Media Edge：`memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`，image `sha256:230f94b8e1d0839827b9c5cd3c0c8bbbdf526d7b34e8cf59f3c688f6a71c9513`。2026-08-28 10:19 CST 起容器因直连 env 缺失（`MEDIA_EDGE_DEVICE_JWT_ISSUER/AUDIENCE`、mTLS 设备状态 Redis、内部监听 TLS、https healthcheck、close-report）fail-closed 崩溃退出，设备流量落入 LiveKit 兼容回退路径（无待命链路，「再见」后不回待命）。19:11–19:17 CST 按 `prepare_production_upgrade_env.py` 规范补齐 `/etc/memoria-media-edge.env` 并重建，容器 healthy、`127.0.0.1:8794` 恢复监听；close-report 与 control-api 共享 token（48 字符）已双侧配置，control-api 于 19:52 CST 重建加载。`/tmp/media-runtime.override.yml` 中 agent/bridge 旧镜像钉住值已同步为当前运行镜像。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:v1`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g）。真实设备音频回放验证："南京今天的天气怎么样？" 纯语音段 340ms。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。紧邻回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge`。
 - Control API：`memoria-control-api:20260827-architecture-split-v1`，revision `349a3a3c5a40e350b82fb16f23e5f33e482a3f81`，容器 healthy，2026-08-28 19:52 CST 重建以加载 close-report token。
@@ -132,6 +132,24 @@ direct_real_device_verified: false
 已确认无效链路：`input_policy` / `capture_allowed` 在 Go Media Edge 与 ESP32 固件中均无消费者，只对 H5 生效。`Hold device capture closed until on-device playback can finish` 对设备链路是空操作，不要再沿这条链补防回声逻辑。
 
 未验证：真实设备连续多轮、欢迎语后立即提问、播放尾音误触发率仍需板卡证据，不得据此更新 `direct_real_device_verified`。切流后的 provider smoke 中 FunASR 间歇失败已判定为供应商侧问题（见「当前生产」），FunASR 恢复前无法用真机区分“死锁已修复”与“供应商识别不出”。
+
+## VAD 未结束保护与终止态输入闸门
+
+```yaml
+candidate: media_vad_end_watchdog_terminal_fence
+as_of_date: 2026-08-29
+code: complete
+wired: agent_settings_to_media_voice_core_registry_to_device_vad_lifecycle
+enabled: production_agent_and_bridge_true
+verified: agent_full_tests_mypy_ruff_edge_go_tests_component_build_cutover_health_restart0
+max_user_speech_duration_s: 60
+direct_real_device_verified: false
+full_duplex_verified: false
+```
+
+本轮修复将 owner-silence 计时限定在 `listening` 阶段，接受 `vad.start` 时同步暂停；每个设备话轮只 arm 一次独立的 60 秒最长讲话 watchdog，收到 `vad.end`、重连或关闭时取消，超时以 `max_user_speech_duration_timeout` 发送 typed `CONVERSATION_STATE_CLOSED`。`standby_requested`、transport terminal 和已关闭 Registry context 在音频/VAD/KWS/播放回调入口全部 fail-closed；关闭前安装按 `stream_epoch` 的持久终止 fence，旧 epoch 拒绝重建，而更高 epoch 仍可在旧 transport 清理后重连。
+
+本地 Agent 全套测试、strict mypy、ruff、`git diff --check` 与 Media Edge `go test ./...` 通过；候选镜像构建/import smoke、Agent/Bridge 切流、健康检查、bridge socket、heartbeat 和 restart=0 均有远端收据。串口目前只取得固件启动、激活和 idle 稳定证据，尚未采集新的 `vad.start`/`vad.end`；“天气 → 今天星期几”连续两轮及真实设备 watchdog 触发仍待现场语音，不能更新 `direct_real_device_verified` 或 `full_duplex_verified`。
 
 ## 下一轮真实设备验收
 

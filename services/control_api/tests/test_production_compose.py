@@ -32,10 +32,14 @@ def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None
     )[0]
     factory = "services.agent.src.media_agent_factory:build_production_media_session_factory"
     assert f'MEDIA_BRIDGE_SESSION_FACTORY: "{factory}"' in bridge
+    assert 'MEDIA_MAX_USER_SPEECH_DURATION_S: "60"' in bridge
     assert "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY" not in bridge
     assert "source: /var/lib/memoria-agent" in bridge
     assert "target: /data" in bridge
     assert f"MEDIA_BRIDGE_SESSION_FACTORY={factory}" in (
+        ROOT / "infra/memoria.env.production.example"
+    ).read_text(encoding="utf-8")
+    assert "MEDIA_MAX_USER_SPEECH_DURATION_S=60" in (
         ROOT / "infra/memoria.env.production.example"
     ).read_text(encoding="utf-8")
 

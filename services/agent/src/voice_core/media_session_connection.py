@@ -39,6 +39,10 @@ class MediaSessionConnectionMixin:
             preserve_remaining: bool,
         ) -> None: ...
 
+        def _cancel_max_user_speech_watchdog(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
@@ -60,7 +64,14 @@ class MediaSessionConnectionMixin:
         event: MediaEnvelope,
         detected_monotonic_ms: int = 0,
     ) -> None:
+        if not session.accepts_input():
+            return
+        current = self._sessions.get(session.identity.session_id)
+        if current is not None and (current.closed or current.standby_requested):
+            return
         context = await self._get_or_create(session.identity)
+        if context.closed or context.standby_requested or not session.accepts_input():
+            return
         if event.type != "client.stop_assistant":
             return
         # The edge timestamp is wall-clock time on another host. It is useful
@@ -146,7 +157,7 @@ class MediaSessionConnectionMixin:
         context = self._sessions.get(session_id)
         if context is not None:
             self._pause_owner_silence_timer(context)
-        if session.state == "closed":
+        if session.state == "closed" or session.terminal_requested:
             await self._finalize_session(session_id)
             return
         # A gRPC stream closing is normally a transport reconnect, not a
@@ -196,8 +207,17 @@ class MediaSessionConnectionMixin:
                 return
             self._sessions.pop(session_id, None)
             context_stream_epoch = context.stream_epoch
+            # Install the bridge tombstone before releasing the registry lock.
+            # Resource teardown below can await provider I/O; late callbacks
+            # must be rejected for that entire interval and must not recreate
+            # this context after it leaves ``_sessions``.
+            self.bridge.bridge.mark_terminal(
+                session_id,
+                stream_epoch=context_stream_epoch,
+            )
             context.closed = True
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
+            self._cancel_max_user_speech_watchdog(context)
             context.projection.discard_provisional(None, "session_closed")
             context.projection.reset_phase(stream_epoch=context.stream_epoch)
             self._clear_pending_turn_state(context)

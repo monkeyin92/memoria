@@ -78,6 +78,11 @@ class MediaVoiceSessionState:
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
+    # Independent wall-clock bound for one accepted user utterance.  This is
+    # deliberately separate from owner-silence timing: a stuck VAD stream
+    # must eventually fail closed even while the owner is still speaking.
+    max_user_speech_task: asyncio.Task[None] | None = None
+    max_user_speech_deadline: float | None = None
     standby_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     standby_requested: bool = False
     standby_reason: str | None = None

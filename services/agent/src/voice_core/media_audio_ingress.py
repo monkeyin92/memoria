@@ -691,7 +691,7 @@ class MediaAudioIngress:
     async def _pump(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
         try:
-            while not context.closed:
+            while not context.closed and not context.standby_requested:
                 try:
                     frame, enqueued_at = state.queue.get_nowait()
                 except asyncio.QueueEmpty:

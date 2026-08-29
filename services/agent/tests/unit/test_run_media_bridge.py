@@ -53,9 +53,83 @@ def _settings() -> SimpleNamespace:
         media_bridge_go_shadow_enabled=False,
         media_output_generation_timeout_s=45.0,
         media_owner_silence_timeout_s=10.0,
+        media_max_user_speech_duration_s=60.0,
         media_bridge_grpc_addr="127.0.0.1:50051",
         prometheus_port=0,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_wires_max_user_speech_duration_to_session_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = _Server()
+    session_factory = _SessionFactory()
+    settings = _settings()
+    settings.media_max_user_speech_duration_s = 37.5
+    _patch_run(monkeypatch, server=server, session_factory=session_factory)
+    monkeypatch.setattr(run_media_bridge, "load_settings", lambda **_kwargs: settings)
+
+    captured: list[dict[str, object]] = []
+
+    class _Registry:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+        def install(self) -> None:
+            return None
+
+    monkeypatch.setattr(run_media_bridge, "MediaVoiceCoreRegistry", _Registry)
+
+    await run_media_bridge.run()
+
+    assert len(captured) == 1
+    assert captured[0]["output_generation_timeout_s"] == 45.0
+    assert captured[0]["owner_silence_timeout_s"] == 10.0
+    assert captured[0]["max_user_speech_duration_s"] == 37.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_factory", [None, object()])
+async def test_run_wires_watchdog_in_provider_registry_variants(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_factory: object | None,
+) -> None:
+    """The provider-only fallback must not silently drop watchdog settings."""
+
+    server = _Server()
+    settings = _settings()
+    settings.media_max_user_speech_duration_s = 41.0
+    _patch_run(monkeypatch, server=server, session_factory=_SessionFactory())
+    monkeypatch.setattr(run_media_bridge, "load_settings", lambda **_kwargs: settings)
+    monkeypatch.setattr(run_media_bridge, "_load_session_factory", lambda _settings: None)
+    monkeypatch.setattr(
+        run_media_bridge,
+        "_load_provider_factory",
+        lambda _settings: (lambda _identity: object()),
+    )
+    monkeypatch.setattr(run_media_bridge, "_load_runtime_factory", lambda _settings: runtime_factory)
+
+    captured: list[dict[str, object]] = []
+
+    class _Registry:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+        def install(self) -> None:
+            return None
+
+    monkeypatch.setattr(run_media_bridge, "MediaVoiceCoreRegistry", _Registry)
+
+    await run_media_bridge.run()
+
+    assert len(captured) == 1
+    assert captured[0]["owner_silence_timeout_s"] == 10.0
+    assert captured[0]["max_user_speech_duration_s"] == 41.0
+    if runtime_factory is None:
+        assert "runtime_factory" not in captured[0]
+    else:
+        assert captured[0]["runtime_factory"] is runtime_factory
 
 
 def _patch_run(

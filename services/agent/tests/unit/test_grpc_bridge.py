@@ -333,6 +333,183 @@ async def test_closed_conversation_state_preempts_reliable_output() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_closed_conversation_state_survives_a_full_outgoing_queue() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=1)
+    identity = SessionIdentity("conversation-close-full", account_id="account", device_id="device")
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    assert await bridge.emit_event(identity.session_id, "reliable.before_close", {})
+
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=connection.session.fence,
+        reason="max_user_speech_duration_timeout",
+    )
+
+    # The old reliable event may be discarded under pressure, but the typed
+    # terminal receipt must remain deliverable and close the transport.
+    assert connection.closed is True
+    terminal = connection.outgoing.get_nowait()
+    assert terminal.WhichOneof("event") == "state"
+    assert terminal.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert connection.outgoing.empty()
+
+
+@pytest.mark.asyncio
+async def test_terminal_tombstone_blocks_closed_epoch_and_allows_newer_epoch() -> None:
+    bridge = MediaBridgeGrpcServer()
+    identity = SessionIdentity("conversation-tombstone", account_id="account", device_id="device")
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=connection.session.fence,
+        reason="owner_silence_timeout",
+    )
+    connection.outgoing.get_nowait()
+
+    bridge._close_connection(connection)  # noqa: SLF001 - deterministic cleanup
+    assert bridge.bridge.close_if_epoch(identity.session_id, identity.stream_epoch)
+    assert bridge.bridge.get(identity.session_id) is None
+    assert bridge.bridge.is_terminal(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+    )
+    with pytest.raises(ValueError, match="media session is terminal"):
+        bridge._open_connection(  # noqa: SLF001 - transport seam under test
+            SessionIdentity(
+                identity.session_id,
+                account_id=identity.account_id,
+                device_id=identity.device_id,
+                stream_epoch=identity.stream_epoch,
+            )
+        )
+
+    replacement = bridge._open_connection(  # noqa: SLF001 - transport seam under test
+        SessionIdentity(
+            identity.session_id,
+            account_id=identity.account_id,
+            device_id=identity.device_id,
+            stream_epoch=identity.stream_epoch + 1,
+        )
+    )
+    assert replacement.session.identity.stream_epoch == identity.stream_epoch + 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_session_rejects_late_media_without_invoking_callbacks() -> None:
+    audio_seen: list[int] = []
+    speech_seen: list[str] = []
+
+    async def on_audio(_session, frame) -> None:
+        audio_seen.append(frame.sequence)
+
+    async def on_speech(_session, segment, _detected_monotonic_ms=0) -> None:
+        speech_seen.append(segment.kind.value)
+
+    bridge = MediaBridgeGrpcServer(
+        on_audio_frame=on_audio,
+        on_speech_segment=on_speech,
+    )
+    identity = SessionIdentity("terminal-input", account_id="account", device_id="device")
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+
+    assert await bridge.emit_conversation_state(
+        identity.session_id,
+        media_pb2.CONVERSATION_STATE_CLOSED,
+        fence=connection.session.fence,
+        reason="owner_silence_timeout",
+    )
+    terminal = connection.outgoing.get_nowait()
+    assert terminal.WhichOneof("event") == "state"
+    assert terminal.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert connection.session.terminal_requested is True
+    assert connection.session.accepts_input() is False
+    assert connection.session.generation_active is False
+
+    proto_identity = media_pb2.SessionIdentity(
+        session_id=identity.session_id,
+        account_id=identity.account_id,
+        device_id=identity.device_id,
+        client_type=identity.client_type,
+        stream_epoch=identity.stream_epoch,
+    )
+    await bridge._handle_request(  # noqa: SLF001 - transport seam under test
+        connection,
+        media_pb2.MediaToCore(
+            audio=media_pb2.AudioFrame(
+                identity=proto_identity,
+                sequence=0,
+                capture_start_sample=0,
+                frame_samples=2,
+                payload=b"\x00\x00\x01\x00",
+            )
+        ),
+    )
+    await bridge._handle_request(  # noqa: SLF001 - transport seam under test
+        connection,
+        media_pb2.MediaToCore(
+            vad=media_pb2.VadEvent(
+                identity=proto_identity,
+                type=media_pb2.VAD_EVENT_SPEECH_START,
+                sample_position=0,
+                probability=0.99,
+            )
+        ),
+    )
+    await bridge._handle_request(  # noqa: SLF001 - transport seam under test
+        connection,
+        media_pb2.MediaToCore(
+            keyword=media_pb2.KeywordEvent(
+                identity=proto_identity,
+                keyword="停一下",
+                confidence=0.99,
+                start_sample=0,
+                end_sample=2,
+                hard_stop=True,
+            )
+        ),
+    )
+
+    assert audio_seen == []
+    assert speech_seen == []
+    assert connection.session.timeline.pending == ()
+    assert not connection.session.uplink
+    assert connection.outgoing.empty()
+    assert not await bridge.emit_pcm(
+        identity.session_id,
+        PCMFrame(
+            identity=identity,
+            turn_id=0,
+            generation_id=0,
+            tool_epoch=0,
+            sequence=0,
+            source_start_sample=0,
+            frame_samples=2,
+            pcm_s16le=b"\x00\x00\x01\x00",
+        ),
+    )
+    assert not await bridge.emit_event(identity.session_id, "late.event", {})
+    assert not connection.session.reconnect(
+        SessionIdentity(
+            identity.session_id,
+            account_id=identity.account_id,
+            device_id=identity.device_id,
+            stream_epoch=identity.stream_epoch + 1,
+        )
+    )
+    with pytest.raises(ValueError, match="media session is terminal"):
+        bridge._open_connection(  # noqa: SLF001 - transport seam under test
+            SessionIdentity(
+                identity.session_id,
+                account_id=identity.account_id,
+                device_id=identity.device_id,
+                stream_epoch=identity.stream_epoch + 1,
+            )
+        )
+
+
 def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None:
     bridge = MediaBridgeGrpcServer(max_pending_messages=4)
     connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test

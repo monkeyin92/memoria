@@ -40,6 +40,7 @@ class MediaSessionInputMixin:
         metrics: MetricsRegistry
         interruption_policy: InterruptionPolicy
         _audio_ingress: MediaAudioIngress
+        _sessions: dict[str, _MediaVoiceSession]
 
         async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
@@ -70,12 +71,34 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
 
+        def _sync_owner_silence_phase(
+            self, context: _MediaVoiceSession, phase: str
+        ) -> None: ...
+
+        def _arm_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
+
+        def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
+
     async def on_audio_frame(
         self,
         session: MediaBridgeSession,
         frame: AudioFrame,
     ) -> None:
+        # The transport can finish a CLOSED projection before an in-flight
+        # callback unwinds.  Reject at this seam before _get_or_create so a
+        # late frame cannot resurrect a registry/runtime context.
+        if not session.accepts_input():
+            return
+        current = self._sessions.get(session.identity.session_id)
+        if current is not None and (current.closed or current.standby_requested):
+            return
         context = await self._get_or_create(session.identity)
+        if (
+            context.closed
+            or context.standby_requested
+            or not session.accepts_input()
+        ):
+            return
         await self._audio_ingress.accept(context, frame)
 
     async def on_speech_segment(
@@ -84,7 +107,18 @@ class MediaSessionInputMixin:
         segment: SpeechSegment,
         detected_monotonic_ms: int = 0,
     ) -> None:
+        if not session.accepts_input():
+            return
+        current = self._sessions.get(session.identity.session_id)
+        if current is not None and (current.closed or current.standby_requested):
+            return
         context = await self._get_or_create(session.identity)
+        if (
+            context.closed
+            or context.standby_requested
+            or not session.accepts_input()
+        ):
+            return
         if not context.runtime.ingest_media_speech_segment(segment):
             return
 
@@ -128,7 +162,17 @@ class MediaSessionInputMixin:
             else:
                 interruption = None
             await self._apply_projection_segment(context, segment)
+            if (
+                context.closed
+                or context.standby_requested
+                or not session.accepts_input()
+            ):
+                return
             if segment.final:
+                # VAD end is the only normal endpoint for this watchdog.  Do
+                # this before provider finalization, which may await remote
+                # ASR work and otherwise leave the timer racing teardown.
+                self._cancel_max_user_speech_watchdog(context)
                 if not await self._audio_ingress.finalize_speech_segment(
                     context,
                     vad_start_sample=context.turn_start_sample,
@@ -225,6 +269,11 @@ class MediaSessionInputMixin:
                     if context.turn_start_sample is not None
                     else segment.capture_start_sample,
                 )
+                # Runtime phase publication is scheduled asynchronously. Pause
+                # owner-silence synchronously at the accepted VAD boundary and
+                # arm an absolute per-utterance watchdog exactly once.
+                self._sync_owner_silence_phase(context, "user_speaking")
+                self._arm_max_user_speech_watchdog(context)
         # Sample ranges remain authoritative for media turn boundaries.
         if segment.kind is SegmentKind.KWS and segment.final:
             interruption = self.interruption_policy.evaluate(
