@@ -113,6 +113,7 @@ _TRANSITIONS: dict[tuple[ConversationState, TransitionEvent], ConversationState]
     ): ConversationState.TOOL_WAITING,
     (ConversationState.TOOL_WAITING, TransitionEvent.TOOL_RESULT_VALID): ConversationState.THINKING,
     (ConversationState.LISTENING, TransitionEvent.OUTPUT_READY): ConversationState.THINKING,
+    (ConversationState.TOOL_WAITING, TransitionEvent.OUTPUT_READY): ConversationState.THINKING,
     (
         ConversationState.TOOL_WAITING,
         TransitionEvent.USER_CHANGED_TOOL_CONDITIONS,

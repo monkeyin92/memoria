@@ -32,7 +32,11 @@ from services.agent.src.voice_core.grpc_bridge import (
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
-from services.agent.src.voice_core.media_session_types import DelegationOutputClaim
+from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputClaim,
+    DelegationOutputState,
+    owned_delegation_holds_turn,
+)
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
@@ -89,6 +93,8 @@ class MediaSessionProjectionMixin:
             fence.generation_id,
             reason,
         )
+        if not owned_delegation_holds_turn(context.delegation_output_claims, fence):
+            await context.runtime.finish_owned_delegation_wait(cause=reason)
         if (
             not claim.normal_reply_observed
             or context.closed
@@ -214,6 +220,12 @@ class MediaSessionProjectionMixin:
                     reason="no_result",
                 )
                 return
+            if (
+                not runtime.barge_in_enabled
+                and claim.state is DelegationOutputState.OWNED
+                and runtime.fence.turn_id == fence.turn_id
+            ):
+                runtime.hold_floor_for_owned_delegation()
             coordinator.admit_output_intent(
                 intent,
                 current_fence=runtime.fence,

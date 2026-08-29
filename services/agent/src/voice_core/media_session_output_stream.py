@@ -20,6 +20,7 @@ from services.agent.src.voice_core.media_session_types import (
     MediaTextSpan,
     OutputDispatchResult,
     OutputDispatchStatus,
+    owned_delegation_holds_turn,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -629,6 +630,10 @@ class MediaOutputStreamMixin:
         await context.runtime.on_media_playback_done(
             fence,
             context.playback.actual_heard_text(fence),
+            tools_active=owned_delegation_holds_turn(
+                context.delegation_output_claims,
+                fence,
+            ),
         )
         # A playback terminal permanently closes this generation on the
         # hardware and Edge ledgers.  Finish the runtime lifecycle before

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
@@ -267,6 +267,20 @@ class DelegationOutputClaim:
             return False
         self._local_reply_reserved = True
         return True
+
+
+def owned_delegation_holds_turn(
+    claims: Mapping[GenerationFence, DelegationOutputClaim],
+    fence: GenerationFence,
+) -> bool:
+    """True while an OWNED same-turn claim is still waiting to speak."""
+
+    return any(
+        claim.state is DelegationOutputState.OWNED
+        and claim_fence.session_id == fence.session_id
+        and claim_fence.turn_id == fence.turn_id
+        for claim_fence, claim in claims.items()
+    )
 
 
 @dataclass(frozen=True, slots=True)

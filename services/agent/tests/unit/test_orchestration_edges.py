@@ -448,6 +448,34 @@ async def test_orchestrator_background_result_and_actual_playback_edges() -> Non
 
 
 @pytest.mark.asyncio
+async def test_auxiliary_output_follows_tool_waiting_filler_without_new_turn() -> None:
+    orch = Orchestrator()
+    await orch.ready()
+    await orch.on_vad_start()
+    fence = await orch.commit_turn("南京天气怎么样")
+    assert orch.state_machine is not None
+    orch.state_machine.state = ConversationState.SPEAKING
+    orch.heard_tracker.reset()
+    await orch.finish_livekit_playback(
+        playback_position_s=0.2,
+        synchronized_transcript="稍等",
+        tools_active=True,
+        reply_fence=fence,
+    )
+    assert orch.state is ConversationState.TOOL_WAITING
+
+    next_fence = await orch.begin_auxiliary_output(fence)
+    assert next_fence is not None
+    assert next_fence.turn_id == fence.turn_id
+    assert next_fence.generation_id == fence.generation_id + 1
+    assert orch.state is ConversationState.THINKING
+
+    orch.state_machine.state = ConversationState.TOOL_WAITING
+    assert await orch.abandon_tool_wait(cause="owned_delegation_released")
+    assert orch.state is ConversationState.LISTENING
+
+
+@pytest.mark.asyncio
 async def test_late_owner_playback_keeps_the_originating_fence_scope() -> None:
     orch = Orchestrator()
     await orch.ready()

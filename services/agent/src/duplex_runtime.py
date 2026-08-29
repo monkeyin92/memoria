@@ -3216,8 +3216,37 @@ class DuplexRuntime(DuplexSpeakerMixin):
         self._played_assistant_text = normalized
         self._pending_assistant_text = ""
         self._was_speaking = False
-        self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
+        if tools_active:
+            # Filler / acknowledgement playback is not the turn terminal while
+            # an OWNED same-turn delegation is still waiting to speak.
+            self.set_interaction_phase(
+                InteractionPhase.TOOL_WAITING,
+                cause="media_playback_ack",
+            )
+        else:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         return True
+
+    def hold_floor_for_owned_delegation(self) -> None:
+        """Keep the half-duplex floor open for one same-turn successor result."""
+
+        self._fresh_user_speech = False
+        if self.interaction_phase in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+            InteractionPhase.LISTENING,
+        }:
+            self.set_interaction_phase(
+                InteractionPhase.TOOL_WAITING,
+                cause="owned_delegation_hold",
+            )
+
+    async def finish_owned_delegation_wait(self, *, cause: str) -> None:
+        """Release a tool-wait that will not produce a successor generation."""
+
+        await self.orchestrator.abandon_tool_wait(cause=cause)
+        if self.interaction_phase is InteractionPhase.TOOL_WAITING:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
 
     async def on_media_playback_interrupted(
         self,

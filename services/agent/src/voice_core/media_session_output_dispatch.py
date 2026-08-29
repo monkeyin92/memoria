@@ -415,7 +415,8 @@ class MediaOutputDispatchMixin:
         if (
             context.output_owner is not None
             or context.reply_lock.locked()
-            or context.runtime.orchestrator.state is ConversationState.LISTENING
+            or context.runtime.orchestrator.state
+            in {ConversationState.LISTENING, ConversationState.TOOL_WAITING}
         ):
             if not await self._enqueue_output_work(context, work):
                 return OutputDispatchResult(
@@ -510,7 +511,10 @@ class MediaOutputDispatchMixin:
                     reason="missing_output_work",
                 )
                 continue
-            if context.runtime.orchestrator.state is ConversationState.LISTENING:
+            if context.runtime.orchestrator.state in {
+                ConversationState.LISTENING,
+                ConversationState.TOOL_WAITING,
+            }:
                 work = await self._promote_auxiliary_output(context, work)
                 if work is None:
                     return False

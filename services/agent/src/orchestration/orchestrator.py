@@ -450,7 +450,10 @@ class Orchestrator:
         assert self.state_machine is not None
         assert self.fence_gate is not None
         async with self._state_lock:
-            if not self.fence.matches(expected_fence) or self.state is not ConversationState.LISTENING:
+            if not self.fence.matches(expected_fence) or self.state not in {
+                ConversationState.LISTENING,
+                ConversationState.TOOL_WAITING,
+            }:
                 return None
             next_fence = expected_fence.bump_generation()
             if not self._inherit_context_version(expected_fence, next_fence):
@@ -465,6 +468,18 @@ class Orchestrator:
                 self.segmenter.reset(next_fence)
             self._tts_cancel = asyncio.Event()
             return next_fence
+
+    async def abandon_tool_wait(self, *, cause: str) -> bool:
+        """Return to listening after an OWNED wait that will not speak."""
+
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if self.state is not ConversationState.TOOL_WAITING:
+                return False
+            if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                return False
+            self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
+            return True
 
     @staticmethod
     def _generation_fence(

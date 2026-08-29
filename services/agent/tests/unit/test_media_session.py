@@ -21,7 +21,11 @@ from services.agent.src.orchestration.context_snapshot_manager import (
 )
 from services.agent.src.orchestration.conversation_projection import ConversationProjection
 from services.agent.src.orchestration.delegation_coordinator import OutputIntentAdmission
-from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
+from services.agent.src.orchestration.state_machine import (
+    ConversationState,
+    InteractionPhase,
+)
 from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
@@ -4412,6 +4416,182 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
         await registry._finalize_session(identity.session_id)
 
 
+class _LateOwnedDelegationProvider(FakeMediaProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.output_kinds: list[int] = []
+        self.release = asyncio.Event()
+        self.ack_started = asyncio.Event()
+        self.ack_completed = asyncio.Event()
+        self.deep_started = asyncio.Event()
+
+    async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+        await self.release.wait()
+        return "南京今天多云，气温二十二度。"
+
+    @staticmethod
+    def accept_output_intent(intent: Any) -> Any:
+        return intent
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+        self.output_kinds.append(int(intent.kind))
+        if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+            self.ack_started.set()
+        elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+            self.deep_started.set()
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=b"\x02\x00\x03\x00",
+                source_start_sample=source_start_sample,
+                text=str(intent.tts_source),
+                first=True,
+                final=True,
+            )
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_completed.set()
+
+        return chunks()
+
+
+class _CapturingGenerationBridge(MediaBridgeGrpcServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames: list[object] = []
+
+    async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
+        self.frames.append(_frame)
+        return True
+
+    async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+        return True
+
+
+async def _ack_owned_filler_then_wait(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    provider: _LateOwnedDelegationProvider,
+    bridge: _CapturingGenerationBridge,
+) -> tuple[Any, GenerationFence]:
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    committed = await context.runtime.on_turn_committed("今天南京天气怎么样")
+    await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
+    ack_owner = context.output_owner
+    assert ack_owner is not None
+    ack_fence = ack_owner.fence
+    claim = context.delegation_output_claims[committed]
+    assert ack_fence.turn_id == committed.turn_id
+    assert ack_fence.generation_id == committed.generation_id
+    assert claim.state is DelegationOutputState.OWNED
+    await asyncio.wait_for(provider.ack_completed.wait(), timeout=1)
+    ack_frame = bridge.frames[-1]
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=ack_fence.generation_id,
+            received_sequence=ack_frame.sequence,
+            rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+            client_monotonic_ms=1,
+            turn_id=ack_fence.turn_id,
+            tool_epoch=ack_fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+    assert claim.state is DelegationOutputState.OWNED
+    assert context.runtime.orchestrator.state is ConversationState.TOOL_WAITING
+    assert context.runtime.interaction_phase is InteractionPhase.TOOL_WAITING
+    assert context.runtime.fence.matches(ack_fence)
+    assert not provider.deep_started.is_set()
+    return context, ack_fence
+
+
+@pytest.mark.asyncio
+async def test_owned_delegation_filler_playback_is_not_turn_terminal() -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("owned-filler-not-terminal")
+    context = None
+    try:
+        context, ack_fence = await _ack_owned_filler_then_wait(
+            registry,
+            identity,
+            provider,
+            bridge,
+        )
+        claim = context.delegation_output_claims[ack_fence]
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
+        assert media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT in provider.output_kinds
+        deep_owner = context.output_owner
+        assert deep_owner is not None
+        assert deep_owner.fence.turn_id == ack_fence.turn_id
+        assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
+    finally:
+        provider.release.set()
+        if context is not None:
+            await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_half_duplex_owned_wait_ignores_user_speech_and_keeps_weather() -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = SessionIdentity("half-duplex-owned-hold")
+    context = None
+    try:
+        context, ack_fence = await _ack_owned_filler_then_wait(
+            registry,
+            identity,
+            provider,
+            bridge,
+        )
+        assert context.runtime.barge_in_enabled is False
+        decision = context.runtime.on_user_voice_started()
+        assert decision is PlaybackInputDecision.IGNORE
+        assert context.runtime.output_floor_allows_assistant
+        assert context.runtime.orchestrator.state is ConversationState.TOOL_WAITING
+        claim = context.delegation_output_claims[ack_fence]
+        assert claim.state is DelegationOutputState.OWNED
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
+        assert claim.state is not DelegationOutputState.RELEASED
+        deep_owner = context.output_owner
+        assert deep_owner is not None
+        assert deep_owner.fence.turn_id == ack_fence.turn_id
+        assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
+    finally:
+        provider.release.set()
+        if context is not None:
+            await registry._finalize_session(identity.session_id)
+
+
 @pytest.mark.asyncio
 async def test_media_provider_does_not_install_an_unavailable_delegation_seam() -> None:
     class UnsupportedProvider(FakeMediaProvider):
@@ -6812,9 +6992,14 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
     completed: list[tuple[GenerationFence, str]] = []
     original = context.runtime.on_media_playback_done
 
-    async def spy(done_fence: GenerationFence, heard_text: str) -> bool:
+    async def spy(
+        done_fence: GenerationFence,
+        heard_text: str,
+        *,
+        tools_active: bool = False,
+    ) -> bool:
         completed.append((done_fence, heard_text))
-        return await original(done_fence, heard_text)
+        return await original(done_fence, heard_text, tools_active=tools_active)
 
     context.runtime.on_media_playback_done = spy  # type: ignore[method-assign]
     await registry.on_playback_progress(
