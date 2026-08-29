@@ -278,9 +278,7 @@ class MockFunASRServer:
             self.pcm_by_connection.append(0)
             pcm_index = len(self.pcm_by_connection) - 1
             await ws.send(
-                json.dumps(
-                    {"header": {"event": "task-started", "task_id": task_id}, "payload": {}}
-                )
+                json.dumps({"header": {"event": "task-started", "task_id": task_id}, "payload": {}})
             )
 
             if self.scenario == "task_reuse_provider_finish" and task_number == 1:
@@ -1011,7 +1009,11 @@ class MockSenseVoiceServer:
 
     @property
     def url(self) -> str:
-        return f"http://{_LOOPBACK_CLIENT_HOST}:{self.port}/asr"
+        # The websocket mocks can race address families, but httpx resolves
+        # "localhost" to exactly one address; on hosts where that name is
+        # intercepted (local TUN/proxy) the rescue request blackholes.  The
+        # server binds 127.0.0.1, so advertise that literal.
+        return f"http://{self.host}:{self.port}/asr"
 
     def start(self) -> None:
         ready = threading.Event()
