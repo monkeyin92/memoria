@@ -274,6 +274,43 @@ def test_rejected_or_backchannel_candidate_is_discarded_without_persistence() ->
     assert discarded.reason == "backchannel"
 
 
+def test_align_provisional_text_lets_late_timeline_revision_commit() -> None:
+    timeline = SpeechTimeline()
+    first = _segment("asr", start=0, end=160, text="天气", kind=SegmentKind.ASR_FINAL, final=True)
+    assert timeline.add(first)
+    projection = ConversationProjection("session", timeline)
+    assert projection.apply_continuous_event(first, turn_id_hint=1)
+
+    later = _segment(
+        "asr-2",
+        start=0,
+        end=160,
+        text="今天天气怎么样",
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+        revision=2,
+    )
+    assert timeline.add(later)
+    aligned = projection.align_provisional_text("今天天气怎么样")
+    assert aligned is not None
+    assert aligned.kind is ProjectionEventKind.PROVISIONAL_PATCH
+
+    committed = projection.commit_turn(
+        CommitEvidence(
+            session_id="session",
+            stream_epoch=1,
+            capture_start_sample=0,
+            capture_end_sample=160,
+            text="今天天气怎么样",
+            fence=GenerationFence("session", 1, 1, 0),
+            speaker_evidence=SpeakerEvidence(),
+            history_eligible=False,
+        )
+    )
+    assert isinstance(committed, CommittedTurn)
+    assert committed.text == "今天天气怎么样"
+
+
 def test_discarded_turn_hint_cannot_reuse_provisional_identity_or_revision() -> None:
     timeline = SpeechTimeline()
     first_segment = _segment("asr-1", start=0, end=160, text="等等")

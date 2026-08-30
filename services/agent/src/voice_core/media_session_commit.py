@@ -343,6 +343,15 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, "empty_media_turn")
             self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
+        aligned = context.projection.align_provisional_text(text)
+        if aligned is not None:
+            logger.info(
+                "media provisional text aligned session=%s stream_epoch=%s timeline_text_len=%s",
+                session_id,
+                stream_epoch,
+                len(text),
+            )
+            await self._emit_projection_patch(context, aligned)
         speaker_evidence = self._projection_speaker_evidence(context)
         history_eligible = context.runtime.current_history_eligible
         commit_evidence = CommitEvidence(
@@ -359,6 +368,8 @@ class MediaSessionCommitMixin:
         projection_rejection = context.projection.validate_commit(commit_evidence)
         if projection_rejection is not None:
             await self._discard_projection(context, projection_rejection.value)
+            if projection_rejection is ProjectionRejectReason.TEXT_MISMATCH:
+                self._nudge_missed_hearing(context)
             return None, projection_rejection.value
         speaker_patch = context.projection.apply_speaker_evidence(speaker_evidence)
         if speaker_patch is not None:
