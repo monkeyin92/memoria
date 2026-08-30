@@ -86,6 +86,8 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, *, accepted: bool
         ) -> None: ...
 
+        def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None: ...
+
         def _observe_committed_conversation_turn(
             self,
             context: _MediaVoiceSession,
@@ -296,6 +298,7 @@ class MediaSessionCommitMixin:
             end_sample=end_sample,
         )
         if not text:
+            context.runtime.on_user_voice_stopped()
             await self._commit_media_input_range(
                 context,
                 session_id=session_id,
@@ -305,6 +308,7 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
+            self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
         retire_end = end_sample if retire_sample is None else retire_sample
         if retire_end < end_sample:
@@ -337,6 +341,7 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
+            self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
         speaker_evidence = self._projection_speaker_evidence(context)
         history_eligible = context.runtime.current_history_eligible

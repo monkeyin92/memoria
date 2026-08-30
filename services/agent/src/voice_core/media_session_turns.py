@@ -108,6 +108,8 @@ class MediaTurnEndpointMixin:
             fence: GenerationFence,
         ) -> bool: ...
 
+        def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None: ...
+
         async def _dispatch_reply(
             self,
             session_id: str,
@@ -427,6 +429,7 @@ class MediaTurnEndpointMixin:
             len(partial.text.strip()) if partial is not None else 0,
             partial.capture_end_sample if partial is not None else None,
         )
+        self._nudge_missed_hearing(context)
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:
         task = context.turn_endpoint_task

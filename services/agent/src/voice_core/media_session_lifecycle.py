@@ -162,6 +162,8 @@ class MediaSessionLifecycleMixin:
             self, context: _MediaVoiceSession
         ) -> None: ...
 
+        async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None: ...
+
         def _cancel_max_user_speech_watchdog(
             self, context: _MediaVoiceSession
         ) -> None: ...
@@ -575,6 +577,7 @@ class MediaSessionLifecycleMixin:
             self.metrics.inc_media_session_started()
             self.metrics.set_media_active_sessions(len(self._sessions))
             self._arm_owner_silence_timer(created, reset=True)
+            await self._speak_device_wake_ack(created)
             return created
         except BaseException as exc:
             if created is not None:

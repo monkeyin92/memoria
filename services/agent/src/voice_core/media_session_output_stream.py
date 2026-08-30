@@ -636,6 +636,9 @@ class MediaOutputStreamMixin:
                 fence,
             ),
         )
+        context.playback.discard(fence)
+        context.output_sequence = 0
+        context.output_text_offset = 0
         # A playback terminal permanently closes this generation on the
         # hardware and Edge ledgers.  Finish the runtime lifecycle before
         # selecting a queued acknowledgement/deep/tool result so the existing

@@ -26,7 +26,7 @@ from services.agent.src.orchestration.state_machine import (
     ConversationState,
     InteractionPhase,
 )
-from services.agent.src.prompts import BRIDGE_PHRASES
+from services.agent.src.prompts import BRIDGE_PHRASES, DEVICE_WAKE_PHRASES, device_wake_phrase
 from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
@@ -4531,6 +4531,104 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
         return True
 
 
+class _AckCapturingProvider(FakeMediaProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.texts: list[str] = []
+        self.started = asyncio.Event()
+        self.completed = asyncio.Event()
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+        self.texts.append(str(intent.tts_source))
+        self.started.set()
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=b"\x02\x00\x03\x00",
+                source_start_sample=source_start_sample,
+                text=str(intent.tts_source),
+                first=True,
+                final=True,
+            )
+            self.completed.set()
+
+        return chunks()
+
+
+async def _finish_output_owner_playback(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    bridge: _CapturingGenerationBridge,
+    session: Any,
+) -> None:
+    context = registry._sessions[identity.session_id]  # noqa: SLF001
+    owner = context.output_owner
+    assert owner is not None
+    ack_frame = bridge.frames[-1]
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=owner.fence.generation_id,
+            received_sequence=ack_frame.sequence,
+            rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+            client_monotonic_ms=1,
+            turn_id=owner.fence.turn_id,
+            tool_epoch=owner.fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+
+
+async def _finish_device_wake_ack_if_any(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    provider: _LateOwnedDelegationProvider,
+    bridge: _CapturingGenerationBridge,
+    session: Any,
+) -> None:
+    if identity.client_type != "device":
+        return
+    try:
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
+    except TimeoutError:
+        return
+    await asyncio.wait_for(provider.ack_completed.wait(), timeout=1)
+    context = registry._sessions[identity.session_id]  # noqa: SLF001
+    for _ in range(40):
+        if context.output_owner is not None or bridge.frames:
+            break
+        await asyncio.sleep(0)
+    if context.output_owner is not None:
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+    elif bridge.frames:
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_frame.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_frame.turn_id,
+                tool_epoch=ack_frame.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+    provider.ack_started.clear()
+    provider.ack_completed.clear()
+
+
 async def _ack_owned_filler_then_wait(
     registry: MediaVoiceCoreRegistry,
     identity: SessionIdentity,
@@ -4539,6 +4637,7 @@ async def _ack_owned_filler_then_wait(
 ) -> tuple[Any, GenerationFence]:
     session = bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
+    await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
     committed = await context.runtime.on_turn_committed("今天南京天气怎么样")
     await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
     ack_owner = context.output_owner
@@ -4569,6 +4668,93 @@ async def _ack_owned_filler_then_wait(
     assert context.runtime.fence.matches(ack_fence)
     assert not provider.deep_started.is_set()
     return context, ack_fence
+
+
+def _device_identity(session_id: str) -> SessionIdentity:
+    return SessionIdentity(
+        session_id,
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-wake-ack")
+    bridge.bridge.open(identity)
+    try:
+        await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert provider.texts == [device_wake_phrase(identity.session_id)]
+        assert provider.texts[0] in DEVICE_WAKE_PHRASES
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_h5_session_does_not_speak_device_wake_ack() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("h5-no-wake")
+    try:
+        await registry._get_or_create(identity)
+        await asyncio.sleep(0.05)
+        assert provider.texts == []
+        assert not provider.started.is_set()
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_empty_asr_asks_user_to_repeat() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-empty-hear")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        fence, reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=16_000,
+        )
+        assert fence is None
+        assert reason == "empty_media_turn"
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert provider.texts == [BRIDGE_PHRASES[2]]
+        assert context.runtime.output_floor_allows_assistant
+    finally:
+        await registry._finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio

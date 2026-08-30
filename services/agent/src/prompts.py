@@ -83,12 +83,27 @@ BRIDGE_PHRASES = (
     "现在连接不太稳定，我们再试一次。",
 )
 
+DEVICE_WAKE_PHRASES = (
+    "我在。",
+    "哎，我来了。",
+    "哎呀，好困呀。",
+)
+
+
+def device_wake_phrase(session_id: str) -> str:
+    """Pick a stable allowlisted wake reply for one device session."""
+
+    return DEVICE_WAKE_PHRASES[sum(session_id.encode()) % len(DEVICE_WAKE_PHRASES)]
+
+
 __all__ = [
     "AI_IDENTITY_RULE_TRANSPARENT",
     "BRIDGE_PHRASES",
     "COMPANION_STYLE",
+    "DEVICE_WAKE_PHRASES",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",
     "TUTOR_STYLE",
     "VOICE_SYSTEM_PROMPT",
+    "device_wake_phrase",
 ]

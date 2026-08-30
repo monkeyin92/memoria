@@ -3227,6 +3227,19 @@ class DuplexRuntime(DuplexSpeakerMixin):
             self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         return True
 
+    def open_assistant_floor_for_nudge(self) -> None:
+        """Let a device ack speak after a missed hear, without opening a user turn."""
+
+        self._fresh_user_speech = False
+        if self.interaction_phase in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+        }:
+            self.set_interaction_phase(
+                InteractionPhase.LISTENING,
+                cause="assistant_nudge",
+            )
+
     def hold_floor_for_owned_delegation(self) -> None:
         """Keep the half-duplex floor open for one same-turn successor result."""
 

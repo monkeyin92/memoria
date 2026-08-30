@@ -23,7 +23,8 @@ from services.agent.src.orchestration.delegation_coordinator import (
     DelegationRequest,
     SideEffectPolicy,
 )
-from services.agent.src.prompts import BRIDGE_PHRASES
+from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
+from services.agent.src.prompts import BRIDGE_PHRASES, device_wake_phrase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
@@ -73,6 +74,121 @@ class MediaSessionProjectionMixin:
             user_text: str,
             fence: GenerationFence,
         ) -> bool: ...
+
+    async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None:
+        if context.identity.client_type != "device":
+            return
+        if not callable(getattr(context.provider, "generate_output", None)):
+            return
+        try:
+            if context.closed or context.standby_requested:
+                return
+            if context.runtime.fence.turn_id != 0 or context.turn_start_sample is not None:
+                return
+            if context.output_owner is not None:
+                return
+            runtime = context.runtime
+            if runtime.orchestrator.state is ConversationState.CONNECTING:
+                await runtime.orchestrator.ready()
+                runtime.set_interaction_phase(
+                    InteractionPhase.LISTENING,
+                    cause="device_wake_ack",
+                )
+            if context.closed or context.runtime.fence.turn_id != 0:
+                return
+            await self._speak_allowlisted_bridge_phrase(
+                context,
+                device_wake_phrase(context.identity.session_id),
+                require_idle_input=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "device wake ack failed session=%s",
+                context.identity.session_id,
+            )
+
+    def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None:
+        if context.closed or context.standby_requested:
+            return
+        if context.identity.client_type != "device":
+            return
+        if context.runtime.assistant_speaking:
+            return
+        asyncio.create_task(
+            self._speak_missed_hearing_ack(context),
+            name=f"missed-hearing-{context.identity.session_id}",
+        )
+
+    async def _speak_missed_hearing_ack(self, context: _MediaVoiceSession) -> None:
+        try:
+            context.runtime.open_assistant_floor_for_nudge()
+            await self._speak_allowlisted_bridge_phrase(
+                context,
+                BRIDGE_PHRASES[2],
+                require_idle_input=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "missed hearing ack failed session=%s",
+                context.identity.session_id,
+            )
+
+    async def _speak_allowlisted_bridge_phrase(
+        self,
+        context: _MediaVoiceSession,
+        phrase: str,
+        *,
+        require_idle_input: bool,
+    ) -> bool:
+        if context.closed or context.standby_requested:
+            return False
+        if context.identity.client_type != "device":
+            return False
+        if not callable(getattr(context.provider, "generate_output", None)):
+            return False
+        if require_idle_input and (
+            context.turn_start_sample is not None or context.output_owner is not None
+        ):
+            return False
+        runtime = context.runtime
+        if runtime.interaction_phase in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+        } and require_idle_input:
+            return False
+        coordinator = runtime.orchestrator.delegation
+        fence = runtime.fence
+        now_ms = int(time.time() * 1_000)
+        acknowledgement = coordinator.bridge_acknowledgement(
+            phrase,
+            fence=fence,
+            context_version=coordinator.current_context_version(fence.session_id),
+            expires_at_ms=now_ms + 8_000,
+            now_ms=now_ms,
+        )
+        coordinator.admit_output_intent(
+            acknowledgement,
+            current_fence=runtime.fence,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            floor_allows_output=runtime.output_floor_allows_assistant,
+            now_ms=now_ms,
+        )
+        if not coordinator.output_intent_is_active(
+            acknowledgement,
+            current_fence=runtime.fence,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            floor_allows_output=runtime.output_floor_allows_assistant,
+            now_ms=now_ms,
+        ):
+            return False
+        return await self._enqueue_output_work(
+            context,
+            _OutputWork(acknowledgement, fence),
+        )
 
     async def _release_media_delegation_claim(
         self,
