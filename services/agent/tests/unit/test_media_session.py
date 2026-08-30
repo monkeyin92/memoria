@@ -363,6 +363,61 @@ async def test_verified_owner_close_phrase_projects_closed_and_returns_device_to
 
 
 @pytest.mark.asyncio
+async def test_device_close_phrase_works_without_formal_owner_authority() -> None:
+    identity = SessionIdentity(
+        "device-trusted-close",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="再见")
+    context.runtime.set_device_conversation_controls(True)
+
+    async def classify_policy_denied(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="uncertain",
+            score=None,
+            quality_score=0.0,
+            reason_code="authority_policy_denied",
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        )
+
+    context.runtime.set_speaker_classifier(classify_policy_denied, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+
+    assert fence is None
+    assert reason == "conversation_end_explicit"
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "conversation_end_explicit"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
 async def test_guest_close_phrase_is_rejected_before_device_standby() -> None:
     identity = SessionIdentity(
         "guest-cannot-close",

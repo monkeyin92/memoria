@@ -41,6 +41,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
     TaskHandle,
 )
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.orchestration.interruption_guard import is_primarily_non_chinese_script
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
@@ -92,6 +93,18 @@ MAX_VOICE_REPLY_SENTENCES_LONGFORM = 12
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 _LOCAL_SAFE_REFUSAL_INSTRUCTIONS = "禁止生成普通回答；仅返回固定安全拒答。"
 _LOCAL_SAFE_REFUSAL_TEXT = "当前模式暂时无法安全生成回答。"
+
+
+def _fuzzy_weekday_query(query: str) -> bool:
+    compact = query.strip().replace(" ", "").replace("　", "")
+    if any(
+        marker in compact
+        for marker in ("星期几", "周几", "礼拜几", "今天几号", "今天日期", "几月几号")
+    ):
+        return True
+    return "几" in compact and any(
+        marker in compact for marker in ("星期", "周几", "礼拜", "星", "周")
+    )
 
 
 try:
@@ -813,7 +826,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         )
         live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         if fixed_reply is None:
-            fixed_reply = fixed_realtime_reply(query=query, now=live_now)
+            lookup_query = "今天星期几" if _fuzzy_weekday_query(query) else query
+            fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now)
+        if fixed_reply is None and is_primarily_non_chinese_script(query):
+            fixed_reply = BRIDGE_PHRASES[2]
         references = dict(policy.references)
         relationship_version_raw = references.get("relationship_profile_version")
         relationship_version = (
@@ -854,7 +870,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             instructions=instructions,
             direct_text=(
                 fixed_reply
-                if companion or anonymous_public or fixed_reply == CRISIS_SUPPORT_REPLY or is_safe_realtime_reply(fixed_reply)
+                if companion
+                or anonymous_public
+                or fixed_reply == CRISIS_SUPPORT_REPLY
+                or fixed_reply in BRIDGE_PHRASES
+                or is_safe_realtime_reply(fixed_reply)
                 else _LOCAL_SAFE_REFUSAL_TEXT
             ),
             epistemic_status="not_applicable",

@@ -116,6 +116,9 @@ class MediaSessionProjectionMixin:
             return
         if context.runtime.assistant_speaking:
             return
+        # Wake TTS echo can produce endpoint=0 with no real user speech.
+        if (context.turn_endpoint_sample or 0) <= 0:
+            return
         asyncio.create_task(
             self._speak_missed_hearing_ack(context),
             name=f"missed-hearing-{context.identity.session_id}",

@@ -9,6 +9,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_completion_ack_only,
     is_conversation_close_only,
     is_explicit_interrupt,
+    is_primarily_non_chinese_script,
 )
 
 
@@ -38,6 +39,11 @@ def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
         "茉莉花茶怎么做",
     ):
         assert not is_conversation_close_only(sentence), sentence
+
+
+def test_primarily_non_chinese_script_detects_garbled_rescue() -> None:
+    assert is_primarily_non_chinese_script("안녕하세요")
+    assert not is_primarily_non_chinese_script("今天星期几")
 
 
 def test_interrupt_ack_phrase_by_semantics() -> None:
