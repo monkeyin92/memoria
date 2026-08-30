@@ -4522,12 +4522,17 @@ class _CapturingGenerationBridge(MediaBridgeGrpcServer):
     def __init__(self) -> None:
         super().__init__()
         self.frames: list[object] = []
+        self.generation_starts: list[GenerationFence] = []
 
     async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
         self.frames.append(_frame)
         return True
 
     async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+        action = _kwargs.get("action")
+        fence = _args[1] if len(_args) > 1 else _kwargs.get("fence")
+        if action == media_pb2.GENERATION_ACTION_START and isinstance(fence, GenerationFence):
+            self.generation_starts.append(fence)
         return True
 
 
@@ -4695,10 +4700,16 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
     identity = _device_identity("device-wake-ack")
     bridge.bridge.open(identity)
     try:
-        await registry._get_or_create(identity)
+        context = await registry._get_or_create(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert provider.texts[0] in DEVICE_WAKE_PHRASES
+        assert context.runtime.fence.turn_id >= 1
+        assert context.runtime.fence.generation_id >= 1
+        assert bridge.generation_starts
+        wake_fence = bridge.generation_starts[0]
+        assert wake_fence.turn_id >= 1
+        assert wake_fence.generation_id >= 1
     finally:
         await registry._finalize_session(identity.session_id)
 

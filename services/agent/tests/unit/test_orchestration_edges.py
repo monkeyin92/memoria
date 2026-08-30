@@ -476,6 +476,22 @@ async def test_auxiliary_output_follows_tool_waiting_filler_without_new_turn() -
 
 
 @pytest.mark.asyncio
+async def test_auxiliary_output_from_bootstrap_opens_first_wire_legal_turn() -> None:
+    orch = Orchestrator()
+    await orch.ready()
+    bootstrap = orch.fence
+    assert (bootstrap.turn_id, bootstrap.generation_id) == (0, 0)
+
+    next_fence = await orch.begin_auxiliary_output(bootstrap)
+    assert next_fence is not None
+    assert next_fence.turn_id >= 1
+    assert next_fence.generation_id >= 1
+    assert next_fence.turn_id == bootstrap.turn_id + 1
+    assert next_fence.generation_id == bootstrap.generation_id + 1
+    assert orch.state is ConversationState.THINKING
+
+
+@pytest.mark.asyncio
 async def test_late_owner_playback_keeps_the_originating_fence_scope() -> None:
     orch = Orchestrator()
     await orch.ready()

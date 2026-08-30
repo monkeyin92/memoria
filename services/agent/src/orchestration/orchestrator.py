@@ -455,7 +455,15 @@ class Orchestrator:
                 ConversationState.TOOL_WAITING,
             }:
                 return None
-            next_fence = expected_fence.bump_generation()
+            # Internal bootstrap is turn 0 / generation 0. Device media v2
+            # ParseGenerationFence uses GetPositiveUint32, so a pre-user
+            # audible source must open the first wire-legal turn instead of
+            # emitting generation.started on turn 0 (which closes the WSS).
+            next_fence = (
+                expected_fence.bump_turn()
+                if expected_fence.turn_id == 0
+                else expected_fence.bump_generation()
+            )
             if not self._inherit_context_version(expected_fence, next_fence):
                 return None
             self.state_machine.apply(
