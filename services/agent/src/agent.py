@@ -41,6 +41,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
     TaskHandle,
 )
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.orchestration.interruption_guard import is_primarily_non_chinese_script
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
@@ -826,9 +827,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         )
         live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         if fixed_reply is None:
-            lookup_query = (
-                "今天星期几" if _fuzzy_weekday_query(query) else query
-            )
+            lookup_query = "今天星期几" if _fuzzy_weekday_query(query) else query
             fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now)
         if fixed_reply is None and is_primarily_non_chinese_script(query):
             fixed_reply = BRIDGE_PHRASES[2]

@@ -817,6 +817,32 @@ def test_asr_supervisor_rejects_cross_sentence_ambiguous_overlap() -> None:
     assert not supervisor.accept_result(ambiguous, session_id="session")
 
 
+def test_asr_supervisor_supersedes_cross_sentence_when_later_final_extends() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    fragment = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="星期几",
+        is_final=True,
+    )
+    assert supervisor.accept_result(fragment, session_id="session")
+    extended = ASRResult(
+        task_epoch=1,
+        sentence_id="s2",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=640,
+        text="今天星期几",
+        is_final=True,
+    )
+    assert supervisor.accept_result(extended, session_id="session")
+
+
 def test_asr_supervisor_fences_old_task_with_a_different_sentence_id() -> None:
     supervisor = ASRStreamSupervisor()
     supervisor.start_task()
