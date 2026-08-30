@@ -509,6 +509,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "--no-deps --no-build" in deploy
     assert "trap rollback ERR" in deploy
     assert "runtime changes escape the Agent component" in deploy
+    assert "packages/*|services/common/*|infra/voices/*|infra/kws/*|infra/Dockerfile.agent" in deploy
+    assert "scripts/verify_env.py|scripts/livekit_smoke_test.py" in deploy
     assert "compose_sha256=$compose_sha" in deploy
     assert "Compose base snapshot was pruned" in deploy
     assert "historical component override was pruned" in deploy

@@ -123,9 +123,11 @@ if [[ -n "$dependency_changes" ]]; then
   exit 1
 fi
 
-# A source overlay cannot silently leave other runtime consumers on stale shared
-# code. Operational/documentation files are allowed, but runtime changes outside
-# services/agent require a full or coordinated multi-component release.
+# Overlay replaces only services/agent and run_media_bridge. Reject changes
+# that would leave the running Agent process on stale in-image code the overlay
+# does not replace (packages, services.common, agent-image scripts/voices).
+# Other services, sidecar scripts, and env examples already live in other
+# images; they must not block an Agent-only cutover after merging to main.
 scope_changes="$(
   git -C "$ROOT" diff --name-only "$base_commit" "$expected_commit" -- \
     services packages scripts infra
@@ -136,7 +138,12 @@ while IFS= read -r changed; do
   case "$changed" in
     services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh|scripts/run_media_bridge.py)
       ;;
-    *) scope_rejections+=("$changed") ;;
+    packages/*|services/common/*|infra/voices/*|infra/kws/*|infra/Dockerfile.agent)
+      scope_rejections+=("$changed")
+      ;;
+    scripts/verify_env.py|scripts/livekit_smoke_test.py|scripts/provider_smoke_test.py|scripts/run_media_slo_reporter.py|scripts/media_runtime_smoke.py)
+      scope_rejections+=("$changed")
+      ;;
   esac
 done <<<"$scope_changes"
 if ((${#scope_rejections[@]})); then
