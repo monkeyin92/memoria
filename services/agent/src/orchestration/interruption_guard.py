@@ -682,6 +682,7 @@ class PlaybackInputGuard:
                 "assistant_echo",
                 "non_target_language",
                 "low_information_fragment",
+                "barge_in_disabled",
             }
             if (
                 stale_reason

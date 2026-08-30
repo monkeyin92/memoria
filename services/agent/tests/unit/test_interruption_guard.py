@@ -251,3 +251,15 @@ def test_meaningful_follow_up_does_not_consume_feedback_circuit() -> None:
         is PlaybackInputDecision.ACCEPT
     )
     assert guard.accept_turn("这是另一个完整的新问题？", now_ns=2_100_000_000)[0] is True
+
+
+def test_barge_in_disabled_revalidated_after_playback_ends() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+    guard.start(during_playback=True, now_ns=1_000_000_000)
+    guard.candidate_reason = "barge_in_disabled"
+    guard.candidate_decision = PlaybackInputDecision.IGNORE
+
+    accepted, reason = guard.accept_turn("今天是星期几", now_ns=5_000_000_000)
+
+    assert accepted is True
+    assert reason is None
