@@ -2053,16 +2053,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if delivery_instruction:
                 delivery_instruction += "\n"
             delivery_instruction += depth_policy.instruction
+            anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
             safe_chat_ctx = self._context_assembler.assemble(
                 chat_ctx=chat_ctx,
                 heard_assistant=heard_assistant,
-                speaker_class=speaker_class,
+                speaker_class="guest" if anonymous_public else speaker_class,
                 response_plan=response_plan,
                 owner_salutation=owner_salutation,
                 resume_interrupted_reply=resume_interrupted_reply,
                 force_current_user_only=(
                     self._is_local_safe_plan(response_plan)
-                    and (speaker_class == "owner" or resume_interrupted_reply or policy.mode == "unknown_safe")
+                    and not anonymous_public
+                    and (speaker_class == "owner" or resume_interrupted_reply)
                 ),
                 session_turns=frozen_session_turns,
                 delivery_instruction=delivery_instruction,

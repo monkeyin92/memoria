@@ -2452,6 +2452,26 @@ async def test_stale_generation_cannot_commit_speaking_state_or_expression() -> 
 
 
 @pytest.mark.asyncio
+async def test_unheard_output_restores_half_duplex_listen() -> None:
+    runtime = DuplexRuntime.create(
+        session_id="unheard-output-listen",
+        barge_in_enabled=False,
+    )
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("今天天气怎么样")
+    assert await runtime.on_assistant_speaking("南京今天晴。", expected_fence=fence)
+    assert runtime._was_speaking is True
+    assert runtime.on_user_voice_started() is PlaybackInputDecision.IGNORE
+
+    await runtime.restore_listen_after_unheard_output(fence, cause="stale_generation")
+
+    assert runtime._was_speaking is False
+    assert runtime.orchestrator.state is ConversationState.LISTENING
+    assert runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_runtime_publishes_and_correlates_first_audio_trace() -> None:
     runtime = DuplexRuntime.create(session_id="trace-session")
     published: list[dict[str, object]] = []

@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.device_vad import DEVICE_POST_PLAYBACK_HOLDOFF_S
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicyClient, ModePolicyClientConfig
 from services.agent.src.observability.metrics import GLOBAL_METRICS
@@ -220,12 +221,16 @@ class ProductionMediaSessionFactory:
         identity: SessionIdentity | None = None,
     ) -> DuplexRuntime:
         settings = self.settings
+        device_session = identity is not None and identity.client_type == "device"
         runtime = DuplexRuntime.create(
             session_id=session_id,
             device_id=device_id,
             tts=tts,
             input_guard_enabled=True,
-            barge_in_enabled=True,
+            barge_in_enabled=not device_session,
+            capture_release_holdoff_s=(
+                DEVICE_POST_PLAYBACK_HOLDOFF_S if device_session else 0.0
+            ),
             listener_cues_enabled=bool(settings.listener_cues_enabled),
             use_paralinguistic_tags=False,
             speaker_verifier=SpeakerVerifier(

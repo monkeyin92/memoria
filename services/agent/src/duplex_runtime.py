@@ -867,6 +867,12 @@ class DuplexRuntime(DuplexSpeakerMixin):
         pcm: bytes,
     ) -> bytes | None:
         if self._pending_epoch_drain is not None:
+            logger.warning(
+                "tts gated by pending epoch drain session=%s current_epoch=%s drain_epoch=%s",
+                self.session_id,
+                self.fence.session_epoch,
+                self._pending_epoch_drain.session_epoch,
+            )
             return None
         return self.orchestrator.gate_tts_audio(cancellation, pcm)
 
@@ -1000,6 +1006,19 @@ class DuplexRuntime(DuplexSpeakerMixin):
             logger.exception("epoch rotation drain failed")
             raise
         self._pending_epoch_drain = None
+
+    async def settle_bootstrap_identity_epoch(self) -> None:
+        """Drain a session-start profile rotation before pre-turn TTS.
+
+        Binding a signed RuntimeProfile can advance ``session_epoch`` and
+        leave ``_pending_epoch_drain`` set until the first user turn.
+        Device wake acknowledgement is audible before any turn, so the
+        barrier must close when the media session is published.
+        """
+
+        if self._pending_epoch_drain is None or self.fence.turn_id != 0:
+            return
+        await self._drain_epoch_rotation()
 
     def degrade_runtime_profile(self) -> GenerationFence:
         """Authority-loss transition to a true unknown-safe degraded epoch."""
@@ -3150,6 +3169,32 @@ class DuplexRuntime(DuplexSpeakerMixin):
         self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
         return True
 
+    async def restore_listen_after_unheard_output(
+        self,
+        fence: GenerationFence,
+        *,
+        cause: str,
+    ) -> None:
+        """Clear the half-duplex speaking latch after TTS that never reached the device.
+
+        Device sessions ignore barge-in while THINKING/SPEAKING. If wake or
+        another source calls on_assistant_speaking and then aborts before the
+        first Edge-accepted PCM, later user turns would otherwise be swallowed.
+        """
+
+        if await self.on_assistant_reply_aborted(fence, cause=cause):
+            return
+        self._pending_assistant_text = ""
+        self._was_speaking = False
+        self._assistant_expression_fence = None
+        self._playback_fence = None
+        restored = await self.orchestrator.return_to_listening_after_unheard_output(
+            fence,
+            cause=cause,
+        )
+        if restored or self.orchestrator.state is ConversationState.LISTENING:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
+
     def _publish_assistant_expression(self, full_text: str) -> None:
         fence = self.fence
         if self._assistant_expression_fence == fence:
@@ -3216,8 +3261,50 @@ class DuplexRuntime(DuplexSpeakerMixin):
         self._played_assistant_text = normalized
         self._pending_assistant_text = ""
         self._was_speaking = False
-        self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
+        if tools_active:
+            # Filler / acknowledgement playback is not the turn terminal while
+            # an OWNED same-turn delegation is still waiting to speak.
+            self.set_interaction_phase(
+                InteractionPhase.TOOL_WAITING,
+                cause="media_playback_ack",
+            )
+        else:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         return True
+
+    def open_assistant_floor_for_nudge(self) -> None:
+        """Let a device ack speak after a missed hear, without opening a user turn."""
+
+        self._fresh_user_speech = False
+        if self.interaction_phase in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+        }:
+            self.set_interaction_phase(
+                InteractionPhase.LISTENING,
+                cause="assistant_nudge",
+            )
+
+    def hold_floor_for_owned_delegation(self) -> None:
+        """Keep the half-duplex floor open for one same-turn successor result."""
+
+        self._fresh_user_speech = False
+        if self.interaction_phase in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+            InteractionPhase.LISTENING,
+        }:
+            self.set_interaction_phase(
+                InteractionPhase.TOOL_WAITING,
+                cause="owned_delegation_hold",
+            )
+
+    async def finish_owned_delegation_wait(self, *, cause: str) -> None:
+        """Release a tool-wait that will not produce a successor generation."""
+
+        await self.orchestrator.abandon_tool_wait(cause=cause)
+        if self.interaction_phase is InteractionPhase.TOOL_WAITING:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
 
     async def on_media_playback_interrupted(
         self,

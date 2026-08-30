@@ -20,6 +20,7 @@ from services.agent.src.voice_core.media_session_types import (
     MediaTextSpan,
     OutputDispatchResult,
     OutputDispatchStatus,
+    same_turn_followup_output_pending,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -124,6 +125,21 @@ class MediaOutputStreamMixin:
             context: _MediaVoiceSession,
             previous_phase: TurnPhase,
         ) -> None: ...
+
+    async def _abort_unheard_stream(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        *,
+        reason: str,
+        emitted_audio: bool,
+    ) -> None:
+        await self._cancel_reply_task(context, fence, reason=reason)
+        if emitted_audio or reason == "playback_rejected":
+            return
+        if reason != "stale_generation" and context.runtime.barge_in_enabled:
+            return
+        await context.runtime.restore_listen_after_unheard_output(fence, cause=reason)
 
     async def on_playback_progress(
         self,
@@ -286,7 +302,12 @@ class MediaOutputStreamMixin:
             async for chunk in chunks:
                 if not self._output_owner_is_current(context, lease):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="superseded")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="superseded",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -307,7 +328,12 @@ class MediaOutputStreamMixin:
                     await asyncio.sleep(delay_s)
                     if not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
-                        await self._cancel_reply_task(context, fence, reason="superseded")
+                        await self._abort_unheard_stream(
+                            context,
+                            fence,
+                            reason="superseded",
+                            emitted_audio=emitted_audio,
+                        )
                         return OutputDispatchResult(
                             fence,
                             OutputDispatchStatus.ABORTED,
@@ -335,7 +361,12 @@ class MediaOutputStreamMixin:
                     )
                     if not speaking_started or not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
-                        await self._cancel_reply_task(context, fence, reason="superseded")
+                        await self._abort_unheard_stream(
+                            context,
+                            fence,
+                            reason="superseded",
+                            emitted_audio=emitted_audio,
+                        )
                         return OutputDispatchResult(
                             fence,
                             OutputDispatchStatus.ABORTED,
@@ -359,7 +390,12 @@ class MediaOutputStreamMixin:
                 gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
                 if gated is None:
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="stale_generation")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="stale_generation",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -388,7 +424,12 @@ class MediaOutputStreamMixin:
                     timeout_s=self.reconnect_grace_s,
                 ):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="transport_rejected")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="transport_rejected",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -629,7 +670,15 @@ class MediaOutputStreamMixin:
         await context.runtime.on_media_playback_done(
             fence,
             context.playback.actual_heard_text(fence),
+            tools_active=same_turn_followup_output_pending(
+                context.delegation_output_claims,
+                context.output_work,
+                fence,
+            ),
         )
+        context.playback.discard(fence)
+        context.output_sequence = 0
+        context.output_text_offset = 0
         # A playback terminal permanently closes this generation on the
         # hardware and Edge ledgers.  Finish the runtime lifecycle before
         # selecting a queued acknowledgement/deep/tool result so the existing

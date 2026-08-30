@@ -152,6 +152,22 @@ def test_session_epoch_is_frozen_into_the_fence(monkeypatch: pytest.MonkeyPatch)
     assert gate.for_fence(runtime.fence, current_fence=runtime.fence) is not None
 
 
+@pytest.mark.asyncio
+async def test_bootstrap_identity_epoch_settles_before_first_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(monkeypatch)
+    runtime.set_mode_policy(_policy(_profile(epoch=1)))
+    assert runtime._pending_epoch_drain is not None
+    assert runtime.gate_tts_audio(runtime.fence, b"pcm") is None
+
+    await runtime.settle_bootstrap_identity_epoch()
+
+    assert runtime._pending_epoch_drain is None
+    assert runtime.gate_tts_audio(runtime.fence, b"pcm") == b"pcm"
+    await runtime.close()
+
+
 def test_bare_runtime_profile_injection_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

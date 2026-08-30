@@ -450,9 +450,20 @@ class Orchestrator:
         assert self.state_machine is not None
         assert self.fence_gate is not None
         async with self._state_lock:
-            if not self.fence.matches(expected_fence) or self.state is not ConversationState.LISTENING:
+            if not self.fence.matches(expected_fence) or self.state not in {
+                ConversationState.LISTENING,
+                ConversationState.TOOL_WAITING,
+            }:
                 return None
-            next_fence = expected_fence.bump_generation()
+            # Internal bootstrap is turn 0 / generation 0. Device media v2
+            # ParseGenerationFence uses GetPositiveUint32, so a pre-user
+            # audible source must open the first wire-legal turn instead of
+            # emitting generation.started on turn 0 (which closes the WSS).
+            next_fence = (
+                expected_fence.bump_turn()
+                if expected_fence.turn_id == 0
+                else expected_fence.bump_generation()
+            )
             if not self._inherit_context_version(expected_fence, next_fence):
                 return None
             self.state_machine.apply(
@@ -465,6 +476,18 @@ class Orchestrator:
                 self.segmenter.reset(next_fence)
             self._tts_cancel = asyncio.Event()
             return next_fence
+
+    async def abandon_tool_wait(self, *, cause: str) -> bool:
+        """Return to listening after an OWNED wait that will not speak."""
+
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if self.state is not ConversationState.TOOL_WAITING:
+                return False
+            if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                return False
+            self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
+            return True
 
     @staticmethod
     def _generation_fence(
@@ -584,6 +607,37 @@ class Orchestrator:
             if not self.fence.matches(expected_fence):
                 return False
             if precondition is not None and not precondition():
+                return False
+            if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                return False
+            self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
+            return True
+
+    async def return_to_listening_after_unheard_output(
+        self,
+        expected_fence: GenerationFence,
+        *,
+        cause: str,
+    ) -> bool:
+        """Drop SPEAKING/THINKING after a generation that never reached the device."""
+
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if self.state is ConversationState.LISTENING:
+                return True
+            if self.state not in {
+                ConversationState.THINKING,
+                ConversationState.SPEAKING,
+                ConversationState.INTERRUPTION_PENDING,
+            }:
+                return False
+            same_generation = (
+                self.fence.session_id == expected_fence.session_id
+                and self.fence.turn_id == expected_fence.turn_id
+                and self.fence.generation_id == expected_fence.generation_id
+                and self.fence.session_epoch == expected_fence.session_epoch
+            )
+            if not self.fence.matches(expected_fence) and not same_generation:
                 return False
             if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
                 return False

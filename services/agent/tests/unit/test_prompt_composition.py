@@ -210,6 +210,7 @@ def test_unknown_safe_has_no_memory_by_default() -> None:
     prompt = _full_prompt(service_mode="unknown_safe", memory_block=None)
     assert "【可用上下文】" not in prompt.system
     assert "不写入长期记忆" in prompt.system
+    assert "本会话里用户已经公开说过的地点" in prompt.system
 
 
 def test_safety_baseline_is_transparent_and_keeps_crisis_rule() -> None:

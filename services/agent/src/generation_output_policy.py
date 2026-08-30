@@ -18,9 +18,11 @@ from services.common.realtime_information import is_safe_realtime_reply
 VoiceKind = Literal["designed", "personal"]
 PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS = (
-    "仅依据当前用户这一轮内容回答普通聊天、通用知识或临时练习。"
-    "不得读取、引用或推断历史对话、账户主人的私人记忆、人格、关系或工具结果；"
-    "不得写入长期记忆；不确定时明确说明。"
+    "仅依据当前用户这一轮及本次会话内已经对用户公开说过的内容回答普通聊天、"
+    "通用知识或临时练习。本会话刚提到的地点或话题可以沿用，但要先向用户确认，"
+    "不得把它写成已验证的主人住址或持久档案。"
+    "不得读取账户主人的持久私人记忆、人格、关系或未在本会话公开说过的工具结果；"
+    "不得写入长期记忆。"
 )
 _PUBLIC_DESIGNED_SPEAKER_SHA256S = frozenset(
     digest

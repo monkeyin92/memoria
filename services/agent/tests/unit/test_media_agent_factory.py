@@ -386,6 +386,7 @@ async def test_device_factory_enables_explicit_subject_fence() -> None:
         identity=identity,
     )
     gate = runtime.orchestrator.runtime_profiles
+    assert runtime.barge_in_enabled is False
     assert gate.expected_active_subject_id == ""
     assert gate.expected_subject_fence_enabled is True
     assert gate.expected_binding_id == "binding-1"

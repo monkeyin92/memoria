@@ -86,6 +86,8 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, *, accepted: bool
         ) -> None: ...
 
+        def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None: ...
+
         def _observe_committed_conversation_turn(
             self,
             context: _MediaVoiceSession,
@@ -251,6 +253,23 @@ class MediaSessionCommitMixin:
             latest_task_epoch=context.asr.latest_authoritative_task_epoch,
         )
 
+    async def _reproject_timeline_range(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> None:
+        """Patch the live provisional from pending timeline facts in range."""
+
+        for segment in context.runtime.speech_timeline.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        ):
+            await self._apply_projection_segment(context, segment)
+
     async def _commit_user_turn_locked(
         self,
         context: _MediaVoiceSession,
@@ -267,13 +286,46 @@ class MediaSessionCommitMixin:
         # Compatibility callers may have populated the authoritative Timeline
         # directly before invoking this seam. Re-project those already-
         # accepted facts rather than letting a valid turn bypass Projection.
-        if context.projection.provisional is None:
-            for segment in context.runtime.speech_timeline.segments_in_range(
+        await self._reproject_timeline_range(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        text = context.runtime.project_media_user_turn(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if not text:
+            context.runtime.on_user_voice_stopped()
+            await self._commit_media_input_range(
+                context,
+                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
-            ):
-                await self._apply_projection_segment(context, segment)
+                retire_end=end_sample,
+            )
+            await self._discard_projection(context, "empty_media_turn")
+            self._nudge_missed_hearing(context)
+            return None, "empty_media_turn"
+        retire_end = end_sample if retire_sample is None else retire_sample
+        if retire_end < end_sample:
+            raise ValueError("media retire sample cannot precede the logical endpoint")
+        was_assistant_speaking = context.runtime.assistant_speaking
+        context.runtime.on_user_voice_stopped()
+        await context.runtime.await_speaker_classification()
+        # Speaker classify yields. A late ASR final can land on the timeline
+        # (or a VAD-first empty provisional can still be stale vs timeline
+        # text). Refresh both sides from the same range before validate, or
+        # commit dies as projection_text_mismatch with a usable transcript.
+        await self._reproject_timeline_range(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
         text = context.runtime.project_media_user_turn(
             stream_epoch=stream_epoch,
             start_sample=start_sample,
@@ -289,13 +341,17 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
+            self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
-        retire_end = end_sample if retire_sample is None else retire_sample
-        if retire_end < end_sample:
-            raise ValueError("media retire sample cannot precede the logical endpoint")
-        was_assistant_speaking = context.runtime.assistant_speaking
-        context.runtime.on_user_voice_stopped()
-        await context.runtime.await_speaker_classification()
+        aligned = context.projection.align_provisional_text(text)
+        if aligned is not None:
+            logger.info(
+                "media provisional text aligned session=%s stream_epoch=%s timeline_text_len=%s",
+                session_id,
+                stream_epoch,
+                len(text),
+            )
+            await self._emit_projection_patch(context, aligned)
         speaker_evidence = self._projection_speaker_evidence(context)
         history_eligible = context.runtime.current_history_eligible
         commit_evidence = CommitEvidence(
@@ -312,6 +368,8 @@ class MediaSessionCommitMixin:
         projection_rejection = context.projection.validate_commit(commit_evidence)
         if projection_rejection is not None:
             await self._discard_projection(context, projection_rejection.value)
+            if projection_rejection is ProjectionRejectReason.TEXT_MISMATCH:
+                self._nudge_missed_hearing(context)
             return None, projection_rejection.value
         speaker_patch = context.projection.apply_speaker_evidence(speaker_evidence)
         if speaker_patch is not None:

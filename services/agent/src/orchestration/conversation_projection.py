@@ -664,6 +664,27 @@ class ConversationProjection:
             return ProjectionRejectReason.NOT_PERSISTABLE
         return None
 
+    def align_provisional_text(self, text: str) -> ProjectionPatch | None:
+        """Keep the live provisional on the same sample-clock text as commit.
+
+        Media commit re-reads the timeline after speaker classify. A late ASR
+        final can change ``projected_text`` while the provisional still holds
+        the previous revision, which used to fail closed as TEXT_MISMATCH and
+        swallow a usable weather/weekday turn.
+        """
+
+        current = self._provisional
+        stripped = text.strip()
+        if current is None or not stripped or stripped == current.text.strip():
+            return None
+        updated = replace(
+            current,
+            revision=self._next_revision(),
+            text=stripped,
+        )
+        self._provisional = updated
+        return ProjectionPatch(ProjectionEventKind.PROVISIONAL_PATCH, updated)
+
     def apply_speaker_evidence(
         self,
         evidence: SpeakerEvidence,

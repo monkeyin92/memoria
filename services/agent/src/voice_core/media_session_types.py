@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
@@ -267,6 +267,39 @@ class DelegationOutputClaim:
             return False
         self._local_reply_reserved = True
         return True
+
+
+def owned_delegation_holds_turn(
+    claims: Mapping[GenerationFence, DelegationOutputClaim],
+    fence: GenerationFence,
+) -> bool:
+    """True while an OWNED same-turn claim is still waiting to speak."""
+
+    return any(
+        claim.state is DelegationOutputState.OWNED
+        and claim_fence.session_id == fence.session_id
+        and claim_fence.turn_id == fence.turn_id
+        for claim_fence, claim in claims.items()
+    )
+
+
+def same_turn_followup_output_pending(
+    claims: Mapping[GenerationFence, DelegationOutputClaim],
+    output_work: Mapping[str, OutputWork],
+    fence: GenerationFence,
+) -> bool:
+    """True while filler playback must not return the device to listening.
+
+    The OWNED claim is marked COMPLETED as soon as the tool result is
+    enqueued, so successor work on the same turn also holds the floor.
+    """
+
+    if owned_delegation_holds_turn(claims, fence):
+        return True
+    return any(
+        work.fence.session_id == fence.session_id and work.fence.turn_id == fence.turn_id
+        for work in output_work.values()
+    )
 
 
 @dataclass(frozen=True, slots=True)
