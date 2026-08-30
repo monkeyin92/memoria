@@ -114,6 +114,45 @@ async def test_rescue_skipped_when_provider_final_seen(
 
 
 @pytest.mark.asyncio
+async def test_rescue_runs_when_provider_final_does_not_cover_segment(
+    silent_funasr: MockFunASRServer,
+    rescue_server: MockSenseVoiceServer,
+) -> None:
+    """An early nonempty FunASR final must not suppress SenseVoice for the rest of the VAD."""
+
+    metrics = MetricsRegistry()
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url=silent_funasr.ws_url,
+            rescue_config=SenseVoiceRescueConfig(endpoint=rescue_server.url),
+        ),
+        metrics=metrics,
+    )
+    await session.connect()
+    await session.send_pcm(_speech_pcm())
+    # Reproduce the 11:33 weather miss: FunASR closed the sentence after
+    # ~80 ms of text while the VAD segment still had ~250 ms of speech.
+    session._segment_nonempty_final_seen = True
+    session._last_emitted_final_sample = 1_280
+    await session.rotate_task(require_consumed=False)
+
+    events = []
+    while not session.events.empty():
+        events.append(session.events.get_nowait())
+    await session.aclose()
+
+    finals = [
+        event.sentence.text
+        for event in events
+        if event.event == "result-generated" and event.sentence is not None
+    ]
+    assert finals == ["兜底识别成功。"]
+    assert rescue_server.requests == 1
+    assert metrics.get("funasr_rescue_total", {"outcome": "rescued"}) == 1.0
+
+
+@pytest.mark.asyncio
 async def test_rescue_skipped_without_speech_energy(
     silent_funasr: MockFunASRServer,
     rescue_server: MockSenseVoiceServer,

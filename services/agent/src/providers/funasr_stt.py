@@ -57,6 +57,10 @@ from services.agent.src.voice_core.speech_timeline import ASRResult
 logger = logging.getLogger(__name__)
 
 _WS_TRACE_MAX_PER_WINDOW = 20
+# A FunASR sentence_end that stops more than 100 ms before the VAD segment
+# end is not a covering transcript.  Skipping SenseVoice in that case left
+# loud weather utterances on the 没听清 path (2026-08-30 11:33 take).
+_RESCUE_COVERAGE_TOLERANCE_S = 0.1
 
 
 def _is_empty_audio_error(error_code: object) -> bool:
@@ -841,8 +845,9 @@ class FunASRSession:
                                 min(ack, ack_ceiling),
                             )
                             if ev.sentence.text.strip():
-                                # Any usable final in this VAD segment makes the
-                                # offline rescue unnecessary for the whole turn.
+                                # Remember a usable provider final.  Rescue
+                                # still runs at VAD end unless this final
+                                # covers the captured segment.
                                 self._segment_nonempty_final_seen = True
                     elif ev.event == "task-finished" and ev.task_id == self.task_id:
                         self._finished_task_id = ev.task_id
@@ -1371,7 +1376,6 @@ class FunASRSession:
             self._rescue is None
             or rescue_config is None
             or self._closed
-            or self._segment_nonempty_final_seen
             or not self._segment_pcm
         ):
             return
@@ -1386,10 +1390,37 @@ class FunASRSession:
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("skipped")
             return
+        coverage_tolerance = max(1, int(_RESCUE_COVERAGE_TOLERANCE_S * self.config.sample_rate))
+        segment_end = self._segment_pcm_end_sample
+        if (
+            self._segment_nonempty_final_seen
+            and segment_end is not None
+            and self._last_emitted_final_sample + coverage_tolerance >= segment_end
+        ):
+            logger.info(
+                "funasr segment rescue skipped: provider final covers segment "
+                "task_id=%s final_end=%s segment_end=%s rms=%s",
+                self.task_id or "unknown",
+                self._last_emitted_final_sample,
+                segment_end,
+                rms,
+            )
+            if self.metrics is not None:
+                self.metrics.inc_funasr_rescue("skipped")
+            return
         task_id = self.task_id or ""
         boundary = self._task_boundary_observed()
         empty_audio_boundary = self._has_replaceable_empty_audio_failure()
         if not task_id or not (boundary or empty_audio_boundary):
+            logger.info(
+                "funasr segment rescue skipped: no task boundary task_id=%s "
+                "boundary=%s empty_audio=%s rms=%s pcm_ms=%s",
+                task_id or "unknown",
+                boundary,
+                empty_audio_boundary,
+                rms,
+                round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
+            )
             return
         # Snapshot every timing input before the network call: a concurrent
         # recovery may rotate the provider task while the rescue is in flight.
@@ -1408,9 +1439,15 @@ class FunASRSession:
             )
         finally:
             self._rescue_deadline = None
-        if self._closed or self._segment_nonempty_final_seen:
-            # A late provider final crossed the queue while the rescue was in
-            # flight; the provider result stays authoritative.
+        covering_now = (
+            self._segment_nonempty_final_seen
+            and segment_end is not None
+            and self._last_emitted_final_sample + coverage_tolerance >= segment_end
+        )
+        if self._closed or covering_now:
+            # A late provider final that covers the VAD segment crossed the
+            # queue while the rescue was in flight; that result stays
+            # authoritative.  A short early final must not discard rescue.
             return
         text = (text or "").strip()
         if len(text) < rescue_config.min_text_chars:
