@@ -178,6 +178,44 @@ async def test_rescue_skipped_without_speech_energy(
 
 
 @pytest.mark.asyncio
+async def test_rescue_runs_when_peak_abs_is_high_but_rms_is_low(
+    silent_funasr: MockFunASRServer,
+    rescue_server: MockSenseVoiceServer,
+) -> None:
+    """Post-DTLN speech can have low RMS while still carrying usable peaks."""
+
+    metrics = MetricsRegistry()
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url=silent_funasr.ws_url,
+            rescue_config=SenseVoiceRescueConfig(
+                endpoint=rescue_server.url,
+                min_rms=100,
+                min_peak_abs=350,
+            ),
+        ),
+        metrics=metrics,
+    )
+    await session.connect()
+    # Low RMS envelope with a few strong peaks, similar to post-denoise uplink.
+    pcm = b"".join(
+        b"\x00\x00" * 199 + b"\x90\x01"
+        for _ in range(200)
+    )
+    await session.send_pcm(pcm)
+    await session.rotate_task(require_consumed=False)
+
+    events = []
+    while not session.events.empty():
+        events.append(session.events.get_nowait())
+    await session.aclose()
+
+    assert rescue_server.requests == 1
+    assert metrics.get("funasr_rescue_total", {"outcome": "rescued"}) == 1.0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", ["error", "empty"])
 async def test_rescue_failure_or_empty_text_never_raises(
     silent_funasr: MockFunASRServer,
@@ -446,12 +484,14 @@ def test_funasr_config_from_env_parses_rescue() -> None:
             "SENSEVOICE_URL": "http://sensevoice:8000/asr",
             "SENSEVOICE_TIMEOUT_S": "1.5",
             "SENSEVOICE_MIN_RMS": "150",
+            "SENSEVOICE_MIN_PEAK_ABS": "400",
         }
     )
     assert cfg.rescue_config is not None
     assert cfg.rescue_config.endpoint == "http://sensevoice:8000/asr"
     assert cfg.rescue_config.timeout_s == 1.5
     assert cfg.rescue_config.min_rms == 150
+    assert cfg.rescue_config.min_peak_abs == 400
 
     disabled = FunASRConfig.from_env({"DASHSCOPE_API_KEY": "k"})
     assert disabled.rescue_config is None

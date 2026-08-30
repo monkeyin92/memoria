@@ -296,6 +296,17 @@ class SpeechTimeline:
         ]
         return matched
 
+    def evict_segment_ids(self, segment_ids: set[str]) -> None:
+        """Drop pending segments whose provider identity was superseded."""
+
+        if not segment_ids:
+            return
+        self._segments = [
+            item for item in self._segments if item.segment_id not in segment_ids
+        ]
+        for key in [key for key in self._last_segment_revision if key[1] in segment_ids]:
+            self._last_segment_revision.pop(key, None)
+
     def segments_in_range(
         self,
         *,

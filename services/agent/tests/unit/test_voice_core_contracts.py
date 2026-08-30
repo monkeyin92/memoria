@@ -861,6 +861,54 @@ def test_policy_rejected_new_task_does_not_take_authority() -> None:
     assert supervisor.accept_result(current, session_id="session")
 
 
+def test_asr_supervisor_supersedes_cross_sentence_extension() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=1_000)
+    first = ASRResult(1, "s1", 1, 0, 320, "今天", True)
+    assert supervisor.accept_result(first, session_id="session")
+
+    extended = ASRResult(2, "s2", 1, 0, 640, "今天是星期几", True)
+    decision = supervisor.accept_result(extended, session_id="session")
+    assert decision.accepted is extended
+    assert decision.evicted_sentence_ids == ("s1",)
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=640,
+        )
+        == "今天是星期几"
+    )
+
+
+def test_asr_supervisor_supersedes_cross_sentence_tail_extension() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=1_000_000)
+    first = ASRResult(1, "s1", 1, 289_600, 400_000, "今天南京", True)
+    assert supervisor.accept_result(first, session_id="session")
+
+    tail = ASRResult(
+        2,
+        "s2",
+        1,
+        342_400,
+        433_600,
+        "今天南京的天气怎么样",
+        True,
+    )
+    decision = supervisor.accept_result(tail, session_id="session")
+    assert decision.accepted is tail
+    assert decision.evicted_sentence_ids == ("s1",)
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=289_600,
+            end_sample=433_600,
+        )
+        == "今天南京的天气怎么样"
+    )
+
+
 def test_same_task_higher_revision_can_move_sentence_start_forward() -> None:
     supervisor = ASRStreamSupervisor()
     supervisor.record_audio(start_sample=0, frame_samples=320)

@@ -42,10 +42,13 @@ class ASRAcceptDecision:
     normalized tail. Consumers must never forward the provider result after a
     decision has been made. ``__bool__`` keeps the narrow legacy test seam
     source-compatible while callers migrate to ``accepted``/``reason``.
+    ``evicted_sentence_ids`` lists provider sentence ids removed from the
+    pending timeline because a later cross-sentence extension superseded them.
     """
 
     accepted: ASRResult | None
     reason: ASRDecisionReason
+    evicted_sentence_ids: tuple[str, ...] = ()
 
     @property
     def result(self) -> ASRResult | None:
@@ -181,6 +184,50 @@ class ASRStreamSupervisor:
         )
         return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
 
+    @staticmethod
+    def _should_supersede_cross_sentence(
+        cross_sentence: list[ASRFinalInterval],
+        result: ASRResult,
+    ) -> bool:
+        """Allow one longer later final to replace earlier cross-sentence chunks.
+
+        Device VAD can keep one user turn open while FunASR rotates tasks and
+        emits shorter overlapping finals.  Reject ambiguous interior overlaps,
+        but accept a later result that clearly extends the utterance.
+        """
+
+        if not cross_sentence:
+            return False
+        max_end = max(interval.capture_end_sample for interval in cross_sentence)
+        if result.capture_end_sample <= max_end:
+            return False
+        result_span = result.capture_end_sample - result.capture_start_sample
+        max_cross_span = max(
+            interval.capture_end_sample - interval.capture_start_sample
+            for interval in cross_sentence
+        )
+        if result_span > max_cross_span:
+            return True
+        max_text_len = max(len(interval.text) for interval in cross_sentence)
+        return len(result.text) > max_text_len
+
+    def _evict_final_intervals(
+        self,
+        intervals: tuple[ASRFinalInterval, ...],
+    ) -> tuple[str, ...]:
+        evicted: list[str] = []
+        for interval in intervals:
+            if self._final_intervals.pop(interval, None) is None:
+                continue
+            try:
+                self._final_interval_order.remove(interval)
+            except ValueError:
+                pass
+            evicted.append(interval.sentence_id)
+        if evicted:
+            self.timeline.evict_segment_ids(set(evicted))
+        return tuple(evicted)
+
     def preview_result(self, result: ASRResult) -> ASRAcceptDecision:
         """Apply stream/task/watermark gates without mutating supervisor state."""
 
@@ -213,6 +260,7 @@ class ASRStreamSupervisor:
             return ASRAcceptDecision(None, ASRDecisionReason.REVISION_CONFLICT)
         final_interval = ASRFinalInterval.from_result(result)
         superseded_intervals: tuple[ASRFinalInterval, ...] = ()
+        evicted_sentence_ids: tuple[str, ...] = ()
         if result.is_final:
             # Interval-based dedup, not a global end watermark: out-of-order
             # non-overlapping finals (320..640 before 0..320) must survive,
@@ -261,8 +309,30 @@ class ASRStreamSupervisor:
                     if interval.sentence_id != result.sentence_id
                 ]
                 if cross_sentence:
-                    return ASRAcceptDecision(None, ASRDecisionReason.CROSS_SENTENCE_OVERLAP)
-                if not same_task_correction:
+                    if self._should_supersede_cross_sentence(cross_sentence, result):
+                        evicted_sentence_ids = self._evict_final_intervals(tuple(cross_sentence))
+                        overlapping = [
+                            interval
+                            for interval in self._final_intervals
+                            if interval.stream_epoch == result.stream_epoch
+                            and interval.overlaps(final_interval)
+                            and not (
+                                self.last_committed_sample > 0
+                                and result.capture_start_sample >= self.last_committed_sample
+                                and interval.capture_start_sample < self.last_committed_sample
+                            )
+                        ]
+                        cross_sentence = [
+                            interval
+                            for interval in overlapping
+                            if interval.sentence_id != result.sentence_id
+                        ]
+                    if cross_sentence:
+                        return ASRAcceptDecision(
+                            None,
+                            ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
+                        )
+                if not same_task_correction and overlapping:
                     same_range_keys = [
                         interval
                         for interval in overlapping
@@ -339,7 +409,11 @@ class ASRStreamSupervisor:
                 )
         if not accepted:
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
-        return ASRAcceptDecision(result, ASRDecisionReason.ACCEPTED)
+        return ASRAcceptDecision(
+            result,
+            ASRDecisionReason.ACCEPTED,
+            evicted_sentence_ids=evicted_sentence_ids,
+        )
 
     def replay_start_sample(self) -> int:
         replay_samples = self.sample_rate * self.reconnect_audio_ms // 1000

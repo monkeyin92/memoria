@@ -31,6 +31,7 @@ class SenseVoiceRescueConfig:
     endpoint: str
     timeout_s: float = 2.5
     min_rms: int = 100
+    min_peak_abs: int = 350
     max_audio_s: float = 30.0
     min_text_chars: int = 2
 
@@ -42,6 +43,8 @@ class SenseVoiceRescueConfig:
             raise ValueError("SenseVoice rescue timeout must be within (0, 10] seconds")
         if self.min_rms < 0:
             raise ValueError("SenseVoice rescue minimum RMS must be non-negative")
+        if self.min_peak_abs < 0:
+            raise ValueError("SenseVoice rescue minimum peak must be non-negative")
         if not 0 < self.max_audio_s <= 300:
             raise ValueError("SenseVoice rescue audio cap must be within (0, 300] seconds")
         if self.min_text_chars < 1:
@@ -53,6 +56,7 @@ class SenseVoiceRescueConfig:
             endpoint=env.get("SENSEVOICE_URL", "").strip(),
             timeout_s=float(env.get("SENSEVOICE_TIMEOUT_S", "2.5")),
             min_rms=int(env.get("SENSEVOICE_MIN_RMS", "100")),
+            min_peak_abs=int(env.get("SENSEVOICE_MIN_PEAK_ABS", "350")),
             max_audio_s=float(env.get("SENSEVOICE_MAX_AUDIO_S", "30")),
             min_text_chars=int(env.get("SENSEVOICE_MIN_TEXT_CHARS", "2")),
         )

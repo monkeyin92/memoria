@@ -142,6 +142,10 @@ class MediaSessionCommitMixin:
                 self.metrics.inc_media_stale_asr_final()
             self._log_asr_rejection(session_id, result, decision.reason, stage="accept")
             return decision
+        if decision.evicted_sentence_ids:
+            context.runtime.speech_timeline.evict_segment_ids(
+                set(decision.evicted_sentence_ids)
+            )
         # The provider result is never forwarded after supervisor policy has
         # normalized it (e.g. a committed-watermark tail).
         segment = asr_result_to_segment(accepted, session_id=session_id)

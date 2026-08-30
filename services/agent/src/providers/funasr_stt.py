@@ -1381,10 +1381,12 @@ class FunASRSession:
             return
         pcm = b"".join(self._segment_pcm)
         rms = audioop.rms(pcm, 2)
-        if rms < rescue_config.min_rms:
+        peak_abs = audioop.max(pcm, 2)
+        if rms < rescue_config.min_rms and peak_abs < rescue_config.min_peak_abs:
             logger.info(
-                "funasr segment rescue skipped: no speech energy rms=%s task_id=%s",
+                "funasr segment rescue skipped: no speech energy rms=%s peak=%s task_id=%s",
                 rms,
+                peak_abs,
                 self.task_id or "unknown",
             )
             if self.metrics is not None:
