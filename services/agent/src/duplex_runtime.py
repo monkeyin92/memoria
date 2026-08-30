@@ -867,6 +867,12 @@ class DuplexRuntime(DuplexSpeakerMixin):
         pcm: bytes,
     ) -> bytes | None:
         if self._pending_epoch_drain is not None:
+            logger.warning(
+                "tts gated by pending epoch drain session=%s current_epoch=%s drain_epoch=%s",
+                self.session_id,
+                self.fence.session_epoch,
+                self._pending_epoch_drain.session_epoch,
+            )
             return None
         return self.orchestrator.gate_tts_audio(cancellation, pcm)
 
@@ -1000,6 +1006,19 @@ class DuplexRuntime(DuplexSpeakerMixin):
             logger.exception("epoch rotation drain failed")
             raise
         self._pending_epoch_drain = None
+
+    async def settle_bootstrap_identity_epoch(self) -> None:
+        """Drain a session-start profile rotation before pre-turn TTS.
+
+        Binding a signed RuntimeProfile can advance ``session_epoch`` and
+        leave ``_pending_epoch_drain`` set until the first user turn.
+        Device wake acknowledgement is audible before any turn, so the
+        barrier must close when the media session is published.
+        """
+
+        if self._pending_epoch_drain is None or self.fence.turn_id != 0:
+            return
+        await self._drain_epoch_rotation()
 
     def degrade_runtime_profile(self) -> GenerationFence:
         """Authority-loss transition to a true unknown-safe degraded epoch."""
@@ -3149,6 +3168,32 @@ class DuplexRuntime(DuplexSpeakerMixin):
         self._playback_fence = None
         self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
         return True
+
+    async def restore_listen_after_unheard_output(
+        self,
+        fence: GenerationFence,
+        *,
+        cause: str,
+    ) -> None:
+        """Clear the half-duplex speaking latch after TTS that never reached the device.
+
+        Device sessions ignore barge-in while THINKING/SPEAKING. If wake or
+        another source calls on_assistant_speaking and then aborts before the
+        first Edge-accepted PCM, later user turns would otherwise be swallowed.
+        """
+
+        if await self.on_assistant_reply_aborted(fence, cause=cause):
+            return
+        self._pending_assistant_text = ""
+        self._was_speaking = False
+        self._assistant_expression_fence = None
+        self._playback_fence = None
+        restored = await self.orchestrator.return_to_listening_after_unheard_output(
+            fence,
+            cause=cause,
+        )
+        if restored or self.orchestrator.state is ConversationState.LISTENING:
+            self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
 
     def _publish_assistant_expression(self, full_text: str) -> None:
         fence = self.fence

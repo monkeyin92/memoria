@@ -492,6 +492,22 @@ async def test_auxiliary_output_from_bootstrap_opens_first_wire_legal_turn() -> 
 
 
 @pytest.mark.asyncio
+async def test_unheard_auxiliary_output_returns_to_listening() -> None:
+    orch = Orchestrator()
+    await orch.ready()
+    next_fence = await orch.begin_auxiliary_output(orch.fence)
+    assert next_fence is not None
+    assert orch.state_machine is not None
+    orch.state_machine.state = ConversationState.SPEAKING
+
+    assert await orch.return_to_listening_after_unheard_output(
+        next_fence,
+        cause="stale_generation",
+    )
+    assert orch.state is ConversationState.LISTENING
+
+
+@pytest.mark.asyncio
 async def test_late_owner_playback_keeps_the_originating_fence_scope() -> None:
     orch = Orchestrator()
     await orch.ready()

@@ -613,6 +613,37 @@ class Orchestrator:
             self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
             return True
 
+    async def return_to_listening_after_unheard_output(
+        self,
+        expected_fence: GenerationFence,
+        *,
+        cause: str,
+    ) -> bool:
+        """Drop SPEAKING/THINKING after a generation that never reached the device."""
+
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if self.state is ConversationState.LISTENING:
+                return True
+            if self.state not in {
+                ConversationState.THINKING,
+                ConversationState.SPEAKING,
+                ConversationState.INTERRUPTION_PENDING,
+            }:
+                return False
+            same_generation = (
+                self.fence.session_id == expected_fence.session_id
+                and self.fence.turn_id == expected_fence.turn_id
+                and self.fence.generation_id == expected_fence.generation_id
+                and self.fence.session_epoch == expected_fence.session_epoch
+            )
+            if not self.fence.matches(expected_fence) and not same_generation:
+                return False
+            if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                return False
+            self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
+            return True
+
     async def finish_speaking(self, *, tools_active: bool = False) -> None:
         await self.finish_livekit_playback(tools_active=tools_active)
 

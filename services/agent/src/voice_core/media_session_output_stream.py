@@ -126,6 +126,21 @@ class MediaOutputStreamMixin:
             previous_phase: TurnPhase,
         ) -> None: ...
 
+    async def _abort_unheard_stream(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        *,
+        reason: str,
+        emitted_audio: bool,
+    ) -> None:
+        await self._cancel_reply_task(context, fence, reason=reason)
+        if emitted_audio or reason == "playback_rejected":
+            return
+        if reason != "stale_generation" and context.runtime.barge_in_enabled:
+            return
+        await context.runtime.restore_listen_after_unheard_output(fence, cause=reason)
+
     async def on_playback_progress(
         self,
         session: MediaBridgeSession,
@@ -287,7 +302,12 @@ class MediaOutputStreamMixin:
             async for chunk in chunks:
                 if not self._output_owner_is_current(context, lease):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="superseded")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="superseded",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -308,7 +328,12 @@ class MediaOutputStreamMixin:
                     await asyncio.sleep(delay_s)
                     if not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
-                        await self._cancel_reply_task(context, fence, reason="superseded")
+                        await self._abort_unheard_stream(
+                            context,
+                            fence,
+                            reason="superseded",
+                            emitted_audio=emitted_audio,
+                        )
                         return OutputDispatchResult(
                             fence,
                             OutputDispatchStatus.ABORTED,
@@ -336,7 +361,12 @@ class MediaOutputStreamMixin:
                     )
                     if not speaking_started or not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
-                        await self._cancel_reply_task(context, fence, reason="superseded")
+                        await self._abort_unheard_stream(
+                            context,
+                            fence,
+                            reason="superseded",
+                            emitted_audio=emitted_audio,
+                        )
                         return OutputDispatchResult(
                             fence,
                             OutputDispatchStatus.ABORTED,
@@ -360,7 +390,12 @@ class MediaOutputStreamMixin:
                 gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
                 if gated is None:
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="stale_generation")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="stale_generation",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,
@@ -389,7 +424,12 @@ class MediaOutputStreamMixin:
                     timeout_s=self.reconnect_grace_s,
                 ):
                     self.metrics.inc_media_stale_generation()
-                    await self._cancel_reply_task(context, fence, reason="transport_rejected")
+                    await self._abort_unheard_stream(
+                        context,
+                        fence,
+                        reason="transport_rejected",
+                        emitted_audio=emitted_audio,
+                    )
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.ABORTED,

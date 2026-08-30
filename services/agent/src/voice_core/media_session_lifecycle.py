@@ -516,6 +516,7 @@ class MediaSessionLifecycleMixin:
                     raise RuntimeError("Direct playback stop did not reach the Media Edge")
 
             runtime.set_playback_stop_seam(stop_direct_playback)
+            await runtime.settle_bootstrap_identity_epoch()
             return current
         except BaseException:
             await self._close_unpublished_resources(runtime, provider, identity)

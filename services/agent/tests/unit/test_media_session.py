@@ -4715,6 +4715,44 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+
+    def runtime_factory(session_id: str) -> DuplexRuntime:
+        runtime = DuplexRuntime.create(session_id=session_id, barge_in_enabled=False)
+
+        def drop_pcm(_cancellation: object, _pcm: bytes) -> bytes | None:
+            return None
+
+        runtime.gate_tts_audio = drop_pcm  # type: ignore[method-assign]
+        return runtime
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=runtime_factory,
+    )
+    registry.install()
+    identity = _device_identity("device-unheard-wake")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await _wait_until(
+            lambda: (
+                context.output_owner is None
+                and context.runtime._was_speaking is False
+                and context.runtime.orchestrator.state is ConversationState.LISTENING
+                and bool(provider.texts)
+            )
+        )
+        assert context.runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
