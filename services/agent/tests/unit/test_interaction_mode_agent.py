@@ -10,6 +10,7 @@ from typing import Any, Literal
 import pytest
 from livekit.agents import StopResponse, llm
 from services.agent.src import agent as agent_mod
+from services.agent.src import generation_output_policy as output_policy
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
@@ -998,6 +999,53 @@ def test_unknown_safe_clock_fact_uses_authoritative_local_time(
 
     assert plan.direct_text == "今天是2026年8月14日，星期五。"
     assert agent._plan_matches_mode_policy(plan, policy)
+
+
+def test_unknown_safe_clock_fact_survives_non_public_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_mod,
+        "current_local_time",
+        lambda _timezone: datetime.fromisoformat("2026-08-14T17:13:00+08:00"),
+    )
+    runtime = DuplexRuntime.create(session_id="unknown-safe-clock-caps")
+    policy = ModePolicy(
+        mode="unknown_safe",
+        policy_version="test-unknown-safe-with-memory-cap",
+        companion_style_id=None,
+        style_version=None,
+        references=(),
+        capabilities=(
+            ("conversation", True),
+            ("private_memory", True),
+        ),
+        companion_style=None,
+        session_focus=None,
+    )
+    runtime.set_mode_policy(policy)
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    fence = runtime.fence.bump_turn()
+    runtime._bind_mode_policy(fence)
+    plan = agent._local_safe_plan(
+        fence=fence,
+        speaker=SpeakerDecision(
+            classification="uncertain",
+            score=0.0,
+            quality_score=0.0,
+            reason_code="authority_unavailable",
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        ),
+        reason="no_verified_runtime_profile",
+        query="今天星期几？",
+    )
+
+    assert plan.direct_text == "今天是2026年8月14日，星期五。"
+    assert plan.instructions == output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
+    assert agent._plan_matches_mode_policy(plan, runtime.mode_policy_for_fence(fence))
 
 
 @pytest.mark.asyncio

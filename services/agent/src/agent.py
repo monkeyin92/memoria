@@ -608,6 +608,22 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if self._is_local_safe_plan(plan):
             if output_policy.anonymous_public_plan_allowed(plan, policy, tts_model=self._tts_model):
                 return True
+            unknown_safe_direct = (
+                policy.mode == "unknown_safe"
+                and plan.direct_text is not None
+                and (
+                    is_safe_realtime_reply(plan.direct_text)
+                    or plan.direct_text in BRIDGE_PHRASES
+                )
+                and plan.instructions == output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
+                and not plan.grounded_items
+                and not provenance.source_refs
+                and plan.disclosures == provenance.disclosures == ("privacy_refusal", "unknown")
+                and provenance.planner_policy_version == "local-safe-fallback-v1"
+                and self._fallback_voice_target_matches(plan.voice_target, policy)
+            )
+            if unknown_safe_direct:
+                return True
             companion = companion_definition(policy.companion_style_id)
             allowed_companion_direct_text = {
                 None,
@@ -831,6 +847,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             fixed_reply = fixed_realtime_reply(query=lookup_query, now=live_now)
         if fixed_reply is None and is_primarily_non_chinese_script(query):
             fixed_reply = BRIDGE_PHRASES[2]
+        if policy.mode == "unknown_safe" and fixed_reply is not None and (
+            is_safe_realtime_reply(fixed_reply) or fixed_reply in BRIDGE_PHRASES
+        ):
+            # Clock/date facts and bridge nudges use the anonymous public surface
+            # even when the degraded profile still carries non-conversation caps.
+            anonymous_public = True
         references = dict(policy.references)
         relationship_version_raw = references.get("relationship_profile_version")
         relationship_version = (
