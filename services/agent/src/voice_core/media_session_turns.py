@@ -429,7 +429,8 @@ class MediaTurnEndpointMixin:
             len(partial.text.strip()) if partial is not None else 0,
             partial.capture_end_sample if partial is not None else None,
         )
-        self._nudge_missed_hearing(context)
+        if endpoint_sample > 0:
+            self._nudge_missed_hearing(context)
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:
         task = context.turn_endpoint_task

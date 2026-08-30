@@ -438,6 +438,19 @@ def _is_short_non_target(text: str) -> bool:
     )
 
 
+def is_primarily_non_chinese_script(text: str) -> bool:
+    """True when a short ASR rescue is mostly hangul/kana with no Chinese."""
+
+    content = _content(text)
+    if not content:
+        return False
+    cjk = count_cjk_chars(content)
+    non_target = len(_NON_TARGET_SCRIPT.findall(content))
+    if cjk > 0 or non_target == 0:
+        return False
+    return non_target >= max(2, len(content) // 2)
+
+
 def _is_low_information_fragment(text: str, *, multilingual: bool) -> bool:
     """Reject likely playback/ASR debris without blocking normal short acks."""
 

@@ -263,3 +263,12 @@ def test_barge_in_disabled_revalidated_after_playback_ends() -> None:
 
     assert accepted is True
     assert reason is None
+
+
+def test_primarily_non_chinese_script_detects_short_hangul_rescue() -> None:
+    from services.agent.src.orchestration.interruption_guard import (
+        is_primarily_non_chinese_script,
+    )
+
+    assert is_primarily_non_chinese_script("한국어요") is True
+    assert is_primarily_non_chinese_script("今天星期几") is False
