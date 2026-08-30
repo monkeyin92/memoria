@@ -2835,10 +2835,18 @@ class DuplexRuntime(DuplexSpeakerMixin):
             # The Media Voice registry owns the terminal session projection.
             # Runtime only suppresses chat/control side effects after the
             # target-speaker gate has authorized this exact close phrase.
-            if (
-                self.current_speaker_class != "owner"
-                or not self.current_speaker_authority_verified
-            ):
+            formal_guest = (
+                self.current_speaker_class == "guest"
+                or self.current_speaker_reason_code == "owner_mismatch"
+            )
+            owner_verified_close = (
+                self.current_speaker_class == "owner"
+                and self.current_speaker_authority_verified
+            )
+            device_trusted_close = (
+                self._device_conversation_controls_enabled and not formal_guest
+            )
+            if not owner_verified_close and not device_trusted_close:
                 self.orchestrator.metrics.inc_guarded_user_input(
                     "conversation_end_owner_unverified"
                 )

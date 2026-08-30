@@ -261,7 +261,19 @@ class ASRStreamSupervisor:
                     if interval.sentence_id != result.sentence_id
                 ]
                 if cross_sentence:
-                    return ASRAcceptDecision(None, ASRDecisionReason.CROSS_SENTENCE_OVERLAP)
+                    prior_end = max(
+                        interval.capture_end_sample for interval in cross_sentence
+                    )
+                    prior_text_len = max(len(interval.text) for interval in cross_sentence)
+                    extends_span = result.capture_end_sample > prior_end
+                    extends_text = len(result.text.strip()) > prior_text_len
+                    if extends_span or extends_text:
+                        superseded_intervals = tuple(cross_sentence)
+                    else:
+                        return ASRAcceptDecision(
+                            None,
+                            ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
+                        )
                 if not same_task_correction:
                     same_range_keys = [
                         interval

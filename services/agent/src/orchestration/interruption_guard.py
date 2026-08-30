@@ -236,6 +236,23 @@ def normalize_short(text: str) -> str:
     return text.strip().replace(" ", "").replace("　", "").strip("。！？!?，,；;：:")
 
 
+def is_primarily_non_chinese_script(text: str) -> bool:
+    """True when garbled rescue text is mostly non-Chinese symbols or hangul."""
+
+    compact = normalize_short(text)
+    if not compact or len(compact) > 48:
+        return False
+    cjk = sum(1 for char in compact if "\u4e00" <= char <= "\u9fff")
+    hangul = sum(1 for char in compact if "\uac00" <= char <= "\ud7af")
+    kana = sum(1 for char in compact if "\u3040" <= char <= "\u30ff")
+    latin = sum(1 for char in compact if char.isascii() and char.isalpha())
+    if hangul + kana >= 2 and hangul + kana >= cjk:
+        return True
+    if cjk == 0 and hangul + kana + latin >= max(2, len(compact) // 2):
+        return True
+    return False
+
+
 def is_backchannel(text: str, *, duration_ms: int) -> bool:
     t = normalize_short(text)
     if not t or duration_ms > 900:
