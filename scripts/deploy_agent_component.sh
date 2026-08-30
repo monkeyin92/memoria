@@ -178,11 +178,11 @@ archive_commit="$(git get-tar-commit-id <"$artifact")"
 if command -v sha256sum >/dev/null 2>&1; then
   source_sha="$(sha256sum "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(sha256sum "$dockerfile" | cut -d ' ' -f1)"
-  compose_sha="$(git -C "$ROOT" show "$expected_commit:docker-compose.production.yml" | sha256sum | cut -d ' ' -f1)"
+  compose_sha="$(git -C "$ROOT" show "$base_commit:docker-compose.production.yml" | sha256sum | cut -d ' ' -f1)"
 else
   source_sha="$(shasum -a 256 "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(shasum -a 256 "$dockerfile" | cut -d ' ' -f1)"
-  compose_sha="$(git -C "$ROOT" show "$expected_commit:docker-compose.production.yml" | shasum -a 256 | cut -d ' ' -f1)"
+  compose_sha="$(git -C "$ROOT" show "$base_commit:docker-compose.production.yml" | shasum -a 256 | cut -d ' ' -f1)"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   lock_sha="$(git -C "$ROOT" show "$base_commit:uv.lock" | sha256sum | cut -c1-16)"
@@ -534,7 +534,7 @@ previous_args=()
 for file in "${previous_files[@]}"; do
   if [[ "${file##*/}" == docker-compose.production.yml ]]; then
     [[ "$(sha256sum "$file" | cut -d ' ' -f1)" == "$expected_compose_sha" ]] || {
-      echo "production Compose file does not match the tagged release" >&2
+      echo "production Compose file does not match the Agent overlay base" >&2
       exit 1
     }
   fi
