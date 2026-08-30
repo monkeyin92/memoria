@@ -3652,6 +3652,146 @@ async def test_higher_priority_pcm_preempts_after_audio_and_restarts_from_zero()
 
 
 @pytest.mark.asyncio
+async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
+    started = asyncio.Event()
+
+    class BlockingProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                started.set()
+                await asyncio.Event().wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=0,
+                    text="旧回复",
+                    first=True,
+                    final=False,
+                )
+
+            return chunks()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.frames: list[object] = []
+            self.generations: list[tuple[int, GenerationFence]] = []
+            self.effects: list[tuple[int, GenerationFence, str, dict[str, object]]] = []
+
+        async def emit_pcm(self, _session_id: str, frame: object) -> bool:
+            self.frames.append(frame)
+            return True
+
+        async def emit_generation(
+            self,
+            _session_id: str,
+            fence: GenerationFence,
+            *,
+            action: int,
+            **_kwargs: object,
+        ) -> bool:
+            self.generations.append((action, fence))
+            return True
+
+        async def emit_realtime_effect(
+            self,
+            _session_id: str,
+            effect_kind: int,
+            fence: GenerationFence,
+            *,
+            source_event_id: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.effects.append((effect_kind, fence, source_event_id, payload))
+            return True
+
+    provider = BlockingProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-unheard-preempt",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="subject",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("查一下")
+    context.playback.start(fence)
+    reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert context.output_owner is not None
+    assert bridge.frames == []
+
+    coordinator = context.runtime.orchestrator.delegation
+    now_ms = int(time.time() * 1_000)
+    urgent = media_pb2.OutputIntent(
+        intent_id="urgent-pcm",
+        session_id=identity.session_id,
+        turn_id=fence.turn_id,
+        generation_id=fence.generation_id,
+        tool_epoch=fence.tool_epoch,
+        context_version=coordinator.current_context_version(identity.session_id),
+        kind=media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+        priority=100,
+        created_at_ms=now_ms,
+        expires_at_ms=now_ms + 5_000,
+        floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
+        pcm_s16le=b"\x06\x00\x07\x00",
+    )
+    assert (
+        coordinator.admit_output_intent(
+            urgent,
+            current_fence=fence,
+            current_context_version=coordinator.current_context_version(identity.session_id),
+            floor_allows_output=True,
+            now_ms=now_ms + 1,
+        )
+        == ""
+    )
+    assert await registry._enqueue_output_work(context, _OutputWork(urgent, fence))
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(reply, timeout=1)
+    await asyncio.sleep(0)
+
+    assert provider.cancelled == [fence]
+    assert not any(
+        effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+        for effect_kind, _cancelled, _source, _payload in bridge.effects
+    )
+    assert len(bridge.frames) == 1
+    replacement = bridge.frames[0]
+    assert replacement.generation_id > fence.generation_id
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=replacement.generation_id,
+            received_sequence=0,
+            rendered_sample_end=replacement.frame_samples,
+            client_monotonic_ms=1,
+            turn_id=replacement.turn_id,
+            tool_epoch=replacement.tool_epoch,
+        ),
+    )
+    assert context.output_owner is None
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_owner_is_rechecked_after_speaking_transition_before_output() -> None:
     speaking_started = asyncio.Event()
     release_speaking = asyncio.Event()

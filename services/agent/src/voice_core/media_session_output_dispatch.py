@@ -620,6 +620,64 @@ class MediaOutputDispatchMixin:
             return None
         return rebound
 
+    @staticmethod
+    def _device_playback_flush_required(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> bool:
+        """Return whether CANCEL_GENERATION may become a device playback.flush.
+
+        Direct-device firmware fail-closes ``playback.flush`` unless that
+        generation is the active playing fence. An unheard owner (wake already
+        ended, nudge still synthesizing) must not emit the effect.
+        """
+
+        if context.identity.client_type != "device":
+            return True
+        delivery = context.reply_delivery.get(fence)
+        if delivery is not None and delivery.first_frame_sent:
+            return True
+        if context.playback.rendered_sample_end(fence) > 0:
+            return True
+        return bool(context.playback.actual_heard_text(fence))
+
+    async def _emit_cancel_generation(
+        self,
+        context: _MediaVoiceSession,
+        cancelled: GenerationFence,
+        *,
+        heard_fence: GenerationFence,
+        source_event_id: str,
+        payload: dict[str, Any],
+        playback_flush_required: bool | None = None,
+    ) -> bool:
+        required = (
+            playback_flush_required
+            if playback_flush_required is not None
+            else self._device_playback_flush_required(context, heard_fence)
+        )
+        if not required:
+            logger.warning(
+                "skip device playback.flush for unheard generation session=%s "
+                "old_turn=%s old_gen=%s replacement_gen=%s source=%s",
+                context.identity.session_id,
+                heard_fence.turn_id,
+                heard_fence.generation_id,
+                cancelled.generation_id,
+                source_event_id,
+            )
+            return True
+        task_epoch, context_version = self._event_versions(context, cancelled)
+        return await self.bridge.emit_realtime_effect(
+            cancelled.session_id,
+            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+            cancelled,
+            source_event_id=source_event_id,
+            payload=payload,
+            task_epoch=task_epoch,
+            context_version=context_version,
+        )
+
     async def _preempt_output_owner(
         self,
         context: _MediaVoiceSession,
@@ -631,6 +689,7 @@ class MediaOutputDispatchMixin:
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
         old_fence = owner.fence
+        flush_required = self._device_playback_flush_required(context, old_fence)
         heard = context.playback.actual_heard_text(old_fence)
         await self._cancel_reply_task(context, old_fence, reason="preempted")
         cancelled = await context.runtime.preempt_media_output(
@@ -644,15 +703,13 @@ class MediaOutputDispatchMixin:
             synchronized_transcript=heard,
         )
         context.playback.discard(old_fence)
-        task_epoch, context_version = self._event_versions(context, cancelled)
-        if not await self.bridge.emit_realtime_effect(
-            cancelled.session_id,
-            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+        if not await self._emit_cancel_generation(
+            context,
             cancelled,
+            heard_fence=old_fence,
             source_event_id="output_preempted",
             payload={"reason": "output_preempted"},
-            task_epoch=task_epoch,
-            context_version=context_version,
+            playback_flush_required=flush_required,
         ):
             return False
         coordinator = context.runtime.orchestrator.delegation
@@ -782,6 +839,7 @@ class MediaOutputDispatchMixin:
             reason="output_timeout",
             cancel_timeout_s=min(5.0, max(0.1, self.output_generation_timeout_s)),
         )
+        flush_required = self._device_playback_flush_required(context, fence)
         cancelled = await self._advance_failed_output_generation(
             context,
             fence,
@@ -806,13 +864,11 @@ class MediaOutputDispatchMixin:
                 cause="output_timeout",
             )
             return
-        task_epoch, context_version = self._event_versions(context, cancelled)
-        await self.bridge.emit_realtime_effect(
-            cancelled.session_id,
-            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+        await self._emit_cancel_generation(
+            context,
             cancelled,
+            heard_fence=fence,
             source_event_id="output_timeout",
             payload={"reason": "output_timeout"},
-            task_epoch=task_epoch,
-            context_version=context_version,
+            playback_flush_required=flush_required,
         )

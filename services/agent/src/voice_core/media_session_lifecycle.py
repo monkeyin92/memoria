@@ -150,6 +150,23 @@ class MediaSessionLifecycleMixin:
             fence: GenerationFence,
         ) -> tuple[int, int]: ...
 
+        def _device_playback_flush_required(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> bool: ...
+
+        async def _emit_cancel_generation(
+            self,
+            context: _MediaVoiceSession,
+            cancelled: GenerationFence,
+            *,
+            heard_fence: GenerationFence,
+            source_event_id: str,
+            payload: dict[str, Any],
+            playback_flush_required: bool | None = None,
+        ) -> bool: ...
+
         async def _publish_runtime_event(
             self, context: _MediaVoiceSession, event: dict[str, Any]
         ) -> None: ...
@@ -479,6 +496,7 @@ class MediaSessionLifecycleMixin:
                 if old_fence is None:
                     return
 
+                flush_required = self._device_playback_flush_required(current, old_fence)
                 await self._cancel_reply_task(
                     current,
                     old_fence,
@@ -503,15 +521,13 @@ class MediaSessionLifecycleMixin:
                 )
                 current.playback.discard(old_fence)
                 current.output_work.clear()
-                task_epoch, context_version = self._event_versions(current, cancelled)
-                if not await self.bridge.emit_realtime_effect(
-                    cancelled.session_id,
-                    media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+                if not await self._emit_cancel_generation(
+                    current,
                     cancelled,
+                    heard_fence=old_fence,
                     source_event_id="identity_epoch_rotated",
                     payload={"reason": "identity_epoch_rotated"},
-                    task_epoch=task_epoch,
-                    context_version=context_version,
+                    playback_flush_required=flush_required,
                 ):
                     raise RuntimeError("Direct playback stop did not reach the Media Edge")
 

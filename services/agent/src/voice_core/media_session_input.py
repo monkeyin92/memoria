@@ -72,6 +72,17 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
 
+        async def _emit_cancel_generation(
+            self,
+            context: _MediaVoiceSession,
+            cancelled: GenerationFence,
+            *,
+            heard_fence: GenerationFence,
+            source_event_id: str,
+            payload: dict[str, Any],
+            playback_flush_required: bool | None = None,
+        ) -> bool: ...
+
         def _sync_owner_silence_phase(
             self, context: _MediaVoiceSession, phase: str
         ) -> None: ...
@@ -337,15 +348,12 @@ class MediaSessionInputMixin:
                         context.provider_complete = False
                         context.output_complete_emitted = False
                         await self._cancel_reply_task(context, previous_fence)
-                        task_epoch, context_version = self._event_versions(context, cancelled)
-                        await self.bridge.emit_realtime_effect(
-                            context.identity.session_id,
-                            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+                        await self._emit_cancel_generation(
+                            context,
                             cancelled,
+                            heard_fence=previous_fence,
                             source_event_id="keyword_interrupt",
                             payload={"reason": "keyword_interrupt"},
-                            task_epoch=task_epoch,
-                            context_version=context_version,
                         )
                         self.metrics.observe_voice_latency(
                             "interrupt_core_stop",
