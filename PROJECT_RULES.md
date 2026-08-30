@@ -78,6 +78,15 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 - 真实设备验收必须绑定候选 commit、固件摘要、板卡身份摘要、session/stream/generation fence 和用户听感确认。
 - 没有 Exact DAC/AEC Reference/Double-talk/T1–T14 证据时，`direct_real_device_verified` 与 `full_duplex_verified` 保持 false，产品不得宣传全双工。
 
+## 当前出货声学契约
+
+- 当前演示/出货 SKU（ATK ES8388 单麦、AFE 无 playback reference）只允许受控半双工：`audio_mode=half_duplex_safe`。设备会话必须保持 `barge_in_enabled=false` 与 `interruptions_enabled=false`。
+- 固件 hello v2 必须诚实上报 `simultaneous_capture_playback=false`、`aec_mode=none`、`aec_reference=none`。禁止为演示把未验证 AEC 写成已验证。
+- 播放期间以停录或不形成用户 turn 为契约；BOOT 是本地物理硬停。禁止用云端 holdoff、丢弃 VAD 边沿或加大 DTLN 增益去模拟抢话。
+- `TurnPhase` 在当前 SKU 半双工两轮对话未 `verified` 前，不得从 shadow 改为有副作用的生产策略。
+- 全双工/抢话按 SKU 升档：新板必须有 AEC reference，hello 如实上报，Edge 声学 registry 登记后才能协商 `interrupt_assist`；`full_duplex_verified` 另需 T1–T14。禁止把所有 `device_session` 一次性打开 barge-in。
+- 路演、对客和投资人口径必须与 `HANDOFF.md` 的 `advertised_duplex_level` 一致。当前工单步骤只写在 `HANDOFF.md`，不另建计划文档。
+
 ## 发布、回滚与保留
 
 - 发布按组件最小切片，先冻结 source/image/manifest 摘要和回滚点，再切流、冒烟、延迟复核。

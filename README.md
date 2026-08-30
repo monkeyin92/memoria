@@ -423,4 +423,4 @@ DTLN 降噪固定到 `breizhn/DTLN` commit `1de1f15a8b5b7e1c44905618ff2ef70ca827
 - 打断后仍播旧内容：先推进 generation，再取消 provider/session，并在 Edge、设备和投影处比较完整 fence。
 - H5 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 LiveKit connected 当业务 ready。
 
-当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。
+当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。当前开发工单是半双工投资人 Demo（`half_duplex_investor_demo`），不要并行做设备抢话或全双工。

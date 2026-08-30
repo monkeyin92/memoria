@@ -23,11 +23,10 @@ import time
 from pathlib import Path
 
 import numpy as np
+import sherpa_onnx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-
-import sherpa_onnx
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sensevoice-asr")
