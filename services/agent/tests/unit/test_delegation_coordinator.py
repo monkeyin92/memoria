@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -126,6 +127,56 @@ async def test_stale_deep_result_cannot_form_output_intent(stale_gate: str) -> N
         kwargs["relevant"] = False
 
     assert coordinator.output_intent(handle, **kwargs) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_deep_result_delivery_outlives_request_expiry() -> None:
+    """A spoken answer must not expire while it is still being delivered."""
+
+    coordinator = await _coordinator_with_result({"summary": "最快的是 G7001 次。"})
+    base_ms = int(time.time() * 1_000)
+    request = replace(_request(), expires_at_ms=base_ms + 20_000)
+    handle = await coordinator.delegate(request)
+    await handle.record.task
+    intent = coordinator.output_intent(
+        handle,
+        current_fence=request.fence,
+        current_task_epoch=request.task_epoch,
+        current_context_version=request.context_version,
+        relevant=True,
+        now_ms=base_ms + 5_000,
+    )
+    assert intent is not None
+    assert intent.expires_at_ms >= base_ms + 5_000 + 120_000
+
+    spoken = coordinator.admit_output_intent(
+        intent,
+        current_fence=request.fence,
+        current_context_version=request.context_version,
+        floor_allows_output=True,
+        now_ms=base_ms + 5_100,
+    )
+    assert spoken == "最快的是 G7001 次。"
+    assert (
+        coordinator.output_intent_is_selected(
+            intent,
+            current_fence=request.fence,
+            current_context_version=request.context_version,
+            floor_allows_output=True,
+            now_ms=base_ms + 25_000,
+        )
+        is True
+    )
+    assert (
+        coordinator.output_intent_is_selected(
+            intent,
+            current_fence=request.fence,
+            current_context_version=request.context_version,
+            floor_allows_output=True,
+            now_ms=intent.expires_at_ms + 1,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

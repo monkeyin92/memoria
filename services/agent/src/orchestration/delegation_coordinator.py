@@ -22,6 +22,8 @@ from services.agent.src.prompts import BRIDGE_PHRASES, DEVICE_WAKE_PHRASES
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 
 media_pb2: Any = _media_pb2
+
+_DEEP_RESULT_DELIVERY_TTL_MS = 120_000
 logger = logging.getLogger(__name__)
 _MAX_SHADOW_OUTPUT_CANDIDATES_PER_DOMAIN = 4
 
@@ -363,7 +365,10 @@ class DelegationCoordinator:
             kind=request.output_kind,
             priority=request.priority,
             created_at_ms=now,
-            expires_at_ms=request.expires_at_ms,
+            # The request TTL bounds task resolution; a spoken deep result
+            # needs its own delivery TTL so a long answer cannot expire while
+            # it is still being streamed to the device.
+            expires_at_ms=now + _DEEP_RESULT_DELIVERY_TTL_MS,
             floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
             context_version=request.context_version,
             tts_source=spoken,
