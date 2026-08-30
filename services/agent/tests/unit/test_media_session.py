@@ -3792,6 +3792,115 @@ async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expired_emitted_output_restores_listen_and_flushes_device() -> None:
+    first_frame_sent = asyncio.Event()
+    release = asyncio.Event()
+
+    class ExpiringProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=0,
+                    text="旧回复",
+                    first=True,
+                    final=False,
+                )
+                await release.wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x04\x00\x05\x00",
+                    source_start_sample=2,
+                    text="尾句",
+                    final=True,
+                )
+
+            return chunks()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.frames: list[object] = []
+            self.effects: list[tuple[int, GenerationFence, str, dict[str, object]]] = []
+
+        async def emit_pcm(self, _session_id: str, frame: object) -> bool:
+            self.frames.append(frame)
+            first_frame_sent.set()
+            return True
+
+        async def emit_realtime_effect(
+            self,
+            _session_id: str,
+            effect_kind: int,
+            fence: GenerationFence,
+            *,
+            source_event_id: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.effects.append((effect_kind, fence, source_event_id, payload))
+            return True
+
+    provider = ExpiringProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-expired-emitted-output",
+        account_id="account",
+        device_id="device",
+        subject_id="subject",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+        client_type="device",
+    )
+    bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("查一下")
+    context.playback.start(fence)
+    reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
+    await asyncio.wait_for(first_frame_sent.wait(), timeout=1)
+
+    coordinator = context.runtime.orchestrator.delegation
+    current = coordinator.current_output_intent(
+        identity.session_id,
+        current_fence=fence,
+        current_context_version=coordinator.current_context_version(identity.session_id),
+        floor_allows_output=True,
+    )
+    assert current is not None
+    current.expires_at_ms = int(time.time() * 1_000) - 1
+    release.set()
+
+    assert await asyncio.wait_for(reply, timeout=1) is False
+    assert provider.cancelled == [fence]
+    assert context.output_owner is None
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+    assert context.playback.current_fence is None
+    assert any(
+        effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+        and cancelled.generation_id == fence.generation_id + 1
+        and source_event_id == "output_superseded"
+        and payload == {"reason": "superseded"}
+        for effect_kind, cancelled, source_event_id, payload in bridge.effects
+    )
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.first_frame_sent is True
+    assert delivery.terminal_event is ReplyDeliveryEvent.PREEMPTED
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_owner_is_rechecked_after_speaking_transition_before_output() -> None:
     speaking_started = asyncio.Event()
     release_speaking = asyncio.Event()

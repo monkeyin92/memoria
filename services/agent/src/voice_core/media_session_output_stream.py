@@ -112,6 +112,23 @@ class MediaOutputStreamMixin:
             reason: str,
         ) -> GenerationFence | None: ...
 
+        @staticmethod
+        def _device_playback_flush_required(
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> bool: ...
+
+        async def _emit_cancel_generation(
+            self,
+            context: _MediaVoiceSession,
+            cancelled: GenerationFence,
+            *,
+            heard_fence: GenerationFence,
+            source_event_id: str,
+            payload: dict[str, Any],
+            playback_flush_required: bool | None = None,
+        ) -> bool: ...
+
         def _record_reply_delivery_event(
             self,
             context: _MediaVoiceSession,
@@ -134,7 +151,58 @@ class MediaOutputStreamMixin:
         reason: str,
         emitted_audio: bool,
     ) -> None:
+        owner = context.output_owner
+        owner_intent_active = False
+        if owner is not None and owner.fence.matches(fence):
+            coordinator = context.runtime.orchestrator.delegation
+            owner_intent_active = coordinator.output_intent_is_active(
+                owner.intent,
+                current_fence=context.runtime.fence,
+                current_context_version=coordinator.current_context_version(
+                    fence.session_id
+                ),
+                floor_allows_output=context.runtime.output_floor_allows_assistant,
+            )
         await self._cancel_reply_task(context, fence, reason=reason)
+        if emitted_audio and context.runtime.fence.matches(fence):
+            # A higher-priority owner has its own preemption path.  If the
+            # current owner instead disappeared because its intent expired (or
+            # because the transport failed), close the audible generation here
+            # so the device cannot remain in SPEAKING without a terminal fence.
+            if reason != "superseded" or not owner_intent_active:
+                flush_required = self._device_playback_flush_required(context, fence)
+                cancelled = await self._advance_failed_output_generation(
+                    context,
+                    fence,
+                    reason=reason,
+                )
+                context.playback.discard(fence)
+                context.assistant_text = ""
+                context.output_sequence = 0
+                context.output_text_offset = 0
+                context.provider_complete = False
+                context.output_complete_emitted = False
+                for intent_id, pending in tuple(context.output_work.items()):
+                    if pending.fence.matches(fence):
+                        context.output_work.pop(intent_id, None)
+                context.runtime.orchestrator.delegation.reset_output_intent_state(
+                    fence.session_id
+                )
+                if cancelled is None:
+                    await context.runtime.on_assistant_reply_aborted(
+                        fence,
+                        cause=reason,
+                    )
+                else:
+                    await self._emit_cancel_generation(
+                        context,
+                        cancelled,
+                        heard_fence=fence,
+                        source_event_id=f"output_{reason}",
+                        payload={"reason": reason},
+                        playback_flush_required=flush_required,
+                    )
+                return
         if emitted_audio or reason == "playback_rejected":
             return
         if reason != "stale_generation" and context.runtime.barge_in_enabled:
