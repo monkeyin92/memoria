@@ -163,6 +163,7 @@ class MediaSessionCommitMixin:
             self._observe_final_asr_result(context, accepted)
         else:
             self._observe_partial_asr_result(context, accepted)
+            self._maybe_early_commit_stable_clock_fact_partial(context)
         return decision
 
     def _log_asr_rejection(
@@ -312,7 +313,7 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
-            self._nudge_missed_hearing(context)
+            self._nudge_missed_hearing(context, allow_without_endpoint=True)
             return None, "empty_media_turn"
         retire_end = end_sample if retire_sample is None else retire_sample
         if retire_end < end_sample:
@@ -345,7 +346,7 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
-            self._nudge_missed_hearing(context)
+            self._nudge_missed_hearing(context, allow_without_endpoint=True)
             return None, "empty_media_turn"
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:

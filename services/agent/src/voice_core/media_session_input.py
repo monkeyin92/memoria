@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from services.agent.src.voice_core.media_audio_ingress import MediaAudioIngress
 
 media_pb2: Any = _media_pb2
+logger = logging.getLogger(__name__)
 
 
 class MediaSessionInputMixin:
@@ -181,6 +183,21 @@ class MediaSessionInputMixin:
             ):
                 return
             if segment.final:
+                if (
+                    context.identity.client_type == "device"
+                    and context.runtime.playback_overlap_input_blocked()
+                ):
+                    # Wake/playback echo must not arm ASR tail timeouts.  The
+                    # board emits VAD edges once; dropping vad.end here would
+                    # desynchronise the uplink for the rest of the session.
+                    logger.info(
+                        "media vad_end ignored during playback session=%s "
+                        "endpoint_sample=%s",
+                        context.identity.session_id,
+                        segment.voiced_end_sample or segment.capture_start_sample,
+                    )
+                    self._clear_pending_turn_state(context)
+                    return
                 # VAD end is the only normal endpoint for this watchdog.  Do
                 # this before provider finalization, which may await remote
                 # ASR work and otherwise leave the timer racing teardown.

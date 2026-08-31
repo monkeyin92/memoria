@@ -744,6 +744,8 @@ class MediaOutputStreamMixin:
                 fence,
             ),
         )
+        self.clear_device_wake_ack_fence(context, fence)
+        self.flush_pending_missed_hearing_nudge(context)
         context.playback.discard(fence)
         context.output_sequence = 0
         context.output_text_offset = 0

@@ -396,6 +396,37 @@ async def test_recognize_stream_rescue_final_precedes_end_of_speech(
 
 
 @pytest.mark.asyncio
+async def test_mid_segment_rescue_emits_final_before_vad_end(
+    silent_funasr: MockFunASRServer,
+    rescue_server: MockSenseVoiceServer,
+) -> None:
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url=silent_funasr.ws_url,
+            rescue_config=SenseVoiceRescueConfig(endpoint=rescue_server.url),
+        )
+    )
+    await session.connect()
+    samples = 16_000 * 5
+    chunk = 320
+    for start in range(0, samples, chunk):
+        await session.send_pcm(
+            _speech_pcm(chunk),
+            capture_start_sample=start,
+        )
+    await asyncio.sleep(0.05)
+    finals: list[str] = []
+    while not session.events.empty():
+        event = session.events.get_nowait()
+        if event.event == "result-generated" and event.sentence is not None:
+            finals.append(event.sentence.text)
+    await session.aclose()
+    assert finals == ["兜底识别成功。"]
+    assert rescue_server.requests == 1
+
+
+@pytest.mark.asyncio
 async def test_media_adapter_finalize_returns_rescue_final(
     silent_funasr: MockFunASRServer,
     rescue_server: MockSenseVoiceServer,

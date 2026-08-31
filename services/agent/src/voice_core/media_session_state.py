@@ -74,6 +74,8 @@ class MediaVoiceSessionState:
     turn_commit_retry_endpoint_sample: int | None = None
     observed_within_turn_pause_s: float | None = None
     pending_partial: ASRResult | None = None
+    clock_fact_partial_text: str | None = None
+    clock_fact_partial_stable_since: float | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
@@ -88,4 +90,6 @@ class MediaVoiceSessionState:
     standby_reason: str | None = None
     conversation_initiation_provisional_id: str | None = None
     conversation_yield_candidate_fence: GenerationFence | None = None
+    device_wake_ack_fence: GenerationFence | None = None
+    pending_missed_hearing_nudge: bool = False
     closed: bool = False

@@ -2301,6 +2301,11 @@ class DuplexRuntime(DuplexSpeakerMixin):
             }
         )
 
+    def playback_overlap_input_blocked(self) -> bool:
+        """True when half-duplex device input must not open or commit a user turn."""
+
+        return self._assistant_response_blocks_barge_in()
+
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         assistant_response_blocked = self._assistant_response_blocks_barge_in()
         interrupted_assistant_text = (

@@ -96,6 +96,7 @@ class MediaSessionProjectionMixin:
                 )
             if context.closed or context.runtime.fence.turn_id != 0:
                 return
+            context.device_wake_ack_fence = runtime.fence
             await self._speak_allowlisted_bridge_phrase(
                 context,
                 device_wake_phrase(context.identity.session_id),
@@ -109,20 +110,61 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
 
-    def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None:
+    def _nudge_missed_hearing(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        allow_without_endpoint: bool = False,
+    ) -> None:
         if context.closed or context.standby_requested:
             return
         if context.identity.client_type != "device":
             return
+        if self._is_wake_echo_discard(context):
+            return
         if context.runtime.assistant_speaking:
+            context.pending_missed_hearing_nudge = True
             return
         # Wake TTS echo can produce endpoint=0 with no real user speech.
-        if (context.turn_endpoint_sample or 0) <= 0:
+        if not allow_without_endpoint and (context.turn_endpoint_sample or 0) <= 0:
             return
+        self._schedule_missed_hearing_nudge(context)
+
+    def _is_wake_echo_discard(self, context: _MediaVoiceSession) -> bool:
+        wake_fence = context.device_wake_ack_fence
+        if wake_fence is None:
+            return False
+        return context.runtime.assistant_speaking and context.runtime.fence.matches(
+            wake_fence
+        )
+
+    def _schedule_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None:
         asyncio.create_task(
             self._speak_missed_hearing_ack(context),
             name=f"missed-hearing-{context.identity.session_id}",
         )
+
+    def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None:
+        if not context.pending_missed_hearing_nudge:
+            return
+        context.pending_missed_hearing_nudge = False
+        if context.closed or context.standby_requested:
+            return
+        if context.runtime.assistant_speaking:
+            context.pending_missed_hearing_nudge = True
+            return
+        if (context.turn_endpoint_sample or 0) <= 0:
+            return
+        self._schedule_missed_hearing_nudge(context)
+
+    def clear_device_wake_ack_fence(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        wake_fence = context.device_wake_ack_fence
+        if wake_fence is not None and wake_fence.matches(fence):
+            context.device_wake_ack_fence = None
 
     async def _speak_missed_hearing_ack(self, context: _MediaVoiceSession) -> None:
         try:

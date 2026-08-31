@@ -61,6 +61,7 @@ _WS_TRACE_MAX_PER_WINDOW = 20
 # end is not a covering transcript.  Skipping SenseVoice in that case left
 # loud weather utterances on the 没听清 path (2026-08-30 11:33 take).
 _RESCUE_COVERAGE_TOLERANCE_S = 0.1
+_MID_SEGMENT_RESCUE_MIN_S = 4.0
 
 
 def _is_empty_audio_error(error_code: object) -> bool:
@@ -211,6 +212,7 @@ class FunASRSession:
         self._segment_pcm_end_sample: int | None = None
         self._segment_pcm_gaps = 0
         self._segment_nonempty_final_seen = False
+        self._mid_segment_rescue_scheduled = False
         self._rescue_deadline: float | None = None
         self._context: tuple[dict[str, object], ...] = ()
         self._task_epoch = 0
@@ -365,6 +367,7 @@ class FunASRSession:
         self._segment_pcm_end_sample = None
         self._segment_pcm_gaps = 0
         self._segment_nonempty_final_seen = False
+        self._mid_segment_rescue_scheduled = False
 
     def _remember_segment_pcm(self, pcm: bytes, *, start_sample: int, end_sample: int) -> None:
         if self._segment_pcm_start_sample is None:
@@ -1094,6 +1097,7 @@ class FunASRSession:
                         start_sample=start,
                         end_sample=end,
                     )
+                    self._maybe_schedule_mid_segment_rescue()
             except Exception as exc:
                 if self._failed or self._task_failed_event.is_set():
                     raise
@@ -1369,7 +1373,34 @@ class FunASRSession:
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("failed")
 
-    async def _rescue_segment_once(self) -> None:
+    def _maybe_schedule_mid_segment_rescue(self) -> None:
+        """Probe SenseVoice while a VAD segment is still open and FunASR is silent."""
+
+        if (
+            self._rescue is None
+            or self._closed
+            or self._segment_nonempty_final_seen
+            or self._mid_segment_rescue_scheduled
+        ):
+            return
+        min_samples = int(_MID_SEGMENT_RESCUE_MIN_S * self.config.sample_rate)
+        if self._segment_pcm_samples < min_samples:
+            return
+        self._mid_segment_rescue_scheduled = True
+        asyncio.create_task(
+            self._mid_segment_rescue(),
+            name=f"funasr-mid-rescue-{self.task_id or 'unknown'}",
+        )
+
+    async def _mid_segment_rescue(self) -> None:
+        try:
+            await self._rescue_segment_once(mid_utterance=True)
+        except Exception:
+            logger.warning("funasr mid-segment rescue failed", exc_info=True)
+            if self.metrics is not None:
+                self.metrics.inc_funasr_rescue("failed")
+
+    async def _rescue_segment_once(self, *, mid_utterance: bool = False) -> None:
         self._rescue_deadline = None
         rescue_config = self.config.rescue_config
         if (
@@ -1413,7 +1444,10 @@ class FunASRSession:
         task_id = self.task_id or ""
         boundary = self._task_boundary_observed()
         empty_audio_boundary = self._has_replaceable_empty_audio_failure()
-        if not task_id or not (boundary or empty_audio_boundary):
+        if mid_utterance:
+            if not task_id:
+                return
+        elif not task_id or not (boundary or empty_audio_boundary):
             logger.info(
                 "funasr segment rescue skipped: no task boundary task_id=%s "
                 "boundary=%s empty_audio=%s rms=%s pcm_ms=%s",
@@ -1491,6 +1525,13 @@ class FunASRSession:
                 FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
             )
             await self.events.put(FunASRServerEvent(event="task-finished", task_id=task_id))
+        elif mid_utterance:
+            # The VAD segment is still open.  Emit only the synthetic final so
+            # the media adapter can commit clock facts without waiting for
+            # vad.end while FunASR streaming stays silent.
+            await self.events.put(
+                FunASRServerEvent(event="result-generated", task_id=task_id, sentence=sentence)
+            )
         else:
             # Normal boundary: task-finished is already queued; the synthetic
             # final becomes the provider's last tail final.
@@ -1501,7 +1542,8 @@ class FunASRSession:
         if self.metrics is not None:
             self.metrics.inc_funasr_rescue("rescued")
         logger.info(
-            "funasr segment rescued offline task_id=%s text_len=%s rms=%s pcm_ms=%s gaps=%s",
+            "funasr segment rescued %s task_id=%s text_len=%s rms=%s pcm_ms=%s gaps=%s",
+            "mid_utterance" if mid_utterance else "offline",
             task_id,
             len(text),
             rms,

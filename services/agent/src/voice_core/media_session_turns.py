@@ -19,6 +19,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchStatus,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.common.realtime_information import is_clock_fact_query
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session_state import (
@@ -38,6 +39,7 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # larger gaps remain fail-closed so an earlier provider sentence cannot commit
 # a later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
+_CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 
 
 class MediaTurnEndpointMixin:
@@ -166,10 +168,72 @@ class MediaTurnEndpointMixin:
                 )
             else:
                 context.pending_partial = None
+        self._maybe_early_commit_clock_fact(context, result)
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
+
+    @staticmethod
+    def _maybe_early_commit_clock_fact(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Commit clock/date facts without waiting for a stuck device VAD end."""
+
+        if context.identity.client_type != "device":
+            return
+        if context.turn_endpoint_sample is not None:
+            return
+        text = result.text.strip()
+        if not text or not is_clock_fact_query(text):
+            return
+        endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
+        context.turn_endpoint_sample = endpoint
+        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+        logger.info(
+            "media early clock-fact endpoint session=%s endpoint=%s text_len=%s",
+            context.identity.session_id,
+            endpoint,
+            len(text),
+        )
+
+    def _maybe_early_commit_stable_clock_fact_partial(
+        self,
+        context: _MediaVoiceSession,
+    ) -> None:
+        partial = context.pending_partial
+        if partial is None:
+            context.clock_fact_partial_text = None
+            context.clock_fact_partial_stable_since = None
+            return
+        text = partial.text.strip()
+        if not text or not is_clock_fact_query(text):
+            context.clock_fact_partial_text = None
+            context.clock_fact_partial_stable_since = None
+            return
+        now = time.monotonic()
+        if context.clock_fact_partial_text == text:
+            if context.clock_fact_partial_stable_since is None:
+                context.clock_fact_partial_stable_since = now
+            elif (
+                context.turn_endpoint_sample is None
+                and now - context.clock_fact_partial_stable_since
+                >= _CLOCK_FACT_PARTIAL_STABLE_S
+            ):
+                endpoint = max(partial.capture_end_sample, context.turn_end_sample or 0)
+                context.turn_endpoint_sample = endpoint
+                context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+                logger.info(
+                    "media early stable clock-fact partial session=%s endpoint=%s text_len=%s",
+                    context.identity.session_id,
+                    endpoint,
+                    len(text),
+                )
+                self._schedule_turn_commit(context)
+        else:
+            context.clock_fact_partial_text = text
+            context.clock_fact_partial_stable_since = now
 
     @staticmethod
     def _observe_partial_asr_result(
@@ -300,6 +364,8 @@ class MediaTurnEndpointMixin:
         context.turn_endpoint_tail_deadline = None
         context.committed_asr_keys.clear()
         context.pending_partial = None
+        context.clock_fact_partial_text = None
+        context.clock_fact_partial_stable_since = None
 
     async def _retire_pending_turn_input_range(
         self,
