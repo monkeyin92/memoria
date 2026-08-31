@@ -23,7 +23,12 @@ from typing import Any
 
 from services.archive.domain import canonical_payload
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.wake_words import DEFAULT_WAKE_WORD_ID, WAKE_WORD_IDS
+from services.control_api.app.wake_words import (
+    DEFAULT_WAKE_WORD_ID,
+    WAKE_WORD_IDS,
+    resolve_wake_word_settings,
+    wake_word_by_id,
+)
 
 AUDIO_MODES = ("full_duplex_verified", "interrupt_assist", "half_duplex_safe")
 WAKE_MODES = ("button", "keyword", "button_or_keyword")
@@ -39,6 +44,8 @@ DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
     "audio_mode": "half_duplex_safe",
     "wake_mode": "button_or_keyword",
     "wake_word_id": DEFAULT_WAKE_WORD_ID,
+    "wake_word_pinyin": "mo li",
+    "wake_word_display": "茉莉",
     "allowed_barge_in": ["button", "keyword"],
 }
 
@@ -276,6 +283,8 @@ class DeviceSettings:
     audio_mode: str
     wake_mode: str
     wake_word_id: str
+    wake_word_pinyin: str
+    wake_word_display: str
     allowed_barge_in: tuple[str, ...]
     updated_by: str
     updated_at: datetime
@@ -293,6 +302,8 @@ class DeviceSettings:
             "audio_mode": self.audio_mode,
             "wake_mode": self.wake_mode,
             "wake_word_id": self.wake_word_id,
+            "wake_word_pinyin": self.wake_word_pinyin,
+            "wake_word_display": self.wake_word_display,
             "allowed_barge_in": list(self.allowed_barge_in),
             "updated_by": self.updated_by,
             "updated_at": _iso(self.updated_at),
@@ -313,6 +324,18 @@ def _settings_from_row(device_id: str, row: Mapping[str, Any]) -> DeviceSettings
         audio_mode=str(raw["audio_mode"]),
         wake_mode=str(raw["wake_mode"]),
         wake_word_id=str(raw.get("wake_word_id", DEFAULT_WAKE_WORD_ID)),
+        wake_word_pinyin=str(
+            raw.get("wake_word_pinyin")
+            or (wake_word_by_id(str(raw.get("wake_word_id", DEFAULT_WAKE_WORD_ID))) or {"pinyin": "mo li"})[
+                "pinyin"
+            ]
+        ),
+        wake_word_display=str(
+            raw.get("wake_word_display")
+            or (wake_word_by_id(str(raw.get("wake_word_id", DEFAULT_WAKE_WORD_ID))) or {"display": "茉莉"})[
+                "display"
+            ]
+        ),
         allowed_barge_in=tuple(str(item) for item in raw["allowed_barge_in"]),
         updated_by=str(row["updated_by"]),
         updated_at=_utc(str(row["updated_at"])),
@@ -341,6 +364,8 @@ def default_settings(device_id: str, *, now: datetime) -> DeviceSettings:
         audio_mode=str(DEFAULT_DEVICE_SETTINGS["audio_mode"]),
         wake_mode=str(DEFAULT_DEVICE_SETTINGS["wake_mode"]),
         wake_word_id=str(DEFAULT_DEVICE_SETTINGS["wake_word_id"]),
+        wake_word_pinyin=str(DEFAULT_DEVICE_SETTINGS["wake_word_pinyin"]),
+        wake_word_display=str(DEFAULT_DEVICE_SETTINGS["wake_word_display"]),
         allowed_barge_in=tuple(str(item) for item in allowed_barge_in),
         updated_by="",
         updated_at=now,
@@ -374,6 +399,13 @@ def _validate_settings_changes(changes: Mapping[str, object]) -> dict[str, objec
             if wake_word_id not in WAKE_WORD_IDS:
                 raise ValueError(f"wake_word_id must be one of {sorted(WAKE_WORD_IDS)}")
             cleaned[key] = wake_word_id
+        elif key == "wake_word_pinyin":
+            cleaned[key] = str(value).strip()
+        elif key == "wake_word_display":
+            display = str(value).strip()
+            if not display:
+                raise ValueError("wake_word_display must not be empty")
+            cleaned[key] = display
         elif key == "learning_mode":
             if value not in LEARNING_MODES:
                 raise ValueError(f"learning_mode must be one of {LEARNING_MODES}")
@@ -431,9 +463,20 @@ class DeviceSettingsAuthority:
             "audio_mode": current.audio_mode,
             "wake_mode": current.wake_mode,
             "wake_word_id": current.wake_word_id,
+            "wake_word_pinyin": current.wake_word_pinyin,
+            "wake_word_display": current.wake_word_display,
             "allowed_barge_in": list(current.allowed_barge_in),
             **cleaned,
         }
+        if {"wake_word_id", "wake_word_pinyin", "wake_word_display"}.intersection(cleaned):
+            resolved = resolve_wake_word_settings(
+                wake_word_id=str(merged["wake_word_id"]),
+                wake_word_pinyin=str(merged["wake_word_pinyin"]),
+                wake_word_display=str(merged["wake_word_display"]),
+            )
+            merged["wake_word_id"] = resolved["wake_word_id"]
+            merged["wake_word_pinyin"] = resolved["wake_word_pinyin"]
+            merged["wake_word_display"] = resolved["wake_word_display"]
         settings_fingerprint = hashlib.sha256(canonical_payload(merged).encode("utf-8")).hexdigest()
         try:
             stored, _ledger = self._store.update_device_settings_and_profile_ledger(

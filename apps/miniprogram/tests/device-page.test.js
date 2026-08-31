@@ -86,7 +86,29 @@ global.wx = {
               device_ready: true,
               note: "当前板卡默认唤醒词。",
             },
+            {
+              id: "mei_mo_li_ya",
+              display: "梅莫里亚",
+              pinyin: "mei mo li ya",
+              syllables: 4,
+              device_ready: true,
+              note: "白名单唤醒词。",
+            },
           ],
+        },
+      });
+      return;
+    }
+    if (pathname === "/v1/devices/wake-word/validate") {
+      options.success({
+        statusCode: 200,
+        data: {
+          wake_word_id: "custom",
+          wake_word_display: options.data.wake_word_display,
+          wake_word_pinyin: options.data.wake_word_pinyin,
+          syllables: 2,
+          source: "custom",
+          warnings: ["两音节唤醒词误唤醒风险较高，建议在安静环境下单独验收。"],
         },
       });
       return;
@@ -736,6 +758,33 @@ test("wake word picker only submits server-approved catalog ids", async () => {
   assert.deepEqual(settingsPatchCalls[0].changes, { wake_word_id: "mo_li" });
   assert.equal(page.data.wakeWordLabel, "茉莉");
   assert.equal(page.data.settings.wake_word_id, "mo_li");
+});
+
+test("custom wake word validates and saves through the settings API", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_custom", session_id: "ses_custom", session_epoch: 1 });
+  settingsPayload = wireSettings({ settings_version: 3, wake_word_id: "mo_li" });
+  diagnosticsPayload = wireDiagnostics();
+  settingsPatchResult = wireSettings({
+    settings_version: 4,
+    wake_word_id: "custom",
+    wake_word_display: "小黑",
+    wake_word_pinyin: "xiao hei",
+  });
+  settingsPatchCalls.length = 0;
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  page.setData({ customWakeWordDisplay: "小黑", customWakeWordPinyin: "xiao hei" });
+  await page.saveCustomWakeWord();
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.deepEqual(settingsPatchCalls[0].changes, {
+    wake_word_id: "custom",
+    wake_word_display: "小黑",
+    wake_word_pinyin: "xiao hei",
+  });
+  assert.equal(page.data.settings.wake_word_id, "custom");
+  assert.equal(page.data.customWakeWordWarnings.length, 1);
 });
 
 test("empty barge-in selection is blocked and voice kind follows AEC evidence", async () => {

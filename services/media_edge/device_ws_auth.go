@@ -113,6 +113,8 @@ type DeviceSettingsClaim struct {
 	AudioMode        string   `json:"audio_mode"`
 	WakeMode         string   `json:"wake_mode"`
 	WakeWordID       string   `json:"wake_word_id,omitempty"`
+	WakeWordPinyin   string   `json:"wake_word_pinyin,omitempty"`
+	WakeWordDisplay  string   `json:"wake_word_display,omitempty"`
 	AllowedBargeIn   []string `json:"allowed_barge_in"`
 }
 

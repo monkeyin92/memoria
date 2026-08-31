@@ -115,11 +115,45 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         assert body["learning_mode"] == "off"
         assert body["wake_word_id"] == "mo_li"
         assert body["wake_word_display"] == "茉莉"
+        assert body["wake_word_pinyin"] == "mo li"
         assert body["runtime_profile_version"] == 0
 
         catalog = await client.get("/v1/devices/wake-word-catalog")
         assert catalog.status_code == 200
-        assert any(item["id"] == "mo_li" for item in catalog.json()["items"])
+        assert "mei_mo_li_ya" in {item["id"] for item in catalog.json()["items"]}
+
+        validated = await client.post(
+            "/v1/devices/wake-word/validate",
+            json={
+                "wake_word_id": "custom",
+                "wake_word_display": "小黑",
+                "wake_word_pinyin": "xiao hei",
+            },
+        )
+        assert validated.status_code == 200
+        assert validated.json()["wake_word_pinyin"] == "xiao hei"
+
+        custom = await client.patch(
+            "/v1/devices/dev_test_01/settings",
+            json={
+                "changes": {
+                    "wake_word_id": "custom",
+                    "wake_word_display": "小黑",
+                    "wake_word_pinyin": "xiao hei",
+                },
+                "reason": "custom_wake_word",
+            },
+        )
+        assert custom.status_code == 200
+        assert custom.json()["wake_word_id"] == "custom"
+        assert custom.json()["wake_word_pinyin"] == "xiao hei"
+
+        whitelist = await client.patch(
+            "/v1/devices/dev_test_01/settings",
+            json={"changes": {"wake_word_id": "mei_mo_li_ya"}, "reason": "whitelist_wake_word"},
+        )
+        assert whitelist.status_code == 200
+        assert whitelist.json()["wake_word_display"] == "梅莫里亚"
 
         patched = await client.patch(
             "/v1/devices/dev_test_01/settings",
@@ -128,8 +162,8 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         assert patched.status_code == 200, patched.text
         updated = patched.json()
         assert updated["learning_mode"] == "tutor_english"
-        assert updated["settings_version"] == 1
-        assert updated["runtime_profile_version"] == 1
+        assert updated["settings_version"] == 3
+        assert updated["runtime_profile_version"] == 3
         assert updated["runtime_apply_status"] == "next_session"
 
         replayed = await client.patch(
@@ -137,7 +171,7 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
             json={"changes": {"learning_mode": "tutor_english"}},
         )
         assert replayed.status_code == 200
-        assert replayed.json()["runtime_profile_version"] == 1
+        assert replayed.json()["runtime_profile_version"] == 3
 
         forbidden_audio = await client.patch(
             "/v1/devices/dev_test_01/settings",
@@ -189,7 +223,7 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         )
         assert allowed_audio.status_code == 200, allowed_audio.text
         assert allowed_audio.json()["audio_mode"] == "full_duplex_verified"
-        assert allowed_audio.json()["runtime_profile_version"] == 3
+        assert allowed_audio.json()["runtime_profile_version"] == 5
 
 
 @pytest.mark.asyncio

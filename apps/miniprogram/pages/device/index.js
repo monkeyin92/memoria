@@ -131,6 +131,9 @@ Page({
     wakeWordIndex: 0,
     wakeWordLabel: "未读取",
     wakeWordNote: "",
+    customWakeWordDisplay: "",
+    customWakeWordPinyin: "",
+    customWakeWordWarnings: [],
     bargeInOptions: ALL_BARGE_IN_OPTIONS,
     bargeInChecked: {},
     allowedAudioModesLabel: "",
@@ -199,6 +202,9 @@ Page({
       wakeWordIndex: 0,
       wakeWordLabel: "未读取",
       wakeWordNote: "",
+      customWakeWordDisplay: "",
+      customWakeWordPinyin: "",
+      customWakeWordWarnings: [],
       bargeInOptions: ALL_BARGE_IN_OPTIONS,
       bargeInChecked: {},
       allowedAudioModesLabel: "",
@@ -341,6 +347,11 @@ Page({
           settings?.wake_word_id ||
           "未读取",
         wakeWordNote: selectedWakeWord?.note || "",
+        customWakeWordDisplay:
+          settings?.wake_word_id === "custom" ? settings?.wake_word_display || "" : "",
+        customWakeWordPinyin:
+          settings?.wake_word_id === "custom" ? settings?.wake_word_pinyin || "" : "",
+        customWakeWordWarnings: [],
         bargeInOptions,
         bargeInChecked,
         allowedAudioModesLabel: audioModeOptions.map((option) => option.label).join(" / "),
@@ -503,6 +514,45 @@ Page({
     await this.saveDeviceSetting({ wake_word_id: option.id });
   },
 
+  onCustomWakeWordDisplayInput(event) {
+    this.setData({ customWakeWordDisplay: event.detail.value, customWakeWordWarnings: [] });
+  },
+
+  onCustomWakeWordPinyinInput(event) {
+    this.setData({ customWakeWordPinyin: event.detail.value, customWakeWordWarnings: [] });
+  },
+
+  async saveCustomWakeWord() {
+    const display = (this.data.customWakeWordDisplay || "").trim();
+    const pinyin = (this.data.customWakeWordPinyin || "").trim();
+    if (!display || !pinyin) {
+      wx.showToast({ title: "请填写显示名和拼音", icon: "none" });
+      return;
+    }
+    try {
+      const validated = await api.validateWakeWord({
+        wake_word_id: "custom",
+        wake_word_display: display,
+        wake_word_pinyin: pinyin,
+      });
+      await this.saveDeviceSetting({
+        wake_word_id: "custom",
+        wake_word_display: validated.wake_word_display,
+        wake_word_pinyin: validated.wake_word_pinyin,
+      });
+      this.setData({ customWakeWordWarnings: validated.warnings || [] });
+      if ((validated.warnings || []).length) {
+        wx.showModal({
+          title: "自定义唤醒词已保存",
+          content: validated.warnings.join("\n"),
+          showCancel: false,
+        });
+      }
+    } catch (error) {
+      wx.showToast({ title: error?.message || "唤醒词无效", icon: "none" });
+    }
+  },
+
   async toggleBargeIn(event) {
     const value = Array.isArray(event.detail.value) ? event.detail.value : [];
     const kinds = value.filter((kind) =>
@@ -544,6 +594,11 @@ Page({
         wakeWordNote:
           this.data.wakeWordOptions.find((option) => option.id === updated.wake_word_id)?.note ||
           "",
+        customWakeWordDisplay:
+          updated.wake_word_id === "custom" ? updated.wake_word_display || "" : "",
+        customWakeWordPinyin:
+          updated.wake_word_id === "custom" ? updated.wake_word_pinyin || "" : "",
+        customWakeWordWarnings: [],
         bargeInChecked: (() => {
           const checked = {};
           for (const kind of Array.isArray(updated.allowed_barge_in)

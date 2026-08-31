@@ -111,7 +111,17 @@
             <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeWordLabel}}</view>
           </picker>
           <text wx:if="{{wakeWordNote}}" class="setting-control-note">{{wakeWordNote}}</text>
-          <text class="setting-control-note">唤醒词会在设备下次连接时生效；需设备固件预装对应模型。</text>
+          <text class="setting-control-note">预设唤醒词会在设备下次连接时生效。</text>
+        </view>
+        <view class="setting-control custom-wake-word">
+          <text class="setting-control-label">自定义唤醒词</text>
+          <text class="setting-control-note">填写中文显示名与拼音（空格分音节，如 xiao hei）。保存后设备下次连接生效。</text>
+          <input class="field-input wake-word-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
+          <input class="field-input wake-word-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="拼音，例如：xiao hei" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
+          <button class="secondary-button wake-word-save" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="saveCustomWakeWord">保存自定义唤醒词</button>
+          <view wx:for="{{customWakeWordWarnings}}" wx:key="*this">
+            <text class="setting-control-note">{{item}}</text>
+          </view>
         </view>
         <view class="setting-control">
           <text class="setting-control-label">允许的打断方式</text>

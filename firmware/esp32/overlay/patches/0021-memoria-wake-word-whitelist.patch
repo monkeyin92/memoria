@@ -1,0 +1,116 @@
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -31,6 +31,7 @@
+             "memoria/device_identity.cc"
+             "memoria/memoria_audio_frame.cc"
+             "memoria/memoria_activation_client.cc"
++            "memoria/memoria_wake_word.cc"
+             "memoria/memoria_protocol.cc"
+             "mcp_server.cc"
+             "system_info.cc"
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1,5 +1,6 @@
+ #include "application.h"
+ 
++#include "memoria/memoria_wake_word.h"
+ #include "assets.h"
+ #include "board.h"
+ #include "display/display.h"
+@@ -358,6 +359,7 @@ void Application::ActivationTask() {
+         ESP_LOGE(TAG, "Memoria assets partition/model load failed");
+         return;
+     }
++    memoria::WakeWordRegistry::GetInstance().LoadFromNvs();
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+     if (!InitializeProtocol()) {
+         return;
+diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/custom_wake_word.cc
+--- a/main/audio/wake_words/custom_wake_word.cc
++++ b/main/audio/wake_words/custom_wake_word.cc
+@@ -1,6 +1,7 @@
+ #include "custom_wake_word.h"
+ #include "audio_service.h"
+ #include "system_info.h"
+ #include "assets.h"
++#include "memoria/memoria_wake_word.h"
+ 
+ #include <esp_log.h>
+ #include <esp_mn_iface.h>
+@@ -88,6 +89,18 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list)
+         ParseWakenetModelConfig();
+     }
+ 
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    std::string active_command;
++    std::string active_display;
++    if (memoria::WakeWordRegistry::GetInstance().ApplyActiveCommand(
++            &active_command, &active_display)) {
++        commands_.clear();
++        commands_.push_back({active_command, active_display, "wake"});
++        ESP_LOGI(TAG, "Using Memoria wake word command=%s display=%s",
++                 active_command.c_str(), active_display.c_str());
++    }
++#endif
++
+     if (models_ == nullptr || models_->num == -1) {
+         ESP_LOGE(TAG, "Failed to initialize wakenet model");
+         return false;
+diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
+--- a/scripts/build_default_assets.py
++++ b/scripts/build_default_assets.py
+@@ -608,6 +608,30 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
+     return None
+ 
+ 
++def is_memoria_board_sdkconfig(sdkconfig_path):
++    if not os.path.exists(sdkconfig_path):
++        return False
++    with io.open(sdkconfig_path, "r", encoding="utf-8") as handle:
++        return "CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1=y" in handle.read()
++
++
++def read_memoria_wake_word_commands():
++    return [
++        {
++            "command": "mo li",
++            "text": "茉莉",
++            "action": "wake",
++        },
++        {
++            "command": "mei mo li ya",
++            "text": "梅莫里亚",
++            "action": "wake",
++        },
++    ]
++
++
+ def get_language_from_multinet_models(multinet_models):
+     """
+     Determine language from multinet model names
+@@ -898,13 +922,17 @@ def main():
+         language = get_language_from_multinet_models(multinet_model_names)
+         
+         # Build multinet_model info structure
++        commands = read_memoria_wake_word_commands() if is_memoria_board_sdkconfig(args.sdkconfig) else [
++            {
++                "command": custom_wake_word_config['wake_word'],
++                "text": custom_wake_word_config['display'],
++                "action": "wake"
++            }
++        ]
+         multinet_model_info = {
+             "language": language,
+             "duration": 3000,  # Default duration in ms
+             "threshold": custom_wake_word_config['threshold'],
+-            "commands": [
+-                {
+-                    "command": custom_wake_word_config['wake_word'],
+-                    "text": custom_wake_word_config['display'],
+-                    "action": "wake"
+-                }
+-            ]
++            "commands": commands
+         }

@@ -106,6 +106,20 @@ PATCH_0018 = (
     / "patches"
     / "0018-disable-simplex-playback-wake-word.patch"
 ).read_text(encoding="utf-8")
+WAKE_WORD_SOURCE = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "files"
+    / "main"
+    / "memoria"
+    / "memoria_wake_word.cc"
+).read_text(encoding="utf-8")
+PATCH_0021 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0021-memoria-wake-word-whitelist.patch"
+).read_text(encoding="utf-8")
 CONTRACT = json.loads(
     (Path(__file__).parents[3] / "packages" / "contracts" / "device-media-v2.json").read_text(
         encoding="utf-8"
@@ -1536,3 +1550,22 @@ def test_readme_direct_edge_is_v2_only_and_v1_is_legacy_gateway() -> None:
     assert "v1 回滚路径" not in FIRMWARE_README
     assert "A v1 hello is accepted only for safe" not in CONTRACTS_README
     assert "the direct edge is v2-only and never accepts a" in CONTRACTS_README
+
+
+def test_session_accepted_applies_whitelist_and_custom_wake_word_settings() -> None:
+    assert 'cJSON_GetObjectItemCaseSensitive(settings, "wake_word_id")' in SOURCE
+    assert 'cJSON_GetObjectItemCaseSensitive(settings, "wake_word_pinyin")' in SOURCE
+    assert 'cJSON_GetObjectItemCaseSensitive(settings, "wake_word_display")' in SOURCE
+    assert "ResolveWakeWordSelection(" in SOURCE
+    assert "WakeWordRegistry::GetInstance().Configure(" in SOURCE
+    assert '"mei_mo_li_ya"' in WAKE_WORD_SOURCE
+    assert '"custom"' in WAKE_WORD_SOURCE
+    assert "PersistToNvs()" in WAKE_WORD_SOURCE
+
+
+def test_wake_word_whitelist_patch_bundles_catalog_commands_and_overrides_custom() -> None:
+    assert "memoria/memoria_wake_word.cc" in PATCH_0021
+    assert "read_memoria_wake_word_commands()" in PATCH_0021
+    assert "WakeWordRegistry::GetInstance().ApplyActiveCommand" in PATCH_0021
+    assert '"mei mo li ya"' in PATCH_0021
+    assert "LoadFromNvs()" in PATCH_0021

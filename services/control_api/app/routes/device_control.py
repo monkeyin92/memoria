@@ -36,7 +36,13 @@ from services.control_api.app.device_control import (
     RuntimeProfileLedger,
     allowed_audio_modes,
 )
-from services.control_api.app.wake_words import wake_word_by_id, wake_word_catalog_payload
+from services.control_api.app.wake_words import (
+    resolve_wake_word_settings,
+    validate_custom_wake_word,
+    wake_word_by_id,
+    wake_word_catalog_payload,
+    wake_word_validation_warnings,
+)
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -89,6 +95,7 @@ class DeviceSettingsResponse(BaseModel):
     audio_mode: str
     wake_mode: str
     wake_word_id: str
+    wake_word_pinyin: str
     wake_word_display: str
     allowed_barge_in: list[str]
     updated_by: str
@@ -153,7 +160,6 @@ def _settings_response(
     binding_version: int,
     runtime_apply_status: Literal["current", "dispatched", "applied", "next_session"] = "current",
 ) -> DeviceSettingsResponse:
-    wake_word = wake_word_by_id(settings.wake_word_id)
     return DeviceSettingsResponse(
         device_id=settings.device_id,
         settings_version=settings.settings_version,
@@ -165,7 +171,8 @@ def _settings_response(
         audio_mode=settings.audio_mode,
         wake_mode=settings.wake_mode,
         wake_word_id=settings.wake_word_id,
-        wake_word_display=wake_word["display"] if wake_word is not None else settings.wake_word_id,
+        wake_word_pinyin=settings.wake_word_pinyin,
+        wake_word_display=settings.wake_word_display,
         allowed_barge_in=list(settings.allowed_barge_in),
         updated_by=settings.updated_by,
         updated_at=settings.updated_at.isoformat().replace("+00:00", "Z"),
@@ -300,6 +307,48 @@ async def _read_live_device_runtime_status(
     if not isinstance(value, dict) or value.get("device_id") != device_id:
         return None
     return cast(dict[str, object], value)
+
+
+class WakeWordValidateBody(_StrictModel):
+    wake_word_id: str | None = None
+    wake_word_pinyin: str | None = None
+    wake_word_display: str | None = None
+
+
+class WakeWordValidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    wake_word_id: str
+    wake_word_pinyin: str
+    wake_word_display: str
+    syllables: int
+    source: str
+    warnings: list[str]
+
+
+@router.post("/wake-word/validate", response_model=WakeWordValidateResponse)
+async def validate_wake_word(body: WakeWordValidateBody) -> WakeWordValidateResponse:
+    wake_word_id = body.wake_word_id or "mo_li"
+    try:
+        if wake_word_id == "custom":
+            if body.wake_word_pinyin is None or body.wake_word_display is None:
+                raise ValueError("custom wake words require wake_word_pinyin and wake_word_display")
+            resolved = validate_custom_wake_word(
+                pinyin=body.wake_word_pinyin,
+                display=body.wake_word_display,
+            )
+        else:
+            resolved = resolve_wake_word_settings(wake_word_id=wake_word_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return WakeWordValidateResponse(
+        wake_word_id=resolved["wake_word_id"],
+        wake_word_pinyin=resolved["wake_word_pinyin"],
+        wake_word_display=resolved["wake_word_display"],
+        syllables=resolved["syllables"],
+        source=resolved["source"],
+        warnings=wake_word_validation_warnings(resolved),
+    )
 
 
 @router.get("/wake-word-catalog")

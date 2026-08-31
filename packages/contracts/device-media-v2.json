@@ -136,8 +136,19 @@
           "type": "string",
           "enum": [
             "mo_li",
-            "mei_mo_li_ya"
+            "mei_mo_li_ya",
+            "custom"
           ]
+        },
+        "wake_word_pinyin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "wake_word_display": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
         },
         "allowed_barge_in": {
           "type": "array",

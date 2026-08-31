@@ -333,6 +333,8 @@ def _validate_device_settings_claim(
             "audio_mode": "half_duplex_safe",
             "wake_mode": "button_or_keyword",
             "wake_word_id": DEFAULT_WAKE_WORD_ID,
+            "wake_word_pinyin": "mo li",
+            "wake_word_display": "茉莉",
             "allowed_barge_in": ["button"],
         }
     required = {
@@ -349,7 +351,8 @@ def _validate_device_settings_claim(
     provided = set(value)
     if not required.issubset(provided):
         raise ValueError("direct device media settings shape is invalid")
-    if provided - required - {"wake_word_id"}:
+    optional = {"wake_word_id", "wake_word_pinyin", "wake_word_display"}
+    if provided - required - optional:
         raise ValueError("direct device media settings shape is invalid")
     integer_values: dict[str, int] = {}
     for field in ("settings_version", "volume_limit", "screen_brightness"):
@@ -375,6 +378,8 @@ def _validate_device_settings_claim(
     wake_word_id = str(value.get("wake_word_id", DEFAULT_WAKE_WORD_ID))
     if wake_word_id not in WAKE_WORD_IDS:
         raise ValueError("direct device media wake_word_id is invalid")
+    wake_word_pinyin = str(value.get("wake_word_pinyin", "mo li"))
+    wake_word_display = str(value.get("wake_word_display", "茉莉"))
     kinds = value["allowed_barge_in"]
     if (
         not isinstance(kinds, (list, tuple))
@@ -393,6 +398,8 @@ def _validate_device_settings_claim(
         "audio_mode": str(value["audio_mode"]),
         "wake_mode": str(value["wake_mode"]),
         "wake_word_id": wake_word_id,
+        "wake_word_pinyin": wake_word_pinyin,
+        "wake_word_display": wake_word_display,
         "allowed_barge_in": [str(kind) for kind in kinds],
     }
 

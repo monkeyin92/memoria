@@ -17,6 +17,7 @@
 #include "http.h"
 #include "memoria_audio_frame.h"
 #include "memoria_bootstrap.h"
+#include "memoria_wake_word.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -1164,6 +1165,8 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     uint32_t screen_brightness = 0;
     std::string requested_audio_mode;
     std::string wake_word_id;
+    std::string wake_word_pinyin;
+    std::string wake_word_display;
     if (settings == nullptr || !cJSON_IsObject(settings) ||
         !GetUint32(settings, "settings_version", &settings_version) ||
         !GetUint32(settings, "volume_limit", &volume_limit) || volume_limit > 100 ||
@@ -1180,9 +1183,24 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         wake_word_item->valuestring != nullptr) {
         wake_word_id = wake_word_item->valuestring;
     }
-    ESP_LOGI(kTag, "applying device settings version=%u profile=%u wake_word=%s",
-             settings_version, profile_version,
-             wake_word_id.empty() ? "default" : wake_word_id.c_str());
+    const cJSON* wake_word_pinyin_item =
+        cJSON_GetObjectItemCaseSensitive(settings, "wake_word_pinyin");
+    if (wake_word_pinyin_item != nullptr && cJSON_IsString(wake_word_pinyin_item) &&
+        wake_word_pinyin_item->valuestring != nullptr) {
+        wake_word_pinyin = wake_word_pinyin_item->valuestring;
+    }
+    const cJSON* wake_word_display_item =
+        cJSON_GetObjectItemCaseSensitive(settings, "wake_word_display");
+    if (wake_word_display_item != nullptr && cJSON_IsString(wake_word_display_item) &&
+        wake_word_display_item->valuestring != nullptr) {
+        wake_word_display = wake_word_display_item->valuestring;
+    }
+    const WakeWordSelection selection =
+        ResolveWakeWordSelection(wake_word_id, wake_word_pinyin, wake_word_display);
+    WakeWordRegistry::GetInstance().Configure(selection);
+    WakeWordRegistry::GetInstance().PersistToNvs();
+    ESP_LOGI(kTag, "applying device settings version=%u profile=%u wake_word=%s command=%s",
+             settings_version, profile_version, selection.id.c_str(), selection.command.c_str());
     // This board declares no AEC reference, no simultaneous capture and
     // playback, no local stop keyword and no duck. The physical stop button
     // and local VAD honestly permit interrupt_assist, but never verified full

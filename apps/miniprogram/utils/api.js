@@ -674,6 +674,13 @@ function getWakeWordCatalog() {
   return rawRequest("/v1/devices/wake-word-catalog");
 }
 
+function validateWakeWord(payload) {
+  return rawRequest("/v1/devices/wake-word/validate", {
+    method: "POST",
+    data: payload,
+  });
+}
+
 /*
  * 设备诊断（PR-18）。只展示服务端权威字段：绑定/设置快照、声学能力登记、
  * 允许的音频模式与 Runtime Profile 版本。端点不可用时由调用方 fail-closed，
@@ -696,6 +703,8 @@ function updateDeviceSettings(deviceId, changes, { expectedVersion } = {}) {
     "audio_mode",
     "wake_mode",
     "wake_word_id",
+    "wake_word_pinyin",
+    "wake_word_display",
     "allowed_barge_in",
   ]);
   const keys = Object.keys(changes);
@@ -879,6 +888,7 @@ module.exports = {
   getDeviceBinding,
   getDeviceSettings,
   getWakeWordCatalog,
+  validateWakeWord,
   getDeviceDiagnostics,
   updateDeviceSettings,
   resolveSessionSubject,
