@@ -3,7 +3,6 @@ set -Eeuo pipefail
 
 tag="${1:?usage: smoke_server_deployment.sh <release-tag>}"
 release="/opt/memoria/releases/$tag"
-h5_release="/var/www/memoria-releases/$tag"
 image="memoria-control-api:$tag"
 container="memoria-control-preflight"
 data_dir="$(mktemp -d /tmp/memoria-preflight-data.XXXXXX)"
@@ -35,7 +34,6 @@ test -f "$release/infra/nginx-memoria-https.conf"
 test -f "$release/infra/nginx-memoria-miniprogram-media.conf"
 test -f "$release/infra/nginx-memoria-device-media.conf"
 test -f "$release/infra/nginx-memoria-device-edge.conf"
-test -f "$h5_release/index.html"
 sudo docker image inspect "$image" >/dev/null
 if sudo ss -ltn | grep -qE ":($api_port|$nginx_port)[[:space:]]"; then
   echo "preflight ports $api_port or $nginx_port are already in use" >&2
@@ -44,7 +42,6 @@ fi
 
 sudo chown 65532:65532 "$data_dir"
 install -d -m 0755 "$www_root"
-ln -s "$h5_release" "$www_root/memoria-h5"
 cp "$release/infra/nginx-memoria-miniprogram-media.conf" "$smoke_miniprogram_media"
 cp "$release/infra/nginx-memoria-device-media.conf" "$smoke_device_media"
 cp "$release/infra/nginx-memoria-device-edge.conf" "$smoke_device_edge"
@@ -107,12 +104,8 @@ sudo nginx -t -c "$nginx_config"
 sudo nginx -c "$nginx_config"
 
 base="http://127.0.0.1:$nginx_port"
-curl -fsS -H "$host_header" -D "$workdir/h5.headers" \
-  "$base/memoria-h5/" -o "$workdir/h5.index"
-curl -fsS -H "$host_header" \
-  "$base/memoria-h5/arbitrary-spa-route" -o "$workdir/h5.spa"
-cmp "$workdir/h5.index" "$workdir/h5.spa"
-grep -qi '^Permissions-Policy: microphone=(self)' "$workdir/h5.headers"
+h5_status="$(curl -sS -o /dev/null -w '%{http_code}' -H "$host_header" "$base/memoria-h5/")"
+test "$h5_status" = "410"
 
 curl -fsS -H "$host_header" "$base/memoria-api/health/live" \
   -o "$workdir/live.json"
@@ -243,4 +236,4 @@ python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["dis
 python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["items"] and body["items"][0]["message_count"] == 1' \
   "$workdir/days.get.json"
 
-echo "server deployment smoke: PASS (candidate H5, SPA, API, owner-only default, SQLite restart)"
+echo "server deployment smoke: PASS (retired H5, API, owner-only default, SQLite restart)"

@@ -10,9 +10,10 @@ from livekit import rtc
 from services.miniprogram_gateway import audio_processing as audio_processing_module
 from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
 
-REPO_ROOT = Path(__file__).parents[3]
-DOWNLINK_FIXTURE = REPO_ROOT / "apps/h5/public/assets/voices/calm_guide.wav"
-NEAR_END_FIXTURE = REPO_ROOT / "apps/h5/public/assets/voices/bright_peer.wav"
+REPO_ROOT = Path(__file__).parent
+FIXTURE_DIR = REPO_ROOT / "fixtures"
+DOWNLINK_FIXTURE = FIXTURE_DIR / "calm_guide.wav"
+NEAR_END_FIXTURE = FIXTURE_DIR / "bright_peer.wav"
 
 
 def _read_mono_pcm16(path: Path) -> tuple[np.ndarray, int]:

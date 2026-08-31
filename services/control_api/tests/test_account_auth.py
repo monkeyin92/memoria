@@ -633,10 +633,15 @@ async def test_wechat_phone_login_creates_one_stable_registered_identity_and_res
             f"/v1/memory/profile/{restored.json()['user_id']}",
             headers={"Authorization": f"Bearer {restored.json()['access_token']}"},
         )
+        subject = app.state.memory_store.get_subject_profile(user_id=first.json()["user_id"])
 
     assert unknown.status_code == 428
     assert unknown.json()["detail"]["code"] == "phone_authorization_required"
     assert first.status_code == 200
+    assert subject is not None
+    assert subject["subject_category"] == "adult"
+    assert subject["birth_year_band"] == "adult"
+    assert subject["age_evidence_status"] == "verified"
     assert first.json()["user_id"].startswith("wx_")
     assert first.json()["account_type"] == "registered"
     assert first.json()["display_name"] == "小林"

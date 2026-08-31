@@ -1,10 +1,5 @@
 {
   "name": "voice-agent",
   "private": true,
-  "version": "0.1.0",
-  "scripts": {
-    "dev:h5": "npm --prefix apps/h5 run dev",
-    "test:h5": "npm --prefix apps/h5 test",
-    "build:h5": "npm --prefix apps/h5 run build"
-  }
+  "version": "0.1.0"
 }

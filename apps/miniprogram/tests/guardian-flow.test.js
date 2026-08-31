@@ -24,10 +24,9 @@ test("guardian page covers child confirmation, granular consent, summary, and al
   assert.doesNotMatch(template, /心理监测|心理诊断评分|严重度分级/);
 });
 
-test("student notice and tutor focus remain explicit client choices", () => {
+test("student notice and bind consent remain explicit client choices", () => {
   const profile = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
-  const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
-  const homeScript = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
+  const bind = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const api = fs.readFileSync(path.join(root, "utils/api.js"), "utf8");
 
   // 敏感入口只能由 Runtime Profile capabilities 驱动，WXML 不得按本地年龄显示。
@@ -38,9 +37,8 @@ test("student notice and tutor focus remain explicit client choices", () => {
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);
   assert.match(profile, /成长小结与监护授权/);
   assert.match(profile, /敏感能力入口已关闭/);
-  assert.match(homeScript, /英语口语/);
-  assert.match(homeScript, /作业陪伴/);
-  assert.match(homeScript, /learning_mode/);
+  assert.match(bind, /英语口语陪练/);
   assert.match(api, /updateDeviceSettings/);
+  assert.match(api, /learning_mode/);
   assert.doesNotMatch(api, /session_focus/);
 });

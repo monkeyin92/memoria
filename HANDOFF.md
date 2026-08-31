@@ -180,10 +180,10 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 
 1. **补阶段 2 串口证据**（可与下面同一次现场）：串口 monitor 记录 `vad.start`/`vad.end`；receipt 已落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md`（session `79b6e405`，tap WAV 已拷本地；缺 UART）。
 2. **阶段 3 + 5 一次现场**（推荐合并）：
-   - 小程序停在**首页** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手）。
-   - 设备唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
+   - 小程序停在**设备** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手；小程序不再发起语音对话）。
+   - 在**设备端**唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
    - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
-   - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明首页起手。
+   - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明设备 tab 确认在线后由硬件起手。
 3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
 4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
 5. **阶段 7**：阶段 2（含串口）+3+4+5 证据齐全后锁定投资人路演剧本。
@@ -206,7 +206,7 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 | Agent | 0、3–7、发版 | `services/agent/src/voice_core/media_session_*`、`services/agent/src/providers/funasr_stt.py`、`services/agent/src/clock_fact_queries.py`；LiveKit 路径仍见 `device_vad.py` |
 | 固件现场 | 1、2、4 | `firmware/esp32/overlay/`（边沿/ES8388 PGA）；hello 能力字段禁止改成真 AEC；刷写 `firmware/esp32/scripts/flash.sh` |
 | Media Edge | 1、2 无播放/无 close | `services/media_edge/`；确认 Direct WSS `wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`，不要落到 LiveKit compat |
-| 控制面 | 3、5 | 首页发起会话、主人 subject capability；配网/激活不在本工单 |
+| 控制面 | 3、5 | 设备 tab 确认在线、主人 subject capability；配网/激活不在本工单 |
 | 路演 | 7 | 不改代码；按锁定剧本念，口径跟 `advertised_duplex_level: none` |
 
 不要改、不要当修复入口：`input_policy` / `capture_allowed`（只对 H5 有效）、设备会话 `barge_in_enabled`、hello 谎称 AEC、`TurnPhase` 生产副作用、DTLN makeup 再往上加。
@@ -305,7 +305,7 @@ cd services/media_edge && go test ./...
 1. 确认设备仍走 Direct Edge：`wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`，容器 healthy，不要误落到 LiveKit compat（无待命）。
 2. 确认 Agent 容器 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap` 可写；每轮对话后立刻把该会话 WAV 取走，避免被 4 MB 上限丢掉。
 3. 串口 monitor 保持到验收结束：`firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX --monitor`（已刷过则只 monitor）。Mac 下载模式仍是按住 BOOT、轻按 RESET、松开 RESET、松开 BOOT。
-4. 小程序已显示「在线，可开始对话」之后，从设备页返回首页再开对话；激活 200 不计入本工单。
+4. 小程序设备页已显示「在线，可开始对话」之后，直接在硬件端开对话；激活 200 不计入本工单。
 
 通过标准：能同时拿到串口、Agent 日志、Edge 日志和至少一段非静音 tap WAV。缺一项不准进入阶段 2。
 
@@ -330,9 +330,9 @@ cd services/media_edge && go test ./...
 
 通过标准：同一 candidate、同一固件摘要下，连续两轮各一次自然完成。然后才允许改 `HANDOFF.md` 里本候选的两轮对话证据日期；仍不得把 `full_duplex_verified` 改为 true。
 
-### 阶段 3 — 单次会话从首页发起
+### 阶段 3 — 单次会话从设备端发起
 
-从小程序首页实际发起一次对话（可与阶段 2 同一天，但日志要能区分「首页发起」）。激活成功、二维码、BLE 配网不计入。
+设备在线且小程序设备 tab 已确认状态后，在硬件端实际发起一次对话（可与阶段 2 同一天，但日志要能区分「设备端起手」）。激活成功、二维码、BLE 配网不计入。
 
 通过标准：用户听到完整回答，且阶段 2 的 fence/playback 证据齐全。
 
@@ -391,7 +391,7 @@ Demo 收尾与再唤醒（阶段 7 可抄；整段路演剧本仍待阶段 2+3�
 
 - 阶段 2+3 pass：可把本候选 `verified` 写成带日期的两轮 Actual Heard；仍保持 `full_duplex_verified: false`、`advertised_duplex_level: none`。
 - 阶段 4、6 按项补证据日期；未做的保持 pending。阶段 5 已书面降级为超时待命，不得把 `conversation_end_explicit` / 「再见」写成已验证。
-- 五项历史验收（首页对话、再见、10 次唤醒、三环境、天气+星期几）全部自然完成后，才把全局 `direct_real_device_verified` 改为 true。这仍不自动更新 AEC 或全双工。
+- 五项历史验收（设备端对话、再见、10 次唤醒、三环境、天气+星期几）全部自然完成后，才把全局 `direct_real_device_verified` 改为 true。这仍不自动更新 AEC 或全双工。
 - 原始 receipt 继续用 `scripts/hardware_realtime_acceptance.py verify`；本工单不要求跑通 T1–T14 双讲格。
 
 ## 实时话轮状态层候选
@@ -421,9 +421,9 @@ fcdr_proxy_verified: local_agent_full_regression_mypy_and_low_cardinality_contra
 
 ## 生产拓扑
 
-- H5：`https://aigcnice.com:8443/`；Control API：同源 `/memoria-api/`。
+- Control API：`https://aigcnice.com:8443/memoria-api/`。
 - 当前 runtime：`/opt/memoria/current` 原子软链；候选目录：`/opt/memoria/releases/`。
-- 当前 H5：`/var/www/memoria-h5` 原子软链；候选目录：`/var/www/memoria-releases/`。
+- 已退役 H5：`/memoria-h5` 固定返回 `410 Gone`，不再发布或切流静态前端。
 - LiveKit：`livekit/livekit-server:v1.13.5`，Compose project `memoria-livekit`。
 - Control API loopback：`127.0.0.1:8791`；legacy mini gateway：`127.0.0.1:8792`；legacy device gateway：`127.0.0.1:8793`；direct Edge device WSS：`127.0.0.1:8794`。
 - 终身档案：PostgreSQL 17 + pgvector；对象：MinIO；设备共享权威：独立 mTLS Redis。
@@ -447,8 +447,8 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 ## 发布前门禁
 
 1. 在干净 worktree 锁定 source commit/tag，确认只包含目标 slice。
-2. 运行 Python、H5、小程序、Go、契约、镜像和 `git diff --check` 门禁；供应商与 LiveKit smoke 必须使用候选容器。
-3. 冻结 source、images、H5、manifest、verifier 的 SHA-256；验证 OCI revision/role/architecture。
+2. 运行 Python、小程序、Go、契约、镜像和 `git diff --check` 门禁；供应商与 LiveKit smoke 必须使用候选容器。
+3. 冻结 source、images、manifest、verifier 的 SHA-256；验证 OCI revision/role/architecture。
 4. 现场记录当前容器 ID/image ID、软链、env 摘要、数据快照和一个可运行回滚点。
 5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
 
@@ -472,7 +472,7 @@ scripts/deploy_agent_component.sh \
 
 ## 完整制品上传与校验
 
-构建机先生成 portable verifier 和 manifest；manifest 必须显式绑定三个主工件：
+构建机先生成 portable verifier 和 manifest；manifest 必须显式绑定 source 与 images 两个主工件：
 
 ```bash
 uv run python scripts/package_release_verifier.py \
@@ -483,14 +483,13 @@ uv run python scripts/create_release_manifest.py \
   --expected-commit "$SOURCE_COMMIT" \
   --source-archive "$ARTIFACT_DIR/source.tar" \
   --images-archive "$ARTIFACT_DIR/images.tar" \
-  --h5-artifact "$ARTIFACT_DIR/h5.tar.gz" \
   --output "$ARTIFACT_DIR/release-manifest.json"
 ```
 
 `images.tar + images.tar.sha256` 必须成对上传。构建机在工件目录内校验，避免把目录前缀重复拼接：
 
 ```bash
-for artifact in source.tar images.tar h5.tar.gz release-manifest.json release-verifier.pyz; do
+for artifact in source.tar images.tar release-manifest.json release-verifier.pyz; do
   (cd "$ARTIFACT_DIR" && sha256sum "$artifact")
 done
 ```
@@ -522,17 +521,15 @@ printf '%s  %s\n' "$MEMORIA_RELEASE_MANIFEST_SHA256" "$UPLOAD_DIR/release-manife
 
 python3 "$UPLOAD_DIR/release-verifier.pyz" \
   --manifest "$UPLOAD_DIR/release-manifest.json" \
-  --source-archive "$UPLOAD_DIR/source.tar" \
-  --images-archive "$UPLOAD_DIR/images.tar" \
-  --h5-artifact "$UPLOAD_DIR/h5.tar.gz" \
+  --artifact-dir "$UPLOAD_DIR" \
+  --expected-tag "$RELEASE_TAG" \
+  --expected-commit "$SOURCE_COMMIT" \
   --verify-imported-images
 
 tar --extract --file "$UPLOAD_DIR/source.tar" --directory "$CANDIDATE_DIR"
 ```
 
 不允许手工 retag 缺少 manifest 绑定的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、provider smoke、容器健康、私有 readiness、外部 Host/SNI 路由和延迟复核。
-
-旧匿名 H5 用户的迁移窗口必须按既定截止执行：新 H5 验收后，原定窗口保留到绝对截止，不因发布提前删除兼容入口。
 
 ## 数据层启动、备份与恢复
 

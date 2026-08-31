@@ -434,7 +434,7 @@ def test_production_image_context_excludes_runtime_data() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert {"data", "apps/h5/qa"}.issubset(ignored)
+    assert {"data"}.issubset(ignored)
 
 
 def test_current_compose_never_builds_the_removed_web_client() -> None:
@@ -550,7 +550,6 @@ def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> 
     assert "if: needs.changes.outputs.agent == 'true'" in workflow
     assert "if: needs.changes.outputs.python == 'true'" in workflow
     assert workflow.count("if: needs.changes.outputs.media_edge == 'true'") == 2
-    assert "if: needs.changes.outputs.h5 == 'true'" in workflow
     assert "if: needs.changes.outputs.miniprogram == 'true'" in workflow
     assert "services/agent/tests/unit" in workflow
     assert "pytest --import-mode=importlib --no-cov" in workflow
@@ -602,13 +601,11 @@ def test_nginx_bounds_wechat_avatar_upload_without_raising_all_auth_routes() -> 
     assert "proxy_pass http://127.0.0.1:8791/v1/auth/wechat-avatars/;" in avatars
 
 
-def test_nginx_protects_h5_with_csp_and_hides_signed_sample_tokens_from_access_logs() -> None:
+def test_nginx_retires_h5_and_hides_signed_sample_tokens_from_access_logs() -> None:
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
 
-    h5 = nginx.split("location = /memoria-h5/index.html {", 1)[1].split("}", 1)[0]
-    assert "Content-Security-Policy" in h5
-    assert "connect-src 'self' wss:" in h5
-    assert "media-src 'self' blob:" in h5
+    h5 = nginx.split("location ^~ /memoria-h5 {", 1)[1].split("}", 1)[0]
+    assert "return 410" in h5
 
     exact = "location ^~ /memoria-api/v1/voices/provider-samples/ {"
     assert nginx.count(exact) == 1

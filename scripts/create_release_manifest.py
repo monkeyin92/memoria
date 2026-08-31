@@ -12,13 +12,11 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.package_h5_artifact import verify_h5_artifact  # noqa: E402
 from scripts.verify_release_manifest import verify_image_archive  # noqa: E402
 from scripts.verify_release_source import verify, verify_source_archive  # noqa: E402
 
 _PAYLOAD_KEYS = {
     "commit",
-    "h5_artifact",
     "images_archive",
     "release_tag",
     "schema_version",
@@ -54,18 +52,15 @@ def create_manifest(
     expected_commit: str,
     source_archive: Path,
     images_archive: Path,
-    h5_artifact: Path,
     output: Path,
 ) -> dict[str, object]:
     root = root.expanduser().resolve()
     commit = verify(root, expected_commit=expected_commit, release_tag=release_tag)
     source_archive = source_archive.expanduser().resolve()
     images_archive = images_archive.expanduser().resolve()
-    h5_artifact = h5_artifact.expanduser().resolve()
     records = {
         "source_archive": _record(source_archive),
         "images_archive": _record(images_archive),
-        "h5_artifact": _record(h5_artifact),
     }
     verify_source_archive(
         archive=source_archive,
@@ -73,13 +68,11 @@ def create_manifest(
         repository_root=root,
     )
     verify_image_archive(archive=images_archive, expected_commit=commit, release_tag=release_tag)
-    verify_h5_artifact(artifact=h5_artifact, expected_commit=commit, release_tag=release_tag)
     payload: dict[str, object] = {
         "commit": commit,
-        "h5_artifact": records["h5_artifact"],
         "images_archive": records["images_archive"],
         "release_tag": release_tag,
-        "schema_version": 2,
+        "schema_version": 3,
         "source_archive": records["source_archive"],
     }
     digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
@@ -97,7 +90,6 @@ def main() -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--source-archive", required=True, type=Path)
     parser.add_argument("--images-archive", required=True, type=Path)
-    parser.add_argument("--h5-artifact", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
@@ -107,7 +99,6 @@ def main() -> int:
             expected_commit=args.expected_commit,
             source_archive=args.source_archive,
             images_archive=args.images_archive,
-            h5_artifact=args.h5_artifact,
             output=args.output,
         )
     except ValueError as exc:

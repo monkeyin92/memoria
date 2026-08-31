@@ -80,12 +80,9 @@ test("test sources are explicitly excluded from the WeChat package", () => {
   assert.ok(ignoredFolders.has("tests"), "tests 必须排除出微信生产包");
 });
 
-test("cold start, home, memory and device surfaces never create a RecorderManager", () => {
+test("cold start, memory and device surfaces never create a RecorderManager", () => {
   const scoped = [
     path.join(root, "app.js"),
-    ...fs.readdirSync(path.join(root, "pages", "home")).map((name) =>
-      path.join(root, "pages", "home", name),
-    ),
     ...fs.readdirSync(path.join(root, "pages", "memory")).map((name) =>
       path.join(root, "pages", "memory", name),
     ),
@@ -93,7 +90,7 @@ test("cold start, home, memory and device surfaces never create a RecorderManage
       path.join(root, "pages", "device", name),
     ),
   ];
-  matches(scoped, /getRecorderManager/, "冷启动/首页/回顾/设备页创建 RecorderManager");
+  matches(scoped, /getRecorderManager/, "冷启动/回顾/设备页创建 RecorderManager");
 });
 
 test("production package contains no RecorderManager usage at all", () => {
@@ -159,12 +156,8 @@ test("control api exposes no miniprogram media session endpoints", () => {
   }
 });
 
-test("home page is dashboard-only and does not import media modules", () => {
-  const homeScript = fs.readFileSync(path.join(root, "pages", "home", "index.js"), "utf8");
-  const homeTemplate = fs.readFileSync(path.join(root, "pages", "home", "index.wxml"), "utf8");
-  assert.doesNotMatch(homeScript, /media-gateway|media-protocol|pcm-player|transcript-events|MiniProgramMediaSession/);
-  assert.doesNotMatch(homeScript, /wx\.authorize|scope\.record|connectSocket|getRecorderManager/);
-  assert.doesNotMatch(homeTemplate, /开始语音对话|使用文字对话|实时对话|恢复对话|结束语音对话/);
-  assert.match(homeTemplate, /机器人状态/);
-  assert.match(homeTemplate, /今日概览/);
+test("home voice dashboard page stays removed", () => {
+  assert.equal(fs.existsSync(path.join(root, "pages", "home")), false);
+  const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
+  assert.equal(appConfig.pages.includes("pages/home/index"), false);
 });

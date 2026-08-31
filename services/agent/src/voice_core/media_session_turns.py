@@ -13,6 +13,7 @@ from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.conversation_projection import ProjectionPatch
+from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_session_types import (
@@ -43,6 +44,32 @@ _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 
 
 class MediaTurnEndpointMixin:
+    """Coordinate VAD endpoints with ASR finals for one media session."""
+
+    def _classify_provider_final_missing(self, context: _MediaVoiceSession) -> str:
+        rms = 0
+        min_rms = 100
+        provider = getattr(context, "provider", None)
+        asr_session = getattr(provider, "_asr", None)
+        rms_raw = getattr(asr_session, "task_pcm_rms", None)
+        if rms_raw is not None:
+            rms = int(rms_raw)
+        rescue = getattr(getattr(asr_session, "config", None), "rescue_config", None)
+        if rescue is not None:
+            min_rms = int(rescue.min_rms)
+        empty_audio = False
+        has_empty = getattr(asr_session, "_has_replaceable_empty_audio_failure", None)
+        if callable(has_empty):
+            empty_audio = bool(has_empty())
+        outcome = classify_funasr_empty_outcome(
+            rms=rms,
+            min_rms=min_rms,
+            empty_audio_error=empty_audio,
+            pcm_gated=context.turn_start_sample is None and rms == 0,
+        )
+        self.metrics.inc_funasr_empty_transcript(outcome)
+        return outcome
+
     """Own the bounded VAD/ASR endpoint state behind the registry interface."""
 
     if TYPE_CHECKING:
@@ -496,13 +523,14 @@ class MediaTurnEndpointMixin:
             await self._emit_projection_patch(context, discarded)
         logger.warning(
             "media turn discarded after ASR tail timeout session=%s stream_epoch=%s endpoint=%s "
-            "partial_present=%s partial_text_len=%s partial_end_sample=%s",
+            "partial_present=%s partial_text_len=%s partial_end_sample=%s asr_empty_class=%s",
             session_id,
             stream_epoch,
             endpoint_sample,
             partial is not None,
             len(partial.text.strip()) if partial is not None else 0,
             partial.capture_end_sample if partial is not None else None,
+            self._classify_provider_final_missing(context),
         )
         if endpoint_sample > 0:
             self._nudge_missed_hearing(context)

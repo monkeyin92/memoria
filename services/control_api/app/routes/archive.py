@@ -2672,6 +2672,13 @@ async def review_memory(
         "status": reviewed.status,
         "value": reviewed.value,
         "review_event_id": reviewed.review_event_id,
+        "trace": {
+            "claim_id": reviewed.claim_id,
+            "action": body.action,
+            "reviewed_at": datetime.now(UTC).isoformat(),
+            "reviewer_account_id": user.user_id,
+            "review_event_id": reviewed.review_event_id,
+        },
     }
 
 

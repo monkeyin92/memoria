@@ -165,7 +165,6 @@ def test_release_verifier_zipapp_is_deterministic_and_runs_from_reviewed_commit(
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
     for name in (
-        "package_h5_artifact.py",
         "verify_release_manifest.py",
         "verify_release_source.py",
     ):
@@ -205,7 +204,7 @@ def test_release_verifier_zipapp_is_deterministic_and_runs_from_reviewed_commit(
     assert "--manifest" in completed.stdout
 
 
-def test_release_manifest_is_canonical_and_binds_source_images_and_h5(
+def test_release_manifest_is_canonical_and_binds_source_and_images(
     tmp_path: Path,
 ) -> None:
     root, commit, release_tag = _repo(tmp_path)
@@ -213,18 +212,6 @@ def test_release_manifest_is_canonical_and_binds_source_images_and_h5(
     create_source_archive(root=root, expected_commit=commit, release_tag=release_tag, output=source)
     artifact = tmp_path / "images.tar"
     _image_archive(artifact, commit=commit, tag=release_tag)
-    h5_artifact = tmp_path / "h5-dist.tar.gz"
-    h5_source = tmp_path / "dist"
-    h5_source.mkdir()
-    (h5_source / "index.html").write_text("ok", encoding="utf-8")
-    from scripts.package_h5_artifact import package_h5_artifact
-
-    package_h5_artifact(
-        source=h5_source,
-        output=h5_artifact,
-        expected_commit=commit,
-        release_tag=release_tag,
-    )
     output = tmp_path / "release-manifest.json"
 
     completed = subprocess.run(
@@ -241,8 +228,6 @@ def test_release_manifest_is_canonical_and_binds_source_images_and_h5(
             str(source),
             "--images-archive",
             str(artifact),
-            "--h5-artifact",
-            str(h5_artifact),
             "--output",
             str(output),
         ],
@@ -258,13 +243,14 @@ def test_release_manifest_is_canonical_and_binds_source_images_and_h5(
     )
     assert manifest["release_tag"] == release_tag
     assert manifest["commit"] == commit
+    assert manifest["schema_version"] == 3
     assert manifest["source_archive"] == {
         "name": source.name,
         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "size": source.stat().st_size,
     }
     assert manifest["images_archive"]["name"] == artifact.name
-    assert manifest["h5_artifact"]["name"] == h5_artifact.name
+    assert "h5_artifact" not in manifest
     assert len(manifest["digest"]) == 64
 
 
@@ -272,8 +258,6 @@ def test_release_manifest_rejects_missing_artifact_and_wrong_tag(tmp_path: Path)
     root, commit, release_tag = _repo(tmp_path)
     source = tmp_path / "source.tar"
     create_source_archive(root=root, expected_commit=commit, release_tag=release_tag, output=source)
-    h5 = tmp_path / "h5-dist.tar.gz"
-    h5.write_bytes(b"not an H5 artifact")
     output = tmp_path / "release-manifest.json"
 
     with pytest.raises(ValueError, match="not a regular file"):
@@ -283,7 +267,6 @@ def test_release_manifest_rejects_missing_artifact_and_wrong_tag(tmp_path: Path)
             expected_commit=commit,
             source_archive=source,
             images_archive=tmp_path / "missing.tar",
-            h5_artifact=h5,
             output=output,
         )
     with pytest.raises(ValueError, match="release tag does not exist"):
@@ -293,7 +276,6 @@ def test_release_manifest_rejects_missing_artifact_and_wrong_tag(tmp_path: Path)
             expected_commit=commit,
             source_archive=source,
             images_archive=source,
-            h5_artifact=h5,
             output=output,
         )
 
@@ -308,15 +290,6 @@ def test_release_manifest_verifier_binds_expected_source_and_complete_artifact_s
     create_source_archive(root=root, expected_commit=commit, release_tag=release_tag, output=source)
     images = artifact_dir / "images.tar"
     _image_archive(images, commit=commit, tag=release_tag)
-    h5_source = tmp_path / "dist"
-    h5_source.mkdir()
-    (h5_source / "index.html").write_text("ok", encoding="utf-8")
-    h5 = artifact_dir / "h5-dist.tar.gz"
-    from scripts.package_h5_artifact import package_h5_artifact
-
-    package_h5_artifact(
-        source=h5_source, output=h5, expected_commit=commit, release_tag=release_tag
-    )
     manifest_path = artifact_dir / "release-manifest.json"
     create_manifest(
         root=root,
@@ -324,7 +297,6 @@ def test_release_manifest_verifier_binds_expected_source_and_complete_artifact_s
         expected_commit=commit,
         source_archive=source,
         images_archive=images,
-        h5_artifact=h5,
         output=manifest_path,
     )
 
@@ -346,15 +318,6 @@ def test_release_manifest_verifier_rejects_tampering_and_wrong_pairing(tmp_path:
     create_source_archive(root=root, expected_commit=commit, release_tag=release_tag, output=source)
     images = artifact_dir / "images.tar"
     _image_archive(images, commit=commit, tag=release_tag)
-    h5_source = tmp_path / "dist"
-    h5_source.mkdir()
-    (h5_source / "index.html").write_text("ok", encoding="utf-8")
-    h5 = artifact_dir / "h5-dist.tar.gz"
-    from scripts.package_h5_artifact import package_h5_artifact
-
-    package_h5_artifact(
-        source=h5_source, output=h5, expected_commit=commit, release_tag=release_tag
-    )
     manifest_path = artifact_dir / "release-manifest.json"
     create_manifest(
         root=root,
@@ -362,7 +325,6 @@ def test_release_manifest_verifier_rejects_tampering_and_wrong_pairing(tmp_path:
         expected_commit=commit,
         source_archive=source,
         images_archive=images,
-        h5_artifact=h5,
         output=manifest_path,
     )
     kwargs = {
@@ -394,39 +356,6 @@ def test_image_archive_rejects_a_retagged_or_wrong_role_image(tmp_path: Path) ->
         verify_image_archive(archive=archive, expected_commit="a" * 40, release_tag="release-test")
 
 
-def test_manifest_creation_rejects_a_stale_h5_even_if_its_digest_is_recomputed(
-    tmp_path: Path,
-) -> None:
-    root, commit, release_tag = _repo(tmp_path)
-    source = tmp_path / "source.tar"
-    create_source_archive(root=root, expected_commit=commit, release_tag=release_tag, output=source)
-    images = tmp_path / "images.tar"
-    _image_archive(images, commit=commit, tag=release_tag)
-    h5_source = tmp_path / "dist"
-    h5_source.mkdir()
-    (h5_source / "index.html").write_text("old release", encoding="utf-8")
-    h5 = tmp_path / "h5-dist.tar.gz"
-    from scripts.package_h5_artifact import package_h5_artifact
-
-    package_h5_artifact(
-        source=h5_source,
-        output=h5,
-        expected_commit=commit,
-        release_tag="old-release",
-    )
-
-    with pytest.raises(ValueError, match="commit does not match"):
-        create_manifest(
-            root=root,
-            release_tag=release_tag,
-            expected_commit=commit,
-            source_archive=source,
-            images_archive=images,
-            h5_artifact=h5,
-            output=tmp_path / "release-manifest.json",
-        )
-
-
 def test_production_runbook_verifies_manifest_and_portable_sidecars() -> None:
     runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
@@ -434,7 +363,6 @@ def test_production_runbook_verifies_manifest_and_portable_sidecars() -> None:
     assert 'python3 "$UPLOAD_DIR/release-verifier.pyz"' in runbook
     assert "--source-archive" in runbook
     assert "--images-archive" in runbook
-    assert "--h5-artifact" in runbook
     assert "--verify-imported-images" in runbook
     assert 'docker tag "memoria-speaker-model' not in runbook
     assert 'cd "$ARTIFACT_DIR" && sha256sum "$artifact"' in runbook
@@ -445,5 +373,4 @@ def test_production_runbook_verifies_manifest_and_portable_sidecars() -> None:
     extraction = runbook.index('tar --extract --file "$UPLOAD_DIR/source.tar"')
     assert trusted_hash < trusted_verify < extraction
     assert trusted_manifest < trusted_verify
-    assert "新 H5 切流并验收后立即" not in runbook
-    assert "原定窗口保留到绝对截止" in runbook
+    assert "410 Gone" in runbook

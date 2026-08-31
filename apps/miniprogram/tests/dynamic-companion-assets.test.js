@@ -4,14 +4,6 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.join(__dirname, "..");
-const homeTemplate = fs.readFileSync(
-  path.join(root, "pages/home/index.wxml"),
-  "utf8",
-);
-const homeScript = fs.readFileSync(
-  path.join(root, "pages/home/index.js"),
-  "utf8",
-);
 const profileTemplate = fs.readFileSync(
   path.join(root, "pages/profile/index.wxml"),
   "utf8",
@@ -42,7 +34,6 @@ test("companion images use literal source paths so real packages retain them", (
   );
   for (const companionId of companionIds) {
     const assetPath = `/assets/companions/miniprogram/${companionId}.png`;
-    assert.match(homeTemplate, new RegExp(`src="${assetPath}"`));
     assert.match(profileTemplate, new RegExp(`src="${assetPath}"`));
     const asset = fs.readFileSync(path.join(root, assetPath));
     assert.deepEqual(
@@ -52,16 +43,10 @@ test("companion images use literal source paths so real packages retain them", (
     );
   }
   assert.doesNotMatch(
-    homeTemplate,
-    /\/assets\/companions\/miniprogram\/\{\{companion\.id\}\}\.png/,
-  );
-  assert.doesNotMatch(
     profileTemplate,
     /\/assets\/companions\/miniprogram\/\{\{item\.id\}\}\.png/,
   );
-  assert.doesNotMatch(homeScript, /\/assets\/companions\/miniprogram\/\$\{companion\.id\}\.png/);
   assert.doesNotMatch(profileScript, /\/assets\/companions\/miniprogram\/\$\{.+?\}\.png/);
-  assert.doesNotMatch(homeTemplate, /src="\/[^"]+\.webp"/);
   assert.doesNotMatch(profileTemplate, /src="\/[^"]+\.webp"/);
   for (const template of pageTemplates) {
     assert.doesNotMatch(

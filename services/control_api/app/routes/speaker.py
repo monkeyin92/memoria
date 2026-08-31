@@ -26,6 +26,7 @@ from services.control_api.app.security import (
     require_active_voice_session,
     require_authenticated_user,
 )
+from services.control_api.app.subject_verification import speaker_enrollment_remediation
 from services.speaker.domain import (
     EnrollmentQualityError,
     EnrollmentRequest,
@@ -253,19 +254,30 @@ async def _speaker_status_payload(request: Request, *, account_id: str) -> dict[
         if allowed and registered
         else "blocked"
     )
+    subject_payload = (
+        {
+            "subject_category": profile.get("subject_category"),
+            "birth_year_band": profile.get("birth_year_band"),
+            "age_evidence_status": profile.get("age_evidence_status"),
+            "subject_revision": profile.get("subject_revision"),
+        }
+        if profile is not None
+        else None
+    )
+    resolved_block_code = None if allowed and registered else block_code or "account_not_registered"
     return {
         "capability": "speaker_enrollment",
         "capability_allowed": allowed and registered,
-        "block_code": None if allowed and registered else block_code or "account_not_registered",
-        "subject": (
-            {
-                "subject_category": profile.get("subject_category"),
-                "birth_year_band": profile.get("birth_year_band"),
-                "age_evidence_status": profile.get("age_evidence_status"),
-                "subject_revision": profile.get("subject_revision"),
-            }
-            if profile is not None
-            else None
+        "block_code": resolved_block_code,
+        "subject": subject_payload,
+        "remediation": speaker_enrollment_remediation(
+            block_code=resolved_block_code,
+            registered=registered,
+            has_wechat_phone=_store(request).has_external_identity(
+                user_id=account_id,
+                provider="wechat_phone",
+            ),
+            subject=subject_payload,
         ),
         "enrollment": {
             "state": state,

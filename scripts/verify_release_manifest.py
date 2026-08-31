@@ -14,13 +14,11 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.package_h5_artifact import verify_h5_artifact  # noqa: E402
 from scripts.verify_release_source import verify_source_archive  # noqa: E402
 
 _MANIFEST_KEYS = {
     "commit",
     "digest",
-    "h5_artifact",
     "images_archive",
     "release_tag",
     "schema_version",
@@ -169,7 +167,7 @@ def verify_release_manifest(
         raise ValueError("release manifest is not canonical JSON")
     if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_KEYS:
         raise ValueError("release manifest shape is invalid")
-    if manifest.get("schema_version") != 2:
+    if manifest.get("schema_version") != 3:
         raise ValueError("release manifest schema version is unsupported")
     if manifest.get("release_tag") != expected_tag:
         raise ValueError("release manifest tag does not match deployment")
@@ -181,7 +179,7 @@ def verify_release_manifest(
         raise ValueError("release manifest digest does not match payload")
     records = {
         label: _record(manifest.get(label), label=label.replace("_", " "))
-        for label in ("source_archive", "images_archive", "h5_artifact")
+        for label in ("source_archive", "images_archive")
     }
     names = [str(record["name"]) for record in records.values()]
     if len(names) != len(set(names)):
@@ -193,9 +191,6 @@ def verify_release_manifest(
     verify_source_archive(archive=paths["source_archive"], expected_commit=expected_commit)
     verify_image_archive(
         archive=paths["images_archive"], expected_commit=expected_commit, release_tag=expected_tag
-    )
-    verify_h5_artifact(
-        artifact=paths["h5_artifact"], expected_commit=expected_commit, release_tag=expected_tag
     )
     return manifest
 

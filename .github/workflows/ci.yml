@@ -14,7 +14,6 @@ jobs:
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
       python: ${{ steps.filter.outputs.python }}
-      h5: ${{ steps.filter.outputs.h5 }}
       media_edge: ${{ steps.filter.outputs.media_edge }}
       miniprogram: ${{ steps.filter.outputs.miniprogram }}
     steps:
@@ -45,8 +44,6 @@ jobs:
               - 'infra/Dockerfile.control-api'
               - 'infra/Dockerfile.miniprogram-gateway'
               - 'infra/Dockerfile.speaker-model'
-            h5:
-              - 'apps/h5/**'
             media_edge:
               - 'packages/proto/**'
               - 'services/media_edge/**'
@@ -158,27 +155,6 @@ jobs:
         run: uv run python scripts/provider_smoke_test.py
         env:
           OFFLINE_MOCK: "true"
-
-  h5:
-    needs: changes
-    if: needs.changes.outputs.h5 == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/h5/package-lock.json
-      - name: Install
-        working-directory: apps/h5
-        run: npm ci
-      - name: Test
-        working-directory: apps/h5
-        run: npm test
-      - name: Build
-        working-directory: apps/h5
-        run: npm run build
 
   media-edge:
     needs: changes

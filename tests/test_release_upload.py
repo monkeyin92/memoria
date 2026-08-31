@@ -12,8 +12,6 @@ ARTIFACTS = (
     "source.tar.sha256",
     "images.tar",
     "images.tar.sha256",
-    "h5-dist.tar.gz",
-    "h5-dist.tar.gz.sha256",
     "release-manifest.json",
     "release-verifier.pyz",
 )
@@ -22,7 +20,7 @@ ARTIFACTS = (
 def _artifacts(tmp_path: Path) -> Path:
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
-    for name in ("source.tar", "images.tar", "h5-dist.tar.gz"):
+    for name in ("source.tar", "images.tar"):
         payload = f"artifact:{name}\n".encode()
         (artifact_dir / name).write_bytes(payload)
         (artifact_dir / f"{name}.sha256").write_text(

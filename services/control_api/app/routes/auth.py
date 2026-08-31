@@ -37,6 +37,7 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
+from services.control_api.app.subject_verification import maybe_verify_adult_from_wechat_phone
 from services.control_api.app.wechat_auth import (
     WechatAuthError,
     code_to_phone,
@@ -344,12 +345,15 @@ async def login_wechat(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "wechat_identity_conflict"},
         ) from exc
+    now = _utc_now()
     profile = store.update_external_profile(
         user_id=user_id,
         display_name=body.display_name,
         phone_number_masked=masked_phone,
-        now=_utc_now(),
+        now=now,
     )
+    if body.phone_code is not None:
+        maybe_verify_adult_from_wechat_phone(store, user_id=user_id, now=now)
     issued = _issue_session(request=request, response=response, user_id=user_id)
     assert issued is not None
     token, ttl = issued

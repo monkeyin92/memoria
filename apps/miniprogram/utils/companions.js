@@ -1,4 +1,4 @@
-// 伙伴目录。face/chest 坐标与 H5（apps/h5/src/lib/companions.js）保持一致，
+// 伙伴目录。face/chest 坐标用于小程序头像渲染。
 // 以吉祥物方画布百分比描述脸屏位置，供 CSS 表情骨架定位。
 const companions = Object.freeze([
   {

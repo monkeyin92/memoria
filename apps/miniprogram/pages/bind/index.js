@@ -475,6 +475,6 @@ Page({
 
 
   goHome() {
-    wx.switchTab({ url: "/pages/home/index" });
+    wx.switchTab({ url: "/pages/device/index" });
   },
 });

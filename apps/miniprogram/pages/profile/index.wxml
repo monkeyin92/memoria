@@ -102,10 +102,6 @@
       <view><text class="setting-name">自动生成每日回顾</text><text class="setting-desc">每次聊天结束后静默整理</text></view>
       <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#22e5ff" />
     </view>
-    <view class="setting-row">
-      <view><text class="setting-name">语音回应</text><text class="setting-desc">让伙伴用声音陪你</text></view>
-      <switch checked="{{profile.voice_reply}}" data-key="voice_reply" bindchange="onSwitch" color="#22e5ff" />
-    </view>
     <view class="setting-row setting-disabled">
       <view><text class="setting-name">温柔提醒</text><text class="setting-desc">即将开放 · 在合适的时候问候你</text></view>
       <switch checked="{{profile.gentle_reminders}}" data-key="gentle_reminders" bindchange="onSwitch" color="#22e5ff" disabled />

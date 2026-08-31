@@ -57,8 +57,6 @@ artifacts=(
   source.tar.sha256
   images.tar
   images.tar.sha256
-  h5-dist.tar.gz
-  h5-dist.tar.gz.sha256
   release-manifest.json
   release-verifier.pyz
 )
@@ -73,9 +71,9 @@ for artifact in "${artifacts[@]}"; do
 done
 
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$artifact_dir" && sha256sum -c source.tar.sha256 images.tar.sha256 h5-dist.tar.gz.sha256)
+  (cd "$artifact_dir" && sha256sum -c source.tar.sha256 images.tar.sha256)
 else
-  (cd "$artifact_dir" && shasum -a 256 -c source.tar.sha256 images.tar.sha256 h5-dist.tar.gz.sha256)
+  (cd "$artifact_dir" && shasum -a 256 -c source.tar.sha256 images.tar.sha256)
 fi
 
 remote_dir="$remote_root/$release_tag"
@@ -154,7 +152,7 @@ upload_mode="$4"
 destination="$root/$release_tag"
 required=(
   source.tar source.tar.sha256 images.tar images.tar.sha256
-  h5-dist.tar.gz h5-dist.tar.gz.sha256 release-manifest.json release-verifier.pyz
+  release-manifest.json release-verifier.pyz
 )
 for artifact in "${required[@]}"; do
   path="$destination/$artifact"
@@ -167,7 +165,7 @@ for artifact in "${required[@]}"; do
     exit 1
   }
 done
-(cd "$destination" && sha256sum -c source.tar.sha256 images.tar.sha256 h5-dist.tar.gz.sha256)
+(cd "$destination" && sha256sum -c source.tar.sha256 images.tar.sha256)
 if [[ "$upload_mode" == seeded ]]; then
   (cd "$root/$base_tag" && sha256sum -c images.tar.sha256 >/dev/null)
 fi

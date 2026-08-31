@@ -51,8 +51,6 @@ scratch/
 outputs/
 
 # Local mascot cutout backups (opaque masters)
-apps/h5/public/assets/_opaque_backup/
-apps/h5/qa/mascot-cutout-*.png
 
 # Docker volumes
 postgres-data/
@@ -61,9 +59,8 @@ data/
 
 # Audio dumps (privacy)
 *.wav
-!apps/h5/public/assets/voices/
-!apps/h5/public/assets/voices/*.wav
 !services/agent/tests/fixtures/audio/**
+!services/miniprogram_gateway/tests/fixtures/**
 !tests/e2e/fixtures/**
 
 # CosyVoice design previews (binary); registry JSON is committed for deploy

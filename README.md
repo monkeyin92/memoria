@@ -6,10 +6,10 @@ Memoria 是以 ESP32-S3 为第一等语音终端的中文陪伴与长期档案�
 ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
                                       |
                                       +-> Control API -> PostgreSQL / Redis / MinIO
-H5 / 微信小程序 -------------------------> 控制面、档案与设备管理
+微信小程序 --------------------------------> 控制面、档案与设备管理（绑定与查看）
 ```
 
-小程序不是实时媒体终端：不采集麦克风、不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间。H5 保留浏览器实时语音能力；ESP32 是机器人产品的实时语音入口。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工。
+小程序不是实时媒体终端：不采集麦克风、不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间。ESP32 是机器人产品的实时语音入口。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工。
 
 ## 文档与权威
 
@@ -27,7 +27,7 @@ H5 / 微信小程序 -------------------------> 控制面、档案与设备管�
 - Python 3.12、uv、FastAPI、LiveKit Agents、FunASR、百炼兼容 LLM、豆包 Seed-TTS。
 - Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge、Pion WebRTC。
 - PostgreSQL 17 + pgvector、Redis、MinIO。
-- H5：`apps/h5`；微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
+- 微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
 - 共享契约：`packages/contracts`；Media Edge/Voice Core proto：`packages/proto`。
 - 发布、验收和运维脚本：`scripts`；生产 Compose/Nginx/模型 registry：`infra`。
 
@@ -41,15 +41,13 @@ H5 / 微信小程序 -------------------------> 控制面、档案与设备管�
 cp .env.example .env
 echo 'OFFLINE_MOCK=true' >> .env  # 没有供应商密钥时
 uv sync --all-extras
-npm --prefix apps/h5 ci
 ```
 
-三个终端分别启动：
+两个终端分别启动：
 
 ```bash
 uv run uvicorn services.control_api.app.main:app --host 0.0.0.0 --port 8000 --reload
 uv run python -m services.agent.src.main dev
-npm --prefix apps/h5 run dev -- --host 0.0.0.0
 ```
 
 本地数据层与自建 LiveKit：
@@ -59,7 +57,7 @@ docker compose up -d postgres redis
 docker compose --profile self-hosted up -d redis livekit
 ```
 
-`devkey/devsecret` 只允许本机开发。生产 API secret 永远只进入 Control API/Agent 的 root-only 环境文件；H5 只接收短期 participant token。
+`devkey/devsecret` 只允许本机开发。生产 API secret 永远只进入 Control API/Agent 的 root-only 环境文件。
 
 ## 质量门
 
@@ -70,8 +68,6 @@ uv run ruff check .
 uv run python scripts/check_module_budget.py check
 uv run mypy services --strict
 uv run pytest
-npm --prefix apps/h5 test
-npm --prefix apps/h5 run build
 npm --prefix apps/miniprogram test
 uv run python scripts/run_e2e.py --profile offline
 uv run python scripts/provider_smoke_test.py
@@ -146,7 +142,7 @@ Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业�
 
 - 不替换 FunASR，不增加新的 ASR、LLM、分类器或云端调用。
 - 不把规则状态包装成“AI 模型置信度”，不伪造说话人、AEC 或语义证据。
-- 不改变 `ESP32 -> Go Media Edge -> Python Voice Core / Agent` 权威链，不把话轮决策下放到 Edge、固件、H5 或小程序。
+- 不改变 `ESP32 -> Go Media Edge -> Python Voice Core / Agent` 权威链，不把话轮决策下放到 Edge、固件或小程序。
 - 不把状态预测等同于 turn commit、generation cancel、Playback ACK、Actual Heard 或全双工验收。
 - 不为尚未存在的 GPU/模型路径设计兼容层、自动回退或配置矩阵。
 
@@ -309,7 +305,7 @@ OpenTelemetry span 可以记录 `turn.state_changed` 与 `turn.end_candidate`，
 
 ### 代码归属与最小实现
 
-首版扩展现有投影，不新增控制模块，也不改 Go/proto/ESP32/H5 契约：
+首版扩展现有投影，不新增控制模块，也不改 Go/proto/ESP32 契约：
 
 - `services/agent/src/orchestration/conversation_projection.py`：在现有 `FloorState`、`ProvisionalTurn` 和 commit 校验中加入 `TurnPhase`、不可变 `ProjectionFrame` 与有界连续 frame 计数；不导入 provider/runtime 副作用。
 - `services/agent/src/voice_core/media_session_state.py`：继续只持有一个 `ConversationProjection`；断线、stream epoch 或身份 epoch 变化时原子 reset phase 与 provisional state。
@@ -422,6 +418,6 @@ DTLN 降噪固定到 `breizhn/DTLN` commit `1de1f15a8b5b7e1c44905618ff2ef70ca827
 - 说话距离过近：板端输入增益/codec -> 原始 PCM RMS/peak -> DTLN 输入输出 -> VAD 阈值；不要只调云端识别阈值。
 - 回答中断后失联：同一 fence 检查 stop epoch、successor cancel、迟到旧帧、first-frame 连续性和 WSS close cause。
 - 打断后仍播旧内容：先推进 generation，再取消 provider/session，并在 Edge、设备和投影处比较完整 fence。
-- H5 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 LiveKit connected 当业务 ready。
+- 设备 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 LiveKit connected 当业务 ready。
 
 当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。当前开发工单是半双工投资人 Demo（`half_duplex_investor_demo`），不要并行做设备抢话或全双工。

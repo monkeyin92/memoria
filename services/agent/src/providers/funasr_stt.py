@@ -33,6 +33,7 @@ from websockets.asyncio.client import ClientConnection
 
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
+from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
@@ -1414,14 +1415,22 @@ class FunASRSession:
         rms = audioop.rms(pcm, 2)
         peak_abs = audioop.max(pcm, 2)
         if rms < rescue_config.min_rms and peak_abs < rescue_config.min_peak_abs:
+            outcome_class = classify_funasr_empty_outcome(
+                rms=rms,
+                min_rms=rescue_config.min_rms,
+                empty_audio_error=self._has_replaceable_empty_audio_failure(),
+            )
             logger.info(
-                "funasr segment rescue skipped: no speech energy rms=%s peak=%s task_id=%s",
+                "funasr segment rescue skipped: no speech energy rms=%s peak=%s "
+                "task_id=%s asr_empty_class=%s",
                 rms,
                 peak_abs,
                 self.task_id or "unknown",
+                outcome_class,
             )
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("skipped")
+                self.metrics.inc_funasr_empty_transcript(outcome_class)
             return
         coverage_tolerance = max(1, int(_RESCUE_COVERAGE_TOLERANCE_S * self.config.sample_rate))
         segment_end = self._segment_pcm_end_sample
@@ -1487,14 +1496,22 @@ class FunASRSession:
             return
         text = (text or "").strip()
         if len(text) < rescue_config.min_text_chars:
+            outcome_class = classify_funasr_empty_outcome(
+                rms=rms,
+                min_rms=rescue_config.min_rms,
+                empty_audio_error=empty_audio_boundary,
+            )
             logger.info(
-                "funasr segment rescue produced no text task_id=%s rms=%s pcm_ms=%s",
+                "funasr segment rescue produced no text task_id=%s rms=%s pcm_ms=%s "
+                "asr_empty_class=%s",
                 task_id,
                 rms,
                 round(self._segment_pcm_samples * 1000 / self.config.sample_rate),
+                outcome_class,
             )
             if self.metrics is not None:
                 self.metrics.inc_funasr_rescue("no_text")
+                self.metrics.inc_funasr_empty_transcript(outcome_class)
             return
         begin_ms = max(
             0,

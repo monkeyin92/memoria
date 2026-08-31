@@ -316,27 +316,27 @@ async def test_speaker_status_explains_verified_subject_gate_without_audio_acces
         status_response = await client.get("/v1/speakers/status", headers=headers)
 
     assert status_response.status_code == 200
-    assert status_response.json() == {
-        "capability": "speaker_enrollment",
-        "capability_allowed": False,
-        "block_code": "subject_capability_forbidden",
-        "subject": {
-            "subject_category": "unknown",
-            "birth_year_band": "unknown",
-            "age_evidence_status": "unverified",
-            "subject_revision": 0,
-        },
-        "enrollment": {
-            "state": "blocked",
-            "profile_count": 0,
-            "active_profile_id": None,
-            "intent_id": None,
-            "intent_expires_at": None,
-            "profiles": [],
-        },
-        "capture_location": "device",
-        "phone_realtime_capture_allowed": False,
+    payload = status_response.json()
+    assert payload["capability"] == "speaker_enrollment"
+    assert payload["capability_allowed"] is False
+    assert payload["block_code"] == "subject_capability_forbidden"
+    assert payload["subject"] == {
+        "subject_category": "unknown",
+        "birth_year_band": "unknown",
+        "age_evidence_status": "unverified",
+        "subject_revision": 0,
     }
+    assert payload["remediation"]["steps"] == ["authorize_wechat_phone", "refresh_speaker_status"]
+    assert payload["enrollment"] == {
+        "state": "blocked",
+        "profile_count": 0,
+        "active_profile_id": None,
+        "intent_id": None,
+        "intent_expires_at": None,
+        "profiles": [],
+    }
+    assert payload["capture_location"] == "device"
+    assert payload["phone_realtime_capture_allowed"] is False
 
 
 @pytest.mark.asyncio

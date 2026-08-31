@@ -7,7 +7,6 @@ const contracts = require("../../utils/multi-subject-contracts");
 const defaultProfile = {
   display_name: "新朋友",
   auto_summary: true,
-  voice_reply: true,
   gentle_reminders: false,
   reject_non_owner_voice: true,
   companion_id: defaultCompanionId,
@@ -140,6 +139,7 @@ Page({
       profileUnavailableReason: "",
       speakerEnrollmentState: "blocked",
       speakerEnrollmentBlockReason: "",
+      speakerEnrollmentRemediationSteps: [],
       speakerEnrollmentProfileCount: 0,
     });
   },
@@ -186,6 +186,7 @@ Page({
         speakerEnrollmentState: enrollment.state || "blocked",
         speakerEnrollmentBlockReason:
           enrollment.state === "blocked" ? blockReason : "",
+        speakerEnrollmentRemediationSteps: status?.remediation?.steps || [],
         speakerEnrollmentProfileCount: Number(enrollment.profile_count || 0),
       };
     } catch (error) {

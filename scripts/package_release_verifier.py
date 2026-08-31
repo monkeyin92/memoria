@@ -15,7 +15,6 @@ if not __package__:
 from scripts.verify_release_source import verify  # noqa: E402
 
 _VERIFIER_SOURCES = (
-    "scripts/package_h5_artifact.py",
     "scripts/verify_release_manifest.py",
     "scripts/verify_release_source.py",
 )

@@ -62,13 +62,13 @@
 ### R-20260831-02 FunASR 空转写要分账 empty+vendor / empty+gating / low_rms
 
 - 类别：语音
-- 状态：待评估
+- 状态：进行中
 - 首次写入：2026-08-31
 - 最近更新：2026-08-31
 - 为何现在相关：空转写仍在真机路径上出现。llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，不是本仓云端 FunASR，不能当成供应商已关闭。
 - 建议下一步：按 empty+vendor / empty+gating / low_rms 分账。同一切片不要再改 VAD。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4
-- 开发备注：
+- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。
 
 ### R-20260831-03 远场先动 ES8388 模拟，DTLN makeup 已冻结
 
@@ -117,13 +117,13 @@
 ### R-20260831-07 记忆抄 Dense-Mem 的 confirm / trace，不新开服务
 
 - 类别：产品技术
-- 状态：待评估
+- 状态：进行中
 - 首次写入：2026-08-31
 - 最近更新：2026-08-31
 - 为何现在相关：现有 PG 已有证据 / claim 生命周期。需要的是主人确认和可追溯，不是再开一套记忆服务。
 - 建议下一步：把 Dense-Mem 的 confirm / trace 抄进现有 PG。主人确认走 H5 / 小程序；guest / uncertain 只记证据。
 - 来源：https://github.com/markhuangai/dense-mem
-- 开发备注：
+- 开发备注：2026-08-31 `/v1/archive/memories/{claim_id}/review` 响应增加 `trace` 字段。
 
 ---
 
@@ -176,13 +176,13 @@
 ### R-20260831-12 仪表只报已交货能力
 
 - 类别：产品技术
-- 状态：待评估
+- 状态：进行中
 - 首次写入：2026-08-31
 - 最近更新：2026-08-31
 - 为何现在相关：仪表必须只报已交货能力，不报 TAM / 情感 / 没交货的订单。
 - 建议下一步：报微信绑定、主人声纹登记、每周档案写入、访客拦截、导出删除、茉莉误唤醒、半双工 turn 延迟。
 - 来源：
-- 开发备注：
+- 开发备注：2026-08-31 新增 `GET /v1/account/delivered-capabilities`。
 
 ---
 

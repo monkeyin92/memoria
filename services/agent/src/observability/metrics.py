@@ -330,6 +330,9 @@ class MetricsRegistry:
     def inc_funasr_rescue(self, outcome: str) -> None:
         self._inc("funasr_rescue_total", {"outcome": outcome})
 
+    def inc_funasr_empty_transcript(self, outcome_class: str) -> None:
+        self._inc("funasr_empty_transcript_total", {"class": outcome_class})
+
     def inc_llm_request(self, model: str, status: str, *, thinking: bool) -> None:
         self._inc(
             "llm_requests_total",

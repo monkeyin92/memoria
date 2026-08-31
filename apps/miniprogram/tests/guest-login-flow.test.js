@@ -10,12 +10,12 @@ function read(relativePath) {
 }
 
 test("all three tab pages keep a useful guest state instead of redirecting on show", () => {
-  const home = read("pages/home/index.js");
+  const device = read("pages/device/index.js");
   const memory = read("pages/memory/index.wxml");
   const profile = read("pages/profile/index.wxml");
 
   assert.doesNotMatch(
-    home,
+    device,
     /onShow\(\)\s*\{[\s\S]{0,220}navigateTo\(\{\s*url:\s*"\/pages\/auth\/index"/,
   );
   assert.match(memory, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看你的专属回顾/);
@@ -45,14 +45,14 @@ test("guest actions share one login gate with a return path", async () => {
       navigated = url;
     },
   };
-  global.getCurrentPages = () => [{ route: "pages/home/index", options: {} }];
+  global.getCurrentPages = () => [{ route: "pages/device/index", options: {} }];
   delete require.cache[gatePath];
   const { requireLogin } = require("../utils/auth-gate");
 
   try {
     assert.equal(await requireLogin({ reason: "view_dashboard" }), false);
     assert.match(navigated, /^\/pages\/auth\/index\?/);
-    assert.match(decodeURIComponent(navigated), /redirect=\/pages\/home\/index/);
+    assert.match(decodeURIComponent(navigated), /redirect=\/pages\/device\/index/);
     assert.match(navigated, /reason=view_dashboard/);
     assert.match(navigated, /skip_restore=1/);
   } finally {
@@ -99,7 +99,7 @@ test("logout clears private profile state without relying on a tab navigation re
 
 test("auth cleanup broadcasts to every page that can hold private state", () => {
   const appScript = read("app.js");
-  const homeScript = read("pages/home/index.js");
+  const deviceScript = read("pages/device/index.js");
   const memoryScript = read("pages/memory/index.js");
   const profileScript = read("pages/profile/index.js");
   const privacyScript = read("pages/privacy/index.js");
@@ -107,10 +107,10 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
 
   assert.match(appScript, /subscribeAuthCleared\(listener\)/);
   assert.match(appScript, /for \(const listener of \[\.\.\.this\._authClearedListeners\]\)/);
-  assert.match(homeScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
+  assert.match(deviceScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(
-    homeScript,
-    /_enterGuestState\(\)[\s\S]*hasBinding:\s*false[\s\S]*device:\s*null[\s\S]*todayCount:\s*null/,
+    deviceScript,
+    /_enterGuestState\(\)[\s\S]*hasBinding:\s*false[\s\S]*binding:\s*null/,
   );
   assert.match(memoryScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(memoryScript, /_enterGuestState\(\)[\s\S]*days:\s*\[\]/);
