@@ -4,11 +4,11 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-ALLOWED_DOCUMENTS = {"README.md", "PROJECT_RULES.md", "HANDOFF.md"}
+ALLOWED_DOCUMENTS = {"README.md", "PROJECT_RULES.md", "HANDOFF.md", "RESEARCH.md"}
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
 
 
-def test_repository_has_exactly_three_long_lived_documents() -> None:
+def test_repository_has_exactly_four_long_lived_documents() -> None:
     completed = subprocess.run(
         ["git", "ls-files", "-z"],
         cwd=ROOT,

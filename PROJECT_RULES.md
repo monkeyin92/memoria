@@ -1,6 +1,6 @@
 # Memoria Working Agreements
 
-本文件只保存长期有效的工程与产品规则。当前运行状态写入 `HANDOFF.md`；产品、架构和开发入口写入 `README.md`。
+本文件只保存长期有效的工程与产品规则。当前运行状态写入 `HANDOFF.md`；产品、架构和开发入口写入 `README.md`；外部研究扫描写入 `RESEARCH.md`。
 
 ## 工作方式
 
@@ -12,11 +12,12 @@
 
 ## 文档纪律
 
-仓库长期文档严格只有 `README.md`、`PROJECT_RULES.md`、`HANDOFF.md` 三份。禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
+仓库长期文档严格只有 `README.md`、`PROJECT_RULES.md`、`HANDOFF.md`、`RESEARCH.md` 四份。`RESEARCH.md` 是唯一额外文件，供外部研究助手写入扫描、开发评估并标记状态；同一文件持续合并更新。仍禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
 
 - 规则与稳定边界归入 `PROJECT_RULES.md`。
 - 产品、架构、开发和协议入口归入 `README.md`。
 - 当前状态、当前/回滚版本、运维步骤和下一验收归入 `HANDOFF.md`。
+- 外部研究扫描、待评估项与开发状态标记只写入 `RESEARCH.md`；同一想法复现时合并更新，不另建文档。
 - 机器事实优先放 schema、proto、JSON、TOML、锁文件和测试，不用 prose 重复。
 - 过时内容确认无代码/运维引用后直接删除，不保留兼容文档或“归档”目录。
 - 临时证据写入被忽略的 `outputs/` 或服务器证据目录，不提交到 Git。
