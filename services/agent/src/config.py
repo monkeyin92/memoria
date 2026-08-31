@@ -261,6 +261,21 @@ class AgentSettings(BaseSettings):
         le=2.0,
         alias="INTERRUPT_SEMANTIC_TIMEOUT_S",
     )
+    live_lookup_semantic_enabled: bool = Field(
+        default=True,
+        alias="LIVE_LOOKUP_SEMANTIC_ENABLED",
+    )
+    live_lookup_semantic_model: str = Field(
+        default="deepseek-v4-flash",
+        min_length=1,
+        alias="LIVE_LOOKUP_SEMANTIC_MODEL",
+    )
+    live_lookup_semantic_timeout_s: float = Field(
+        default=0.8,
+        ge=0.1,
+        le=2.0,
+        alias="LIVE_LOOKUP_SEMANTIC_TIMEOUT_S",
+    )
     miniprogram_kws_enabled: bool = Field(
         default=False,
         alias="MINIPROGRAM_KWS_ENABLED",

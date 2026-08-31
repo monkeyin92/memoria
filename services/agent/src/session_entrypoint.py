@@ -413,6 +413,14 @@ async def entrypoint(ctx: Any) -> None:
             )
 
         runtime.set_interrupt_semantic_resolver(_resolve_interrupt_semantic)
+    from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
+
+    live_lookup_classifier = None
+    if not offline:
+        live_lookup_classifier = install_live_lookup_semantic_resolver(
+            runtime,
+            runtime_settings,
+        )
     from services.agent.src.policy_runtime_wiring import (
         install_runtime_policy_clients,
     )
@@ -1087,6 +1095,11 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component(
                 "interrupt_semantic_classifier",
                 interrupt_semantic_classifier.aclose(),
+            )
+        if live_lookup_classifier is not None:
+            await _close_component(
+                "live_lookup_classifier",
+                live_lookup_classifier.aclose(),
             )
         if realtime_search_resolver is not None:
             await _close_component(

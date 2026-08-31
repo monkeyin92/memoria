@@ -182,6 +182,20 @@ def test_interrupt_semantic_settings_are_overridable(
     assert settings.interrupt_semantic_timeout_s == 0.4
 
 
+def test_live_lookup_semantic_settings_are_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIVE_LOOKUP_SEMANTIC_ENABLED", "false")
+    monkeypatch.setenv("LIVE_LOOKUP_SEMANTIC_MODEL", "qwen-turbo")
+    monkeypatch.setenv("LIVE_LOOKUP_SEMANTIC_TIMEOUT_S", "0.5")
+
+    settings = AgentSettings()
+
+    assert settings.live_lookup_semantic_enabled is False
+    assert settings.live_lookup_semantic_model == "qwen-turbo"
+    assert settings.live_lookup_semantic_timeout_s == 0.5
+
+
 def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
     monkeypatch.setenv("LIVEKIT_TURN_DETECTOR_VERSION", "v1")

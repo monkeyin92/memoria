@@ -116,7 +116,6 @@ from services.agent.src.runtime_speaker import (
 )
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
-from services.agent.src.live_query_markers import requires_live_media_lookup
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_realtime_followup_nudge,
@@ -340,6 +339,8 @@ class DuplexRuntime(DuplexSpeakerMixin):
     _speech_segment_finalizers: list[Callable[..., None]] = field(default_factory=list)
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
     _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
+    _live_lookup_cache: dict[str, bool] = field(default_factory=dict)
+    _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None
     _context_prefetch_text: str = ""
@@ -601,7 +602,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
                 and is_incomplete_realtime_reply(direct_text, query=query)
             )
         )
-        if static_reply_is_fallback and requires_live_media_lookup(query):
+        if static_reply_is_fallback and self.live_lookup_needed(query):
             request = PendingRealtimeRequest(query, speaker_scope, fence)
             self._pending_realtime_request = request
             return request, False
@@ -1330,6 +1331,26 @@ class DuplexRuntime(DuplexSpeakerMixin):
         starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None,
     ) -> None:
         self._delegation_starter = starter
+
+    def set_live_lookup_semantic_resolver(
+        self,
+        resolver: Callable[[str], Awaitable[bool]] | None,
+    ) -> None:
+        self._live_lookup_semantic_resolver = resolver
+
+    async def resolve_live_lookup_needed(self, query: str) -> bool:
+        from services.agent.src.live_lookup_router import resolve_live_lookup_needed
+
+        return await resolve_live_lookup_needed(
+            query,
+            cache=self._live_lookup_cache,
+            semantic_resolver=self._live_lookup_semantic_resolver,
+        )
+
+    def live_lookup_needed(self, query: str) -> bool:
+        from services.agent.src.live_lookup_router import live_lookup_needed
+
+        return live_lookup_needed(query, cache=self._live_lookup_cache)
 
     def set_voice_profile_refresher(
         self,
