@@ -370,6 +370,7 @@ class MediaTurnEndpointMixin:
         context.clock_fact_partial_text = None
         context.clock_fact_partial_stable_since = None
         context.clock_fact_endpoint_pinned = None
+        context.clock_fact_forced_text = None
 
     async def _retire_pending_turn_input_range(
         self,

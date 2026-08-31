@@ -57,6 +57,9 @@ def _preferred_clock_fact_text(
     start_sample: int,
     end_sample: int,
 ) -> str | None:
+    forced = context.clock_fact_forced_text
+    if forced and is_clock_fact_query(forced):
+        return forced
     candidates = [
         segment.text.strip()
         for segment in context.runtime.speech_timeline.segments_in_range(
@@ -163,6 +166,13 @@ class MediaSessionCommitMixin:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
             self._log_asr_rejection(session_id, result, decision.reason, stage="accept")
+            if result.is_final and is_clock_fact_query(result.text.strip()):
+                await self._recover_rejected_clock_fact_final(
+                    context,
+                    session_id=session_id,
+                    result=result,
+                    reason=decision.reason,
+                )
             return decision
         if decision.evicted_sentence_ids:
             context.runtime.speech_timeline.evict_segment_ids(
@@ -187,6 +197,37 @@ class MediaSessionCommitMixin:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
         return decision
+
+    async def _recover_rejected_clock_fact_final(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        session_id: str,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+    ) -> None:
+        """Keep clock/date turns when overlap policy drops an otherwise valid final."""
+
+        if reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
+            return
+        segment = asr_result_to_segment(result, session_id=session_id)
+        if context.runtime.speech_timeline.can_add(segment):
+            if context.runtime.ingest_media_speech_segment(segment):
+                await self._apply_projection_segment(context, segment)
+                task_epoch, context_version = self._event_versions(
+                    context, context.runtime.fence
+                )
+                await self.bridge.emit_transcript(
+                    session_id,
+                    segment,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                )
+        else:
+            context.clock_fact_forced_text = result.text.strip()
+        self._maybe_early_commit_clock_fact(context, result)
+        if context.turn_endpoint_sample is not None:
+            self._schedule_turn_commit(context)
 
     def _log_asr_rejection(
         self,
