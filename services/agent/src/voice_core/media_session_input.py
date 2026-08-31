@@ -215,6 +215,15 @@ class MediaSessionInputMixin:
                     if segment.voiced_end_sample is not None
                     else segment.capture_start_sample
                 )
+                if context.clock_fact_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_end ignored after clock-fact pin session=%s "
+                        "pinned_endpoint=%s voiced_end=%s",
+                        context.identity.session_id,
+                        context.clock_fact_endpoint_pinned,
+                        voiced_end_sample,
+                    )
+                    return
                 previous_endpoint = context.turn_endpoint_sample
                 # Late/replayed VAD finals may arrive out of callback order.
                 # Never move a pending endpoint backwards, or an older tail

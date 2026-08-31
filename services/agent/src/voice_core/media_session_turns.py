@@ -9,6 +9,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.conversation_projection import ProjectionPatch
@@ -19,7 +20,6 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchStatus,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult
-from services.agent.src.clock_fact_queries import is_clock_fact_query
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session_state import (
@@ -190,7 +190,10 @@ class MediaTurnEndpointMixin:
             return
         endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
         context.turn_endpoint_sample = endpoint
-        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
+        context.turn_retire_sample = endpoint
+        context.clock_fact_endpoint_pinned = endpoint
+        context.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early clock-fact endpoint session=%s endpoint=%s text_len=%s",
             context.identity.session_id,
@@ -366,6 +369,7 @@ class MediaTurnEndpointMixin:
         context.pending_partial = None
         context.clock_fact_partial_text = None
         context.clock_fact_partial_stable_since = None
+        context.clock_fact_endpoint_pinned = None
 
     async def _retire_pending_turn_input_range(
         self,

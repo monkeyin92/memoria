@@ -9,6 +9,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
@@ -47,6 +48,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 media_pb2: Any = _media_pb2
+
+
+def _preferred_clock_fact_text(
+    context: _MediaVoiceSession,
+    *,
+    stream_epoch: int,
+    start_sample: int,
+    end_sample: int,
+) -> str | None:
+    candidates = [
+        segment.text.strip()
+        for segment in context.runtime.speech_timeline.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if segment.text.strip() and is_clock_fact_query(segment.text)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=len)
 
 
 class MediaSessionCommitMixin:
@@ -302,6 +324,14 @@ class MediaSessionCommitMixin:
             start_sample=start_sample,
             end_sample=end_sample,
         )
+        preferred_clock = _preferred_clock_fact_text(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if preferred_clock and (not text or not is_clock_fact_query(text)):
+            text = preferred_clock
         if not text:
             context.runtime.on_user_voice_stopped()
             await self._commit_media_input_range(
@@ -336,6 +366,14 @@ class MediaSessionCommitMixin:
             start_sample=start_sample,
             end_sample=end_sample,
         )
+        preferred_clock = _preferred_clock_fact_text(
+            context,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if preferred_clock and (not text or not is_clock_fact_query(text)):
+            text = preferred_clock
         if not text:
             await self._commit_media_input_range(
                 context,

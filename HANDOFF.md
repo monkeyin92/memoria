@@ -6,7 +6,7 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-08-30
+as_of_date: 2026-08-31
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -165,8 +165,8 @@ barge_in: forbidden
 turn_phase_side_effects: forbidden
 direct_real_device_verified: false
 full_duplex_verified: false
-stage_2: operator_actual_heard_pass_pending_receipt
-stage_3: pending
+stage_2: receipt_filed_3of4_pending_serial
+stage_3: pending_homepage_initiated_session
 stage_4: pending
 stage_5: degraded_owner_silence_timeout_standby
 stage_6: pending
@@ -174,16 +174,19 @@ stage_7: pending
 success: two_natural_turns_actual_heard_then_wake_standby_script
 ```
 
-本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**阶段 2 阻塞项已于 2026-08-31 解除（操作员听感）**：同一 session 内「今天星期几」与「南京天气」均有完整回答；Agent 切片 `20260831-0955-half-duplex-asr-stall-rescue-agent-component`（`bc56f6b`）已切流。仍需补正式 receipt（四件套 + `hardware_realtime_acceptance.py verify`）才能把本候选 `verified` 写成带日期的两轮 Actual Heard。2026-08-30 15:07 CST 高铁长回答 `superseded` 收据见 `outputs/acceptance/half_duplex_investor_demo-20260830-1507.md`，待同一长回答剧本复测。2026-08-31 00:00–09:00 CST 曾出现 FunASR 空转写 + `unknown_safe` policy 拦播报 + 唤醒误触发「没听清」等分支，已由 `0020`/`0955` 及前序切片修复；不得用旧日志升级 `verified`。1150 之前的 11:33 阶段 2 FAIL 见 `outputs/acceptance/half_duplex_investor_demo-20260830-1133.md`，不得复用。不得把 `direct_real_device_verified` 改为 true。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
+本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**阶段 2 阻塞项已于 2026-08-31 解除（操作员听感）**：同一 session 内「今天星期几」与「南京天气」均有完整回答；Agent 切片 `20260831-0955-half-duplex-asr-stall-rescue-agent-component`（`bc56f6b`）已切流。正式 receipt 已落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md`（session `79b6e405-347d-4aad-89be-6e82d4fa1c65`，stream_epoch=1310，tap WAV 已拷本地）；**仍缺串口 UART 四件套之一**，且未跑 `hardware_realtime_acceptance.py verify`，故不能把本候选 `verified` 写成带日期的两轮 Actual Heard，也不能把全局 `direct_real_device_verified` 改为 true。2026-08-30 15:07 CST 高铁长回答 `superseded` 收据见 `outputs/acceptance/half_duplex_investor_demo-20260830-1507.md`，待同一长回答剧本复测。2026-08-31 00:00–09:00 CST 曾出现 FunASR 空转写 + `unknown_safe` policy 拦播报 + 唤醒误触发「没听清」等分支，已由 `0020`/`0955` 及前序切片修复；不得用旧日志升级 `verified`。1150 之前的 11:33 阶段 2 FAIL 见 `outputs/acceptance/half_duplex_investor_demo-20260830-1133.md`，不得复用。不得把 `direct_real_device_verified` 改为 true。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
 
-### 下一阶段（按顺序，2026-08-31 起）
+### 下一阶段（按顺序，2026-08-31 10:55 起）
 
-1. **补阶段 2 正式 receipt**（可与阶段 3 同一次现场）：按模板记录 session_id、两轮 ASR/fence/playback、听感 Actual Heard；落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-HHMM.md`。
-2. **阶段 3**：从小程序首页发起一次对话（日志须能区分「首页发起」）。
-3. **阶段 5**：两轮答完后安静 10 s → `owner_silence_timeout` → 设备 Idle → 再唤醒「茉莉」；不要说「再见」。
-4. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
-5. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
-6. **阶段 7**：阶段 2+3+4+5 证据齐全后锁定投资人路演剧本。
+1. **补阶段 2 串口证据**（可与下面同一次现场）：串口 monitor 记录 `vad.start`/`vad.end`；receipt 已落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md`（session `79b6e405`，tap WAV 已拷本地；缺 UART）。
+2. **阶段 3 + 5 一次现场**（推荐合并）：
+   - 小程序停在**首页** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手）。
+   - 设备唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
+   - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
+   - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明首页起手。
+3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
+4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
+5. **阶段 7**：阶段 2（含串口）+3+4+5 证据齐全后锁定投资人路演剧本。
 
 阶段 8（AEC 新板、全双工 SKU）在阶段 7 demo-ready 之前禁止开工。
 

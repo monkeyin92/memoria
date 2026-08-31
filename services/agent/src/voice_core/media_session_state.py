@@ -76,6 +76,9 @@ class MediaVoiceSessionState:
     pending_partial: ASRResult | None = None
     clock_fact_partial_text: str | None = None
     clock_fact_partial_stable_since: float | None = None
+    # When set, a clock/date final already chose the turn endpoint; later VAD
+    # tails must not extend the range or cancel the pending commit task.
+    clock_fact_endpoint_pinned: int | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
