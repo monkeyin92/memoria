@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
-from services.common.realtime_information import requires_realtime_lookup
+from services.agent.src.live_query_markers import requires_live_media_lookup
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
@@ -77,7 +77,7 @@ def _preferred_clock_fact_text(
 
 def _preferred_live_query_text(context: _MediaVoiceSession) -> str | None:
     forced = context.live_query_forced_text
-    if forced and requires_realtime_lookup(forced):
+    if forced and requires_live_media_lookup(forced):
         return forced
     return None
 
@@ -265,7 +265,7 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        if requires_realtime_lookup(text):
+        if requires_live_media_lookup(text):
             await self._recover_straddling_live_query_final(
                 context,
                 session_id=session_id,
@@ -317,7 +317,7 @@ class MediaSessionCommitMixin:
         if reason is not ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING:
             return
         text = result.text.strip()
-        if not text or not requires_realtime_lookup(text):
+        if not text or not requires_live_media_lookup(text):
             return
         committed = context.asr.last_committed_sample
         if result.capture_end_sample <= committed:

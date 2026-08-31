@@ -116,10 +116,10 @@ from services.agent.src.runtime_speaker import (
 )
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
+from services.agent.src.live_query_markers import requires_live_media_lookup
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_realtime_followup_nudge,
-    requires_realtime_lookup,
 )
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
@@ -601,7 +601,7 @@ class DuplexRuntime(DuplexSpeakerMixin):
                 and is_incomplete_realtime_reply(direct_text, query=query)
             )
         )
-        if static_reply_is_fallback and requires_realtime_lookup(query):
+        if static_reply_is_fallback and requires_live_media_lookup(query):
             request = PendingRealtimeRequest(query, speaker_scope, fence)
             self._pending_realtime_request = request
             return request, False

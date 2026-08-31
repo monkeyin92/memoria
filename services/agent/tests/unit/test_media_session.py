@@ -5693,6 +5693,27 @@ async def test_device_empty_asr_asks_user_to_repeat() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-nudge-cooldown")
+    try:
+        context = await registry._get_or_create(identity)
+        context.turn_endpoint_sample = 16_000
+        registry._nudge_missed_hearing(context)
+        assert context.missed_hearing_nudge_count == 1
+        registry._nudge_missed_hearing(context)
+        assert context.missed_hearing_nudge_count == 1
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_owned_delegation_filler_playback_is_not_turn_terminal() -> None:
     provider = _LateOwnedDelegationProvider()
     bridge = _CapturingGenerationBridge()

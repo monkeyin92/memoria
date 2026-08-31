@@ -46,6 +46,9 @@ if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
 
 logger = logging.getLogger(__name__)
+
+_MISSED_HEARING_NUDGE_COOLDOWN_S = 12.0
+_MAX_MISSED_HEARING_NUDGES = 2
 media_pb2: Any = _media_pb2
 
 
@@ -128,6 +131,18 @@ class MediaSessionProjectionMixin:
         # Wake TTS echo can produce endpoint=0 with no real user speech.
         if not allow_without_endpoint and (context.turn_endpoint_sample or 0) <= 0:
             return
+        now = time.monotonic()
+        last = context.last_missed_hearing_nudge_at
+        if last is not None and now - last < _MISSED_HEARING_NUDGE_COOLDOWN_S:
+            return
+        if context.missed_hearing_nudge_count >= _MAX_MISSED_HEARING_NUDGES:
+            request_standby = getattr(self, "_request_device_standby", None)
+            if callable(request_standby):
+                asyncio.create_task(
+                    request_standby(context, reason="missed_hearing_loop"),
+                    name=f"missed-hearing-standby-{context.identity.session_id}",
+                )
+            return
         self._schedule_missed_hearing_nudge(context)
 
     def _is_wake_echo_discard(self, context: _MediaVoiceSession) -> bool:
@@ -139,6 +154,8 @@ class MediaSessionProjectionMixin:
         )
 
     def _schedule_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None:
+        context.missed_hearing_nudge_count += 1
+        context.last_missed_hearing_nudge_at = time.monotonic()
         asyncio.create_task(
             self._speak_missed_hearing_ack(context),
             name=f"missed-hearing-{context.identity.session_id}",
@@ -169,6 +186,8 @@ class MediaSessionProjectionMixin:
     async def _speak_missed_hearing_ack(self, context: _MediaVoiceSession) -> None:
         try:
             context.runtime.open_assistant_floor_for_nudge()
+            echo_fence = context.runtime.fence
+            context.device_wake_ack_fence = echo_fence
             await self._speak_allowlisted_bridge_phrase(
                 context,
                 BRIDGE_PHRASES[2],

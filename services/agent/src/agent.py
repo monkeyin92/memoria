@@ -67,6 +67,7 @@ from services.common.companion_response_safety import (
 )
 from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
+from services.agent.src.live_query_markers import requires_live_media_lookup
 from services.common.realtime_information import (
     REALTIME_UNAVAILABLE_REPLY,
     current_local_time,
@@ -74,7 +75,6 @@ from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_safe_realtime_reply,
     realtime_instruction,
-    requires_realtime_lookup,
     strip_realtime_bridge_prefix,
 )
 from services.common.response_depth import ResponseDepth, response_depth_for
@@ -371,7 +371,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         """Resolve one fenced public query for the MediaSession-owned task."""
 
         query = text.strip() if isinstance(text, str) else ""
-        if not query or not requires_realtime_lookup(query):
+        if not query or not requires_live_media_lookup(query):
             return None
         if not self._can_start_realtime_delegation(fence):
             return None
@@ -1636,7 +1636,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         fence: GenerationFence,
     ) -> None:
         if self._response_planner_client is None:
-            if requires_realtime_lookup(text):
+            if requires_live_media_lookup(text):
                 await self._get_or_start_realtime_delegation(query=text, fence=fence)
             return
         ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
@@ -1648,7 +1648,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             self._context_ready_by_fence.pop(fence, None)
         if not self._runtime.fence.matches(fence):
             return
-        if requires_realtime_lookup(text):
+        if requires_live_media_lookup(text):
             await self._get_or_start_realtime_delegation(query=text, fence=fence)
 
     async def _get_or_start_realtime_delegation(

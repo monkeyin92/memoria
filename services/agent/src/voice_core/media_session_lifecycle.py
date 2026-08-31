@@ -49,7 +49,7 @@ from services.agent.src.voice_core.media_session_types import (
     SessionFactory,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult, SpeechSegment
-from services.common.realtime_information import requires_realtime_lookup
+from services.agent.src.live_query_markers import requires_live_media_lookup
 
 media_pb2: Any = _media_pb2
 
@@ -457,7 +457,7 @@ class MediaSessionLifecycleMixin:
                     text: str,
                     fence: GenerationFence,
                 ) -> Coroutine[Any, Any, None] | None:
-                    if not requires_realtime_lookup(text) or not current.runtime.fence.matches(
+                    if not requires_live_media_lookup(text) or not current.runtime.fence.matches(
                         fence
                     ):
                         return None

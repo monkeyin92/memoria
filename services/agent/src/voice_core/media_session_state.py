@@ -97,4 +97,6 @@ class MediaVoiceSessionState:
     conversation_yield_candidate_fence: GenerationFence | None = None
     device_wake_ack_fence: GenerationFence | None = None
     pending_missed_hearing_nudge: bool = False
+    missed_hearing_nudge_count: int = 0
+    last_missed_hearing_nudge_at: float | None = None
     closed: bool = False
