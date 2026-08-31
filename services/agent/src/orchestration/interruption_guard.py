@@ -214,6 +214,44 @@ _CONVERSATION_CLOSE_ONLY = frozenset(
     }
 )
 
+_CONVERSATION_CLOSE_FAREWELL_SUFFIXES = (
+    "再见",
+    "拜拜",
+    "拜拜了",
+    "下次见",
+    "回头见",
+)
+
+# Short acknowledgement stems that may precede a farewell in one utterance,
+# e.g.「知道了，再见」.  Keep this separate from exact close phrases so
+# sentences such as「下次见到小明要说再见」stay in chat.
+_CONVERSATION_CLOSE_COMPOUND_PREFIXES = frozenset(
+    {
+        "知道了",
+        "我知道了",
+        "好的知道了",
+        "好的我知道了",
+        "好了知道了",
+        "好了我知道了",
+        "好的",
+        "好",
+        "嗯",
+        "嗯嗯",
+        "行了",
+        "可以了",
+        "不用了",
+        "够了",
+        "好了",
+        "先这样",
+        "就这样",
+        "退下",
+        "退下吧",
+    }
+)
+
+_MAX_COMPOUND_CONVERSATION_CLOSE_CHARS = 14
+_MAX_ASSISTANT_FAREWELL_REPLY_CHARS = 36
+
 _NON_TARGET_SCRIPT = re.compile(r"[\u3040-\u30ff\uac00-\ud7af]")
 _CANTONESE_MARKERS = frozenset("佢嘅咁冇喺啲咗嚟噉唔仲俾")
 _LANGUAGE_ACTION = r"(?:学|教|练|说|用|翻译|切换|作为|充当|培训|教学|老师)"
@@ -273,7 +311,39 @@ def is_completion_ack_only(text: str) -> bool:
 def is_conversation_close_only(text: str) -> bool:
     """Return whether one exact owner utterance requests device standby."""
 
-    return _compact_interrupt_text(text) in _CONVERSATION_CLOSE_ONLY
+    compact = _compact_interrupt_text(text)
+    if compact in _CONVERSATION_CLOSE_ONLY:
+        return True
+    return _is_compound_conversation_close(compact)
+
+
+def user_turn_suggests_conversation_close(text: str) -> bool:
+    """Whether a committed user turn should end the device conversation."""
+
+    return is_conversation_close_only(text)
+
+
+def is_short_assistant_farewell_reply(text: str) -> bool:
+    """Whether a short assistant reply is closing the conversation."""
+
+    compact = _compact_interrupt_text(text)
+    return (
+        bool(compact)
+        and len(compact) <= _MAX_ASSISTANT_FAREWELL_REPLY_CHARS
+        and any(compact.endswith(suffix) for suffix in _CONVERSATION_CLOSE_FAREWELL_SUFFIXES)
+    )
+
+
+def _is_compound_conversation_close(compact: str) -> bool:
+    if not compact or len(compact) > _MAX_COMPOUND_CONVERSATION_CLOSE_CHARS:
+        return False
+    for suffix in _CONVERSATION_CLOSE_FAREWELL_SUFFIXES:
+        if not compact.endswith(suffix) or len(compact) <= len(suffix):
+            continue
+        prefix = compact[: -len(suffix)]
+        if prefix in _CONVERSATION_CLOSE_COMPOUND_PREFIXES:
+            return True
+    return False
 
 
 def _strip_leading_interrupt_fillers(text: str) -> str:

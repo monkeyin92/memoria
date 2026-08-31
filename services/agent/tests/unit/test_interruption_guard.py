@@ -10,6 +10,8 @@ from services.agent.src.orchestration.interruption_guard import (
     is_conversation_close_only,
     is_explicit_interrupt,
     is_primarily_non_chinese_script,
+    is_short_assistant_farewell_reply,
+    user_turn_suggests_conversation_close,
 )
 
 
@@ -31,6 +33,8 @@ def test_explicit_interrupt_prefixes() -> None:
 def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
     for phrase in ("再见", "拜拜", "知道了", "我知道了", "退下吧", "先这样吧"):
         assert is_conversation_close_only(phrase), phrase
+    for phrase in ("知道了，再见", "好的，再见", "嗯，拜拜"):
+        assert is_conversation_close_only(phrase), phrase
 
     for sentence in (
         "再见是什么意思",
@@ -39,6 +43,12 @@ def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
         "茉莉花茶怎么做",
     ):
         assert not is_conversation_close_only(sentence), sentence
+
+
+def test_assistant_farewell_reply_pairs_with_user_close_intent() -> None:
+    assert user_turn_suggests_conversation_close("知道了，再见")
+    assert is_short_assistant_farewell_reply("祝你上海玩得开心，再见")
+    assert not user_turn_suggests_conversation_close("下次见到小明要说再见")
 
 
 def test_primarily_non_chinese_script_detects_garbled_rescue() -> None:

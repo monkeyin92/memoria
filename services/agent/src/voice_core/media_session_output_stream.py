@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
-from services.agent.src.orchestration.conversation_projection import TurnPhase
+from services.agent.src.orchestration.interruption_guard import (
+    is_short_assistant_farewell_reply,
+    user_turn_suggests_conversation_close,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
@@ -702,6 +705,37 @@ class MediaOutputStreamMixin:
             )
             sample += frame_samples
 
+    async def _maybe_standby_after_farewell_complete(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        if (
+            context.closed
+            or context.standby_requested
+            or context.identity.client_type != "device"
+            or not context.runtime.fence.matches(fence)
+        ):
+            return
+        assistant_text = context.assistant_text.strip() or context.playback.actual_heard_text(
+            fence
+        ).strip()
+        if not is_short_assistant_farewell_reply(assistant_text):
+            return
+        last_user = next(
+            (
+                turn.content.strip()
+                for turn in reversed(context.runtime.orchestrator.context.turns)
+                if turn.role == "user" and turn.content.strip()
+            ),
+            "",
+        )
+        if not user_turn_suggests_conversation_close(last_user):
+            return
+        request_standby = getattr(self, "_request_device_standby", None)
+        if callable(request_standby):
+            await request_standby(context, reason="conversation_farewell_complete")
+
     async def _finish_completed_output(
         self,
         context: _MediaVoiceSession,
@@ -744,8 +778,10 @@ class MediaOutputStreamMixin:
                 fence,
             ),
         )
+        await self._maybe_standby_after_farewell_complete(context, fence)
         self.clear_device_wake_ack_fence(context, fence)
-        self.flush_pending_missed_hearing_nudge(context)
+        if not context.standby_requested:
+            self.flush_pending_missed_hearing_nudge(context)
         context.playback.discard(fence)
         context.output_sequence = 0
         context.output_text_offset = 0
