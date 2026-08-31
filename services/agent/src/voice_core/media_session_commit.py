@@ -74,6 +74,35 @@ def _preferred_clock_fact_text(
     return max(candidates, key=len)
 
 
+def _resolve_media_turn_text(
+    context: _MediaVoiceSession,
+    *,
+    stream_epoch: int,
+    start_sample: int,
+    end_sample: int,
+) -> str | None:
+    """Resolve authoritative media commit text for one sample range."""
+
+    text = context.runtime.project_media_user_turn(
+        stream_epoch=stream_epoch,
+        start_sample=start_sample,
+        end_sample=end_sample,
+    )
+    preferred_clock = _preferred_clock_fact_text(
+        context,
+        stream_epoch=stream_epoch,
+        start_sample=start_sample,
+        end_sample=end_sample,
+    )
+    if not preferred_clock:
+        return text
+    if not text or not is_clock_fact_query(text):
+        return preferred_clock
+    if text.strip() != preferred_clock:
+        return preferred_clock
+    return text
+
+
 class MediaSessionCommitMixin:
     """Commit a single sample range through Projection and Runtime fences."""
 
@@ -360,19 +389,12 @@ class MediaSessionCommitMixin:
             start_sample=start_sample,
             end_sample=end_sample,
         )
-        text = context.runtime.project_media_user_turn(
-            stream_epoch=stream_epoch,
-            start_sample=start_sample,
-            end_sample=end_sample,
-        )
-        preferred_clock = _preferred_clock_fact_text(
+        text = _resolve_media_turn_text(
             context,
             stream_epoch=stream_epoch,
             start_sample=start_sample,
             end_sample=end_sample,
         )
-        if preferred_clock and (not text or not is_clock_fact_query(text)):
-            text = preferred_clock
         if not text:
             context.runtime.on_user_voice_stopped()
             await self._commit_media_input_range(
@@ -402,19 +424,12 @@ class MediaSessionCommitMixin:
             start_sample=start_sample,
             end_sample=end_sample,
         )
-        text = context.runtime.project_media_user_turn(
-            stream_epoch=stream_epoch,
-            start_sample=start_sample,
-            end_sample=end_sample,
-        )
-        preferred_clock = _preferred_clock_fact_text(
+        text = _resolve_media_turn_text(
             context,
             stream_epoch=stream_epoch,
             start_sample=start_sample,
             end_sample=end_sample,
         )
-        if preferred_clock and (not text or not is_clock_fact_query(text)):
-            text = preferred_clock
         if not text:
             await self._commit_media_input_range(
                 context,
@@ -666,9 +681,29 @@ class MediaSessionCommitMixin:
         )
         context_version = context.runtime.orchestrator.context_version_for_fence(fence)
         previous_phase = context.projection.phase
+        commit_text = (
+            _resolve_media_turn_text(
+                context,
+                stream_epoch=stream_epoch,
+                start_sample=start_sample,
+                end_sample=end_sample,
+            )
+            or commit_evidence.text
+        )
+        final_align = context.projection.align_provisional_text(commit_text)
+        if final_align is not None:
+            logger.info(
+                "media provisional text aligned before commit session=%s stream_epoch=%s "
+                "timeline_text_len=%s",
+                session_id,
+                stream_epoch,
+                len(commit_text),
+            )
+            await self._emit_projection_patch(context, final_align)
         projection_result = context.projection.commit_turn(
             replace(
                 commit_evidence,
+                text=commit_text,
                 fence=fence,
                 context_version=context_version,
             )
