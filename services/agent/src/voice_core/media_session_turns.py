@@ -19,7 +19,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchStatus,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult
-from services.common.realtime_information import is_clock_fact_query
+from services.agent.src.clock_fact_queries import is_clock_fact_query
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session_state import (

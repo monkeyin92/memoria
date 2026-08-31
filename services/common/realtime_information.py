@@ -129,12 +129,6 @@ def _asks_for_time(query: str) -> bool:
     )
 
 
-def is_clock_fact_query(query: str) -> bool:
-    """Return whether a user utterance asks only for local clock/date facts."""
-
-    return _asks_for_date(query) or _asks_for_time(query)
-
-
 def fixed_realtime_reply(*, query: str, now: datetime) -> str | None:
     """Answer clock facts locally; ask for a city before searching weather."""
 
