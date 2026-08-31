@@ -5405,6 +5405,140 @@ async def test_device_clock_fact_prepare_provisional_drift_still_commits() -> No
 
 
 @pytest.mark.asyncio
+async def test_device_clock_fact_pin_survives_replayed_vad_start() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-clock-fact-vad-start")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="clock-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        pinned = context.clock_fact_endpoint_pinned
+        assert pinned == 16_000
+        assert context.turn_endpoint_sample == pinned
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="replayed-vad-start",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=20_000,
+                capture_end_sample=20_001,
+            ),
+        )
+        assert context.clock_fact_endpoint_pinned == pinned
+        assert context.turn_endpoint_sample == pinned
+        assert context.turn_endpoint_task is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_pinned_clock_fact_commits_without_asr_endpoint_coverage() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-clock-fact-coverage")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="clock-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        context.turn_end_sample = 8_000
+        await asyncio.sleep(0.2)
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns == ["今天星期几"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

@@ -221,6 +221,7 @@ class MediaTurnEndpointMixin:
                 context.clock_fact_partial_stable_since = now
             elif (
                 context.turn_endpoint_sample is None
+                and context.clock_fact_endpoint_pinned is None
                 and now - context.clock_fact_partial_stable_since
                 >= _CLOCK_FACT_PARTIAL_STABLE_S
             ):
@@ -547,8 +548,13 @@ class MediaTurnEndpointMixin:
             )
             if not current_endpoint or context is None:
                 return
+            pinned_clock_fact = (
+                context.clock_fact_endpoint_pinned is not None
+                and context.clock_fact_endpoint_pinned == endpoint_sample
+            )
             if (
-                not self._asr_covers_endpoint(
+                not pinned_clock_fact
+                and not self._asr_covers_endpoint(
                     context,
                     context.turn_end_sample,
                     endpoint_sample,

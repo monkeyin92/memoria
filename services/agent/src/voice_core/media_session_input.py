@@ -251,6 +251,15 @@ class MediaSessionInputMixin:
                     )
                 self._schedule_turn_commit(context)
             else:
+                if context.clock_fact_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_start ignored after clock-fact pin session=%s "
+                        "pinned_endpoint=%s vad_start=%s",
+                        context.identity.session_id,
+                        context.clock_fact_endpoint_pinned,
+                        segment.capture_start_sample,
+                    )
+                    return
                 pending_endpoint = context.turn_endpoint_sample
                 if (
                     pending_endpoint is not None
