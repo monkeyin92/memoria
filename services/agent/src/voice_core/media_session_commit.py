@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
+from services.common.realtime_information import requires_realtime_lookup
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
@@ -74,6 +75,13 @@ def _preferred_clock_fact_text(
     return max(candidates, key=len)
 
 
+def _preferred_live_query_text(context: _MediaVoiceSession) -> str | None:
+    forced = context.live_query_forced_text
+    if forced and requires_realtime_lookup(forced):
+        return forced
+    return None
+
+
 def _resolve_media_turn_text(
     context: _MediaVoiceSession,
     *,
@@ -94,6 +102,10 @@ def _resolve_media_turn_text(
         start_sample=start_sample,
         end_sample=end_sample,
     )
+    preferred_live = _preferred_live_query_text(context)
+    if preferred_live:
+        if not text or len(preferred_live.strip()) > len(text.strip()):
+            return preferred_live
     if not preferred_clock:
         return text
     if not text or not is_clock_fact_query(text):
@@ -177,6 +189,13 @@ class MediaSessionCommitMixin:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
             self._log_asr_rejection(session_id, result, preview.reason, stage="preview")
+            if result.is_final:
+                await self._recover_rejected_semantic_final(
+                    context,
+                    session_id=session_id,
+                    result=result,
+                    reason=preview.reason,
+                )
             return preview
         candidate_segment = asr_result_to_segment(candidate, session_id=session_id)
         if not context.runtime.speech_timeline.can_add(candidate_segment):
@@ -195,8 +214,8 @@ class MediaSessionCommitMixin:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
             self._log_asr_rejection(session_id, result, decision.reason, stage="accept")
-            if result.is_final and is_clock_fact_query(result.text.strip()):
-                await self._recover_rejected_clock_fact_final(
+            if result.is_final:
+                await self._recover_rejected_semantic_final(
                     context,
                     session_id=session_id,
                     result=result,
@@ -226,6 +245,33 @@ class MediaSessionCommitMixin:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
         return decision
+
+    async def _recover_rejected_semantic_final(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        session_id: str,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+    ) -> None:
+        text = result.text.strip()
+        if not text:
+            return
+        if is_clock_fact_query(text):
+            await self._recover_rejected_clock_fact_final(
+                context,
+                session_id=session_id,
+                result=result,
+                reason=reason,
+            )
+            return
+        if requires_realtime_lookup(text):
+            await self._recover_straddling_live_query_final(
+                context,
+                session_id=session_id,
+                result=result,
+                reason=reason,
+            )
 
     async def _recover_rejected_clock_fact_final(
         self,
@@ -257,6 +303,45 @@ class MediaSessionCommitMixin:
         self._maybe_early_commit_clock_fact(context, result)
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
+
+    async def _recover_straddling_live_query_final(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        session_id: str,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+    ) -> None:
+        """Keep weather/live turns when a final spans an already-committed range."""
+
+        if reason is not ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING:
+            return
+        text = result.text.strip()
+        if not text or not requires_realtime_lookup(text):
+            return
+        committed = context.asr.last_committed_sample
+        if result.capture_end_sample <= committed:
+            return
+        adjusted_start = max(committed, result.capture_start_sample)
+        adjusted = replace(
+            result,
+            capture_start_sample=adjusted_start,
+        )
+        segment = asr_result_to_segment(adjusted, session_id=session_id)
+        if context.runtime.speech_timeline.can_add(segment):
+            if context.runtime.ingest_media_speech_segment(segment):
+                await self._apply_projection_segment(context, segment)
+                task_epoch, context_version = self._event_versions(
+                    context, context.runtime.fence
+                )
+                await self.bridge.emit_transcript(
+                    session_id,
+                    segment,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                )
+                self._observe_final_asr_result(context, adjusted)
+        context.live_query_forced_text = text
 
     def _log_asr_rejection(
         self,

@@ -5539,6 +5539,106 @@ async def test_device_pinned_clock_fact_commits_without_asr_endpoint_coverage() 
 
 
 @pytest.mark.asyncio
+async def test_device_weather_final_recovered_after_straddling_committed_range() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-weather-straddle")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        context.asr.mark_committed(64_000)
+        context.runtime.commit_media_speech_range(
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=64_000,
+        )
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        weather = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="weather-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=187_520,
+            text="今天南京的天气怎么样",
+            is_final=True,
+            confidence=0.9,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            weather,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+        assert context.live_query_forced_text == "今天南京的天气怎么样"
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=113_280,
+                capture_end_sample=113_281,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-end",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=187_520,
+                capture_end_sample=187_521,
+                final=True,
+                voiced_end_sample=173_120,
+            ),
+        )
+        context.turn_start_sample = 113_280
+        context.turn_end_sample = 173_120
+        context.turn_endpoint_sample = 173_120
+        context.turn_retire_sample = 187_520
+        fence, reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=113_280,
+            end_sample=173_120,
+            retire_sample=187_520,
+        )
+        assert fence is not None
+        assert reason is None
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns == ["今天南京的天气怎么样"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

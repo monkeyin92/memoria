@@ -80,6 +80,7 @@ class MediaVoiceSessionState:
     # tails must not extend the range or cancel the pending commit task.
     clock_fact_endpoint_pinned: int | None = None
     clock_fact_forced_text: str | None = None
+    live_query_forced_text: str | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
