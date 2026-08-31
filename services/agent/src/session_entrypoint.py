@@ -413,11 +413,17 @@ async def entrypoint(ctx: Any) -> None:
             )
 
         runtime.set_interrupt_semantic_resolver(_resolve_interrupt_semantic)
+    from services.agent.src.conversation_close_wiring import install_conversation_close_semantic_resolver
     from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 
     live_lookup_classifier = None
+    close_intent_classifier = None
     if not offline:
         live_lookup_classifier = install_live_lookup_semantic_resolver(
+            runtime,
+            runtime_settings,
+        )
+        close_intent_classifier = install_conversation_close_semantic_resolver(
             runtime,
             runtime_settings,
         )
@@ -1100,6 +1106,11 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component(
                 "live_lookup_classifier",
                 live_lookup_classifier.aclose(),
+            )
+        if close_intent_classifier is not None:
+            await _close_component(
+                "close_intent_classifier",
+                close_intent_classifier.aclose(),
             )
         if realtime_search_resolver is not None:
             await _close_component(

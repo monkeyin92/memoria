@@ -13,7 +13,6 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.interruption_guard import (
     is_short_assistant_farewell_reply,
-    user_turn_suggests_conversation_close,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
@@ -730,7 +729,7 @@ class MediaOutputStreamMixin:
             ),
             "",
         )
-        if not user_turn_suggests_conversation_close(last_user):
+        if not context.runtime.conversation_close_needed(last_user):
             return
         request_standby = getattr(self, "_request_device_standby", None)
         if callable(request_standby):

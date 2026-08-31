@@ -1211,6 +1211,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         publish_user_transcript: bool = True,
     ) -> GenerationFence:
         await self._runtime.resolve_live_lookup_needed(text)
+        await self._runtime.resolve_conversation_close_needed(text)
         policy = self._runtime.mode_policy
         if (
             input_modality == "audio"

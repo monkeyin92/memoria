@@ -558,6 +558,7 @@ class MediaSessionCommitMixin:
         if speaker_patch is not None:
             await self._emit_projection_patch(context, speaker_patch)
         elapsed_ms = (end_sample - start_sample) * 1_000 // 16_000
+        await context.runtime.resolve_conversation_close_needed(text)
         route = context.runtime.route_user_turn(text)
         guarded_reason = context.runtime.playback_guarded_reason(
             text,

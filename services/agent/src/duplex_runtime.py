@@ -341,6 +341,8 @@ class DuplexRuntime(DuplexSpeakerMixin):
     _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
     _live_lookup_cache: dict[str, bool] = field(default_factory=dict)
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
+    _conversation_close_cache: dict[str, bool] = field(default_factory=dict)
+    _conversation_close_semantic_resolver: Callable[[str], Awaitable[bool]] | None = None
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None
     _context_prefetch_text: str = ""
@@ -1352,6 +1354,28 @@ class DuplexRuntime(DuplexSpeakerMixin):
 
         return live_lookup_needed(query, cache=self._live_lookup_cache)
 
+    def set_conversation_close_semantic_resolver(
+        self,
+        resolver: Callable[[str], Awaitable[bool]] | None,
+    ) -> None:
+        self._conversation_close_semantic_resolver = resolver
+
+    async def resolve_conversation_close_needed(self, text: str) -> bool:
+        from services.agent.src.conversation_close_router import (
+            resolve_conversation_close_needed,
+        )
+
+        return await resolve_conversation_close_needed(
+            text,
+            cache=self._conversation_close_cache,
+            semantic_resolver=self._conversation_close_semantic_resolver,
+        )
+
+    def conversation_close_needed(self, text: str) -> bool:
+        from services.agent.src.conversation_close_router import conversation_close_needed
+
+        return conversation_close_needed(text, cache=self._conversation_close_cache)
+
     def set_voice_profile_refresher(
         self,
         refresher: Callable[[], Coroutine[Any, Any, Any]],
@@ -1461,6 +1485,9 @@ class DuplexRuntime(DuplexSpeakerMixin):
             semantic_verdict=semantic_verdict,
             session_focus=self._mode_policy.session_focus,
             device_conversation=self._device_conversation_controls_enabled,
+            conversation_close=self.conversation_close_needed(
+                text if text is not None else self._interrupt_candidate_text()
+            ),
         )
 
     def _is_explicit_owner_interrupt_cmd(self) -> bool:

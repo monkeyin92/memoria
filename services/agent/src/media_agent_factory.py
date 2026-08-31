@@ -39,6 +39,7 @@ from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderAdapter,
     ExistingVoiceProviderConfig,
 )
+from services.agent.src.conversation_close_wiring import install_conversation_close_semantic_resolver
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,12 @@ class ProductionMediaSessionFactory:
             live_lookup_classifier = install_live_lookup_semantic_resolver(runtime, self.settings)
             if live_lookup_classifier is not None:
                 owned.append(live_lookup_classifier)
+            close_intent_classifier = install_conversation_close_semantic_resolver(
+                runtime,
+                self.settings,
+            )
+            if close_intent_classifier is not None:
+                owned.append(close_intent_classifier)
             mode_policy_client = await self._bind_mode_policy(runtime)
             owned.append(mode_policy_client)
 

@@ -285,6 +285,7 @@ def route_utterance(
     semantic_verdict: InterruptSemanticVerdict | None = None,
     session_focus: SessionFocus | None = None,
     device_conversation: bool = False,
+    conversation_close: bool | None = None,
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
@@ -332,7 +333,11 @@ def route_utterance(
     # 3) Conversation terminal phrases are not ordinary interruption commands.
     # They require the normal target-speaker gate and never produce an LLM turn
     # or a fixed acknowledgement before the device returns to standby.
-    if device_conversation and is_conversation_close_only(text):
+    if device_conversation and (
+        conversation_close
+        if conversation_close is not None
+        else is_conversation_close_only(text)
+    ):
         return UtteranceRoute(
             intent=UtteranceIntent.END_SESSION,
             reason="conversation_end_explicit",
