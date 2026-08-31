@@ -214,6 +214,16 @@ _CONVERSATION_CLOSE_ONLY = frozenset(
     }
 )
 
+_ENGLISH_CONVERSATION_CLOSE_ONLY = frozenset(
+    {
+        "goodbye",
+        "bye",
+        "byebye",
+        "seeyou",
+        "seeya",
+    }
+)
+
 _CONVERSATION_CLOSE_FAREWELL_SUFFIXES = (
     "再见",
     "拜拜",
@@ -244,6 +254,11 @@ _CONVERSATION_CLOSE_COMPOUND_PREFIXES = frozenset(
         "好了",
         "先这样",
         "就这样",
+        "就这样吧",
+        "行",
+        "好吧",
+        "那",
+        "那就",
         "退下",
         "退下吧",
     }
@@ -311,10 +326,13 @@ def is_completion_ack_only(text: str) -> bool:
 def is_conversation_close_only(text: str) -> bool:
     """Return whether one exact owner utterance requests device standby."""
 
-    compact = _compact_interrupt_text(text)
-    if compact in _CONVERSATION_CLOSE_ONLY:
+    compact = _conversation_close_compact(text)
+    if compact in _CONVERSATION_CLOSE_ONLY or compact in _ENGLISH_CONVERSATION_CLOSE_ONLY:
         return True
-    return _is_compound_conversation_close(compact)
+    raw_compact = _compact_interrupt_text(text)
+    if raw_compact.isascii():
+        return False
+    return _is_compound_conversation_close(raw_compact)
 
 
 def user_turn_suggests_conversation_close(text: str) -> bool:
@@ -344,6 +362,13 @@ def _is_compound_conversation_close(compact: str) -> bool:
         if prefix in _CONVERSATION_CLOSE_COMPOUND_PREFIXES:
             return True
     return False
+
+
+def _conversation_close_compact(text: str) -> str:
+    compact = _compact_interrupt_text(text)
+    if compact.isascii():
+        return compact.casefold()
+    return compact
 
 
 def _strip_leading_interrupt_fillers(text: str) -> str:

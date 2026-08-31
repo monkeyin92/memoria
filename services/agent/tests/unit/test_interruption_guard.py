@@ -33,7 +33,15 @@ def test_explicit_interrupt_prefixes() -> None:
 def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
     for phrase in ("再见", "拜拜", "知道了", "我知道了", "退下吧", "先这样吧"):
         assert is_conversation_close_only(phrase), phrase
-    for phrase in ("知道了，再见", "好的，再见", "嗯，拜拜"):
+    for phrase in (
+        "知道了，再见",
+        "好的，再见",
+        "嗯，拜拜",
+        "行，拜拜",
+        "就这样吧，拜拜",
+    ):
+        assert is_conversation_close_only(phrase), phrase
+    for phrase in ("goodbye", "Good bye", "BYE", "see you"):
         assert is_conversation_close_only(phrase), phrase
 
     for sentence in (
