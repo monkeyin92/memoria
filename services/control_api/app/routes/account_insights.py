@@ -34,9 +34,12 @@ async def delivered_capabilities(
     profile = store.get_subject_profile(user_id=account_id) or {}
     speaker_profiles = await _authority(request).profiles(account_id)
     active_speakers = [item for item in speaker_profiles if item.status == "active"]
+    memory_activity = store.memory_activity_summary(user_id=account_id)
     return {
         "as_of": datetime.now(UTC).isoformat(),
         "account_id": account_id,
+        "product_positioning": "family_archive_terminal",
+        "ai_disclosure_required": True,
         "wechat_bound": store.has_external_identity(
             user_id=account_id,
             provider="wechat_openid",
@@ -45,6 +48,7 @@ async def delivered_capabilities(
             user_id=account_id,
             provider="wechat_phone",
         ),
+        "devices_bound": store.count_active_device_identities(account_id=account_id),
         "subject_category": profile.get("subject_category"),
         "age_evidence_status": profile.get("age_evidence_status"),
         "speaker_profiles_active": len(active_speakers),
@@ -54,6 +58,11 @@ async def delivered_capabilities(
             and profile.get("age_evidence_status") == "verified"
         ),
         "reject_non_owner_voice": bool(profile.get("reject_non_owner_voice", True)),
+        "memory_days_with_activity": memory_activity["memory_days_with_activity"],
+        "total_messages": memory_activity["total_messages"],
+        "model_training_contribution_enabled": False,
+        "account_export_available": True,
+        "account_deletion_available": True,
         "advertised_duplex_level": "none",
         "notes": (
             "Counts only delivered control-plane and identity signals. "

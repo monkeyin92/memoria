@@ -73,6 +73,24 @@ global.wx = {
       );
       return;
     }
+    if (pathname === "/v1/devices/wake-word-catalog") {
+      options.success({
+        statusCode: 200,
+        data: {
+          items: [
+            {
+              id: "mo_li",
+              display: "茉莉",
+              pinyin: "mo li",
+              syllables: 2,
+              device_ready: true,
+              note: "当前板卡默认唤醒词。",
+            },
+          ],
+        },
+      });
+      return;
+    }
     const activeMatch = pathname.match(/^\/v1\/sessions\/([^/]+)\/active-subject$/);
     if (activeMatch) {
       activeSubjectCalls.push({
@@ -495,6 +513,8 @@ function wireSettings(overrides = {}) {
     learning_mode: "off",
     audio_mode: "half_duplex_safe",
     wake_mode: "button",
+    wake_word_id: "mo_li",
+    wake_word_display: "茉莉",
     allowed_barge_in: ["button", "keyword"],
     updated_by: "person_owner",
     updated_at: new Date().toISOString(),
@@ -694,6 +714,28 @@ test("audio mode and wake mode pickers only submit server-approved values", asyn
   assert.deepEqual(settingsPatchCalls[0].changes, { wake_mode: "keyword" });
   assert.equal(page.data.wakeModeLabel, "唤醒词唤醒");
   assert.equal(page.data.settings.wake_mode, "keyword");
+});
+
+test("wake word picker only submits server-approved catalog ids", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_wake", session_id: "ses_wake", session_epoch: 1 });
+  settingsPayload = wireSettings({ settings_version: 3, wake_word_id: "mo_li", wake_word_display: "茉莉" });
+  diagnosticsPayload = wireDiagnostics();
+  settingsPatchResult = wireSettings({
+    settings_version: 4,
+    wake_word_id: "mo_li",
+    wake_word_display: "茉莉",
+  });
+  settingsPatchCalls.length = 0;
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.wakeWordLabel, "茉莉");
+  await page.selectWakeWord({ detail: { value: "0" } });
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.deepEqual(settingsPatchCalls[0].changes, { wake_word_id: "mo_li" });
+  assert.equal(page.data.wakeWordLabel, "茉莉");
+  assert.equal(page.data.settings.wake_word_id, "mo_li");
 });
 
 test("empty barge-in selection is blocked and voice kind follows AEC evidence", async () => {

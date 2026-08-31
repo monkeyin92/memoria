@@ -85,6 +85,24 @@ class RecordStoreMixin:
             raise RuntimeError("message insert failed")
         return dict(row), False
 
+    def memory_activity_summary(self, *, user_id: str) -> dict[str, int]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(DISTINCT local_date) AS memory_days_with_activity,
+                       COUNT(*) AS total_messages
+                FROM messages
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return {"memory_days_with_activity": 0, "total_messages": 0}
+        return {
+            "memory_days_with_activity": int(row["memory_days_with_activity"]),
+            "total_messages": int(row["total_messages"]),
+        }
+
     def list_messages(self, *, user_id: str, summary_date: str) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(

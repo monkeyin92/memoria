@@ -2,12 +2,17 @@
 
 <view class="page-shell auth-page">
   <view class="auth-copy">
-    <text class="eyebrow auth-copy-line">让每次回来都还是你</text>
+    <text class="eyebrow auth-copy-line">家庭桌面档案终端</text>
     <text class="page-title auth-copy-line">微信登录 Memoria</text>
   </view>
 
   <view class="card auth-card">
     <text class="auth-intro">{{reasonHint}}</text>
+    <view class="compliance-notice">
+      <text class="compliance-line">Memoria 是家庭档案终端，不是拟人化陪伴服务。</text>
+      <text class="compliance-line">设备回应由人工智能生成，会明确标识；模型训练默认关闭。</text>
+      <text class="compliance-line">声纹属于敏感生物识别信息，只在设备端采集。</text>
+    </view>
 
     <button
       class="avatar-button"

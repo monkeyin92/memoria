@@ -1,4 +1,5 @@
 const storage = require("./utils/storage");
+const compliance = require("./utils/compliance");
 
 App({
   globalData: {
@@ -8,6 +9,7 @@ App({
     identity: null,
   },
   _authClearedListeners: new Set(),
+  _reminderTimer: null,
 
   onLaunch() {
     const snapshot = storage.readAuthSnapshot();
@@ -15,6 +17,24 @@ App({
     this.globalData.identity = snapshot.identity;
     this.globalData.accessToken = snapshot.accessToken;
     this.globalData.accessTokenExpiresAt = snapshot.expiresAt;
+  },
+
+  onShow() {
+    compliance.startForegroundSession();
+    if (this._reminderTimer) clearInterval(this._reminderTimer);
+    this._reminderTimer = setInterval(
+      () => compliance.checkContinuousUseReminder(),
+      compliance.REMINDER_CHECK_MS,
+    );
+    compliance.checkContinuousUseReminder();
+  },
+
+  onHide() {
+    compliance.endForegroundSession();
+    if (this._reminderTimer) {
+      clearInterval(this._reminderTimer);
+      this._reminderTimer = null;
+    }
   },
 
   setAuthenticatedIdentity(response) {

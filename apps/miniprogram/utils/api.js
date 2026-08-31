@@ -495,6 +495,10 @@ function reviewMemoryClaim(claimId, action = "confirm") {
   });
 }
 
+function getDeliveredCapabilities() {
+  return rawRequest("/v1/account/delivered-capabilities");
+}
+
 function getGrowthOverview() {
   return rawRequest("/v1/growth/overview");
 }
@@ -666,6 +670,10 @@ function getDeviceSettings(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
 }
 
+function getWakeWordCatalog() {
+  return rawRequest("/v1/devices/wake-word-catalog");
+}
+
 /*
  * 设备诊断（PR-18）。只展示服务端权威字段：绑定/设置快照、声学能力登记、
  * 允许的音频模式与 Runtime Profile 版本。端点不可用时由调用方 fail-closed，
@@ -687,6 +695,7 @@ function updateDeviceSettings(deviceId, changes, { expectedVersion } = {}) {
     "learning_mode",
     "audio_mode",
     "wake_mode",
+    "wake_word_id",
     "allowed_barge_in",
   ]);
   const keys = Object.keys(changes);
@@ -853,6 +862,7 @@ module.exports = {
   summarizeDay,
   getConversationReview,
   reviewMemoryClaim,
+  getDeliveredCapabilities,
   getGrowthOverview,
   getPersonaStatus,
   getDigitalSelfVersions,
@@ -868,6 +878,7 @@ module.exports = {
   createDeviceBinding,
   getDeviceBinding,
   getDeviceSettings,
+  getWakeWordCatalog,
   getDeviceDiagnostics,
   updateDeviceSettings,
   resolveSessionSubject,

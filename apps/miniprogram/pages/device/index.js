@@ -48,9 +48,19 @@ function clampPercent(value) {
   return parsed;
 }
 
-function indexOfOption(options, value) {
-  const index = options.findIndex((option) => option.value === value);
+function indexOfOption(options, value, key = "value") {
+  const index = options.findIndex((option) => option[key] === value);
   return index >= 0 ? index : 0;
+}
+
+function selectableWakeWordOptions(items) {
+  return (items || [])
+    .filter((item) => item && item.device_ready === true)
+    .map((item) => ({
+      id: item.id,
+      label: item.display,
+      note: item.note || "",
+    }));
 }
 
 function roleLabels(roles) {
@@ -117,6 +127,10 @@ Page({
     wakeModeOptions: WAKE_MODE_OPTIONS,
     wakeModeIndex: 0,
     wakeModeLabel: "未读取",
+    wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "当前板卡默认唤醒词。" }],
+    wakeWordIndex: 0,
+    wakeWordLabel: "未读取",
+    wakeWordNote: "",
     bargeInOptions: ALL_BARGE_IN_OPTIONS,
     bargeInChecked: {},
     allowedAudioModesLabel: "",
@@ -181,6 +195,10 @@ Page({
       audioModeIndex: 0,
       wakeModeIndex: 0,
       wakeModeLabel: "未读取",
+      wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "当前板卡默认唤醒词。" }],
+      wakeWordIndex: 0,
+      wakeWordLabel: "未读取",
+      wakeWordNote: "",
       bargeInOptions: ALL_BARGE_IN_OPTIONS,
       bargeInChecked: {},
       allowedAudioModesLabel: "",
@@ -202,12 +220,13 @@ Page({
       return;
     }
     try {
-      const [profileResult, activationResult, settingsResult, diagnosticsResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
           api.getDeviceSettings(binding.device_id),
           api.getDeviceDiagnostics(binding.device_id),
+          api.getWakeWordCatalog(),
         ]);
       if (flowSeq !== this._flowSeq) return; // 晚到响应丢弃
       const profile =
@@ -243,6 +262,12 @@ Page({
       const bargeInChecked = {};
       for (const kind of bargeInKinds) bargeInChecked[kind] = true;
       const wakeModeIndex = indexOfOption(WAKE_MODE_OPTIONS, settings?.wake_mode);
+      const wakeWordOptions =
+        wakeWordCatalogResult.status === "fulfilled"
+          ? selectableWakeWordOptions(wakeWordCatalogResult.value?.items)
+          : this.data.wakeWordOptions;
+      const wakeWordIndex = indexOfOption(wakeWordOptions, settings?.wake_word_id, "id");
+      const selectedWakeWord = wakeWordOptions[wakeWordIndex] || null;
       const audioModeIndex = indexOfOption(audioModeOptions, settings?.audio_mode);
       const liveRuntime = diagnostics?.live_runtime || null;
       const effectiveAudioModeLabel =
@@ -308,6 +333,14 @@ Page({
           ? WAKE_MODE_OPTIONS.find((option) => option.value === settings.wake_mode)?.label ||
             settings.wake_mode
           : "未读取",
+        wakeWordOptions,
+        wakeWordIndex,
+        wakeWordLabel:
+          settings?.wake_word_display ||
+          selectedWakeWord?.label ||
+          settings?.wake_word_id ||
+          "未读取",
+        wakeWordNote: selectedWakeWord?.note || "",
         bargeInOptions,
         bargeInChecked,
         allowedAudioModesLabel: audioModeOptions.map((option) => option.label).join(" / "),
@@ -464,6 +497,12 @@ Page({
     await this.saveDeviceSetting({ wake_mode: option.value });
   },
 
+  async selectWakeWord(event) {
+    const option = this.data.wakeWordOptions[Number(event.detail.value)];
+    if (!option) return;
+    await this.saveDeviceSetting({ wake_word_id: option.id });
+  },
+
   async toggleBargeIn(event) {
     const value = Array.isArray(event.detail.value) ? event.detail.value : [];
     const kinds = value.filter((kind) =>
@@ -500,6 +539,11 @@ Page({
           "未读取",
         audioModeIndex: indexOfOption(this.data.audioModeOptions, updated.audio_mode),
         wakeModeIndex: indexOfOption(WAKE_MODE_OPTIONS, updated.wake_mode),
+        wakeWordIndex: indexOfOption(this.data.wakeWordOptions, updated.wake_word_id, "id"),
+        wakeWordLabel: updated.wake_word_display || updated.wake_word_id || "未读取",
+        wakeWordNote:
+          this.data.wakeWordOptions.find((option) => option.id === updated.wake_word_id)?.note ||
+          "",
         bargeInChecked: (() => {
           const checked = {};
           for (const kind of Array.isArray(updated.allowed_barge_in)

@@ -107,11 +107,19 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
             "learning_mode",
             "audio_mode",
             "wake_mode",
+            "wake_word_id",
+            "wake_word_display",
             "allowed_barge_in",
         ):
             assert key in body
         assert body["learning_mode"] == "off"
+        assert body["wake_word_id"] == "mo_li"
+        assert body["wake_word_display"] == "茉莉"
         assert body["runtime_profile_version"] == 0
+
+        catalog = await client.get("/v1/devices/wake-word-catalog")
+        assert catalog.status_code == 200
+        assert any(item["id"] == "mo_li" for item in catalog.json()["items"])
 
         patched = await client.patch(
             "/v1/devices/dev_test_01/settings",
@@ -137,6 +145,12 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         )
         assert forbidden_audio.status_code == 422
         assert forbidden_audio.json()["detail"]["code"] == "audio_mode_requires_aec_evidence"
+
+        forbidden_wake_word = await client.patch(
+            "/v1/devices/dev_test_01/settings",
+            json={"changes": {"wake_word_id": "unknown"}, "reason": "invalid"},
+        )
+        assert forbidden_wake_word.status_code == 422
 
         interrupt_assist = await client.patch(
             "/v1/devices/dev_test_01/settings",

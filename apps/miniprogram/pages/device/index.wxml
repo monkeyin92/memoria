@@ -106,6 +106,14 @@
           </picker>
         </view>
         <view class="setting-control">
+          <text class="setting-control-label">唤醒词</text>
+          <picker wx:if="{{wakeWordOptions.length > 0}}" range="{{wakeWordOptions}}" range-key="label" value="{{wakeWordIndex}}" bindchange="selectWakeWord" disabled="{{settingsSaving}}">
+            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeWordLabel}}</view>
+          </picker>
+          <text wx:if="{{wakeWordNote}}" class="setting-control-note">{{wakeWordNote}}</text>
+          <text class="setting-control-note">唤醒词会在设备下次连接时生效；需设备固件预装对应模型。</text>
+        </view>
+        <view class="setting-control">
           <text class="setting-control-label">允许的打断方式</text>
           <checkbox-group bindchange="toggleBargeIn">
             <label wx:for="{{bargeInOptions}}" wx:key="value" class="barge-in-option">

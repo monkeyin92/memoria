@@ -36,6 +36,7 @@ from services.control_api.app.device_control import (
     RuntimeProfileLedger,
     allowed_audio_modes,
 )
+from services.control_api.app.wake_words import wake_word_by_id, wake_word_catalog_payload
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -87,6 +88,8 @@ class DeviceSettingsResponse(BaseModel):
     learning_mode: str
     audio_mode: str
     wake_mode: str
+    wake_word_id: str
+    wake_word_display: str
     allowed_barge_in: list[str]
     updated_by: str
     updated_at: str
@@ -150,6 +153,7 @@ def _settings_response(
     binding_version: int,
     runtime_apply_status: Literal["current", "dispatched", "applied", "next_session"] = "current",
 ) -> DeviceSettingsResponse:
+    wake_word = wake_word_by_id(settings.wake_word_id)
     return DeviceSettingsResponse(
         device_id=settings.device_id,
         settings_version=settings.settings_version,
@@ -160,6 +164,8 @@ def _settings_response(
         learning_mode=settings.learning_mode,
         audio_mode=settings.audio_mode,
         wake_mode=settings.wake_mode,
+        wake_word_id=settings.wake_word_id,
+        wake_word_display=wake_word["display"] if wake_word is not None else settings.wake_word_id,
         allowed_barge_in=list(settings.allowed_barge_in),
         updated_by=settings.updated_by,
         updated_at=settings.updated_at.isoformat().replace("+00:00", "Z"),
@@ -296,6 +302,11 @@ async def _read_live_device_runtime_status(
     return cast(dict[str, object], value)
 
 
+@router.get("/wake-word-catalog")
+async def get_wake_word_catalog() -> dict[str, object]:
+    return {"items": wake_word_catalog_payload()}
+
+
 @router.get(
     "/{device_id}/settings",
     response_model=DeviceSettingsResponse,
@@ -382,7 +393,7 @@ async def patch_device_settings(
             detail={"code": "runtime_profile_ledger_unavailable"},
         )
     safety_sensitive = bool(
-        {"audio_mode", "wake_mode", "allowed_barge_in"}.intersection(body.changes)
+        {"audio_mode", "wake_mode", "wake_word_id", "allowed_barge_in"}.intersection(body.changes)
     )
     delivered = await _invalidate_active_device_session(
         request,

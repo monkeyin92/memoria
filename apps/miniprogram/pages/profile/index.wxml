@@ -61,6 +61,25 @@
     </view>
   </view>
 
+  <view class="card compliance-card">
+    <text class="settings-title">合规说明</text>
+    <text class="compliance-copy">{{complianceCopy.positioning}}</text>
+    <text class="compliance-copy">{{complianceCopy.aiDisclosure}}</text>
+    <text class="compliance-copy">{{complianceCopy.trainingDefaultOff}}</text>
+    <text wx:if="{{isMinor}}" class="compliance-copy">{{complianceCopy.minorRestrictions}}</text>
+  </view>
+
+  <view class="card">
+    <text class="settings-title">已交货能力</text>
+    <text class="setting-desc">只展示服务端已确认的控制面与身份信号，不含未验收的硬件指标。</text>
+    <view wx:if="{{deliveredCapabilitiesLoading}}" class="section-empty">正在加载…</view>
+    <view wx:elif="{{!deliveredCapabilities.length}}" class="section-empty">暂时无法读取能力仪表。</view>
+    <view wx:for="{{deliveredCapabilities}}" wx:key="label" class="delivered-row">
+      <text class="delivered-label">{{item.label}}</text>
+      <text class="delivered-value">{{item.value}}</text>
+    </view>
+  </view>
+
   <view class="card">
     <text class="settings-title">陪伴方式</text>
     <view wx:for="{{companions}}" wx:key="id" class="companion-row {{profile.companion_id === item.id ? 'companion-selected' : ''}}" data-id="{{item.id}}" bindtap="chooseCompanion">

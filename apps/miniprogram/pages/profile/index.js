@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const compliance = require("../../utils/compliance");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { readBindingManifest } = require("../../utils/device-binding");
@@ -62,6 +63,47 @@ function computeStats(items) {
   return { totalDays, moments, streak };
 }
 
+function formatDeliveredCapabilityRows(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  return [
+    { label: "微信已绑定", value: payload.wechat_bound ? "是" : "否" },
+    { label: "手机号已验证", value: payload.wechat_phone_verified ? "是" : "否" },
+    { label: "已绑定设备", value: String(payload.devices_bound ?? 0) },
+    {
+      label: "主人声纹",
+      value: `${payload.speaker_profiles_active ?? 0} 个活跃`,
+    },
+    {
+      label: "档案活跃天数",
+      value: String(payload.memory_days_with_activity ?? 0),
+    },
+    {
+      label: "档案消息条数",
+      value: String(payload.total_messages ?? 0),
+    },
+    {
+      label: "访客声纹拦截",
+      value: payload.reject_non_owner_voice ? "开启" : "关闭",
+    },
+    {
+      label: "半双工口径",
+      value: payload.advertised_duplex_level || "none",
+    },
+    {
+      label: "模型训练贡献",
+      value: payload.model_training_contribution_enabled ? "开启" : "默认关闭",
+    },
+    {
+      label: "数据导出",
+      value: payload.account_export_available ? "可用" : "不可用",
+    },
+    {
+      label: "账号注销",
+      value: payload.account_deletion_available ? "可用" : "不可用",
+    },
+  ];
+}
+
 Page({
   data: {
     identity: null,
@@ -89,6 +131,14 @@ Page({
     speakerEnrollmentState: "blocked",
     speakerEnrollmentBlockReason: "",
     speakerEnrollmentProfileCount: 0,
+    deliveredCapabilities: [],
+    deliveredCapabilitiesLoading: false,
+    complianceCopy: {
+      positioning: compliance.PRODUCT_POSITIONING,
+      aiDisclosure: compliance.AI_DISCLOSURE,
+      trainingDefaultOff: compliance.TRAINING_DEFAULT_OFF,
+      minorRestrictions: compliance.MINOR_RESTRICTIONS,
+    },
   },
 
   onLoad() {
@@ -107,6 +157,7 @@ Page({
     }
     this.loadProfile();
     this.loadStats();
+    this.loadDeliveredCapabilities();
   },
 
   onUnload() {
@@ -141,6 +192,8 @@ Page({
       speakerEnrollmentBlockReason: "",
       speakerEnrollmentRemediationSteps: [],
       speakerEnrollmentProfileCount: 0,
+      deliveredCapabilities: [],
+      deliveredCapabilitiesLoading: false,
     });
   },
 
@@ -279,6 +332,25 @@ Page({
     }
   },
 
+  async loadDeliveredCapabilities() {
+    const authEpoch = api.currentAuthEpoch();
+    this.setData({ deliveredCapabilitiesLoading: true });
+    try {
+      const payload = await api.getDeliveredCapabilities();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({
+        deliveredCapabilities: formatDeliveredCapabilityRows(payload),
+      });
+    } catch {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ deliveredCapabilities: [] });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) {
+        this.setData({ deliveredCapabilitiesLoading: false });
+      }
+    }
+  },
+
   async loadStats() {
     const identity = api.currentIdentity();
     if (!identity) return;
@@ -335,7 +407,7 @@ Page({
   async loginFromProfile() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     this.setData({ authenticated: true });
-    await Promise.all([this.loadProfile(), this.loadStats()]);
+    await Promise.all([this.loadProfile(), this.loadStats(), this.loadDeliveredCapabilities()]);
   },
 
   async openDigitalSelf() {

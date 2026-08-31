@@ -83,6 +83,18 @@ class DeviceStoreMixin:
             ).fetchone()
             return dict(row) if row is not None else None
 
+    def count_active_device_identities(self, *, account_id: str) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM device_identities
+                WHERE account_id = ? AND revoked_at IS NULL
+                """,
+                (account_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def revoke_device_identity(self, *, device_id: str, account_id: str, now: str) -> bool:
         with self._connection() as connection:
             cursor = connection.execute(

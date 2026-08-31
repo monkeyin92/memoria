@@ -132,6 +132,13 @@
             "button_or_keyword"
           ]
         },
+        "wake_word_id": {
+          "type": "string",
+          "enum": [
+            "mo_li",
+            "mei_mo_li_ya"
+          ]
+        },
         "allowed_barge_in": {
           "type": "array",
           "minItems": 1,

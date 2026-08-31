@@ -23,6 +23,7 @@ from typing import Any
 
 from services.archive.domain import canonical_payload
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.wake_words import DEFAULT_WAKE_WORD_ID, WAKE_WORD_IDS
 
 AUDIO_MODES = ("full_duplex_verified", "interrupt_assist", "half_duplex_safe")
 WAKE_MODES = ("button", "keyword", "button_or_keyword")
@@ -37,6 +38,7 @@ DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
     "learning_mode": "off",
     "audio_mode": "half_duplex_safe",
     "wake_mode": "button_or_keyword",
+    "wake_word_id": DEFAULT_WAKE_WORD_ID,
     "allowed_barge_in": ["button", "keyword"],
 }
 
@@ -273,6 +275,7 @@ class DeviceSettings:
     learning_mode: str
     audio_mode: str
     wake_mode: str
+    wake_word_id: str
     allowed_barge_in: tuple[str, ...]
     updated_by: str
     updated_at: datetime
@@ -289,6 +292,7 @@ class DeviceSettings:
             "learning_mode": self.learning_mode,
             "audio_mode": self.audio_mode,
             "wake_mode": self.wake_mode,
+            "wake_word_id": self.wake_word_id,
             "allowed_barge_in": list(self.allowed_barge_in),
             "updated_by": self.updated_by,
             "updated_at": _iso(self.updated_at),
@@ -308,6 +312,7 @@ def _settings_from_row(device_id: str, row: Mapping[str, Any]) -> DeviceSettings
         learning_mode=str(raw.get("learning_mode", "off")),
         audio_mode=str(raw["audio_mode"]),
         wake_mode=str(raw["wake_mode"]),
+        wake_word_id=str(raw.get("wake_word_id", DEFAULT_WAKE_WORD_ID)),
         allowed_barge_in=tuple(str(item) for item in raw["allowed_barge_in"]),
         updated_by=str(row["updated_by"]),
         updated_at=_utc(str(row["updated_at"])),
@@ -335,6 +340,7 @@ def default_settings(device_id: str, *, now: datetime) -> DeviceSettings:
         learning_mode=str(DEFAULT_DEVICE_SETTINGS["learning_mode"]),
         audio_mode=str(DEFAULT_DEVICE_SETTINGS["audio_mode"]),
         wake_mode=str(DEFAULT_DEVICE_SETTINGS["wake_mode"]),
+        wake_word_id=str(DEFAULT_DEVICE_SETTINGS["wake_word_id"]),
         allowed_barge_in=tuple(str(item) for item in allowed_barge_in),
         updated_by="",
         updated_at=now,
@@ -363,6 +369,11 @@ def _validate_settings_changes(changes: Mapping[str, object]) -> dict[str, objec
             if value not in WAKE_MODES:
                 raise ValueError(f"wake_mode must be one of {WAKE_MODES}")
             cleaned[key] = value
+        elif key == "wake_word_id":
+            wake_word_id = str(value)
+            if wake_word_id not in WAKE_WORD_IDS:
+                raise ValueError(f"wake_word_id must be one of {sorted(WAKE_WORD_IDS)}")
+            cleaned[key] = wake_word_id
         elif key == "learning_mode":
             if value not in LEARNING_MODES:
                 raise ValueError(f"learning_mode must be one of {LEARNING_MODES}")
@@ -419,6 +430,7 @@ class DeviceSettingsAuthority:
             "learning_mode": current.learning_mode,
             "audio_mode": current.audio_mode,
             "wake_mode": current.wake_mode,
+            "wake_word_id": current.wake_word_id,
             "allowed_barge_in": list(current.allowed_barge_in),
             **cleaned,
         }

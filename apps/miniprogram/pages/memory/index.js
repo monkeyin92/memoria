@@ -212,12 +212,24 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ reviewingClaimId: claimId, error: "" });
     try {
-      await api.reviewMemoryClaim(claimId);
+      const review = await api.reviewMemoryClaim(claimId);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const refreshed = await this.loadDays();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       if (refreshed === "ok") {
-        wx.showToast({ title: "已确认", icon: "success" });
+        const trace = review?.trace || {};
+        const reviewEventId = trace.review_event_id || review?.review_event_id || "";
+        const reviewedAt = trace.reviewed_at || "";
+        if (reviewEventId) {
+          wx.showModal({
+            title: "记忆已确认",
+            content: `追溯号：${reviewEventId}${reviewedAt ? `\n确认时间：${reviewedAt}` : ""}`,
+            showCancel: false,
+            confirmText: "知道了",
+          });
+        } else {
+          wx.showToast({ title: "已确认", icon: "success" });
+        }
       }
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;

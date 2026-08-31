@@ -1163,6 +1163,7 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     uint32_t volume_limit = 0;
     uint32_t screen_brightness = 0;
     std::string requested_audio_mode;
+    std::string wake_word_id;
     if (settings == nullptr || !cJSON_IsObject(settings) ||
         !GetUint32(settings, "settings_version", &settings_version) ||
         !GetUint32(settings, "volume_limit", &volume_limit) || volume_limit > 100 ||
@@ -1173,8 +1174,15 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         ESP_LOGE(kTag, "session.accepted device settings are invalid or not effective");
         return false;
     }
-    ESP_LOGI(kTag, "applying device settings version=%u profile=%u", settings_version,
-             profile_version);
+    const cJSON* wake_word_item =
+        cJSON_GetObjectItemCaseSensitive(settings, "wake_word_id");
+    if (wake_word_item != nullptr && cJSON_IsString(wake_word_item) &&
+        wake_word_item->valuestring != nullptr) {
+        wake_word_id = wake_word_item->valuestring;
+    }
+    ESP_LOGI(kTag, "applying device settings version=%u profile=%u wake_word=%s",
+             settings_version, profile_version,
+             wake_word_id.empty() ? "default" : wake_word_id.c_str());
     // This board declares no AEC reference, no simultaneous capture and
     // playback, no local stop keyword and no duck. The physical stop button
     // and local VAD honestly permit interrupt_assist, but never verified full

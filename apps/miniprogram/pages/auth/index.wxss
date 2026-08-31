@@ -36,6 +36,25 @@
   line-height: 1.6;
 }
 
+.compliance-notice {
+  margin: 24rpx 0;
+  padding: 24rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.18);
+  border-radius: 24rpx;
+  background: rgba(16, 23, 52, 0.55);
+}
+
+.compliance-line {
+  display: block;
+  color: #a8b4dc;
+  font-size: 24rpx;
+  line-height: 1.65;
+}
+
+.compliance-line + .compliance-line {
+  margin-top: 12rpx;
+}
+
 .avatar-button {
   display: flex;
   width: 152rpx;
