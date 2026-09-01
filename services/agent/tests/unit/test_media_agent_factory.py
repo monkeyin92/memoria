@@ -263,6 +263,12 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         def set_runtime_profile_refresher(self, refresher: object) -> None:
             assert callable(refresher)
 
+        def set_live_lookup_semantic_resolver(self, resolver: object) -> None:
+            assert resolver is None or callable(resolver)
+
+        def set_conversation_close_semantic_resolver(self, resolver: object) -> None:
+            assert resolver is None or callable(resolver)
+
     class TTS:
         pool = None
 

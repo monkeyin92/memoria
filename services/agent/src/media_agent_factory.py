@@ -39,6 +39,10 @@ from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderAdapter,
     ExistingVoiceProviderConfig,
 )
+from services.agent.src.voice_profile_client import (
+    VoiceProfileClient,
+    VoiceProfileClientConfig,
+)
 from services.agent.src.conversation_close_wiring import install_conversation_close_semantic_resolver
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 

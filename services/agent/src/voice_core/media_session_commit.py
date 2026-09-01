@@ -151,7 +151,22 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, *, accepted: bool
         ) -> None: ...
 
-        def _nudge_missed_hearing(self, context: _MediaVoiceSession) -> None: ...
+        def _nudge_missed_hearing(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            allow_without_endpoint: bool = False,
+        ) -> None: ...
+
+        def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
+
+        def _maybe_early_commit_clock_fact(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
+        def _maybe_early_commit_stable_clock_fact_partial(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
 
         def _observe_committed_conversation_turn(
             self,

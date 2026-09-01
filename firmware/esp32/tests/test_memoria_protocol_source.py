@@ -164,8 +164,8 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
     assert "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n" in sdkconfig
     assert "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n" in sdkconfig
     assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
-    assert "默认启用本地唤醒词“梅莫里亚”" in FIRMWARE_README
-    assert "普通“你好你好”不是唤醒词" in FIRMWARE_README
+    assert "默认出厂唤醒词为「茉莉」（`mo li`）" in FIRMWARE_README
+    assert "白名单词「梅莫里亚」（`mei mo li ya`）" in FIRMWARE_README
 
 
 def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:

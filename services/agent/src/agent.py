@@ -57,7 +57,6 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.agent.src.orchestration.interruption_guard import is_primarily_non_chinese_script
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companion_response_safety import (

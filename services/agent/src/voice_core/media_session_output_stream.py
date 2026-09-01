@@ -34,6 +34,7 @@ from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 
 if TYPE_CHECKING:
+    from services.agent.src.orchestration.conversation_projection import TurnPhase
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
     from services.agent.src.voice_core.media_session_state import (
         MediaVoiceSessionState as _MediaVoiceSession,
@@ -143,6 +144,16 @@ class MediaOutputStreamMixin:
             self,
             context: _MediaVoiceSession,
             previous_phase: TurnPhase,
+        ) -> None: ...
+
+        def flush_pending_missed_hearing_nudge(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        def clear_device_wake_ack_fence(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
         ) -> None: ...
 
     async def _abort_unheard_stream(
