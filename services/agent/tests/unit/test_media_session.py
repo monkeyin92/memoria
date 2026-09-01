@@ -74,6 +74,7 @@ class FakeMediaProvider(MediaVoiceProvider):
     def __init__(self) -> None:
         self.audio_calls: list[int] = []
         self.cancelled: list[GenerationFence] = []
+        self.pause_asr_calls: list[int] = []
         self.closed = False
 
     async def ingest_audio(
@@ -118,6 +119,9 @@ class FakeMediaProvider(MediaVoiceProvider):
     def cancel_generation(self, fence: GenerationFence) -> bool:
         self.cancelled.append(fence)
         return True
+
+    async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
+        self.pause_asr_calls.append(identity.stream_epoch)
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True
@@ -2402,6 +2406,56 @@ async def test_audio_ingress_serializes_duplicate_finalize_watermark(
     assert [entry["result"] for entry in boundary_logs] == ["success", "duplicate"]
     assert boundary_logs[1]["audio_admitted_watermark"] == 2
     assert boundary_logs[1]["previous_finalized_watermark"] == 2
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_commit_pauses_provider_asr_when_playback_starts() -> None:
+    """Committing a turn starts playback, which must close the ASR task.
+
+    Half-duplex playback stops uplink capture, so leaving the provider task
+    open would starve its feed and trip the 23-second idle timeout.
+    """
+
+    identity = SessionIdentity(
+        "commit-pauses-asr",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="你好")
+
+    async def classify_owner(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _verified_owner_decision()
+
+    context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+
+    assert provider.pause_asr_calls == []
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+
+    assert fence is not None, f"turn did not commit: {reason}"
+    assert context.playback.current_fence == fence
+    assert provider.pause_asr_calls == [identity.stream_epoch]
     await context.runtime.close()
 
 

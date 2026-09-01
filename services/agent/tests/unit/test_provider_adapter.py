@@ -708,6 +708,69 @@ async def test_existing_provider_adapter_rotates_funasr_at_vad_boundary() -> Non
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_rotates_asr_task_when_playback_starts() -> None:
+    """Half-duplex playback starves the provider feed; the task must be rotated.
+
+    FunASR expects a continuous audio feed and drops the task after ~23s of
+    silence. Playback stops uplink capture, so the task is closed at playback
+    start and a fresh one is opened when capture resumes.
+    """
+
+    class PlaybackPauseASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rotation_calls = 0
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+
+        async def rotate_task(self, *, require_consumed: bool = True) -> None:
+            self.rotation_calls += 1
+            assert require_consumed is False
+            self.task_epoch += 1
+            self.task_id = f"task-{self.task_epoch}"
+            self.task_sample_origin = 320
+
+    asr = PlaybackPauseASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-playback-pause", stream_epoch=1)
+
+    # No audio has been fed yet: nothing to rotate, so playback must not churn
+    # a task that was never started.
+    await adapter.pause_asr_for_playback(identity)
+    assert asr.rotation_calls == 0
+
+    assert not await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    await adapter.pause_asr_for_playback(identity)
+
+    assert asr.rotation_calls == 1
+    assert asr.task_id == "task-2"
+    assert adapter.current_asr_task_epoch == 2
+
+    # Idempotent while capture stays stopped: repeated playback starts without
+    # intervening audio must not rotate again.
+    await adapter.pause_asr_for_playback(identity)
+    assert asr.rotation_calls == 1
+
+    # Capture resumed: the next segment rides the fresh task and still
+    # finalizes normally.
+    assert not await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320),
+    )
+    await adapter.pause_asr_for_playback(identity)
+    assert asr.rotation_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_keeps_late_final_on_old_lazy_task_origin() -> None:
     class LazyRotationASR(FakeASR):
         def __init__(self) -> None:
