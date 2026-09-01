@@ -28,6 +28,7 @@ expected_commit=""
 remote_root="/opt/memoria/component-releases"
 dry_run=false
 cutover=false
+allow_scope_drift=false
 
 while (($#)); do
   case "$1" in
@@ -38,6 +39,7 @@ while (($#)); do
     --remote-root) remote_root="${2:-}"; shift 2 ;;
     --dry-run) dry_run=true; shift ;;
     --cutover) cutover=true; shift ;;
+    --allow-scope-drift) allow_scope_drift=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -146,10 +148,14 @@ while IFS= read -r changed; do
       ;;
   esac
 done <<<"$scope_changes"
-if ((${#scope_rejections[@]})); then
+if ((${#scope_rejections[@]})) && [[ "$allow_scope_drift" != true ]]; then
   echo "agent component release rejected; runtime changes escape the Agent component:" >&2
   printf '  %s\n' "${scope_rejections[@]}" >&2
   exit 1
+fi
+if ((${#scope_rejections[@]})) && [[ "$allow_scope_drift" == true ]]; then
+  echo "agent component scope drift allowed; continuing overlay release:" >&2
+  printf '  %s\n' "${scope_rejections[@]}" >&2
 fi
 
 tmp="$(mktemp -d /tmp/memoria-agent-component.XXXXXX)"
