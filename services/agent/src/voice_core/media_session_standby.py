@@ -174,10 +174,13 @@ class MediaSessionStandbyMixin:
         """Count silence only while the Python authority says it is listening."""
 
         if phase == "listening":
-            # A new post-reply listening window gives the owner the full
-            # configured interval. Ambient VAD never reaches this reset seam.
-            self._arm_owner_silence_timer(context, reset=True)
-            context.owner_silence_grace_used = False
+            # Resume the owner's remaining budget; do not mint a fresh window
+            # here. Assistant-only speech (a missed-hearing nudge) also lands
+            # on this seam, and a reset would let the assistant's own voice
+            # extend the owner-silence deadline indefinitely. A verified owner
+            # turn refreshes the full interval in _finish_owner_silence_turn,
+            # which is the only place owner activity is actually established.
+            self._arm_owner_silence_timer(context, reset=False)
         else:
             # Silence is measured only while the authority is listening.  In
             # particular, an open VAD turn must not consume the owner's

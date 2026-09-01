@@ -547,6 +547,54 @@ async def test_device_owner_silence_timer_pauses_while_user_is_speaking() -> Non
 
 
 @pytest.mark.asyncio
+async def test_assistant_nudge_playback_does_not_extend_owner_silence_window() -> None:
+    """A missed-hearing nudge is assistant speech, not owner activity.
+
+    Its playback returns the floor through the same ``listening`` projection
+    seam a real reply uses.  If that seam minted a fresh window, the
+    assistant's own voice would push the owner-silence deadline out by a full
+    interval per nudge and the silent close would never be reached.
+    """
+
+    identity = SessionIdentity(
+        "owner-silence-nudge",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        owner_silence_timeout_s=0.30,
+    )
+    context = await registry._get_or_create(identity)
+
+    # Burn most of the window the owner was given at session creation.
+    await asyncio.sleep(0.20)
+    assert registry.context(identity.session_id) is context.runtime
+
+    # One nudge: assistant speaks, then the floor returns to listening. No
+    # owner turn was ever accepted, so no fresh interval may be granted.
+    registry._sync_owner_silence_phase(context, "speaking")
+    registry._sync_owner_silence_phase(context, "listening")
+
+    await asyncio.sleep(0.20)
+
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "owner_silence_timeout"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
 async def test_max_user_speech_watchdog_closes_a_stuck_vad_turn() -> None:
     identity = SessionIdentity(
         "max-user-speech-watchdog",
