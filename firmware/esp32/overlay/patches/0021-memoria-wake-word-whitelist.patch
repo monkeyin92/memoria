@@ -1,37 +1,38 @@
 diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
 --- a/main/CMakeLists.txt
 +++ b/main/CMakeLists.txt
-@@ -31,6 +31,7 @@
+@@ -35,6 +35,7 @@ set(SOURCES "audio/audio_codec.cc"
              "memoria/device_identity.cc"
              "memoria/memoria_audio_frame.cc"
              "memoria/memoria_activation_client.cc"
 +            "memoria/memoria_wake_word.cc"
              "memoria/memoria_protocol.cc"
+             "memoria/memoria_bootstrap.cc"
              "mcp_server.cc"
-             "system_info.cc"
 diff --git a/main/application.cc b/main/application.cc
 --- a/main/application.cc
 +++ b/main/application.cc
-@@ -1,5 +1,6 @@
- #include "application.h"
- 
+@@ -6,6 +6,7 @@
+ #include "display.h"
+ #include "mcp_server.h"
+ #include "mqtt_protocol.h"
 +#include "memoria/memoria_wake_word.h"
- #include "assets.h"
- #include "board.h"
- #include "display/display.h"
-@@ -358,6 +359,7 @@ void Application::ActivationTask() {
+ #include "memoria_protocol.h"
+ #include "memoria_bootstrap.h"
+ #include "display/lcd_display.h"
+@@ -618,6 +619,7 @@ void Application::ActivationTask() {
+     if (!assets.partition_valid() || !assets.Apply()) {
          ESP_LOGE(TAG, "Memoria assets partition/model load failed");
          return;
      }
 +    memoria::WakeWordRegistry::GetInstance().LoadFromNvs();
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
      if (!InitializeProtocol()) {
          return;
+     }
 diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/custom_wake_word.cc
 --- a/main/audio/wake_words/custom_wake_word.cc
 +++ b/main/audio/wake_words/custom_wake_word.cc
-@@ -1,6 +1,7 @@
- #include "custom_wake_word.h"
+@@ -2,6 +2,7 @@
  #include "audio_service.h"
  #include "system_info.h"
  #include "assets.h"
@@ -39,7 +40,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
  
  #include <esp_log.h>
  #include <esp_mn_iface.h>
-@@ -88,6 +89,18 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list)
+@@ -99,6 +100,18 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list)
          ParseWakenetModelConfig();
      }
  
@@ -61,7 +62,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
 --- a/scripts/build_default_assets.py
 +++ b/scripts/build_default_assets.py
-@@ -608,6 +608,30 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
+@@ -618,6 +618,28 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
      return None
  
  
@@ -90,7 +91,7 @@ diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
  def get_language_from_multinet_models(multinet_models):
      """
      Determine language from multinet model names
-@@ -898,13 +922,17 @@ def main():
+@@ -896,17 +918,18 @@ def main():
          language = get_language_from_multinet_models(multinet_model_names)
          
          # Build multinet_model info structure
@@ -114,3 +115,5 @@ diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
 -            ]
 +            "commands": commands
          }
+         print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")
+         print(f"  wake word language: {language}")

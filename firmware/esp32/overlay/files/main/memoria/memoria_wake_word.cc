@@ -108,9 +108,12 @@ void WakeWordRegistry::LoadFromNvs() {
     char id[32] = {};
     char command[64] = {};
     char display[32] = {};
-    if (nvs_get_str(handle, kNvsWakeWordId, id, sizeof(id)) != ESP_OK ||
-        nvs_get_str(handle, kNvsWakeWordCommand, command, sizeof(command)) != ESP_OK ||
-        nvs_get_str(handle, kNvsWakeWordDisplay, display, sizeof(display)) != ESP_OK) {
+    size_t id_len = sizeof(id);
+    size_t command_len = sizeof(command);
+    size_t display_len = sizeof(display);
+    if (nvs_get_str(handle, kNvsWakeWordId, id, &id_len) != ESP_OK ||
+        nvs_get_str(handle, kNvsWakeWordCommand, command, &command_len) != ESP_OK ||
+        nvs_get_str(handle, kNvsWakeWordDisplay, display, &display_len) != ESP_OK) {
         nvs_close(handle);
         return;
     }
