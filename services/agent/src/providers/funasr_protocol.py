@@ -34,6 +34,11 @@ class FunASRSentence:
     heartbeat: bool
     words: tuple[TimedWord, ...]
     word_timing_valid: bool = True
+    # True when this "final" was synthesized locally from the offline rescue
+    # rather than received from the provider.  A rescue result is a stand-in
+    # for provider silence, so it must never outrank a real provider final on
+    # the same audio (see ASRResult.rescue_synthesized).
+    rescue_synthesized: bool = False
 
 
 def sentence_to_asr_result(
@@ -92,6 +97,7 @@ def sentence_to_asr_result(
         provider_end_ms=provider_end_ms,
         stream_epoch=stream_epoch,
         word_timings=word_timings,
+        rescue_synthesized=sentence.rescue_synthesized,
     )
 
 

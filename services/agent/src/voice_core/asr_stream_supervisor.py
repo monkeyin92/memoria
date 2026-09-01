@@ -198,6 +198,23 @@ class ASRStreamSupervisor:
 
         if not cross_sentence:
             return False
+        # A rescue final is a stand-in for provider silence.  The mid-utterance
+        # rescue fires while the VAD segment is still open, so it routinely
+        # registers a longer interval than the provider final that arrives
+        # afterwards; span/text comparisons below would then keep the stand-in
+        # and drop the authoritative transcript.  Let a real provider final
+        # replace rescue intervals outright.
+        if not result.rescue_synthesized and all(
+            interval.rescue_synthesized for interval in cross_sentence
+        ):
+            return True
+        # The reverse must stay closed.  A rescue interval is usually the wider
+        # one, so the span comparison below would let a stand-in evict an
+        # authoritative provider transcript that already landed.
+        if result.rescue_synthesized and any(
+            not interval.rescue_synthesized for interval in cross_sentence
+        ):
+            return False
         max_end = max(interval.capture_end_sample for interval in cross_sentence)
         if result.capture_end_sample <= max_end:
             return False

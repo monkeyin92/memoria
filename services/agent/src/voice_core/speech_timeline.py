@@ -131,6 +131,12 @@ class ASRResult:
     # Optional reliable word boundaries projected onto the absolute sample
     # clock. Supervisor uses these only for committed-watermark straddles.
     word_timings: tuple[ASRWordTiming, ...] = ()
+    # True when the offline rescue synthesized this final because the realtime
+    # provider stayed silent.  It stands in for a missing provider result, so a
+    # real provider final covering the same audio must be able to replace it
+    # even when the rescue interval is longer (mid-utterance rescue fires while
+    # the VAD segment is still open and would otherwise win on span alone).
+    rescue_synthesized: bool = False
     timing_evidence: ASRTimingEvidence = field(init=False)
     # Reconnected providers can trim an expanded sentence to a new tail. Keep
     # the provider sentence id for reconciliation while giving that tail its
@@ -205,6 +211,9 @@ class ASRFinalInterval:
     capture_end_sample: int
     text: str = field(default="", compare=False)
     revision: int = field(default=0, compare=False)
+    # Carried for overlap arbitration only; excluded from identity so an
+    # interval stays poppable regardless of its provenance.
+    rescue_synthesized: bool = field(default=False, compare=False)
 
     @classmethod
     def from_result(cls, result: ASRResult) -> ASRFinalInterval:
@@ -216,6 +225,7 @@ class ASRFinalInterval:
             capture_end_sample=result.capture_end_sample,
             text=result.text,
             revision=result.revision,
+            rescue_synthesized=result.rescue_synthesized,
         )
 
     def overlaps(self, other: ASRFinalInterval) -> bool:

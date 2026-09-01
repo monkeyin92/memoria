@@ -817,6 +817,25 @@ class FunASRSession:
                         self._task_started_event.set()
                         self._remember_current_task_event_context()
                     elif ev.event == "result-generated" and ev.sentence is not None:
+                        if (
+                            ev.sentence.sentence_end
+                            and ev.sentence.text
+                            and not ev.sentence.heartbeat
+                            and not ev.sentence.rescue_synthesized
+                        ):
+                            # Realtime finals were previously metric-only, so a
+                            # log-only view of a session made the realtime path
+                            # look completely silent even while it was
+                            # delivering transcripts.
+                            logger.info(
+                                "FunASR realtime final task_id=%s sentence_id=%s "
+                                "text_len=%s begin_ms=%s end_ms=%s",
+                                ev.task_id,
+                                ev.sentence.sentence_id,
+                                len(ev.sentence.text),
+                                ev.sentence.begin_ms,
+                                ev.sentence.end_ms,
+                            )
                         result_context = task_context or self.task_event_context(ev.task_id)
                         sample_origin = (
                             result_context.sample_origin
@@ -1529,6 +1548,7 @@ class FunASRSession:
             sentence_end=True,
             heartbeat=False,
             words=(),
+            rescue_synthesized=True,
         )
         if empty_audio_boundary and not boundary:
             # The provider rejected the task as empty audio, so no
