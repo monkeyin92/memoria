@@ -115,6 +115,26 @@ owner_silence_timeout_s: 10
 
 当前候选已发布到生产 Agent/Bridge/Edge 并写入当前板卡。2026-08-30 10:19 切流后 Direct 唤醒 TTS 曾用 `turn_id=0`，固件拒包、无 Actual Heard；10:33 已改为先打开 `turn_id>=1` 再播允许名单短句（「我在。」「哎，我来了。」「哎呀，好困呀。」）。该听感尚未真机验收，不能更新 `direct_real_device_verified`。2026-08-25 真机已验证“茉莉”唤醒后静默约 10 秒，Python 产生 `owner_silence_timeout` typed CLOSED，Edge 成功排队 `session.close`，设备回到待命；Edge 也已增加旧 FLOOR fence 丢弃和重复 CLOSED 幂等保护。明确结束语测试时，ASR 路由进入结束语分支，但正式主人权限返回 `subject_capability_forbidden`，记录为 `conversation_end_owner_unverified` 并由随后超时关闭，因此 `conversation_end_explicit` 仍待主人声纹/subject profile 权限就绪后复测。两音节“茉莉”相较原四音节唤醒词有更高误唤醒风险，安静、电视人声和家庭噪声三种环境的阈值验收仍未完成，不能更新 `direct_real_device_verified`。
 
+## 播放期间 ASR 任务空闲超时修复
+
+```yaml
+candidate: playback_asr_task_pause
+as_of_date: 2026-09-01
+code: complete
+wired: playback_ledger_start_to_provider_pause_asr_to_funasr_rotate_task
+enabled: true
+deployed: main_branch
+production_release_commit: 7d13ad1ecd85af6b647ec08d5b33e6ad0a3f654a
+verified: syntax_check_and_compilation
+direct_real_device_verified: false
+```
+
+**缺陷 3 根因**：半双工模式下播放开始时停止音频采集，但 ASR 任务保持打开。FunASR 提供商期望持续音频输入（FUNASR_HEARTBEAT 参数），23 秒无音频后超时失败。生产日志显示 12 次 `EmptyAudio` 错误和 2 次超时，均发生在播放期间。
+
+**修复方案**：在播放开始时主动关闭当前 ASR 任务。方法是在 `MediaVoiceProvider` 协议中新增 `pause_asr_for_playback()` 方法，由 `ExistingVoiceProviderAdapter` 实现并调用 `FunASRSession.rotate_task()`。在所有播放启动点（`media_session_commit.py`、`media_session_output_dispatch.py`、`media_session_connection.py` 两处、`media_session_input.py`）调用该方法。播放结束后音频采集恢复时会自动启动新任务。
+
+**未验证边界**：真机复测、生产环境播放期间 ASR 超时消失、播放结束后新任务正常启动。修复已合并到 `main` 分支（commit `7d13ad1`、merge commit `f631990..7d13ad1`），但尚未发布到生产或进行真机验证，不得据此升级 `direct_real_device_verified`。
+
 ## 播放后 VAD 上行门控死锁候选
 
 ```yaml
