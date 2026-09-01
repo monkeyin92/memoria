@@ -221,7 +221,7 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
    - 在**设备端**唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
    - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
    - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明设备 tab 确认在线后由硬件起手。
-3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。白名单已上线，同一次现场把 `mo_li` 与 `mei_mo_li_ya` 各记一组，供路演选词；两音节风险见 `RESEARCH.md` R-20260831-01。
+3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
 4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
 5. **阶段 7**：阶段 2（含串口）+3+4+5 证据齐全后锁定投资人路演剧本。
 
