@@ -35,9 +35,9 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `297d2e0a46199242d9c4017856a06c984a94d315`（2026-09-01 12:52 CST 切流，标签 `20260901-1248-owner-authority-missed-hearing-agent-component`）。Control API 与 Media Edge 发布提交为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`（2026-09-01 10:02 CST 切流，标签 `20260901-0945-wake-word-whitelist`）：
+当前 Agent/Bridge overlay 源提交为 `2290da1a80d974b91f78b59a8d4ac5c6cb67a976`（2026-09-01 18:32 CST 切流、19:43 CST 栈 tag 对齐，标签 `20260901-1740-funasr-rescue-playback-asr-pause-agent-component`）。Control API 与 Media Edge 发布提交为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`（2026-09-01 10:02 CST 切流，标签 `20260901-0945-wake-word-whitelist`）：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260901-1248-owner-authority-missed-hearing-agent-component`，revision `297d2e0a46199242d9c4017856a06c984a94d315`（overlay 核心修复 `88d46c9`）。Bridge healthy、bridge gRPC PASS、restart=0；Agent worker 已注册，但 healthcheck 仍因 heartbeat 对 Control API 返回 HTTPStatusError 报 `unhealthy`（Agent/Control 栈 tag 分裂，切流前即存在，与本次 overlay 无关）。紧邻回滚点 `memoria-agent:rollback-20260901-1248-owner-authority-missed-hearing-agent-component-pre-agent` 与 `-pre-bridge`（revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`）。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260901-1740-funasr-rescue-playback-asr-pause-agent-component`，overlay revision `2290da1a80d974b91f78b59a8d4ac5c6cb67a976`（含播放期 ASR pause `7d13ad1`、heartbeat 409 诊断 `2290da1`）。栈 `MEMORIA_RELEASE_TAG` 已与 Control 对齐为 `20260901-0945-wake-word-whitelist` / commit `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`；Agent/Bridge healthy、bridge gRPC PASS、restart=0。切流因 Agent/Control 栈 tag 分裂走手动 compose（`cutover_mode=manual_tag_split`）；紧邻回滚点 `memoria-agent:rollback-20260901-1740-funasr-rescue-playback-asr-pause-agent-component-pre-agent` 与 `-pre-bridge`（revision `297d2e0a46199242d9c4017856a06c984a94d315`，镜像 `20260901-1248-owner-authority-missed-hearing-agent-component`）。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 已钉住本标签。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
@@ -123,9 +123,11 @@ as_of_date: 2026-09-01
 code: complete
 wired: playback_ledger_start_to_provider_pause_asr_to_funasr_rotate_task
 enabled: true
-deployed: main_branch
-production_release_commit: 7d13ad1ecd85af6b647ec08d5b33e6ad0a3f654a
-verified: unit_regression_mutation_checked
+deployed: production_agent_bridge
+production_release_tag: 20260901-1740-funasr-rescue-playback-asr-pause-agent-component
+production_release_commit: 2290da1a80d974b91f78b59a8d4ac5c6cb67a976
+deployed_at_utc: 2026-09-01T10:32:01Z
+verified: unit_regression_mutation_checked_and_production_cutover_healthy
 regression_tests: test_commit_pauses_provider_asr_when_playback_starts,test_existing_provider_adapter_rotates_asr_task_when_playback_starts
 direct_real_device_verified: false
 ```
@@ -136,7 +138,7 @@ direct_real_device_verified: false
 
 **回归测试**：会话层 `test_commit_pauses_provider_asr_when_playback_starts` 走真实 `commit_user_turn` 路径，断言播放启动后 pause 恰好触发一次；适配器层 `test_existing_provider_adapter_rotates_asr_task_when_playback_starts` 断言 `rotate_task(require_consumed=False)` 被调用、未开始的任务不被空转、采集未恢复时重复播放启动保持幂等。已用变异验证有效性：注掉 `media_session_commit.py` 的 pause 调用后会话层测试失败（`[] == [1]`）。注意 `FakeMediaProvider` 继承 `MediaVoiceProvider` Protocol，Protocol 的 `...` 方法体会成为返回 `None` 的真实方法——新增协议方法时若不在测试替身里显式实现，调用点会在测试中静默 no-op。
 
-**未验证边界**：真机复测、生产环境播放期间 ASR 超时消失、播放结束后新任务正常启动。修复已合并到 `main` 分支（commit `7d13ad1`、merge commit `f631990..7d13ad1`），但尚未发布到生产或进行真机验证，不得据此升级 `direct_real_device_verified`。
+**未验证边界**：真机复测、生产环境播放期间 ASR 超时消失、播放结束后新任务正常启动。修复已随 Agent overlay `20260901-1740-funasr-rescue-playback-asr-pause-agent-component`（2026-09-01 18:32 CST 切流）发布到生产 Agent/Bridge；容器 healthy、restart=0，但播放期 FunASR 行为仍需真机 receipt，不得据此升级 `direct_real_device_verified`。
 
 ## 播放后 VAD 上行门控死锁候选
 
@@ -461,6 +463,7 @@ fcdr_proxy_verified: local_agent_full_regression_mypy_and_low_cardinality_contra
 - 已退役 H5：`/memoria-h5` 固定返回 `410 Gone`，不再发布或切流静态前端。
 - LiveKit：`livekit/livekit-server:v1.13.5`，Compose project `memoria-livekit`。
 - Control API loopback：`127.0.0.1:8791`；legacy mini gateway：`127.0.0.1:8792`；legacy device gateway：`127.0.0.1:8793`；direct Edge device WSS：`127.0.0.1:8794`。
+- Voice Core Media Bridge 生产容器名：`memoria-voice-core-media-bridge-1`（Compose service `voice-core-media-bridge`，与 Agent 同镜像）。
 - 终身档案：PostgreSQL 17 + pgvector；对象：MinIO；设备共享权威：独立 mTLS Redis。
 
 ESP32 Direct 正式入口是 `wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。
