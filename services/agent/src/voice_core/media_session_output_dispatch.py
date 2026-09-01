@@ -600,6 +600,9 @@ class MediaOutputDispatchMixin:
         context.assistant_text = ""
         context.provider_complete = False
         context.output_complete_emitted = False
+        # Close the ASR task when playback starts to avoid idle timeout during
+        # half-duplex assistant speech (defect 3: 23-second timeout fix).
+        await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, next_fence)
         if not await self.bridge.emit_generation(
             next_fence.session_id,

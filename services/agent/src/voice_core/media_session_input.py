@@ -384,6 +384,9 @@ class MediaSessionInputMixin:
                         context.playback.start(cancelled)
                         context.provider_complete = False
                         context.output_complete_emitted = False
+                        # Close the ASR task when playback starts to avoid idle timeout during
+                        # half-duplex assistant speech (defect 3: 23-second timeout fix).
+                        await context.provider.pause_asr_for_playback(context.identity)
                         await self._cancel_reply_task(context, previous_fence)
                         await self._emit_cancel_generation(
                             context,
