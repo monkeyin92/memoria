@@ -172,7 +172,7 @@ full_duplex_verified: false
 stage_2: receipt_filed_3of4_pending_serial
 stage_3: pending_homepage_initiated_session
 stage_4: pending
-stage_5: pending_field_ret_2026_09_01_owner_authority_missed_hearing
+stage_5: pass_2026_09_01_operator_two_rounds
 stage_6: pending
 stage_7: pending
 success: two_natural_turns_actual_heard_then_wake_standby_script
@@ -182,12 +182,12 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 
 ### 下一阶段（按顺序，2026-08-31 10:55 起）
 
-0. **阶段 5 代码阻塞已解除（2026-09-01），待真机复测**：2026-09-01 真机操作员观察——当前固件 `c11fb87e…` 上唤醒「茉莉」→「今天星期几」→「南京天气怎么样」两轮都有完整回答（阶段 2 的听感部分在新固件上复现通过，但四件套未挂、无 receipt，不能升级 `verified`）；随后**保持安静，期望 `owner_silence_timeout` 静默关闭，实际板子自己说了一句「刚才没有听清，可以再说一遍吗？」，最后由操作员按 BOOT 强制待命**。定位到两个缺陷：
+0. ~~**阶段 5 真机复测**~~ **已通过（2026-09-01 操作员，两轮）**——见上。2026-09-01 早先 FAIL 根因（缺陷 A/B）已修并验证。
    - **A（已修，2026-09-01）。空轮次「没听清」提示未校验主人权威。** 此前 `empty_media_turn` 与 ASR tail timeout 均可触发 `_nudge_missed_hearing`，且 `allow_without_endpoint=True` 绕过了 endpoint 检查（该参数原是为唤醒 TTS 回声保留，现已有 `device_wake_ack_fence`）。修法：删除 `allow_without_endpoint`；新增 `_owner_speech_is_established()`，仅当 `current_speaker_class == "owner"` 且 `authority_verified` 时才提示。分类前空轮次直接静默；「主人真说了话但 ASR 出空」由 tail timeout + 主人权威路径兜底，符合半双工契约。顺带修复 timeout 路径在 `_clear_pending_turn_state` 清掉 `turn_endpoint_sample` 后 nudge 被误挡的隐性 bug（改传 `endpoint_sample=`）。Agent 切片 `20260901-1248-owner-authority-missed-hearing-agent-component`（`88d46c9`/`297d2e0`）已切流；回归测试 `test_device_empty_asr_asks_user_to_repeat`、`test_device_empty_asr_without_owner_stays_silent`。
    - **B（已修，2026-09-01）。提示语自己重置主人静默窗口。** `_speak_missed_hearing_ack` 播完回 `listening`，`_sync_owner_silence_phase` 原先走 `_arm_owner_silence_timer(reset=True)` 并清 `owner_silence_grace_used`，等于每次提示重开满 10 秒 + 再给一次 3 s grace。修法：`listening` 接缝改为 `reset=False`（续用剩余预算），满窗刷新只保留在 `_finish_owner_silence_turn` 的 `owner_verified` 分支——那是唯一真正确立主人活动的地方；grace 也只在主人活动时清。语义变为「主人拿到的是 10 秒**净聆听**预算，助手说话期间暂停不计，每个已验证主人轮次重新给满」，与半双工契约一致（主人在助手说话时本就无法开口，不该被扣时间）。回归测试 `test_assistant_nudge_playback_does_not_extend_owner_silence_window`（`test_media_session.py`）已验证：旧语义下不产生 CLOSED，新语义下正常 `owner_silence_timeout` 关闭。
-   A/B 代码均已合入 `main` 并发布；**阶段 5 现场验收仍待重跑**：安静 10 s 内板子不得再自发说「没听清」。尚未确证 2026-09-01 那次空轮次究竟是播放尾音回声还是环境 VAD，可用日志里 `empty_media_turn`/`provider_final_missing` 的 `stream_epoch`/样本区间与播放终止时间戳对比。
+   A/B 代码均已合入 `main` 并发布。**阶段 5 现场复测已通过（2026-09-01 操作员，两轮）**：`20260901-1248-owner-authority-missed-hearing-agent-component` 上两轮「星期几 + 天气」后安静 10 s 均静默 `owner_silence_timeout` 关闭，未再自发说「没听清」；再唤醒可继续对话。操作员听感 pass，**尚未落盘正式 receipt**（无串口/tap/session fence 四件套），故不得升级全局 `direct_real_device_verified`。
 1. **阶段 2 需在当前固件上整轮重跑**（不是只补串口）：已落盘的 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md` 记的是 `firmware_app_sha256=f15a3b35…`，而 2026-09-01 为白名单唤醒词重刷后当前板卡是 `c11fb87e…`。阶段 2 通过标准要求「同一固件摘要下」，因此该 receipt 不能用来升级 `verified`；重跑时串口 monitor 全程挂着，补齐 `vad.start`/`vad.end`、tap WAV、DTLN 后 RMS，并记 `wake_word_id`。
-2. **阶段 3 + 5 一次现场**（推荐合并）：
+2. **阶段 3 + 5 一次现场**（阶段 5 已于 2026-09-01 操作员两轮 pass；阶段 3 仍 pending 正式 receipt）：
    - 小程序停在**设备** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手；小程序不再发起语音对话）。
    - 在**设备端**唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
    - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
