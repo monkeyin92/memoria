@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -225,6 +227,87 @@ async def test_heartbeat_rechecks_registration_and_recovers_after_reconnect(
     assert [payload["livekit_ready"] for payload in payloads] == [True, False, True]
     assert json.loads(state_path.read_text(encoding="utf-8"))["accepted_at"] == (
         "2026-07-22T10:11:32+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_release_tag_rejection_logs_status_and_reported_tag(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stack tag split must be distinguishable from Control API being down.
+
+    Control API answers 409 when its own MEMORIA_RELEASE_TAG differs from the
+    one reported here, which leaves the container permanently unhealthy. The
+    log has to carry the status and the reported tag or the cause is invisible.
+    """
+
+    caplog.set_level(logging.WARNING, logger="services.agent.src.heartbeat")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200)
+        return httpx.Response(409, json={"detail": "agent release tag does not match config"})
+
+    heartbeat = AgentHeartbeat(
+        AgentHeartbeatConfig(
+            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
+            internal_token="agent-heartbeat-token",
+            release_tag="20260831-2215-miniprogram-bind-view-control-api",
+            state_path=tmp_path / "heartbeat.json",
+            interval_s=0.01,
+        ),
+        registration_probe=lambda: True,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        task = asyncio.create_task(heartbeat.run_with_client(client))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    rejected = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("agent heartbeat rejected")
+    ]
+    assert rejected, f"no rejection logged; got {[r.message for r in caplog.records]}"
+    assert "status=409" in rejected[0]
+    assert "release_tag=20260831-2215-miniprogram-bind-view-control-api" in rejected[0]
+    assert "agent release tag does not match config" in rejected[0]
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_still_logs_generic_reason(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="services.agent.src.heartbeat")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("control api unreachable")
+
+    heartbeat = AgentHeartbeat(
+        AgentHeartbeatConfig(
+            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
+            internal_token="agent-heartbeat-token",
+            release_tag="release-heartbeat-test",
+            state_path=tmp_path / "heartbeat.json",
+            interval_s=0.01,
+        ),
+        registration_probe=lambda: False,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        task = asyncio.create_task(heartbeat.run_with_client(client))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert any(
+        record.message == "agent heartbeat failed: ConnectError" for record in caplog.records
     )
 
 

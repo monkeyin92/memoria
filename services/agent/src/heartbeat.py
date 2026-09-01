@@ -104,12 +104,39 @@ class AgentHeartbeat:
 
     async def run(self) -> None:
         async with httpx.AsyncClient(timeout=self._config.timeout_s) as client:
-            while True:
-                try:
-                    await self.report(client)
-                except (httpx.HTTPError, OSError) as exc:
-                    logger.warning("agent heartbeat failed: %s", type(exc).__name__)
-                await asyncio.sleep(self._config.interval_s)
+            await self.run_with_client(client)
+
+    async def run_with_client(self, client: httpx.AsyncClient) -> None:
+        while True:
+            try:
+                await self.report(client)
+            except httpx.HTTPStatusError as exc:
+                # Control API answers 409 when its own MEMORIA_RELEASE_TAG
+                # differs from the one reported here. Without the status and the
+                # reported tag, a permanent stack tag split is indistinguishable
+                # from Control API being unreachable.
+                logger.warning(
+                    "agent heartbeat rejected: status=%s release_tag=%s detail=%s",
+                    exc.response.status_code,
+                    self._config.release_tag,
+                    _response_detail(exc.response),
+                )
+            except (httpx.HTTPError, OSError) as exc:
+                logger.warning("agent heartbeat failed: %s", type(exc).__name__)
+            await asyncio.sleep(self._config.interval_s)
+
+
+def _response_detail(response: httpx.Response) -> str:
+    """Best-effort one-line reason from a rejected heartbeat response."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text[:200]
+    if isinstance(payload, dict):
+        reason = payload.get("detail") or payload.get("status") or payload
+        return str(reason)[:200]
+    return str(payload)[:200]
 
 
 def _write_heartbeat_state(state_path: Path, *, release_tag: str, accepted_at: datetime) -> None:
