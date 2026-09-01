@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import httpx
 import pytest
-
 from services.agent.src.conversation_close_router import (
     conversation_close_needed,
     resolve_conversation_close_needed,

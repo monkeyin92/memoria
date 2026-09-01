@@ -11,12 +11,16 @@ Usage: deploy_agent_component.sh \
   --base-image memoria-agent:TAG \
   [--expected-commit COMMIT] \
   [--remote-root /opt/memoria/component-releases] \
-  [--dry-run] [--cutover]
+  [--dry-run] [--cutover] [--skip-gates]
 
 The fast lane is intentionally limited to services/agent/** and the Voice Core
 bridge launcher that wires that package. Dependency-lock, shared-service,
 packages, or other runtime-script changes fail closed and must use the full
 image release path.
+
+Ruff, module line budgets, mypy --strict, and the Agent unit plus deployment
+contract test suites run locally before the remote host is touched. --skip-gates
+disables them and must only be used with a filed reason.
 EOF
 }
 
@@ -29,6 +33,7 @@ remote_root="/opt/memoria/component-releases"
 dry_run=false
 cutover=false
 allow_scope_drift=false
+skip_gates=false
 
 while (($#)); do
   case "$1" in
@@ -40,6 +45,7 @@ while (($#)); do
     --dry-run) dry_run=true; shift ;;
     --cutover) cutover=true; shift ;;
     --allow-scope-drift) allow_scope_drift=true; shift ;;
+    --skip-gates) skip_gates=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -85,6 +91,46 @@ python3 "$ROOT/scripts/verify_release_source.py" \
   --root "$ROOT" \
   --expected-commit "$expected_commit" \
   --release-tag "$release_tag"
+
+# The component lane bypasses the full image build, so it also bypassed every
+# gate that build ran. Re-run the Agent job's own gates here against the
+# verified clean worktree, before the release touches the remote host. Without
+# this the fast lane can cut over code that CI would reject.
+run_release_gate() {
+  local label="$1"
+  shift
+  echo "release gate: $label" >&2
+  "$@" || {
+    echo "agent component release rejected; gate failed: $label" >&2
+    exit 1
+  }
+}
+
+if [[ "$skip_gates" == true ]]; then
+  echo "agent component release gates skipped by operator request" >&2
+else
+  command -v uv >/dev/null || {
+    echo "uv is required to run release gates; pass --skip-gates only with a filed reason" >&2
+    exit 1
+  }
+  gate_env=(env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION
+    -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S)
+  run_release_gate ruff \
+    "${gate_env[@]}" uv run --project "$ROOT" ruff check \
+    "$ROOT/services/agent" \
+    "$ROOT/services/control_api/tests/test_production_compose.py"
+  run_release_gate module-budget \
+    "${gate_env[@]}" uv run --project "$ROOT" python \
+    "$ROOT/scripts/check_module_budget.py" check
+  run_release_gate mypy \
+    "${gate_env[@]}" uv run --project "$ROOT" mypy "$ROOT/services/agent" --strict
+  run_release_gate pytest \
+    "${gate_env[@]}" uv run --project "$ROOT" pytest \
+    --import-mode=importlib --no-cov -q \
+    "$ROOT/services/agent/tests/unit" \
+    "$ROOT/services/control_api/tests/test_production_compose.py"
+  echo "agent component release gates passed" >&2
+fi
 
 base_metadata="$(
   ssh "$remote" bash -s -- "$base_image" <<'REMOTE_INSPECT'

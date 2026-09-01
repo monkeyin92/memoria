@@ -36,13 +36,6 @@ from services.control_api.app.device_control import (
     RuntimeProfileLedger,
     allowed_audio_modes,
 )
-from services.control_api.app.wake_words import (
-    resolve_wake_word_settings,
-    validate_custom_wake_word,
-    wake_word_by_id,
-    wake_word_catalog_payload,
-    wake_word_validation_warnings,
-)
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -51,6 +44,12 @@ from services.control_api.app.security import (
 from services.control_api.app.session_directory import (
     SessionDirectory,
     SessionDirectoryUnavailable,
+)
+from services.control_api.app.wake_words import (
+    resolve_wake_word_settings,
+    validate_custom_wake_word,
+    wake_word_catalog_payload,
+    wake_word_validation_warnings,
 )
 from services.device_fleet.bootstrap_domain import OnboardingError
 from services.device_fleet.bootstrap_service import DeviceOnboardingService

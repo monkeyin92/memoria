@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
-
 from services.control_api.app.main import create_app
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult
