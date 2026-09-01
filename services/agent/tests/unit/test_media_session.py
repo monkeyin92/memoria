@@ -598,6 +598,133 @@ async def test_assistant_nudge_playback_does_not_extend_owner_silence_window() -
     assert provider.closed is True
 
 
+def _owner_silence_identity(session_id: str) -> SessionIdentity:
+    return SessionIdentity(
+        session_id,
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_silence_budget_is_not_refreshed_without_verified_authority() -> None:
+    """Unverified speakers spend the owner's window without ever refilling it.
+
+    ``_finish_owner_silence_turn`` refreshes the full interval only when the
+    committed turn carries a verified owner classification.  When speaker
+    authority is unavailable or denied, each accepted turn keeps whatever the
+    previous turn left behind, so a multi-turn conversation drains one single
+    window and the session can close moments after a reply finishes playing.
+    This test pins that carry-over arithmetic so the behaviour cannot change
+    silently in either direction.
+    """
+
+    identity = _owner_silence_identity("owner-silence-unverified-carryover")
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        owner_silence_timeout_s=0.30,
+    )
+    context = await registry._get_or_create(identity)
+
+    # Authority is never established for this conversation.  This is the
+    # ``subject_capability_forbidden`` / ``authority_unavailable`` shape, not a
+    # guest: the runtime simply has no decision to project.
+    assert context.runtime.current_speaker_authority_verified is False
+
+    # Turn one: the owner speaks 0.12s into the window and the turn commits.
+    await asyncio.sleep(0.12)
+    registry._sync_owner_silence_phase(context, "user_speaking")
+    registry._finish_owner_silence_turn(context, accepted=True)
+    after_first = context.owner_silence_remaining_s
+    assert after_first is not None
+    assert after_first < 0.30, "an unverified turn must not mint a fresh window"
+    assert after_first == pytest.approx(0.18, abs=0.05)
+
+    # Playback of the reply, then the floor returns to the owner.  The resumed
+    # timer carries the first turn's leftover rather than a full interval.
+    registry._sync_owner_silence_phase(context, "speaking")
+    registry._sync_owner_silence_phase(context, "listening")
+    assert context.owner_silence_remaining_s == pytest.approx(after_first)
+
+    # Turn two burns most of what is left and still gets no refresh.
+    await asyncio.sleep(0.12)
+    registry._sync_owner_silence_phase(context, "user_speaking")
+    registry._finish_owner_silence_turn(context, accepted=True)
+    after_second = context.owner_silence_remaining_s
+    assert after_second is not None
+    assert after_second < after_first
+    assert registry.context(identity.session_id) is context.runtime
+
+    # The floor returns once more, and the residue expires almost immediately.
+    registry._sync_owner_silence_phase(context, "speaking")
+    registry._sync_owner_silence_phase(context, "listening")
+    await asyncio.sleep(after_second + 0.06)
+
+    closed = _queued_event(connection, "state")
+    assert closed.state.state == media_pb2.CONVERSATION_STATE_CLOSED
+    assert closed.state.reason == "owner_silence_timeout"
+    assert registry.context(identity.session_id) is None
+    assert provider.closed is True
+
+
+@pytest.mark.asyncio
+async def test_verified_owner_turn_refreshes_the_full_owner_silence_window() -> None:
+    """A verified owner turn is the one seam that refills the whole interval.
+
+    This is the control case for the carry-over test above: the same sequence
+    of projections, differing only in that the committed turn carries a
+    verified owner decision.  The refreshed window must be the configured
+    interval exactly, and the one-shot VAD grace must be re-armed so the next
+    utterance is not judged against the previous turn's bookkeeping.
+    """
+
+    identity = _owner_silence_identity("owner-silence-verified-refresh")
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        owner_silence_timeout_s=0.30,
+    )
+    context = await registry._get_or_create(identity)
+    try:
+        # Burn most of the window, and spend the one-shot VAD grace so the
+        # refresh has something observable to reset.
+        await asyncio.sleep(0.12)
+        context.owner_silence_grace_used = True
+
+        decision = _verified_owner_decision()
+        context.runtime._speaker_decision = decision
+        context.runtime._speaker_class = decision.classification
+        assert context.runtime.current_speaker_authority_verified is True
+
+        registry._sync_owner_silence_phase(context, "user_speaking")
+        registry._finish_owner_silence_turn(context, accepted=True)
+
+        assert context.owner_silence_remaining_s == pytest.approx(0.30)
+        assert context.owner_silence_grace_used is False
+
+        # The refreshed budget survives the reply's playback and is what the
+        # ``listening`` seam resumes once the floor comes back.
+        registry._sync_owner_silence_phase(context, "speaking")
+        registry._sync_owner_silence_phase(context, "listening")
+        assert context.owner_silence_remaining_s == pytest.approx(0.30)
+        assert registry.context(identity.session_id) is context.runtime
+        assert provider.closed is False
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
 @pytest.mark.asyncio
 async def test_max_user_speech_watchdog_closes_a_stuck_vad_turn() -> None:
     identity = SessionIdentity(
@@ -5857,7 +5984,7 @@ async def test_device_empty_asr_without_owner_stays_silent() -> None:
     identity = _device_identity("device-empty-no-owner")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        await registry._get_or_create(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
