@@ -37,7 +37,7 @@
 
 ## 本周约束
 
-- 扫描日期：2026-09-01（09:09 扫描误把正文写成空文件，已从 `6004907c` 恢复）。
+- 扫描日期：2026-09-01。本轮只追加 R-20260901-01..06，并把备注并入 R-20260831-01 / R-20260831-02 / R-20260831-05。
 - 当前出货 SKU 只允许受控半双工；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。
 - 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。
 - 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词（无需为每个词重刷）。误唤醒与漏唤醒仍要记数；不要开播放期 KWS。
@@ -58,19 +58,19 @@
 - 最近更新：2026-09-01
 - 为何现在相关：默认唤醒词「茉莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
 - 建议下一步：阶段 4 安静环境 ×10，分别记漏唤醒 / 误唤醒。误唤醒高则加 WakeNet 阈值，或切到 ≥3 音节词。不要开播放期 KWS。
-- 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html
-- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。
+- 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html ；https://github.com/espressif/esp-sr/issues/194
+- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。2026-09-01 MultiNet 是唤醒后命令词，WakeNet 才是门卫；目录切词不算 R-01 完成。误唤醒高时用 `set_wakenet_threshold`（0.4–0.9999），或改 ≥3 音节 WakeNet。
 
 ### R-20260831-02 FunASR 空转写要分账 empty+vendor / empty+gating / low_rms
 
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
-- 为何现在相关：空转写仍在真机路径上出现。llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，不是本仓云端 FunASR，不能当成供应商已关闭。
-- 建议下一步：按 empty+vendor / empty+gating / low_rms 分账。同一切片不要再改 VAD。
-- 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4
-- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。
+- 最近更新：2026-09-01
+- 为何现在相关：空转写仍在真机路径上出现。FunASR v1.3.29（2026-07-24）修的是无标点模型时 `sentence_info` 空时间轴；llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，是另一条路径，不能当成云端 FunASR 已关闭。sidecar 应钉 FunASR ≥1.3.29。
+- 建议下一步：按 empty+vendor / empty+gating / low_rms 分账。同一切片不要再改 VAD。sidecar 空时间轴先核 FunASR 版本。
+- 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4 ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29
+- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。2026-09-01 sidecar 应钉 FunASR ≥1.3.29；llama.cpp v0.2.4 与云端 FunASR 空转写分账。
 
 ### R-20260831-03 远场先动 ES8388 模拟，DTLN makeup 已冻结
 
@@ -99,10 +99,10 @@
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
-- 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着，买板不能假定 MIC3 loopback 已可用。
-- 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3。阶段 7 前不刷。
-- 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036
+- 最近更新：2026-09-01
+- 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着；硬件 MIC3 回灌不等于 AFE 吃到参考通道。买板不能假定 MIC3 loopback 已可用，还要核 `channel_mask` 与 `aec_ref_type`（EXTERNAL_ADC vs INTERNAL）。
+- 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3 是否进入 AEC reference。阶段 7 前不刷。
+- 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
 - 开发备注：
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
@@ -198,7 +198,7 @@
 - 最近更新：2026-08-31
 - 为何现在相关：《人工智能拟人化互动服务管理暂行办法》2026-07-15 已生效。声纹是敏感生物识别。
 - 建议下一步：落地页二选一：家庭档案终端 vs 拟人化陪伴。学生账号禁止虚拟亲属 / 伴侣。小程序导出 / 删除；训练默认关；会话标明 AI；2 小时提醒。
-- 来源：https://www.cac.gov.cn/2026-04-10/c_1777558395078289.htm ；https://www.news.cn/politics/20260731/26fdd0534922429bae213b5f6f3122ec/c.html
+- 来源：https://www.cac.gov.cn/2026-04/10/c_1777558395078289.htm ；https://www.news.cn/politics/20260731/26fdd0534922429bae213b5f6f3122ec/c.html
 - 开发备注：2026-08-31 小程序登录页与「我的」页增加 AI 标识 / 家庭档案终端定位 / 训练默认关闭说明；App 前台连续 2 小时提醒；未成年人限制文案在 profile 展示。
 
 ### R-20260831-14 小程序 GTM：控制面，不承诺微信实时语音
@@ -211,6 +211,76 @@
 - 建议下一步：配网 / 选角 / 声纹在设备录、微信确认、学生账号、静音、回顾与导出。家庭共享。
 - 来源：https://cloud.tencent.com/solution/smart-living
 - 开发备注：2026-08-31 已裁至绑定 + 回顾 + 我的三 Tab；移除 home 实时语音与 H5 跳转。
+
+---
+
+## 2026-09-01 追加
+
+### R-20260901-01 目录切词不是 WakeNet；茉莉仍要阈值或更长词
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：昨夜已上白名单 / MultiNet 切词。乐鑫分层是 WakeNet 门卫 + MultiNet 唤醒后命令。两音节「茉莉」误唤醒不会因为目录多几个词而消失。
+- 建议下一步：阶段 4 对当前默认词跑 ×10。误唤醒高则只调 WakeNet 阈值或换成四字词，不要把 MultiNet 命令当成唤醒权威。
+- 来源：https://github.com/espressif/esp-sr/issues/194 ；https://espressif-docs.readthedocs-hosted.com/projects/espressif-esp-moonlight/en/latest/speech_recognition.html
+- 开发备注：
+
+### R-20260901-02 SenseVoice sidecar 核对 FunASR ≥1.3.29 时间轴
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：FunASR v1.3.29（2026-07-24）修复 SenseVoice 在无标点模型时 `sentence_info` 空时间轴。sidecar 走 SenseVoice-small；空转写/空边界先看版本，再改设备 VAD。
+- 建议下一步：在 sidecar 镜像记录 FunASR 版本。若低于 1.3.29 且出现空时间轴，先升级 sidecar，不要和云端 FunASR 空转写混账。
+- 来源：https://github.com/modelscope/FunASR/releases/tag/v1.3.29
+- 开发备注：
+
+### R-20260901-03 7·15 伴侣下线后，适老/适幼是鼓励项，不是虚拟亲属
+
+- 类别：合规
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：办法第六条鼓励适幼照护、适老陪伴。2026-07-15 施行当日行业集中下线自定义虚拟恋人。吉祥物和投资人口径仍可能滑向赛博亲人。
+- 建议下一步：五个吉祥物禁止亲属/伴侣角色。落地页保持家庭档案终端。
+- 来源：https://www.cac.gov.cn/2026-04/10/c_1777558395078289.htm ；https://www.kangdalawyers.com/library/5464.html
+- 开发备注：
+
+### R-20260901-04 立创买板验收：MIC3 必须进 AEC 参考通道
+
+- 类别：硬件
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：xiaozhi #2036 仍开着。硬件 MIC3 回灌不等于 AFE 吃到参考通道。
+- 建议下一步：阶段 7 之后买立创时验收 MIC3 是否进入 AEC reference。未过清单不得改 hello，不得开 barge-in。
+- 来源：https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
+- 开发备注：
+
+### R-20260901-05 家庭成员邀请不能升级成主人声纹
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：腾讯连连家庭管理有邀请成员 API。微信家庭成员不等于麦克风前的 owner。
+- 建议下一步：若做家庭共享，绑定只给控制面权限；写档案仍要设备端 owner 声纹。访客/成员默认 guest。
+- 来源：https://cloud.tencent.com/document/product/1081/40776 ；https://cloud.tencent.com/document/product/1081/40817
+- 开发备注：
+
+### R-20260901-06 告别语义分类不能绕过主人能力门
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：昨夜已切 END_SESSION 小模型分类。阶段 5「再见」曾因主人能力不足降级。语义分类若对 guest 直接关会话，会把权限门拆掉。
+- 建议下一步：精确词和语义分类都先过主人 subject capability；guest 只停公开播放或走超时。
+- 来源：
+- 开发备注：
 
 ---
 
