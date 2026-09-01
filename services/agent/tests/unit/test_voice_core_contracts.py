@@ -935,6 +935,68 @@ def test_asr_supervisor_supersedes_cross_sentence_tail_extension() -> None:
     )
 
 
+def test_provider_final_supersedes_shorter_rescue_interval() -> None:
+    """A real provider final must replace a longer rescue stand-in.
+
+    Reproduces production session 0703b3a8 (stream_epoch 1331): the
+    mid-utterance rescue fired while the VAD segment was still open and
+    registered samples 0-76_480, then FunASR's own final for 38_560-64_160
+    arrived and was dropped as cross_sentence_overlap because the rescue
+    interval was longer.  The transcript was lost even though the provider
+    had delivered it.
+    """
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=100_000)
+    rescue = ASRResult(
+        1,
+        "0",
+        1,
+        0,
+        76_480,
+        "救援合成结果",
+        True,
+        rescue_synthesized=True,
+    )
+    assert supervisor.accept_result(rescue, session_id="session")
+
+    provider_final = ASRResult(1, "s1", 1, 38_560, 64_160, "今天星期几", True)
+    decision = supervisor.accept_result(provider_final, session_id="session")
+    assert decision.accepted is provider_final
+    assert decision.evicted_sentence_ids == ("0",)
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=38_560,
+            end_sample=64_160,
+        )
+        == "今天星期几"
+    )
+
+
+def test_rescue_final_does_not_supersede_provider_final() -> None:
+    """The reverse direction must stay closed: rescue never evicts a provider final."""
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=100_000)
+    provider_final = ASRResult(1, "s1", 1, 38_560, 64_160, "今天星期几", True)
+    assert supervisor.accept_result(provider_final, session_id="session")
+
+    rescue = ASRResult(
+        1,
+        "0",
+        1,
+        0,
+        76_480,
+        "救援合成结果",
+        True,
+        rescue_synthesized=True,
+    )
+    decision = supervisor.accept_result(rescue, session_id="session")
+    assert decision.accepted is None
+    assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+
+
 def test_same_task_higher_revision_can_move_sentence_start_forward() -> None:
     supervisor = ASRStreamSupervisor()
     supervisor.record_audio(start_sample=0, frame_samples=320)
