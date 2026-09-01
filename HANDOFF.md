@@ -182,13 +182,13 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 
 ### 下一阶段（按顺序，2026-08-31 10:55 起）
 
-1. **补阶段 2 串口证据**（可与下面同一次现场）：串口 monitor 记录 `vad.start`/`vad.end`；receipt 已落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md`（session `79b6e405`，tap WAV 已拷本地；缺 UART）。
+1. **阶段 2 需在当前固件上整轮重跑**（不是只补串口）：已落盘的 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md` 记的是 `firmware_app_sha256=f15a3b35…`，而 2026-09-01 为白名单唤醒词重刷后当前板卡是 `c11fb87e…`。阶段 2 通过标准要求「同一固件摘要下」，因此该 receipt 不能用来升级 `verified`；重跑时串口 monitor 全程挂着，补齐 `vad.start`/`vad.end`、tap WAV、DTLN 后 RMS，并记 `wake_word_id`。
 2. **阶段 3 + 5 一次现场**（推荐合并）：
    - 小程序停在**设备** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手；小程序不再发起语音对话）。
    - 在**设备端**唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
    - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
    - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明设备 tab 确认在线后由硬件起手。
-3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
+3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。白名单已上线，同一次现场把 `mo_li` 与 `mei_mo_li_ya` 各记一组，供路演选词；两音节风险见 `RESEARCH.md` R-20260831-01。
 4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
 5. **阶段 7**：阶段 2（含串口）+3+4+5 证据齐全后锁定投资人路演剧本。
 
@@ -228,6 +228,7 @@ distance_cm: 30-60
 device_id:
 firmware_app_version:
 firmware_app_sha256:
+wake_word_id: mo_li|mei_mo_li_ya|custom
 agent_image_id:
 agent_source_commit:
 edge_image_id:

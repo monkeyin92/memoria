@@ -65,3 +65,6 @@ data/
 
 # CosyVoice design previews (binary); registry JSON is committed for deploy
 infra/voices/previews/
+
+# Gate caches redirected into the tree when the home cache is unwritable
+.tmp-gate/
