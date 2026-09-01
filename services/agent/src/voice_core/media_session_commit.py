@@ -155,7 +155,7 @@ class MediaSessionCommitMixin:
             self,
             context: _MediaVoiceSession,
             *,
-            allow_without_endpoint: bool = False,
+            endpoint_sample: int | None = None,
         ) -> None: ...
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
@@ -505,7 +505,10 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
-            self._nudge_missed_hearing(context, allow_without_endpoint=True)
+            # No speaker classification has been awaited yet on this path, so
+            # owner authority cannot be established and _nudge_missed_hearing
+            # would refuse. The post-classification empty check below is the
+            # only place an empty turn may prompt.
             return None, "empty_media_turn"
         retire_end = end_sample if retire_sample is None else retire_sample
         if retire_end < end_sample:
@@ -539,7 +542,7 @@ class MediaSessionCommitMixin:
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "empty_media_turn")
-            self._nudge_missed_hearing(context, allow_without_endpoint=True)
+            self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:

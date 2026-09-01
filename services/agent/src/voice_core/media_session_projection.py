@@ -113,11 +113,29 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
 
+    def _owner_speech_is_established(self, context: _MediaVoiceSession) -> bool:
+        """True only when this turn carries verified owner authority.
+
+        An empty ASR result proves nothing about who produced the audio. On the
+        current single-mic board there is no playback AEC reference, so the
+        assistant's own TTS tail and ambient room noise both reach the mic and
+        both endpoint as turns with no text. Speaker classification runs on the
+        captured PCM independently of ASR text, so it is the only evidence that
+        separates "the owner spoke and ASR failed" from "something else made
+        noise". Without it the device would answer the room.
+        """
+
+        runtime = context.runtime
+        return (
+            runtime.current_speaker_class == "owner"
+            and runtime.current_speaker_authority_verified
+        )
+
     def _nudge_missed_hearing(
         self,
         context: _MediaVoiceSession,
         *,
-        allow_without_endpoint: bool = False,
+        endpoint_sample: int | None = None,
     ) -> None:
         if context.closed or context.standby_requested:
             return
@@ -128,8 +146,14 @@ class MediaSessionProjectionMixin:
         if context.runtime.assistant_speaking:
             context.pending_missed_hearing_nudge = True
             return
-        # Wake TTS echo can produce endpoint=0 with no real user speech.
-        if not allow_without_endpoint and (context.turn_endpoint_sample or 0) <= 0:
+        effective_endpoint = (
+            endpoint_sample
+            if endpoint_sample is not None
+            else (context.turn_endpoint_sample or 0)
+        )
+        if effective_endpoint <= 0:
+            return
+        if not self._owner_speech_is_established(context):
             return
         now = time.monotonic()
         last = context.last_missed_hearing_nudge_at
@@ -171,6 +195,8 @@ class MediaSessionProjectionMixin:
             context.pending_missed_hearing_nudge = True
             return
         if (context.turn_endpoint_sample or 0) <= 0:
+            return
+        if not self._owner_speech_is_established(context):
             return
         self._schedule_missed_hearing_nudge(context)
 

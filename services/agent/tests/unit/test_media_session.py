@@ -5712,9 +5712,95 @@ async def test_device_empty_asr_asks_user_to_repeat() -> None:
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=0.02,
     )
     registry.install()
     identity = _device_identity("device-empty-hear")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        async def classify_owner(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+            return _verified_owner_decision()
+
+        context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+        context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id="empty-asr-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id="empty-asr-end",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=16_000,
+                capture_end_sample=16_001,
+                final=True,
+                voiced_end_sample=16_000,
+            ),
+        )
+        endpoint_sample = context.turn_endpoint_sample
+        assert endpoint_sample == 16_000
+        endpoint_task = context.turn_endpoint_task
+        assert endpoint_task is not None
+        endpoint_task.cancel()
+        await asyncio.gather(endpoint_task, return_exceptions=True)
+        timeout_handle = context.turn_endpoint_timeout_handle
+        if timeout_handle is not None:
+            timeout_handle.cancel()
+            context.turn_endpoint_timeout_handle = None
+
+        decision = _verified_owner_decision()
+        context.runtime._speaker_decision = decision
+        context.runtime._speaker_class = decision.classification
+
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint_sample,
+        )
+
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert provider.texts == [BRIDGE_PHRASES[2]]
+        assert context.runtime.output_floor_allows_assistant
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_empty_asr_without_owner_stays_silent() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-empty-no-owner")
     session = bridge.bridge.open(identity)
     try:
         context = await registry._get_or_create(identity)
@@ -5733,9 +5819,9 @@ async def test_device_empty_asr_asks_user_to_repeat() -> None:
         )
         assert fence is None
         assert reason == "empty_media_turn"
-        await asyncio.wait_for(provider.started.wait(), timeout=1)
-        assert provider.texts == [BRIDGE_PHRASES[2]]
-        assert context.runtime.output_floor_allows_assistant
+        await asyncio.sleep(0.05)
+        assert provider.texts == []
+        assert not provider.started.is_set()
     finally:
         await registry._finalize_session(identity.session_id)
 
@@ -5750,9 +5836,21 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
     )
     registry.install()
     identity = _device_identity("device-nudge-cooldown")
+    session = bridge.bridge.open(identity)
     try:
         context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
         context.turn_endpoint_sample = 16_000
+        decision = _verified_owner_decision()
+        context.runtime._speaker_decision = decision
+        context.runtime._speaker_class = decision.classification
+
         registry._nudge_missed_hearing(context)
         assert context.missed_hearing_nudge_count == 1
         registry._nudge_missed_hearing(context)
