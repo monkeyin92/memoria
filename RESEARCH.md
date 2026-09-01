@@ -8,7 +8,7 @@
 
 1. 研究助手扫描后：同一想法复用已有 id 并更新「最近更新」；新想法新增 `R-YYYYMMDD-NN`，状态先标「待评估」。
 2. 开发评估后：只改「状态」「最近更新」「开发备注」。已完成 / 不做 / 废弃的行永不删除，只改状态并追加一行注明日期的备注。
-3. 建议不得违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。
+3. 建议不得违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「花莉」。
 4. 扫描更新必须是合并：禁止把本文件改回只剩标题。写入前若正文行数会大幅变少，停止并报错。
 
 ## 状态词（只准用这些）
@@ -31,17 +31,17 @@
 - 同一想法再次出现时合并到原 id，禁止复制一条。
 - 永不删除「已完成 / 不做 / 废弃」行；只改状态，并在开发备注追加注明日期的一行说明。
 - 不写生产密钥、环境路径、镜像 SHA、设备 ID、HANDOFF 运维细节。
-- 不建议违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。不要建议播放期 KWS、现板谎称 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
+- 不建议违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「花莉」。不要建议播放期 KWS、现板谎称 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
 
 ---
 
 ## 本周约束
 
-- 扫描日期：2026-09-01（09:09 扫描误把正文写成空文件，已从 `6004907c` 恢复）。
+- 扫描日期：2026-09-01。本轮追加 R-20260901-01..11，并把备注并入 R-20260831-01 / R-20260831-02 / R-20260831-05 / R-20260831-13。
 - 当前出货 SKU 只允许受控半双工；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。
 - 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。
-- 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词（无需为每个词重刷）。误唤醒与漏唤醒仍要记数；不要开播放期 KWS。
-- 现板无 AEC reference；hello 必须 `aec_mode=none`。阶段 7 前不刷下一块 AEC 板。
+- 唤醒词默认「花莉」，已支持白名单切换 / MultiNet 自定义词（无需为每个词重刷）。误唤醒与漏唤醒仍要记数；不要开播放期 KWS。
+- 现板无 AEC reference；hello 必须 `aec_mode=none`，直到 R 通道被证明可用。阶段 7 前不刷下一块 AEC 板。不得用 ESP-SR `AEC_MODE_SR_*` 宣称双工或 barge-in。
 - 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。BOOT 是唯一硬停。
 - DTLN makeup 已冻结 `8.0×`，不要再抬。
 - H5 已移除；控制面只留小程序绑定 / 回顾 / 我的。
@@ -50,27 +50,27 @@
 
 ## 语音与硬件
 
-### R-20260831-01 茉莉两音节低于 ESP-SR 3–6 音节门槛
+### R-20260831-01 花莉两音节低于 ESP-SR 3–6 音节门槛
 
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
 - 最近更新：2026-09-01
-- 为何现在相关：默认唤醒词「茉莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
+- 为何现在相关：默认唤醒词「花莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
 - 建议下一步：阶段 4 安静环境 ×10，分别记漏唤醒 / 误唤醒。误唤醒高则加 WakeNet 阈值，或切到 ≥3 音节词。不要开播放期 KWS。
-- 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html
-- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。
+- 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html ；https://github.com/espressif/esp-sr/issues/194
+- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。2026-09-01 MultiNet 是唤醒后命令词，WakeNet 才是门卫；目录切词不算 R-01 完成。误唤醒高时用 `set_wakenet_threshold`（0.4–0.9999），或改 ≥3 音节 WakeNet。
 
 ### R-20260831-02 FunASR 空转写要分账 empty+vendor / empty+gating / low_rms
 
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
-- 为何现在相关：空转写仍在真机路径上出现。llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，不是本仓云端 FunASR，不能当成供应商已关闭。
-- 建议下一步：按 empty+vendor / empty+gating / low_rms 分账。同一切片不要再改 VAD。
-- 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4
-- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。
+- 最近更新：2026-09-01
+- 为何现在相关：空转写仍在真机路径上出现。FunASR v1.3.29（2026-07-24）修的是无标点模型时 `sentence_info` 空时间轴；llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，是另一条路径，不能当成云端 FunASR 已关闭。sidecar 应钉 FunASR ≥1.3.29。
+- 建议下一步：按 empty+vendor / empty+gating / low_rms 分账。同一切片不要再改 VAD。sidecar 空时间轴先核 FunASR 版本。
+- 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4 ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29
+- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。2026-09-01 sidecar 应钉 FunASR ≥1.3.29；llama.cpp v0.2.4 与云端 FunASR 空转写分账。
 
 ### R-20260831-03 远场先动 ES8388 模拟，DTLN makeup 已冻结
 
@@ -99,10 +99,10 @@
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
-- 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着，买板不能假定 MIC3 loopback 已可用。
-- 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3。阶段 7 前不刷。
-- 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036
+- 最近更新：2026-09-01
+- 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着；硬件 MIC3 回灌不等于 AFE 吃到参考通道。买板不能假定 MIC3 loopback 已可用，还要核 `channel_mask` 与 `aec_ref_type`（EXTERNAL_ADC vs INTERNAL）。
+- 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3 是否进入 AEC reference。阶段 7 前不刷。
+- 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
 - 开发备注：
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
@@ -182,7 +182,7 @@
 - 首次写入：2026-08-31
 - 最近更新：2026-08-31
 - 为何现在相关：仪表必须只报已交货能力，不报 TAM / 情感 / 没交货的订单。
-- 建议下一步：报微信绑定、主人声纹登记、每周档案写入、访客拦截、导出删除、茉莉误唤醒、半双工 turn 延迟。
+- 建议下一步：报微信绑定、主人声纹登记、每周档案写入、访客拦截、导出删除、花莉误唤醒、半双工 turn 延迟。
 - 来源：
 - 开发备注：2026-08-31 新增 `GET /v1/account/delivered-capabilities`；2026-08-31 扩展设备绑定 / 档案计数 / 合规字段，并在小程序「我的」页展示已交货能力仪表。
 
@@ -195,11 +195,11 @@
 - 类别：合规
 - 状态：已完成
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
+- 最近更新：2026-09-01
 - 为何现在相关：《人工智能拟人化互动服务管理暂行办法》2026-07-15 已生效。声纹是敏感生物识别。
-- 建议下一步：落地页二选一：家庭档案终端 vs 拟人化陪伴。学生账号禁止虚拟亲属 / 伴侣。小程序导出 / 删除；训练默认关；会话标明 AI；2 小时提醒。
-- 来源：https://www.cac.gov.cn/2026-04-10/c_1777558395078289.htm ；https://www.news.cn/politics/20260731/26fdd0534922429bae213b5f6f3122ec/c.html
-- 开发备注：2026-08-31 小程序登录页与「我的」页增加 AI 标识 / 家庭档案终端定位 / 训练默认关闭说明；App 前台连续 2 小时提醒；未成年人限制文案在 profile 展示。
+- 建议下一步：落地页二选一：家庭档案终端 vs 拟人化陪伴。学生账号禁止虚拟亲属 / 伴侣。小程序导出 / 删除；训练默认关；会话标明 AI；2 小时提醒。投研/包装话术审查；ES8388 机考虑物理/硬开关静音并在小程序显示麦状态。
+- 来源：https://www.cac.gov.cn/2026-04/10/c_1777558395078289.htm ；https://www.news.cn/politics/20260731/26fdd0534922429bae213b5f6f3122ec/c.html
+- 开发备注：2026-08-31 小程序登录页与「我的」页增加 AI 标识 / 家庭档案终端定位 / 训练默认关闭说明；App 前台连续 2 小时提醒；未成年人限制文案在 profile 展示。2026-09-01 新华/法治日报施行后解读：广告不得承诺「替代亲情」「治愈孤独」；家庭场景默认隐私、能本地则本地、麦/摄像头要有开启提示和便捷关闭。
 
 ### R-20260831-14 小程序 GTM：控制面，不承诺微信实时语音
 
@@ -211,6 +211,131 @@
 - 建议下一步：配网 / 选角 / 声纹在设备录、微信确认、学生账号、静音、回顾与导出。家庭共享。
 - 来源：https://cloud.tencent.com/solution/smart-living
 - 开发备注：2026-08-31 已裁至绑定 + 回顾 + 我的三 Tab；移除 home 实时语音与 H5 跳转。
+
+---
+
+## 2026-09-01 追加
+
+### R-20260901-01 目录切词不是 WakeNet；花莉仍要阈值或更长词
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：昨夜已上白名单 / MultiNet 切词。乐鑫分层是 WakeNet 门卫 + MultiNet 唤醒后命令。两音节「花莉」误唤醒不会因为目录多几个词而消失。
+- 建议下一步：阶段 4 对当前默认词跑 ×10。误唤醒高则只调 WakeNet 阈值或换成四字词，不要把 MultiNet 命令当成唤醒权威。
+- 来源：https://github.com/espressif/esp-sr/issues/194 ；https://espressif-docs.readthedocs-hosted.com/projects/espressif-esp-moonlight/en/latest/speech_recognition.html
+- 开发备注：
+
+### R-20260901-02 SenseVoice sidecar 核对 FunASR ≥1.3.29 时间轴
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：FunASR v1.3.29（2026-07-24）修复 SenseVoice 在无 token timestamps / 无标点时 `sentence_info` 空时间轴，并用 VAD 回填（例 610–5530 ms）。sidecar 走 SenseVoice-small；空转写/空边界先看版本，再改设备 VAD。`sentence_info` 只给小程序回顾时间轴，不当 EOU / 话轮结束。
+- 建议下一步：云端与 sidecar 钉 `funasr==1.3.29`。在 sidecar 镜像记录 FunASR 版本。若低于 1.3.29 且出现空时间轴，先升级 sidecar，不要和云端 FunASR 空转写混账。
+- 来源：https://github.com/modelscope/FunASR/releases/tag/v1.3.29 ；https://github.com/modelscope/FunASR/pull/3414 ；https://pypi.org/project/funasr/1.3.29/
+- 开发备注：
+
+### R-20260901-03 7·15 伴侣下线后，适老/适幼是鼓励项，不是虚拟亲属
+
+- 类别：合规
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：办法第六条鼓励适幼照护、适老陪伴。2026-07-15 施行当日行业集中下线自定义虚拟恋人。吉祥物和投资人口径仍可能滑向赛博亲人。
+- 建议下一步：五个吉祥物禁止亲属/伴侣角色。落地页保持家庭档案终端。
+- 来源：https://www.cac.gov.cn/2026-04/10/c_1777558395078289.htm ；https://www.kangdalawyers.com/library/5464.html
+- 开发备注：
+
+### R-20260901-04 立创买板验收：MIC3 必须进 AEC 参考通道
+
+- 类别：硬件
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：xiaozhi #2036 仍开着。硬件 MIC3 回灌不等于 AFE 吃到参考通道。
+- 建议下一步：阶段 7 之后买立创时验收 MIC3 是否进入 AEC reference。未过清单不得改 hello，不得开 barge-in。
+- 来源：https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
+- 开发备注：
+
+### R-20260901-05 家庭成员邀请不能升级成主人声纹
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：腾讯连连家庭管理有邀请成员 API。微信家庭成员不等于麦克风前的 owner。
+- 建议下一步：若做家庭共享，绑定只给控制面权限；写档案仍要设备端 owner 声纹。访客/成员默认 guest。
+- 来源：https://cloud.tencent.com/document/product/1081/40776 ；https://cloud.tencent.com/document/product/1081/40817
+- 开发备注：
+
+### R-20260901-06 告别语义分类不能绕过主人能力门
+
+- 类别：语音
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：昨夜已切 END_SESSION 小模型分类。阶段 5「再见」曾因主人能力不足降级。语义分类若对 guest 直接关会话，会把权限门拆掉。
+- 建议下一步：精确词和语义分类都先过主人 subject capability；guest 只停公开播放或走超时。
+- 来源：
+- 开发备注：
+
+### R-20260901-07 现 SKU 用 ESP-SR AEC_MODE_SR_* 只护唤醒/漏音，不宣称双工
+
+- 类别：硬件
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：R-05 是下一块 AEC 板。现板 ATK ES8388 1-mic 无硬件 AEC。乐鑫 AEC 模式拆成 SR（线性滤波，面向唤醒）与 FD（线性+NLP，面向全双工）。官方示例 `aec_create(..., mic_num=1, AEC_MODE_SR_LOW_COST)`；AFE v2 `input_format` 用 `M+R`。这能压 TTS 漏进麦导致的误唤醒，不等于 barge-in 或 advertised duplex。
+- 建议下一步：1) 现板确认能否拿到与喇叭对齐的 R 通道（数字 I2S 拷贝 vs 模拟回采）；量不到就记缺口，不硬开 FD，hello 仍是 `aec_mode=none`。2) 只评测 `AEC_MODE_SR_LOW_COST` vs `SR_HIGH_PERF`：TTS 播放中说「花莉」的误唤醒/漏检，禁止用 FD 对外话术。3) 与 R-04 generation fence 对齐：AEC 只护听，打断仍走会话围栏。
+- 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/acoustic_echo_cancellation/README.html ；https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32/audio_front_end/migration_guide.html ；https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/audio_front_end/Espressif_Microphone_Design_Guidelines.html
+- 开发备注：
+
+### R-20260901-08 长期档案：原始语音/声纹 vs 转写文本分级
+
+- 类别：合规
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：CAC 2026-01-10《互联网应用程序个人信息收集使用规定（征求意见稿）》第十五条：人脸/指纹/声纹须特定目的、最小必要；除法定或单独同意外应存于生物识别设备内、不得经互联网外传。第三十八条把小程序算进互联网应用程序。这与已落地的 AI 标识 + 2h 提醒不是同一层。仍是征求意见稿。
+- 建议下一步：默认云端只存转写+记忆条目；原始 wav/特征不长期留、不用于声纹登录。小程序不要为回顾开实时麦。隐私政策拆：对话文本 / 原始音频 / 是否训练。
+- 来源：https://www.cac.gov.cn/2026-01/10/c_1769603446094128.htm ；https://www.cac.gov.cn/2026-01/09/c_1769688003183197.htm ；https://www.news.cn/politics/20260110/f08e925cb322436ca77d39962bd704aa/c.html
+- 开发备注：
+
+### R-20260901-09 2026-04 标识执法落到导出文件的显式+隐式元数据
+
+- 类别：合规
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：CAC 2026-04-28 对剪映/猫箱/即梦约谈处罚，依据含《人工智能生成合成内容标识办法》（2025-09-01 施行）。导出未加用户可感知显式标识、文件元数据未含隐式标识。小程序回顾/导出是用户语音+模型回复混合物；R-09 demo 若可下载，执法点在文件。
+- 建议下一步：导出 JSON/音频包里模型侧显式「AI 生成」；元数据写服务提供者+内容编号。用户原话与合成 TTS 分轨或分字段。
+- 来源：https://www.cac.gov.cn/2026-04/28/c_1779119736411711.htm ；https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm
+- 开发备注：
+
+### R-20260901-10 华泰 2026-08：平价硬件 + 轻订阅 + 配件/家居，不是 LOVOT 强制月费
+
+- 类别：市场定位
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：华泰 2026-08-12：家庭陪伴机价格带约 2000–4000 元（研报数字）；不复制 LOVOT 高月费。长期档案+记忆回顾适合做轻订阅标的。
+- 建议下一步：定价叙事对齐该价格带与半双工 SKU；订阅写成记忆/回顾/家庭档案；指标用 delivered-capabilities，不编留存数字。
+- 来源：https://stock.10jqka.com.cn/20260812/c678877468.shtml ；https://finance.sina.com.cn/stock/stockzmt/2026-08-12/doc-inimzcpt7023259.shtml
+- 开发备注：
+
+### R-20260901-11 Fun-ASR-Nano / SenseVoice GGUF 做离线档案回放，不做 ESP32 端 ASR
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-01
+- 最近更新：2026-09-01
+- 为何现在相关：FunASR 2026-06 起 Fun-ASR-Nano 有 llama.cpp/GGUF 单二进制。适合家庭档案离线回放、方言补识别，不替代 Go Media Edge，不上 ESP32，不做实时双工。
+- 建议下一步：在归档 worker（非 MCU）试 llama-funasr-cli + FSMN-VAD GGUF，与线上 FunASR 做差异抽样；说话人用 CAM++，不当成 SenseVoice 原生输出。
+- 来源：https://github.com/QwenAudio/Fun-ASR/ ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29 ；https://www.funasr.com/en/llama-cpp.html ；https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512
+- 开发备注：
 
 ---
 
