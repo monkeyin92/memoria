@@ -8,7 +8,7 @@
 
 1. 研究助手扫描后：同一想法复用已有 id 并更新「最近更新」；新想法新增 `R-YYYYMMDD-NN`，状态先标「待评估」。
 2. 开发评估后：只改「状态」「最近更新」「开发备注」。已完成 / 不做 / 废弃的行永不删除，只改状态并追加一行注明日期的备注。
-3. 建议不得违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「花莉」。
+3. 建议不得违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。
 4. 扫描更新必须是合并：禁止把本文件改回只剩标题。写入前若正文行数会大幅变少，停止并报错。
 
 ## 状态词（只准用这些）
@@ -31,7 +31,7 @@
 - 同一想法再次出现时合并到原 id，禁止复制一条。
 - 永不删除「已完成 / 不做 / 废弃」行；只改状态，并在开发备注追加注明日期的一行说明。
 - 不写生产密钥、环境路径、镜像 SHA、设备 ID、HANDOFF 运维细节。
-- 不建议违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「花莉」。不要建议播放期 KWS、现板谎称 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
+- 不建议违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。不要建议播放期 KWS、现板谎称 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
 
 ---
 
@@ -40,7 +40,7 @@
 - 扫描日期：2026-09-01。本轮追加 R-20260901-01..11，并把备注并入 R-20260831-01 / R-20260831-02 / R-20260831-05 / R-20260831-13。
 - 当前出货 SKU 只允许受控半双工；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。
 - 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。
-- 唤醒词默认「花莉」，已支持白名单切换 / MultiNet 自定义词（无需为每个词重刷）。误唤醒与漏唤醒仍要记数；不要开播放期 KWS。
+- 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词（无需为每个词重刷）。误唤醒与漏唤醒仍要记数；不要开播放期 KWS。
 - 现板无 AEC reference；hello 必须 `aec_mode=none`，直到 R 通道被证明可用。阶段 7 前不刷下一块 AEC 板。不得用 ESP-SR `AEC_MODE_SR_*` 宣称双工或 barge-in。
 - 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。BOOT 是唯一硬停。
 - DTLN makeup 已冻结 `8.0×`，不要再抬。
@@ -50,13 +50,13 @@
 
 ## 语音与硬件
 
-### R-20260831-01 花莉两音节低于 ESP-SR 3–6 音节门槛
+### R-20260831-01 茉莉两音节低于 ESP-SR 3–6 音节门槛
 
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
 - 最近更新：2026-09-01
-- 为何现在相关：默认唤醒词「花莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
+- 为何现在相关：默认唤醒词「茉莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
 - 建议下一步：阶段 4 安静环境 ×10，分别记漏唤醒 / 误唤醒。误唤醒高则加 WakeNet 阈值，或切到 ≥3 音节词。不要开播放期 KWS。
 - 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html ；https://github.com/espressif/esp-sr/issues/194
 - 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。2026-09-01 MultiNet 是唤醒后命令词，WakeNet 才是门卫；目录切词不算 R-01 完成。误唤醒高时用 `set_wakenet_threshold`（0.4–0.9999），或改 ≥3 音节 WakeNet。
@@ -182,7 +182,7 @@
 - 首次写入：2026-08-31
 - 最近更新：2026-08-31
 - 为何现在相关：仪表必须只报已交货能力，不报 TAM / 情感 / 没交货的订单。
-- 建议下一步：报微信绑定、主人声纹登记、每周档案写入、访客拦截、导出删除、花莉误唤醒、半双工 turn 延迟。
+- 建议下一步：报微信绑定、主人声纹登记、每周档案写入、访客拦截、导出删除、茉莉误唤醒、半双工 turn 延迟。
 - 来源：
 - 开发备注：2026-08-31 新增 `GET /v1/account/delivered-capabilities`；2026-08-31 扩展设备绑定 / 档案计数 / 合规字段，并在小程序「我的」页展示已交货能力仪表。
 
@@ -216,13 +216,13 @@
 
 ## 2026-09-01 追加
 
-### R-20260901-01 目录切词不是 WakeNet；花莉仍要阈值或更长词
+### R-20260901-01 目录切词不是 WakeNet；茉莉仍要阈值或更长词
 
 - 类别：语音
 - 状态：待评估
 - 首次写入：2026-09-01
 - 最近更新：2026-09-01
-- 为何现在相关：昨夜已上白名单 / MultiNet 切词。乐鑫分层是 WakeNet 门卫 + MultiNet 唤醒后命令。两音节「花莉」误唤醒不会因为目录多几个词而消失。
+- 为何现在相关：昨夜已上白名单 / MultiNet 切词。乐鑫分层是 WakeNet 门卫 + MultiNet 唤醒后命令。两音节「茉莉」误唤醒不会因为目录多几个词而消失。
 - 建议下一步：阶段 4 对当前默认词跑 ×10。误唤醒高则只调 WakeNet 阈值或换成四字词，不要把 MultiNet 命令当成唤醒权威。
 - 来源：https://github.com/espressif/esp-sr/issues/194 ；https://espressif-docs.readthedocs-hosted.com/projects/espressif-esp-moonlight/en/latest/speech_recognition.html
 - 开发备注：
@@ -289,7 +289,7 @@
 - 首次写入：2026-09-01
 - 最近更新：2026-09-01
 - 为何现在相关：R-05 是下一块 AEC 板。现板 ATK ES8388 1-mic 无硬件 AEC。乐鑫 AEC 模式拆成 SR（线性滤波，面向唤醒）与 FD（线性+NLP，面向全双工）。官方示例 `aec_create(..., mic_num=1, AEC_MODE_SR_LOW_COST)`；AFE v2 `input_format` 用 `M+R`。这能压 TTS 漏进麦导致的误唤醒，不等于 barge-in 或 advertised duplex。
-- 建议下一步：1) 现板确认能否拿到与喇叭对齐的 R 通道（数字 I2S 拷贝 vs 模拟回采）；量不到就记缺口，不硬开 FD，hello 仍是 `aec_mode=none`。2) 只评测 `AEC_MODE_SR_LOW_COST` vs `SR_HIGH_PERF`：TTS 播放中说「花莉」的误唤醒/漏检，禁止用 FD 对外话术。3) 与 R-04 generation fence 对齐：AEC 只护听，打断仍走会话围栏。
+- 建议下一步：1) 现板确认能否拿到与喇叭对齐的 R 通道（数字 I2S 拷贝 vs 模拟回采）；量不到就记缺口，不硬开 FD，hello 仍是 `aec_mode=none`。2) 只评测 `AEC_MODE_SR_LOW_COST` vs `SR_HIGH_PERF`：TTS 播放中说「茉莉」的误唤醒/漏检，禁止用 FD 对外话术。3) 与 R-04 generation fence 对齐：AEC 只护听，打断仍走会话围栏。
 - 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/acoustic_echo_cancellation/README.html ；https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32/audio_front_end/migration_guide.html ；https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/audio_front_end/Espressif_Microphone_Design_Guidelines.html
 - 开发备注：
 
