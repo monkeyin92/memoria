@@ -478,6 +478,31 @@ class ExistingVoiceProviderAdapter:
         self._clear_asr_event_context()
         self._remember_asr_task(asr, identity.stream_epoch)
 
+    async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
+        """Close the current ASR task when playback starts to avoid idle timeout.
+
+        In half-duplex mode, playback stops audio capture for the duration of
+        assistant speech. The ASR provider expects continuous audio and will
+        timeout after 23 seconds of silence. Rotating the task when playback
+        starts prevents this timeout; a new task will start when capture resumes.
+        """
+
+        if self._asr is None or not self._audio_since_finalize:
+            return
+        asr = await self._ensure_asr(identity.stream_epoch)
+        previous_task_id = str(getattr(asr, "task_id", "") or "")
+        if not previous_task_id:
+            return
+        self._remember_asr_task(asr, identity.stream_epoch)
+        await asr.rotate_task(require_consumed=False)
+        self._remember_asr_task(asr, identity.stream_epoch)
+        self._audio_since_finalize = False
+        logger.info(
+            "Rotated ASR task on playback start: task_id=%s stream_epoch=%s",
+            previous_task_id,
+            identity.stream_epoch,
+        )
+
     def _map_asr_event(
         self,
         asr: FunASRSession,

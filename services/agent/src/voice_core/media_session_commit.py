@@ -870,6 +870,9 @@ class MediaSessionCommitMixin:
         context.turn_started_ns = time.monotonic_ns()
         context.tts_started_ns = None
         context.first_audio_observed = False
+        # Close the ASR task when playback starts to avoid idle timeout during
+        # half-duplex assistant speech (defect 3: 23-second timeout fix).
+        await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)
         generation_started = await self.bridge.emit_generation(
             session_id,
