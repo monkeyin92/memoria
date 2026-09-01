@@ -384,7 +384,7 @@ cd firmware/esp32
 ./scripts/flash.sh --port /dev/cu.usbmodemXXXX --monitor
 ```
 
-默认启用本地唤醒词“梅莫里亚”（`mei mo li ya`）；普通“你好你好”不是唤醒词。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
+默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 
 Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 BOOT，然后重试。monitor 使用 `Ctrl+]` 退出。
 

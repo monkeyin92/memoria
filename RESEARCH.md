@@ -59,7 +59,7 @@
 - 为何现在相关：默认唤醒词「茉莉」只有两音节，低于 ESP-SR 定制唤醒词建议的 3–6 音节门槛。
 - 建议下一步：阶段 4 安静环境 ×10，分别记漏唤醒 / 误唤醒。误唤醒高则加 WakeNet 阈值，或切到 ≥3 音节词。不要开播放期 KWS。
 - 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html
-- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。阶段 4 计数仍待做。
+- 开发备注：2026-08-31 已合入白名单唤醒词切换与 MultiNet 自定义唤醒词（catalog 经设备设置下发固件，运行时选词，无需为每个词重刷）。2026-09-01 生产切流 `20260901-0945-wake-word-whitelist`、小程序 0.8.74、研发板已刷 patch `0021`；阶段 4 真机计数仍待做。
 
 ### R-20260831-02 FunASR 空转写要分账 empty+vendor / empty+gating / low_rms
 

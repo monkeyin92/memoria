@@ -6,7 +6,7 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-08-31
+as_of_date: 2026-09-01
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -35,13 +35,14 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `6ede9909262661f834f850703848f7dc919334d7`（2026-08-31 21:35 CST 切流，Agent-only source overlay，基座 `20260831-2125-close-phrase-expansion-agent-component` / `b1be23b`），Media Edge 发布提交为 `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`（镜像不变），Control API 当前部署提交为 `349a3a3c5a40e350b82fb16f23e5f33e482a3f81`：
+当前 Agent/Bridge 发布提交为 `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`（2026-08-31 22:15 CST 切流，标签 `20260831-2215-miniprogram-bind-view-agent-component`）。Control API 与 Media Edge 发布提交为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`（2026-09-01 10:02 CST 切流，标签 `20260901-0945-wake-word-whitelist`）：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260831-2135-close-intent-semantic-router-agent-component`，image `sha256:cc8c29f48793a07c78e16efad5212c8d848e613345e1357c08ec488b9bcd98d9`，revision `6ede9909262661f834f850703848f7dc919334d7`。两个容器 healthy、bridge gRPC PASS、restart=0。本切片在精确/复合告别规则之外增加小模型 `END_SESSION` 语义分类（`CONVERSATION_CLOSE_SEMANTIC_*`，默认 `deepseek-v4-flash`、0.8s 超时）：未命中规则的告别变体先分类再路由；`UNSURE` fail-closed 不结束会话；结果缓存在 runtime。前序切片已覆盖英文 goodbye、行拜拜、复合告别与告别播完 standby。紧邻回滚点 `memoria-agent:rollback-20260831-2135-close-intent-semantic-router-agent-component-pre-agent` 与 `-pre-bridge`（回滚镜像为切流前 `20260831-2125-close-phrase-expansion-agent-component`）。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
-- Media Edge：`memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`，image `sha256:230f94b8e1d0839827b9c5cd3c0c8bbbdf526d7b34e8cf59f3c688f6a71c9513`。2026-08-28 10:19 CST 起容器因直连 env 缺失（`MEDIA_EDGE_DEVICE_JWT_ISSUER/AUDIENCE`、mTLS 设备状态 Redis、内部监听 TLS、https healthcheck、close-report）fail-closed 崩溃退出，设备流量落入 LiveKit 兼容回退路径（无待命链路，「再见」后不回待命）。19:11–19:17 CST 按 `prepare_production_upgrade_env.py` 规范补齐 `/etc/memoria-media-edge.env` 并重建，容器 healthy、`127.0.0.1:8794` 恢复监听；close-report 与 control-api 共享 token（48 字符）已双侧配置，control-api 于 19:52 CST 重建加载。`/tmp/media-runtime.override.yml` 中 agent/bridge 旧镜像钉住值已同步为当前运行镜像。
-- SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:v1`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g）。真实设备音频回放验证："南京今天的天气怎么样？" 纯语音段 340ms。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。紧邻回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge`。
-- Control API：`memoria-control-api:20260827-architecture-split-v1`，revision `349a3a3c5a40e350b82fb16f23e5f33e482a3f81`，容器 healthy，2026-08-28 19:52 CST 重建以加载 close-report token。
-- 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260831-2215-miniprogram-bind-view-agent-component`，revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`。两个容器 healthy、bridge gRPC PASS、restart=0。紧邻回滚点 `memoria-agent:rollback-20260831-2135-close-intent-semantic-router-agent-component-pre-agent` 与 `-pre-bridge`。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
+- Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 已钉住本标签。
+- SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:v1`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。紧邻回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge`。
+- Control API：`memoria-control-api:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy。白名单 catalog（`mo_li`、`mei_mo_li_ya`）、`POST /v1/devices/wake-word/validate` 与 MultiNet 自定义唤醒词 settings 已上线。紧邻回滚镜像 `memoria-control-api:20260831-2215-miniprogram-bind-view-control-api`（revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`）。
+- 小程序体验版 **0.8.74**（2026-09-01 微信开发者工具上传）：设备页支持白名单切换与自定义唤醒词（pinyin + display）。
+- Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
 - 2026-08-28 15:40 CST 切流后复测：Qwen Realtime Search 与 Doubao 稳定 PASS；**FunASR 间歇失败**，4 次中 1 次 PASS，报 `FunASR returned no interim transcript`。定性依据：用切流前镜像 `rollback-…-pre-agent` 做 A/B 对比同样失败；且该 smoke 直接调用 `FunASRSession`，不经过 device VAD 门控或本次改动的任何代码路径。判定为供应商侧抖动，**与本次发布无关**，因此不构成回滚理由（回滚同样失败且会丢失修复）。FunASR 恢复前真实识别率会受影响，需另行跟进供应商。
@@ -68,7 +69,7 @@ enabled: production_control_api_and_flashed_board_true
 verified: 2026-08-27_server_ack_and_miniprogram_device_ready
 device_id: dev_atk_a4cb8fd6095c
 firmware_version: 2.4.2
-miniprogram_experience_version: 0.8.73
+miniprogram_experience_version: 0.8.74
 ```
 
 本轮已打通并验证以下顺序：二维码 introspect → BLE Protocomm Security 1（X25519、PoP、AES-256-CTR）→ 设备 online-proof → claim/binding → Activation Manifest → 设备 ACK → `ready_for_conversation`。小程序不采集声纹或实时语音；Wi-Fi 密码只在已认证的 BLE 会话中写入设备，不经过 Control API 日志或小程序普通请求。
@@ -82,11 +83,12 @@ miniprogram_experience_version: 0.8.73
 ## 当前板卡与固件
 
 - 固件 app version：2.4.2；ES8388 输入增益：18 dB。
-- app SHA-256：`f15a3b356f3eed604673da1f08afc784832be4e36fa44642ac9dc8d359d03115`。
-- merged SHA-256：`73a92c2dcda5be860761e40ccad3bca361db8da40e0f98ce02f36e0062ec9419`。
-- overlay SHA-256：`4df9c49cf823cc07e1b6e13a4c3cb4c6efd7b684370e8ba8baaace7c25ab0ca0`。
+- app SHA-256：`c11fb87ed4ffd0206aa5a9554d6226d539186f71040e4ea8525dea6b3dd31492`。
+- merged SHA-256：`3f45c9f394847d617ab1df36919e74cecee41a84e0a3cbb13b75e61f7346f68e`。
+- overlay SHA-256：`8bad9a23dd0559598155f7b701da94d2564fcf1f1cb99d427bd60051b878bb69`（含 patch `0021` 白名单唤醒词与 `memoria_wake_word` 注册表）。
+- 默认出厂唤醒词仍为「茉莉」（`mo li`）；assets 同时打包 `mei mo li ya`，运行时经 device settings / NVS 切换；自定义词走 MultiNet 拼音命令（v1，非云端 WakeNet 训练）。
 - `memoria_identity` 刷前/刷后 SHA-256：`b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，逐字节一致。
-- 本轮使用 `scripts/flash.sh --port /dev/cu.usbmodem101` 写入 bootloader、partition table、OTA data 和 app，未写入 `0x10000..0x1ffff` 身份区；串口确认 Wi-Fi、Activation Manifest activation_version=3、idle、1MIC/0 playback AFE 与 KWS 初始化，无 brownout 或重启循环。
+- 2026-09-01 使用 `scripts/flash.sh --port /dev/cu.usbmodem101 --build` 写入 bootloader、partition table、OTA data、`generated_assets.bin` 与 app，未写入 `0x10000..0x1ffff` 身份区。
 - Speaking 期间关闭 KWS 并忽略迟到 wake event；回到 idle 后恢复。BOOT 始终是本地物理硬停止。
 
 这些证据只达到 `identity-safe flash + board boot/activation`，不等于完整设备媒体或 Actual Heard。
@@ -103,10 +105,12 @@ deployed: production_agent_bridge_edge_and_firmware
 verified: 2026-08-25_real_device_wake_and_owner_silence_timeout_to_typed_closed_session_close
 direct_real_device_verified: false
 wake_word: 茉莉
+wake_word_whitelist: [mo_li, mei_mo_li_ya]
+wake_word_custom: multinet_pinyin_v1
 owner_silence_timeout_s: 10
 ```
 
-固件只在本地 KWS 用 `mo li` 唤醒，仍不上传唤醒词音频。设备会话中的“再见”“知道了”“退下吧”等精确结束语只有通过目标说话人权威判定后才关闭；带后续内容的句子不会误触发。无主人语音计时只由 Python Voice Core 的权威会话状态管理：助手输出和传输断开期间暂停，回到聆听时开启 10 秒窗口，裸 VAD/环境声不能重置主人计时。关闭通过 typed `CONVERSATION_STATE_CLOSED` 进入 Go Media Edge，再下发设备 `session.close` 回到 Idle，不新增第二套聆听状态机。
+固件只在本地 MultiNet/KWS 用当前活跃命令词唤醒（默认 `mo li` / 「茉莉」），仍不上传唤醒词音频。小程序设备页可切换白名单词或保存自定义词（display + pinyin）；设置经 Control API → Media Edge `session.accepted` 下发，固件需含 patch `0021` 且设备重连后生效。自定义 v1 不走云端 WakeNet 训练；两音节词误唤醒风险仍高，阶段 4 计数待做。设备会话中的“再见”“知道了”“退下吧”等精确结束语只有通过目标说话人权威判定后才关闭；带后续内容的句子不会误触发。无主人语音计时只由 Python Voice Core 的权威会话状态管理：助手输出和传输断开期间暂停，回到聆听时开启 10 秒窗口，裸 VAD/环境声不能重置主人计时。关闭通过 typed `CONVERSATION_STATE_CLOSED` 进入 Go Media Edge，再下发设备 `session.close` 回到 Idle，不新增第二套聆听状态机。
 
 当前候选已发布到生产 Agent/Bridge/Edge 并写入当前板卡。2026-08-30 10:19 切流后 Direct 唤醒 TTS 曾用 `turn_id=0`，固件拒包、无 Actual Heard；10:33 已改为先打开 `turn_id>=1` 再播允许名单短句（「我在。」「哎，我来了。」「哎呀，好困呀。」）。该听感尚未真机验收，不能更新 `direct_real_device_verified`。2026-08-25 真机已验证“茉莉”唤醒后静默约 10 秒，Python 产生 `owner_silence_timeout` typed CLOSED，Edge 成功排队 `session.close`，设备回到待命；Edge 也已增加旧 FLOOR fence 丢弃和重复 CLOSED 幂等保护。明确结束语测试时，ASR 路由进入结束语分支，但正式主人权限返回 `subject_capability_forbidden`，记录为 `conversation_end_owner_unverified` 并由随后超时关闭，因此 `conversation_end_explicit` 仍待主人声纹/subject profile 权限就绪后复测。两音节“茉莉”相较原四音节唤醒词有更高误唤醒风险，安静、电视人声和家庭噪声三种环境的阈值验收仍未完成，不能更新 `direct_real_device_verified`。
 
