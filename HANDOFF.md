@@ -35,9 +35,9 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`（2026-08-31 22:15 CST 切流，标签 `20260831-2215-miniprogram-bind-view-agent-component`）。Control API 与 Media Edge 发布提交为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`（2026-09-01 10:02 CST 切流，标签 `20260901-0945-wake-word-whitelist`）：
+当前 Agent/Bridge 发布提交为 `297d2e0a46199242d9c4017856a06c984a94d315`（2026-09-01 12:52 CST 切流，标签 `20260901-1248-owner-authority-missed-hearing-agent-component`）。Control API 与 Media Edge 发布提交为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`（2026-09-01 10:02 CST 切流，标签 `20260901-0945-wake-word-whitelist`）：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260831-2215-miniprogram-bind-view-agent-component`，revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`。两个容器 healthy、bridge gRPC PASS、restart=0。紧邻回滚点 `memoria-agent:rollback-20260831-2135-close-intent-semantic-router-agent-component-pre-agent` 与 `-pre-bridge`。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260901-1248-owner-authority-missed-hearing-agent-component`，revision `297d2e0a46199242d9c4017856a06c984a94d315`（overlay 核心修复 `88d46c9`）。Bridge healthy、bridge gRPC PASS、restart=0；Agent worker 已注册，但 healthcheck 仍因 heartbeat 对 Control API 返回 HTTPStatusError 报 `unhealthy`（Agent/Control 栈 tag 分裂，切流前即存在，与本次 overlay 无关）。紧邻回滚点 `memoria-agent:rollback-20260901-1248-owner-authority-missed-hearing-agent-component-pre-agent` 与 `-pre-bridge`（revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`）。设备会话仍 `barge_in_enabled=false`；DTLN `8.0x`、PCM tap 仍在 bridge `/tmp/media-pcm-tap`。不得仅凭听感把全局 `direct_real_device_verified` 改为 true。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 已钉住本标签。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:v1`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。紧邻回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge`。
 - Control API：`memoria-control-api:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy。白名单 catalog（`mo_li`、`mei_mo_li_ya`）、`POST /v1/devices/wake-word/validate` 与 MultiNet 自定义唤醒词 settings 已上线。紧邻回滚镜像 `memoria-control-api:20260831-2215-miniprogram-bind-view-control-api`（revision `61e7428a8ec68e0e3535a722aaa4c3e37167c0e6`）。
@@ -172,7 +172,7 @@ full_duplex_verified: false
 stage_2: receipt_filed_3of4_pending_serial
 stage_3: pending_homepage_initiated_session
 stage_4: pending
-stage_5: fail_2026_09_01_missed_hearing_nudge_preempts_silent_close
+stage_5: pending_field_ret_2026_09_01_owner_authority_missed_hearing
 stage_6: pending
 stage_7: pending
 success: two_natural_turns_actual_heard_then_wake_standby_script
@@ -182,10 +182,10 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 
 ### 下一阶段（按顺序，2026-08-31 10:55 起）
 
-0. **先修阶段 5 阻塞（代码，不必到现场）**：2026-09-01 真机操作员观察——当前固件 `c11fb87e…` 上唤醒「茉莉」→「今天星期几」→「南京天气怎么样」两轮都有完整回答（阶段 2 的听感部分在新固件上复现通过，但四件套未挂、无 receipt，不能升级 `verified`）；随后**保持安静，期望 `owner_silence_timeout` 静默关闭，实际板子自己说了一句「刚才没有听清，可以再说一遍吗？」，最后由操作员按 BOOT 强制待命**。定位到两个缺陷：
-   - **A. 回复播完后的空轮次没有回声保护、也不校验主人权威。** `_is_wake_echo_discard` 只在 `device_wake_ack_fence` 存在且助手正在说话时挡（`media_session_projection.py:148`），而该 fence 在播放终止时就被 `clear_device_wake_ack_fence` 清掉（`media_session_output_stream.py:792`）。于是天气回答播完、麦克风重开后，单麦无 AEC 参考的播放尾音或环境噪声触发 VAD → ASR 空 → `empty_media_turn` 以 `allow_without_endpoint=True` 调 `_nudge_missed_hearing`（`media_session_commit.py:508`/`:542`），全程没有 `current_speaker_class == "owner"` 判定。环境噪声因此能让板子主动说话。
+0. **阶段 5 代码阻塞已解除（2026-09-01），待真机复测**：2026-09-01 真机操作员观察——当前固件 `c11fb87e…` 上唤醒「茉莉」→「今天星期几」→「南京天气怎么样」两轮都有完整回答（阶段 2 的听感部分在新固件上复现通过，但四件套未挂、无 receipt，不能升级 `verified`）；随后**保持安静，期望 `owner_silence_timeout` 静默关闭，实际板子自己说了一句「刚才没有听清，可以再说一遍吗？」，最后由操作员按 BOOT 强制待命**。定位到两个缺陷：
+   - **A（已修，2026-09-01）。空轮次「没听清」提示未校验主人权威。** 此前 `empty_media_turn` 与 ASR tail timeout 均可触发 `_nudge_missed_hearing`，且 `allow_without_endpoint=True` 绕过了 endpoint 检查（该参数原是为唤醒 TTS 回声保留，现已有 `device_wake_ack_fence`）。修法：删除 `allow_without_endpoint`；新增 `_owner_speech_is_established()`，仅当 `current_speaker_class == "owner"` 且 `authority_verified` 时才提示。分类前空轮次直接静默；「主人真说了话但 ASR 出空」由 tail timeout + 主人权威路径兜底，符合半双工契约。顺带修复 timeout 路径在 `_clear_pending_turn_state` 清掉 `turn_endpoint_sample` 后 nudge 被误挡的隐性 bug（改传 `endpoint_sample=`）。Agent 切片 `20260901-1248-owner-authority-missed-hearing-agent-component`（`88d46c9`/`297d2e0`）已切流；回归测试 `test_device_empty_asr_asks_user_to_repeat`、`test_device_empty_asr_without_owner_stays_silent`。
    - **B（已修，2026-09-01）。提示语自己重置主人静默窗口。** `_speak_missed_hearing_ack` 播完回 `listening`，`_sync_owner_silence_phase` 原先走 `_arm_owner_silence_timer(reset=True)` 并清 `owner_silence_grace_used`，等于每次提示重开满 10 秒 + 再给一次 3 s grace。修法：`listening` 接缝改为 `reset=False`（续用剩余预算），满窗刷新只保留在 `_finish_owner_silence_turn` 的 `owner_verified` 分支——那是唯一真正确立主人活动的地方；grace 也只在主人活动时清。语义变为「主人拿到的是 10 秒**净聆听**预算，助手说话期间暂停不计，每个已验证主人轮次重新给满」，与半双工契约一致（主人在助手说话时本就无法开口，不该被扣时间）。回归测试 `test_assistant_nudge_playback_does_not_extend_owner_silence_window`（`test_media_session.py`）已验证：旧语义下不产生 CLOSED，新语义下正常 `owner_silence_timeout` 关闭。
-   缺陷 A 仍未修，阶段 5 现场前需先定 A 的取舍（是否保留「ASR 空也提示」）。另外尚未确证哪个源头产生了那个空轮次（播放尾音回声 vs 环境 VAD），需要日志里 `empty_media_turn` 的 `stream_epoch`/样本区间与播放终止时间戳对比。**A 未修则阶段 5 仍会重演**：噪声触发的提示语依然会在静默窗口内说话，只是不再无限续命，最迟仍会以 `owner_silence_timeout` 关闭。
+   A/B 代码均已合入 `main` 并发布；**阶段 5 现场验收仍待重跑**：安静 10 s 内板子不得再自发说「没听清」。尚未确证 2026-09-01 那次空轮次究竟是播放尾音回声还是环境 VAD，可用日志里 `empty_media_turn`/`provider_final_missing` 的 `stream_epoch`/样本区间与播放终止时间戳对比。
 1. **阶段 2 需在当前固件上整轮重跑**（不是只补串口）：已落盘的 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md` 记的是 `firmware_app_sha256=f15a3b35…`，而 2026-09-01 为白名单唤醒词重刷后当前板卡是 `c11fb87e…`。阶段 2 通过标准要求「同一固件摘要下」，因此该 receipt 不能用来升级 `verified`；重跑时串口 monitor 全程挂着，补齐 `vad.start`/`vad.end`、tap WAV、DTLN 后 RMS，并记 `wake_word_id`。
 2. **阶段 3 + 5 一次现场**（推荐合并）：
    - 小程序停在**设备** tab，确认「在线，可开始对话」（不要从配网/设备 onboarding 页起手；小程序不再发起语音对话）。
@@ -461,7 +461,7 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 4. 现场记录当前容器 ID/image ID、软链、env 摘要、数据快照和一个可运行回滚点。
 5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
 
-Agent-only 快速路径的运行时切片只允许 `services/agent/**`；发布脚本与对应门禁测试可以随发布机制修复，但依赖锁、运行时 Dockerfile、共享包或其他服务变化必须走完整镜像发布：
+Agent-only 快速路径的运行时切片只允许 `services/agent/**`；发布脚本与对应门禁测试可以随发布机制修复，但依赖锁、运行时 Dockerfile、共享包或其他服务变化必须走完整镜像发布。当 `main` 上存在与 overlay 无关的漂移（例如 `packages/contracts/**`）而 Agent 代码不依赖它们时，可用 `--allow-scope-drift` 继续 overlay 发布；若 Agent/Bridge/Control 的 `MEMORIA_RELEASE_TAG` 已分裂，脚本 stack-authority 门禁会 REJECT，需按 `component-releases/<tag>/` 内已构建镜像手动 compose cutover（保留 rollback 标签）：
 
 ```bash
 scripts/deploy_agent_component.sh \
@@ -476,6 +476,7 @@ scripts/deploy_agent_component.sh \
   --release-tag "$RELEASE_TAG" \
   --base-image "memoria-agent:$BASE_TAG" \
   --expected-commit "$SOURCE_COMMIT" \
+  --allow-scope-drift \
   --cutover
 ```
 
