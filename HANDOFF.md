@@ -125,13 +125,16 @@ wired: playback_ledger_start_to_provider_pause_asr_to_funasr_rotate_task
 enabled: true
 deployed: main_branch
 production_release_commit: 7d13ad1ecd85af6b647ec08d5b33e6ad0a3f654a
-verified: syntax_check_and_compilation
+verified: unit_regression_mutation_checked
+regression_tests: test_commit_pauses_provider_asr_when_playback_starts,test_existing_provider_adapter_rotates_asr_task_when_playback_starts
 direct_real_device_verified: false
 ```
 
 **缺陷 3 根因**：半双工模式下播放开始时停止音频采集，但 ASR 任务保持打开。FunASR 提供商期望持续音频输入（FUNASR_HEARTBEAT 参数），23 秒无音频后超时失败。生产日志显示 12 次 `EmptyAudio` 错误和 2 次超时，均发生在播放期间。
 
 **修复方案**：在播放开始时主动关闭当前 ASR 任务。方法是在 `MediaVoiceProvider` 协议中新增 `pause_asr_for_playback()` 方法，由 `ExistingVoiceProviderAdapter` 实现并调用 `FunASRSession.rotate_task()`。在所有播放启动点（`media_session_commit.py`、`media_session_output_dispatch.py`、`media_session_connection.py` 两处、`media_session_input.py`）调用该方法。播放结束后音频采集恢复时会自动启动新任务。
+
+**回归测试**：会话层 `test_commit_pauses_provider_asr_when_playback_starts` 走真实 `commit_user_turn` 路径，断言播放启动后 pause 恰好触发一次；适配器层 `test_existing_provider_adapter_rotates_asr_task_when_playback_starts` 断言 `rotate_task(require_consumed=False)` 被调用、未开始的任务不被空转、采集未恢复时重复播放启动保持幂等。已用变异验证有效性：注掉 `media_session_commit.py` 的 pause 调用后会话层测试失败（`[] == [1]`）。注意 `FakeMediaProvider` 继承 `MediaVoiceProvider` Protocol，Protocol 的 `...` 方法体会成为返回 `None` 的真实方法——新增协议方法时若不在测试替身里显式实现，调用点会在测试中静默 no-op。
 
 **未验证边界**：真机复测、生产环境播放期间 ASR 超时消失、播放结束后新任务正常启动。修复已合并到 `main` 分支（commit `7d13ad1`、merge commit `f631990..7d13ad1`），但尚未发布到生产或进行真机验证，不得据此升级 `direct_real_device_verified`。
 
