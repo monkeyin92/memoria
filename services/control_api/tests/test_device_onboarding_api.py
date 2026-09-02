@@ -921,6 +921,9 @@ async def test_direct_device_media_session_never_touches_livekit(
         "audio_mode": "half_duplex_safe",
         "wake_mode": "button_or_keyword",
         "allowed_barge_in": ["button", "keyword"],
+        "wake_word_id": "mo_li",
+        "wake_word_pinyin": "mo li",
+        "wake_word_display": "茉莉",
     }
     ledger_entry = RuntimeProfileLedger(memory).current("dev_test_01")
     assert ledger_entry is not None

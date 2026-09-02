@@ -93,11 +93,12 @@ async def test_legacy_vector_schema_upgrades_in_place_and_hnsw_is_used() -> None
         connection = await asyncpg.connect(dsn)
         try:
             await connection.execute(
-                Path("services/archive/postgres_schema.sql").read_text(
+                Path("services/archive/postgres_archive_schema.sql").read_text(
                     encoding="utf-8"
                 )
             )
             await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            await connection.execute("DROP TABLE IF EXISTS memory_vector_documents")
             await connection.execute(
                 """
                 CREATE TABLE memory_vector_documents (
