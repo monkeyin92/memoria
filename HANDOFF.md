@@ -83,7 +83,7 @@ miniprogram_experience_version: 0.8.74
 
 ## 当前板卡与固件
 
-- 固件 app version：2.4.2；ES8388 输入增益：18 dB。
+- 固件 app version：2.4.2；ES8388 输入增益：**21 dB（2026-09-02 已刷写）**；app SHA `1af5a39e…`（前 `c11fb87e…` 为 18 dB）。epoch1351 复测：30–60 cm 正常音量 DTLN 后 RMS **939/764**，两轮 commit+播报，较 18 dB 需大喊（2000+）明显改善。
 - app SHA-256：`c11fb87ed4ffd0206aa5a9554d6226d539186f71040e4ea8525dea6b3dd31492`。
 - merged SHA-256：`3f45c9f394847d617ab1df36919e74cecee41a84e0a3cbb13b75e61f7346f68e`。
 - overlay SHA-256：`8bad9a23dd0559598155f7b701da94d2564fcf1f1cb99d427bd60051b878bb69`（含 patch `0021` 白名单唤醒词与 `memoria_wake_word` 注册表）。
@@ -195,20 +195,28 @@ barge_in: forbidden
 turn_phase_side_effects: forbidden
 direct_real_device_verified: false
 full_duplex_verified: false
-stage_2: receipt_filed_3of4_pending_serial_and_firmware_rerun
+stage_2: pass_2026_09_02_operator_receipt_pending_template_fields
 stage_3: pass_2026_09_01_operator_receipt_pending_template_fields
 stage_4: pass_2026_09_01_quiet_mo_li_10of10_0false
 stage_5: pass_2026_09_01_operator_pending_template_receipt
-stage_6: pending
-stage_7: pending_blocked_on_stage_2
+stage_6: pass_2026_09_02_operator_receipt_pending_template_fields
+stage_7: pass_2026_09_02_operator_receipt_pending_template_fields
 success: two_natural_turns_actual_heard_then_wake_standby_script
+demo_script: outputs/acceptance/half_duplex_investor_demo-stage7-script.md
+demo_ready: true
 ```
 
-本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**阶段 2 阻塞项已于 2026-08-31 解除（操作员听感）**：同一 session 内「今天星期几」与「南京天气」均有完整回答；Agent 切片 `20260831-0955-half-duplex-asr-stall-rescue-agent-component`（`bc56f6b`）已切流。正式 receipt 已落盘 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md`（session `79b6e405-347d-4aad-89be-6e82d4fa1c65`，stream_epoch=1310，tap WAV 已拷本地）；**仍缺串口 UART 四件套之一**，且未跑 `hardware_realtime_acceptance.py verify`，故不能把本候选 `verified` 写成带日期的两轮 Actual Heard，也不能把全局 `direct_real_device_verified` 改为 true。2026-08-30 15:07 CST 高铁长回答 `superseded` 收据见 `outputs/acceptance/half_duplex_investor_demo-20260830-1507.md`，待同一长回答剧本复测。2026-08-31 00:00–09:00 CST 曾出现 FunASR 空转写 + `unknown_safe` policy 拦播报 + 唤醒误触发「没听清」等分支，已由 `0020`/`0955` 及前序切片修复；不得用旧日志升级 `verified`。1150 之前的 11:33 阶段 2 FAIL 见 `outputs/acceptance/half_duplex_investor_demo-20260830-1133.md`，不得复用。不得把 `direct_real_device_verified` 改为 true。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
+本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**2026-09-02 操作员 pass**：阶段 2（固件 `c11fb87e…` 连续两轮 + 静默关闭）、阶段 6（安静/电视/家庭噪声三环境）与阶段 7（锁定剧本完整彩排）均已验收；**阶段 0–7 操作员 pass 已齐**，本候选可标 `demo_ready: true`。**模板 receipt 四件套仍缺**，故 `direct_real_device_verified` 保持 false。历史：阶段 2 听感曾于 2026-08-31 解除阻塞；旧 receipt `half_duplex_investor_demo-20260831-0949.md`（固件 `f15a3b35…`）不得复用。1150 之前的 11:33 阶段 2 FAIL 见 `outputs/acceptance/half_duplex_investor_demo-20260830-1133.md`，不得复用。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
 
 **阶段 3（2026-09-01 操作员 pass）**：收据 `outputs/acceptance/stage3_device_initiated-20260901-1545.md`（session `a4719c8f-fdc8-4397-a152-a13e9442049e`，stream_epoch=1346）。硬件端唤醒「茉莉」→ 欢迎语 →「今天星期几」完整回答 → `owner_silence_timeout` 关闭；fence/playback 链齐全。Turn 2 曾因 RMS 过低丢弃，Turn 3 clock-fact 成功。**未按 `half_duplex_investor_demo-<YYYYMMDD-HHMM>.md` 模板落盘**，缺 `firmware_app_sha256`、镜像 ID、串口 `vad.start`/`vad.end`、tap 路径；不得据此单独升级 `verified` 或 `direct_real_device_verified`。
 
-**阶段 4（2026-09-01 操作员 pass，仅安静环境 `mo_li`）**：收据 `outputs/acceptance/stage4_wake_word_count-20260901-1530.md`。`scripts/wake_word_field_count.py` 对生产 bridge 日志计数：主动唤醒 10/10（epoch 1334–1343），5 分钟静默误唤醒 0。测试前 epoch 1333 曾由底噪 VAD 卡住，由 60 s watchdog 结束。电视/家庭噪声仍归阶段 6；同上，收据未填模板四件套，不得单独升级全局 `direct_real_device_verified`。
+**阶段 4（2026-09-01 操作员 pass，仅安静环境 `mo_li`）**：收据 `outputs/acceptance/stage4_wake_word_count-20260901-1530.md`。`scripts/wake_word_field_count.py` 对生产 bridge 日志计数：主动唤醒 10/10（epoch 1334–1343），5 分钟静默误唤醒 0。测试前 epoch 1333 曾由底噪 VAD 卡住，由 60 s watchdog 结束。电视/家庭噪声已归阶段 6（2026-09-02 pass）；同上，收据未填模板四件套，不得单独升级全局 `direct_real_device_verified`。
+
+**阶段 2（2026-09-02 操作员 pass，当前固件 `c11fb87e…`）**：同一 session 内唤醒「茉莉」→「今天天气怎么样」→「今天星期几」两轮完整 Actual Heard，安静 10 s 后 `owner_silence_timeout` 回 Idle。操作员口述验收（非 Mac 外放）；**未按 `half_duplex_investor_demo-<YYYYMMDD-HHMM>.md` 模板落盘**，缺串口 `vad.start`/`vad.end`、tap WAV、镜像 ID 等四件套；不得据此单独升级全局 `direct_real_device_verified`。
+
+**阶段 6（2026-09-02 操作员 pass）**：安静 / 电视人声 / 家庭噪声三环境：非主人声与裸 VAD 均未续命主人静默窗口，会话仍按 timeout 关闭。操作员口述验收；**未按模板落盘 receipt**；不得单独升级全局 `direct_real_device_verified`。
+
+**阶段 7（2026-09-02 操作员 pass，锁定剧本彩排）**：按 `outputs/acceptance/half_duplex_investor_demo-stage7-script.md` 完整走通：小程序在线展示 → 唤醒「茉莉」→ 天气 → 星期几 → 静默关闭 → 再唤醒。操作员口述验收（非 Mac 外放）；**未按模板落盘 receipt**；不得单独升级全局 `direct_real_device_verified`。
 
 ### 下一阶段（按顺序，2026-08-31 10:55 起）
 
@@ -219,22 +227,22 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
    A/B 代码均已合入 `main` 并发布。**阶段 5 现场复测已通过（2026-09-01 操作员，两轮）**：`20260901-1248-owner-authority-missed-hearing-agent-component` 上两轮「星期几 + 天气」后安静 10 s 均静默 `owner_silence_timeout` 关闭，未再自发说「没听清」；再唤醒可继续对话。操作员听感 pass；**尚未按模板落盘正式 receipt**（无串口/tap/镜像 ID/固件 SHA 四件套），故不得升级全局 `direct_real_device_verified`。同日 `outputs/acceptance/half_duplex_investor_demo-20260901-1439.md` 记的是阶段 2 剧本（天气 + 星期几），其中星期几 Actual Heard 为操作员 FAIL，不得与阶段 5 pass 混用。
    - **C（已修，2026-09-01 14:58）。「今天星期几」第一遍被识别成韩语。** 同一轮操作员复测中天气回答正常、「今天星期几」第一遍出谚文、第二遍才对。根因不在 FunASR：session `0703b3a8-1618-4ec5-a8ac-85813865acf0`（tap `epoch1331`）里 4 个话轮的文本**全部**来自 `funasr segment rescued offline`，FunASR 实时链一次未出文本，即 SenseVoice 救援当时是主路径而非边缘。sidecar 把请求里的 `language=zh` 只写进日志、从不传给 recognizer，`from_sense_voice(language='')` 因此走内置 LID。用生产 tap 原始音频在容器内做 A/B 定性（非推断）：`language=''` 在 `t=10.0s` 窗口输出 `직리한 생지지.`（正是用户听到的那一遍）且 `t=8.0s` 另有错字 `今年星期几`；`language='zh'` 同一批 7/7 稳定输出 `今天星期几？`。修法见「当前生产」SenseVoice 条目。跨容器端到端复验（bridge → sidecar HTTP，同一段故障音频）：`zh` → `今天星期几？`、`auto` → `직리한 생지지.`、`xx` → 415。
      未验证边界：只换了 sidecar 镜像，**未做真机复测**；本条不构成阶段 5 receipt，也不得据此升级 `direct_real_device_verified`。另外「FunASR 实时链在这次会话中全程空转写、全靠离线救援兜底」是独立的待跟进问题，本次未动，识别延迟仍受救援路径影响。
-1. **阶段 2 需在当前固件上整轮重跑**（唯一阻塞阶段 7）：已落盘的 `outputs/acceptance/half_duplex_investor_demo-20260831-0949.md` 记的是 `firmware_app_sha256=f15a3b35…`，而 2026-09-01 白名单唤醒词重刷后当前板卡是 `c11fb87e…`。阶段 2 通过标准要求「同一固件摘要下」，因此该 receipt 不能用来升级 `verified`；重跑时串口 monitor 全程挂着，补齐 `vad.start`/`vad.end`、tap WAV、DTLN 后 RMS，并记 `wake_word_id`。
-2. ~~**阶段 3**~~ **已通过（2026-09-01）**——见上 `stage3_device_initiated-20260901-1545.md`；若要与阶段 2/7 合并验收，建议下次现场用标准模板重录并补齐四件套。
-3. ~~**阶段 4（安静环境 `mo_li` ×10）**~~ **已通过（2026-09-01）**——见上 `stage4_wake_word_count-20260901-1530.md`；电视/家庭噪声仍归阶段 6。
-4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
-5. **阶段 7**：阶段 2（含串口、当前固件 `c11fb87e…`）证据齐全后锁定投资人路演剧本；阶段 3/4/5 已有操作员 pass，但模板 receipt 与阶段 2 仍缺项。
+1. ~~**阶段 2（当前固件 `c11fb87e…` 连续两轮）**~~ **已通过（2026-09-02 操作员）**——见上。旧 receipt `half_duplex_investor_demo-20260831-0949.md`（固件 `f15a3b35…`）仍不得复用；若要与阶段 7 合并验收，建议用标准模板重录并补齐四件套。
+2. ~~**阶段 3**~~ **已通过（2026-09-01）**——见上 `stage3_device_initiated-20260901-1545.md`；若要与阶段 7 合并验收，建议下次现场用标准模板重录并补齐四件套。
+3. ~~**阶段 4（安静环境 `mo_li` ×10）**~~ **已通过（2026-09-01）**——见上 `stage4_wake_word_count-20260901-1530.md`。
+4. ~~**阶段 6（安静 / 电视 / 家庭噪声）**~~ **已通过（2026-09-02 操作员）**——见上。
+5. ~~**阶段 7（锁定投资人路演剧本 + 完整彩排）**~~ **已通过（2026-09-02 操作员）**——见 `outputs/acceptance/half_duplex_investor_demo-stage7-script.md`；模板 receipt 四件套仍缺。
 
-阶段 8（AEC 新板、全双工 SKU）在阶段 7 demo-ready 之前禁止开工。
+阶段 8（AEC 新板、全双工 SKU）本 demo 工单内禁止开工；`demo_ready: true` 后另开候选规划阶段 8。
 
 ### 怎么开工（给开发人员）
 
 1. 读完本节 + 上面的「播放后 VAD 上行门控死锁候选」+ `PROJECT_RULES.md`「当前出货声学契约」。不要另开计划文档。
 2. 阶段 0 先跑门禁，确认没有人把设备 barge-in 打开。
 3. 阶段 1 把串口、Agent 日志、Edge 日志、PCM tap 四件套同时接上，再进阶段 2。
-4. 阶段 2 听感已通过（2026-08-31 操作员）；阶段 3/4 已于 2026-09-01 pass。下一现场优先 **阶段 2 在当前固件上整轮重跑（含串口）**，再进阶段 6。没绿之前禁止刷 AEC 新板、禁止开抢话、禁止路演。
+4. **阶段 0–7 操作员 pass 已齐（2026-09-02）**；本候选 `demo_ready: true`。若需升级 `verified` 或 `direct_real_device_verified`，用标准模板重录并补齐四件套（串口/tap/镜像/固件 SHA）。
 5. 每次真机失败只走一个分支（VAD / RMS / FunASR / fence），改完用新 receipt，不用旧日志升级 `verified`。
-6. 阶段 2+3 绿了再锁阶段 7 剧本。阶段 4 安静环境数字已有；阶段 6 三环境仍 pending。`full_duplex_verified` 本工单内永远保持 false。
+6. 阶段 0–7 已绿；`full_duplex_verified` 本工单内永远保持 false。阶段 8（AEC 新板）可另开候选，不得混进本 demo 工单。
 
 ### 分工与入口文件
 
@@ -285,7 +293,7 @@ notes:
 
 ### 目标与非目标
 
-目标（全部完成后才可把本候选标为 demo-ready；`direct_real_device_verified` 仍只覆盖下列半双工场景，不升 `full_duplex_verified`）：
+目标（阶段 0–7 操作员 pass 已齐，`demo_ready: true`；`direct_real_device_verified` 仍只覆盖下列半双工场景，不升 `full_duplex_verified`）：
 
 - 现板契约保持受控半双工：用户说完 → 设备听完一整段回答 → 再听下一句。播放期间不形成抢话 turn。
 - 投资人可复现剧本：唤醒「茉莉」→ 连续两问都有同 fence 的 `playback.ended` + 听感 Actual Heard → 设备能回待命再唤醒。
@@ -347,7 +355,7 @@ cd services/media_edge && go test ./...
 
 通过标准：能同时拿到串口、Agent 日志、Edge 日志和至少一段非静音 tap WAV。缺一项不准进入阶段 2。
 
-### 阶段 2 — 阻塞项：正常距离连续两轮（固件现场 + Agent 日志）
+### 阶段 2 — 正常距离连续两轮（固件现场 + Agent 日志）
 
 剧本（欢迎语播放完毕、设备回到 listening 后再开口）：
 
@@ -366,6 +374,8 @@ cd services/media_edge && go test ./...
 
 需要发版则走现有最小切片（Agent-only 仅当 diff 只在 `services/agent/**`），切流后重跑本阶段，不得用旧 receipt 升级 `verified`。
 
+**2026-09-02 操作员 pass（固件 `c11fb87e…`）**：唤醒 → 天气 → 星期几两轮 Actual Heard，安静 10 s `owner_silence_timeout`。口述验收，未落盘标准模板 receipt。
+
 通过标准：同一 candidate、同一固件摘要下，连续两轮各一次自然完成。然后才允许改 `HANDOFF.md` 里本候选的两轮对话证据日期；仍不得把 `full_duplex_verified` 改为 true。
 
 ### 阶段 3 — 单次会话从设备端发起
@@ -380,7 +390,7 @@ cd services/media_edge && go test ./...
 
 待机、30–60 cm、正常音量说「茉莉」10 次。记录漏唤醒/误唤醒。安静环境先做；电视/噪声放到阶段 6。
 
-**2026-09-01 安静环境 pass**：`outputs/acceptance/stage4_wake_word_count-20260901-1530.md`，`mo_li` 10/10 漏唤醒 0、5 分钟误唤醒 0（`scripts/wake_word_field_count.py` 对 bridge 日志计数）。电视/家庭噪声仍待阶段 6。
+**2026-09-01 安静环境 pass**：`outputs/acceptance/stage4_wake_word_count-20260901-1530.md`，`mo_li` 10/10 漏唤醒 0、5 分钟误唤醒 0（`scripts/wake_word_field_count.py` 对 bridge 日志计数）。电视/家庭噪声见阶段 6（2026-09-02 pass）。
 
 通过标准：漏唤醒与误唤醒次数写入 receipt。两音节「茉莉」若误唤醒过高，只调 KWS 阈值或改回更长词，不开放播放期 KWS。
 
@@ -390,7 +400,7 @@ cd services/media_edge && go test ./...
 
 **2026-09-01 操作员 pass（超时待命 + 再唤醒路径）**：两轮「星期几 + 天气」后安静 10 s `owner_silence_timeout` 关闭，未自发「没听清」，再唤醒可继续。听感 pass，**未按模板落盘 receipt**（无串口/tap/镜像/固件四件套）。不得与 `half_duplex_investor_demo-20260901-1439.md`（阶段 2 剧本、星期几 Actual Heard FAIL）混用。
 
-Demo 收尾与再唤醒（阶段 7 可抄；整段路演剧本仍待阶段 2，此处不锁定）：
+Demo 收尾与再唤醒（阶段 7 可抄；阶段 2 pass 后整段路演剧本可锁定）：
 
 1. 两轮答完后保持安静；主人静默 `owner_silence_timeout_s=10`。
 2. 期望：`owner_silence_timeout` → typed `CONVERSATION_STATE_CLOSED` → Edge `session.close` → 设备 Idle。
@@ -402,19 +412,25 @@ Demo 收尾与再唤醒（阶段 7 可抄；整段路演剧本仍待阶段 2，�
 
 安静、电视人声、家庭噪声三种环境：非主人声音不得重置主人静默窗口。裸 VAD/环境声不能续命会话。
 
+**2026-09-02 操作员 pass**：三环境均未续命主人静默窗口，会话仍按 timeout 关闭。口述验收，未落盘标准模板 receipt。
+
 通过标准：三种环境各有日志。本阶段失败不回滚阶段 2，但不得宣称「嘈杂也能听」。
 
 ### 阶段 7 — 锁定投资人 Demo 剧本
 
-仅当阶段 2 与阶段 3 为 pass，阶段 4 有数字，阶段 5 为 pass 或已降级台词（本剧本尚未锁定）：
+**2026-09-02 已锁定**：完整剧本见 `outputs/acceptance/half_duplex_investor_demo-stage7-script.md`（`uv run python scripts/half_duplex_receipt.py stage7-script` 可重新生成）。问句顺序与阶段 2 已验证路径一致：天气 → 星期几 → 静默关闭 → 再唤醒。
+
+锁定剧本摘要（路演当天照此执行，禁止临场改问句或演示抢话）：
 
 1. 小程序展示设备在线（不采集麦克风）。
-2. 人在 30–60 cm 说「茉莉」。
-3. 欢迎语播完后再问第一句，听完。
-4. 再问第二句（建议一句能碰到记忆或身份的，若主人能力 pending 则用「星期几」这类已验证问句）。
-5. 按阶段 5 已降级收尾：安静 10s 主人静默 → typed CLOSED → `session.close` → Idle；不要说「再见」。
-6. 需要时再唤醒「茉莉」，证明不是一次性会话。
-7. 口头说明：这一代是听完再答；抢话要等带 AEC 的下一 SKU。
+2. 30–60 cm 对板说「茉莉」；欢迎语播完后再开口。
+3. 「今天天气怎么样」——听完完整回答。
+4. 「今天星期几」——听完完整回答。
+5. 安静 10 s → `owner_silence_timeout` → Idle；**不要说「再见」**。
+6. 再唤醒「茉莉」+ 短句，证明非一次性会话。
+7. 对观众口径：这一代听完再答；抢话等带 AEC 的下一 SKU；BOOT 硬停。
+
+**2026-09-02 操作员 pass（锁定剧本彩排）**：天气 → 星期几 → 静默关闭 → 再唤醒，与锁定剧本一致。口述验收，未落盘标准模板 receipt。
 
 路演当天禁止改增益、禁止刷未经阶段 2 复验的固件、禁止临场演示打断。
 
@@ -433,8 +449,8 @@ Demo 收尾与再唤醒（阶段 7 可抄；整段路演剧本仍待阶段 2，�
 
 ### 完成时如何改本文件
 
-- 阶段 2+3 pass（含模板四件套、当前固件 `c11fb87e…`、串口）：可把本候选 `verified` 写成带日期的两轮 Actual Heard；仍保持 `full_duplex_verified: false`、`advertised_duplex_level: none`。阶段 3 已有 2026-09-01 操作员 pass，但收据未达此门槛。
-- 阶段 4 安静环境已有 2026-09-01 数字（10/10、误唤醒 0）；阶段 6 三环境仍 pending。阶段 5 已书面降级为超时待命，不得把 `conversation_end_explicit` / 「再见」写成已验证；操作员 2026-09-01 超时待命 pass 仍缺模板 receipt。
+- 阶段 2+3+7 pass（含模板四件套、当前固件 `c11fb87e…`、串口）：可把本候选 `verified` 写成带日期的两轮 Actual Heard；仍保持 `full_duplex_verified: false`、`advertised_duplex_level: none`。阶段 0–7 已有操作员 pass（2026-09-02），`demo_ready: true`，但收据未达此门槛。
+- 阶段 4 安静环境已有 2026-09-01 数字（10/10、误唤醒 0）；阶段 6 三环境 2026-09-02 操作员 pass。阶段 5 已书面降级为超时待命，不得把 `conversation_end_explicit` / 「再见」写成已验证；各阶段操作员 pass 仍缺模板 receipt。
 - 五项历史验收（设备端对话、再见、10 次唤醒、三环境、天气+星期几）全部自然完成后，才把全局 `direct_real_device_verified` 改为 true。这仍不自动更新 AEC 或全双工。
 - 原始 receipt 继续用 `scripts/hardware_realtime_acceptance.py verify`；本工单不要求跑通 T1–T14 双讲格。
 

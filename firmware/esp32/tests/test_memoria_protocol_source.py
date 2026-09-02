@@ -169,7 +169,7 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
 
 
 def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:
-    assert "constexpr float kMicInputGainDb = 18.0f;" in BOARD_SOURCE
+    assert "constexpr float kMicInputGainDb = 21.0f;" in BOARD_SOURCE
     assert "audio_codec.SetInputGain(kMicInputGainDb);" in BOARD_SOURCE
     assert "SetInputGain(12.0f)" not in BOARD_SOURCE
     assert "SetInputGain(24.0f)" not in BOARD_SOURCE

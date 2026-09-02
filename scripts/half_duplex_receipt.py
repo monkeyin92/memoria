@@ -180,53 +180,60 @@ def cmd_write_stage7_script(args: argparse.Namespace) -> int:
 
 
 STAGE7_SCRIPT = """\
-# 半双工投资人 Demo 锁定剧本（草案）
+# 半双工投资人 Demo 锁定剧本
 
+status: locked
 as_of: {as_of}
+work_order: half_duplex_investor_demo
+device_id: dev_atk_a4cb8fd6095c
+firmware_app_version: 2.4.2
+firmware_app_sha256: c11fb87ed4ffd0206aa5a9554d6226d539186f71040e4ea8525dea6b3dd31492
+wake_word_id: mo_li
 advertised_duplex_level: none
 hardware: ATK ES8388 单麦，无 AEC reference
 barge_in: forbidden
 
 ## 事前检查（路演当天）
 
-- 小程序首页显示「在线，可开始对话」；从首页 tab 起手，不从配网页。
+- 小程序首页显示「在线，可开始对话」；从设备 tab 起手，不从配网页。
 - 生产 Agent/Bridge/Edge 容器 healthy；设备走 Direct WSS，不是 LiveKit compat。
-- 固件 2.4.2；半双工 hello 仍为 `aec_mode=none`。
-- 串口 + Agent 日志 + Edge 日志 + PCM tap 四件套就位（若缺 UART，不得宣称 verified）。
+- 固件 2.4.2 / SHA `c11fb87e…`；hello 仍为 `aec_mode=none`、`simultaneous_capture_playback=false`。
+- 可选：串口 + bridge 日志 + PCM tap（升级 `verified` 时需要；口述彩排可省略）。
 
-## 3 分钟口播顺序
+## 3 分钟口播顺序（与阶段 2 已验证问句一致）
 
-1. **展示控制面（15s）**  
+1. **展示控制面（15s，对观众）**  
    「Memoria 是家庭桌面记忆终端：小程序只做配网、选角和档案，不采实时语音。」
 
 2. **唤醒（10s）**  
-   30–60 cm 正常音量：「茉莉」。  
+   30–60 cm 正常音量对板：「茉莉」。  
    等欢迎语播完再开口（半双工契约）。
 
 3. **第一问（30s）**  
-   「今天星期几。」  
-   听完完整回答；口头确认「听完再答，不能抢话」。
+   「今天天气怎么样。」  
+   听完完整回答；可对观众口头确认「听完再答，不能抢话」。
 
 4. **第二问（30s）**  
-   「南京今天的天气怎么样。」  
+   「今天星期几。」  
    听完完整回答。
 
 5. **收尾待命（20s）**  
-   保持安静 10 秒；期望 `owner_silence_timeout` → 设备回 Idle。  
-   **不要说「再见」**（主人 capability 未就绪，已降级）。
+   保持安静 10 秒；期望 `owner_silence_timeout` → typed CLOSED → 设备 Idle。  
+   **不要说「再见」**（主人 subject capability 未就绪，阶段 5 已降级）。
 
 6. **再唤醒（15s）**  
-   再说「茉莉」+ 一句短话，证明不是一次性会话。
+   再说「茉莉」+ 一句短话（如「你好」），证明不是一次性会话。
 
-7. **口径收口（20s）**  
+7. **口径收口（20s，对观众）**  
    「这一代是听完再答的半双工；自然抢话和全双工等带 AEC 的下一 SKU。BOOT 键随时硬停。」
 
 ## 禁止演示
 
 - 语音打断 / 抢话 / barge-in
 - 「再见」结束语（除非 owner 声纹已 verified 且 receipt 已补）
-- 用 H5 麦克风冒充设备 demo
+- 用 H5 / 手机麦克风冒充设备 demo
 - 宣称全双工、持续聆听或 99% 唤醒率
+- 路演当天改增益、刷未经阶段 2 复验的固件、临场演示打断
 
 ## 失败时的单分支排障
 

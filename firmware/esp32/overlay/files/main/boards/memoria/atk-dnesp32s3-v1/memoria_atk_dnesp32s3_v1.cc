@@ -20,7 +20,7 @@ namespace {
 
 // Board-level acoustic calibration authority. ES8388 exposes 3 dB PGA steps;
 // keep this explicit so noise/VAD tuning cannot silently override sensitivity.
-constexpr float kMicInputGainDb = 18.0f;
+constexpr float kMicInputGainDb = 21.0f;
 
 }  // namespace
 
@@ -218,8 +218,9 @@ public:
         // Upstream's 24 dB kept the old ASR VAD open on the board's broadband
         // noise floor. The first correction to 12 dB over-attenuated ordinary
         // speaking distance after DTLN. Keep the strict local AFE VAD and use
-        // the ES8388's midpoint 18 dB PGA step: 6 dB more speech headroom than
-        // 12 dB while retaining 6 dB noise reduction from upstream.
+        // the ES8388's 21 dB PGA step (+3 dB from 18 dB): 2026-09-02 field
+        // evidence showed normal 30–60 cm speech at DTLN post-RMS 58–117 (fail)
+        // while louder turns at 2000+ passed; retain 3 dB headroom below 24 dB.
         static bool input_gain_configured = false;
         if (!input_gain_configured) {
             audio_codec.SetInputGain(kMicInputGainDb);
