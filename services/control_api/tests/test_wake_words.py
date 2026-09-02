@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from services.control_api.app.wake_words import (
     CUSTOM_WAKE_WORD_ID,
     DEFAULT_WAKE_WORD_ID,

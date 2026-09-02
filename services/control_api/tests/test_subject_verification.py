@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.subject_verification import (
     maybe_verify_adult_from_wechat_phone,

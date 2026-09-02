@@ -60,8 +60,8 @@ from services.control_api.app.multi_subject_runtime import (
     MultiSubjectRuntimeControl,
     PostgresMultiSubjectRuntimeControl,
 )
-from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import account_insights as account_insights_routes
+from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import device_control as device_control_routes
 from services.control_api.app.routes import device_onboarding as device_onboarding_routes

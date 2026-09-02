@@ -211,6 +211,7 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
 0. ~~**阶段 5 真机复测**~~ **已通过（2026-09-01 操作员，两轮）**——见上。2026-09-01 早先 FAIL 根因（缺陷 A/B）已修并验证。
    - **A（已修，2026-09-01）。空轮次「没听清」提示未校验主人权威。** 此前 `empty_media_turn` 与 ASR tail timeout 均可触发 `_nudge_missed_hearing`，且 `allow_without_endpoint=True` 绕过了 endpoint 检查（该参数原是为唤醒 TTS 回声保留，现已有 `device_wake_ack_fence`）。修法：删除 `allow_without_endpoint`；新增 `_owner_speech_is_established()`，仅当 `current_speaker_class == "owner"` 且 `authority_verified` 时才提示。分类前空轮次直接静默；「主人真说了话但 ASR 出空」由 tail timeout + 主人权威路径兜底，符合半双工契约。顺带修复 timeout 路径在 `_clear_pending_turn_state` 清掉 `turn_endpoint_sample` 后 nudge 被误挡的隐性 bug（改传 `endpoint_sample=`）。Agent 切片 `20260901-1248-owner-authority-missed-hearing-agent-component`（`88d46c9`/`297d2e0`）已切流；回归测试 `test_device_empty_asr_asks_user_to_repeat`、`test_device_empty_asr_without_owner_stays_silent`。
    - **B（已修，2026-09-01）。提示语自己重置主人静默窗口。** `_speak_missed_hearing_ack` 播完回 `listening`，`_sync_owner_silence_phase` 原先走 `_arm_owner_silence_timer(reset=True)` 并清 `owner_silence_grace_used`，等于每次提示重开满 10 秒 + 再给一次 3 s grace。修法：`listening` 接缝改为 `reset=False`（续用剩余预算），满窗刷新只保留在 `_finish_owner_silence_turn` 的 `owner_verified` 分支——那是唯一真正确立主人活动的地方；grace 也只在主人活动时清。语义变为「主人拿到的是 10 秒**净聆听**预算，助手说话期间暂停不计，每个已验证主人轮次重新给满」，与半双工契约一致（主人在助手说话时本就无法开口，不该被扣时间）。回归测试 `test_assistant_nudge_playback_does_not_extend_owner_silence_window`（`test_media_session.py`）已验证：旧语义下不产生 CLOSED，新语义下正常 `owner_silence_timeout` 关闭。
+   - **D（已补测试，2026-09-01；代码未改）。满窗刷新此前零覆盖。** B 的三个既有测试都只驱动 `_sync_owner_silence_phase`，没有一个走 `_finish_owner_silence_turn`，也没有一个设置 `authority_verified` —— 也就是说「每个已验证主人轮次重新给满」这半句语义从来没被测过。新增两个测试钉住实际算术：`test_owner_silence_budget_is_not_refreshed_without_verified_authority` 用两个已提交话轮验证权威缺失时预算只被消耗、从不回填，最终在残额耗尽后正常 `owner_silence_timeout` 关闭；`test_verified_owner_turn_refreshes_the_full_owner_silence_window` 是对照组，断言已验证主人轮次把 `owner_silence_remaining_s` 刷回满窗且清掉 `owner_silence_grace_used`。这正是 receipt `half_duplex_investor_demo-20260901-1439.md` 里 `close: owner_silence_timeout ~0.1s after playback_ended`（当轮权威为 `subject_capability_forbidden`）的代码侧解释：跨轮消耗单一窗口是当前设计的既有行为，不是计时器 bug。是否该让未验证说话人也拿到刷新，属于产品决策，本次未改行为。
    A/B 代码均已合入 `main` 并发布。**阶段 5 现场复测已通过（2026-09-01 操作员，两轮）**：`20260901-1248-owner-authority-missed-hearing-agent-component` 上两轮「星期几 + 天气」后安静 10 s 均静默 `owner_silence_timeout` 关闭，未再自发说「没听清」；再唤醒可继续对话。操作员听感 pass，**尚未落盘正式 receipt**（无串口/tap/session fence 四件套），故不得升级全局 `direct_real_device_verified`。
    - **C（已修，2026-09-01 14:58）。「今天星期几」第一遍被识别成韩语。** 同一轮操作员复测中天气回答正常、「今天星期几」第一遍出谚文、第二遍才对。根因不在 FunASR：session `0703b3a8-1618-4ec5-a8ac-85813865acf0`（tap `epoch1331`）里 4 个话轮的文本**全部**来自 `funasr segment rescued offline`，FunASR 实时链一次未出文本，即 SenseVoice 救援当时是主路径而非边缘。sidecar 把请求里的 `language=zh` 只写进日志、从不传给 recognizer，`from_sense_voice(language='')` 因此走内置 LID。用生产 tap 原始音频在容器内做 A/B 定性（非推断）：`language=''` 在 `t=10.0s` 窗口输出 `직리한 생지지.`（正是用户听到的那一遍）且 `t=8.0s` 另有错字 `今年星期几`；`language='zh'` 同一批 7/7 稳定输出 `今天星期几？`。修法见「当前生产」SenseVoice 条目。跨容器端到端复验（bridge → sidecar HTTP，同一段故障音频）：`zh` → `今天星期几？`、`auto` → `직리한 생지지.`、`xx` → 415。
      未验证边界：只换了 sidecar 镜像，**未做真机复测**；本条不构成阶段 5 receipt，也不得据此升级 `direct_real_device_verified`。另外「FunASR 实时链在这次会话中全程空转写、全靠离线救援兜底」是独立的待跟进问题，本次未动，识别延迟仍受救援路径影响。
@@ -220,7 +221,7 @@ success: two_natural_turns_actual_heard_then_wake_standby_script
    - 在**设备端**唤醒「茉莉」→ 问「今天星期几」→ 问「南京天气怎么样」→ 两轮均听完。
    - 安静 10 s → 期望 `owner_silence_timeout` → `session.close` → 板子 Idle → 再唤醒「茉莉」说一句话；不要说「再见」。
    - 落盘 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`，phase 填 3 或 5，notes 写明设备 tab 确认在线后由硬件起手。
-3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。白名单已上线，同一次现场把 `mo_li` 与 `mei_mo_li_ya` 各记一组，供路演选词；两音节风险见 `RESEARCH.md` R-20260831-01。
+3. **阶段 4**：安静环境「茉莉」×10，记录漏唤醒/误唤醒。
 4. **阶段 6**：安静 / 电视 / 家庭噪声三环境，验证裸 VAD 不续命主人静默窗口。
 5. **阶段 7**：阶段 2（含串口）+3+4+5 证据齐全后锁定投资人路演剧本。
 
@@ -489,6 +490,16 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 3. 冻结 source、images、manifest、verifier 的 SHA-256；验证 OCI revision/role/architecture。
 4. 现场记录当前容器 ID/image ID、软链、env 摘要、数据快照和一个可运行回滚点。
 5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
+
+**module budget 已转绿（2026-09-01）。** 三个模块此前共超 283 行。棘轮脚本 `update` 显式拒绝抬预算，且 `check` 双向拒绝（低于预算也报 `is below budget`），所以只能搬代码；又因为 `update` 会先对**全部**条目算 over_budget、任一超标就整体 raise，三个模块必须同批修完再跑一次 `update`，单独修任何一个都无法转绿。按 `voice_core/media_session_*.py` 与 `runtime_speaker.py` 的既有 mixin 惯例做纯搬移（零行为改动，搬移体逐字节 diff 核对）：
+
+- `conversation_projection.py` 1114 → 1067：5 个 `StrEnum` + `SpeakerClass` 搬到新 `orchestration/projection_types.py`。原模块用 `X as X` 别名 re-export（mypy strict 隐含 `no_implicit_reexport`，普通 `from ... import` 不算导出），13 处下游导入零改动。已实测 `TurnPhase` 跨三条导入路径 identity 保持 `True` —— 40+ 处 `is TurnPhase.X` 断言依赖这一点，绝不能新旧模块各定义一份。
+- `agent.py` 2456 → 2316：`_frozen_designed_fallback` / `_apply_cached_voice_profile` / `_heard_only_chat_context` 搬到新 `agent_voice_profile.py`。`media_agent_factory.py:12` 与 `session_entrypoint.py:15` 的 import 必须改指新模块，否则 strict 报两个 `attr-defined`。
+- `duplex_runtime.py` 4485 → 4246：新增 `runtime_provenance.py`（provenance 5 方法 + `GenerationVoiceSnapshot` + 两个上限常量）与 `runtime_emotion.py`（emotion 3 方法），照 `DuplexSpeakerMixin` 的 `if TYPE_CHECKING:` 存根写法过 strict。MRO 已实测 `[DuplexRuntime, DuplexSpeakerMixin, ProvenanceMixin, EmotionMixin, object]`，逐方法确认归属无遮蔽。`GenerationVoiceSnapshot` 别名 re-export 给 `agent.py`。
+
+预算已棘轮到 4246 / 2316 / 1067。副作用一条：搬走的 `emotion_observation` 与 `speech_plan_selected` 两条日志 logger 名由 `...duplex_runtime` 变为 `...runtime_emotion`（无测试按 logger 名断言，但按 logger 字段过滤的日志检索会受影响）。全仓 `ruff check` / `mypy services --strict`（430 文件）/ Agent 全套测试通过；`services/control_api` 与 `device_fleet` 有 19 个既有失败（需 Postgres），已用 stash 对照确认失败集与改动前逐条相同。
+
+2026-09-01 起 `deploy_agent_component.sh` 自己跑门禁，不再依赖操作员记得手动跑：在 `verify_release_source.py` 确认 worktree 干净之后、SSH 触到远端之前，依次跑 ruff（`services/agent` + `test_production_compose.py`）、`check_module_budget.py check`、`mypy services/agent --strict`、Agent 单测 + 部署契约测试，任一失败即 `exit 1` 拒绝发布。门禁命令用 `env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S` 剥掉本地 `.env` 注入，否则本机 shell 的 169 个变量会让测试假红。`--skip-gates` 可关闭，但必须在收据里写明理由。此前该脚本零门禁调用，是 module budget 红了 122 个提交、跨约 6 次切流仍能上生产的直接原因。
 
 Agent-only 快速路径的运行时切片只允许 `services/agent/**`；发布脚本与对应门禁测试可以随发布机制修复，但依赖锁、运行时 Dockerfile、共享包或其他服务变化必须走完整镜像发布。当 `main` 上存在与 overlay 无关的漂移（例如 `packages/contracts/**`）而 Agent 代码不依赖它们时，可用 `--allow-scope-drift` 继续 overlay 发布；若 Agent/Bridge/Control 的 `MEMORIA_RELEASE_TAG` 已分裂，脚本 stack-authority 门禁会 REJECT，需按 `component-releases/<tag>/` 内已构建镜像手动 compose cutover（保留 rollback 标签）：
 

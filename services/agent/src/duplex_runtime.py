@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
-import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -36,7 +35,6 @@ from services.agent.src.event_identity import (
     publish_ui_event,
     transcript_delta_event,
 )
-from services.agent.src.generation_output_policy import generation_voice_allowed
 from services.agent.src.identity_state import (
     capture_identity_tasks,
     clear_identity_private_state,
@@ -57,9 +55,7 @@ from services.agent.src.orchestration.context_snapshot_manager import (
 )
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
 from services.agent.src.orchestration.emotion import (
-    EmotionObservation,
     EmotionSmoother,
-    aggregate_acoustic_segments,
 )
 from services.agent.src.orchestration.formal_speaker_enrollment import (
     FormalSpeakerEnrollment,
@@ -83,7 +79,6 @@ from services.agent.src.orchestration.prosody import (
     SpeechPlan,
     mascot_expression_for_reply,
     speech_plan_for_emotion,
-    speech_plan_for_turn,
 )
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
@@ -108,7 +103,12 @@ from services.agent.src.output_provenance import (
     owner_acoustic_evidence,
     speaker_persona_provenance,
 )
+from services.agent.src.runtime_emotion import DuplexRuntimeEmotionMixin
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
+from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
+from services.agent.src.runtime_provenance import (
+    GenerationVoiceSnapshot as GenerationVoiceSnapshot,
+)
 from services.agent.src.runtime_speaker import (
     PLAYBACK_INPUT_BLOCK_MIN_WORDS,
     DuplexSpeakerMixin,
@@ -133,35 +133,6 @@ ResumeSpeakerBinding = tuple[str, str, int | None, str]
 POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
 POST_PLAYBACK_ECHO_GUARD_MS = 10_000
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
-RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
-RESPONSE_PROVENANCE_MAX_FENCES = 32
-_RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
-    {
-        "query",
-        "prompt",
-        "instructions",
-        "content",
-        "excerpt",
-        "score",
-        "quality_score",
-        "embedding",
-        "audio",
-        "token",
-        "cookie",
-    }
-)
-
-
-
-
-@dataclass(frozen=True, slots=True)
-class GenerationVoiceSnapshot:
-    """Applied TTS identity frozen to one exact generation fence."""
-
-    profile_id: str | None
-    resource_id: str
-    speaker_sha256: str
-    voice_kind: Literal["designed", "personal"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +163,11 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
 
 
 @dataclass
-class DuplexRuntime(DuplexSpeakerMixin):
+class DuplexRuntime(
+    DuplexSpeakerMixin,
+    DuplexRuntimeProvenanceMixin,
+    DuplexRuntimeEmotionMixin,
+):
     """Session-scoped orchestration bound to LiveKit agent lifecycle."""
 
     orchestrator: Orchestrator
@@ -1199,110 +1174,6 @@ class DuplexRuntime(DuplexSpeakerMixin):
     def _owner_projection_eligible(self, fence: GenerationFence) -> bool:
         return self._owner_projection_eligible_by_fence.get(fence, False)
 
-    def bind_response_provenance(
-        self,
-        fence: GenerationFence,
-        provenance: dict[str, Any],
-    ) -> bool:
-        """Freeze bounded planner/model/source IDs for one exact generation."""
-
-        if not self.fence.matches(fence) or fence.session_id != self.session_id:
-            return False
-        try:
-            encoded = json.dumps(
-                provenance,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode()
-        except (TypeError, ValueError):
-            return False
-        if (
-            not provenance
-            or len(encoded) > RESPONSE_PROVENANCE_MAX_BYTES
-            or self._contains_forbidden_provenance_key(provenance)
-        ):
-            return False
-        self._response_provenance_by_fence[fence] = json.loads(encoded)
-        while len(self._response_provenance_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
-            self._response_provenance_by_fence.pop(next(iter(self._response_provenance_by_fence)))
-        return True
-
-    def bind_generation_voice(
-        self,
-        fence: GenerationFence,
-        *,
-        profile_id: str | None,
-        resource_id: str,
-        speaker_sha256: str,
-        voice_kind: Literal["designed", "personal"],
-    ) -> bool:
-        """Bind or update the voice actually used by this exact generation."""
-
-        policy = self.mode_policy_for_fence(fence)
-        if (
-            fence.session_id != self.session_id
-            or not self.fence.matches(fence)
-            or not generation_voice_allowed(
-                policy,
-                personal_voice_permitted=self.profile_permits(
-                    fence, capability="voice_clone_use"
-                ),
-                profile_id=profile_id,
-                resource_id=resource_id,
-                speaker_sha256=speaker_sha256,
-                voice_kind=voice_kind,
-            )
-        ):
-            return False
-        self._voice_snapshot_by_fence[fence] = GenerationVoiceSnapshot(
-            profile_id=profile_id,
-            resource_id=resource_id,
-            speaker_sha256=speaker_sha256,
-            voice_kind=voice_kind,
-        )
-        while len(self._voice_snapshot_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
-            self._voice_snapshot_by_fence.pop(next(iter(self._voice_snapshot_by_fence)))
-        return True
-
-    def generation_voice_for(
-        self,
-        fence: GenerationFence,
-    ) -> GenerationVoiceSnapshot | None:
-        return self._voice_snapshot_by_fence.get(fence)
-
-    @classmethod
-    def _contains_forbidden_provenance_key(cls, value: object) -> bool:
-        if isinstance(value, dict):
-            return any(
-                str(key).lower() in _RESPONSE_PROVENANCE_FORBIDDEN_KEYS
-                or cls._contains_forbidden_provenance_key(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(cls._contains_forbidden_provenance_key(item) for item in value)
-        return False
-
-    def response_provenance_for(
-        self,
-        fence: GenerationFence,
-    ) -> dict[str, Any] | None:
-        stored = self._response_provenance_by_fence.get(fence)
-        if stored is None:
-            return None
-        provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))
-        voice = self.generation_voice_for(fence)
-        if voice is not None:
-            provenance.update(
-                {
-                    "tts_model": voice.resource_id,
-                    "actual_voice_profile_id": voice.profile_id,
-                    "actual_voice_resource_id": voice.resource_id,
-                    "actual_voice_speaker_sha256": voice.speaker_sha256,
-                }
-            )
-        return provenance
 
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
@@ -2159,116 +2030,6 @@ class DuplexRuntime(DuplexSpeakerMixin):
             sample_rate=self._speaker_sample_rate,
         )
 
-    def observe_acoustic_emotion(
-        self,
-        provider_label: str,
-        *,
-        text: str = "",
-        turn_id: int | None = None,
-    ) -> None:
-        current_turn_id = self.fence.turn_id
-        if turn_id is None or turn_id <= current_turn_id or turn_id > current_turn_id + 1:
-            return
-        segments = self._emotion_segments_by_turn.setdefault(turn_id, [])
-        if len(segments) < 8:
-            segments.append((provider_label, text[:512]))
-        self._emotion_segments_by_turn = {
-            key: value
-            for key, value in self._emotion_segments_by_turn.items()
-            if key > current_turn_id
-        }
-
-    def _publish_emotion_observation(
-        self,
-        observation: EmotionObservation,
-        *,
-        turn_id: int,
-        fence: GenerationFence,
-    ) -> None:
-        logger.info(
-            "emotion_observation label=%s provider_label=%s evidence=%s turn_id=%s",
-            observation.label,
-            observation.provider_label,
-            ",".join(observation.evidence),
-            turn_id,
-        )
-        target_generation_id = fence.generation_id + int(turn_id > fence.turn_id)
-        self._publish(
-            {
-                "type": "emotion_observation",
-                "session_id": self.session_id,
-                "label": observation.label,
-                "provider_label": observation.provider_label,
-                "provider_confidence": None,
-                "evidence": list(observation.evidence),
-                "persist": False,
-                "turn_id": turn_id,
-                "generation_id": target_generation_id,
-                "expires_after_ms": self.emotion_smoother.ttl_ms,
-                "at": datetime.now(UTC).isoformat(),
-            },
-            fence=fence,
-        )
-
-    def _apply_speech_plan(
-        self,
-        user_text: str,
-        *,
-        turn_id: int,
-        fence: GenerationFence,
-    ) -> SpeechPlan:
-        segments = self._emotion_segments_by_turn.pop(turn_id, [])
-        self._emotion_segments_by_turn = {
-            key: value for key, value in self._emotion_segments_by_turn.items() if key > turn_id
-        }
-        acoustic = None
-        if segments:
-            provider_label, acoustic_text = aggregate_acoustic_segments(segments)
-            acoustic = self.emotion_smoother.observe_acoustic(
-                provider_label,
-                text=acoustic_text,
-                turn_id=turn_id,
-            )
-        observation = self.emotion_smoother.observe_text(user_text, acoustic=acoustic)
-        self._publish_emotion_observation(observation, turn_id=turn_id, fence=fence)
-        self.speech_plan = speech_plan_for_turn(
-            label=observation.label,
-            provider_label=observation.provider_label,
-            text=user_text,
-            evidence=observation.evidence,
-            use_markup_tags=self.use_paralinguistic_tags,
-            companion_id=self.mode_policy.companion_style_id,
-        )
-        self._speech_plans_by_fence[fence] = self.speech_plan
-        while len(self._speech_plans_by_fence) > 16:
-            self._speech_plans_by_fence.pop(next(iter(self._speech_plans_by_fence)))
-        apply_plan = getattr(self.tts, "apply_speech_plan", None)
-        if callable(apply_plan):
-            speaker_scope: Literal["owner", "public"] = (
-                "owner" if self._speaker_class == "owner" else "public"
-            )
-            reference_contexts = self.orchestrator.context.tts_reference_context(
-                current_user_final=user_text,
-                speaker_scope=speaker_scope,
-            )
-            self._tts_references_by_fence[fence] = reference_contexts
-            while len(self._tts_references_by_fence) > 16:
-                self._tts_references_by_fence.pop(next(iter(self._tts_references_by_fence)))
-            self.apply_speech_plan_to_tts(fence)
-        logger.info(
-            "speech_plan_selected emotion=%s dialect=%s tone=%s rate=%.2f pitch=%s "
-            "delivery=%s tts_prefix=%s strip=%s turn_id=%s",
-            self.speech_plan.voice_emotion,
-            self.speech_plan.dialect,
-            self.speech_plan.tone,
-            self.speech_plan.rate,
-            self.speech_plan.pitch,
-            self.speech_plan.delivery_mode,
-            self.speech_plan.tts_prefix or "-",
-            self.speech_plan.strip_paralinguistic,
-            turn_id,
-        )
-        return self.speech_plan
 
     def _publish_listener_cue(self, cue: ListenerCue, state: str) -> None:
         publish_listener_cue(self, cue, state)

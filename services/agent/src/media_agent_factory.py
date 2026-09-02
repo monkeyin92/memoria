@@ -9,10 +9,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
+from services.agent.src.agent import DuplexVoiceAgent
+from services.agent.src.agent_voice_profile import _apply_cached_voice_profile
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+from services.agent.src.conversation_close_wiring import (
+    install_conversation_close_semantic_resolver,
+)
 from services.agent.src.device_vad import DEVICE_POST_PLAYBACK_HOLDOFF_S
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 from services.agent.src.mode_policy_client import ModePolicyClient, ModePolicyClientConfig
 from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.orchestration.handlers import (
@@ -43,8 +48,6 @@ from services.agent.src.voice_profile_client import (
     VoiceProfileClient,
     VoiceProfileClientConfig,
 )
-from services.agent.src.conversation_close_wiring import install_conversation_close_semantic_resolver
-from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 
 logger = logging.getLogger(__name__)
 

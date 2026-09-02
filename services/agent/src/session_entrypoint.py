@@ -12,7 +12,8 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
 
-from services.agent.src.agent import DuplexVoiceAgent, _apply_cached_voice_profile
+from services.agent.src.agent import DuplexVoiceAgent
+from services.agent.src.agent_voice_profile import _apply_cached_voice_profile
 from services.agent.src.config import load_turn_timing
 from services.agent.src.device_vad import (
     DEVICE_ENDPOINTING_MAX_DELAY_S,
@@ -413,7 +414,9 @@ async def entrypoint(ctx: Any) -> None:
             )
 
         runtime.set_interrupt_semantic_resolver(_resolve_interrupt_semantic)
-    from services.agent.src.conversation_close_wiring import install_conversation_close_semantic_resolver
+    from services.agent.src.conversation_close_wiring import (
+        install_conversation_close_semantic_resolver,
+    )
     from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 
     live_lookup_classifier = None
