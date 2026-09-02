@@ -2175,6 +2175,10 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
             if (QueueTransportText(RenderJson(root.value))) {
                 vad_active_ = speaking;
                 vad_started_sample_ = speaking ? uplink_sample_start_ : 0;
+                ESP_LOGI(kTag, "Device VAD %s at sample=%llu rms=%.4f",
+                         speaking ? "start" : "end",
+                         static_cast<unsigned long long>(uplink_sample_start_),
+                         static_cast<double>(near_end_rms));
             }
             return;
         }
