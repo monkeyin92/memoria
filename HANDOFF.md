@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-03
-resume_checkpoint: owner_voiceprint_shadow_pending_not_active
+resume_checkpoint: owner_voiceprint_active_awaiting_board_match
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -34,19 +34,19 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-03 17:49 CST）
+## 下次接着从这里开始（2026-09-03 18:22 CST）
 
 ```yaml
 resume_focus: owner_voiceprint_device_enrollment
 work_order: half_duplex_investor_demo
 demo_script_two_turns: PASS_epoch1367
 subject_adult_verified: true
-speaker_enrollment_state: pending
+speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
-speaker_profile_status: shadow
+speaker_profile_status: active
 last_wake_epoch: 1372
-device_enrollment_prompts: four_samples_submitted_shadow_pending
+device_enrollment_prompts: quality_enroll_is_owner_active
 miniprogram_devtools_publish: not_done
 direct_real_device_verified: false
 ```
@@ -58,26 +58,25 @@ direct_real_device_verified: false
 3. **epoch 1370**：四段都收进内存（speech_ms 580/760/440/440），提交 embedding 在 1.0s 超时返回 503；intent 被提前 consume，无 profile。板子说「这段没录上」是通用失败词，不是只丢第四段。
 4. **epoch 1371**：`state=required intent=no`，只播唤醒短句后停在聆听中。样本未落库，不能只补第四段。
 5. **提交/重试修复已切流**：Agent/Bridge `memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，Control `memoria-control-api:20260903-1745-enrollment-keep-intent-control-api`，源提交 `e781cb0`。
-6. **epoch 1372 四段提交成功**：session `f30915aa`，POST enrollments/internal **201**；profile `1b5b577b` **shadow**；4 条 sample，embedding speech_ms 1970–3180；intent `6bcb7345` 已 consume。小程序「我的」为 **pending**。anti-spoof 为 `unavailable`（replay/synthetic_risk=1），激活接口会拒绝；shadow 不授予主人权限（同会话已见 `target_non_owner`）。
+6. **epoch 1372 四段提交成功**，随后按开箱流程改为合格登记即 **active**。profile `1b5b577b` 已升为 **active**（2026-09-03 10:22 UTC）。CAM++ 无反欺骗头仍返回 `unavailable`，但不再挡住主人匹配；不得把该字段改成 `verified`。Control overlay `20260903-1820-owner-enroll-active-control-api` / `1a7a939`。
 
 **下一步（按顺序）**
 
-1. 不要把 pending/shadow 当主人认证；「再见」等结束语仍不会按主人关闭。
-2. 激活需要独立评估：≥200 trial 的 FAR/FRR 报告，且 sample 的 `risk_assessment=verified`。当前没有后台评估任务，也不得伪造 owner。
-3. 可选：开发者工具上传含「再试一次」按钮的小程序（非阻塞）。
-4. 仍勿把 `direct_real_device_verified` 改为 true。
+1. 刷新小程序「我的」，应变为已激活。唤醒后用平时声音说话，应能按主人识别；可复测「再见」。
+2. 可选：开发者工具上传含「重新录制」和开箱自动授权的小程序。
+3. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
 
 ## 当前生产
 
-当前 Agent/Bridge overlay 源提交为 `e781cb071b32c4ff128e069e67af6fa7e7fdd8fc`（2026-09-03 17:48 CST 切流，标签 `20260903-1745-enrollment-keep-intent-agent-component`）。Control API overlay 源提交为同一提交（标签 `20260903-1745-enrollment-keep-intent-control-api`）。栈环境字段与 Media Edge 仍为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` / `20260901-0945-wake-word-whitelist`：
+当前 Agent/Bridge overlay 源提交为 `e781cb071b32c4ff128e069e67af6fa7e7fdd8fc`（2026-09-03 17:48 CST 切流，标签 `20260903-1745-enrollment-keep-intent-agent-component`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。栈环境字段与 Media Edge 仍为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` / `20260901-0945-wake-word-whitelist`：
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，overlay revision `e781cb071b32c4ff128e069e67af6fa7e7fdd8fc`（PCM 排空保留；短 VAD 拼到 800ms；提交超时 30s；无 intent 时提示去小程序）。栈 `MEMORIA_RELEASE_TAG` 仍对齐 `20260901-0945-wake-word-whitelist`；healthy、bridge gRPC PASS、restart=0。`cutover_mode=manual_tag_split`；收据 `/opt/memoria/component-releases/20260903-1745-enrollment-keep-intent-agent-component/`。紧邻回滚点 `memoria-agent:rollback-20260903-1745-enrollment-keep-intent-agent-component-pre-agent` 与 `-pre-bridge`（镜像 `20260903-1725-enrollment-pcm-drain-agent-component`）。**subject：「主人」已 adult/verified；声纹 intent `6bcb7345` 已恢复 `requested`，直接再唤醒并说满 4 段，不必打开小程序。** `direct_real_device_verified` 保持 false。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，overlay revision `e781cb071b32c4ff128e069e67af6fa7e7fdd8fc`（PCM 排空保留；短 VAD 拼到 800ms；提交超时 30s；无 intent 时提示去小程序）。栈 `MEMORIA_RELEASE_TAG` 仍对齐 `20260901-0945-wake-word-whitelist`；healthy、bridge gRPC PASS、restart=0。`cutover_mode=manual_tag_split`；收据 `/opt/memoria/component-releases/20260903-1745-enrollment-keep-intent-agent-component/`。紧邻回滚点 `memoria-agent:rollback-20260903-1745-enrollment-keep-intent-agent-component-pre-agent` 与 `-pre-bridge`（镜像 `20260903-1725-enrollment-pcm-drain-agent-component`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 已钉住本标签。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
-- Control API：`memoria-control-api:20260903-1745-enrollment-keep-intent-control-api`，overlay revision `e781cb071b32c4ff128e069e67af6fa7e7fdd8fc`（成功写入 shadow 才消耗 intent；enrollment embed 超时 5s；embedding 失败打 warning）。演示账号「主人」已 adult/verified；intent `6bcb7345` 已恢复 `requested`。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`；healthy。回滚 `rollback-20260903-1745-enrollment-keep-intent-control-api-pre-control`（镜像 `20260903-1650-enrollment-intent-ttl-control-api`）。
+- Control API：`memoria-control-api:20260903-1820-owner-enroll-active-control-api`，overlay revision `1a7a9390adc806adcae3aade1b8a01022b4f1368`（合格登记直接 active；classify 不再把 unavailable 反欺骗当拒绝；管理员可发新 intent 重录）。演示账号 profile `1b5b577b` 已 **active**。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`；healthy。回滚 `rollback-20260903-1820-owner-enroll-active-control-api-pre-control`（镜像 `20260903-1745-enrollment-keep-intent-control-api`）。
 - 小程序体验版 **0.8.74**（2026-09-01 微信开发者工具上传）：设备页支持白名单切换与自定义唤醒词（pinyin + display）。
 - Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
