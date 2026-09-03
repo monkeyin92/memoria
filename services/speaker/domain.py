@@ -58,12 +58,15 @@ class EnrollmentRequest:
     account_id: str
     consent_grant_id: str
     samples: tuple[EnrollmentSample, ...]
+    intent_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.consent_grant_id.strip():
             raise ValueError("account_id and consent_grant_id must not be blank")
         if len(self.samples) < 3:
             raise ValueError("speaker enrollment requires at least three samples")
+        if self.intent_id is not None and not self.intent_id.strip():
+            raise ValueError("enrollment intent_id must not be blank")
 
 
 @dataclass(frozen=True, slots=True)

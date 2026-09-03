@@ -11,8 +11,8 @@ from services.agent.src.orchestration.formal_speaker_enrollment import (
 from services.agent.src.prompts import BRIDGE_PHRASES, SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
 
 
-def _pcm(seconds: float, sample_rate: int = 16_000) -> bytes:
-    samples = np.full(int(seconds * sample_rate), 2_000, dtype=np.int16)
+def _pcm(seconds: float, sample_rate: int = 16_000, amplitude: int = 2_000) -> bytes:
+    samples = np.full(int(seconds * sample_rate), amplitude, dtype=np.int16)
     return samples.tobytes()
 
 
@@ -29,20 +29,23 @@ def test_formal_enrollment_collects_four_bounded_endpoint_samples() -> None:
     assert all(len(item) <= 16_000 * 2 * 6 for item in collector.samples())
 
 
-def test_formal_enrollment_rejects_short_and_odd_pcm() -> None:
+def test_formal_enrollment_rejects_silence_and_odd_pcm() -> None:
     collector = FormalSpeakerEnrollment(sample_rate=16_000)
     collector.begin()
 
-    assert collector.add_endpoint(_pcm(0.2)) is None
+    assert collector.add_endpoint(_pcm(0.5, amplitude=0)) is None
     assert collector.add_endpoint(b"\x00") is None
     assert collector.sample_count == 0
 
 
-def test_formal_enrollment_accepts_half_second_voiced_endpoint() -> None:
+def test_formal_enrollment_concatenates_short_voiced_endpoints() -> None:
     collector = FormalSpeakerEnrollment(sample_rate=16_000)
     collector.begin()
 
-    assert collector.add_endpoint(_pcm(0.5)) is not None
+    assert collector.add_endpoint(_pcm(0.5)) is None
+    assert collector.sample_count == 0
+    accepted = collector.add_endpoint(_pcm(0.5))
+    assert accepted is not None
     assert collector.sample_count == 1
 
 

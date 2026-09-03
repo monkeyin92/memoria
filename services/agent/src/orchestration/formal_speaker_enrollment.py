@@ -27,11 +27,12 @@ class FormalSpeakerEnrollment:
     """
 
     target_samples: int = 4
-    min_speech_ms: int = 400
+    min_speech_ms: int = 800
     max_sample_ms: int = 6000
     sample_rate: int = 16000
     active: bool = False
     _samples: list[bytes] = field(default_factory=list)
+    _pending: bytes = b""
 
     def __post_init__(self) -> None:
         if not 3 <= self.target_samples <= 10:
@@ -43,10 +44,12 @@ class FormalSpeakerEnrollment:
 
     def begin(self) -> None:
         self._samples.clear()
+        self._pending = b""
         self.active = True
 
     def cancel(self) -> None:
         self._samples.clear()
+        self._pending = b""
         self.active = False
 
     @property
@@ -58,15 +61,25 @@ class FormalSpeakerEnrollment:
         return len(self._samples)
 
     def add_endpoint(self, pcm: bytes) -> bytes | None:
-        """Accept one VAD endpoint only when it has enough voiced speech."""
+        """Accept voiced speech once a prompt has accumulated enough audio.
+
+        Choppy VAD often splits one sentence.  Keep stitching endpoints for
+        the current prompt until voiced speech meets the embedding floor.
+        Silence-only leftovers are ignored so a previous turn cannot pad in.
+        """
 
         if not self.active or self.complete or not pcm or len(pcm) % 2:
             return None
         max_bytes = self.sample_rate * 2 * self.max_sample_ms // 1000
         bounded = pcm[:max_bytes]
-        if speech_ms_from_pcm(bounded, sample_rate=self.sample_rate) < self.min_speech_ms:
+        if speech_ms_from_pcm(bounded, sample_rate=self.sample_rate) <= 0:
             return None
-        sample = bytes(bounded)
+        combined = (self._pending + bounded)[-max_bytes:]
+        if speech_ms_from_pcm(combined, sample_rate=self.sample_rate) < self.min_speech_ms:
+            self._pending = combined
+            return None
+        sample = bytes(combined)
+        self._pending = b""
         self._samples.append(sample)
         if self.complete:
             self.active = False

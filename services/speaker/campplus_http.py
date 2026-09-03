@@ -9,6 +9,8 @@ import httpx
 
 from services.speaker.domain import EmbeddingResult, RiskAssessment
 
+_ENROLLMENT_EMBED_TIMEOUT_S = 5.0
+
 
 class CampPlusHTTPEmbeddingAdapter:
     def __init__(
@@ -30,8 +32,27 @@ class CampPlusHTTPEmbeddingAdapter:
         self._token = token
         self._client = client
         self._timeout = httpx.Timeout(timeout_s)
+        self._enrollment_timeout = httpx.Timeout(max(timeout_s, _ENROLLMENT_EMBED_TIMEOUT_S))
 
     async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
+        return await self._embed(pcm, sample_rate=sample_rate, timeout=self._timeout)
+
+    async def embed_enrollment(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
+        """Enrollment may batch several longer clips; classify stays fail-fast."""
+
+        return await self._embed(
+            pcm,
+            sample_rate=sample_rate,
+            timeout=self._enrollment_timeout,
+        )
+
+    async def _embed(
+        self,
+        pcm: bytes,
+        *,
+        sample_rate: int,
+        timeout: httpx.Timeout,
+    ) -> EmbeddingResult:
         if not pcm or len(pcm) > 16 * 1024 * 1024 or sample_rate < 8000:
             raise ValueError("speaker PCM must be non-empty, bounded and at least 8 kHz")
         client = self._client or httpx.AsyncClient()
@@ -44,7 +65,7 @@ class CampPlusHTTPEmbeddingAdapter:
                     "encoding": "pcm_s16le",
                     "sample_rate": sample_rate,
                 },
-                timeout=self._timeout,
+                timeout=timeout,
             )
             response.raise_for_status()
             payload = response.json()

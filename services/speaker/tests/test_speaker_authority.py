@@ -605,3 +605,83 @@ async def test_create_enrollment_intent_revokes_expired_pending_before_reuse(
         ).fetchone()
     assert row is not None
     assert row[0] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_enroll_consumes_intent_only_after_successful_embed(tmp_path: Path) -> None:
+    class BoomAdapter(FakeEmbeddingAdapter):
+        async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
+            raise RuntimeError("speaker embedding exploded")
+
+    boom = SpeakerAuthority.sqlite(
+        tmp_path / "intent-boom.sqlite",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=BoomAdapter(),
+    )
+    intent = await boom.create_enrollment_intent(
+        account_id="account-001",
+        consent_policy_version="speaker-consent-v1",
+        now="2026-08-27T09:00:00+00:00",
+        expires_at="2026-08-28T09:00:00+00:00",
+    )
+    with pytest.raises(RuntimeError, match="exploded"):
+        await boom.enroll(
+            EnrollmentRequest(
+                account_id="account-001",
+                consent_grant_id="consent-boom",
+                samples=_request().samples,
+                intent_id=intent.intent_id,
+            )
+        )
+    pending = await boom.pending_enrollment_intent(
+        "account-001",
+        now="2026-08-27T09:30:00+00:00",
+    )
+    assert pending is not None
+    assert pending.intent_id == intent.intent_id
+
+    authority = SpeakerAuthority.sqlite(
+        tmp_path / "intent-ok.sqlite",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    ready = await authority.create_enrollment_intent(
+        account_id="account-001",
+        consent_policy_version="speaker-consent-v1",
+        now="2026-08-27T09:00:00+00:00",
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    with pytest.raises(EnrollmentQualityError, match="insufficient_speech"):
+        await authority.enroll(
+            EnrollmentRequest(
+                account_id="account-001",
+                consent_grant_id="consent-short",
+                samples=tuple(
+                    EnrollmentSample(pcm=b"short", sample_rate=16000) for _ in range(3)
+                ),
+                intent_id=ready.intent_id,
+            )
+        )
+    still_pending = await authority.pending_enrollment_intent(
+        "account-001",
+        now="2026-08-27T09:30:00+00:00",
+    )
+    assert still_pending is not None
+    assert still_pending.intent_id == ready.intent_id
+
+    enrolled = await authority.enroll(
+        EnrollmentRequest(
+            account_id="account-001",
+            consent_grant_id="consent-ok",
+            samples=_request().samples,
+            intent_id=ready.intent_id,
+        )
+    )
+    assert enrolled.status == "shadow"
+    assert (
+        await authority.pending_enrollment_intent(
+            "account-001",
+            now="2026-08-27T09:30:00+00:00",
+        )
+        is None
+    )

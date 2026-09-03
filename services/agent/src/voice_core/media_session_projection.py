@@ -189,6 +189,7 @@ class MediaSessionProjectionMixin:
         from services.agent.src.prompts import (
             SPEAKER_ENROLLMENT_DONE_PHRASE,
             SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE,
+            SPEAKER_ENROLLMENT_NEED_CONSENT_PHRASE,
         )
         from services.agent.src.speaker_authority_client import (
             load_device_enrollment_status,
@@ -205,12 +206,35 @@ class MediaSessionProjectionMixin:
             enrollment = (status or {}).get("enrollment") or {}
             state = str(enrollment.get("state") or "")
             intent_id = str(enrollment.get("intent_id") or "")
-            if state not in {"requested", "required"} or not intent_id:
+            if state not in {"requested", "required"}:
                 logger.info(
                     "device speaker enrollment skipped session=%s state=%s intent=%s",
                     context.identity.session_id,
                     state or "unavailable",
                     "yes" if intent_id else "no",
+                )
+                return
+            if not intent_id:
+                logger.info(
+                    "device speaker enrollment skipped session=%s state=%s intent=no",
+                    context.identity.session_id,
+                    state,
+                )
+                self._pause_owner_silence_timer(context)
+                paused_silence = True
+                wait_for_wake = context.device_wake_ack_fence is not None
+                if not await self._wait_for_output_idle(
+                    context,
+                    wait_for_start=wait_for_wake,
+                ):
+                    return
+                await self._speak_device_enrollment_phrase(
+                    context,
+                    SPEAKER_ENROLLMENT_NEED_CONSENT_PHRASE,
+                )
+                await self._request_device_standby(
+                    context,
+                    reason="speaker_enrollment_needs_consent",
                 )
                 return
             authority = speaker_authority_client_from_settings()

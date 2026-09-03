@@ -336,8 +336,9 @@ class SpeakerAuthority:
         return self._intent(row)
 
     async def enroll(self, request: EnrollmentRequest) -> EnrollmentResult:
+        embed = getattr(self._adapter, "embed_enrollment", self._adapter.embed)
         embedded = [
-            await self._adapter.embed(sample.pcm, sample_rate=sample.sample_rate)
+            await embed(sample.pcm, sample_rate=sample.sample_rate)
             for sample in request.samples
         ]
         for result in embedded:
@@ -350,6 +351,20 @@ class SpeakerAuthority:
         )
         ciphertext = self._fernet.encrypt(template)
         with self._connect() as connection:
+            if request.intent_id is not None:
+                cursor = connection.execute(
+                    """
+                    UPDATE speaker_enrollment_intents
+                    SET state = 'consumed', consumed_at = ?
+                    WHERE intent_id = ? AND account_id = ?
+                      AND state = 'requested' AND expires_at > ?
+                    """,
+                    (now, request.intent_id, request.account_id, now),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(
+                        "speaker enrollment intent is missing, expired or already used"
+                    )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO speaker_identities (

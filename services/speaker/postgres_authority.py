@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -79,8 +80,9 @@ class PostgresSpeakerAuthority:
         await connection.execute("SELECT set_config('app.account_id', $1, true)", account_id)
 
     async def enroll(self, request: EnrollmentRequest) -> EnrollmentResult:
+        embed = getattr(self._adapter, "embed_enrollment", self._adapter.embed)
         embedded = [
-            await self._adapter.embed(sample.pcm, sample_rate=sample.sample_rate)
+            await embed(sample.pcm, sample_rate=sample.sample_rate)
             for sample in request.samples
         ]
         for result in embedded:
@@ -95,6 +97,23 @@ class PostgresSpeakerAuthority:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
+            if request.intent_id is not None:
+                now = datetime.now(UTC).isoformat()
+                status = await connection.execute(
+                    """
+                    UPDATE speaker_enrollment_intents
+                    SET state = 'consumed', consumed_at = $1
+                    WHERE intent_id = $2 AND account_id = $3
+                      AND state = 'requested' AND expires_at > $1
+                    """,
+                    now,
+                    request.intent_id,
+                    request.account_id,
+                )
+                if status != "UPDATE 1":
+                    raise ValueError(
+                        "speaker enrollment intent is missing, expired or already used"
+                    )
             await connection.execute(
                 """
                 INSERT INTO speaker_identities (

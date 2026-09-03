@@ -54,6 +54,42 @@ async def test_campplus_http_adapter_maps_the_internal_embedding_contract() -> N
 
 
 @pytest.mark.asyncio
+async def test_campplus_enrollment_embed_uses_longer_timeout() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "model_version": "campplus-2026-07",
+                "embedding": [0.25, 0.75],
+                "speech_ms": 1700,
+                "snr_db": 18.5,
+                "quality_score": 0.91,
+                "replay_risk": 0.08,
+                "synthetic_risk": 0.06,
+                "risk_assessment": "verified",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = CampPlusHTTPEmbeddingAdapter(
+            endpoint="https://speaker-model.test/v1/embeddings/speaker",
+            token="internal-model-token",
+            model_version="campplus-2026-07",
+            timeout_s=1.0,
+            client=client,
+        )
+        result = await adapter.embed_enrollment(b"pcm-audio", sample_rate=16000)
+
+    assert adapter._enrollment_timeout.read == 5.0
+    assert adapter._timeout.read == 1.0
+    assert result.speech_ms == 1700
+    assert observed["path"] == "/v1/embeddings/speaker"
+
+
+@pytest.mark.asyncio
 async def test_campplus_http_adapter_rejects_wrong_model_or_invalid_payload() -> None:
     responses = iter(
         [

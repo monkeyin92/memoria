@@ -10,6 +10,7 @@ from services.agent.src.orchestration.interruption_guard import PlaybackInputDec
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.prompts import (
     SPEAKER_ENROLLMENT_DONE_PHRASE,
+    SPEAKER_ENROLLMENT_NEED_CONSENT_PHRASE,
     SPEAKER_ENROLLMENT_SAMPLE_PROMPTS,
     device_wake_phrase,
 )
@@ -61,7 +62,7 @@ async def _finish_current_playback(
 
 
 @pytest.mark.asyncio
-async def test_device_session_skips_enrollment_without_intent(
+async def test_device_session_asks_for_miniprogram_consent_without_intent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MEMORIA_SPEAKER_AUTHORITY_ENABLED", "true")
@@ -86,14 +87,23 @@ async def test_device_session_skips_enrollment_without_intent(
     )
     registry.install()
     identity = _device_identity("device-enroll-skip")
-    bridge.bridge.open(identity)
+    session = bridge.bridge.open(identity)
     try:
         context = await registry._get_or_create(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await _finish_current_playback(registry, identity, bridge, session)
+        await _wait_until(
+            lambda: SPEAKER_ENROLLMENT_NEED_CONSENT_PHRASE in provider.texts,
+            timeout=2.0,
+        )
+        await _finish_current_playback(registry, identity, bridge, session)
         task = context.speaker_enrollment_task
         if task is not None:
-            await asyncio.wait_for(task, timeout=1)
-        assert provider.texts == [device_wake_phrase(identity.session_id)]
+            await asyncio.wait_for(task, timeout=2)
+        assert provider.texts[0] == device_wake_phrase(identity.session_id)
+        assert provider.texts[1] == SPEAKER_ENROLLMENT_NEED_CONSENT_PHRASE
+        assert context.standby_requested is True
+        assert context.standby_reason == "speaker_enrollment_needs_consent"
     finally:
         await registry._finalize_session(identity.session_id)
 

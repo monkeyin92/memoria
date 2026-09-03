@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import logging
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from services.speaker.domain import (
 )
 
 router = APIRouter(prefix="/v1/speakers", tags=["speakers"])
+logger = logging.getLogger(__name__)
 _MAX_PCM_BYTES = 4 * 1024 * 1024
 
 
@@ -198,26 +200,42 @@ async def _enroll_for_account(
     if _store(request).get_account(user_id=account_id) is None:
         raise HTTPException(status_code=403, detail="register an account before biometric enrollment")
     if intent_id is not None:
-        try:
-            intent = await _authority(request).consume_enrollment_intent(
-                intent_id=intent_id,
-                account_id=account_id,
-                now=datetime.now(UTC).isoformat(),
+        pending = await _authority(request).pending_enrollment_intent(
+            account_id,
+            now=datetime.now(UTC).isoformat(),
+        )
+        if pending is None or pending.intent_id != intent_id:
+            raise HTTPException(
+                status_code=409,
+                detail="speaker enrollment intent is missing, expired or already used",
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        consent_policy_version = intent.consent_policy_version
+        consent_policy_version = pending.consent_policy_version
     try:
         result = await _authority(request).enroll(
             EnrollmentRequest(
                 account_id=account_id,
                 consent_grant_id=f"speaker:{consent_policy_version}:{uuid.uuid4()}",
                 samples=samples,
+                intent_id=intent_id,
             )
         )
     except EnrollmentQualityError as exc:
+        logger.info(
+            "speaker enrollment rejected for quality account_id=%s reason=%s",
+            account_id,
+            exc,
+        )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        if intent_id is None:
+            raise
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (httpx.HTTPError, RuntimeError) as exc:
+        logger.warning(
+            "speaker enrollment embedding unavailable account_id=%s",
+            account_id,
+            exc_info=True,
+        )
         raise HTTPException(status_code=503, detail="speaker embedding service unavailable") from exc
     return asdict(result)
 

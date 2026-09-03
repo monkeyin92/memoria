@@ -32,7 +32,7 @@ class SpeakerAuthorityClientConfig:
     endpoint: str
     internal_token: str
     timeout_s: float = 0.4
-    enrollment_timeout_s: float = 10.0
+    enrollment_timeout_s: float = 30.0
 
     def __post_init__(self) -> None:
         url = httpx.URL(self.endpoint)
@@ -135,26 +135,28 @@ class SpeakerAuthorityClient:
 
         if not session_id.strip() or not intent_id.strip() or not 3 <= len(samples) <= 10:
             raise ValueError("speaker enrollment requires session, intent and 3 to 10 samples")
+        payload_json = {
+            "session_id": session_id,
+            "intent_id": intent_id,
+            "samples": [
+                {
+                    "audio_base64": base64.b64encode(sample.pcm).decode("ascii"),
+                    "sample_rate": sample.sample_rate,
+                    "device": sample.device,
+                    "scene": sample.scene,
+                }
+                for sample in samples
+            ],
+        }
         client = self._client or httpx.AsyncClient()
         try:
-            response = await client.post(
-                self._enrollment_endpoint(),
-                headers={"X-Memoria-Speaker-Token": self._config.internal_token},
-                json={
-                    "session_id": session_id,
-                    "intent_id": intent_id,
-                    "samples": [
-                        {
-                            "audio_base64": base64.b64encode(sample.pcm).decode("ascii"),
-                            "sample_rate": sample.sample_rate,
-                            "device": sample.device,
-                            "scene": sample.scene,
-                        }
-                        for sample in samples
-                    ],
-                },
-                timeout=self._config.enrollment_timeout_s,
-            )
+            response = await self._post_enrollment(client, payload_json)
+            if response.status_code == 503:
+                logger.warning(
+                    "speaker enrollment submit retry session_id=%s",
+                    session_id,
+                )
+                response = await self._post_enrollment(client, payload_json)
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict) or not isinstance(payload.get("profile_id"), str):
@@ -163,6 +165,18 @@ class SpeakerAuthorityClient:
         finally:
             if self._client is None:
                 await client.aclose()
+
+    async def _post_enrollment(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        return await client.post(
+            self._enrollment_endpoint(),
+            headers={"X-Memoria-Speaker-Token": self._config.internal_token},
+            json=payload,
+            timeout=self._config.enrollment_timeout_s,
+        )
 
     async def enrollment_status(self, *, session_id: str) -> dict[str, Any]:
         """Read whether this active session needs device-side enrollment."""
@@ -279,7 +293,7 @@ def speaker_authority_client_from_settings() -> SpeakerAuthorityClient | None:
             endpoint=settings.speaker_authority_url,
             internal_token=token,
             timeout_s=settings.speaker_authority_timeout_s,
-            enrollment_timeout_s=10.0,
+            enrollment_timeout_s=30.0,
         )
     )
 

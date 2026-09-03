@@ -109,6 +109,45 @@ async def test_client_enrolls_device_samples_without_sending_account_id() -> Non
 
 
 @pytest.mark.asyncio
+async def test_client_retries_enrollment_once_on_503() -> None:
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(
+                503,
+                request=request,
+                json={"detail": "speaker embedding service unavailable"},
+            )
+        return httpx.Response(
+            201,
+            request=request,
+            json={"profile_id": "profile-shadow", "status": "shadow", "sample_count": 3},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        result = await client.enroll(
+            session_id="session-001",
+            intent_id="intent-001",
+            samples=[
+                SpeakerEnrollmentSample(pcm=value, sample_rate=16000)
+                for value in (b"one-01", b"two-02", b"three-03")
+            ],
+        )
+
+    assert calls["count"] == 2
+    assert result["profile_id"] == "profile-shadow"
+
+
+@pytest.mark.asyncio
 async def test_client_reads_session_scoped_enrollment_status() -> None:
     observed: dict[str, object] = {}
 

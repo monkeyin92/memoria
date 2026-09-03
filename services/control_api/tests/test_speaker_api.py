@@ -395,9 +395,79 @@ async def test_internal_device_enrollment_resolves_account_from_voice_session(
             },
         )
 
+        status_response = await client.get("/v1/speakers/status", headers=owner_headers)
+
     assert response.status_code == 201, response.text
     assert response.json()["status"] == "shadow"
     assert response.json()["sample_count"] == 3
+    assert status_response.status_code == 200
+    enrollment = status_response.json()["enrollment"]
+    assert enrollment["state"] == "pending"
+    assert enrollment["intent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_internal_device_enrollment_keeps_intent_when_embedding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class BoomEmbeddingAdapter(FakeEmbeddingAdapter):
+        async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
+            raise RuntimeError("speaker embedding exploded")
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.speaker_authority = SpeakerAuthority.sqlite(
+        tmp_path / "speakers.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=BoomEmbeddingAdapter(),
+    )
+    internal = {"X-Memoria-Speaker-Token": "test-speaker-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="speaker-device-enroll-fail",
+        )
+        owner_headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        intent_response = await client.post(
+            "/v1/speakers/enrollment-intents",
+            headers=owner_headers,
+            json={
+                "consent_policy_version": "speaker-biometric-v1",
+                "consent_accepted": True,
+            },
+        )
+        assert intent_response.status_code == 201, intent_response.text
+        intent_id = intent_response.json()["intent_id"]
+        _add_voice_session(
+            app,
+            user_id=identity["user_id"],
+            session_id="device-enroll-fail-session",
+        )
+        response = await client.post(
+            "/v1/speakers/enrollments/internal",
+            headers=internal,
+            json={
+                "session_id": "device-enroll-fail-session",
+                "intent_id": intent_id,
+                "samples": [
+                    {
+                        "audio_base64": _audio(value),
+                        "sample_rate": 16000,
+                        "device": "esp32",
+                        "scene": "device_voiceprint_setup",
+                    }
+                    for value in (b"owner-01", b"owner-02", b"owner-03")
+                ],
+            },
+        )
+        status_response = await client.get("/v1/speakers/status", headers=owner_headers)
+
+    assert response.status_code == 503, response.text
+    enrollment = status_response.json()["enrollment"]
+    assert enrollment["state"] == "requested"
+    assert enrollment["intent_id"] == intent_id
 
 
 @pytest.mark.asyncio
