@@ -3054,13 +3054,9 @@ class DuplexRuntime(
         *,
         tools_active: bool = False,
     ) -> bool:
-        """Commit the exact sample-ACKed text for a media-v1 playback.
+        """Commit exact sample-ACKed media-v1 playback text and arm echo guard.
 
-        The generic LiveKit callback estimates heard text from wall-clock
-        playout. A media device/browser can provide a stronger sample
-        watermark, so the ledger's exact text must be passed through rather
-        than re-estimated with a safety margin.
-        """
+        Prefer ledger watermark text over LiveKit wall-clock estimates."""
 
         if not self.fence.matches(fence):
             return False
