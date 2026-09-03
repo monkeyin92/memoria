@@ -6,7 +6,7 @@
   <view wx:if="{{!authenticated}}" class="card guest-profile">
     <text class="guest-profile-badge">游客浏览模式</text>
     <text class="guest-profile-title">先看看，再决定什么时候开始</text>
-    <text class="guest-profile-copy">未登录时不会读取你的资料、统计或回顾。点击下方按钮后再使用微信登录。</text>
+    <text class="guest-profile-copy">未登录时不会读取你的资料、统计或回顾。若账号尚未授权手机号，下一步会进入「授权手机号并登录」。</text>
     <button class="primary-button guest-profile-button" bindtap="loginFromProfile">微信登录</button>
   </view>
 

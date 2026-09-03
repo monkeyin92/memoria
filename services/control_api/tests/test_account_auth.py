@@ -658,6 +658,61 @@ async def test_wechat_phone_login_creates_one_stable_registered_identity_and_res
 
 
 @pytest.mark.asyncio
+async def test_openid_only_legacy_account_must_authorize_phone_before_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Silent restore must not skip phone for openid-only legacy accounts."""
+
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+    login_code = "dev-wechat-legacy-openid"
+    openid = f"dev-openid-{login_code}"
+    now = datetime.now(UTC).isoformat()
+    user_id, _ = app.state.memory_store.bind_external_identities(
+        preferred_user_id="wx_legacy_openid_only",
+        identities={"wechat_openid": wechat_auth.openid_hash(openid)},
+        now=now,
+    )
+    app.state.memory_store.update_external_profile(
+        user_id=user_id,
+        display_name="旧号",
+        phone_number_masked=None,
+        now=now,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        blocked = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": login_code},
+        )
+        completed = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": login_code,
+                "phone_code": "dev-phone-legacy",
+                "display_name": "旧号",
+            },
+        )
+        restored = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": login_code},
+        )
+        subject = app.state.memory_store.get_subject_profile(user_id=user_id)
+
+    assert blocked.status_code == 428
+    assert blocked.json()["detail"]["code"] == "phone_authorization_required"
+    assert completed.status_code == 200
+    assert completed.json()["user_id"] == user_id
+    assert completed.json()["phone_number_masked"] == "181****8880"
+    assert restored.status_code == 200
+    assert restored.json()["user_id"] == user_id
+    assert subject is not None
+    assert subject["subject_category"] == "adult"
+    assert subject["age_evidence_status"] == "verified"
+
+
+@pytest.mark.asyncio
 async def test_wechat_phone_identity_cannot_be_claimed_by_another_openid(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

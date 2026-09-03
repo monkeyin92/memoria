@@ -313,11 +313,19 @@ async def login_wechat(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "account_deletion_in_progress"},
         )
-    if existing_user_id is None and body.phone_code is None:
-        raise HTTPException(
-            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-            detail={"code": "phone_authorization_required"},
+    # New accounts always need WeChat phone. Existing openid-only accounts also
+    # must re-authorize phone: silent restore used to skip getPhoneNumber and
+    # leave subject_capability_forbidden (no verified adult) stuck forever.
+    if body.phone_code is None:
+        needs_phone = existing_user_id is None or not store.has_external_identity(
+            user_id=existing_user_id,
+            provider="wechat_phone",
         )
+        if needs_phone:
+            raise HTTPException(
+                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+                detail={"code": "phone_authorization_required"},
+            )
 
     identities = {"wechat_openid": openid_subject}
     masked_phone: str | None = None
