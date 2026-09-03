@@ -47,7 +47,7 @@ speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
 last_wake_epoch: 1372
 device_enrollment_prompts: quality_enroll_is_owner_active
-miniprogram_devtools_publish: not_done
+miniprogram_devtools_publish: uploaded_0.8.75_devtools_cli
 direct_real_device_verified: false
 ```
 
@@ -62,8 +62,8 @@ direct_real_device_verified: false
 
 **下一步（按顺序）**
 
-1. 刷新小程序「我的」，应变为已激活。唤醒后用平时声音说话，应能按主人识别；可复测「再见」。
-2. 可选：开发者工具上传含「重新录制」和开箱自动授权的小程序。
+1. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
+2. 复测「再见」：epoch 1373 最后一截约 240ms、FunASR 空转写，走了 `owner_silence_timeout`，没有打到 `conversation_end_explicit`。下次只说「再见」，等助手说完再讲。
 3. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
@@ -77,7 +77,7 @@ direct_real_device_verified: false
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
 - Control API：`memoria-control-api:20260903-1820-owner-enroll-active-control-api`，overlay revision `1a7a9390adc806adcae3aade1b8a01022b4f1368`（合格登记直接 active；classify 不再把 unavailable 反欺骗当拒绝；管理员可发新 intent 重录）。演示账号 profile `1b5b577b` 已 **active**。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`；healthy。回滚 `rollback-20260903-1820-owner-enroll-active-control-api-pre-control`（镜像 `20260903-1745-enrollment-keep-intent-control-api`）。
-- 小程序体验版 **0.8.74**（2026-09-01 微信开发者工具上传）：设备页支持白名单切换与自定义唤醒词（pinyin + display）。
+- 小程序开发版 **0.8.75**（2026-09-03 微信开发者工具 CLI 上传）：「我的」支持主人声纹重新录制；开箱完成会请求设备登记。请在微信里切到该版本后刷新。miniprogram-ci 因 IP 白名单 `121.237.160.230` 失败，改走本机 DevTools。
 - Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
@@ -105,7 +105,7 @@ enabled: production_control_api_and_flashed_board_true
 verified: 2026-08-27_server_ack_and_miniprogram_device_ready
 device_id: dev_atk_a4cb8fd6095c
 firmware_version: 2.4.2
-miniprogram_experience_version: 0.8.74
+miniprogram_experience_version: 0.8.75
 ```
 
 本轮已打通并验证以下顺序：二维码 introspect → BLE Protocomm Security 1（X25519、PoP、AES-256-CTR）→ 设备 online-proof → claim/binding → Activation Manifest → 设备 ACK → `ready_for_conversation`。小程序不采集声纹或实时语音；Wi-Fi 密码只在已认证的 BLE 会话中写入设备，不经过 Control API 日志或小程序普通请求。
