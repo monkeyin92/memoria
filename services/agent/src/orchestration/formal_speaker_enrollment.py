@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.agent.src.orchestration.speaker_verify import speech_ms_from_pcm
-from services.agent.src.prompts import SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
+from services.agent.src.prompts import BRIDGE_PHRASES, SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
 from services.agent.src.speaker_authority_client import (
     SpeakerAuthorityClient,
     SpeakerEnrollmentSample,
@@ -27,7 +27,7 @@ class FormalSpeakerEnrollment:
     """
 
     target_samples: int = 4
-    min_speech_ms: int = 1200
+    min_speech_ms: int = 400
     max_sample_ms: int = 6000
     sample_rate: int = 16000
     active: bool = False
@@ -108,14 +108,21 @@ async def run_formal_speaker_enrollment(
     try:
         for index in range(sample_count):
             await speak(SPEAKER_ENROLLMENT_SAMPLE_PROMPTS[index])
-            try:
-                collected.append(await asyncio.wait_for(samples.get(), timeout=sample_timeout_s))
-            except TimeoutError:
+            sample: tuple[bytes, int] | None = None
+            for attempt in range(2):
+                try:
+                    sample = await asyncio.wait_for(samples.get(), timeout=sample_timeout_s)
+                    break
+                except TimeoutError:
+                    if attempt == 0:
+                        await speak(BRIDGE_PHRASES[2])
+            if sample is None:
                 runtime.publish_formal_speaker_enrollment_result(
                     accepted=False,
                     reason="sample_timeout",
                 )
                 return {"status": "failed", "reason": "sample_timeout"}
+            collected.append(sample)
         payload = await authority.enroll(
             session_id=runtime.session_id,
             intent_id=intent_id,

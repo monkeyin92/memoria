@@ -202,6 +202,10 @@ class MediaSessionInputMixin:
                     return
                 if context.runtime.formal_speaker_enrollment_active:
                     self._cancel_max_user_speech_watchdog(context)
+                    # Drain the PCM pump before snapshotting. Skipping this
+                    # left enrollment with a few milliseconds of audio even
+                    # when the user spoke a full sentence.
+                    await self._audio_ingress._wait_until_idle(context)
                     context.runtime.on_user_voice_stopped()
                     await context.provider.pause_asr_for_playback(context.identity)
                     context.ingress.last_finalized_audio_watermark = max(
@@ -209,10 +213,6 @@ class MediaSessionInputMixin:
                         context.asr.last_sent_sample,
                     )
                     self._clear_pending_turn_state(context)
-                    logger.info(
-                        "media enrollment sample captured session=%s",
-                        context.identity.session_id,
-                    )
                     return
                 # VAD end is the only normal endpoint for this watchdog.  Do
                 # this before provider finalization, which may await remote

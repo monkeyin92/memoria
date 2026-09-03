@@ -141,14 +141,15 @@
     <text class="settings-title">主人声纹</text>
     <text wx:if="{{speakerEnrollmentState === 'active'}}" class="setting-desc">主人声纹已激活，可用于确认主人说话。声纹模板由服务端保管，不用于声音复刻。</text>
     <text wx:elif="{{speakerEnrollmentState === 'pending'}}" class="setting-desc">主人声纹样本已提交，服务端正在完成质量与反欺骗评估，暂未激活。</text>
-    <text wx:elif="{{speakerEnrollmentState === 'requested'}}" class="setting-desc">已记录你的登记授权。设备在线后会进入声纹登记提示，录音仍只发生在设备端。</text>
+    <text wx:elif="{{speakerEnrollmentState === 'requested'}}" class="setting-desc">已记录你的登记授权。唤醒设备后按提示说 4 段话。若刚才没录上，可再点一次或直接再唤醒。</text>
     <text wx:elif="{{speakerEnrollmentState === 'required'}}" class="setting-desc">请保持设备在线，按机器人语音提示说 4 段话完成登记。手机不采集声纹，登记状态由服务端确认。</text>
     <text wx:else class="setting-desc">当前还不能登记主人声纹：{{speakerEnrollmentBlockReason}}</text>
-    <view wx:if="{{speakerEnrollmentState === 'required'}}" class="account-row" bindtap="startSpeakerEnrollment">
+    <view wx:if="{{speakerEnrollmentState === 'required' || speakerEnrollmentState === 'requested'}}" class="account-row" bindtap="startSpeakerEnrollment">
       <view><text class="setting-name">在设备上开始初始化</text><text class="setting-desc">需要已绑定且在线的设备</text></view>
-      <text class="account-action">开始</text>
+      <text wx:if="{{speakerEnrollmentState === 'requested'}}" class="account-action">再试一次</text>
+      <text wx:else class="account-action">开始</text>
     </view>
-    <text wx:if="{{speakerEnrollmentState === 'required'}}" class="form-note">需要先绑定设备；真正录音发生在设备端，完成后回到本页刷新状态。</text>
+    <text wx:if="{{speakerEnrollmentState === 'required' || speakerEnrollmentState === 'requested'}}" class="form-note">需要先绑定设备；真正录音发生在设备端，完成后回到本页刷新状态。</text>
   </view>
   <view wx:if="{{digitalSelfEntryAllowed}}" class="card nav-card" bindtap="openDigitalSelf">
     <view><text class="settings-title">数字分身成长</text><text class="setting-desc">查看服务端的成长维度、Persona 与版本状态</text></view>

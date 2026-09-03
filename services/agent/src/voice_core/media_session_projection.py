@@ -82,6 +82,10 @@ class MediaSessionProjectionMixin:
 
         def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
 
+        async def _request_device_standby(
+            self, context: _MediaVoiceSession, *, reason: str
+        ) -> bool: ...
+
         def _arm_owner_silence_timer(
             self, context: _MediaVoiceSession, *, reset: bool
         ) -> None: ...
@@ -256,6 +260,12 @@ class MediaSessionProjectionMixin:
                 if failed
                 else SPEAKER_ENROLLMENT_DONE_PHRASE,
             )
+            if failed:
+                await self._request_device_standby(
+                    context,
+                    reason="speaker_enrollment_incomplete",
+                )
+                return
         except asyncio.CancelledError:
             raise
         except Exception:

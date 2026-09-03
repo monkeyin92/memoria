@@ -8,7 +8,7 @@ from services.agent.src.orchestration.formal_speaker_enrollment import (
     FormalSpeakerEnrollment,
     run_formal_speaker_enrollment,
 )
-from services.agent.src.prompts import SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
+from services.agent.src.prompts import BRIDGE_PHRASES, SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
 
 
 def _pcm(seconds: float, sample_rate: int = 16_000) -> bytes:
@@ -36,6 +36,14 @@ def test_formal_enrollment_rejects_short_and_odd_pcm() -> None:
     assert collector.add_endpoint(_pcm(0.2)) is None
     assert collector.add_endpoint(b"\x00") is None
     assert collector.sample_count == 0
+
+
+def test_formal_enrollment_accepts_half_second_voiced_endpoint() -> None:
+    collector = FormalSpeakerEnrollment(sample_rate=16_000)
+    collector.begin()
+
+    assert collector.add_endpoint(_pcm(0.5)) is not None
+    assert collector.sample_count == 1
 
 
 class _FakeEnrollmentRuntime:
@@ -100,9 +108,10 @@ async def test_run_formal_enrollment_speaks_four_prompts_and_submits() -> None:
 async def test_run_formal_enrollment_times_out_without_sample() -> None:
     runtime = _FakeEnrollmentRuntime()
     authority = _FakeEnrollmentAuthority()
+    spoken: list[str] = []
 
-    async def speak(_text: str) -> None:
-        return None
+    async def speak(text: str) -> None:
+        spoken.append(text)
 
     payload = await run_formal_speaker_enrollment(
         runtime=runtime,
@@ -113,6 +122,7 @@ async def test_run_formal_enrollment_times_out_without_sample() -> None:
     )
 
     assert payload == {"status": "failed", "reason": "sample_timeout"}
+    assert spoken == [SPEAKER_ENROLLMENT_SAMPLE_PROMPTS[0], BRIDGE_PHRASES[2]]
     assert authority.calls == []
     assert runtime.results[-1] == {"accepted": False, "reason": "sample_timeout"}
     assert runtime.sink is None

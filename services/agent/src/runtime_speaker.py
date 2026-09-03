@@ -31,6 +31,7 @@ from services.agent.src.orchestration.orchestrator import Orchestrator
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
     SpeakerVerifier,
+    speech_ms_from_pcm,
     voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.speech_epoch_assembler import (
@@ -371,12 +372,25 @@ class DuplexSpeakerMixin:
 
     def on_user_voice_stopped(self) -> None:
         keyword_binding = self.keyword_spotter_binding()
+        was_collecting = self._speaker_collecting
         if self._speaker_collecting:
             self.mark_audio_event("last_user_audio")
         self._speaker_collecting = False
         self.speaker_verifier.mark_utterance_end()
         if self.formal_speaker_enrollment_active:
-            sample = self._formal_enrollment.add_endpoint(bytes(self._speaker_pcm))
+            pcm = bytes(self._speaker_pcm)
+            speech_ms = speech_ms_from_pcm(pcm, sample_rate=self._speaker_sample_rate)
+            sample = self._formal_enrollment.add_endpoint(pcm)
+            logger.info(
+                "formal enrollment endpoint session=%s accepted=%s speech_ms=%s "
+                "pcm_bytes=%s collecting=%s sample_count=%s",
+                self.session_id,
+                sample is not None,
+                speech_ms,
+                len(pcm),
+                was_collecting,
+                self._formal_enrollment.sample_count,
+            )
             if sample is not None and self._formal_enrollment_sample_sink is not None:
                 self._spawn(
                     self._formal_enrollment_sample_sink(sample, self._speaker_sample_rate),
