@@ -31,7 +31,7 @@ def build_close_intent_semantic_classifier(
                 )
             ),
             model=str(
-                getattr(settings, "conversation_close_semantic_model", "qwen3-flash")
+                getattr(settings, "conversation_close_semantic_model", "qwen-flash")
             ),
             timeout_s=float(getattr(settings, "conversation_close_semantic_timeout_s", 0.8)),
         )

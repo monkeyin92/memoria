@@ -42,6 +42,7 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
+_LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
 
 
 class MediaTurnEndpointMixin:
@@ -202,6 +203,7 @@ class MediaTurnEndpointMixin:
             else:
                 context.pending_partial = None
         self._maybe_early_commit_clock_fact(context, result)
+        self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
@@ -250,6 +252,7 @@ class MediaTurnEndpointMixin:
         context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
         context.turn_endpoint_sample = endpoint
         context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+        context.live_query_endpoint_pinned = endpoint
         context.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media live-query forced endpoint session=%s endpoint=%s text_len=%s",
@@ -293,6 +296,93 @@ class MediaTurnEndpointMixin:
             endpoint,
             len(text),
         )
+
+    @staticmethod
+    def _pin_live_lookup_endpoint(
+        context: _MediaVoiceSession,
+        capture_end_sample: int,
+        *,
+        text_len: int,
+        source: str,
+    ) -> None:
+        endpoint = max(capture_end_sample, context.turn_end_sample or 0)
+        context.turn_endpoint_sample = endpoint
+        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
+        context.turn_retire_sample = endpoint
+        context.live_query_endpoint_pinned = endpoint
+        context.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media early live-query endpoint session=%s endpoint=%s text_len=%s source=%s",
+            context.identity.session_id,
+            endpoint,
+            text_len,
+            source,
+        )
+
+    def _maybe_early_commit_live_lookup(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Commit weather/live turns without waiting for a stuck device VAD end."""
+
+        if context.identity.client_type != "device":
+            return
+        if context.turn_endpoint_sample is not None:
+            return
+        text = result.text.strip()
+        if not text or not context.runtime.live_lookup_needed(text):
+            return
+        if self._reply_in_flight(context):
+            logger.warning(
+                "media early live-query commit skipped: reply in flight "
+                "session=%s text_len=%s",
+                context.identity.session_id,
+                len(text),
+            )
+            return
+        self._pin_live_lookup_endpoint(
+            context,
+            result.capture_end_sample,
+            text_len=len(text),
+            source="final",
+        )
+
+    def _maybe_early_commit_stable_live_lookup_partial(
+        self,
+        context: _MediaVoiceSession,
+    ) -> None:
+        partial = context.pending_partial
+        if partial is None:
+            context.live_query_partial_text = None
+            context.live_query_partial_stable_since = None
+            return
+        text = partial.text.strip()
+        if not text or not context.runtime.live_lookup_needed(text):
+            context.live_query_partial_text = None
+            context.live_query_partial_stable_since = None
+            return
+        now = time.monotonic()
+        if context.live_query_partial_text == text:
+            if context.live_query_partial_stable_since is None:
+                context.live_query_partial_stable_since = now
+            elif (
+                context.turn_endpoint_sample is None
+                and context.live_query_endpoint_pinned is None
+                and now - context.live_query_partial_stable_since >= _LIVE_LOOKUP_PARTIAL_STABLE_S
+            ):
+                if self._reply_in_flight(context):
+                    return
+                self._pin_live_lookup_endpoint(
+                    context,
+                    partial.capture_end_sample,
+                    text_len=len(text),
+                    source="partial",
+                )
+                self._schedule_turn_commit(context)
+        else:
+            context.live_query_partial_text = text
+            context.live_query_partial_stable_since = now
 
     @staticmethod
     def _pin_conversation_close_endpoint(
@@ -659,6 +749,9 @@ class MediaTurnEndpointMixin:
         MediaTurnEndpointMixin._cancel_conversation_close_semantic_task(context)
         context.clock_fact_forced_text = None
         context.live_query_forced_text = None
+        context.live_query_partial_text = None
+        context.live_query_partial_stable_since = None
+        context.live_query_endpoint_pinned = None
         context.live_query_forced_authoritative = False
         context.missed_hearing_nudge_count = 0
         context.last_missed_hearing_nudge_at = None
@@ -847,12 +940,17 @@ class MediaTurnEndpointMixin:
                 context.conversation_close_endpoint_pinned is not None
                 and context.conversation_close_endpoint_pinned == endpoint_sample
             )
+            pinned_live_query = (
+                context.live_query_endpoint_pinned is not None
+                and context.live_query_endpoint_pinned == endpoint_sample
+            )
             forced_live_query = bool(
                 context.live_query_forced_authoritative and context.live_query_forced_text
             )
             if (
                 not pinned_clock_fact
                 and not pinned_conversation_close
+                and not pinned_live_query
                 and not forced_live_query
                 and not self._asr_covers_endpoint(
                     context,

@@ -198,6 +198,7 @@ _CONVERSATION_CLOSE_ONLY = frozenset(
         "好了我知道了",
         "退下",
         "退下吧",
+        "你退下",
         "你退下吧",
         "先这样",
         "先这样吧",
@@ -230,6 +231,8 @@ _CONVERSATION_CLOSE_FAREWELL_SUFFIXES = (
     "拜拜了",
     "下次见",
     "回头见",
+    "退下",
+    "退下吧",
 )
 
 # Short acknowledgement stems that may precede a farewell in one utterance,

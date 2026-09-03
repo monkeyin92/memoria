@@ -31,7 +31,7 @@ class CloseIntentSemanticVerdict(StrEnum):
 class CloseIntentSemanticClassifierConfig:
     api_key: str
     base_url: str
-    model: str = "qwen3-flash"
+    model: str = "qwen-flash"
     timeout_s: float = 0.8
 
     def __post_init__(self) -> None:

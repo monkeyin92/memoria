@@ -176,11 +176,19 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _maybe_early_commit_live_lookup(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
         def _maybe_early_commit_conversation_close(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
         def _maybe_early_commit_stable_clock_fact_partial(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        def _maybe_early_commit_stable_live_lookup_partial(
             self, context: _MediaVoiceSession
         ) -> None: ...
 
@@ -278,6 +286,7 @@ class MediaSessionCommitMixin:
         else:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
+            self._maybe_early_commit_stable_live_lookup_partial(context)
             self._maybe_early_commit_stable_conversation_close_partial(context)
         return decision
 
@@ -438,6 +447,12 @@ class MediaSessionCommitMixin:
                 adjusted.capture_start_sample,
                 adjusted.capture_end_sample,
             )
+        if close_needed and not live_lookup_needed:
+            self._observe_final_asr_result(context, adjusted)
+            self._maybe_early_commit_conversation_close(context, adjusted)
+            if context.turn_endpoint_sample is not None:
+                self._schedule_turn_commit(context)
+            return
         context.live_query_forced_text = text
         if reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
             # The blocking interval's text (e.g. playback echo) stays on the

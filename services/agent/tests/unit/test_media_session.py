@@ -5437,6 +5437,57 @@ async def test_device_clock_fact_final_commits_before_vad_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_live_lookup_final_commits_before_vad_end() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-early-live-lookup")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="weather-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="weather-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="明天南宁天气怎么样",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        assert context.turn_endpoint_sample == 16_000
+        assert context.live_query_endpoint_pinned == 16_000
+        assert context.turn_endpoint_task is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_conversation_close_final_commits_before_vad_end() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

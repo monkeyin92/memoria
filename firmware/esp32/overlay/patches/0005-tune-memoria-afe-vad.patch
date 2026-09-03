@@ -11,7 +11,7 @@ diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_aud
 +    // defines larger VAD modes as having a higher speech-trigger probability,
 +    // so keep the strictest mode to reject steady room/playback noise. Retain
 +    // a 900 ms quiet tail for natural pauses in short Chinese utterances.
-+    // The protocol layer still supplies the independent 20 s hard fence.
++    // The protocol layer still supplies the independent 10 s hard fence.
 +    afe_config->vad_mode = VAD_MODE_0;
 +    afe_config->vad_min_noise_ms = 900;
 +#else

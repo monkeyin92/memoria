@@ -86,6 +86,9 @@ class MediaVoiceSessionState:
     conversation_close_semantic_task: asyncio.Task[None] | None = None
     clock_fact_forced_text: str | None = None
     live_query_forced_text: str | None = None
+    live_query_partial_text: str | None = None
+    live_query_partial_stable_since: float | None = None
+    live_query_endpoint_pinned: int | None = None
     # Set when the forced live-query text was recovered from a
     # CROSS_SENTENCE_OVERLAP rejection: in-range timeline text then belongs
     # to the blocking interval and the forced text must win unconditionally.
