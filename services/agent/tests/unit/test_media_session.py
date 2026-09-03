@@ -6501,8 +6501,8 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.live_query_forced_text == "你说的好多呀，好的，我知道了，再见！"
-        assert context.live_query_forced_authoritative is True
+        assert context.live_query_forced_text is None
+        assert context.conversation_close_endpoint_pinned == 336_960
         assert context.turn_endpoint_sample == 336_960
     finally:
         await registry._finalize_session(identity.session_id)
