@@ -131,14 +131,27 @@ class ReplyDeliveryLedger:
         """Record one event, returning ``(snapshot, changed)``.
 
         Repeating the same milestone or terminal event is a no-op.  Once a
-        terminal event exists, all other late events are ignored so a stale
-        callback cannot rewrite the authoritative outcome.
+        terminal event exists, late events are ignored so a stale callback
+        cannot rewrite the authoritative outcome — except an unheard
+        ``PREEMPTED`` may be replaced by ``FIRST_FRAME_SENT`` when a later
+        successful attempt reuses the same fence (live-lookup deep TTS).
         """
 
         current = self.ensure(fence)
         if event in current.events:
             return current, False
-        if current.terminal:
+        # Unheard scheduling cancels (e.g. live-lookup preempt before any
+        # downlink frame) must not poison a later successful deep TTS on the
+        # same fence. Heard preempts stay sticky.
+        if (
+            current.terminal
+            and current.terminal_event is ReplyDeliveryEvent.PREEMPTED
+            and not current.first_frame_sent
+            and event is ReplyDeliveryEvent.FIRST_FRAME_SENT
+        ):
+            current = ReplyDelivery(key=current.key)
+            self._records[current.key] = current
+        elif current.terminal:
             return current, False
         if event is ReplyDeliveryEvent.ACTUAL_HEARD and not current.first_frame_sent:
             raise ValueError("actual_heard requires first_frame_sent")

@@ -78,6 +78,61 @@ def test_terminal_failure_can_be_recorded_before_any_audio() -> None:
     assert record.terminal_reason == "transport_rejected"
 
 
+def test_unheard_preempted_allows_first_frame_revival_then_actual_heard() -> None:
+    """Live-lookup cancel before audio must not poison same-fence deep TTS."""
+
+    ledger = ReplyDeliveryLedger()
+    fence = GenerationFence("session", 2, 2, 0, session_epoch=1)
+
+    preempted, changed = ledger.record(
+        fence,
+        ReplyDeliveryEvent.PREEMPTED,
+        reason="output_task_cancelled",
+    )
+    assert changed is True
+    assert preempted.terminal_event is ReplyDeliveryEvent.PREEMPTED
+    assert preempted.first_frame_sent is False
+
+    revived, revived_changed = ledger.record(
+        fence,
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        reason="downlink_frame_accepted",
+    )
+    assert revived_changed is True
+    assert revived.terminal is False
+    assert revived.first_frame_sent is True
+    assert revived.events == (ReplyDeliveryEvent.FIRST_FRAME_SENT,)
+
+    for event, reason in (
+        (ReplyDeliveryEvent.PROVIDER_COMPLETED, "provider_stream_complete"),
+        (ReplyDeliveryEvent.ACTUAL_HEARD, "exact_playback_ack"),
+        (ReplyDeliveryEvent.PLAYBACK_ENDED, "playback_completed"),
+    ):
+        snapshot, changed = ledger.record(fence, event, reason=reason)
+        assert changed is True
+
+    assert snapshot.actual_heard is True
+    assert snapshot.playback_ended is True
+    assert snapshot.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
+
+
+def test_heard_preempted_stays_sticky() -> None:
+    ledger = ReplyDeliveryLedger()
+    fence = GenerationFence("session", 2, 2, 0)
+
+    ledger.record(fence, ReplyDeliveryEvent.FIRST_FRAME_SENT)
+    ledger.record(fence, ReplyDeliveryEvent.PREEMPTED, reason="output_task_cancelled")
+    late, changed = ledger.record(
+        fence,
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        reason="stale_revival",
+    )
+
+    assert changed is False
+    assert late.terminal_event is ReplyDeliveryEvent.PREEMPTED
+    assert late.first_frame_sent is True
+
+
 def test_actual_heard_requires_first_frame_boundary() -> None:
     ledger = ReplyDeliveryLedger()
     fence = GenerationFence("session", 1, 1, 0)

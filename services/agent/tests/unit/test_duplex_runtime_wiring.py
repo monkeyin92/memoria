@@ -348,6 +348,63 @@ async def test_post_playback_weekday_echo_cannot_start_a_follow_up_turn() -> Non
 
 
 @pytest.mark.asyncio
+async def test_media_playback_done_arms_post_playback_weekday_echo_guard() -> None:
+    """media-v1 completion must stamp the same echo window as LiveKit."""
+
+    runtime = DuplexRuntime.create(
+        session_id="media-post-playback-weekday-echo",
+        input_guard_enabled=True,
+        barge_in_enabled=False,
+    )
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("今天星期几")
+    answer = "今天是2026年8月6日，星期四。"
+    runtime.update_pending_assistant_text(answer)
+    await runtime.orchestrator.begin_speaking([], answer)
+    assert await runtime.on_media_playback_done(fence, answer)
+    assert runtime._last_playback_completed_ns is not None
+    assert "星期四" in runtime._played_assistant_text
+
+    accepted, reason = runtime.accept_user_turn(
+        "星期四",
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is False
+    assert reason == "assistant_echo"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_media_playback_done_falls_back_to_pending_text_for_echo_guard() -> None:
+    runtime = DuplexRuntime.create(
+        session_id="media-post-playback-empty-heard",
+        input_guard_enabled=True,
+        barge_in_enabled=False,
+    )
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("今天星期几")
+    answer = "今天是星期四。"
+    runtime.update_pending_assistant_text(answer)
+    await runtime.orchestrator.begin_speaking([], answer)
+    # Empty exact heard text (e.g. ledger gap) still arms weekday echo match.
+    assert await runtime.on_media_playback_done(fence, "")
+    assert runtime._played_assistant_text == answer
+    assert runtime._last_playback_completed_ns is not None
+
+    accepted, reason = runtime.accept_user_turn(
+        "星期四",
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is False
+    assert reason == "assistant_echo"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("transcript", ["等一下", "等下。"])
 async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start(
     transcript: str,

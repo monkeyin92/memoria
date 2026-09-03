@@ -3080,9 +3080,14 @@ class DuplexRuntime(
             )
         else:
             return False
-        self._played_assistant_text = normalized
+        played = normalized or self._pending_assistant_text.strip() or self._played_assistant_text
+        self._played_assistant_text = played
         self._pending_assistant_text = ""
         self._was_speaking = False
+        # Mirror LiveKit completion: arm the post-playback echo window so
+        # short weekday/backchannel ASR echoes cannot open a phantom turn.
+        self._last_playback_completed_ns = time.monotonic_ns()
+        self._clear_unanchored_playback_transcript()
         if tools_active:
             # Filler / acknowledgement playback is not the turn terminal while
             # an OWNED same-turn delegation is still waiting to speak.
