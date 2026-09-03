@@ -23,11 +23,13 @@ from services.agent.src.providers.doubao_tts import (
 from services.agent.src.providers.doubao_tts import (
     PooledConnection as DoubaoConnection,
 )
+from websockets.protocol import State
 
 
 class FakeWebSocket:
     def __init__(self) -> None:
         self.closed = False
+        self.state = State.OPEN
 
     async def send(self, _payload: object) -> None:
         return None
@@ -35,12 +37,17 @@ class FakeWebSocket:
     async def recv(self) -> bytes:
         connect_id = b"fake-connection"
         payload = b"{}"
-        return b"\x11\x94\x10\x00" + struct.pack(
-            ">iI", doubao_tts.EventType.CONNECTION_STARTED, len(connect_id)
-        ) + connect_id + struct.pack(">I", len(payload)) + payload
+        return (
+            b"\x11\x94\x10\x00"
+            + struct.pack(">iI", doubao_tts.EventType.CONNECTION_STARTED, len(connect_id))
+            + connect_id
+            + struct.pack(">I", len(payload))
+            + payload
+        )
 
     async def close(self) -> None:
         self.closed = True
+        self.state = State.CLOSED
 
 
 def _doubao_pool() -> tuple[DoubaoTTSPool, DoubaoConnection]:
@@ -137,6 +144,46 @@ async def test_doubao_release_removes_a_socket_already_marked_closed() -> None:
 
     assert pool._all == {}
     assert metrics.get("provider_ws_active", {"provider": "tts"}) == 0
+
+
+@pytest.mark.asyncio
+async def test_doubao_acquire_replaces_a_server_expired_pooled_connection() -> None:
+    metrics = MetricsRegistry()
+    pool = DoubaoTTSPool(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            pool_size=1,
+        ),
+        metrics=metrics,
+    )
+    # Doubao closes idle sockets with a 1000 frame; only ws.state records it.
+    expired = DoubaoConnection(ws=FakeWebSocket(), conn_id="expired")  # type: ignore[arg-type]
+    expired.ws.state = State.CLOSED  # type: ignore[attr-defined]
+    replacement = DoubaoConnection(ws=FakeWebSocket(), conn_id="fresh")  # type: ignore[arg-type]
+    pool._all[expired.conn_id] = expired
+    await pool._available.put(expired)
+
+    async def open_replacement() -> DoubaoConnection:
+        pool._all[replacement.conn_id] = replacement
+        return replacement
+
+    async def no_refill() -> None:
+        return None
+
+    pool._open = open_replacement
+    pool._refill_one = no_refill
+
+    acquired = await pool.acquire(wait_s=0)
+
+    assert acquired is replacement
+    assert expired.conn_id not in pool._all
+    assert metrics.get("tts_connections_discarded_total", {"reason": "expired"}) == 1
+    # A retired idle socket is lifecycle, not a provider fault.
+    assert pool._breaker.consecutive_failures == 0
+    assert pool._breaker.state == "closed"
+
+    await pool.aclose()
 
 
 def _cosyvoice_pool() -> tuple[CosyVoicePool, CosyVoiceConnection]:

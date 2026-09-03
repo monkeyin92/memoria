@@ -18,6 +18,7 @@ import websockets
 from livekit.agents import APIConnectionError, APIConnectOptions, tts
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, TimedString
 from websockets.asyncio.client import ClientConnection
+from websockets.protocol import State
 
 from services.agent.src.config import validate_doubao_auth
 from services.agent.src.contracts.events import TimedWord
@@ -185,6 +186,17 @@ class PooledConnection:
     closed: bool = False
     session_id: str = ""
     cancel_sent: bool = False
+
+    @property
+    def live(self) -> bool:
+        """False once either side closed the socket.
+
+        Doubao expires idle sockets server-side with a 1000 close frame. The
+        local flags stay untouched then, so the transport state is the only
+        evidence that a queued connection can still carry a session.
+        """
+
+        return not self.closed and not self.failed and self.ws.state is State.OPEN
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,7 +378,10 @@ class DoubaoTTSPool:
             conn = await asyncio.wait_for(self._available.get(), timeout=wait_s)
         except TimeoutError:
             conn = None
-        if conn is None or conn.closed or conn.failed:
+        if conn is not None and not conn.live:
+            await self.discard(conn, reason="expired")
+            conn = None
+        if conn is None:
             async with self._lock:
                 if self._closing:
                     raise RuntimeError("Doubao TTS pool is closing")
@@ -377,8 +392,9 @@ class DoubaoTTSPool:
                         conn = await self._open()
                         conn.burst = len(self._all) > self.config.pool_size
                         break
-                    if not conn.closed and not conn.failed:
+                    if conn.live:
                         break
+                    await self.discard(conn, reason="expired")
         conn.in_use = True
         if conn.resource_id != self.config.resource_id:
             await self.discard(conn, reason="resource_mismatch")
@@ -437,7 +453,9 @@ class DoubaoTTSPool:
         elif not was_closed and reason == "shutdown" and not conn.session_id:
             with contextlib.suppress(Exception):
                 await conn.ws.send(build_client_message(EventType.FINISH_CONNECTION))
-        if reason not in {"cancel", "shutdown"}:
+        # A server-expired idle socket is normal lifecycle, not a provider
+        # fault: counting it would open the breaker after pool_size retirements.
+        if reason not in {"cancel", "shutdown", "expired"}:
             self._breaker.record_failure()
         self._remove_connection(conn)
         conn.session_id = ""

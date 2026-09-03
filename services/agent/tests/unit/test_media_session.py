@@ -3769,9 +3769,7 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
     )
 
     assert context.conversation_yield_candidate_fence == candidate
-    assert metrics.get(
-        "voice_conversation_yield_proxy_total", {"status": "confirmed"}
-    ) == 0
+    assert metrics.get("voice_conversation_yield_proxy_total", {"status": "confirmed"}) == 0
 
     registry._record_reply_delivery_event(
         context,
@@ -3781,9 +3779,7 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
     )
 
     assert context.conversation_yield_candidate_fence is None
-    assert metrics.get(
-        "voice_conversation_yield_proxy_total", {"status": "confirmed"}
-    ) == 1
+    assert metrics.get("voice_conversation_yield_proxy_total", {"status": "confirmed"}) == 1
     await registry._finalize_session(identity.session_id)
 
 
@@ -5280,6 +5276,70 @@ async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
                 and bool(provider.texts)
             )
         )
+        assert context.runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tts_failure_before_first_frame_returns_device_session_to_listening() -> None:
+    """Regression for epoch 1375: Doubao handed back a server-expired socket.
+
+    The reply raised before its first frame and nothing released the floor, so
+    the runtime stayed in THINKING and dropped every later ``vad.end`` as
+    playback echo. The board could not be heard again for the rest of the
+    session, and owner-silence never closed it because that timer only runs
+    while listening.
+    """
+
+    class FailingOutputProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempted = asyncio.Event()
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = (intent, work_id, source_start_sample)
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                self.attempted.set()
+                raise RuntimeError("Doubao TTS connection closed before first audio")
+                yield  # pragma: no cover - unreachable async-generator marker
+
+            return chunks()
+
+    provider = FailingOutputProvider()
+    bridge = _CapturingGenerationBridge()
+
+    def runtime_factory(session_id: str) -> DuplexRuntime:
+        return DuplexRuntime.create(session_id=session_id, barge_in_enabled=False)
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=runtime_factory,
+    )
+    registry.install()
+    identity = _device_identity("device-tts-failed-before-first-frame")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.attempted.wait(), timeout=1)
+        await _wait_until(
+            lambda: (
+                context.runtime.orchestrator.state is ConversationState.LISTENING
+                and context.runtime._was_speaking is False
+            )
+        )
+        # Without an open input gate the next endpoint is discarded as echo.
+        assert context.runtime.playback_overlap_input_blocked() is False
         assert context.runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
     finally:
         await registry._finalize_session(identity.session_id)
@@ -8694,19 +8754,16 @@ async def test_media_backchannel_restores_without_persisting_a_turn() -> None:
         and payload["action"] == "restore"
         for effect_kind, payload in effects
     )
-    assert metrics.get(
-        "voice_conversation_turn_initiation_total",
-        {"kind": "vad_first", "state": "assistant_overlap"},
-    ) == 1
-    assert metrics.get(
-        "voice_conversation_backchannel_total", {"status": "detected"}
-    ) == 1
-    assert metrics.get(
-        "voice_conversation_backchannel_total", {"status": "continued"}
-    ) == 1
-    assert metrics.get(
-        "voice_conversation_participation_proxy_ms_total", {"kind": "owner"}
-    ) == 0
+    assert (
+        metrics.get(
+            "voice_conversation_turn_initiation_total",
+            {"kind": "vad_first", "state": "assistant_overlap"},
+        )
+        == 1
+    )
+    assert metrics.get("voice_conversation_backchannel_total", {"status": "detected"}) == 1
+    assert metrics.get("voice_conversation_backchannel_total", {"status": "continued"}) == 1
+    assert metrics.get("voice_conversation_participation_proxy_ms_total", {"kind": "owner"}) == 0
 
 
 @pytest.mark.asyncio
@@ -8784,16 +8841,15 @@ async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
         and payload["action"] == "restore"
         for effect_kind, payload in effects
     )
-    assert metrics.get(
-        "voice_conversation_turn_initiation_total",
-        {"kind": "asr_direct", "state": "assistant_overlap"},
-    ) == 1
-    assert metrics.get(
-        "voice_conversation_yield_proxy_total", {"status": "candidate"}
-    ) == 1
-    assert metrics.get(
-        "voice_conversation_participation_proxy_ms_total", {"kind": "owner"}
-    ) == 500
+    assert (
+        metrics.get(
+            "voice_conversation_turn_initiation_total",
+            {"kind": "asr_direct", "state": "assistant_overlap"},
+        )
+        == 1
+    )
+    assert metrics.get("voice_conversation_yield_proxy_total", {"status": "candidate"}) == 1
+    assert metrics.get("voice_conversation_participation_proxy_ms_total", {"kind": "owner"}) == 500
 
 
 @pytest.mark.asyncio
@@ -9268,9 +9324,9 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is False
-    assert metrics.get(
-        "voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}
-    ) == 0
+    assert (
+        metrics.get("voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}) == 0
+    )
 
 
 @pytest.mark.asyncio

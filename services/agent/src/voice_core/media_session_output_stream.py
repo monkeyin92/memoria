@@ -146,9 +146,7 @@ class MediaOutputStreamMixin:
             previous_phase: TurnPhase,
         ) -> None: ...
 
-        def flush_pending_missed_hearing_nudge(
-            self, context: _MediaVoiceSession
-        ) -> None: ...
+        def flush_pending_missed_hearing_nudge(self, context: _MediaVoiceSession) -> None: ...
 
         def clear_device_wake_ack_fence(
             self,
@@ -171,9 +169,7 @@ class MediaOutputStreamMixin:
             owner_intent_active = coordinator.output_intent_is_active(
                 owner.intent,
                 current_fence=context.runtime.fence,
-                current_context_version=coordinator.current_context_version(
-                    fence.session_id
-                ),
+                current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
             )
         await self._cancel_reply_task(context, fence, reason=reason)
@@ -198,9 +194,7 @@ class MediaOutputStreamMixin:
                 for intent_id, pending in tuple(context.output_work.items()):
                     if pending.fence.matches(fence):
                         context.output_work.pop(intent_id, None)
-                context.runtime.orchestrator.delegation.reset_output_intent_state(
-                    fence.session_id
-                )
+                context.runtime.orchestrator.delegation.reset_output_intent_state(fence.session_id)
                 if cancelled is None:
                     await context.runtime.on_assistant_reply_aborted(
                         fence,
@@ -264,9 +258,8 @@ class MediaOutputStreamMixin:
         # replace a complete answer with its last phrase.
         heard = context.playback.actual_heard_text(fence)
         delivery = context.reply_delivery.get(fence)
-        if (
-            context.playback.received_sequence(fence) >= 0
-            and (delivery is None or not delivery.first_frame_sent)
+        if context.playback.received_sequence(fence) >= 0 and (
+            delivery is None or not delivery.first_frame_sent
         ):
             # Keep direct playback-ledger fixtures and legacy callers honest:
             # an accepted playback range is the same transport boundary as a
@@ -539,9 +532,8 @@ class MediaOutputStreamMixin:
                     "downlink_frame_accepted",
                 )
                 if (
-                    (delivery_before is None or not delivery_before.first_frame_sent)
-                    and context.tts_started_ns is not None
-                ):
+                    delivery_before is None or not delivery_before.first_frame_sent
+                ) and context.tts_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
                         (time.monotonic_ns() - context.tts_started_ns) / 1_000_000_000,
@@ -594,7 +586,16 @@ class MediaOutputStreamMixin:
             raise
         except Exception:
             self.metrics.inc_media_session_failed()
-            await self._cancel_reply_task(context, fence, reason="provider_failed")
+            # A provider that dies before its first frame leaves a half-duplex
+            # device session in THINKING, where every later vad.end is dropped
+            # as playback echo.  Give the floor back through the same seam as
+            # every other generation that never reached the device.
+            await self._abort_unheard_stream(
+                context,
+                fence,
+                reason="provider_failed",
+                emitted_audio=emitted_audio,
+            )
             raise
         if emitted_audio and context.runtime.fence.matches(fence):
             # Provider completion is not playback completion. Keep the runtime
@@ -727,9 +728,9 @@ class MediaOutputStreamMixin:
             or not context.runtime.fence.matches(fence)
         ):
             return
-        assistant_text = context.assistant_text.strip() or context.playback.actual_heard_text(
-            fence
-        ).strip()
+        assistant_text = (
+            context.assistant_text.strip() or context.playback.actual_heard_text(fence).strip()
+        )
         if not is_short_assistant_farewell_reply(assistant_text):
             return
         last_user = next(
