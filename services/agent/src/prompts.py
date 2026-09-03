@@ -89,11 +89,34 @@ DEVICE_WAKE_PHRASES = (
     "哎呀，好困呀。",
 )
 
+SPEAKER_ENROLLMENT_SAMPLE_PROMPTS = (
+    "请说第一段，使用自然语气介绍一下自己。",
+    "请说第二段，换成柔和一点的语气。",
+    "请说第三段，带一点微笑地说一句话。",
+    "请说第四段，用平时认真说话的语气说一句话。",
+)
+SPEAKER_ENROLLMENT_DONE_PHRASE = "好的，已经记下你的声音了。"
+SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE = "这次没录完整，可以在小程序里重新点登记。"
+SPEAKER_ENROLLMENT_PHRASES = SPEAKER_ENROLLMENT_SAMPLE_PROMPTS + (
+    SPEAKER_ENROLLMENT_DONE_PHRASE,
+    SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE,
+)
+
 
 def device_wake_phrase(session_id: str) -> str:
     """Pick a stable allowlisted wake reply for one device session."""
 
     return DEVICE_WAKE_PHRASES[sum(session_id.encode()) % len(DEVICE_WAKE_PHRASES)]
+
+
+def is_allowlisted_device_phrase(phrase: str) -> bool:
+    """True when the device may speak this fixed phrase without model text."""
+
+    return (
+        phrase in BRIDGE_PHRASES
+        or phrase in DEVICE_WAKE_PHRASES
+        or phrase in SPEAKER_ENROLLMENT_PHRASES
+    )
 
 
 __all__ = [
@@ -103,7 +126,12 @@ __all__ = [
     "DEVICE_WAKE_PHRASES",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",
+    "SPEAKER_ENROLLMENT_DONE_PHRASE",
+    "SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE",
+    "SPEAKER_ENROLLMENT_PHRASES",
+    "SPEAKER_ENROLLMENT_SAMPLE_PROMPTS",
     "TUTOR_STYLE",
     "VOICE_SYSTEM_PROMPT",
     "device_wake_phrase",
+    "is_allowlisted_device_phrase",
 ]

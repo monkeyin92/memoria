@@ -307,7 +307,7 @@ async def create_enrollment_intent(
         account_id=user.user_id,
         consent_policy_version=body.consent_policy_version,
         now=now.isoformat(),
-        expires_at=(now + timedelta(minutes=15)).isoformat(),
+        expires_at=(now + timedelta(hours=24)).isoformat(),
     )
     return {
         "intent_id": intent.intent_id,

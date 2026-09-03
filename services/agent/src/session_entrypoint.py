@@ -26,6 +26,9 @@ from services.agent.src.device_vad import (
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.fixed_speech import FixedSpeechPlayer
+from services.agent.src.orchestration.formal_speaker_enrollment import (
+    run_formal_speaker_enrollment,
+)
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
@@ -33,10 +36,6 @@ from services.agent.src.providers.interrupt_semantic_classifier import (
 )
 from services.agent.src.response_planner_client import ResponsePlannerClient
 from services.agent.src.runtime_speaker import KeywordSpotterBinding
-from services.agent.src.speaker_authority_client import (
-    SpeakerAuthorityClient,
-    SpeakerEnrollmentSample,
-)
 from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.common.companions import companion_definition
@@ -158,85 +157,6 @@ def should_enable_legacy_speaker_verifier(settings: Any, *, offline: bool) -> bo
             "legacy speaker enrollment disabled because formal speaker authority is enabled"
         )
     return enabled and not authority_enabled and not offline
-
-
-async def run_formal_speaker_enrollment(
-    *,
-    runtime: DuplexRuntime,
-    fixed_speech: FixedSpeechPlayer,
-    authority: SpeakerAuthorityClient,
-    intent_id: str,
-    sample_count: int = 4,
-    sample_timeout_s: float = 15.0,
-) -> dict[str, Any]:
-    """Collect device endpoint samples and submit one formal enrollment.
-
-    This is intentionally session-scoped.  The device supplies PCM through
-    the existing Agent audio path; the control plane resolves account identity
-    from ``session_id`` and owns all biometric templates and activation gates.
-    """
-
-    if not 3 <= sample_count <= 4:
-        raise ValueError("formal speaker enrollment currently supports 3 or 4 samples")
-    samples: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=sample_count)
-    collected: list[tuple[bytes, int]] = []
-
-    async def _receive_sample(pcm: bytes, sample_rate: int) -> None:
-        if samples.full():
-            return
-        await samples.put((pcm, sample_rate))
-
-    runtime.set_formal_speaker_enrollment_sample_sink(_receive_sample)
-    runtime.begin_formal_speaker_enrollment(target_samples=sample_count)
-    prompts = (
-        "请说第一段，使用自然语气介绍一下自己。",
-        "请说第二段，换成柔和一点的语气。",
-        "请说第三段，带一点微笑地说一句话。",
-        "请说第四段，用平时认真说话的语气说一句话。",
-    )
-    try:
-        for index in range(sample_count):
-            await fixed_speech.say(
-                prompts[index],
-                interruptible=False,
-                restore_state="speaker_enroll",
-            )
-            try:
-                collected.append(await asyncio.wait_for(samples.get(), timeout=sample_timeout_s))
-            except TimeoutError:
-                runtime.publish_formal_speaker_enrollment_result(
-                    accepted=False,
-                    reason="sample_timeout",
-                )
-                return {"status": "failed", "reason": "sample_timeout"}
-        payload = await authority.enroll(
-            session_id=runtime.session_id,
-            intent_id=intent_id,
-            samples=[
-                SpeakerEnrollmentSample(pcm=pcm, sample_rate=sample_rate)
-                for pcm, sample_rate in collected
-            ],
-        )
-        runtime.publish_formal_speaker_enrollment_result(
-            accepted=True,
-            reason="submitted",
-            profile_id=str(payload.get("profile_id")),
-            status=str(payload.get("status")),
-        )
-        return payload
-    except Exception:
-        logger.warning(
-            "formal speaker enrollment failed session_id=%s",
-            runtime.session_id,
-            exc_info=True,
-        )
-        runtime.publish_formal_speaker_enrollment_result(
-            accepted=False,
-            reason="authority_error",
-        )
-        return {"status": "failed", "reason": "authority_error"}
-    finally:
-        runtime.end_formal_speaker_enrollment(reason="completed")
 
 
 def prewarm(proc: Any) -> None:
@@ -1158,6 +1078,11 @@ async def entrypoint(ctx: Any) -> None:
     # the resulting status and never supplies PCM.
     if device_session and runtime_settings.speaker_authority_enabled and not offline:
         try:
+            from services.agent.src.speaker_authority_client import (
+                SpeakerAuthorityClient,
+                SpeakerAuthorityClientConfig,
+            )
+
             formal_authority = SpeakerAuthorityClient(
                 SpeakerAuthorityClientConfig(
                     endpoint=runtime_settings.speaker_authority_url,
@@ -1174,11 +1099,26 @@ async def entrypoint(ctx: Any) -> None:
             if enrollment_state in {"requested", "required"}:
                 intent_id = str((enrollment_status.get("enrollment") or {}).get("intent_id") or "")
                 if intent_id:
+
+                    async def _say_enrollment_prompt(text: str) -> None:
+                        await fixed_speech.say(
+                            text,
+                            interruptible=False,
+                            restore_state="speaker_enroll",
+                        )
+
                     await run_formal_speaker_enrollment(
                         runtime=runtime,
-                        fixed_speech=fixed_speech,
+                        speak=_say_enrollment_prompt,
                         authority=formal_authority,
                         intent_id=intent_id,
+                    )
+                else:
+                    logger.info(
+                        "formal speaker enrollment skipped missing intent "
+                        "session_id=%s state=%s",
+                        runtime.session_id,
+                        enrollment_state,
                     )
         except Exception:
             logger.warning(

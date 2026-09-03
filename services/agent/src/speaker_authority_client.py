@@ -175,7 +175,7 @@ class SpeakerAuthorityClient:
                 self._status_endpoint(),
                 params={"session_id": session_id},
                 headers={"X-Memoria-Speaker-Token": self._config.internal_token},
-                timeout=self._config.timeout_s,
+                timeout=self._config.enrollment_timeout_s,
             )
             response.raise_for_status()
             payload = response.json()
@@ -263,3 +263,41 @@ class SpeakerAuthorityClient:
             )
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise ValueError("invalid speaker authority response") from exc
+
+
+def speaker_authority_client_from_settings() -> SpeakerAuthorityClient | None:
+    """Build the internal client when production speaker authority is on."""
+
+    from services.agent.src.config import AgentSettings
+
+    settings = AgentSettings()
+    token = settings.speaker_internal_token.get_secret_value()
+    if not settings.speaker_authority_enabled or not token.strip():
+        return None
+    return SpeakerAuthorityClient(
+        SpeakerAuthorityClientConfig(
+            endpoint=settings.speaker_authority_url,
+            internal_token=token,
+            timeout_s=settings.speaker_authority_timeout_s,
+            enrollment_timeout_s=10.0,
+        )
+    )
+
+
+async def load_device_enrollment_status(*, session_id: str) -> dict[str, Any] | None:
+    """Read session-scoped enrollment state; None means skip device prompts."""
+
+    if not session_id.strip():
+        return None
+    client = speaker_authority_client_from_settings()
+    if client is None:
+        return None
+    try:
+        return await client.enrollment_status(session_id=session_id)
+    except Exception:
+        logger.warning(
+            "device speaker enrollment status unavailable session_id=%s",
+            session_id,
+            exc_info=True,
+        )
+        return None

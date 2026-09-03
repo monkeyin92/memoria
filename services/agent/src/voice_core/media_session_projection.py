@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 _MISSED_HEARING_NUDGE_COOLDOWN_S = 12.0
 _MAX_MISSED_HEARING_NUDGES = 2
+_OUTPUT_IDLE_TIMEOUT_S = 30.0
 media_pb2: Any = _media_pb2
 
 
@@ -77,6 +79,12 @@ class MediaSessionProjectionMixin:
             user_text: str,
             fence: GenerationFence,
         ) -> bool: ...
+
+        def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
+
+        def _arm_owner_silence_timer(
+            self, context: _MediaVoiceSession, *, reset: bool
+        ) -> None: ...
 
     async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None:
         if context.identity.client_type != "device":
@@ -112,6 +120,157 @@ class MediaSessionProjectionMixin:
                 "device wake ack failed session=%s",
                 context.identity.session_id,
             )
+
+    def _spawn_device_speaker_enrollment(self, context: _MediaVoiceSession) -> None:
+        if context.identity.client_type != "device":
+            return
+        enabled = os.environ.get("MEMORIA_SPEAKER_AUTHORITY_ENABLED", "").strip().lower()
+        if enabled not in {"1", "true", "yes"}:
+            return
+        context.speaker_enrollment_task = asyncio.create_task(
+            self._run_device_speaker_enrollment(context),
+            name=f"device-speaker-enrollment-{context.identity.session_id}",
+        )
+
+    def _media_output_is_busy(self, context: _MediaVoiceSession) -> bool:
+        task = context.output_dispatch_task
+        return (
+            context.output_owner is not None
+            or context.runtime.assistant_speaking
+            or (task is not None and not task.done())
+        )
+
+    async def _wait_for_output_idle(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        timeout_s: float = _OUTPUT_IDLE_TIMEOUT_S,
+        wait_for_start: bool = False,
+    ) -> bool:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        seen_busy = self._media_output_is_busy(context)
+        while loop.time() < deadline:
+            if context.closed or context.standby_requested:
+                return False
+            busy = self._media_output_is_busy(context)
+            if busy:
+                seen_busy = True
+            elif seen_busy:
+                return True
+            elif not wait_for_start:
+                return True
+            await asyncio.sleep(0.05)
+        return bool(seen_busy and not self._media_output_is_busy(context))
+
+    async def _speak_device_enrollment_phrase(
+        self,
+        context: _MediaVoiceSession,
+        phrase: str,
+    ) -> bool:
+        context.runtime.open_assistant_floor_for_nudge()
+        spoken = await self._speak_allowlisted_bridge_phrase(
+            context,
+            phrase,
+            require_idle_input=False,
+        )
+        if not spoken:
+            return False
+        return await self._wait_for_output_idle(context, wait_for_start=True)
+
+    async def _run_device_speaker_enrollment(self, context: _MediaVoiceSession) -> None:
+        from services.agent.src.orchestration.formal_speaker_enrollment import (
+            run_formal_speaker_enrollment,
+        )
+        from services.agent.src.prompts import (
+            SPEAKER_ENROLLMENT_DONE_PHRASE,
+            SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE,
+        )
+        from services.agent.src.speaker_authority_client import (
+            load_device_enrollment_status,
+            speaker_authority_client_from_settings,
+        )
+
+        paused_silence = False
+        try:
+            status = await load_device_enrollment_status(
+                session_id=context.identity.session_id,
+            )
+            if context.closed or context.standby_requested:
+                return
+            enrollment = (status or {}).get("enrollment") or {}
+            state = str(enrollment.get("state") or "")
+            intent_id = str(enrollment.get("intent_id") or "")
+            if state not in {"requested", "required"} or not intent_id:
+                logger.info(
+                    "device speaker enrollment skipped session=%s state=%s intent=%s",
+                    context.identity.session_id,
+                    state or "unavailable",
+                    "yes" if intent_id else "no",
+                )
+                return
+            authority = speaker_authority_client_from_settings()
+            if authority is None:
+                logger.info(
+                    "device speaker enrollment skipped session=%s reason=authority_disabled",
+                    context.identity.session_id,
+                )
+                return
+            self._pause_owner_silence_timer(context)
+            paused_silence = True
+            wait_for_wake = context.device_wake_ack_fence is not None
+            if not await self._wait_for_output_idle(
+                context,
+                wait_for_start=wait_for_wake,
+            ):
+                logger.warning(
+                    "device speaker enrollment missed idle floor session=%s",
+                    context.identity.session_id,
+                )
+                return
+
+            async def _speak(text: str) -> None:
+                if not await self._speak_device_enrollment_phrase(context, text):
+                    raise RuntimeError("enrollment prompt was not spoken")
+
+            logger.info(
+                "device speaker enrollment started session=%s intent=%s",
+                context.identity.session_id,
+                intent_id,
+            )
+            result = await run_formal_speaker_enrollment(
+                runtime=context.runtime,
+                speak=_speak,
+                authority=authority,
+                intent_id=intent_id,
+            )
+            if context.closed or context.standby_requested:
+                return
+            failed = str(result.get("status") or "") == "failed" or result.get("reason") in {
+                "sample_timeout",
+                "authority_error",
+            }
+            await self._speak_device_enrollment_phrase(
+                context,
+                SPEAKER_ENROLLMENT_INCOMPLETE_PHRASE
+                if failed
+                else SPEAKER_ENROLLMENT_DONE_PHRASE,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "device speaker enrollment failed session=%s",
+                context.identity.session_id,
+                exc_info=True,
+            )
+        finally:
+            if (
+                paused_silence
+                and not context.closed
+                and not context.standby_requested
+            ):
+                self._arm_owner_silence_timer(context, reset=True)
 
     def _owner_speech_is_established(self, context: _MediaVoiceSession) -> bool:
         """True only when this turn carries verified owner authority.

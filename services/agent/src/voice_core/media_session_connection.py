@@ -222,6 +222,14 @@ class MediaSessionConnectionMixin:
                 stream_epoch=context_stream_epoch,
             )
             context.closed = True
+            enrollment_task = context.speaker_enrollment_task
+            context.speaker_enrollment_task = None
+            if (
+                enrollment_task is not None
+                and enrollment_task is not current_task
+                and not enrollment_task.done()
+            ):
+                enrollment_task.cancel()
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
             context.projection.discard_provisional(None, "session_closed")

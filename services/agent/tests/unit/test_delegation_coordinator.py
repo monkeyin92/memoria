@@ -20,7 +20,11 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionSnapshot,
 )
 from services.agent.src.orchestration.task_manager import TaskManager, ToolSpec
-from services.agent.src.prompts import BRIDGE_PHRASES, DEVICE_WAKE_PHRASES
+from services.agent.src.prompts import (
+    BRIDGE_PHRASES,
+    DEVICE_WAKE_PHRASES,
+    SPEAKER_ENROLLMENT_SAMPLE_PROMPTS,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 
 
@@ -305,6 +309,14 @@ def test_bridge_acknowledgement_is_allowlist_only() -> None:
         now_ms=1_000,
     )
     assert wake.tts_source == DEVICE_WAKE_PHRASES[0]
+    enroll = DelegationCoordinator.bridge_acknowledgement(
+        SPEAKER_ENROLLMENT_SAMPLE_PROMPTS[0],
+        fence=_fence(),
+        context_version=5,
+        expires_at_ms=2_000,
+        now_ms=1_000,
+    )
+    assert enroll.tts_source == SPEAKER_ENROLLMENT_SAMPLE_PROMPTS[0]
     with pytest.raises(ValueError):
         DelegationCoordinator.bridge_acknowledgement(
             "查询已经成功，结果一定正确。",

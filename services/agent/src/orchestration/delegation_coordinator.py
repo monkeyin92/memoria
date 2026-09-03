@@ -18,7 +18,7 @@ from services.agent.src.orchestration.task_manager import (
     ToolTask,
     spoken_result_summarizer,
 )
-from services.agent.src.prompts import BRIDGE_PHRASES, DEVICE_WAKE_PHRASES
+from services.agent.src.prompts import is_allowlisted_device_phrase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 
 media_pb2: Any = _media_pb2
@@ -679,7 +679,7 @@ class DelegationCoordinator:
         expires_at_ms: int,
         now_ms: int | None = None,
     ) -> Any:
-        if phrase not in BRIDGE_PHRASES and phrase not in DEVICE_WAKE_PHRASES:
+        if not is_allowlisted_device_phrase(phrase):
             raise ValueError("bridge acknowledgement is not allowlisted")
         now = int(time.time() * 1_000) if now_ms is None else now_ms
         if context_version < 0 or expires_at_ms <= now:

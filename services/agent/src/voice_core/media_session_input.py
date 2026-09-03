@@ -200,6 +200,20 @@ class MediaSessionInputMixin:
                     )
                     self._clear_pending_turn_state(context)
                     return
+                if context.runtime.formal_speaker_enrollment_active:
+                    self._cancel_max_user_speech_watchdog(context)
+                    context.runtime.on_user_voice_stopped()
+                    await context.provider.pause_asr_for_playback(context.identity)
+                    context.ingress.last_finalized_audio_watermark = max(
+                        context.ingress.last_finalized_audio_watermark,
+                        context.asr.last_sent_sample,
+                    )
+                    self._clear_pending_turn_state(context)
+                    logger.info(
+                        "media enrollment sample captured session=%s",
+                        context.identity.session_id,
+                    )
+                    return
                 # VAD end is the only normal endpoint for this watchdog.  Do
                 # this before provider finalization, which may await remote
                 # ASR work and otherwise leave the timer racing teardown.

@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from services.agent.src.orchestration.speaker_verify import speech_ms_from_pcm
+from services.agent.src.prompts import SPEAKER_ENROLLMENT_SAMPLE_PROMPTS
+from services.agent.src.speaker_authority_client import (
+    SpeakerAuthorityClient,
+    SpeakerEnrollmentSample,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -65,4 +76,74 @@ class FormalSpeakerEnrollment:
         return tuple(self._samples)
 
 
-__all__ = ["FormalSpeakerEnrollment"]
+async def run_formal_speaker_enrollment(
+    *,
+    runtime: Any,
+    speak: Callable[[str], Awaitable[None]],
+    authority: SpeakerAuthorityClient,
+    intent_id: str,
+    sample_count: int = 4,
+    sample_timeout_s: float = 15.0,
+) -> dict[str, Any]:
+    """Collect device endpoint samples and submit one formal enrollment.
+
+    The device supplies PCM through the existing Agent audio path. The control
+    plane resolves account identity from ``session_id`` and owns templates.
+    """
+
+    if not 3 <= sample_count <= 4:
+        raise ValueError("formal speaker enrollment currently supports 3 or 4 samples")
+    if sample_count > len(SPEAKER_ENROLLMENT_SAMPLE_PROMPTS):
+        raise ValueError("formal speaker enrollment is missing a prompt")
+    samples: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=sample_count)
+    collected: list[tuple[bytes, int]] = []
+
+    async def _receive_sample(pcm: bytes, sample_rate: int) -> None:
+        if samples.full():
+            return
+        await samples.put((pcm, sample_rate))
+
+    runtime.set_formal_speaker_enrollment_sample_sink(_receive_sample)
+    runtime.begin_formal_speaker_enrollment(target_samples=sample_count)
+    try:
+        for index in range(sample_count):
+            await speak(SPEAKER_ENROLLMENT_SAMPLE_PROMPTS[index])
+            try:
+                collected.append(await asyncio.wait_for(samples.get(), timeout=sample_timeout_s))
+            except TimeoutError:
+                runtime.publish_formal_speaker_enrollment_result(
+                    accepted=False,
+                    reason="sample_timeout",
+                )
+                return {"status": "failed", "reason": "sample_timeout"}
+        payload = await authority.enroll(
+            session_id=runtime.session_id,
+            intent_id=intent_id,
+            samples=[
+                SpeakerEnrollmentSample(pcm=pcm, sample_rate=sample_rate)
+                for pcm, sample_rate in collected
+            ],
+        )
+        runtime.publish_formal_speaker_enrollment_result(
+            accepted=True,
+            reason="submitted",
+            profile_id=str(payload.get("profile_id")),
+            status=str(payload.get("status")),
+        )
+        return payload
+    except Exception:
+        logger.warning(
+            "formal speaker enrollment failed session_id=%s",
+            runtime.session_id,
+            exc_info=True,
+        )
+        runtime.publish_formal_speaker_enrollment_result(
+            accepted=False,
+            reason="authority_error",
+        )
+        return {"status": "failed", "reason": "authority_error"}
+    finally:
+        runtime.end_formal_speaker_enrollment(reason="completed")
+
+
+__all__ = ["FormalSpeakerEnrollment", "run_formal_speaker_enrollment"]

@@ -135,6 +135,39 @@ async def test_client_reads_session_scoped_enrollment_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enrollment_status_uses_enrollment_timeout_not_classify_timeout() -> None:
+    observed: dict[str, object] = {}
+
+    class _Recorder:
+        async def get(self, url: object, **kwargs: object) -> httpx.Response:
+            observed["timeout"] = kwargs.get("timeout")
+            observed["path"] = httpx.URL(str(url)).path
+            return httpx.Response(
+                200,
+                request=httpx.Request("GET", str(url)),
+                json={"enrollment": {"state": "requested"}},
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    client = SpeakerAuthorityClient(
+        SpeakerAuthorityClientConfig(
+            endpoint="https://control.test/v1/speakers/classify",
+            internal_token="speaker-internal-token",
+            timeout_s=0.4,
+            enrollment_timeout_s=10.0,
+        ),
+        client=_Recorder(),  # type: ignore[arg-type]
+    )
+    status = await client.enrollment_status(session_id="session-001")
+
+    assert observed["timeout"] == 10.0
+    assert observed["path"] == "/v1/speakers/status/internal"
+    assert status["enrollment"] == {"state": "requested"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("policy", [None, "false", 0])
 async def test_client_defaults_missing_or_unparseable_policy_to_strict(policy: object) -> None:
     payload = _guest_payload()

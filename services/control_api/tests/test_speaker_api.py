@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -368,6 +368,10 @@ async def test_internal_device_enrollment_resolves_account_from_voice_session(
             },
         )
         assert intent_response.status_code == 201, intent_response.text
+        intent_payload = intent_response.json()
+        created_at = datetime.fromisoformat(str(intent_payload["created_at"]))
+        expires_at = datetime.fromisoformat(str(intent_payload["expires_at"]))
+        assert expires_at - created_at == timedelta(hours=24)
         _add_voice_session(
             app,
             user_id=identity["user_id"],
