@@ -405,6 +405,7 @@ class MediaTurnEndpointMixin:
         context.clock_fact_endpoint_pinned = None
         context.clock_fact_forced_text = None
         context.live_query_forced_text = None
+        context.live_query_forced_authoritative = False
         context.missed_hearing_nudge_count = 0
         context.last_missed_hearing_nudge_at = None
 

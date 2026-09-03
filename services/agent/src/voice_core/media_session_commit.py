@@ -103,6 +103,11 @@ def _resolve_media_turn_text(
     )
     preferred_live = _preferred_live_query_text(context)
     if preferred_live:
+        # An authoritative forced text means the in-range timeline text comes
+        # from a blocking interval (e.g. playback echo that overlapped the
+        # user final), so length comparison against it is meaningless.
+        if context.live_query_forced_authoritative:
+            return preferred_live
         if not text or len(preferred_live.strip()) > len(text.strip()):
             return preferred_live
     if not preferred_clock:
@@ -326,9 +331,22 @@ class MediaSessionCommitMixin:
         result: ASRResult,
         reason: ASRDecisionReason,
     ) -> None:
-        """Keep weather/live turns when a final spans an already-committed range."""
+        """Keep weather/live turns when overlap policy drops an otherwise valid final.
 
-        if reason is not ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING:
+        Two rejection shapes are recovered here:
+        - STRADDLES_COMMITTED_WITHOUT_TIMING: the final spans an already-
+          committed range; trim its start to the committed watermark.
+        - CROSS_SENTENCE_OVERLAP: a blocking interval (e.g. playback echo
+          transcribed while the assistant was speaking) overlaps the user
+          final. The in-range timeline text is then untrustworthy, so the
+          forced text is marked authoritative to win commit-time resolution
+          regardless of length.
+        """
+
+        if reason not in (
+            ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING,
+            ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
+        ):
             return
         text = result.text.strip()
         if not text or not await context.runtime.resolve_live_lookup_needed(text):
@@ -356,6 +374,11 @@ class MediaSessionCommitMixin:
                 )
                 self._observe_final_asr_result(context, adjusted)
         context.live_query_forced_text = text
+        if reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
+            # The blocking interval's text (e.g. playback echo) stays on the
+            # in-range timeline, so the recovered text must win commit-time
+            # resolution unconditionally rather than by length.
+            context.live_query_forced_authoritative = True
 
     def _log_asr_rejection(
         self,

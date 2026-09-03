@@ -5868,6 +5868,128 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
 
 
 @pytest.mark.asyncio
+async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> None:
+    """Playback echo must not starve the first real user turn.
+
+    Regression for the 2026-09-03 field failure: the welcome-message echo was
+    transcribed into a final interval, the weather rescue final overlapped it
+    and was rejected as cross_sentence_overlap, and the turn starved with no
+    commit. The recovered forced text must win commit-time resolution even
+    though the echo text on the in-range timeline is longer.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-weather-overlap")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="echo-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=62_080,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        echo_decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            echo,
+        )
+        assert echo_decision.accepted is not None
+        weather = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="weather-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=148_160,
+            text="今天南京的天气怎么样",
+            is_final=True,
+            confidence=0.9,
+            rescue_synthesized=True,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            weather,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.live_query_forced_authoritative
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-end",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=133_760,
+                capture_end_sample=133_761,
+                final=True,
+                voiced_end_sample=133_760,
+            ),
+        )
+        context.turn_start_sample = 0
+        context.turn_end_sample = 133_760
+        context.turn_endpoint_sample = 133_760
+        context.turn_retire_sample = 148_160
+        fence, reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=133_760,
+            retire_sample=148_160,
+        )
+        assert fence is not None
+        assert reason is None
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        # The longer echo text must not win; the authoritative forced text does.
+        assert user_turns == ["今天南京的天气怎么样"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

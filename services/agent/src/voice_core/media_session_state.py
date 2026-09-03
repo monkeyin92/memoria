@@ -81,6 +81,10 @@ class MediaVoiceSessionState:
     clock_fact_endpoint_pinned: int | None = None
     clock_fact_forced_text: str | None = None
     live_query_forced_text: str | None = None
+    # Set when the forced live-query text was recovered from a
+    # CROSS_SENTENCE_OVERLAP rejection: in-range timeline text then belongs
+    # to the blocking interval and the forced text must win unconditionally.
+    live_query_forced_authoritative: bool = False
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
