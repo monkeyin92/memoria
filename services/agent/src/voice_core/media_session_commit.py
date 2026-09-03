@@ -23,6 +23,7 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
+from services.agent.src.orchestration.interruption_guard import is_conversation_close_only
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -291,7 +292,9 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        if await context.runtime.resolve_live_lookup_needed(text):
+        if is_conversation_close_only(text) or await context.runtime.resolve_live_lookup_needed(
+            text
+        ):
             await self._recover_straddling_live_query_final(
                 context,
                 session_id=session_id,
@@ -368,7 +371,12 @@ class MediaSessionCommitMixin:
         ):
             return
         text = result.text.strip()
-        if not text or not await context.runtime.resolve_live_lookup_needed(text):
+        if not text:
+            return
+        if not (
+            is_conversation_close_only(text)
+            or await context.runtime.resolve_live_lookup_needed(text)
+        ):
             return
         committed = context.asr.last_committed_sample
         if result.capture_end_sample <= committed:

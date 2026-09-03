@@ -265,7 +265,22 @@ _CONVERSATION_CLOSE_COMPOUND_PREFIXES = frozenset(
 )
 
 _MAX_COMPOUND_CONVERSATION_CLOSE_CHARS = 14
+_MAX_TRAILING_FAREWELL_CHARS = 40
 _MAX_ASSISTANT_FAREWELL_REPLY_CHARS = 36
+_CLAUSE_SPLIT = re.compile(r"[。！？.!?，,；;：:、]+")
+_FALSE_FAREWELL_MARKERS = ("要说再见", "说再见", "叫再见", "什么意思")
+_DISMISS_MARKERS = (
+    "知道了",
+    "好的",
+    "不用了",
+    "够了",
+    "先这样",
+    "就这样",
+    "行了",
+    "可以了",
+    "好了",
+    "休息",
+)
 
 _NON_TARGET_SCRIPT = re.compile(r"[\u3040-\u30ff\uac00-\ud7af]")
 _CANTONESE_MARKERS = frozenset("佢嘅咁冇喺啲咗嚟噉唔仲俾")
@@ -307,7 +322,13 @@ def is_completion_ack_only(text: str) -> bool:
 
 
 def is_conversation_close_only(text: str) -> bool:
-    """Return whether one exact owner utterance requests device standby."""
+    """Return whether one owner utterance requests device standby.
+
+    Exact phrases stay the fast path. A longer turn still counts when the
+    last punctuated clause is a close phrase, or when a short dismiss
+    (「好的/知道了」) ends with 再见/拜拜. Questions about the word itself
+    stay in chat.
+    """
 
     compact = _conversation_close_compact(text)
     if compact in _CONVERSATION_CLOSE_ONLY or compact in _ENGLISH_CONVERSATION_CLOSE_ONLY:
@@ -315,7 +336,11 @@ def is_conversation_close_only(text: str) -> bool:
     raw_compact = _compact_interrupt_text(text)
     if raw_compact.isascii():
         return False
-    return _is_compound_conversation_close(raw_compact)
+    if _is_compound_conversation_close(raw_compact):
+        return True
+    if _is_last_clause_conversation_close(text):
+        return True
+    return _is_trailing_dismiss_farewell(raw_compact)
 
 
 def user_turn_suggests_conversation_close(text: str) -> bool:
@@ -343,6 +368,30 @@ def _is_compound_conversation_close(compact: str) -> bool:
             continue
         prefix = compact[: -len(suffix)]
         if prefix in _CONVERSATION_CLOSE_COMPOUND_PREFIXES:
+            return True
+    return False
+
+
+def _is_last_clause_conversation_close(text: str) -> bool:
+    clauses = [part.strip() for part in _CLAUSE_SPLIT.split(text) if part.strip()]
+    if len(clauses) < 2:
+        return False
+    last = _compact_interrupt_text(clauses[-1])
+    if last in _CONVERSATION_CLOSE_ONLY or last in _ENGLISH_CONVERSATION_CLOSE_ONLY:
+        return True
+    return _is_compound_conversation_close(last)
+
+
+def _is_trailing_dismiss_farewell(compact: str) -> bool:
+    if not compact or len(compact) > _MAX_TRAILING_FAREWELL_CHARS:
+        return False
+    if any(marker in compact for marker in _FALSE_FAREWELL_MARKERS):
+        return False
+    for suffix in _CONVERSATION_CLOSE_FAREWELL_SUFFIXES:
+        if not compact.endswith(suffix) or len(compact) <= len(suffix):
+            continue
+        body = compact[: -len(suffix)]
+        if any(marker in body for marker in _DISMISS_MARKERS):
             return True
     return False
 

@@ -304,6 +304,12 @@ def test_conversation_close_phrases_are_hardware_scoped_and_exact() -> None:
     assert route_utterance("再见").intent is UtteranceIntent.CHAT
     assert route_utterance("再见是什么意思", device_conversation=True).intent is UtteranceIntent.CHAT
     assert route_utterance("我知道了怎么做", device_conversation=True).intent is UtteranceIntent.CHAT
+    route = route_utterance(
+        "你说的好多呀，好的，我知道了，再见！",
+        device_conversation=True,
+    )
+    assert route.intent is UtteranceIntent.END_SESSION
+    assert route.reason == "conversation_end_explicit"
 
 
 def test_interrupt_then_chat_has_no_control_ack() -> None:

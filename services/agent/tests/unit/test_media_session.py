@@ -6094,6 +6094,72 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
 
 
 @pytest.mark.asyncio
+async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> None:
+    """A trailing 再见 must not starve when overlap policy drops the final."""
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-close-overlap")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="echo-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=64_000,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        echo_decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            echo,
+        )
+        assert echo_decision.accepted is not None
+        farewell = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=336_960,
+            text="你说的好多呀，好的，我知道了，再见！",
+            is_final=True,
+            confidence=0.9,
+            rescue_synthesized=True,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            farewell,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.live_query_forced_text == "你说的好多呀，好的，我知道了，再见！"
+        assert context.live_query_forced_authoritative is True
+        assert context.turn_endpoint_sample == 336_960
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() -> None:
     """Reject-then-VAD-jitter must not starve an authoritative live-query recovery.
 

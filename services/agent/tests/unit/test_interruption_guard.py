@@ -51,6 +51,9 @@ def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
         "茉莉花茶怎么做",
     ):
         assert not is_conversation_close_only(sentence), sentence
+    assert is_conversation_close_only("你说的好多呀，好的，我知道了，再见！")
+    assert is_conversation_close_only("你说的好多呀好的我知道了再见")
+    assert is_conversation_close_only("行了，先这样吧，拜拜")
 
 
 def test_assistant_farewell_reply_pairs_with_user_close_intent() -> None:
