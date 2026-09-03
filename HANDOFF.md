@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-03
-resume_checkpoint: owner_voiceprint_keep_intent_fix_awaiting_board
+resume_checkpoint: owner_voiceprint_shadow_pending_not_active
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -41,10 +41,12 @@ resume_focus: owner_voiceprint_device_enrollment
 work_order: half_duplex_investor_demo
 demo_script_two_turns: PASS_epoch1367
 subject_adult_verified: true
-speaker_enrollment_state: requested
+speaker_enrollment_state: pending
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
-last_wake_epoch: 1371
-device_enrollment_prompts: keep_intent_fix_deployed_awaiting_board
+speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
+speaker_profile_status: shadow
+last_wake_epoch: 1372
+device_enrollment_prompts: four_samples_submitted_shadow_pending
 miniprogram_devtools_publish: not_done
 direct_real_device_verified: false
 ```
@@ -55,14 +57,15 @@ direct_real_device_verified: false
 2. **主人声纹门禁**：演示账号「主人」已 **adult/verified**。
 3. **epoch 1370**：四段都收进内存（speech_ms 580/760/440/440），提交 embedding 在 1.0s 超时返回 503；intent 被提前 consume，无 profile。板子说「这段没录上」是通用失败词，不是只丢第四段。
 4. **epoch 1371**：`state=required intent=no`，只播唤醒短句后停在聆听中。样本未落库，不能只补第四段。
-5. **提交/重试修复已切流**：Agent/Bridge `memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，Control `memoria-control-api:20260903-1745-enrollment-keep-intent-control-api`，源提交 `e781cb0`。成功写入 shadow 才消耗 intent；短 VAD 拼到 800ms；enrollment embed 5s、提交 30s；无 intent 时播「请先在小程序点一下登记」。intent `6bcb7345` 已恢复为 `requested`（至 2026-09-04 09:09 UTC）。
+5. **提交/重试修复已切流**：Agent/Bridge `memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，Control `memoria-control-api:20260903-1745-enrollment-keep-intent-control-api`，源提交 `e781cb0`。
+6. **epoch 1372 四段提交成功**：session `f30915aa`，POST enrollments/internal **201**；profile `1b5b577b` **shadow**；4 条 sample，embedding speech_ms 1970–3180；intent `6bcb7345` 已 consume。小程序「我的」为 **pending**。anti-spoof 为 `unavailable`（replay/synthetic_risk=1），激活接口会拒绝；shadow 不授予主人权限（同会话已见 `target_non_owner`）。
 
 **下一步（按顺序）**
 
-1. 板子待命后直接唤醒，**四段都再说一遍**，每段说完整一句话再停（有效人声大约 ≥800ms）。不必打开小程序。
-2. 「我的」应变为 `pending` → **`active`**。
-3. 可选：声纹 active 后复测「再见」；仍勿把 `direct_real_device_verified` 改为 true。
-4. 可选：开发者工具上传含「再试一次」按钮的小程序（非阻塞）。
+1. 不要把 pending/shadow 当主人认证；「再见」等结束语仍不会按主人关闭。
+2. 激活需要独立评估：≥200 trial 的 FAR/FRR 报告，且 sample 的 `risk_assessment=verified`。当前没有后台评估任务，也不得伪造 owner。
+3. 可选：开发者工具上传含「再试一次」按钮的小程序（非阻塞）。
+4. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
 
