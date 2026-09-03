@@ -206,6 +206,18 @@ class MediaTurnEndpointMixin:
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
 
+    @staticmethod
+    def _reply_in_flight(context: _MediaVoiceSession) -> bool:
+        """True when a reply is synthesizing, locked, or holding output."""
+
+        task = context.reply_task
+        return bool(
+            context.runtime.assistant_speaking
+            or context.output_owner is not None
+            or context.reply_lock.locked()
+            or (task is not None and not task.done())
+        )
+
     def _arm_live_query_forced_endpoint(
         self,
         context: _MediaVoiceSession,
@@ -218,6 +230,14 @@ class MediaTurnEndpointMixin:
         endpoint past ASR coverage and silently defer forever.
         """
 
+        if self._reply_in_flight(context):
+            logger.warning(
+                "media live-query forced endpoint skipped: reply in flight "
+                "session=%s text_len=%s",
+                context.identity.session_id,
+                len(result.text.strip()),
+            )
+            return
         endpoint = max(
             result.capture_end_sample,
             context.turn_end_sample or 0,
@@ -250,6 +270,14 @@ class MediaTurnEndpointMixin:
             return
         text = result.text.strip()
         if not text or not is_clock_fact_query(text):
+            return
+        if MediaTurnEndpointMixin._reply_in_flight(context):
+            logger.warning(
+                "media early clock-fact commit skipped: reply in flight "
+                "session=%s text_len=%s",
+                context.identity.session_id,
+                len(text),
+            )
             return
         endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
         context.turn_endpoint_sample = endpoint

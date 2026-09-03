@@ -169,6 +169,9 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        @staticmethod
+        def _reply_in_flight(context: _MediaVoiceSession) -> bool: ...
+
         def _maybe_early_commit_clock_fact(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -323,6 +326,18 @@ class MediaSessionCommitMixin:
                 )
         else:
             context.clock_fact_forced_text = result.text.strip()
+        # Timeline ingest above is intentional; only suppress re-arm/commit while
+        # an earlier reply still owns the session (late offline finals).
+        if self._reply_in_flight(context):
+            logger.warning(
+                "media clock-fact recovery commit skipped: reply in flight "
+                "session=%s text_len=%s samples=%s-%s",
+                session_id,
+                len(result.text.strip()),
+                result.capture_start_sample,
+                result.capture_end_sample,
+            )
+            return
         self._maybe_early_commit_clock_fact(context, result)
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
@@ -414,12 +429,21 @@ class MediaSessionCommitMixin:
             # in-range timeline, so the recovered text must win commit-time
             # resolution unconditionally rather than by length.
             context.live_query_forced_authoritative = True
-        # Forced text is already the authoritative commit text. Always arm
-        # turn bounds and re-schedule commit; do not depend on timeline
-        # re-injection succeeding (can_add/ingest may fail on overlap).
+        # Forced text is already the authoritative commit text. Always observe
+        # turn bounds; re-arm/commit only when no reply is already in flight.
         self._observe_final_asr_result(context, adjusted)
         if context.live_query_forced_authoritative:
-            self._arm_live_query_forced_endpoint(context, adjusted)
+            if self._reply_in_flight(context):
+                logger.warning(
+                    "media live-query recovery arm skipped: reply in flight "
+                    "session=%s text_len=%s samples=%s-%s",
+                    session_id,
+                    len(text),
+                    adjusted.capture_start_sample,
+                    adjusted.capture_end_sample,
+                )
+            else:
+                self._arm_live_query_forced_endpoint(context, adjusted)
 
     def _log_asr_rejection(
         self,

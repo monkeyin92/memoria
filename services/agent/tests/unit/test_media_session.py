@@ -6138,6 +6138,155 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
 
 
 @pytest.mark.asyncio
+async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Late overlap-rejected clock-fact must not cancel an in-flight reply.
+
+    Regression for stage-7 epoch 1363: weekday early-committed turn3 and
+    started Doubao TTS, then a longer-range offline final was rejected as
+    cross_sentence_overlap, recovery early-committed turn4, and cancel_reply
+    killed turn3 (reply_task_exception). While a reply owns the session,
+    recovery may still ingest timeline text but must not re-arm/commit.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-late-clock-fact-inflight")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="clock-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+        first = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=178_240,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, first)
+
+        async def _reply_owns_session() -> bool:
+            return bool(
+                context.output_owner is not None
+                and any(
+                    turn.role == "user" and turn.content == "今天星期几"
+                    for turn in context.runtime.orchestrator.context.turns
+                )
+            )
+
+        for _ in range(40):
+            if await _reply_owns_session():
+                break
+            await asyncio.sleep(0.05)
+        assert await _reply_owns_session()
+        assert MediaVoiceCoreRegistry._reply_in_flight(context)
+        in_flight_fence = context.output_owner.fence
+        in_flight_task = context.reply_task
+        generation_count_before = len(bridge.generation_starts)
+        user_turns_before = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns_before == ["今天星期几"]
+        committed = context.asr.last_committed_sample
+        assert committed >= 178_240
+
+        # Blocking interval after the committed watermark (playback echo shape).
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="playback-echo",
+            revision=1,
+            capture_start_sample=committed,
+            capture_end_sample=committed + 62_080,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, echo)
+
+        # Longer overlapping rescue final cannot supersede a real provider
+        # interval → cross_sentence_overlap → recovery must skip re-commit.
+        late = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-late-offline",
+            revision=1,
+            capture_start_sample=committed,
+            capture_end_sample=committed + 120_000,
+            text="今天是星期几",
+            is_final=True,
+            confidence=0.95,
+            rescue_synthesized=True,
+        )
+        with caplog.at_level(logging.WARNING):
+            decision = await registry._accept_asr_result_decision(
+                identity.session_id,
+                late,
+            )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.turn_endpoint_sample is None
+        assert context.output_owner is not None
+        assert context.output_owner.fence == in_flight_fence
+        if in_flight_task is not None:
+            assert context.reply_task is in_flight_task
+            assert not in_flight_task.cancelled()
+        assert len(bridge.generation_starts) == generation_count_before
+        user_turns_after = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns_after == ["今天星期几"]
+        assert any(
+            "clock-fact recovery commit skipped: reply in flight" in record.message
+            for record in caplog.records
+        )
+        await asyncio.sleep(0.05)
+        assert not any(
+            "reply_task_exception" in record.message or "reply_task_cancelled" in record.message
+            for record in caplog.records
+        )
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
