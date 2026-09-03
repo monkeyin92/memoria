@@ -281,7 +281,7 @@ class AgentSettings(BaseSettings):
         alias="CONVERSATION_CLOSE_SEMANTIC_ENABLED",
     )
     conversation_close_semantic_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen3-flash",
         min_length=1,
         alias="CONVERSATION_CLOSE_SEMANTIC_MODEL",
     )

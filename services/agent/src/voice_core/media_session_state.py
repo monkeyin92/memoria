@@ -79,6 +79,11 @@ class MediaVoiceSessionState:
     # When set, a clock/date final already chose the turn endpoint; later VAD
     # tails must not extend the range or cancel the pending commit task.
     clock_fact_endpoint_pinned: int | None = None
+    conversation_close_partial_text: str | None = None
+    conversation_close_partial_stable_since: float | None = None
+    conversation_close_endpoint_pinned: int | None = None
+    conversation_close_semantic_text: str | None = None
+    conversation_close_semantic_task: asyncio.Task[None] | None = None
     clock_fact_forced_text: str | None = None
     live_query_forced_text: str | None = None
     # Set when the forced live-query text was recovered from a

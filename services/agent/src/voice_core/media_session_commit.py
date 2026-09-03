@@ -23,7 +23,6 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
-from services.agent.src.orchestration.interruption_guard import is_conversation_close_only
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -177,7 +176,15 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _maybe_early_commit_conversation_close(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
         def _maybe_early_commit_stable_clock_fact_partial(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
+        def _maybe_early_commit_stable_conversation_close_partial(
             self, context: _MediaVoiceSession
         ) -> None: ...
 
@@ -271,6 +278,7 @@ class MediaSessionCommitMixin:
         else:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
+            self._maybe_early_commit_stable_conversation_close_partial(context)
         return decision
 
     async def _recover_rejected_semantic_final(
@@ -292,9 +300,9 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        if is_conversation_close_only(text) or await context.runtime.resolve_live_lookup_needed(
-            text
-        ):
+        close_needed = await context.runtime.resolve_conversation_close_needed(text)
+        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        if close_needed or live_lookup_needed:
             await self._recover_straddling_live_query_final(
                 context,
                 session_id=session_id,
@@ -373,10 +381,9 @@ class MediaSessionCommitMixin:
         text = result.text.strip()
         if not text:
             return
-        if not (
-            is_conversation_close_only(text)
-            or await context.runtime.resolve_live_lookup_needed(text)
-        ):
+        close_needed = await context.runtime.resolve_conversation_close_needed(text)
+        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        if not (close_needed or live_lookup_needed):
             return
         committed = context.asr.last_committed_sample
         if result.capture_end_sample <= committed:

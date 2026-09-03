@@ -5437,6 +5437,244 @@ async def test_device_clock_fact_final_commits_before_vad_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_conversation_close_final_commits_before_vad_end() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-early-conversation-close")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="farewell-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="好的，那你早点休息，再见。",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        assert context.turn_endpoint_sample == 16_000
+        assert context.conversation_close_endpoint_pinned == 16_000
+        assert context.turn_endpoint_task is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_conversation_close_pin_blocks_late_vad_end_extension() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-conversation-close-pin")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="farewell-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="好的，再见",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        pinned = context.conversation_close_endpoint_pinned
+        assert pinned == 16_000
+        assert context.turn_endpoint_sample == pinned
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="late-vad-end",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=200_000,
+                capture_end_sample=200_001,
+                final=True,
+                voiced_end_sample=200_000,
+            ),
+        )
+        assert context.turn_endpoint_sample != 200_000
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_conversation_close_semantic_final_commits_before_vad_end() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-semantic-conversation-close")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        calls: list[str] = []
+
+        async def resolver(text: str) -> bool:
+            calls.append(text)
+            return text == "那先不聊了"
+
+        context.runtime.set_conversation_close_semantic_resolver(resolver)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="farewell-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="那先不聊了",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        task = context.conversation_close_semantic_task
+        if task is not None:
+            await task
+        assert calls == ["那先不聊了"]
+        assert (
+            context.conversation_close_endpoint_pinned == 16_000
+            or context.turn_endpoint_sample == 16_000
+            or context.standby_requested
+        )
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_conversation_close_rule_hit_skips_semantic_resolver() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-rule-conversation-close")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+
+        async def resolver(_: str) -> bool:
+            raise AssertionError("rule hit should not call semantic resolver")
+
+        context.runtime.set_conversation_close_semantic_resolver(resolver)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="farewell-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="好的，再见",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        assert context.turn_endpoint_sample == 16_000
+        assert context.conversation_close_semantic_task is None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_clock_fact_pin_blocks_late_vad_end_extension() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

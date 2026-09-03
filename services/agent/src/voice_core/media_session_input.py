@@ -240,6 +240,15 @@ class MediaSessionInputMixin:
                         voiced_end_sample,
                     )
                     return
+                if context.conversation_close_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_end ignored after conversation-close pin session=%s "
+                        "pinned_endpoint=%s voiced_end=%s",
+                        context.identity.session_id,
+                        context.conversation_close_endpoint_pinned,
+                        voiced_end_sample,
+                    )
+                    return
                 if (
                     context.live_query_forced_authoritative
                     and context.live_query_forced_text
@@ -286,6 +295,15 @@ class MediaSessionInputMixin:
                         "pinned_endpoint=%s vad_start=%s",
                         context.identity.session_id,
                         context.clock_fact_endpoint_pinned,
+                        segment.capture_start_sample,
+                    )
+                    return
+                if context.conversation_close_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_start ignored after conversation-close pin session=%s "
+                        "pinned_endpoint=%s vad_start=%s",
+                        context.identity.session_id,
+                        context.conversation_close_endpoint_pinned,
                         segment.capture_start_sample,
                     )
                     return

@@ -41,6 +41,7 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # a later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
+_CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 
 
 class MediaTurnEndpointMixin:
@@ -201,6 +202,7 @@ class MediaTurnEndpointMixin:
             else:
                 context.pending_partial = None
         self._maybe_early_commit_clock_fact(context, result)
+        self._maybe_early_commit_conversation_close(context, result)
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
         if context.turn_endpoint_sample is not None:
@@ -291,6 +293,195 @@ class MediaTurnEndpointMixin:
             endpoint,
             len(text),
         )
+
+    @staticmethod
+    def _pin_conversation_close_endpoint(
+        context: _MediaVoiceSession,
+        capture_end_sample: int,
+        *,
+        text_len: int,
+        source: str,
+    ) -> None:
+        endpoint = max(capture_end_sample, context.turn_end_sample or 0)
+        context.turn_endpoint_sample = endpoint
+        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
+        context.turn_retire_sample = endpoint
+        context.conversation_close_endpoint_pinned = endpoint
+        context.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media early conversation-close endpoint session=%s endpoint=%s "
+            "text_len=%s source=%s",
+            context.identity.session_id,
+            endpoint,
+            text_len,
+            source,
+        )
+
+    @staticmethod
+    def _cancel_conversation_close_semantic_task(
+        context: _MediaVoiceSession,
+    ) -> None:
+        task = context.conversation_close_semantic_task
+        if task is not None and not task.done():
+            task.cancel()
+        context.conversation_close_semantic_task = None
+        context.conversation_close_semantic_text = None
+
+    def _schedule_conversation_close_semantic_evaluation(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        text: str,
+        capture_end_sample: int,
+        source: str,
+    ) -> None:
+        if (
+            context.conversation_close_semantic_task is not None
+            and context.conversation_close_semantic_text == text
+        ):
+            return
+        self._cancel_conversation_close_semantic_task(context)
+        stream_epoch = context.stream_epoch
+        context.conversation_close_semantic_text = text
+        context.conversation_close_semantic_task = asyncio.create_task(
+            self._evaluate_conversation_close_early_commit(
+                context,
+                text=text,
+                capture_end_sample=capture_end_sample,
+                stream_epoch=stream_epoch,
+                source=source,
+            ),
+            name=f"conversation-close-semantic-{context.identity.session_id}",
+        )
+
+    async def _evaluate_conversation_close_early_commit(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        text: str,
+        capture_end_sample: int,
+        stream_epoch: int,
+        source: str,
+    ) -> None:
+        try:
+            if (
+                context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample is not None
+            ):
+                return
+            needed = await context.runtime.resolve_conversation_close_needed(text)
+            if not needed:
+                return
+            if (
+                context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample is not None
+            ):
+                logger.warning(
+                    "media early conversation-close semantic skipped after resolve "
+                    "session=%s text_len=%s source=%s",
+                    context.identity.session_id,
+                    len(text),
+                    source,
+                )
+                return
+            self._pin_conversation_close_endpoint(
+                context,
+                capture_end_sample,
+                text_len=len(text),
+                source=f"semantic_{source}",
+            )
+            self._schedule_turn_commit(context)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "media early conversation-close semantic failed session=%s text_len=%s source=%s",
+                context.identity.session_id,
+                len(text),
+                source,
+                exc_info=True,
+            )
+        finally:
+            if context.conversation_close_semantic_text == text:
+                context.conversation_close_semantic_task = None
+                context.conversation_close_semantic_text = None
+
+    def _maybe_early_commit_conversation_close(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Commit farewell/standby turns without waiting for a stuck device VAD end."""
+
+        if context.identity.client_type != "device":
+            return
+        if context.turn_endpoint_sample is not None:
+            return
+        text = result.text.strip()
+        if not text:
+            return
+        if context.runtime.conversation_close_needed(text):
+            self._pin_conversation_close_endpoint(
+                context,
+                result.capture_end_sample,
+                text_len=len(text),
+                source="final",
+            )
+            return
+        self._schedule_conversation_close_semantic_evaluation(
+            context,
+            text=text,
+            capture_end_sample=result.capture_end_sample,
+            source="final",
+        )
+
+    def _maybe_early_commit_stable_conversation_close_partial(
+        self,
+        context: _MediaVoiceSession,
+    ) -> None:
+        partial = context.pending_partial
+        if partial is None:
+            context.conversation_close_partial_text = None
+            context.conversation_close_partial_stable_since = None
+            self._cancel_conversation_close_semantic_task(context)
+            return
+        text = partial.text.strip()
+        if not text:
+            context.conversation_close_partial_text = None
+            context.conversation_close_partial_stable_since = None
+            self._cancel_conversation_close_semantic_task(context)
+            return
+        now = time.monotonic()
+        if context.conversation_close_partial_text == text:
+            if context.conversation_close_partial_stable_since is None:
+                context.conversation_close_partial_stable_since = now
+            elif (
+                context.turn_endpoint_sample is None
+                and context.conversation_close_endpoint_pinned is None
+                and now - context.conversation_close_partial_stable_since
+                >= _CONVERSATION_CLOSE_PARTIAL_STABLE_S
+            ):
+                if context.runtime.conversation_close_needed(text):
+                    self._pin_conversation_close_endpoint(
+                        context,
+                        partial.capture_end_sample,
+                        text_len=len(text),
+                        source="partial",
+                    )
+                    self._schedule_turn_commit(context)
+                else:
+                    self._schedule_conversation_close_semantic_evaluation(
+                        context,
+                        text=text,
+                        capture_end_sample=partial.capture_end_sample,
+                        source="partial",
+                    )
+        else:
+            context.conversation_close_partial_text = text
+            context.conversation_close_partial_stable_since = now
+            self._cancel_conversation_close_semantic_task(context)
 
     def _maybe_early_commit_stable_clock_fact_partial(
         self,
@@ -462,6 +653,10 @@ class MediaTurnEndpointMixin:
         context.clock_fact_partial_text = None
         context.clock_fact_partial_stable_since = None
         context.clock_fact_endpoint_pinned = None
+        context.conversation_close_partial_text = None
+        context.conversation_close_partial_stable_since = None
+        context.conversation_close_endpoint_pinned = None
+        MediaTurnEndpointMixin._cancel_conversation_close_semantic_task(context)
         context.clock_fact_forced_text = None
         context.live_query_forced_text = None
         context.live_query_forced_authoritative = False
@@ -648,11 +843,16 @@ class MediaTurnEndpointMixin:
                 context.clock_fact_endpoint_pinned is not None
                 and context.clock_fact_endpoint_pinned == endpoint_sample
             )
+            pinned_conversation_close = (
+                context.conversation_close_endpoint_pinned is not None
+                and context.conversation_close_endpoint_pinned == endpoint_sample
+            )
             forced_live_query = bool(
                 context.live_query_forced_authoritative and context.live_query_forced_text
             )
             if (
                 not pinned_clock_fact
+                and not pinned_conversation_close
                 and not forced_live_query
                 and not self._asr_covers_endpoint(
                     context,
