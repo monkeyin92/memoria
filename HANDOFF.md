@@ -195,18 +195,18 @@ barge_in: forbidden
 turn_phase_side_effects: forbidden
 direct_real_device_verified: false
 full_duplex_verified: false
-stage_2: pass_2026_09_02_receipt_1907_serial_vad_pending
+stage_2: pass_2026_09_03_receipt_1256_serial_vad_present
 stage_3: pass_2026_09_01_operator_receipt_pending_template_fields
 stage_4: pass_2026_09_01_quiet_mo_li_10of10_0false
 stage_5: pass_2026_09_01_operator_pending_template_receipt
 stage_6: pass_2026_09_02_operator_receipt_pending_template_fields
-stage_7: pass_2026_09_02_operator_receipt_pending_template_fields
+stage_7: pass_2026_09_03_receipt_1303_serial_vad_present
 success: two_natural_turns_actual_heard_then_wake_standby_script
 demo_script: outputs/acceptance/half_duplex_investor_demo-stage7-script.md
 demo_ready: true
 ```
 
-本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**2026-09-02 操作员 pass**：阶段 2（固件 `1af5a39e…` / 21 dB，receipt `1907`）、阶段 6（安静/电视/家庭噪声三环境）与阶段 7（锁定剧本，步骤 6 再唤醒 welcome pass / hello 回复降级）均已验收；**阶段 0–7 操作员 pass 已齐**，本候选可标 `demo_ready: true`。**模板 receipt 仅缺串口 `Device VAD start/end`**，故 `direct_real_device_verified` 保持 false。历史：阶段 2 听感曾于 2026-08-31 解除阻塞；旧 receipt `half_duplex_investor_demo-20260831-0949.md`（固件 `f15a3b35…`）不得复用。1150 之前的 11:33 阶段 2 FAIL 见 `outputs/acceptance/half_duplex_investor_demo-20260830-1133.md`，不得复用。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
+本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**阶段 0–7 操作员 pass 已齐**，`demo_ready: true`。阶段 2 / 7 权威收据现为 `20260903-1256` / `20260903-1303`（均含串口 Device VAD + 四件套，镜像 `20260903-1248-…`）。全局 `direct_real_device_verified` 仍 false（主人 subject capability / 幻影轮 / 天气 ledger 缺口未关）。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
 
 **阶段 3（2026-09-01 操作员 pass）**：收据 `outputs/acceptance/stage3_device_initiated-20260901-1545.md`（session `a4719c8f-fdc8-4397-a152-a13e9442049e`，stream_epoch=1346）。硬件端唤醒「茉莉」→ 欢迎语 →「今天星期几」完整回答 → `owner_silence_timeout` 关闭；fence/playback 链齐全。Turn 2 曾因 RMS 过低丢弃，Turn 3 clock-fact 成功。**未按 `half_duplex_investor_demo-<YYYYMMDD-HHMM>.md` 模板落盘**，缺 `firmware_app_sha256`、镜像 ID、串口 `vad.start`/`vad.end`、tap 路径；不得据此单独升级 `verified` 或 `direct_real_device_verified`。
 
@@ -231,7 +231,7 @@ demo_ready: true
 2. ~~**阶段 3**~~ **已通过（2026-09-01）**——见上 `stage3_device_initiated-20260901-1545.md`；若要与阶段 7 合并验收，建议下次现场用标准模板重录并补齐四件套。
 3. ~~**阶段 4（安静环境 `mo_li` ×10）**~~ **已通过（2026-09-01）**——见上 `stage4_wake_word_count-20260901-1530.md`。
 4. ~~**阶段 6（安静 / 电视 / 家庭噪声）**~~ **已通过（2026-09-02 操作员）**——见上。
-5. ~~**阶段 7（锁定投资人路演剧本 + 完整彩排）**~~ **已通过（2026-09-02 操作员）**——见 receipt `1907` + `half_duplex_investor_demo-stage7-script.md`；串口 VAD 仍缺。
+5. ~~**阶段 7（锁定投资人路演剧本 + 完整彩排）**~~ **已通过（2026-09-03 权威 receipt `1303`，含串口）**——见上；旧口述 `1907` 可被取代。
 
 阶段 8（AEC 新板、全双工 SKU）本 demo 工单内禁止开工；`demo_ready: true` 后另开候选规划阶段 8。
 
