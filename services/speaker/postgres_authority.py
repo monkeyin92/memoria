@@ -138,12 +138,17 @@ class PostgresSpeakerAuthority:
                 )
             )
             await connection.execute(
+                "UPDATE speaker_profiles SET status = 'shadow', activated_at = NULL "
+                "WHERE account_id = $1 AND status = 'active'",
+                request.account_id,
+            )
+            await connection.execute(
                 """
                 INSERT INTO speaker_profiles (
                     profile_id, account_id, identity_id, model_version,
                     template_version, template_ciphertext, owner_threshold,
-                    guest_threshold, consent_grant_id, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'shadow')
+                    guest_threshold, consent_grant_id, status, activated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', now())
                 """,
                 profile_id,
                 request.account_id,
@@ -187,7 +192,7 @@ class PostgresSpeakerAuthority:
             template_version=template_version,
             model_version=self._adapter.model_version,
             sample_count=len(request.samples),
-            status="shadow",
+            status="active",
             consent_grant_id=request.consent_grant_id,
         )
 

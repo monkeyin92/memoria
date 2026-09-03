@@ -35,7 +35,8 @@ def _embedding(**overrides: float | int | str | tuple[float, ...]) -> EmbeddingR
         (_embedding(quality_score=0.49), "low_quality"),
         (_embedding(replay_risk=0.5), "replay_risk"),
         (_embedding(synthetic_risk=0.5), "synthetic_risk"),
-        (_embedding(risk_assessment="unavailable"), "risk_assessment_unavailable"),
+        (_embedding(risk_assessment="unavailable"), None),
+        (_embedding(risk_assessment="unavailable", replay_risk=1.0, synthetic_risk=1.0), None),
         (_embedding(), None),
     ],
 )

@@ -258,16 +258,16 @@ async def _speaker_status_payload(request: Request, *, account_id: str) -> dict[
             account_id,
             now=datetime.now(UTC).isoformat(),
         )
-        if allowed and registered and active is None and shadow is None
+        if allowed and registered
         else None
     )
     state = (
-        "active"
+        "requested"
+        if pending_intent is not None
+        else "active"
         if active is not None
         else "pending"
         if shadow is not None
-        else "requested"
-        if pending_intent is not None
         else "required"
         if allowed and registered
         else "blocked"

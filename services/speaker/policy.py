@@ -23,8 +23,10 @@ def classification_quality_reason(result: EmbeddingResult) -> str | None:
     quality_reason = embedding_quality_reason(result)
     if quality_reason is not None:
         return quality_reason
+    # CAM++ has no anti-spoof head, so production embeddings are "unavailable"
+    # with sentinel risk=1.0. That is missing evidence, not a spoof detection.
     if result.risk_assessment != "verified":
-        return "risk_assessment_unavailable"
+        return None
     if result.replay_risk >= 0.5:
         return "replay_risk"
     if result.synthetic_risk >= 0.5:

@@ -142,15 +142,15 @@ async def test_control_api_enrolls_and_classifies_through_real_campplus_onnx(
             owner = await classify(speaker1_b)
             guest = await classify(speaker2_a)
 
-    assert enrolled.json()["status"] == "shadow"
+    assert enrolled.json()["status"] == "active"
     assert activation_rejected.status_code == 409
     assert "anti-spoof assessment is unavailable" in activation_rejected.text
     assert owner.status_code == guest.status_code == 200
-    assert owner.json()["classification"] == "uncertain"
-    assert owner.json()["reason_code"] == "shadow_owner_candidate"
+    assert owner.json()["classification"] == "owner"
+    assert owner.json()["reason_code"] == "owner_match"
     assert owner.json()["score"] >= 0.78
-    assert owner.json()["permissions"]["read_private_memory"] is False
-    assert guest.json()["classification"] == "uncertain"
-    assert guest.json()["reason_code"] == "shadow_guest_candidate"
+    assert owner.json()["permissions"]["read_private_memory"] is True
+    assert guest.json()["classification"] == "guest"
+    assert guest.json()["reason_code"] == "owner_mismatch"
     assert guest.json()["score"] <= 0.45
     assert guest.json()["permissions"]["write_long_term_memory"] is False

@@ -12,7 +12,6 @@ from services.speaker.domain import (
     EnrollmentRequest,
     EnrollmentSample,
     RevokeSpeakerProfile,
-    SpeakerEvaluation,
     SpeakerSample,
 )
 from services.speaker.postgres_authority import PostgresSpeakerAuthority
@@ -70,22 +69,7 @@ async def test_postgres_speaker_authority_matches_the_public_contract() -> None:
             ),
         )
     )
-    shadow = await authority.classify(
-        SpeakerSample(account_id=account_id, pcm=b"owner-live", sample_rate=16000)
-    )
-    await authority.activate(
-        enrollment.profile_id,
-        account_id=account_id,
-        evaluation=SpeakerEvaluation(
-            report_ref="eval-postgres-far-frr",
-            sample_count=200,
-            far=0.02,
-            frr=0.08,
-            eer=0.05,
-            unknown_rejection=0.93,
-            passed=True,
-        ),
-    )
+    assert enrollment.status == "active"
     owner = await authority.classify(
         SpeakerSample(account_id=account_id, pcm=b"owner-live", sample_rate=16000)
     )
@@ -104,11 +88,8 @@ async def test_postgres_speaker_authority_matches_the_public_contract() -> None:
         SpeakerSample(account_id=account_id, pcm=b"owner-live", sample_rate=16000)
     )
 
-    assert (shadow.classification, shadow.reason_code) == (
-        "uncertain",
-        "shadow_owner_candidate",
-    )
     assert owner.classification == "owner"
+    assert owner.reason_code == "owner_match"
     assert guest.classification == "guest"
     assert guest.permissions.read_private_memory is False
     assert [(item.template_version, item.status) for item in profiles] == [(1, "active")]

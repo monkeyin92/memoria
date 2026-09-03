@@ -242,8 +242,8 @@ async def test_registered_owner_manages_shadow_active_and_revoked_speaker_profil
             },
         )
 
-    assert enrolled.json()["status"] == "shadow"
-    assert profiles.json()["items"][0]["status"] == "shadow"
+    assert enrolled.json()["status"] == "active"
+    assert profiles.json()["items"][0]["status"] == "active"
     assert activated.status_code == 204
     assert owner.json()["classification"] == "owner"
     assert owner.json()["permissions"]["read_private_memory"] is True
@@ -396,14 +396,29 @@ async def test_internal_device_enrollment_resolves_account_from_voice_session(
         )
 
         status_response = await client.get("/v1/speakers/status", headers=owner_headers)
+        retry_intent = await client.post(
+            "/v1/speakers/enrollment-intents",
+            headers=owner_headers,
+            json={
+                "consent_policy_version": "speaker-biometric-v1",
+                "consent_accepted": True,
+            },
+        )
+        retry_status = await client.get("/v1/speakers/status", headers=owner_headers)
 
     assert response.status_code == 201, response.text
-    assert response.json()["status"] == "shadow"
+    assert response.json()["status"] == "active"
     assert response.json()["sample_count"] == 3
     assert status_response.status_code == 200
     enrollment = status_response.json()["enrollment"]
-    assert enrollment["state"] == "pending"
+    assert enrollment["state"] == "active"
     assert enrollment["intent_id"] is None
+    assert enrollment["active_profile_id"] == response.json()["profile_id"]
+    assert retry_intent.status_code == 201, retry_intent.text
+    retry_enrollment = retry_status.json()["enrollment"]
+    assert retry_enrollment["state"] == "requested"
+    assert retry_enrollment["intent_id"] == retry_intent.json()["intent_id"]
+    assert retry_enrollment["active_profile_id"] == response.json()["profile_id"]
 
 
 @pytest.mark.asyncio

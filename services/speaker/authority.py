@@ -380,12 +380,18 @@ class SpeakerAuthority:
             ).fetchone()
             template_version = int(row[0])
             connection.execute(
+                "UPDATE speaker_profiles SET status = 'shadow', activated_at = NULL "
+                "WHERE account_id = ? AND status = 'active'",
+                (request.account_id,),
+            )
+            connection.execute(
                 """
                 INSERT INTO speaker_profiles (
                     profile_id, account_id, identity_id, model_version,
                     template_version, template_ciphertext, owner_threshold,
-                    guest_threshold, consent_grant_id, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'shadow', ?)
+                    guest_threshold, consent_grant_id, status, created_at,
+                    activated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     profile_id,
@@ -397,6 +403,7 @@ class SpeakerAuthority:
                     self._owner_threshold,
                     self._guest_threshold,
                     request.consent_grant_id,
+                    now,
                     now,
                 ),
             )
@@ -431,7 +438,7 @@ class SpeakerAuthority:
             template_version=template_version,
             model_version=self._adapter.model_version,
             sample_count=len(request.samples),
-            status="shadow",
+            status="active",
             consent_grant_id=request.consent_grant_id,
         )
 

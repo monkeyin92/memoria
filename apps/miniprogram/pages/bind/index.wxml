@@ -179,7 +179,7 @@
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
-      <text class="done-note">绑定成功不等于设备已经激活。说话人登记在机器人端完成，无需在手机上采集；下一步等待机器人确认 Activation ACK。</text>
+      <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它对着设备说几句话完成主人声纹；手机不录音。</text>
       <view class="button-row">
         <button class="primary-button form-next-button" bindtap="continueActivation">继续等待激活</button>
       </view>

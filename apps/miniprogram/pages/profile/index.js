@@ -261,7 +261,7 @@ Page({
     }
     try {
       await api.createSpeakerEnrollmentIntent();
-      wx.showToast({ title: "已请求设备登记", icon: "success" });
+      wx.showToast({ title: "请唤醒设备说话", icon: "success" });
       const status = await this.loadSpeakerEnrollmentStatus();
       this.setData(status);
     } catch (error) {

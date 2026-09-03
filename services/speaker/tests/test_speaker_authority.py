@@ -79,12 +79,7 @@ async def test_three_state_classification_and_fail_closed_permissions(tmp_path: 
         guest_threshold=0.40,
     )
     enrollment = await authority.enroll(_request())
-    assert enrollment.status == "shadow"
-    await authority.activate(
-        enrollment.profile_id,
-        account_id="account-001",
-        evaluation=_evaluation(),
-    )
+    assert enrollment.status == "active"
 
     owner = await authority.classify(
         SpeakerSample(account_id="account-001", pcm=b"owner-live", sample_rate=16000)
@@ -139,31 +134,25 @@ async def test_shadow_profile_never_grants_owner_and_activation_is_versioned(
         adapter=FakeEmbeddingAdapter(),
     )
     first = await authority.enroll(_request())
-
-    before_activation = await authority.classify(
+    first_owner = await authority.classify(
         SpeakerSample(account_id="account-001", pcm=b"owner-live", sample_rate=16000)
     )
-    assert before_activation.classification == "uncertain"
-    assert before_activation.reason_code == "shadow_owner_candidate"
-    assert before_activation.score == pytest.approx(1.0, abs=0.01)
+    assert first.status == "active"
+    assert first_owner.classification == "owner"
+    assert first_owner.permissions.read_private_memory is True
 
-    await authority.activate(
-        first.profile_id,
-        account_id="account-001",
-        evaluation=_evaluation("eval-far-frr-v1"),
-    )
     second = await authority.enroll(_request())
-    await authority.activate(
-        second.profile_id,
-        account_id="account-001",
-        evaluation=_evaluation("eval-far-frr-v2"),
-    )
-
     profiles = await authority.profiles("account-001")
+    assert second.status == "active"
     assert [(item.template_version, item.status) for item in profiles] == [
         (2, "active"),
         (1, "shadow"),
     ]
+    replaced = await authority.classify(
+        SpeakerSample(account_id="account-001", pcm=b"owner-live", sample_rate=16000)
+    )
+    assert replaced.classification == "owner"
+    assert replaced.profile_id == second.profile_id
 
 
 @pytest.mark.asyncio
@@ -219,11 +208,10 @@ async def test_enrollment_keeps_distinct_natural_voice_conditions_as_prototypes(
         for value in (b"natural", b"soft", b"bright", b"steady")
     ]
 
-    assert [item.reason_code for item in decisions] == [
-        "shadow_owner_candidate",
-    ] * 4
+    assert [item.reason_code for item in decisions] == ["owner_match"] * 4
     assert [item.score for item in decisions] == pytest.approx([1.0] * 4)
-    assert all(not item.permissions.read_private_memory for item in decisions)
+    assert all(item.classification == "owner" for item in decisions)
+    assert all(item.permissions.read_private_memory for item in decisions)
 
 
 @pytest.mark.asyncio
@@ -235,7 +223,8 @@ async def test_shadow_short_sample_keeps_candidate_without_granting_authority(
         template_key=Fernet.generate_key().decode("ascii"),
         adapter=FakeEmbeddingAdapter(),
     )
-    await authority.enroll(_request())
+    enrolled = await authority.enroll(_request())
+    assert enrolled.status == "active"
 
     short = await authority.classify(
         SpeakerSample(account_id="account-001", pcm=b"short", sample_rate=16000)
@@ -243,9 +232,8 @@ async def test_shadow_short_sample_keeps_candidate_without_granting_authority(
 
     assert (short.classification, short.reason_code) == (
         "uncertain",
-        "shadow_owner_candidate",
+        "insufficient_speech",
     )
-    assert short.score == pytest.approx(1.0, abs=0.01)
     assert short.permissions.read_private_memory is False
 
 
@@ -296,6 +284,12 @@ async def test_shadow_runtime_guest_cutoff_preserves_owner_conversation_matrix(
         guest_threshold=0.45,
     )
     enrollment = await stored_threshold.enroll(_request())
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE speaker_profiles SET status = 'shadow', activated_at = NULL "
+            "WHERE profile_id = ?",
+            (enrollment.profile_id,),
+        )
     runtime_threshold = SpeakerAuthority.sqlite(
         database,
         template_key=key,
@@ -400,6 +394,7 @@ async def test_unavailable_anti_spoof_stays_shadow_and_cannot_activate(tmp_path:
         adapter=EmbeddingOnlyAdapter(),
     )
     enrollment = await authority.enroll(_request())
+    assert enrollment.status == "active"
 
     with pytest.raises(ValueError, match="anti-spoof assessment is unavailable"):
         await authority.activate(
@@ -408,12 +403,12 @@ async def test_unavailable_anti_spoof_stays_shadow_and_cannot_activate(tmp_path:
             evaluation=_evaluation(),
         )
 
-    shadow = await authority.classify(
+    owner = await authority.classify(
         SpeakerSample(account_id="account-001", pcm=b"owner-live", sample_rate=16000)
     )
-    assert shadow.classification == "uncertain"
-    assert shadow.reason_code == "shadow_owner_candidate"
-    assert shadow.permissions.read_private_memory is False
+    assert owner.classification == "owner"
+    assert owner.reason_code == "owner_match"
+    assert owner.permissions.read_private_memory is True
 
 
 @pytest.mark.asyncio
@@ -677,7 +672,7 @@ async def test_enroll_consumes_intent_only_after_successful_embed(tmp_path: Path
             intent_id=ready.intent_id,
         )
     )
-    assert enrolled.status == "shadow"
+    assert enrolled.status == "active"
     assert (
         await authority.pending_enrollment_intent(
             "account-001",
