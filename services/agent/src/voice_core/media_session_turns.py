@@ -681,7 +681,12 @@ class MediaTurnEndpointMixin:
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
                 return
-            await self._commit_pending_turn(context)
+            # Shield past the grace sleep: late offline recovery re-arms the
+            # same endpoint via ``_schedule_turn_commit``, which cancels the
+            # prior grace task. Cancelling mid-classify/commit left the pin
+            # live until ASR tail timeout discarded a weekday clock-fact turn
+            # that already had timeline text (2026-09-03 epoch 1366).
+            await asyncio.shield(self._commit_pending_turn(context))
             if (
                 context.turn_endpoint_sample == endpoint_sample
                 and context.runtime.assistant_speaking

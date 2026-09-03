@@ -5768,6 +5768,115 @@ async def test_device_pinned_clock_fact_commits_without_asr_endpoint_coverage() 
 
 
 @pytest.mark.asyncio
+async def test_device_clock_fact_commit_survives_recovery_reschedule() -> None:
+    """Late overlap recovery must not abort an in-flight clock-fact commit.
+
+    Field (2026-09-03 epoch 1366): FunASR early clock-fact entered commit
+    (speaker classify), SenseVoice ``cross_sentence_overlap`` recovery
+    re-armed ``_schedule_turn_commit`` and cancelled the grace task mid-flight;
+    ASR tail timeout then discarded the weekday turn despite timeline text.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-clock-fact-reschedule")
+    session = bridge.bridge.open(identity)
+    commit_entered = asyncio.Event()
+    allow_commit = asyncio.Event()
+    original_commit = registry._commit_pending_turn
+
+    async def delayed_commit(context, *, provider_final_missing=False, schedule_prepare_retry=True):
+        commit_entered.set()
+        await allow_commit.wait()
+        return await original_commit(
+            context,
+            provider_final_missing=provider_final_missing,
+            schedule_prepare_retry=schedule_prepare_retry,
+        )
+
+    registry._commit_pending_turn = delayed_commit  # type: ignore[method-assign]
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="clock-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        assert context.clock_fact_endpoint_pinned == 16_000
+        first_task = context.turn_endpoint_task
+        assert first_task is not None
+
+        await asyncio.wait_for(commit_entered.wait(), timeout=1)
+        # Simulate late offline recovery re-arming the same endpoint.
+        registry._schedule_turn_commit(context)
+        second_task = context.turn_endpoint_task
+        assert second_task is not None
+        assert second_task is not first_task
+        allow_commit.set()
+
+        for _ in range(50):
+            user_turns = [
+                turn.content
+                for turn in context.runtime.orchestrator.context.turns
+                if turn.role == "user" and turn.content
+            ]
+            if user_turns == ["今天星期几"] and context.turn_endpoint_sample is None:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            user_turns = [
+                turn.content
+                for turn in context.runtime.orchestrator.context.turns
+                if turn.role == "user" and turn.content
+            ]
+            raise AssertionError(
+                f"clock-fact turn did not commit after recovery reschedule: "
+                f"user_turns={user_turns!r} endpoint={context.turn_endpoint_sample}"
+            )
+    finally:
+        allow_commit.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_weather_final_recovered_after_straddling_committed_range() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
