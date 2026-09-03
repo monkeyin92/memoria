@@ -226,6 +226,19 @@ class MediaSessionInputMixin:
                         voiced_end_sample,
                     )
                     return
+                if (
+                    context.live_query_forced_authoritative
+                    and context.live_query_forced_text
+                ):
+                    logger.info(
+                        "media vad_end ignored after live-query forced recovery "
+                        "session=%s endpoint=%s voiced_end=%s text_len=%s",
+                        context.identity.session_id,
+                        context.turn_endpoint_sample,
+                        voiced_end_sample,
+                        len(context.live_query_forced_text),
+                    )
+                    return
                 previous_endpoint = context.turn_endpoint_sample
                 # Late/replayed VAD finals may arrive out of callback order.
                 # Never move a pending endpoint backwards, or an older tail
@@ -260,6 +273,19 @@ class MediaSessionInputMixin:
                         context.identity.session_id,
                         context.clock_fact_endpoint_pinned,
                         segment.capture_start_sample,
+                    )
+                    return
+                if (
+                    context.live_query_forced_authoritative
+                    and context.live_query_forced_text
+                ):
+                    logger.info(
+                        "media vad_start ignored after live-query forced recovery "
+                        "session=%s endpoint=%s vad_start=%s text_len=%s",
+                        context.identity.session_id,
+                        context.turn_endpoint_sample,
+                        segment.capture_start_sample,
+                        len(context.live_query_forced_text),
                     )
                     return
                 pending_endpoint = context.turn_endpoint_sample

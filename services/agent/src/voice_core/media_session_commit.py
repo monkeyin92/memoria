@@ -165,6 +165,10 @@ class MediaSessionCommitMixin:
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
+        def _arm_live_query_forced_endpoint(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
         def _maybe_early_commit_clock_fact(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -353,6 +357,18 @@ class MediaSessionCommitMixin:
             return
         committed = context.asr.last_committed_sample
         if result.capture_end_sample <= committed:
+            # Silent early-return here starved a weather turn with zero ERROR
+            # (2026-09-03 epoch 1361). Keep the gate, but make it audible.
+            logger.warning(
+                "media live-query recovery skipped: already committed "
+                "session=%s reason=%s text_len=%s samples=%s-%s committed=%s",
+                session_id,
+                reason.value,
+                len(text),
+                result.capture_start_sample,
+                result.capture_end_sample,
+                committed,
+            )
             return
         adjusted_start = max(committed, result.capture_start_sample)
         adjusted = replace(
@@ -372,13 +388,38 @@ class MediaSessionCommitMixin:
                     task_epoch=task_epoch,
                     context_version=context_version,
                 )
-                self._observe_final_asr_result(context, adjusted)
+            else:
+                logger.warning(
+                    "media live-query recovery ingest failed session=%s reason=%s "
+                    "text_len=%s samples=%s-%s",
+                    session_id,
+                    reason.value,
+                    len(text),
+                    adjusted.capture_start_sample,
+                    adjusted.capture_end_sample,
+                )
+        else:
+            logger.warning(
+                "media live-query recovery can_add failed session=%s reason=%s "
+                "text_len=%s samples=%s-%s",
+                session_id,
+                reason.value,
+                len(text),
+                adjusted.capture_start_sample,
+                adjusted.capture_end_sample,
+            )
         context.live_query_forced_text = text
         if reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
             # The blocking interval's text (e.g. playback echo) stays on the
             # in-range timeline, so the recovered text must win commit-time
             # resolution unconditionally rather than by length.
             context.live_query_forced_authoritative = True
+        # Forced text is already the authoritative commit text. Always arm
+        # turn bounds and re-schedule commit; do not depend on timeline
+        # re-injection succeeding (can_add/ingest may fail on overlap).
+        self._observe_final_asr_result(context, adjusted)
+        if context.live_query_forced_authoritative:
+            self._arm_live_query_forced_endpoint(context, adjusted)
 
     def _log_asr_rejection(
         self,

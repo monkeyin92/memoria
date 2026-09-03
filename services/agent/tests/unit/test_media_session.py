@@ -5937,6 +5937,11 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
         assert context.live_query_forced_text == "今天南京的天气怎么样"
         assert context.live_query_forced_authoritative
+        # Recovery must arm turn bounds itself; do not depend on a later
+        # timeline inject or a test harness manually setting samples.
+        assert context.turn_start_sample is not None
+        assert context.turn_end_sample == 148_160
+        assert context.turn_endpoint_sample == 148_160
         await registry.on_speech_segment(
             session,
             SpeechSegment(
@@ -5965,25 +5970,168 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
                 voiced_end_sample=133_760,
             ),
         )
-        context.turn_start_sample = 0
-        context.turn_end_sample = 133_760
-        context.turn_endpoint_sample = 133_760
-        context.turn_retire_sample = 148_160
-        fence, reason = await registry.commit_user_turn(
-            identity.session_id,
-            stream_epoch=identity.stream_epoch,
-            start_sample=0,
-            end_sample=133_760,
-            retire_sample=148_160,
-        )
-        assert fence is not None
-        assert reason is None
+        # Authoritative recovery ignores later VAD and keeps the armed endpoint.
+        assert context.turn_endpoint_sample == 148_160
+        await asyncio.sleep(0.05)
         user_turns = [
             turn.content
             for turn in context.runtime.orchestrator.context.turns
             if turn.role == "user" and turn.content
         ]
         # The longer echo text must not win; the authoritative forced text does.
+        assert user_turns == ["今天南京的天气怎么样"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() -> None:
+    """Reject-then-VAD-jitter must not starve an authoritative live-query recovery.
+
+    Regression for 2026-09-03 epoch 1361: weather final was rejected as
+    cross_sentence_overlap, recovery set forced text, then post-reject VAD
+    jitter kept moving the endpoint past turn_end so grace commit deferred
+    forever until tail timeout cleared the forced text. The recovered turn
+    must commit through the automatic grace path even when more VAD arrives.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+        turn_endpoint_grace_s=0,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=2.0,
+    )
+    registry.install()
+    identity = _device_identity("device-weather-vad-jitter")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="echo-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=62_080,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        echo_decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            echo,
+        )
+        assert echo_decision.accepted is not None
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+
+        weather = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="weather-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=85_120,
+            text="今天南京的天气怎么样",
+            is_final=True,
+            confidence=0.9,
+            rescue_synthesized=True,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            weather,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.live_query_forced_authoritative
+        assert context.turn_end_sample == 85_120
+        assert context.turn_endpoint_sample == 85_120
+
+        # Field order: rejection arrived before vad_end was processed. The
+        # late vad_end and later jitter must not clear the forced window.
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=2,
+                segment_id="weather-vad-end",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=85_120,
+                capture_end_sample=85_121,
+                final=True,
+                voiced_end_sample=70_720,
+            ),
+        )
+        assert context.turn_endpoint_sample == 85_120
+
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=3,
+                segment_id="jitter-vad-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=90_000,
+                capture_end_sample=90_001,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=3,
+                segment_id="jitter-vad-end",
+                revision=2,
+                kind=SegmentKind.VAD,
+                capture_start_sample=130_880,
+                capture_end_sample=130_881,
+                final=True,
+                voiced_end_sample=116_480,
+            ),
+        )
+        assert context.turn_endpoint_sample == 85_120
+        assert context.live_query_forced_text == "今天南京的天气怎么样"
+
+        await asyncio.sleep(0.05)
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
         assert user_turns == ["今天南京的天气怎么样"]
     finally:
         await registry._finalize_session(identity.session_id)

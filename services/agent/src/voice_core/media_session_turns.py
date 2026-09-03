@@ -206,6 +206,37 @@ class MediaTurnEndpointMixin:
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
 
+    def _arm_live_query_forced_endpoint(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Pin and commit a recovered live-query turn before VAD jitter can starve it.
+
+        Mirrors clock-fact early endpoint pinning: authoritative forced text is
+        already the commit text, so later VAD start/end must not move the
+        endpoint past ASR coverage and silently defer forever.
+        """
+
+        endpoint = max(
+            result.capture_end_sample,
+            context.turn_end_sample or 0,
+            context.turn_endpoint_sample or 0,
+        )
+        if context.turn_start_sample is None:
+            context.turn_start_sample = result.capture_start_sample
+        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
+        context.turn_endpoint_sample = endpoint
+        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+        context.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media live-query forced endpoint session=%s endpoint=%s text_len=%s",
+            context.identity.session_id,
+            endpoint,
+            len(result.text.strip()),
+        )
+        self._schedule_turn_commit(context)
+
     @staticmethod
     def _maybe_early_commit_clock_fact(
         context: _MediaVoiceSession,
@@ -589,8 +620,12 @@ class MediaTurnEndpointMixin:
                 context.clock_fact_endpoint_pinned is not None
                 and context.clock_fact_endpoint_pinned == endpoint_sample
             )
+            forced_live_query = bool(
+                context.live_query_forced_authoritative and context.live_query_forced_text
+            )
             if (
                 not pinned_clock_fact
+                and not forced_live_query
                 and not self._asr_covers_endpoint(
                     context,
                     context.turn_end_sample,
@@ -602,6 +637,19 @@ class MediaTurnEndpointMixin:
                 # the late final will re-arm this same commit in
                 # ``_observe_final_asr_result``.
             ):
+                if context.live_query_forced_text or context.clock_fact_forced_text:
+                    logger.warning(
+                        "media turn commit deferred with forced text "
+                        "session=%s stream_epoch=%s endpoint=%s turn_end=%s "
+                        "live_forced=%s clock_forced=%s authoritative=%s",
+                        session_id,
+                        stream_epoch,
+                        endpoint_sample,
+                        context.turn_end_sample,
+                        bool(context.live_query_forced_text),
+                        bool(context.clock_fact_forced_text),
+                        context.live_query_forced_authoritative,
+                    )
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
                 return
