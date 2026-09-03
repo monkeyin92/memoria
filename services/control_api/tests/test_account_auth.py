@@ -713,6 +713,53 @@ async def test_openid_only_legacy_account_must_authorize_phone_before_restore(
 
 
 @pytest.mark.asyncio
+async def test_silent_restore_promotes_unknown_subject_when_phone_already_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Accounts that already bound phone must still become verified adult on restore."""
+
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-stuck-unknown",
+                "phone_code": "dev-phone-stuck",
+                "display_name": "卡主",
+            },
+        )
+        user_id = first.json()["user_id"]
+        # Simulate a historical bug: phone bound, subject left unknown/unverified.
+        app.state.memory_store.update_subject_profile(
+            user_id=user_id,
+            subject_category="unknown",
+            birth_year_band="unknown",
+            age_evidence_status="unverified",
+            now=datetime.now(UTC).isoformat(),
+        )
+        stuck = app.state.memory_store.get_subject_profile(user_id=user_id)
+        assert stuck is not None
+        assert stuck["subject_category"] == "unknown"
+        assert stuck["age_evidence_status"] == "unverified"
+
+        restored = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": "dev-wechat-stuck-unknown"},
+        )
+        promoted = app.state.memory_store.get_subject_profile(user_id=user_id)
+
+    assert first.status_code == 200
+    assert restored.status_code == 200
+    assert promoted is not None
+    assert promoted["subject_category"] == "adult"
+    assert promoted["birth_year_band"] == "adult"
+    assert promoted["age_evidence_status"] == "verified"
+
+
+@pytest.mark.asyncio
 async def test_wechat_phone_identity_cannot_be_claimed_by_another_openid(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

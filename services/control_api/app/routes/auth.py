@@ -360,8 +360,10 @@ async def login_wechat(
         phone_number_masked=masked_phone,
         now=now,
     )
-    if body.phone_code is not None:
-        maybe_verify_adult_from_wechat_phone(store, user_id=user_id, now=now)
+    # Promote on every login once wechat_phone exists. Fresh phone_code used to
+    # be the only trigger; silent restore then left unknown+phone accounts stuck
+    # on subject_capability_forbidden with no UI path back to getPhoneNumber.
+    maybe_verify_adult_from_wechat_phone(store, user_id=user_id, now=now)
     issued = _issue_session(request=request, response=response, user_id=user_id)
     assert issued is not None
     token, ttl = issued
