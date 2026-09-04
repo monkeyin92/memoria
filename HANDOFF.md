@@ -119,6 +119,7 @@ miniprogram_experience_version: 0.8.75
 ## 当前板卡与固件
 
 - 固件 app version：2.4.2；ES8388 输入增益：**21 dB（2026-09-02 已刷写）**；app SHA `1af5a39e…`（前 `c11fb87e…` 为 18 dB）。epoch1351 复测：30–60 cm 正常音量 DTLN 后 RMS **939/764**，两轮 commit+播报，较 18 dB 需大喊（2000+）明显改善。
+- **板端降噪候选（2026-09-03 构建，未刷写）**：overlay patch `0022` 在 Memoria 板打开 ESP-SR AFE WebRTC 降噪（AFE 流水线 AEC→NS→VAD，NS 先于板端 VAD 与上行生效，稳态环境噪声不再把板端/网关能量 VAD 顶到 20 s 硬兜底才收轮）；`CONFIG_SR_NSN_WEBRTC=y` 显式 pin（无模型、零 flash 体积）。同期修复 overlay 漂移：真机调参把设备 VAD 硬兜底从 10 s 改到 20 s 时只改了 `.cache` 构建树没回写 overlay（`kMaxVadSpeechSamples` 与 patch 0005 注释），本次已同步为 20 s 并加门禁 pin，否则下次 overlay 重放会静默回退 10 s。候选 app SHA `6bb2af5d…`，merged SHA `a02cd168…`，overlay SHA `536a7395…`（含 patch `0022` 与 check-overlay/测试断言）。门禁已过：锁定 commit 重放 + clean build + `check-overlay.sh` + 重放树对比改前基线仅含 NS 变更。**待办：刷写后在嘈杂环境按剧本验收（说话收轮不再等 20 s 兜底、Actual Heard、误/漏唤醒计数、上行 RMS 变化）；NS 不足以收轮时按序升级 NSNET2（模型 340 KB，assets 余量充足）→ `vadnet1_medium` 神经 VAD（288 KB）；NS 生效后需重标定 Go Media Edge `media_vad.go` 的 MinRMS/噪声底参数。**
 - app SHA-256：`c11fb87ed4ffd0206aa5a9554d6226d539186f71040e4ea8525dea6b3dd31492`。
 - merged SHA-256：`3f45c9f394847d617ab1df36919e74cecee41a84e0a3cbb13b75e61f7346f68e`。
 - overlay SHA-256：`8bad9a23dd0559598155f7b701da94d2564fcf1f1cb99d427bd60051b878bb69`（含 patch `0021` 白名单唤醒词与 `memoria_wake_word` 注册表）。

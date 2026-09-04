@@ -15,6 +15,7 @@
                 "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
                 "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
                 "CONFIG_SR_MN_CN_MULTINET6_QUANT=y",
+                "CONFIG_SR_NSN_WEBRTC=y",
                 "CONFIG_USE_HOTSPOT_WIFI_PROVISIONING=y",
                 "CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n",
                 "CONFIG_BT_ENABLED=y",

@@ -91,6 +91,7 @@ required = {
     "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
     "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
     "CONFIG_SR_MN_CN_MULTINET6_QUANT=y",
+    "CONFIG_SR_NSN_WEBRTC=y",
 }
 missing = sorted(required - sdkconfig)
 if missing:
@@ -307,6 +308,26 @@ rg -Fq 'UpgradeFirmware' "$overlay_patch_0015" || \
     die "patch 0015 must override the upstream firmware upgrade path"
 rg -Fq 'Memoria OTA is disabled' "$overlay_patch_0015" || \
     die "patch 0015 must fail closed instead of using upstream OTA"
+
+# AFE noise suppression: the Memoria simplex board runs ESP-SR WebRTC NS
+# inside the AFE pipeline so steady room noise is suppressed before the
+# on-device VAD, the gateway energy VAD and the server denoiser.
+overlay_patch_0022="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0022-enable-memoria-afe-noise-suppression.patch"
+[[ -f "$overlay_patch_0022" ]] || die "overlay patch 0022 is missing"
+rg -q 'ns_init = kUseAfeNoiseSuppression' "$overlay_patch_0022" || \
+    die "patch 0022 must gate AFE noise suppression behind the Memoria board switch"
+rg -q 'AFE_NS_MODE_WEBRTC' "$overlay_patch_0022" || \
+    die "patch 0022 must pin the WebRTC noise suppression mode"
+afe_engine="$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc"
+[[ -f "$afe_engine" ]] || die "AFE engine source missing"
+rg -q 'ns_init = kUseAfeNoiseSuppression' "$afe_engine" || \
+    die "AFE noise suppression must be wired for the Memoria build"
+
+# The 20 s device VAD hard fence is the tuned field value; a silent drift
+# back to the older 10 s bound would change conversation closure behavior.
+rg -Fq 'kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20' \
+    "$protocol_source" || die "device VAD hard fence must stay at 20 s"
+
 sdkconfig="$MEMORIA_UPSTREAM_DIR/sdkconfig"
 metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
 flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"

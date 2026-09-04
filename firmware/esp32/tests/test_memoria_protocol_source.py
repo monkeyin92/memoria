@@ -22,6 +22,12 @@ AFE_PATCH = (
     / "patches"
     / "0005-tune-memoria-afe-vad.patch"
 ).read_text(encoding="utf-8")
+NS_PATCH = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0022-enable-memoria-afe-noise-suppression.patch"
+).read_text(encoding="utf-8")
 HALF_DUPLEX_PATCH = (
     Path(__file__).parents[1]
     / "overlay"
@@ -251,6 +257,25 @@ def test_memoria_afe_uses_bounded_noise_tolerant_endpointing() -> None:
     assert "afe_config->vad_min_noise_ms = 900" in AFE_PATCH
     assert "900 ms quiet tail for natural pauses" in AFE_PATCH
     assert "+    afe_config->ns_init" not in AFE_PATCH
+
+
+def test_memoria_afe_noise_suppression_patch_enables_webrtc_ns_for_memoria_only() -> None:
+    # NS runs inside the AFE pipeline before the on-device VAD and the uplink,
+    # so steady room noise no longer holds energy VADs open to the hard fence.
+    assert "kUseAfeNoiseSuppression" in NS_PATCH
+    assert "+    afe_config->ns_init = kUseAfeNoiseSuppression;" in NS_PATCH
+    assert "+    afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;" in NS_PATCH
+    assert "+    afe_config->ns_model_name = nullptr;" in NS_PATCH
+    # The switch must be board-scoped: upstream boards keep NS off.
+    assert "+static constexpr bool kUseAfeNoiseSuppression = true;" in NS_PATCH
+    assert "+static constexpr bool kUseAfeNoiseSuppression = false;" in NS_PATCH
+    assert "NS: %s" in NS_PATCH
+    assert '"NS: off"' not in NS_PATCH
+
+
+def test_device_vad_hard_fence_stays_at_tuned_20s() -> None:
+    assert "static_cast<uint64_t>(kUplinkSampleRate) * 20" in SOURCE
+    assert "static_cast<uint64_t>(kUplinkSampleRate) * 10" not in SOURCE
 
 
 def test_simplex_playback_and_state_changes_cannot_leave_a_vad_epoch_open() -> None:

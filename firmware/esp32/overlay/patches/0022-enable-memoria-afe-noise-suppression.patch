@@ -1,0 +1,52 @@
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -20,6 +20,18 @@
+ static constexpr bool kUseAfeForVoiceProcessing = false;
+ #endif
+ 
++// Memoria (ATK-DNESP32S3, simplex ES8388, no playback reference) keeps the
++// ESP-SR WebRTC noise suppressor on inside the AFE pipeline. NS runs before
++// both the on-device VAD and the uplink, so steady room noise cannot hold the
++// energy VADs open until the 20 s turn hard fence. WebRTC NS needs no model
++// and no reference channel; NSNET2 is the follow-up if field tests fall short.
++#if defined(CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1) && \
++    CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++static constexpr bool kUseAfeNoiseSuppression = true;
++#else
++static constexpr bool kUseAfeNoiseSuppression = false;
++#endif
++
+ AfeAudioEngine::AfeAudioEngine() {
+     event_group_ = xEventGroupCreate();
+ }
+@@ -135,7 +147,7 @@
+     afe_config->aec_init = codec_->input_reference();
+     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
+     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;
+-    afe_config->ns_init = false;
++    afe_config->ns_init = kUseAfeNoiseSuppression;
+     afe_config->vad_init = kUseAfeForVoiceProcessing;
+ #if defined(CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1) && \
+     CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+@@ -146,6 +158,8 @@
+     // The protocol layer still supplies the independent 20 s hard fence.
+     afe_config->vad_mode = VAD_MODE_0;
+     afe_config->vad_min_noise_ms = 900;
++    afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;
++    afe_config->ns_model_name = nullptr;
+ #else
+     afe_config->vad_mode = VAD_MODE_0;
+     afe_config->vad_min_noise_ms = 100;
+@@ -197,8 +211,9 @@
+     const char* detector = wake_detector_ == WakeDetector::kWakeNet
+         ? "WakeNet"
+         : (wake_detector_ == WakeDetector::kMultiNet ? "MultiNet" : "none");
+-    ESP_LOGI(TAG, "Initialized FD AFE, detector: %s, NS: off, feed: %d, fetch: %d",
+-        detector, afe_iface_->get_feed_chunksize(afe_data_), afe_iface_->get_fetch_chunksize(afe_data_));
++    ESP_LOGI(TAG, "Initialized FD AFE, detector: %s, NS: %s, feed: %d, fetch: %d",
++        detector, kUseAfeNoiseSuppression ? "webrtc" : "off",
++        afe_iface_->get_feed_chunksize(afe_data_), afe_iface_->get_fetch_chunksize(afe_data_));
+     return true;
+ }
+ 
