@@ -34,10 +34,10 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-05 00:32 CST）
+## 下次接着从这里开始（2026-09-05 01:18 CST）
 
 ```yaml
-resume_focus: epoch1386_filler_preempt_and_target_non_owner
+resume_focus: epoch1386_published_awaiting_board_retest
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -45,6 +45,7 @@ llm_classifiers: qwen-flash
 demo_script_two_turns: PASS_epoch1379
 lookup_filler_fence_fix: published_dup_start_and_stack_env_healed
 weekday_after_weather: published_retest_fail_target_non_owner
+epoch1386_filler_speaker_fix: published_awaiting_board_retest
 subject_adult_verified: true
 speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
@@ -72,11 +73,12 @@ direct_real_device_verified: false
 12. **重复 START + 409 已切流**：源 `05968a32b3bafbbd91de089a3cad46fcdc156261`，标签 `20260904-dup-start-stack-env-v2-agent-component`。同 fence 第二次 START 不再下发；cutover 用 Control 的 `MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist`。Agent/Bridge **healthy**，heartbeat 已 recorded，切流后 409 为 0。`/tmp/media-runtime.override.yml` 去掉钉死 8 月 Agent/Bridge 镜像的旧段，只留 Media Edge。回滚 `rollback-20260904-dup-start-stack-env-v2-agent-component-pre-agent/-pre-bridge`。
 13. **epoch 1384（21:59 CST）天气垫话 PASS，星期几 FAIL**：session `6209dcad-ae73-47bc-9ad6-566e10d286cf`。唤醒 gen1 Actual Heard → 天气 live-query 提交（`text_len=7`）垫话被天气答案 preempt（听感完整「稍等」+ 天气）→ 星期几 FunASR `text_len=8` early clock-fact pin `endpoint=154880`，`commit` 因 `projection_range_mismatch` 丢弃 → overlap recovery 再 pin `205760` 但 `turn_start` 空，2.5s tail timeout 记 `asr_empty_class=low_rms`（误分类；该段 RMS 2435）→ `owner_silence_timeout` 待命。串口 VAD 有第二轮；没有 generation 3。
 14. **星期几提交修复已切流**：源 `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`，标签 `20260905-weekday-projection-range-agent-component`。commit 前 `align_provisional_range` 扩展投影区间（抽到 `conversation_projection_range.py` 以保持 1067 行预算）；clock-fact overlap recovery 走 `_observe_final_asr_result` 补 `turn_start`。单测 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-weekday-projection-range-agent-component-pre-agent/-pre-bridge`。
-15. **epoch 1386（00:29–00:30 CST）复测 FAIL**：session `0f7b81d0-59e1-40f8-b8f2-4ee0c16fdf87`。天气 live-query `text_len=10` 已 commit；垫话 gen2 `first_frame` 后被 OpenMeteo 1753ms 抢占（`preempted`/`output_task_cancelled`），听感「稍」截断再完整「稍等，我查询一下」+天气。随后两轮日期/星期几 ASR 已 pin，`align_provisional_text` 成功，**没有** `projection_range_mismatch`；回复被 `target_non_owner` 掐掉。再见同样 `target_non_owner`，Edge `reason=owner_silence_timeout`。档案 `speaker.classified`：天气轮 `uncertain`/`ambiguous_score` score **0.4706** quality 0.91；日期轮 `guest`/`owner_mismatch` score **0.3373** quality 0.73（profile `1b5b577b`，阈值 owner 0.78 / guest 0.40）。后轮未再 classify，沿用 mismatch。
+15. **epoch 1386（00:29–00:30 CST）复测 FAIL**：session `0f7b81d0-59e1-40f8-b8f2-4ee0c16fdf87`。天气 live-query `text_len=10` 已 commit；垫话 gen2 `first_frame` 后被取消（`preempted`/`output_task_cancelled`），听感「稍」截断再完整「稍等，我查询一下」+天气。随后两轮日期/星期几 ASR 已 pin，`align_provisional_text` 成功，**没有** `projection_range_mismatch`；回复被 `target_non_owner` 掐掉。再见同样 `target_non_owner`，Edge `reason=owner_silence_timeout`。档案 `speaker.classified`：天气轮 `uncertain`/`ambiguous_score` score **0.4706** quality 0.91；日期轮 `guest`/`owner_mismatch` score **0.3373** quality 0.73（profile `1b5b577b`，阈值 owner 0.78 / guest 0.40）。后轮未再 classify，沿用 mismatch。
+16. **垫话出声 + 播后声纹修复已切流**：源 `8a8eb9ade975b7eae1c3709e5d3434bff26a8d6f`，标签 `20260905-filler-post-playback-speaker-agent-component`。已出声 FAST_ACK 不再 preempt；同 turn `first_frame` 后天气去掉 `LIVE_LOOKUP_FILLER`；无 AEC 播后 2s 内 quality 低于 0.85 的 formal guest 记 `post_playback_untrusted`，并丢掉 400ms preroll。不放宽 `reject_non_owner_voice`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-filler-post-playback-speaker-agent-component-pre-agent/-pre-bridge`。
 
 **下一步（按顺序）**
 
-1. 不要放宽 `reject_non_owner_voice`。垫话抢占与「播完后下一轮 CAM++ 掉到 guest 带」是两条问题。
+1. 真机复测：天气垫话完整出声且不重复「稍等」；随后问日期/星期几应能回答。不要放宽 `reject_non_owner_voice`。
 2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -85,9 +87,9 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260905-weekday-projection-range-agent-component`（源 `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260905-filler-post-playback-speaker-agent-component`（源 `8a8eb9ade975b7eae1c3709e5d3434bff26a8d6f`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260905-weekday-projection-range-agent-component`，revision `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`，image `sha256:bf60abdf32238a8626ecdf9b5ab688b0ff3e754f24748cc16fbd89dca8f9f382`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260905-weekday-projection-range-agent-component/`。回滚 `rollback-20260905-weekday-projection-range-agent-component-pre-agent/-pre-bridge`。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。天气垫话 + 星期几待真机复测。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260905-filler-post-playback-speaker-agent-component`，revision `8a8eb9ade975b7eae1c3709e5d3434bff26a8d6f`，image `sha256:7a9378c7c90ae38db270ed1015c73a62349dbf99828dbfa8f36ab2fe4de34651`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260905-filler-post-playback-speaker-agent-component/`。回滚 `rollback-20260905-filler-post-playback-speaker-agent-component-pre-agent/-pre-bridge`（镜像 `20260905-weekday-projection-range-agent-component` / `sha256:bf60abdf32238a8626ecdf9b5ab688b0ff3e754f24748cc16fbd89dca8f9f382`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。天气垫话完整出声 + 播后星期几待真机复测。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
