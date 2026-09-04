@@ -34,23 +34,23 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-05 00:20 CST）
+## 下次接着从这里开始（2026-09-05 00:32 CST）
 
 ```yaml
-resume_focus: device_retest_weekday_after_weather
+resume_focus: epoch1386_filler_preempt_and_target_non_owner
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
 llm_classifiers: qwen-flash
 demo_script_two_turns: PASS_epoch1379
 lookup_filler_fence_fix: published_dup_start_and_stack_env_healed
-weekday_after_weather: published_awaiting_retest
+weekday_after_weather: published_retest_fail_target_non_owner
 subject_adult_verified: true
 speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
-last_wake_epoch: 1384
+last_wake_epoch: 1386
 device_enrollment_prompts: quality_enroll_is_owner_active
 miniprogram_devtools_publish: uploaded_0.8.75_devtools_cli
 direct_real_device_verified: false
@@ -71,11 +71,12 @@ direct_real_device_verified: false
 11. **epoch 1382 垫话回归**：同一 fence 第二次 `generation.started` 被固件拒（`strictly advance`），会话拆掉，只听到「稍」后待命。
 12. **重复 START + 409 已切流**：源 `05968a32b3bafbbd91de089a3cad46fcdc156261`，标签 `20260904-dup-start-stack-env-v2-agent-component`。同 fence 第二次 START 不再下发；cutover 用 Control 的 `MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist`。Agent/Bridge **healthy**，heartbeat 已 recorded，切流后 409 为 0。`/tmp/media-runtime.override.yml` 去掉钉死 8 月 Agent/Bridge 镜像的旧段，只留 Media Edge。回滚 `rollback-20260904-dup-start-stack-env-v2-agent-component-pre-agent/-pre-bridge`。
 13. **epoch 1384（21:59 CST）天气垫话 PASS，星期几 FAIL**：session `6209dcad-ae73-47bc-9ad6-566e10d286cf`。唤醒 gen1 Actual Heard → 天气 live-query 提交（`text_len=7`）垫话被天气答案 preempt（听感完整「稍等」+ 天气）→ 星期几 FunASR `text_len=8` early clock-fact pin `endpoint=154880`，`commit` 因 `projection_range_mismatch` 丢弃 → overlap recovery 再 pin `205760` 但 `turn_start` 空，2.5s tail timeout 记 `asr_empty_class=low_rms`（误分类；该段 RMS 2435）→ `owner_silence_timeout` 待命。串口 VAD 有第二轮；没有 generation 3。
-14. **星期几提交修复已切流**：源 `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`，标签 `20260905-weekday-projection-range-agent-component`。commit 前 `align_provisional_range` 扩展投影区间（抽到 `conversation_projection_range.py` 以保持 1067 行预算）；clock-fact overlap recovery 走 `_observe_final_asr_result` 补 `turn_start`。单测 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-weekday-projection-range-agent-component-pre-agent/-pre-bridge`。真机星期几待复测。
+14. **星期几提交修复已切流**：源 `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`，标签 `20260905-weekday-projection-range-agent-component`。commit 前 `align_provisional_range` 扩展投影区间（抽到 `conversation_projection_range.py` 以保持 1067 行预算）；clock-fact overlap recovery 走 `_observe_final_asr_result` 补 `turn_start`。单测 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-weekday-projection-range-agent-component-pre-agent/-pre-bridge`。
+15. **epoch 1386（00:29–00:30 CST）复测 FAIL**：session `0f7b81d0-59e1-40f8-b8f2-4ee0c16fdf87`。天气 live-query `text_len=10` 已 commit；垫话 gen2 `first_frame` 后被 OpenMeteo 1753ms 抢占（`preempted`/`output_task_cancelled`），听感「稍」截断再完整「稍等，我查询一下」+天气。随后两轮日期/星期几 ASR 已 pin（live-query `text_len=6` + clock-fact `text_len=4`），`align_provisional_text` 成功，**没有** `projection_range_mismatch`；回复被 `target_non_owner` 掐掉。再见 `text_len=3` 同样 `target_non_owner`，**不是** `conversation_end_explicit`。Edge `reason=owner_silence_timeout`，设备 `00:30:25` idle。天气轮 `response_plan_cached reason=no_verified_runtime_profile mode=unknown_safe`。
 
 **下一步（按顺序）**
 
-1. **真机复测**：茉莉 → 天气（完整垫话 + 天气）→ 今天星期几必须 Actual Heard → 再见待命。
+1. 查 epoch 1386 两轮 classify 的 `reason_code`（formal guest/`owner_mismatch` vs `shadow_guest_candidate`）；不要放宽 `reject_non_owner_voice`。垫话抢占与声纹拒是两条问题。
 2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
