@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -59,6 +59,9 @@ TRUSTED_PLAYBACK_VOICE_WINDOW_MS = 900
 TRUSTED_PLAYBACK_MIN_VOICED_MS = 160
 TRUSTED_PLAYBACK_VOICE_WITNESS_MS = 2_500
 KEYWORD_SPOTTER_MIN_PCM_MS = 80
+POST_PLAYBACK_SPEAKER_UNTRUSTED_MS = 2_000
+POST_PLAYBACK_SPEAKER_PREROLL_MS = 400
+POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +95,10 @@ class DuplexSpeakerMixin:
         _speaker_pcm: bytearray
         _speaker_collecting: bool
         _speaker_classification_task: asyncio.Task[Any] | None
+        _last_playback_completed_ns: int | None
+        _speaker_pcm_gate_epoch: int | None
+        _speaker_pcm_skip_bytes: int
+        _speaker_post_playback_untrusted: bool
         _trusted_playback_pcm: bytearray
         _trusted_playback_witness_pcm: bytes
         _trusted_playback_witness_ns: int | None
@@ -218,9 +225,24 @@ class DuplexSpeakerMixin:
                     now_ns if now_ns is not None else time.monotonic_ns()
                 )
         if self._speaker_collecting and pcm:
-            self._speaker_pcm.extend(pcm)
-            if len(self._speaker_pcm) > 4 * 1024 * 1024:
-                del self._speaker_pcm[: len(self._speaker_pcm) - 4 * 1024 * 1024]
+            if getattr(self, "_speaker_pcm_gate_epoch", None) != self._speaker_epoch:
+                self._speaker_pcm_gate_epoch = self._speaker_epoch
+                untrusted = self._in_post_playback_speaker_window(now_ns)
+                self._speaker_post_playback_untrusted = untrusted
+                self._speaker_pcm_skip_bytes = (
+                    self._speaker_sample_rate * 2 * POST_PLAYBACK_SPEAKER_PREROLL_MS // 1_000
+                    if untrusted and not self.trusted_aec_playback_control
+                    else 0
+                )
+            skip = getattr(self, "_speaker_pcm_skip_bytes", 0)
+            if skip:
+                dropped = min(skip, len(pcm))
+                pcm = pcm[dropped:]
+                self._speaker_pcm_skip_bytes = skip - dropped
+            if pcm:
+                self._speaker_pcm.extend(pcm)
+                if len(self._speaker_pcm) > 4 * 1024 * 1024:
+                    del self._speaker_pcm[: len(self._speaker_pcm) - 4 * 1024 * 1024]
         # Never enroll assistant TTS that leaks into the mic during playback.
         # After begin_speaker_enrollment we force _was_speaking=False so user
         # enroll speech is always collected.
@@ -490,10 +512,41 @@ class DuplexSpeakerMixin:
             decision = self._uncertain_speaker_decision("authority_unavailable")
         if epoch != self._speaker_epoch:
             return decision
+        if self._should_keep_post_playback_guest_unconfirmed(decision):
+            decision = replace(
+                decision,
+                classification="uncertain",
+                reason_code="post_playback_untrusted",
+                permissions=permissions_for_speaker("uncertain"),
+            )
+            logger.info(
+                "post-playback speaker mismatch held as uncertain session=%s "
+                "score=%s quality=%.3f",
+                self.session_id,
+                decision.score,
+                decision.quality_score,
+            )
         self._speaker_decision = decision
         self._speaker_class = decision.classification
         self._publish_speaker_decision(epoch, decision)
         return decision
+
+    def _in_post_playback_speaker_window(self, now_ns: int | None) -> bool:
+        completed_ns = self._last_playback_completed_ns
+        if completed_ns is None:
+            return False
+        now = now_ns if now_ns is not None else time.monotonic_ns()
+        elapsed_ms = (now - completed_ns) // 1_000_000
+        return 0 <= elapsed_ms <= POST_PLAYBACK_SPEAKER_UNTRUSTED_MS
+
+    def _should_keep_post_playback_guest_unconfirmed(self, decision: SpeakerDecision) -> bool:
+        if self.trusted_aec_playback_control:
+            return False
+        if not getattr(self, "_speaker_post_playback_untrusted", False):
+            return False
+        if decision.classification != "guest" and decision.reason_code != "owner_mismatch":
+            return False
+        return decision.quality_score < POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY
 
     def _uncertain_speaker_decision(self, reason: str) -> SpeakerDecision:
         return SpeakerDecision(

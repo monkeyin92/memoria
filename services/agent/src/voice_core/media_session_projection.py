@@ -54,24 +54,47 @@ _OUTPUT_IDLE_TIMEOUT_S = 30.0
 media_pb2: Any = _media_pb2
 
 
+def _strip_leading_live_lookup_filler(spoken: str) -> str:
+    text = spoken.lstrip()
+    if text.startswith(LIVE_LOOKUP_FILLER):
+        return text[len(LIVE_LOOKUP_FILLER) :].lstrip()
+    return spoken
+
+
+def _same_turn_fence(left: GenerationFence, right: GenerationFence) -> bool:
+    return (
+        left.session_id == right.session_id
+        and left.session_epoch == right.session_epoch
+        and left.turn_id == right.turn_id
+    )
+
+
 def _live_lookup_filler_was_heard(context: _MediaVoiceSession, fence: GenerationFence) -> bool:
     owner = context.output_owner
     if owner is not None and int(getattr(owner.intent, "kind", 0)) == int(
         media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
     ):
-        return True
+        delivery = context.reply_delivery.get(owner.fence)
+        if delivery is not None and delivery.first_frame_sent:
+            return True
+        if context.playback.rendered_sample_end(owner.fence) > 0:
+            return True
+        if context.playback.actual_heard_text(owner.fence):
+            return True
     if LIVE_LOOKUP_FILLER in context.playback.actual_heard_text(fence):
         return True
+    for snapshot in context.reply_delivery.snapshots():
+        if not _same_turn_fence(snapshot.key.fence, fence):
+            continue
+        if snapshot.first_frame_sent or snapshot.actual_heard:
+            return True
     for result in context.output_results:
-        if (
-            result.fence.turn_id != fence.turn_id
-            or result.fence.session_epoch != fence.session_epoch
-        ):
+        if not _same_turn_fence(result.fence, fence):
             continue
         if result.emitted_audio:
             return True
     delivery = context.reply_delivery.get(fence)
-    return bool(delivery is not None and delivery.actual_heard)
+    return bool(delivery is not None and (delivery.first_frame_sent or delivery.actual_heard))
 
 
 class MediaSessionProjectionMixin:
@@ -641,9 +664,11 @@ class MediaSessionProjectionMixin:
                 )
                 return
             spoken = str(getattr(intent, "tts_source", "") or "")
-            if spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
-                if not played_lookup_filler or not _live_lookup_filler_was_heard(context, fence):
-                    intent.tts_source = LIVE_LOOKUP_FILLER + spoken
+            filler_started = played_lookup_filler and _live_lookup_filler_was_heard(context, fence)
+            if filler_started:
+                intent.tts_source = _strip_leading_live_lookup_filler(spoken)
+            elif spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
+                intent.tts_source = LIVE_LOOKUP_FILLER + spoken
             if (
                 not runtime.barge_in_enabled
                 and claim.state is DelegationOutputState.OWNED

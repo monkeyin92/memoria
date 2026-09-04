@@ -93,6 +93,12 @@ class MediaOutputDispatchMixin:
         ) -> None: ...
 
         @staticmethod
+        def _fast_ack_has_started_playback(
+            context: _MediaVoiceSession,
+            lease: _OutputOwnerLease,
+        ) -> bool: ...
+
+        @staticmethod
         def _acquire_output_owner(
             context: _MediaVoiceSession,
             fence: GenerationFence,
@@ -728,6 +734,16 @@ class MediaOutputDispatchMixin:
         owner = context.output_owner
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
+        if self._fast_ack_has_started_playback(context, owner):
+            logger.info(
+                "defer output preempt until live-lookup ack finishes session=%s "
+                "ack_turn=%s ack_gen=%s replacement=%s",
+                context.identity.session_id,
+                owner.fence.turn_id,
+                owner.fence.generation_id,
+                work.intent_id,
+            )
+            return True
         old_fence = owner.fence
         flush_required = self._device_playback_flush_required(context, old_fence)
         heard = context.playback.actual_heard_text(old_fence)

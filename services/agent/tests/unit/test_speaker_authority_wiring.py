@@ -12,11 +12,15 @@ def _decision(
     classification: str,
     *,
     reason_code: str | None = None,
+    score: float | None = None,
+    quality_score: float = 0.9,
 ) -> SpeakerDecision:
+    if score is None:
+        score = 0.95 if classification == "owner" else 0.1
     return SpeakerDecision(
         classification=classification,  # type: ignore[arg-type]
-        score=0.95 if classification == "owner" else 0.1,
-        quality_score=0.9,
+        score=score,
+        quality_score=quality_score,
         reason_code=reason_code
         or ("owner_match" if classification == "owner" else "owner_mismatch"),
         model_version="campplus-runtime-test",
@@ -24,6 +28,13 @@ def _decision(
         profile_id="profile-001",
         permissions=permissions_for_speaker(classification),  # type: ignore[arg-type]
     )
+
+
+async def _finish_assistant_playback(runtime: DuplexRuntime, text: str) -> None:
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("今天南京天气怎么样")
+    await runtime.orchestrator.begin_speaking([], text)
+    assert await runtime.on_media_playback_done(fence, text)
 
 
 def _enable_companion_policy(runtime: DuplexRuntime) -> None:
@@ -35,6 +46,76 @@ def _enable_companion_policy(runtime: DuplexRuntime) -> None:
         voice_profile=True,
         shadow_low_sensitivity_persona=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_post_playback_low_quality_mismatch_stays_unconfirmed() -> None:
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _decision("guest", score=0.3373, quality_score=0.7345)
+
+    runtime = DuplexRuntime.create()
+    runtime.set_target_speaker_focus(True)
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    await _finish_assistant_playback(runtime, "南京今天多云。")
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01" * 12_800)
+    runtime.on_user_voice_stopped()
+
+    decision = await runtime.await_speaker_classification()
+    accepted, reason = runtime.accept_user_turn("今天星期几")
+
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == "post_playback_untrusted"
+    assert accepted is True
+    assert reason is None
+    assert runtime._reject_non_owner_voice is True
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_post_playback_high_quality_guest_is_still_rejected() -> None:
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _decision("guest", score=0.12, quality_score=0.91)
+
+    runtime = DuplexRuntime.create()
+    runtime.set_target_speaker_focus(True)
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    await _finish_assistant_playback(runtime, "南京今天多云。")
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01" * 12_800)
+    runtime.on_user_voice_stopped()
+
+    decision = await runtime.await_speaker_classification()
+    accepted, reason = runtime.accept_user_turn("今天星期几")
+
+    assert decision.classification == "guest"
+    assert decision.reason_code == "owner_mismatch"
+    assert accepted is False
+    assert reason == "target_non_owner"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_post_playback_preroll_is_dropped_from_speaker_pcm() -> None:
+    observed: dict[str, object] = {}
+    preroll = b"\x22\x00" * 6_400
+    voice = b"\x33\x00" * 8_000
+
+    async def classify(pcm: bytes, sample_rate: int) -> SpeakerDecision:
+        observed.update(pcm=pcm, sample_rate=sample_rate)
+        return _decision("owner")
+
+    runtime = DuplexRuntime.create()
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    await _finish_assistant_playback(runtime, "南京今天多云。")
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(preroll)
+    runtime.feed_speaker_pcm(voice)
+    runtime.on_user_voice_stopped()
+    await runtime.await_speaker_classification()
+
+    assert observed == {"pcm": voice, "sample_rate": 16000}
+    await runtime.close()
 
 
 @pytest.mark.asyncio

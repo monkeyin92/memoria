@@ -114,6 +114,25 @@ class MediaOutputOwnerMixin:
         return True
 
     @staticmethod
+    def _fast_ack_has_started_playback(
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+    ) -> bool:
+        """True once a live-lookup filler has already gone out on this lease."""
+
+        if int(getattr(lease.intent, "kind", 0)) != int(
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+        ):
+            return False
+        fence = lease.fence
+        delivery = context.reply_delivery.get(fence)
+        if delivery is not None and delivery.first_frame_sent:
+            return True
+        if context.playback.rendered_sample_end(fence) > 0:
+            return True
+        return bool(context.playback.actual_heard_text(fence))
+
+    @staticmethod
     def _output_owner_is_current(
         context: _MediaVoiceSession,
         lease: _OutputOwnerLease,
@@ -125,12 +144,16 @@ class MediaOutputOwnerMixin:
         ):
             return False
         coordinator = context.runtime.orchestrator.delegation
-        return coordinator.output_intent_is_selected(
+        if coordinator.output_intent_is_selected(
             lease.intent,
             current_fence=context.runtime.fence,
             current_context_version=coordinator.current_context_version(lease.fence.session_id),
             floor_allows_output=context.runtime.output_floor_allows_assistant,
-        )
+        ):
+            return True
+        # A heard live-lookup filler must finish even if a later context
+        # snapshot drops it from the shadow candidate set.
+        return MediaOutputOwnerMixin._fast_ack_has_started_playback(context, lease)
 
     @staticmethod
     def _acquire_output_owner(

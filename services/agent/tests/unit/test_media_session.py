@@ -7808,6 +7808,216 @@ async def test_unheard_live_lookup_ack_prefixes_deep_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_started_live_lookup_ack_cancelled_does_not_repeat_filler() -> None:
+    class HoldingAckProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ack_hold = asyncio.Event()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=intent.kind != media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    try:
+                        await self.ack_hold.wait()
+                    except asyncio.CancelledError:
+                        raise
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"\x04\x00\x05\x00",
+                        source_start_sample=source_start_sample + 2,
+                        text="",
+                        first=False,
+                        final=True,
+                    )
+                    self.ack_completed.set()
+
+            return chunks()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.frames: list[object] = []
+
+        async def emit_pcm(self, _session_id: str, frame: object) -> bool:
+            self.frames.append(frame)
+            return True
+
+        async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+    provider = HoldingAckProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("started-ack-no-repeat-filler")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        await registry._cancel_reply_task(context, ack_owner.fence, reason="preempted")
+        provider.ack_hold.set()
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        assert media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT in provider.output_kinds
+        assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=context.runtime.fence.generation_id,
+                received_sequence=0,
+                rendered_sample_end=2,
+                client_monotonic_ms=1,
+                turn_id=context.runtime.fence.turn_id,
+                tool_epoch=context.runtime.fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+    finally:
+        provider.ack_hold.set()
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_started_live_lookup_ack_is_not_preempted_by_deep_result() -> None:
+    class HoldingAckProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ack_hold = asyncio.Event()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=intent.kind != media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    await self.ack_hold.wait()
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"\x04\x00\x05\x00",
+                        source_start_sample=source_start_sample + 2,
+                        text="",
+                        first=False,
+                        final=True,
+                    )
+                    self.ack_completed.set()
+
+            return chunks()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.frames: list[object] = []
+
+        async def emit_pcm(self, _session_id: str, frame: object) -> bool:
+            self.frames.append(frame)
+            return True
+
+        async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+    provider = HoldingAckProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("started-ack-not-preempted")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        ack_fence = ack_owner.fence
+        context.runtime.orchestrator.delegation.reset_output_intent_state(identity.session_id)
+        provider.release.set()
+        await asyncio.sleep(0.05)
+        assert not provider.deep_started.is_set()
+        assert context.output_owner is ack_owner
+        provider.ack_hold.set()
+        await asyncio.wait_for(provider.ack_completed.wait(), timeout=2)
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        assert provider.output_kinds == [
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+            media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
+        ]
+        assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
+    finally:
+        provider.ack_hold.set()
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()
     deep_gate = asyncio.Event()
