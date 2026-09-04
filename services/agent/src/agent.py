@@ -47,7 +47,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.interruption_guard import is_primarily_non_chinese_script
 from services.agent.src.orchestration.task_manager import ToolSpec
-from services.agent.src.prompts import BRIDGE_PHRASES, LIVE_LOOKUP_FILLER, THINKING_FILLER
+from services.agent.src.prompts import BRIDGE_PHRASES, LIVE_LOOKUP_FILLER
 from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
     RECALL_CONTEXT_ITEM_MAX_CHARS,
@@ -2076,27 +2076,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if asyncio.iscoroutine(stream):
                 stream = await stream
             assert stream is not None
-
-            async def _stream_with_thinking_cover() -> Any:
-                cover_thinking = (
-                    realtime_request is None
-                    and response_plan.direct_text is None
-                    and not resume_interrupted_reply
-                )
-                if cover_thinking:
-                    first_task = asyncio.create_task(anext(stream))
-                    done, _pending = await asyncio.wait({first_task}, timeout=0.25)
-                    if first_task not in done:
-                        yield THINKING_FILLER
-                    try:
-                        first = await first_task
-                    except StopAsyncIteration:
-                        return
-                    yield first
-                async for item in stream:
-                    yield item
-
-            async for chunk in _stream_with_thinking_cover():
+            async for chunk in stream:
                 if task is not None and task.cancelled():
                     break
                 if self._runtime.orchestrator.tts_cancel_event().is_set():
