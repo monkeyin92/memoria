@@ -407,6 +407,14 @@ class MediaOutputDispatchMixin:
                     OutputDispatchStatus.COMPLETED,
                     "local_reply_already_reserved",
                 )
+        elif context.runtime.live_lookup_needed(user_text):
+            # Lookup owns the audible path. Starting a parallel conversation
+            # reply here is what cut FAST_ACK down to 「稍」 on live queries.
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.COMPLETED,
+                "live_lookup_pending",
+            )
         coordinator = context.runtime.orchestrator.delegation
         now_ms = int(time.time() * 1_000)
         intent = coordinator.conversation_reply(
@@ -752,18 +760,21 @@ class MediaOutputDispatchMixin:
         owner = context.output_owner
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
-        if self._fast_ack_has_started_playback(context, owner) or (
-            int(getattr(work.intent, "kind", 0))
+        heard = self._owner_has_started_playback(context, owner)
+        if heard and (
+            not context.runtime.barge_in_enabled
+            or self._fast_ack_has_started_playback(context, owner)
+            or int(getattr(work.intent, "kind", 0))
             == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)
-            and self._owner_has_started_playback(context, owner)
         ):
             logger.info(
                 "defer output preempt until current playback finishes session=%s "
-                "owner_turn=%s owner_gen=%s owner_kind=%s replacement=%s",
+                "owner_turn=%s owner_gen=%s owner_kind=%s barge_in=%s replacement=%s",
                 context.identity.session_id,
                 owner.fence.turn_id,
                 owner.fence.generation_id,
                 int(getattr(owner.intent, "kind", 0)),
+                context.runtime.barge_in_enabled,
                 work.intent_id,
             )
             return True

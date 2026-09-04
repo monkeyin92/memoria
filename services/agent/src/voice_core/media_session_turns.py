@@ -1060,6 +1060,22 @@ class MediaTurnEndpointMixin:
                     reason,
                 )
             return reason
+        owner = context.output_owner
+        if (
+            owner is not None
+            and not context.runtime.barge_in_enabled
+            and owner.fence.turn_id == fence.turn_id
+        ):
+            delivery = context.reply_delivery.get(owner.fence)
+            if delivery is not None and delivery.first_frame_sent:
+                logger.info(
+                    "skip same-turn cancel of heard playback session=%s "
+                    "owner_gen=%s new_gen=%s",
+                    context.identity.session_id,
+                    owner.fence.generation_id,
+                    fence.generation_id,
+                )
+                return "heard_output_in_flight"
         # A final ASR result can arrive while the previous answer is still
         # synthesizing.  Wait for that task to release the per-session reply
         # lock before scheduling the new turn; otherwise ``generate_reply``
