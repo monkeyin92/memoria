@@ -43,7 +43,7 @@ constexpr uint64_t kAfeVadHangoverSamples =
 // AFE is the normal endpoint authority. This absolute sample-clock fence only
 // prevents one bad/noisy capture from holding a signed media session open
 // indefinitely; ordinary turns must still end through the AFE VAD callback.
-constexpr uint64_t kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 10;
+constexpr uint64_t kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20;
 
 struct ScopedJson final {
     cJSON* value = nullptr;
