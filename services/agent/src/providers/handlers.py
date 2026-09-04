@@ -76,9 +76,10 @@ def build_language_model_handler(
     extra_body: dict[str, Any] = {
         "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
     }
-    if settings.llm_provider == "bailian_deepseek":
-        extra_body["enable_thinking"] = False
+    if settings.llm_provider == "deepseek":
+        extra_body["thinking"] = {"type": "disabled"}
     else:
+        extra_body["enable_thinking"] = False
         extra_body["thinking"] = {"type": "disabled"}
     return llm_factory(
         model=settings.llm_fast_model,

@@ -27,7 +27,7 @@ _SYSTEM_PROMPT = """\
 class InterruptSemanticClassifierConfig:
     api_key: str
     base_url: str
-    model: str = "deepseek-v4-flash"
+    model: str = "qwen-flash"
     timeout_s: float = 1.2
 
     def __post_init__(self) -> None:

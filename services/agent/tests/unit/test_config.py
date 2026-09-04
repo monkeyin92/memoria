@@ -43,7 +43,11 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8
     assert s.interrupt_semantic_enabled is True
-    assert s.interrupt_semantic_model == "deepseek-v4-flash"
+    assert s.interrupt_semantic_model == "qwen-flash"
+    assert s.live_lookup_semantic_model == "qwen-flash"
+    assert s.conversation_close_semantic_model == "qwen-flash"
+    assert s.llm_provider == "qwen"
+    assert s.qwen_fast_model == "qwen3.7-flash"
     assert s.interrupt_semantic_timeout_s == 1.2
     assert s.miniprogram_kws_enabled is False
     assert s.media_bridge_grpc_enabled is False
@@ -282,17 +286,17 @@ def test_agent_settings_requires_one_complete_doubao_auth_mode(
         AgentSettings()
 
 
-def test_bailian_deepseek_is_the_default_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_qwen_flash_is_the_default_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     settings = AgentSettings()
 
-    assert settings.llm_provider == "bailian_deepseek"
+    assert settings.llm_provider == "qwen"
     assert settings.llm_api_key == "dashscope-test-key"
     assert settings.llm_base_url.endswith("/compatible-mode/v1")
-    assert settings.llm_fast_model == "deepseek-v4-flash"
-    assert settings.llm_deep_model == "deepseek-v4-flash"
+    assert settings.llm_fast_model == "qwen3.7-flash"
+    assert settings.llm_deep_model == "qwen-plus"
 
 
 def test_deepseek_configuration_remains_an_override(monkeypatch: pytest.MonkeyPatch) -> None:

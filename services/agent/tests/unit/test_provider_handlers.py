@@ -60,6 +60,7 @@ async def test_bailian_deepseek_handlers_keep_keyless_weather_lookup(
             "timeout": llm_calls[0]["timeout"],
             "extra_body": {
                 "enable_thinking": False,
+                "thinking": {"type": "disabled"},
                 "max_tokens": 180,
             },
         }
@@ -83,6 +84,30 @@ async def test_provider_handlers_do_not_send_dashscope_search_options_to_deepsee
     )
 
     assert calls[0]["extra_body"] == {
+        "thinking": {"type": "disabled"},
+        "max_tokens": 240,
+    }
+
+
+@pytest.mark.asyncio
+async def test_qwen_handlers_disable_thinking_for_flash_chat() -> None:
+    calls: list[dict[str, Any]] = []
+
+    await build_voice_provider_handlers(
+        settings=SimpleNamespace(
+            llm_provider="qwen",
+            llm_fast_model="qwen3.7-flash",
+            llm_api_key="secret",
+            llm_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        llm_factory=lambda **kwargs: calls.append(kwargs) or object(),
+        asr_factory=object,
+        tts_factory=object,
+    )
+
+    assert calls[0]["model"] == "qwen3.7-flash"
+    assert calls[0]["extra_body"] == {
+        "enable_thinking": False,
         "thinking": {"type": "disabled"},
         "max_tokens": 240,
     }

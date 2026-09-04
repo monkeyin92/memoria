@@ -259,7 +259,7 @@ async def smoke_llm() -> str:
         base_url=settings.llm_base_url,
         fast_model=settings.llm_fast_model,
         thinking_mode=(
-            "dashscope" if settings.llm_provider == "bailian_deepseek" else "deepseek"
+            "deepseek" if settings.llm_provider == "deepseek" else "dashscope"
         ),
     )
     client = DeepSeekClient(cfg)

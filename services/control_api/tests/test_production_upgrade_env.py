@@ -254,7 +254,7 @@ def test_endpointing_defaults_match_operator_templates() -> None:
         "ENDPOINTING_MAX_DELAY_S": "2.20",
         "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
         "INTERRUPT_SEMANTIC_ENABLED": "true",
-        "INTERRUPT_SEMANTIC_MODEL": "deepseek-v4-flash",
+        "INTERRUPT_SEMANTIC_MODEL": "qwen-flash",
         "INTERRUPT_SEMANTIC_TIMEOUT_S": "1.2",
     }
 
@@ -295,11 +295,16 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["ENDPOINTING_MAX_DELAY_S"] == "2.20"
     assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
     assert agent["INTERRUPT_SEMANTIC_ENABLED"] == "true"
-    assert agent["LLM_PROVIDER"] == "bailian_deepseek"
-    assert agent["INTERRUPT_SEMANTIC_MODEL"] == "deepseek-v4-flash"
+    assert agent["LLM_PROVIDER"] == "qwen"
+    assert agent["QWEN_FAST_MODEL"] == "qwen3.7-flash"
+    assert agent["INTERRUPT_SEMANTIC_MODEL"] == "qwen-flash"
+    assert agent["LIVE_LOOKUP_SEMANTIC_MODEL"] == "qwen-flash"
+    assert agent["CONVERSATION_CLOSE_SEMANTIC_MODEL"] == "qwen-flash"
     assert agent["INTERRUPT_SEMANTIC_TIMEOUT_S"] == "1.2"
     assert control["CRISIS_SEMANTIC_ENABLED"] == "true"
-    assert control["CRISIS_SEMANTIC_MODEL"] == "deepseek-v4-flash"
+    assert control["CRISIS_SEMANTIC_MODEL"] == "qwen-flash"
+    assert control["DASHSCOPE_SUMMARY_MODEL"] == "qwen-flash"
+    assert control["MEMORIA_MEMORY_EXTRACTION_MODEL"] == "qwen-flash"
     assert control["CRISIS_SEMANTIC_TIMEOUT_S"] == "0.8"
     assert "CRISIS_SEMANTIC_ENABLED" not in agent
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"

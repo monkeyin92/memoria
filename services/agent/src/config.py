@@ -116,7 +116,7 @@ class AgentSettings(BaseSettings):
         default="livekit_cloud", alias="DEPLOYMENT_PROFILE"
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    llm_provider: LLMProvider = Field(default="bailian_deepseek", alias="LLM_PROVIDER")
+    llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
     tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
 
     livekit_url: str = Field(default="", alias="LIVEKIT_URL")
@@ -244,14 +244,14 @@ class AgentSettings(BaseSettings):
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="DASHSCOPE_COMPATIBLE_BASE_URL",
     )
-    qwen_fast_model: str = Field(default="qwen-turbo", alias="QWEN_FAST_MODEL")
+    qwen_fast_model: str = Field(default="qwen3.7-flash", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
     interrupt_semantic_enabled: bool = Field(
         default=True,
         alias="INTERRUPT_SEMANTIC_ENABLED",
     )
     interrupt_semantic_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen-flash",
         min_length=1,
         alias="INTERRUPT_SEMANTIC_MODEL",
     )
@@ -266,7 +266,7 @@ class AgentSettings(BaseSettings):
         alias="LIVE_LOOKUP_SEMANTIC_ENABLED",
     )
     live_lookup_semantic_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen-flash",
         min_length=1,
         alias="LIVE_LOOKUP_SEMANTIC_MODEL",
     )

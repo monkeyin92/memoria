@@ -635,7 +635,7 @@ class ControlSettings(BaseSettings):
     )
 
     llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"] = Field(
-        default="bailian_deepseek",
+        default="qwen",
         alias="LLM_PROVIDER",
     )
     tts_provider: Literal["cosyvoice", "doubao"] = Field(
@@ -685,7 +685,7 @@ class ControlSettings(BaseSettings):
         alias="DASHSCOPE_BASE_URL",
     )
     dashscope_summary_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen-flash",
         alias="DASHSCOPE_SUMMARY_MODEL",
     )
     dashscope_summary_timeout_s: float = Field(
@@ -699,7 +699,7 @@ class ControlSettings(BaseSettings):
         alias="CRISIS_SEMANTIC_ENABLED",
     )
     crisis_semantic_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen-flash",
         min_length=1,
         alias="CRISIS_SEMANTIC_MODEL",
     )
@@ -710,7 +710,7 @@ class ControlSettings(BaseSettings):
         alias="CRISIS_SEMANTIC_TIMEOUT_S",
     )
     memory_extraction_model: str = Field(
-        default="deepseek-v4-flash",
+        default="qwen-flash",
         alias="MEMORIA_MEMORY_EXTRACTION_MODEL",
     )
     memory_extraction_timeout_s: float = Field(

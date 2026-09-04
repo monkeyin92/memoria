@@ -30,7 +30,7 @@ def build_live_lookup_semantic_classifier(
                     "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 )
             ),
-            model=str(getattr(settings, "live_lookup_semantic_model", "deepseek-v4-flash")),
+            model=str(getattr(settings, "live_lookup_semantic_model", "qwen-flash")),
             timeout_s=float(getattr(settings, "live_lookup_semantic_timeout_s", 0.8)),
         )
     )

@@ -34,18 +34,21 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-03 18:22 CST）
+## 下次接着从这里开始（2026-09-04 10:32 CST）
 
 ```yaml
-resume_focus: owner_voiceprint_device_enrollment
+resume_focus: qwen37_flash_conversation_acceptance
 work_order: half_duplex_investor_demo
-demo_script_two_turns: PASS_epoch1367
+firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
+llm_conversation: qwen3.7-flash
+llm_classifiers: qwen-flash
+demo_script_two_turns: PASS_epoch1379
 subject_adult_verified: true
 speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
-last_wake_epoch: 1372
+last_wake_epoch: 1379
 device_enrollment_prompts: quality_enroll_is_owner_active
 miniprogram_devtools_publish: uploaded_0.8.75_devtools_cli
 direct_real_device_verified: false
@@ -59,20 +62,23 @@ direct_real_device_verified: false
 4. **epoch 1371**：`state=required intent=no`，只播唤醒短句后停在聆听中。样本未落库，不能只补第四段。
 5. **提交/重试修复已切流**：Agent/Bridge `memoria-agent:20260903-1745-enrollment-keep-intent-agent-component`，Control `memoria-control-api:20260903-1745-enrollment-keep-intent-control-api`，源提交 `e781cb0`。
 6. **epoch 1372 四段提交成功**，随后按开箱流程改为合格登记即 **active**。profile `1b5b577b` 已升为 **active**（2026-09-03 10:22 UTC）。CAM++ 无反欺骗头仍返回 `unavailable`，但不再挡住主人匹配；不得把该字段改成 `verified`。Control overlay `20260903-1820-owner-enroll-active-control-api` / `1a7a939`。
+7. **2026-09-04 10:17 CST 已刷 WebRTC NS 候选固件**（未重建；身份区未写）。串口确认 `Initialized FD AFE, detector: MultiNet, NS: webrtc`。
+8. **epoch 1379（10:27–10:28 CST）NS 固件现场双轮 + 短告别 PASS**：唤醒「茉莉」→ 星期几（clock-fact，`text_len=6`，FunASR RMS 470）generation 2 Actual Heard + `playback.ended` → 天气（live-query，`text_len=10`，FunASR RMS 685）generation 4 Actual Heard + `playback.ended` → 短告别 `text_len=6` 走 `conversation_end_explicit`，Edge `reason=conversation_end_explicit`，设备 `listening -> idle`。操作员听感两轮都有完整回答、再见立刻待命。证据：`outputs/acceptance/run-20260904-flash-ns/`（serial / bridge.log / tap-epoch1379.wav）。
 
 **下一步（按顺序）**
 
-1. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
-2. 复测自然告别：epoch **1374** 把「……我知道了，再见」17 字转写因 overlap 丢掉，一直听到静音超时。结束语规则和 overlap 捞回已切流，唤醒后再说那句应立刻待命。
-3. 仍勿把 `direct_real_device_verified` 改为 true。
+1. **复测刚切的文本模型**：主对话 `qwen3.7-flash`、分类器 `qwen-flash`。重点：天气/星期几、短告别立刻待命、打断语义、联网判定不再 0.8s 超时。
+2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
+3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
+4. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
 
 ## 当前生产
 
-当前 Agent/Bridge overlay 源提交为 `70828bfe1afe55747f8d6e48960c7950888a3419`（2026-09-03 18:54 CST 切流，标签 `20260903-1852-trailing-farewell-close-agent-component`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。栈环境字段与 Media Edge 仍为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` / `20260901-0945-wake-word-whitelist`：
+当前 Agent/Bridge 镜像为 `memoria-agent:20260903-2318-early-vad-commit-qwen-flash-agent-component`（容器 overlay 已比下文 1852 标签新；HANDOFF 旧句保留作历史）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。栈环境字段与 Media Edge 仍为 `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` / `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env，待真机复测）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260903-1852-trailing-farewell-close-agent-component`，overlay revision `70828bfe1afe55747f8d6e48960c7950888a3419`（自然告别句「……再见」可结束会话；重叠丢弃的结束语会捞回）。栈 `MEMORIA_RELEASE_TAG` 仍对齐 `20260901-0945-wake-word-whitelist`；healthy、bridge gRPC PASS、restart=0。`cutover_mode=manual_tag_split`；收据 `/opt/memoria/component-releases/20260903-1852-trailing-farewell-close-agent-component/`。紧邻回滚点 `memoria-agent:rollback-20260903-1852-trailing-farewell-close-agent-component-pre-agent` 与 `-pre-bridge`（镜像 `20260903-1745-enrollment-keep-intent-agent-component`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260903-2318-early-vad-commit-qwen-flash-agent-component`。现场 `memoria-agent-1` 曾 unhealthy（heartbeat 409，栈 `MEMORIA_RELEASE_TAG` 仍为 `20260827-architecture-split-v1` / `cutover_mode=manual_tag_split`）；对话走 Bridge。告别句「……再见」可结束会话。收据 `/opt/memoria/component-releases/20260903-2318-early-vad-commit-qwen-flash-agent-component/`。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 已钉住本标签。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
@@ -118,17 +124,17 @@ miniprogram_experience_version: 0.8.75
 
 ## 当前板卡与固件
 
-- 固件 app version：2.4.2；ES8388 输入增益：**21 dB（2026-09-02 已刷写）**；app SHA `1af5a39e…`（前 `c11fb87e…` 为 18 dB）。epoch1351 复测：30–60 cm 正常音量 DTLN 后 RMS **939/764**，两轮 commit+播报，较 18 dB 需大喊（2000+）明显改善。
-- **板端降噪候选（2026-09-03 构建，未刷写）**：overlay patch `0022` 在 Memoria 板打开 ESP-SR AFE WebRTC 降噪（AFE 流水线 AEC→NS→VAD，NS 先于板端 VAD 与上行生效，稳态环境噪声不再把板端/网关能量 VAD 顶到 20 s 硬兜底才收轮）；`CONFIG_SR_NSN_WEBRTC=y` 显式 pin（无模型、零 flash 体积）。同期修复 overlay 漂移：真机调参把设备 VAD 硬兜底从 10 s 改到 20 s 时只改了 `.cache` 构建树没回写 overlay（`kMaxVadSpeechSamples` 与 patch 0005 注释），本次已同步为 20 s 并加门禁 pin，否则下次 overlay 重放会静默回退 10 s。候选 app SHA `6bb2af5d…`，merged SHA `a02cd168…`，overlay SHA `536a7395…`（含 patch `0022` 与 check-overlay/测试断言）。门禁已过：锁定 commit 重放 + clean build + `check-overlay.sh` + 重放树对比改前基线仅含 NS 变更。**待办：刷写后在嘈杂环境按剧本验收（说话收轮不再等 20 s 兜底、Actual Heard、误/漏唤醒计数、上行 RMS 变化）；NS 不足以收轮时按序升级 NSNET2（模型 340 KB，assets 余量充足）→ `vadnet1_medium` 神经 VAD（288 KB）；NS 生效后需重标定 Go Media Edge `media_vad.go` 的 MinRMS/噪声底参数。**
-- app SHA-256：`c11fb87ed4ffd0206aa5a9554d6226d539186f71040e4ea8525dea6b3dd31492`。
-- merged SHA-256：`3f45c9f394847d617ab1df36919e74cecee41a84e0a3cbb13b75e61f7346f68e`。
-- overlay SHA-256：`8bad9a23dd0559598155f7b701da94d2564fcf1f1cb99d427bd60051b878bb69`（含 patch `0021` 白名单唤醒词与 `memoria_wake_word` 注册表）。
+- 固件 app version：2.4.2；ES8388 输入增益：**21 dB（保留在当前镜像）**。NS off 现场基线仍是 2026-09-02 的 app SHA `1af5a39e…`（前 `c11fb87e…` 为 18 dB）：epoch1351 30–60 cm 正常音量 DTLN 后 RMS **939/764**。
+- **板端 WebRTC 降噪（2026-09-04 10:17 CST 已刷写；epoch 1379 双轮+短告别已过，嘈杂环境未定量）**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS；`CONFIG_SR_NSN_WEBRTC=y`。刷写未写身份区。epoch **1379** session `e3422df6-57fe-4c46-8302-102dcca56990`：设备 VAD 全部 `vad_end`（用户段 6.64 s / 5.98 s / 告别 1.54 s），**没有 20 s 硬兜底**。FunASR 两轮 RMS 470 / 685（NS off 基线 epoch1351 为 939/764，本轮更低但仍提交成功）。尾段低电平 32–53 被标 `asr_empty_class=low_rms`，未挡主轮。天气轮 generation 3 曾 `transport_rejected`（fence 仍钉在 turn2/gen2），generation 4 补播成功，操作员听感无中断失败。短告别 `text_len=6` → `conversation_end_explicit` → 设备 idle（最后 VAD end 后 126 ms）。tap 全文件 RMS 518、19.92 s。**未做**：明确嘈杂环境噪声底、误/漏唤醒计数、`media_vad.go` MinRMS 重标定、17 字 overlap 原句。NS 不够时仍按序 NSNET2 → `vadnet1_medium`。
+- app SHA-256：`6bb2af5db28825b6d647dadff0e9c2c2307476535a77736603716980c37e0aad`。
+- merged SHA-256：`a02cd168eabeb4e62138f5773ab09e754efd57f9572f7861a4e76b373679c062`。
+- overlay SHA-256：`536a73952297cdca52a5d687b86f0d9221efb2d1ce9a25e5f1c76bd861e952b1`（含 patch `0022` WebRTC NS 与 20 s fence pin）。
 - 默认出厂唤醒词仍为「茉莉」（`mo li`）；assets 同时打包 `mei mo li ya`，运行时经 device settings / NVS 切换；自定义词走 MultiNet 拼音命令（v1，非云端 WakeNet 训练）。
-- `memoria_identity` 刷前/刷后 SHA-256：`b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，逐字节一致。
-- 2026-09-01 使用 `scripts/flash.sh --port /dev/cu.usbmodem101 --build` 写入 bootloader、partition table、OTA data、`generated_assets.bin` 与 app，未写入 `0x10000..0x1ffff` 身份区。
+- `memoria_identity` 上次逐字节核验 SHA-256：`b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`（2026-09-01）；本次刷写未重读该分区。
+- 2026-09-01 曾用 `scripts/flash.sh --port /dev/cu.usbmodem101 --build` 写入同类分区、未写身份区。2026-09-04 本次未加 `--build`，二进制指纹与构建候选一致。
 - Speaking 期间关闭 KWS 并忽略迟到 wake event；回到 idle 后恢复。BOOT 始终是本地物理硬停止。
 
-这些证据只达到 `identity-safe flash + board boot/activation`，不等于完整设备媒体或 Actual Heard。
+epoch 1379 已有串口 VAD、bridge Actual Heard / `playback.ended`、Edge 显式结束和操作员听感；仍不等于全局 `direct_real_device_verified`，也不等于嘈杂环境定量抗噪。
 
 ## 茉莉唤醒与自动待命候选
 

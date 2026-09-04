@@ -37,7 +37,7 @@ class CrisisSemanticVerdict(StrEnum):
 class CrisisSemanticClassifierConfig:
     api_key: str
     base_url: str
-    model: str = "deepseek-v4-flash"
+    model: str = "qwen-flash"
     timeout_s: float = 0.8
 
     def __post_init__(self) -> None:
