@@ -37,7 +37,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 下次接着从这里开始（2026-09-05 01:18 CST）
 
 ```yaml
-resume_focus: epoch1386_published_awaiting_board_retest
+resume_focus: epoch1389_slight_cut_local_unreleased
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -75,10 +75,11 @@ direct_real_device_verified: false
 14. **星期几提交修复已切流**：源 `90d4dff6c3add86f01c935e2885b3873e1e2f0fb`，标签 `20260905-weekday-projection-range-agent-component`。commit 前 `align_provisional_range` 扩展投影区间（抽到 `conversation_projection_range.py` 以保持 1067 行预算）；clock-fact overlap recovery 走 `_observe_final_asr_result` 补 `turn_start`。单测 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-weekday-projection-range-agent-component-pre-agent/-pre-bridge`。
 15. **epoch 1386（00:29–00:30 CST）复测 FAIL**：session `0f7b81d0-59e1-40f8-b8f2-4ee0c16fdf87`。天气 live-query `text_len=10` 已 commit；垫话 gen2 `first_frame` 后被取消（`preempted`/`output_task_cancelled`），听感「稍」截断再完整「稍等，我查询一下」+天气。随后两轮日期/星期几 ASR 已 pin，`align_provisional_text` 成功，**没有** `projection_range_mismatch`；回复被 `target_non_owner` 掐掉。再见同样 `target_non_owner`，Edge `reason=owner_silence_timeout`。档案 `speaker.classified`：天气轮 `uncertain`/`ambiguous_score` score **0.4706** quality 0.91；日期轮 `guest`/`owner_mismatch` score **0.3373** quality 0.73（profile `1b5b577b`，阈值 owner 0.78 / guest 0.40）。后轮未再 classify，沿用 mismatch。
 16. **垫话出声 + 播后声纹修复已切流**：源 `8a8eb9ade975b7eae1c3709e5d3434bff26a8d6f`，标签 `20260905-filler-post-playback-speaker-agent-component`。已出声 FAST_ACK 不再 preempt；同 turn `first_frame` 后天气去掉 `LIVE_LOOKUP_FILLER`；无 AEC 播后 2s 内 quality 低于 0.85 的 formal guest 记 `post_playback_untrusted`，并丢掉 400ms preroll。不放宽 `reject_non_owner_voice`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-filler-post-playback-speaker-agent-component-pre-agent/-pre-bridge`。
+17. **epoch 1388/1389 复测**：1388 唤醒后星期几仍 `target_non_owner`。1389 session `09f38e59` 星期几+天气都答了，但每轮 `first_frame` 后 `output_task_cancelled`，听感「稍」截断再正文。星期几被语义分类器当成联网查询（`interaction_delegation_started` + qwen-plus 7 字）；天气 LLM/垫话出声后被 DEEP_RESULT 掐。本地修复 `aa2435d`（未发布）：clock-fact 不再 live-lookup；lookup claim 未就绪时不抢先开 LLM；已出声 owner 不被 DEEP_RESULT flush。
 
 **下一步（按顺序）**
 
-1. 真机复测：天气垫话完整出声且不重复「稍等」；随后问日期/星期几应能回答。不要放宽 `reject_non_owner_voice`。
+1. 发布 `aa2435d` Agent/Bridge overlay，再真机复测：星期几不要「稍」；天气不要把「稍」卡断。不要放宽 `reject_non_owner_voice`。
 2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
