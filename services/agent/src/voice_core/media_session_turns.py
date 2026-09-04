@@ -284,6 +284,13 @@ class MediaTurnEndpointMixin:
                 len(text),
             )
             return
+        if context.turn_start_sample is None:
+            context.turn_start_sample = result.capture_start_sample
+        else:
+            context.turn_start_sample = min(
+                context.turn_start_sample,
+                result.capture_start_sample,
+            )
         endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
         context.turn_endpoint_sample = endpoint
         context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)

@@ -16,6 +16,9 @@ from services.agent.src.orchestration.conversation_projection import (
     TurnPhase,
     transition_turn_phase,
 )
+from services.agent.src.orchestration.conversation_projection_range import (
+    align_provisional_range,
+)
 from services.agent.src.orchestration.speech_timeline import (
     SegmentKind,
     SpeechSegment,
@@ -309,6 +312,81 @@ def test_align_provisional_text_lets_late_timeline_revision_commit() -> None:
     )
     assert isinstance(committed, CommittedTurn)
     assert committed.text == "今天天气怎么样"
+
+
+def test_align_provisional_range_lets_later_asr_pin_commit() -> None:
+    timeline = SpeechTimeline()
+    vad = _segment("vad", start=84_160, end=84_161, kind=SegmentKind.VAD)
+    assert timeline.add(vad)
+    projection = ConversationProjection("session", timeline)
+    assert projection.apply_continuous_event(vad, turn_id_hint=2)
+    assert projection.provisional is not None
+    assert projection.provisional.capture_end_sample == 84_161
+
+    final = _segment(
+        "asr",
+        start=123_520,
+        end=154_880,
+        text="今天星期几",
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+    )
+    assert timeline.add(final)
+    aligned_text = projection.align_provisional_text("今天星期几")
+    assert aligned_text is not None
+    evidence = CommitEvidence(
+        session_id="session",
+        stream_epoch=1,
+        capture_start_sample=84_160,
+        capture_end_sample=154_880,
+        text="今天星期几",
+        fence=GenerationFence("session", 2, 1, 0),
+        speaker_evidence=SpeakerEvidence(),
+        history_eligible=False,
+    )
+    assert projection.validate_commit(evidence) is ProjectionRejectReason.RANGE_MISMATCH
+
+    aligned_range = align_provisional_range(projection, 84_160, 154_880)
+    assert aligned_range is not None
+    assert aligned_range.turn.capture_start_sample == 84_160
+    assert aligned_range.turn.capture_end_sample == 154_880
+    assert projection.validate_commit(evidence) is None
+    committed = projection.commit_turn(evidence)
+    assert isinstance(committed, CommittedTurn)
+    assert committed.text == "今天星期几"
+    assert committed.capture_end_sample == 154_880
+
+
+def test_align_provisional_range_expands_to_cover_commit() -> None:
+    timeline = SpeechTimeline()
+    final = _segment(
+        "asr",
+        start=160,
+        end=640,
+        text="边界测试",
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+    )
+    assert timeline.add(final)
+    projection = ConversationProjection("session", timeline)
+    assert projection.apply_continuous_event(final, turn_id_hint=1)
+    assert align_provisional_range(projection, 160, 640) is None
+    assert align_provisional_range(projection, 80, 640) is not None
+    assert projection.provisional is not None
+    assert projection.provisional.capture_start_sample == 80
+    assert projection.provisional.capture_end_sample == 640
+    still_outside = CommitEvidence(
+        session_id="session",
+        stream_epoch=1,
+        capture_start_sample=160,
+        capture_end_sample=800,
+        text="边界测试",
+        fence=GenerationFence("session", 1, 1, 0),
+        speaker_evidence=SpeakerEvidence(),
+        history_eligible=False,
+    )
+    assert align_provisional_range(projection, 160, 800) is not None
+    assert projection.validate_commit(still_outside) is None
 
 
 def test_discarded_turn_hint_cannot_reuse_provisional_identity_or_revision() -> None:

@@ -19,6 +19,9 @@ from services.agent.src.orchestration.conversation_projection import (
     SpeakerEvidence,
     TurnPhase,
 )
+from services.agent.src.orchestration.conversation_projection_range import (
+    align_provisional_range,
+)
 from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
@@ -358,9 +361,9 @@ class MediaSessionCommitMixin:
                 result.capture_end_sample,
             )
             return
-        self._maybe_early_commit_clock_fact(context, result)
-        if context.turn_endpoint_sample is not None:
-            self._schedule_turn_commit(context)
+        # Observe sets turn_start. Pinning the endpoint alone left
+        # epoch 1384 as invalid_pending until ASR tail timeout.
+        self._observe_final_asr_result(context, result)
 
     async def _recover_straddling_live_query_final(
         self,
@@ -671,6 +674,19 @@ class MediaSessionCommitMixin:
                 len(text),
             )
             await self._emit_projection_patch(context, aligned)
+        range_aligned = align_provisional_range(context.projection, start_sample, end_sample)
+        if range_aligned is not None:
+            logger.info(
+                "media provisional range aligned session=%s stream_epoch=%s "
+                "commit=%s-%s provisional=%s-%s",
+                session_id,
+                stream_epoch,
+                start_sample,
+                end_sample,
+                range_aligned.turn.capture_start_sample,
+                range_aligned.turn.capture_end_sample,
+            )
+            await self._emit_projection_patch(context, range_aligned)
         speaker_evidence = self._projection_speaker_evidence(context)
         history_eligible = context.runtime.current_history_eligible
         commit_evidence = CommitEvidence(
@@ -921,6 +937,17 @@ class MediaSessionCommitMixin:
                 len(commit_text),
             )
             await self._emit_projection_patch(context, final_align)
+        final_range = align_provisional_range(context.projection, start_sample, end_sample)
+        if final_range is not None:
+            logger.info(
+                "media provisional range aligned before commit session=%s stream_epoch=%s "
+                "commit=%s-%s",
+                session_id,
+                stream_epoch,
+                start_sample,
+                end_sample,
+            )
+            await self._emit_projection_patch(context, final_range)
         projection_result = context.projection.commit_turn(
             replace(
                 commit_evidence,

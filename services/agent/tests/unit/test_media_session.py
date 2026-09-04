@@ -6444,6 +6444,164 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
 
 
 @pytest.mark.asyncio
+async def test_device_clock_fact_commits_when_provisional_lags_asr_end() -> None:
+    """A weekday pin must commit even if projection still holds a short VAD range.
+
+    Field (2026-09-04 epoch 1384): FunASR accepted ``今天星期几`` and early-
+    committed endpoint=154880, then ``validate_commit`` failed closed as
+    ``projection_range_mismatch``. The board stayed silent until owner silence.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-clock-fact-range-lag")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="clock-vad-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=84_160,
+                capture_end_sample=84_161,
+            ),
+        )
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-final",
+            revision=1,
+            capture_start_sample=123_520,
+            capture_end_sample=154_880,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        # Reproduce the field lag: VAD-only provisional end, ASR pin already armed.
+        context.projection._provisional = replace(  # noqa: SLF001
+            context.projection.provisional,
+            capture_start_sample=84_160,
+            capture_end_sample=84_161,
+            text="今天星期几",
+        )
+        context.turn_start_sample = 84_160
+        context.turn_end_sample = 154_880
+        context.turn_endpoint_sample = 154_880
+        context.turn_retire_sample = 154_880
+        context.clock_fact_endpoint_pinned = 154_880
+        context.turn_endpoint_grace_deadline = time.monotonic()
+        registry._schedule_turn_commit(context)
+        await asyncio.sleep(0.2)
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns == ["今天星期几"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_clock_fact_recovered_after_overlap_without_vad() -> None:
+    """Overlap recovery must arm turn_start, not only the clock-fact pin.
+
+    Field (2026-09-04 epoch 1384 hop 2): the weekday final was rejected as
+    ``cross_sentence_overlap``, recovery pinned endpoint=205760 with
+    ``turn_start_sample is None``, then ASR tail timeout discarded the turn
+    as ``low_rms``.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-clock-fact-overlap-no-vad")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="echo-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=180_000,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        echo_decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            echo,
+        )
+        assert echo_decision.accepted is not None
+        weekday = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="clock-overlap",
+            revision=1,
+            capture_start_sample=123_520,
+            capture_end_sample=205_760,
+            text="今天星期几",
+            is_final=True,
+            confidence=0.9,
+            rescue_synthesized=True,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            weekday,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.turn_start_sample is not None
+        assert context.turn_endpoint_sample == 205_760
+        await asyncio.sleep(0.2)
+        user_turns = [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        assert user_turns == ["今天星期几"]
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> None:
     """A trailing 再见 must not starve when overlap policy drops the final."""
 
