@@ -37,7 +37,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 下次接着从这里开始（2026-09-05 01:41 CST）
 
 ```yaml
-resume_focus: epoch1389_clock_fact_heard_playback_awaiting_board_retest
+resume_focus: epoch1390_ticket_slight_cut_local_unreleased
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
