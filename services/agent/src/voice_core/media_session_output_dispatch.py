@@ -93,6 +93,12 @@ class MediaOutputDispatchMixin:
         ) -> None: ...
 
         @staticmethod
+        def _owner_has_started_playback(
+            context: _MediaVoiceSession,
+            lease: _OutputOwnerLease,
+        ) -> bool: ...
+
+        @staticmethod
         def _fast_ack_has_started_playback(
             context: _MediaVoiceSession,
             lease: _OutputOwnerLease,
@@ -350,6 +356,18 @@ class MediaOutputDispatchMixin:
                 "stale_fence",
             )
         claim = context.delegation_output_claims.get(fence)
+        if claim is None and context.runtime.live_lookup_needed(user_text):
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.delegation_initial_decision_timeout_s
+            while claim is None and loop.time() < deadline:
+                await asyncio.sleep(0.01)
+                if context.closed or not context.runtime.fence.matches(fence):
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.SKIPPED,
+                        "stale_fence",
+                    )
+                claim = context.delegation_output_claims.get(fence)
         if claim is not None:
             claim.observe_normal_reply()
             if claim.state is DelegationOutputState.PENDING:
@@ -734,13 +752,18 @@ class MediaOutputDispatchMixin:
         owner = context.output_owner
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
-        if self._fast_ack_has_started_playback(context, owner):
+        if self._fast_ack_has_started_playback(context, owner) or (
+            int(getattr(work.intent, "kind", 0))
+            == int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT)
+            and self._owner_has_started_playback(context, owner)
+        ):
             logger.info(
-                "defer output preempt until live-lookup ack finishes session=%s "
-                "ack_turn=%s ack_gen=%s replacement=%s",
+                "defer output preempt until current playback finishes session=%s "
+                "owner_turn=%s owner_gen=%s owner_kind=%s replacement=%s",
                 context.identity.session_id,
                 owner.fence.turn_id,
                 owner.fence.generation_id,
+                int(getattr(owner.intent, "kind", 0)),
                 work.intent_id,
             )
             return True

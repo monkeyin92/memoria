@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.common.companion_response_safety import companion_safety_decision
 from services.common.realtime_information import (
     _normalized,
@@ -16,9 +17,17 @@ _AGENT_EXTRA_LIVE_MARKERS = (
 )
 
 
+def _is_local_clock_fact(query: str) -> bool:
+    """Date/time-only questions are answered locally; they must not start lookup filler."""
+
+    return is_clock_fact_query(query) and not requires_realtime_lookup(query)
+
+
 def keyword_requires_live_media_lookup(query: str) -> bool:
     """Deterministic fast path for obvious live-information turns."""
 
+    if _is_local_clock_fact(query):
+        return False
     if requires_realtime_lookup(query):
         return True
     compact = _normalized(query)
@@ -47,6 +56,9 @@ async def resolve_live_lookup_needed(
     if companion_safety_decision(query) != "none":
         cache[compact] = False
         return False
+    if _is_local_clock_fact(query):
+        cache[compact] = False
+        return False
     cached = cache.get(compact)
     if cached is not None:
         return cached
@@ -72,6 +84,8 @@ def live_lookup_needed(
     if not compact:
         return False
     if companion_safety_decision(query) != "none":
+        return False
+    if _is_local_clock_fact(query):
         return False
     cached = cache.get(compact)
     if cached is not None:

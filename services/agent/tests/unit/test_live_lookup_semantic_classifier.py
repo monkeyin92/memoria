@@ -39,6 +39,29 @@ def test_keyword_requires_live_media_lookup_matches_train_and_weather() -> None:
     assert keyword_requires_live_media_lookup("查询明天从南京到上海最快的动车")
     assert keyword_requires_live_media_lookup("今天南京天气怎么样")
     assert not keyword_requires_live_media_lookup("讲个笑话")
+    assert not keyword_requires_live_media_lookup("今天星期几")
+    assert not keyword_requires_live_media_lookup("现在几点了")
+
+
+@pytest.mark.asyncio
+async def test_weekday_clock_fact_does_not_start_live_lookup() -> None:
+    cache: dict[str, bool] = {"今天星期几": True}
+
+    async def resolver(_: str) -> bool:
+        raise AssertionError("clock-fact must not call the semantic lookup classifier")
+
+    assert not await resolve_live_lookup_needed(
+        "今天星期几",
+        cache=cache,
+        semantic_resolver=resolver,
+    )
+    assert not live_lookup_needed("今天星期几", cache=cache)
+    assert cache["今天星期几"] is False
+    assert not await resolve_live_lookup_needed(
+        "现在几点了",
+        cache={},
+        semantic_resolver=resolver,
+    )
 
 
 @pytest.mark.asyncio

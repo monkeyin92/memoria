@@ -114,6 +114,19 @@ class MediaOutputOwnerMixin:
         return True
 
     @staticmethod
+    def _owner_has_started_playback(
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+    ) -> bool:
+        fence = lease.fence
+        delivery = context.reply_delivery.get(fence)
+        if delivery is not None and delivery.first_frame_sent:
+            return True
+        if context.playback.rendered_sample_end(fence) > 0:
+            return True
+        return bool(context.playback.actual_heard_text(fence))
+
+    @staticmethod
     def _fast_ack_has_started_playback(
         context: _MediaVoiceSession,
         lease: _OutputOwnerLease,
@@ -124,13 +137,7 @@ class MediaOutputOwnerMixin:
             media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
         ):
             return False
-        fence = lease.fence
-        delivery = context.reply_delivery.get(fence)
-        if delivery is not None and delivery.first_frame_sent:
-            return True
-        if context.playback.rendered_sample_end(fence) > 0:
-            return True
-        return bool(context.playback.actual_heard_text(fence))
+        return MediaOutputOwnerMixin._owner_has_started_playback(context, lease)
 
     @staticmethod
     def _output_owner_is_current(
