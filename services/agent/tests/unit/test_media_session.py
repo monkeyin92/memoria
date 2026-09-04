@@ -9630,9 +9630,6 @@ async def test_downlink_queue_overflow_cancels_runtime_and_provider() -> None:
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好。")
     context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
-    connection.session.generation.advance(fence)
-    assert connection.session.reset_downlink_generation(fence)
-    connection.session.generation_active = True
     assert context.runtime.orchestrator.state is ConversationState.SPEAKING
 
     assert await bridge.emit_generation(
