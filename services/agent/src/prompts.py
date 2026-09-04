@@ -81,7 +81,10 @@ BRIDGE_PHRASES = (
     "稍等，我查询一下。",
     "刚才没有听清，可以再说一遍吗？",
     "现在连接不太稳定，我们再试一次。",
+    "稍等，我想一下。",
 )
+LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
+THINKING_FILLER = BRIDGE_PHRASES[4]
 
 DEVICE_WAKE_PHRASES = (
     "我在。",
@@ -125,6 +128,8 @@ __all__ = [
     "AI_IDENTITY_RULE_TRANSPARENT",
     "BRIDGE_PHRASES",
     "COMPANION_STYLE",
+    "LIVE_LOOKUP_FILLER",
+    "THINKING_FILLER",
     "DEVICE_WAKE_PHRASES",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",

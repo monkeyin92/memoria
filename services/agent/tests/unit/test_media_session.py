@@ -4737,6 +4737,7 @@ async def test_media_provider_installs_prewarm_and_delegation_callbacks() -> Non
     assert provider.prewarm_calls == 1
     assert provider.delegations == [("今天南京天气怎么样", fence)]
     assert len(provider.output_intents) == 1
+    assert str(provider.output_intents[0].tts_source).startswith("稍等，我查询一下。")
     assert context.runtime.orchestrator.task_manager.accepted_broadcast_count == 1
     assert context.runtime.orchestrator.task_manager.tasks == {}
     await context.runtime.close()
@@ -7462,10 +7463,37 @@ async def test_media_delegation_initial_decision_timeout_replies_locally_and_can
 
 
 @pytest.mark.asyncio
-async def test_fast_media_delegation_success_skips_fast_acknowledgement() -> None:
+async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     class FastProvider(_DelegationProbeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
         async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
             return "南京今天多云。"
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    first=True,
+                    final=True,
+                )
+
+            return chunks()
 
     provider = FastProvider()
     registry = MediaVoiceCoreRegistry(
@@ -7473,7 +7501,7 @@ async def test_fast_media_delegation_success_skips_fast_acknowledgement() -> Non
         provider_factory=lambda _identity: provider,
     )
     registry.install()
-    identity = SessionIdentity("fast-delegation-no-ack")
+    identity = SessionIdentity("fast-delegation-filler-prefix")
     context = await registry._get_or_create(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
@@ -7485,10 +7513,10 @@ async def test_fast_media_delegation_success_skips_fast_acknowledgement() -> Non
     claim = context.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.COMPLETED
     assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT not in provider.output_kinds
+    assert provider.output_texts == ["稍等，我查询一下。南京今天多云。"]
     assert provider.reply_calls == 0
     assert await registry.generate_reply(identity.session_id, query, fence)
     assert provider.reply_calls == 0
-    assert provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT]
     await registry._finalize_session(identity.session_id)
 
 

@@ -35,7 +35,7 @@ from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
-from services.agent.src.prompts import BRIDGE_PHRASES
+from services.agent.src.prompts import BRIDGE_PHRASES, THINKING_FILLER
 from services.agent.src.response_planner_client import (
     ContextPrefetchFetch,
     ResponseGroundedItem,
@@ -1332,6 +1332,34 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
     assert await asyncio.wait_for(anext(output), timeout=1) == "稍等，我查询一下。"
     release.set()
     assert [item async for item in output if isinstance(item, str)] == ["南京今天多云。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_llm_first_token_plays_thinking_filler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="thinking-filler")
+    await runtime.on_turn_committed("帮我安排一下明天上午")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="直接回答。",
+        speaker_class="uncertain",
+    )
+    release = asyncio.Event()
+
+    async def slow_llm(*_args: Any, **_kwargs: Any) -> AsyncIterator[str]:
+        await release.wait()
+        yield "明天上午去公园。"
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(slow_llm))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="帮我安排一下明天上午")
+    output = agent.llm_node(chat_ctx, [], None)
+    assert await asyncio.wait_for(anext(output), timeout=1) == THINKING_FILLER
+    release.set()
+    assert [item async for item in output if isinstance(item, str)] == ["明天上午去公园。"]
     await runtime.close()
 
 

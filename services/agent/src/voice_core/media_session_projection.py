@@ -25,7 +25,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
     SideEffectPolicy,
 )
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
-from services.agent.src.prompts import BRIDGE_PHRASES, device_wake_phrase
+from services.agent.src.prompts import BRIDGE_PHRASES, LIVE_LOOKUP_FILLER, device_wake_phrase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
@@ -558,6 +558,7 @@ class MediaSessionProjectionMixin:
                 await coordinator.cancel(handle, "delegation_claim_released")
             return
         try:
+            played_lookup_filler = False
             task_done, _pending = await asyncio.wait(
                 {handle.record.task},
                 timeout=0.02,
@@ -565,7 +566,7 @@ class MediaSessionProjectionMixin:
             if not task_done and runtime.fence.matches(fence):
                 now_ms = int(time.time() * 1_000)
                 acknowledgement = coordinator.bridge_acknowledgement(
-                    BRIDGE_PHRASES[1],
+                    LIVE_LOOKUP_FILLER,
                     fence=fence,
                     context_version=context_version,
                     expires_at_ms=now_ms + 5_000,
@@ -585,7 +586,7 @@ class MediaSessionProjectionMixin:
                     floor_allows_output=runtime.output_floor_allows_assistant,
                     now_ms=now_ms,
                 ):
-                    await self._enqueue_output_work(
+                    played_lookup_filler = await self._enqueue_output_work(
                         context,
                         _OutputWork(acknowledgement, fence),
                     )
@@ -619,6 +620,9 @@ class MediaSessionProjectionMixin:
                     reason="no_result",
                 )
                 return
+            spoken = str(getattr(intent, "tts_source", "") or "")
+            if not played_lookup_filler and spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
+                intent.tts_source = LIVE_LOOKUP_FILLER + spoken
             if (
                 not runtime.barge_in_enabled
                 and claim.state is DelegationOutputState.OWNED
