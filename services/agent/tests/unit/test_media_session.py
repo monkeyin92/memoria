@@ -7520,6 +7520,135 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     await registry._finalize_session(identity.session_id)
 
 
+class _FenceCheckingBridge(MediaBridgeGrpcServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.accepted_pcm: list[object] = []
+        self.rejected_pcm: list[object] = []
+        self.frames = self.accepted_pcm
+        self.start_reasons: list[str] = []
+        self.generation_starts: list[GenerationFence] = []
+
+    async def emit_generation(
+        self, session_id: str, fence: object, *, action: int, reason: str = "", **_kwargs: object
+    ) -> bool:
+        if action == media_pb2.GENERATION_ACTION_START:
+            session = self.bridge.get(session_id)
+            if session is not None and isinstance(fence, GenerationFence):
+                session.generation.advance(fence)
+                session.reset_downlink_generation(fence)
+                session.generation_active = True
+                self.generation_starts.append(fence)
+            self.start_reasons.append(reason)
+        return True
+
+    async def emit_pcm(self, session_id: str, frame: object) -> bool:
+        session = self.bridge.get(session_id)
+        if session is None or not session.accept_downlink(frame):  # type: ignore[arg-type]
+            self.rejected_pcm.append(frame)
+            return False
+        self.accepted_pcm.append(frame)
+        return True
+
+
+@pytest.mark.asyncio
+async def test_live_lookup_ack_starts_lagging_transport_generation_before_pcm() -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _FenceCheckingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("lagging-commit-start-ack")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.accepted_pcm), timeout=2.0)
+        owner = context.output_owner
+        assert owner is not None
+        ack_frame = bridge.accepted_pcm[-1]
+        assert ack_frame.turn_id == owner.fence.turn_id
+        assert ack_frame.generation_id == owner.fence.generation_id
+        assert not any(
+            getattr(frame, "generation_id", None) == owner.fence.generation_id
+            for frame in bridge.rejected_pcm
+        )
+        assert "output_generation_start" in bridge.start_reasons
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_unheard_live_lookup_ack_prefixes_deep_result() -> None:
+    class UnheardProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(intent.tts_source))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    class RejectingBridge(MediaBridgeGrpcServer):
+        async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+        async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
+            return False
+
+    provider = UnheardProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=RejectingBridge(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("unheard-lookup-ack-prefix")
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: context.output_owner is None, timeout=2.0)
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT in provider.output_kinds
+        assert media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT in provider.output_kinds
+        assert provider.output_texts[-1] == f"{BRIDGE_PHRASES[1]}南京今天多云，气温二十二度。"
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
 @pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()

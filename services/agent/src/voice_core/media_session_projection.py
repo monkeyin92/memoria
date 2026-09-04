@@ -54,6 +54,26 @@ _OUTPUT_IDLE_TIMEOUT_S = 30.0
 media_pb2: Any = _media_pb2
 
 
+def _live_lookup_filler_was_heard(context: _MediaVoiceSession, fence: GenerationFence) -> bool:
+    owner = context.output_owner
+    if owner is not None and int(getattr(owner.intent, "kind", 0)) == int(
+        media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+    ):
+        return True
+    if LIVE_LOOKUP_FILLER in context.playback.actual_heard_text(fence):
+        return True
+    for result in context.output_results:
+        if (
+            result.fence.turn_id != fence.turn_id
+            or result.fence.session_epoch != fence.session_epoch
+        ):
+            continue
+        if result.emitted_audio:
+            return True
+    delivery = context.reply_delivery.get(fence)
+    return bool(delivery is not None and delivery.actual_heard)
+
+
 class MediaSessionProjectionMixin:
     """Keep Runtime/Projection emission behind the Registry interface."""
 
@@ -621,8 +641,9 @@ class MediaSessionProjectionMixin:
                 )
                 return
             spoken = str(getattr(intent, "tts_source", "") or "")
-            if not played_lookup_filler and spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
-                intent.tts_source = LIVE_LOOKUP_FILLER + spoken
+            if spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
+                if not played_lookup_filler or not _live_lookup_filler_was_heard(context, fence):
+                    intent.tts_source = LIVE_LOOKUP_FILLER + spoken
             if (
                 not runtime.barge_in_enabled
                 and claim.state is DelegationOutputState.OWNED

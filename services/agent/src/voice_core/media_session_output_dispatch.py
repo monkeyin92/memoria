@@ -519,6 +519,16 @@ class MediaOutputDispatchMixin:
                 if work is None:
                     return False
                 continue
+            if not await self._ensure_transport_generation_started(context, work.fence):
+                coordinator.complete_output_intent(
+                    work.intent,
+                    current_fence=fence,
+                    current_context_version=coordinator.current_context_version(session_id),
+                    floor_allows_output=context.runtime.output_floor_allows_assistant,
+                    reason="generation_start_rejected",
+                )
+                context.output_work.pop(work.intent_id, None)
+                continue
             task = asyncio.create_task(
                 self._run_output_work(context, work),
                 name=f"media-output-{session_id}-{work.intent_id}",
@@ -622,6 +632,33 @@ class MediaOutputDispatchMixin:
             context.output_work.pop(rebound.intent_id, None)
             return None
         return rebound
+
+    async def _ensure_transport_generation_started(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> bool:
+        """Start the transport generation before the first PCM of this fence.
+
+        Turn commit emits START asynchronously. A live-lookup ACK can win that
+        race and be rejected while the gate is still on the previous greeting.
+        """
+
+        gate = getattr(self.bridge, "bridge", None)
+        session = gate.get(context.identity.session_id) if gate is not None else None
+        if session is None or not session.accepts_input():
+            return True
+        if session.generation_active and session.fence.matches(fence):
+            return True
+        task_epoch, context_version = self._event_versions(context, fence)
+        return await self.bridge.emit_generation(
+            fence.session_id,
+            fence,
+            action=media_pb2.GENERATION_ACTION_START,
+            reason="output_generation_start",
+            task_epoch=task_epoch,
+            context_version=context_version,
+        )
 
     @staticmethod
     def _device_playback_flush_required(
