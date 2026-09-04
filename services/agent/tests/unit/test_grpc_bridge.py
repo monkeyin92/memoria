@@ -991,6 +991,42 @@ async def test_bridge_returns_the_effective_interaction_authority(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_generation_start_is_not_sent_to_the_device() -> None:
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(SessionIdentity("dup-start"))
+    fence = GenerationFence("dup-start", 2, 2, 0, 1)
+    assert await bridge.emit_generation(
+        "dup-start",
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+        reason="output_generation_start",
+    )
+    first = connection.outgoing.get_nowait()
+    assert first.generation.action == media_pb2.GENERATION_ACTION_START
+    assert first.generation.turn_id == 2
+    assert first.generation.generation_id == 2
+    assert first.generation.reason == "output_generation_start"
+    assert await bridge.emit_generation(
+        "dup-start",
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+        reason="user_turn_committed",
+    )
+    with pytest.raises(asyncio.QueueEmpty):
+        connection.outgoing.get_nowait()
+    newer = GenerationFence("dup-start", 2, 3, 0, 1)
+    assert await bridge.emit_generation(
+        "dup-start",
+        newer,
+        action=media_pb2.GENERATION_ACTION_START,
+        reason="auxiliary_output",
+    )
+    second = connection.outgoing.get_nowait()
+    assert second.generation.generation_id == 3
+    assert second.generation.reason == "auxiliary_output"
+
+
+@pytest.mark.asyncio
 async def test_bridge_rejects_non_monotonic_generation_controls() -> None:
     bridge = MediaBridgeGrpcServer()
     identity = SessionIdentity("generation-session")

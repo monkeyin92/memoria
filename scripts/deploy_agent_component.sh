@@ -418,18 +418,19 @@ bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Conf
 agent_stack_release_tag="$(container_env_value "$agent_container" MEMORIA_RELEASE_TAG)"
 bridge_stack_release_tag="$(container_env_value "$bridge_container" MEMORIA_RELEASE_TAG)"
 control_stack_release_tag="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
-control_release_commit="$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-control_release_tag="$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+control_stack_release_commit="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
 [[ -n "$agent_stack_release_tag" \
   && "$agent_stack_release_tag" == "$bridge_stack_release_tag" \
-  && "$agent_stack_release_tag" == "$control_stack_release_tag" \
-  && "$agent_stack_release_tag" == "$control_release_tag" \
-  && "$control_release_commit" =~ ^[0-9a-f]{40}$ ]] || {
-  echo "Agent, bridge, and Control do not share one runtime stack authority" >&2
+  && -n "$control_stack_release_tag" \
+  && "$control_stack_release_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Agent and bridge do not share one stack env, or Control stack tag is missing" >&2
   exit 1
 }
-stack_release_tag="$agent_stack_release_tag"
-stack_release_commit="$control_release_commit"
+# Compose interpolates image names from the stack env. Component overlay
+# labels (Control/Agent image versions) diverge by design and must not be
+# used as that env; doing so left Agent heartbeat 409 after overlay cutovers.
+stack_release_tag="$control_stack_release_tag"
+stack_release_commit="$control_stack_release_commit"
 config_files="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 bridge_config_files="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 working_dir="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"

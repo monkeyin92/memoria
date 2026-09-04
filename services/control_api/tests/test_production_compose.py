@@ -520,8 +520,10 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'previous_files=("$base_file" "$live_override")' in deploy
     assert "production Compose file does not match the Agent overlay base" in deploy
     assert 'MEMORIA_RELEASE_COMMIT="$stack_release_commit"' in deploy
-    assert '"$agent_stack_release_tag" == "$control_release_tag"' in deploy
-    assert "do not share one runtime stack authority" in deploy
+    assert 'stack_release_tag="$control_stack_release_tag"' in deploy
+    assert 'stack_release_commit="$control_stack_release_commit"' in deploy
+    assert '"$agent_stack_release_tag" == "$control_release_tag"' not in deploy
+    assert "do not share one stack env, or Control stack tag is missing" in deploy
     assert 'runtime_stack_release_tag=%s\\n' in deploy
     assert "trap - ERR" in deploy
     assert "component rollback=PASS" in deploy

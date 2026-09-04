@@ -1221,6 +1221,14 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
+        if (
+            action == media_pb2.GENERATION_ACTION_START
+            and connection.session.generation_active
+            and connection.session.fence.matches(fence)
+        ):
+            # The device rejects an equal generation.started as a wire
+            # violation. A second START for the current fence is a no-op.
+            return True
         try:
             connection.session.generation.advance(fence)
         except ValueError as exc:
