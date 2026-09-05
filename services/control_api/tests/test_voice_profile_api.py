@@ -441,6 +441,75 @@ async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
 
 
 @pytest.mark.asyncio
+async def test_custom_persona_companion_session_resolves_the_frozen_clone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    app.state.voice_profile_manager = FrozenPreviewResolutionStub(
+        VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-personal",
+            version_number=2,
+            provider="alibaba_model_studio",
+            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            resource_id="cosyvoice-v3.5-flash",
+            voice_id=voice_id,
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "custom-persona-owner", "password": "safe-password"},
+            )
+        ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="custom-persona-owner",
+        )
+        saved = await client.put(
+            f"/v1/memory/profile/{identity['user_id']}",
+            headers=headers,
+            json={
+                "companion_id": "taoxi",
+                "bio": "[memoria.custom_persona.v1]\nname: 小北\n---\n说话短一点，像朋友。",
+            },
+        )
+        session = (
+            await client.post(
+                "/v1/sessions",
+                headers=headers,
+                json={"user_id": identity["user_id"], "voice_backend": "cascade"},
+            )
+        ).json()
+        resolved = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": session["session_id"]},
+        )
+
+    assert saved.status_code == 200
+    frozen = app.state.memory_store.get_voice_session_by_id(session_id=session["session_id"])
+    assert frozen is not None
+    assert frozen["companion_style_id"] == "taoxi"
+    assert frozen["voice_provider"] == "alibaba_model_studio"
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["mode"] == "active"
+    assert body["voice_kind"] == "personal"
+    assert body["provider"] == "alibaba_model_studio"
+    assert body["voice_id"] == voice_id
+    assert body["speaker_sha256"] == hashlib.sha256(voice_id.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
 async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1246,3 +1315,77 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
     assert blocked_by_quality_gate.status_code == 409
     assert measured.json()["status"] == "passed"
     assert activated.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_ready_for_device_enrollment_activates_without_in_app_ab(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signer = VoiceSampleURLSigner(
+        secret="voice-sample-signing-secret-long-enough",
+        public_base_url="https://control.test",
+        ttl_s=300,
+    )
+    app.state.voice_sample_signer = signer
+    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
+        tmp_path / "memoria.sqlite3",
+        object_store=EncryptedLocalObjectStore(
+            root=tmp_path / "voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-key-v1",
+        ),
+        provider=ProviderStub(),
+        sample_url_factory=signer.url,
+        provider_region="cn-beijing",
+        target_model="cosyvoice-v3.5-flash",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "device-ready-owner", "password": "safe-password"},
+            )
+        ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="device-ready-owner",
+        )
+        await client.post(
+            "/v1/voices/consent",
+            headers=headers,
+            json={"accepted": True, "policy_version": "voice-clone-v1"},
+        )
+        enrolled = await client.post(
+            "/v1/voices/enrollments",
+            headers=headers,
+            json={
+                "audio_base64": base64.b64encode(b"RIFF" + b"\x01\x02" * 16_000).decode(),
+                "media_type": "audio/wav",
+                "duration_ms": 12_000,
+                "sample_rate": 24_000,
+                "ready_for_device": True,
+            },
+        )
+        profile = enrolled.json()
+        listing = await client.get("/v1/voices/profiles", headers=headers)
+        ready_again = await client.post(
+            f"/v1/voices/profiles/{profile['profile_id']}/ready-for-device",
+            headers=headers,
+        )
+
+    assert enrolled.status_code == 201
+    assert profile["status"] == "active"
+    assert profile["evaluation_status"] == "passed"
+    assert profile["quality_status"] == "passed"
+    assert profile["activated_at"]
+    assert listing.status_code == 200
+    assert listing.json()["items"][0]["status"] == "active"
+    assert ready_again.status_code == 200
+    assert ready_again.json()["status"] == "active"
+

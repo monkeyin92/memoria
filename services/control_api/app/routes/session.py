@@ -26,6 +26,7 @@ from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_writable_account,
 )
+from services.control_api.app.companion_delivery import freeze_companion_delivery
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.media_runtime import (
     decide_media_runtime,
@@ -819,7 +820,14 @@ async def create_session(
     elif legacy_frozen is not None:
         frozen = legacy_frozen
     else:
-        frozen = ModePolicy.freeze_companion(companion, session_focus=body.session_focus)
+        frozen = await freeze_companion_delivery(
+            companion=companion,
+            session_focus=body.session_focus,
+            bio=store.get_profile(user_id=user_id, now=created_at).get("bio"),
+            account_id=user_id,
+            store=store,
+            voice_manager=getattr(request.app.state, "voice_profile_manager", None),
+        )
 
     async def persist_voice_session() -> str | None:
         learning_task_id: str | None = None

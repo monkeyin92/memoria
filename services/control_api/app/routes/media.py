@@ -24,6 +24,10 @@ from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_writable_account,
 )
+from services.control_api.app.companion_delivery import (
+    freeze_companion_delivery,
+    voice_session_delivery_fields,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import (
     AcousticCapabilityAuthority,
@@ -43,7 +47,6 @@ from services.control_api.app.media_runtime import (
     select_device_media_runtime,
 )
 from services.control_api.app.media_slo import MediaSLOUnavailable
-from services.control_api.app.mode_policy import ModePolicy
 from services.control_api.app.routes import session as session_routes
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -685,9 +688,13 @@ async def _create_direct_device_media_session(
         Literal["chat", "tutor_english", "tutor_homework"],
         device_settings.learning_mode if device_settings.learning_mode != "off" else "chat",
     )
-    frozen = ModePolicy.freeze_companion(
-        companion,
+    frozen = await freeze_companion_delivery(
+        companion=companion,
         session_focus=session_focus,
+        bio=owner.get("bio"),
+        account_id=account_id,
+        store=store,
+        voice_manager=getattr(request.app.state, "voice_profile_manager", None),
     )
     requested_capabilities: list[CapabilityValue] = ["chat"]
     if device_settings.learning_mode == "tutor_english":
@@ -722,19 +729,7 @@ async def _create_direct_device_media_session(
             legacy_scope_sha256=None,
             legacy_voice_allowed=None,
             legacy_expires_at=None,
-            companion_style_id=frozen.companion_style_id,
-            companion_style_version=frozen.companion_style_version,
-            voice_profile_id=None,
-            voice_profile_version=None,
-            voice_provider=None,
-            voice_model=None,
-            voice_resource_id=None,
-            voice_provider_expires_at=None,
-            voice_speaker_sha256=None,
-            fallback_voice_profile_id=None,
-            fallback_voice_provider=None,
-            fallback_voice_model=None,
-            fallback_voice_resource_id=None,
+            **voice_session_delivery_fields(frozen),
             learning_task_id=None,
         )
 
@@ -1089,6 +1084,31 @@ async def _resume_direct_device_media_session(
             status_code=503,
             detail={"code": "direct_media_audio_mode_not_attested"},
         )
+    if str(voice_session.get("interaction_mode") or "") == "companion":
+        owner = store.get_profile(
+            user_id=account_id,
+            now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        companion = companion_definition(owner.get("companion_id") or DEFAULT_COMPANION_ID)
+        if companion is not None:
+            session_focus = cast(
+                Literal["chat", "tutor_english", "tutor_homework"],
+                device_settings.learning_mode
+                if device_settings.learning_mode != "off"
+                else "chat",
+            )
+            frozen = await freeze_companion_delivery(
+                companion=companion,
+                session_focus=session_focus,
+                bio=owner.get("bio"),
+                account_id=account_id,
+                store=store,
+                voice_manager=getattr(request.app.state, "voice_profile_manager", None),
+            )
+            store.update_voice_session_companion_delivery(
+                session_id=session_id,
+                **voice_session_delivery_fields(frozen),
+            )
 
     directory = cast(
         SessionDirectory | None,

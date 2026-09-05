@@ -535,6 +535,37 @@ def _personal_voice_contract_valid(frozen: FrozenMode) -> bool:
     )
 
 
+def companion_personal_voice_contract_valid(frozen: FrozenMode) -> bool:
+    """True when a companion session froze an exact personal clone contract."""
+
+    if frozen.interaction_mode != "companion":
+        return False
+    if not (
+        _present(frozen.voice_profile_id)
+        and frozen.voice_profile_version is not None
+        and frozen.voice_profile_version > 0
+        and _sha256(frozen.voice_speaker_sha256)
+        and frozen.fallback_voice_provider == "volcengine_doubao"
+        and frozen.fallback_voice_model == "seed-tts-2.0"
+        and frozen.fallback_voice_resource_id == "seed-tts-2.0"
+        and _present(frozen.fallback_voice_profile_id)
+    ):
+        return False
+    if (
+        frozen.voice_provider == "volcengine_doubao"
+        and frozen.voice_model == "seed-icl-2.0"
+        and frozen.voice_resource_id == "seed-icl-2.0"
+    ):
+        return _utc_timestamp(frozen.voice_provider_expires_at)
+    return bool(
+        frozen.voice_provider == "alibaba_model_studio"
+        and isinstance(frozen.voice_model, str)
+        and frozen.voice_model.startswith("cosyvoice-v3.5-")
+        and frozen.voice_resource_id == frozen.voice_model
+        and (frozen.voice_provider_expires_at is None or _utc_timestamp(frozen.voice_provider_expires_at))
+    )
+
+
 def _voice_contract_valid(frozen: FrozenMode) -> bool:
     personal = (
         frozen.voice_profile_id,

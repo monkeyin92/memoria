@@ -269,6 +269,9 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         def set_conversation_close_semantic_resolver(self, resolver: object) -> None:
             assert resolver is None or callable(resolver)
 
+        def profile_permits(self, _fence: object, *, capability: str) -> bool:
+            return False
+
     class TTS:
         pool = None
 

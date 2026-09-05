@@ -635,6 +635,45 @@ def test_policy_rejects_missing_frozen_fallback_field_even_in_companion_mode() -
     assert not ModePolicyClient._parse(payload).available
 
 
+def test_companion_policy_accepts_a_complete_personal_clone_contract() -> None:
+    speaker = "a" * 64
+    policy = ModePolicyClient._parse(
+        _payload(
+            voice_profile_id="voice-profile-personal",
+            voice_profile_version=2,
+            voice_provider="alibaba_model_studio",
+            voice_model="cosyvoice-v3.5-flash",
+            voice_resource_id="cosyvoice-v3.5-flash",
+            voice_provider_expires_at=None,
+            voice_speaker_sha256=speaker,
+            fallback_voice_profile_id="bright_peer",
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
+        )
+    )
+
+    assert policy.available
+    assert policy.mode == "companion"
+    assert dict(policy.references)["voice_provider"] == "alibaba_model_studio"
+    assert dict(policy.references)["fallback_voice_profile_id"] == "bright_peer"
+
+
+def test_companion_policy_rejects_a_partial_personal_clone_contract() -> None:
+    policy = ModePolicyClient._parse(
+        _payload(
+            voice_profile_id="voice-profile-personal",
+            voice_profile_version=2,
+            voice_provider="alibaba_model_studio",
+            voice_model="cosyvoice-v3.5-flash",
+            voice_resource_id="cosyvoice-v3.5-flash",
+            voice_speaker_sha256="a" * 64,
+        )
+    )
+
+    assert policy.available is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload,status",

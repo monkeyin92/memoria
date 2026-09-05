@@ -297,6 +297,62 @@ class VoiceSessionStoreMixin:
             )
         return max(0, cursor.rowcount)
 
+    def update_voice_session_companion_delivery(
+        self,
+        *,
+        session_id: str,
+        companion_style_id: str | None,
+        companion_style_version: str | None,
+        voice_profile_id: str | None = None,
+        voice_profile_version: int | None = None,
+        voice_provider: str | None = None,
+        voice_model: str | None = None,
+        voice_resource_id: str | None = None,
+        voice_provider_expires_at: str | None = None,
+        voice_speaker_sha256: str | None = None,
+        fallback_voice_profile_id: str | None = None,
+        fallback_voice_provider: str | None = None,
+        fallback_voice_model: str | None = None,
+        fallback_voice_resource_id: str | None = None,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE voice_sessions
+                SET companion_style_id = ?,
+                    companion_style_version = ?,
+                    voice_profile_id = ?,
+                    voice_profile_version = ?,
+                    voice_provider = ?,
+                    voice_model = ?,
+                    voice_resource_id = ?,
+                    voice_provider_expires_at = ?,
+                    voice_speaker_sha256 = ?,
+                    fallback_voice_profile_id = ?,
+                    fallback_voice_provider = ?,
+                    fallback_voice_model = ?,
+                    fallback_voice_resource_id = ?
+                WHERE session_id = ?
+                  AND interaction_mode = 'companion'
+                """,
+                (
+                    companion_style_id,
+                    companion_style_version,
+                    voice_profile_id,
+                    voice_profile_version,
+                    voice_provider,
+                    voice_model,
+                    voice_resource_id,
+                    voice_provider_expires_at,
+                    voice_speaker_sha256,
+                    fallback_voice_profile_id,
+                    fallback_voice_provider,
+                    fallback_voice_model,
+                    fallback_voice_resource_id,
+                    session_id,
+                ),
+            )
+
     def reserve_omni_sdp_exchange(
         self,
         *,

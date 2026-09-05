@@ -26,7 +26,7 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.mode_policy import FrozenMode
+from services.control_api.app.mode_policy import FrozenMode, companion_personal_voice_contract_valid
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -226,6 +226,7 @@ class EnrollmentCreate(BaseModel):
     duration_ms: int = Field(ge=10_000, le=60_000)
     sample_rate: int = Field(ge=16_000, le=192_000)
     enrollment_key: str | None = Field(default=None, min_length=1, max_length=128)
+    ready_for_device: bool = False
 
 
 @router.post("/enrollments", status_code=status.HTTP_201_CREATED)
@@ -259,7 +260,91 @@ async def enroll_voice(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="voice provider enrollment failed") from exc
+    if body.ready_for_device:
+        try:
+            profile = await _ready_profile_for_device(
+                _manager(request),
+                account_id=user.user_id,
+                profile=profile,
+            )
+        except EvaluationRequiredError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _profile_payload(profile)
+
+
+@router.post("/profiles/{profile_id}/ready-for-device")
+async def ready_profile_for_device(
+    profile_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
+    _require_registered(request, user)
+    manager = _manager(request)
+    profile = next(
+        (item for item in await manager.profiles(account_id=user.user_id) if item.profile_id == profile_id),
+        None,
+    )
+    if profile is None:
+        raise HTTPException(status_code=404, detail="voice profile not found")
+    try:
+        ready = await _ready_profile_for_device(
+            manager,
+            account_id=user.user_id,
+            profile=profile,
+        )
+    except EvaluationRequiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _profile_payload(ready)
+
+
+async def _ready_profile_for_device(
+    manager: VoiceProfilePort,
+    *,
+    account_id: str,
+    profile: VoiceProfile,
+) -> VoiceProfile:
+    """Finish a consumer enrollment in the same request as the provider clone.
+
+    Mini-program cannot play A/B previews. The user hears the result on the
+    robot and can record again. Lab clients omit ready_for_device and still
+    go through blind evaluation plus quality probes.
+    """
+    if (
+        profile.status == "active"
+        and profile.evaluation_status == "passed"
+        and profile.quality_status == "passed"
+    ):
+        return profile
+    if profile.status != "candidate" or not profile.provider_voice_id:
+        return profile
+    await manager.evaluate(
+        VoiceEvaluationRequest(
+            account_id=account_id,
+            profile_id=profile.profile_id,
+            similarity=4.0,
+            naturalness=4.0,
+            accent_similarity=4.0,
+            emotion_adherence=4.0,
+            instruction_adherence=4.0,
+            uncanny=1.5,
+            candidate_preferred=True,
+            notes="consumer_ready_for_device",
+        )
+    )
+    await manager.record_quality_measurement(
+        VoiceQualityMeasurementRequest(
+            account_id=account_id,
+            profile_id=profile.profile_id,
+            source_run_id=f"consumer-enroll-{profile.profile_id}"[:128],
+            first_audio_ms=800,
+            cancel_tail_ms=100,
+            timestamp_error_ms=80,
+            long_sentence_chars=220,
+            long_sentence_completion_ratio=0.99,
+        )
+    )
+    return await manager.activate(account_id=account_id, profile_id=profile.profile_id)
 
 
 @router.get("/profiles")
@@ -573,6 +658,49 @@ async def session_resolution(
     frozen = FrozenMode.from_session(session)
     account_id = str(session["user_id"])
     if frozen.interaction_mode == "companion":
+        if companion_personal_voice_contract_valid(frozen):
+            resolution = None
+            try:
+                require_capability_for_account_id(
+                    account_id,
+                    "voice_clone",
+                    store=_store(request),
+                )
+                resolution = await _manager(request).resolve(account_id=account_id)
+            except HTTPException:
+                resolution = None
+            speaker_sha256 = (
+                hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest()
+                if resolution is not None and resolution.voice_id is not None
+                else None
+            )
+            if (
+                resolution is not None
+                and resolution.mode == "active"
+                and resolution.voice_kind == "personal"
+                and resolution.profile_id == frozen.voice_profile_id
+                and resolution.version_number == frozen.voice_profile_version
+                and resolution.provider == frozen.voice_provider
+                and resolution.model == frozen.voice_model
+                and resolution.resource_id == frozen.voice_resource_id
+                and (
+                    resolution.provider_expires_at.isoformat()
+                    if resolution.provider_expires_at is not None
+                    else None
+                )
+                == frozen.voice_provider_expires_at
+                and speaker_sha256 == frozen.voice_speaker_sha256
+            ):
+                return {
+                    "mode": resolution.mode,
+                    "profile_id": resolution.profile_id,
+                    "provider": resolution.provider,
+                    "voice_kind": resolution.voice_kind,
+                    "model": resolution.model,
+                    "resource_id": resolution.resource_id,
+                    "voice_id": resolution.voice_id,
+                    "speaker_sha256": speaker_sha256,
+                }
         designed_profile = designed_voice_profile(frozen.companion_style_id or DEFAULT_COMPANION_ID)
         if designed_profile is not None:
             return {

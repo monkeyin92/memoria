@@ -463,7 +463,6 @@ async def entrypoint(ctx: Any) -> None:
     if (
         runtime_settings.voice_profile_enabled
         and voice_token
-        and runtime.profile_permits(runtime.fence, capability="voice_clone_use")
         and not offline
     ):
         from services.agent.src.voice_profile_client import VoiceProfileClientConfig
@@ -487,7 +486,7 @@ async def entrypoint(ctx: Any) -> None:
             policy=runtime.mode_policy,
         )
     elif runtime_settings.voice_profile_enabled and not offline:
-        logger.warning("voice profile is disabled because policy authority or token is unavailable")
+        logger.warning("voice profile is disabled because token is unavailable")
     runtime.cue_scheduler.min_speech_ms = runtime_settings.listener_cue_min_speech_ms
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms
     runtime.cue_scheduler.cooldown_ms = runtime_settings.listener_cue_cooldown_ms

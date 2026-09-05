@@ -6,7 +6,12 @@ import json
 import httpx
 import pytest
 from services.agent.src.agent import _apply_cached_voice_profile
-from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.agent_voice_profile import align_tts_voice_to_policy
+from services.agent.src.generation_output_policy import (
+    frozen_companion_clone_permitted,
+    generation_voice_reject_reason,
+)
+from services.agent.src.mode_policy_client import ModePolicy, ModePolicyClient
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.voice_profile_client import (
@@ -246,7 +251,9 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
 
 
 @pytest.mark.asyncio
-async def test_legacy_cosyvoice_active_profile_is_never_cached_for_doubao() -> None:
+async def test_cosyvoice_clone_is_not_applied_on_doubao_tts() -> None:
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -257,8 +264,8 @@ async def test_legacy_cosyvoice_active_profile_is_never_cached_for_doubao() -> N
                 "voice_kind": "personal",
                 "model": "cosyvoice-v3.5-flash",
                 "resource_id": "cosyvoice-v3.5-flash",
-                "voice_id": "cosyvoice-v3.5-flash-clone-owner001",
-                "speaker_sha256": _speaker_sha256("cosyvoice-v3.5-flash-clone-owner001"),
+                "voice_id": voice_id,
+                "speaker_sha256": _speaker_sha256(voice_id),
             },
         )
 
@@ -270,8 +277,26 @@ async def test_legacy_cosyvoice_active_profile_is_never_cached_for_doubao() -> N
             ),
             client=http_client,
         )
-        assert not await client.refresh(session_id="session-legacy")
-        assert client.cached(session_id="session-legacy") is None
+        tts = DoubaoTTS(
+            DoubaoTTSConfig(
+                api_key="test",
+                voice_profile="warm_companion",
+                speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            )
+        )
+        try:
+            assert await client.refresh(session_id="session-legacy")
+            _apply_cached_voice_profile(
+                tts_plugin=tts,
+                client=client,
+                session_id="session-legacy",
+                mode="self_preview",
+                policy=_self_preview_policy(),
+            )
+            assert tts.current_voice_kind == "designed"
+            assert tts.current_voice_profile_id == "warm_companion"
+        finally:
+            await tts.aclose()
 
 
 @pytest.mark.asyncio
@@ -677,6 +702,216 @@ async def test_companion_mode_never_applies_a_personal_clone() -> None:
             await tts.aclose()
 
 
+def _companion_clone_policy(*, provider: str, model: str, voice_id: str) -> ModePolicy:
+    payload = {
+        "interaction_mode": "companion",
+        "session_focus": "chat",
+        "mode_policy_version": "s2-v1",
+        "companion_style_id": "taoxi",
+        "companion_style_version": "companion-v1",
+        "policy_scope": "session",
+        "actor_account_id": None,
+        "resource_owner_account_id": None,
+        "digital_self_version_id": None,
+        "manifest_sha256": None,
+        "preview_grant_id": None,
+        "perspective": None,
+        "relationship_profile_id": None,
+        "relationship_profile_version": None,
+        "legacy_actor_role": None,
+        "legacy_grantee_account_id": None,
+        "legacy_grant_id": None,
+        "legacy_shell_id": None,
+        "legacy_grant_snapshot_sha256": None,
+        "legacy_scope_sha256": None,
+        "legacy_voice_allowed": None,
+        "legacy_expires_at": None,
+        "voice_profile_id": "voice-profile-personal",
+        "voice_profile_version": 2,
+        "voice_provider": provider,
+        "voice_model": model,
+        "voice_resource_id": model if provider == "alibaba_model_studio" else "seed-icl-2.0",
+        "voice_provider_expires_at": (
+            None if provider == "alibaba_model_studio" else "2027-07-23T00:00:00+00:00"
+        ),
+        "voice_speaker_sha256": _speaker_sha256(voice_id),
+        "fallback_voice_profile_id": "bright_peer",
+        "fallback_voice_provider": "volcengine_doubao",
+        "fallback_voice_model": "seed-tts-2.0",
+        "fallback_voice_resource_id": "seed-tts-2.0",
+        "capabilities": {
+            "conversation": True,
+            "private_memory": True,
+            "persona": True,
+            "persona_low_sensitivity": True,
+            "tools": True,
+            "history": True,
+            "learning": True,
+            "voice_profile": True,
+        },
+    }
+    policy = ModePolicyClient._parse(payload)
+    assert policy.available
+    return policy
+
+
+@pytest.mark.asyncio
+async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None:
+    voice_id = "S_personal_companion_allowed"
+    policy = _companion_clone_policy(
+        provider="volcengine_doubao",
+        model="seed-icl-2.0",
+        voice_id=voice_id,
+    )
+    payload = {
+        "mode": "active",
+        "profile_id": "voice-profile-personal",
+        "provider": "volcengine_doubao",
+        "voice_kind": "personal",
+        "model": "seed-icl-2.0",
+        "resource_id": "seed-icl-2.0",
+        "voice_id": voice_id,
+        "speaker_sha256": _speaker_sha256(voice_id),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as http_client:
+        client = VoiceProfileClient(
+            VoiceProfileClientConfig(
+                endpoint="https://control.test/v1/voices/session-resolution",
+                internal_token="voice-internal-token",
+            ),
+            client=http_client,
+        )
+        tts = DoubaoTTS(
+            DoubaoTTSConfig(
+                api_key="test",
+                voice_profile="warm_companion",
+                speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            )
+        )
+        try:
+            assert await client.refresh(session_id="companion-clone")
+            _apply_cached_voice_profile(
+                tts_plugin=tts,
+                client=client,
+                session_id="companion-clone",
+                mode="companion",
+                policy=policy,
+            )
+            assert tts.current_voice_kind == "personal"
+            assert tts.current_voice == voice_id
+            assert frozen_companion_clone_permitted(policy) is True
+            assert (
+                generation_voice_reject_reason(
+                    policy,
+                    personal_voice_permitted=True,
+                    profile_id="voice-profile-personal",
+                    resource_id="seed-icl-2.0",
+                    speaker_sha256=_speaker_sha256(voice_id),
+                    voice_kind="personal",
+                )
+                is None
+            )
+        finally:
+            await tts.aclose()
+
+
+@pytest.mark.asyncio
+async def test_wake_aligns_tts_to_the_frozen_catalog_companion() -> None:
+    policy = ModePolicyClient._parse(
+        {
+            "interaction_mode": "companion",
+            "session_focus": "chat",
+            "mode_policy_version": "s2-v1",
+            "companion_style_id": "taoxi",
+            "companion_style_version": "companion-v1",
+            "policy_scope": "session",
+            "actor_account_id": None,
+            "resource_owner_account_id": None,
+            "digital_self_version_id": None,
+            "manifest_sha256": None,
+            "preview_grant_id": None,
+            "perspective": None,
+            "relationship_profile_id": None,
+            "relationship_profile_version": None,
+            "legacy_actor_role": None,
+            "legacy_grantee_account_id": None,
+            "legacy_grant_id": None,
+            "legacy_shell_id": None,
+            "legacy_grant_snapshot_sha256": None,
+            "legacy_scope_sha256": None,
+            "legacy_voice_allowed": None,
+            "legacy_expires_at": None,
+            "voice_profile_id": None,
+            "voice_profile_version": None,
+            "voice_provider": None,
+            "voice_model": None,
+            "voice_resource_id": None,
+            "voice_provider_expires_at": None,
+            "voice_speaker_sha256": None,
+            "fallback_voice_profile_id": None,
+            "fallback_voice_provider": None,
+            "fallback_voice_model": None,
+            "fallback_voice_resource_id": None,
+            "capabilities": {
+                "conversation": True,
+                "private_memory": True,
+                "persona": True,
+                "persona_low_sensitivity": True,
+                "tools": True,
+                "history": True,
+                "learning": True,
+                "voice_profile": True,
+            },
+        }
+    )
+    tts = DoubaoTTS(
+        DoubaoTTSConfig(
+            api_key="test",
+            voice_profile="warm_companion",
+            speaker="zh_male_yangguangqingnian_uranus_bigtts",
+        )
+    )
+    try:
+        align_tts_voice_to_policy(tts, policy, personal_voice_permitted=False)
+        assert tts.current_voice_profile_id == "bright_peer"
+        assert tts.current_voice_kind == "designed"
+    finally:
+        await tts.aclose()
+
+
+@pytest.mark.asyncio
+async def test_voice_profile_client_accepts_a_cosyvoice_personal_clone() -> None:
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    payload = {
+        "mode": "active",
+        "profile_id": "voice-profile-personal",
+        "provider": "alibaba_model_studio",
+        "voice_kind": "personal",
+        "model": "cosyvoice-v3.5-flash",
+        "resource_id": "cosyvoice-v3.5-flash",
+        "voice_id": voice_id,
+        "speaker_sha256": _speaker_sha256(voice_id),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    ) as http_client:
+        client = VoiceProfileClient(
+            VoiceProfileClientConfig(
+                endpoint="https://control.test/v1/voices/session-resolution",
+                internal_token="voice-internal-token",
+            ),
+            client=http_client,
+        )
+        assert await client.refresh(session_id="companion-cosyvoice")
+        cached = client.cached(session_id="companion-cosyvoice")
+        assert cached is not None
+        assert cached.provider == "alibaba_model_studio"
+        assert cached.voice_kind == "personal"
+        assert cached.voice_id == voice_id
+
+
 @pytest.mark.asyncio
 async def test_tts_switches_to_approved_clone_and_restores_exact_baseline() -> None:
     config = CosyVoiceConfig(
@@ -691,8 +926,14 @@ async def test_tts_switches_to_approved_clone_and_restores_exact_baseline() -> N
     tts.apply_voice_profile(
         model="cosyvoice-v3.5-flash",
         voice="cosyvoice-v3.5-flash-clone-owner001",
+        profile_id="voice-profile-personal",
+        provider="alibaba_model_studio",
+        voice_kind="personal",
+        resource_id="cosyvoice-v3.5-flash",
     )
     assert tts.current_voice == "cosyvoice-v3.5-flash-clone-owner001"
+    assert tts.current_voice_kind == "personal"
+    assert tts.current_voice_profile_id == "voice-profile-personal"
     assert tts.current_rate == 1.0
     tts.use_baseline_voice()
 

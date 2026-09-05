@@ -33,6 +33,7 @@ from services.common.companions import (
     companion_definition,
 )
 from services.common.crisis_policy import CrisisRoute, crisis_semantic_candidate, route_crisis
+from services.common.custom_persona import CustomPersona, parse_custom_persona
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -46,7 +47,12 @@ from services.control_api.app.account_gate import (
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import RuntimeProfileLedger
-from services.control_api.app.mode_policy import FrozenMode, InteractionMode, ModePolicy
+from services.control_api.app.mode_policy import (
+    FrozenMode,
+    InteractionMode,
+    ModePolicy,
+    companion_personal_voice_contract_valid,
+)
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -1531,10 +1537,22 @@ def _instruction_text(
     now: datetime,
     evolution_artifacts: tuple[ResolvedEvolutionArtifact, ...] = (),
     tutor_directive: str | None = None,
+    custom_persona: CustomPersona | None = None,
 ) -> tuple[str, tuple[ResolvedEvolutionArtifact, ...]]:
     rules = [*plan.instructions.safety_rules, *plan.instructions.style_rules]
     companion = companion_definition(frozen.companion_style_id)
-    if frozen.interaction_mode == "companion" and companion is not None:
+    if frozen.interaction_mode == "companion" and custom_persona is not None and custom_persona.active:
+        rules.append(
+            f"你当前就是用户自定义的陪伴机器人“{custom_persona.name}”。对外只使用这个名字，"
+            f"不要自称目录里的其他伙伴。"
+        )
+        rules.append(AI_IDENTITY_RULE_TRANSPARENT)
+        rules.append(
+            "用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”"
+            "但自伤、轻生或正在发生的紧迫危险属于危机支持，绝不能用“我不知道”拒答。"
+        )
+        rules.append(f"具体表达规则：{custom_persona.text}")
+    elif frozen.interaction_mode == "companion" and companion is not None:
         rules.append(
             f"你当前就是用户选定的陪伴机器人“{companion.display_name}”。对外只使用这个名字，"
             f"角色说明：{companion.style_description}。"
@@ -1611,6 +1629,7 @@ def _response_plan_payload(
     evolution_receipt_secret: str | None = None,
     evolution_protocol: str = "",
     tutor_directive: str | None = None,
+    custom_persona: CustomPersona | None = None,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -1627,6 +1646,12 @@ def _response_plan_payload(
     companion = companion_definition(frozen.companion_style_id)
     voice_target = (
         {
+            "kind": "approved_personal",
+            "profile_id": frozen.voice_profile_id,
+            "model": frozen.voice_model,
+        }
+        if frozen.interaction_mode == "companion" and companion_personal_voice_contract_valid(frozen)
+        else {
             "kind": "companion",
             "profile_id": companion.designed_voice_profile,
             "model": DESIGNED_VOICE_MODEL,
@@ -1657,6 +1682,7 @@ def _response_plan_payload(
         now=now,
         evolution_artifacts=evolution_artifacts,
         tutor_directive=tutor_directive,
+        custom_persona=custom_persona,
     )
     artifact_refs = [
         {
@@ -2037,6 +2063,14 @@ async def response_plan(
                     evolution_receipt_secret=settings.evolution_internal_token(),
                     evolution_protocol=evolution_protocol,
                     tutor_directive=tutor_directive,
+                    custom_persona=parse_custom_persona(
+                        _store(request)
+                        .get_profile(
+                            user_id=account_id,
+                            now=now.isoformat().replace("+00:00", "Z"),
+                        )
+                        .get("bio")
+                    ),
                 )
                 cached_payload = await cache.put(key, fingerprint, payload)
         except AccountDeletingError as exc:

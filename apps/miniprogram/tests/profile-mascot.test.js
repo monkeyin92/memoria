@@ -19,6 +19,7 @@ test("profile hero uses the WeChat avatar or a name initial, not a robot mascot"
 test("profile companion picker is persona and voice text, not robot artwork", () => {
   assert.match(template, /人格与声音/);
   assert.match(template, /对话只在机器人上进行/);
+  assert.match(template, /下次唤醒才会换成对应声音/);
   assert.match(template, /声音 · \{\{item\.voiceName\}\}/);
   assert.match(template, /自定义人格与声音/);
   assert.doesNotMatch(template, /陪伴方式/);

@@ -67,7 +67,7 @@
 
   <view class="card" aria-role="radiogroup" aria-label="人格与声音">
     <text class="settings-title">人格与声音</text>
-    <text class="setting-desc">对话只在机器人上进行。可选用系统默认人格与声音，也可以自己写人格，并上传或录一段声音。</text>
+    <text class="setting-desc">对话只在机器人上进行。目录人格用对应的设计声音；自定义人格用你写的名字说话，并在声音就绪后用你的声音。换人格后，下次唤醒才会换成对应声音。</text>
     <view
       wx:for="{{companions}}"
       wx:key="id"
@@ -126,7 +126,7 @@
         auto-height
       />
       <button class="secondary-button custom-save" loading="{{saving}}" bindtap="saveCustomPersona">保存自定义人格</button>
-      <text class="setting-desc">自定义声音需要 10–60 秒清晰人声。评估通过前，设备仍使用系统音色。</text>
+      <text class="setting-desc">录或上传 10–60 秒清楚的人声。生成大约一分钟，结果就显示在上面。</text>
       <text class="persona-voice">{{voiceCloneStatusLabel}}</text>
       <view class="button-row voice-sample-row">
         <button class="secondary-button" loading="{{voiceSampleBusy}}" disabled="{{voiceSampleBusy || recording}}" bindtap="uploadVoiceSample">上传音频</button>

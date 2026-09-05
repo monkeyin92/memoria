@@ -10,13 +10,17 @@ from pathlib import Path
 from typing import Any, cast
 
 from services.agent.src.agent import DuplexVoiceAgent
-from services.agent.src.agent_voice_profile import _apply_cached_voice_profile
+from services.agent.src.agent_voice_profile import (
+    _apply_cached_voice_profile,
+    align_tts_voice_to_policy,
+)
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.conversation_close_wiring import (
     install_conversation_close_semantic_resolver,
 )
 from services.agent.src.device_vad import DEVICE_POST_PLAYBACK_HOLDOFF_S
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.generation_output_policy import frozen_companion_clone_permitted
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
 from services.agent.src.mode_policy_client import ModePolicyClient, ModePolicyClientConfig
 from services.agent.src.observability.metrics import GLOBAL_METRICS
@@ -25,6 +29,7 @@ from services.agent.src.orchestration.handlers import (
     SpeechSynthesisHandler,
 )
 from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
+from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS
 from services.agent.src.providers.doubao_tts import DoubaoTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.handlers import (
@@ -141,6 +146,7 @@ class ProductionMediaSessionFactory:
                 owned.append(close_intent_classifier)
             mode_policy_client = await self._bind_mode_policy(runtime)
             owned.append(mode_policy_client)
+            tts = await self._maybe_use_cosyvoice_clone_tts(runtime, tts)
 
             async def _refresh_profile() -> VerifiedRuntimeProfile | None:
                 policy = await mode_policy_client.fetch(session_id=runtime.session_id)
@@ -161,6 +167,14 @@ class ProductionMediaSessionFactory:
             voice_profile_client = await self._bind_voice_profile(runtime, tts)
             if voice_profile_client is not None:
                 owned.append(voice_profile_client)
+            align_tts_voice_to_policy(
+                tts,
+                runtime.mode_policy,
+                personal_voice_permitted=runtime.profile_permits(
+                    runtime.fence, capability="voice_clone_use"
+                )
+                or frozen_companion_clone_permitted(runtime.mode_policy),
+            )
             self._bind_speaker_authority(runtime)
             await self._bind_archive(runtime)
             self._configure_runtime(runtime, tts)
@@ -352,11 +366,7 @@ class ProductionMediaSessionFactory:
     ) -> VoiceProfileClient | None:
         settings = self.settings
         token = settings.internal_token("voice_resolution")
-        if not (
-            settings.voice_profile_enabled
-            and token
-            and runtime.profile_permits(runtime.fence, capability="voice_clone_use")
-        ):
+        if not (settings.voice_profile_enabled and token):
             return None
         client = VoiceProfileClient(
             VoiceProfileClientConfig(
@@ -375,6 +385,23 @@ class ProductionMediaSessionFactory:
             policy=runtime.mode_policy,
         )
         return client
+
+    async def _maybe_use_cosyvoice_clone_tts(self, runtime: DuplexRuntime, tts: Any) -> Any:
+        if dict(runtime.mode_policy.references).get("voice_provider") != "alibaba_model_studio":
+            return tts
+        if not frozen_companion_clone_permitted(runtime.mode_policy):
+            return tts
+        close_tts = getattr(tts, "aclose", None)
+        if callable(close_tts):
+            with contextlib.suppress(Exception):
+                await close_tts()
+        clone_tts = CosyVoiceTTS.from_env()
+        runtime.tts = clone_tts
+        warm = getattr(getattr(clone_tts, "pool", None), "warm", None)
+        if callable(warm):
+            with contextlib.suppress(Exception):
+                await warm()
+        return clone_tts
 
     async def _bind_archive(self, runtime: DuplexRuntime) -> None:
         sink = self.archive_sink

@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from services.agent.src.context_assembler import heard_only_chat_context
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.generation_output_policy import (
+    frozen_companion_clone_permitted,
     generation_voice_profile_id,
     generation_voice_reject_reason,
 )
@@ -69,7 +70,7 @@ def _apply_cached_voice_profile(
 ) -> None:
     profile = client.cached(session_id=session_id)
     references = dict(policy.references) if policy is not None else {}
-    selected_fallback = _frozen_designed_fallback(policy)
+    selected_fallback = _frozen_designed_fallback(policy) or _policy_designed_voice_profile(policy)
     if profile is None:
         profile = selected_fallback
     if profile is None:
@@ -101,7 +102,7 @@ def _apply_cached_voice_profile(
         profile = selected_fallback
         designed_fallback_matches = True
     if (
-        (mode == "companion" and profile.voice_kind != "designed")
+        (mode == "companion" and profile.voice_kind != "designed" and not personal_matches)
         or (mode == "self_preview" and not (personal_matches or designed_fallback_matches))
         or (
             mode == "legacy"
@@ -141,12 +142,11 @@ def _apply_cached_voice_profile(
                 resource_id=profile.resource_id,
             )
         except TypeError:
-            if profile.voice_kind == "designed":
-                try:
-                    apply_profile(model=profile.model, voice=profile.voice_id)
-                    return
-                except (TypeError, ValueError):
-                    pass
+            try:
+                apply_profile(model=profile.model, voice=profile.voice_id)
+                return
+            except (TypeError, ValueError):
+                pass
             baseline = getattr(tts_plugin, "use_baseline_voice", None)
             if callable(baseline):
                 baseline()
@@ -297,7 +297,9 @@ def bind_generation_tts_voice(
     if tts_plugin is None:
         return False
     policy = runtime.mode_policy_for_fence(fence)
-    personal_voice_permitted = runtime.profile_permits(fence, capability="voice_clone_use")
+    personal_voice_permitted = runtime.profile_permits(
+        fence, capability="voice_clone_use"
+    ) or frozen_companion_clone_permitted(policy)
     align_tts_voice_to_policy(
         tts_plugin,
         policy,

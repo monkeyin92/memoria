@@ -572,6 +572,8 @@ class CosyVoiceTTS(tts.TTS[Any]):
         self._config = config
         self._baseline_model = config.model
         self._baseline_voice = config.voice
+        self._voice_kind = "designed"
+        self._voice_profile_id: str | None = None
         self._pool = pool or CosyVoicePool(config)
         self._active_fence: GenerationFence | None = None
         self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None
@@ -644,15 +646,34 @@ class CosyVoiceTTS(tts.TTS[Any]):
         # Prefer 1.0; still clamp defensive ranges if a caller passes outliers.
         self._config.rate = min(1.05, max(0.95, rate))
 
-    def apply_voice_profile(self, *, model: str, voice: str) -> None:
+    def apply_voice_profile(
+        self,
+        *,
+        model: str,
+        voice: str,
+        profile_id: str | None = None,
+        provider: str | None = None,
+        voice_kind: str | None = None,
+        resource_id: str | None = None,
+    ) -> None:
         if not model.startswith("cosyvoice-v3.5-") or not voice.strip():
             raise ValueError("active voice profile must use CosyVoice v3.5")
+        if provider not in {None, "alibaba_model_studio"}:
+            raise ValueError("CosyVoice profile requires alibaba_model_studio")
+        if voice_kind not in {None, "designed", "personal"}:
+            raise ValueError("CosyVoice voice_kind must be designed or personal")
+        if resource_id not in {None, model}:
+            raise ValueError("CosyVoice resource_id must match the model")
         self._config.model = model
         self._config.voice = voice
+        self._voice_kind = "personal" if voice_kind == "personal" else "designed"
+        self._voice_profile_id = profile_id
 
     def use_baseline_voice(self) -> None:
         self._config.model = self._baseline_model
         self._config.voice = self._baseline_voice
+        self._voice_kind = "designed"
+        self._voice_profile_id = None
 
     @property
     def current_model(self) -> str:
@@ -661,6 +682,14 @@ class CosyVoiceTTS(tts.TTS[Any]):
     @property
     def current_voice(self) -> str:
         return self._config.voice
+
+    @property
+    def current_voice_kind(self) -> str:
+        return self._voice_kind
+
+    @property
+    def current_voice_profile_id(self) -> str | None:
+        return self._voice_profile_id
 
     @property
     def current_instruction(self) -> str | None:

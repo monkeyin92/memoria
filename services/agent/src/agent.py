@@ -1065,7 +1065,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if input_modality == "audio" and self._runtime.tts is not None:
             clone_use = self._runtime.profile_permits(
                 self._runtime.fence, capability="voice_clone_use"
-            )
+            ) or output_policy.frozen_companion_clone_permitted(self._runtime.mode_policy)
             if self._voice_profile_client is not None and clone_use:
                 await self._runtime.wait_for_voice_profile_refresh()
             await self._runtime.refresh_runtime_profile()

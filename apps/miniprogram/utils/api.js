@@ -383,23 +383,41 @@ function listVoiceProfiles() {
   return rawRequest("/v1/voices/profiles");
 }
 
+function readyVoiceForDevice(profileId) {
+  return rawRequest(
+    `/v1/voices/profiles/${encodeURIComponent(profileId)}/ready-for-device`,
+    { method: "POST" },
+  );
+}
+
 function enrollVoiceClone({
   audioBase64,
   mediaType,
   durationMs,
   sampleRate = 16000,
   enrollmentKey,
+  readyForDevice = true,
 }) {
+  const data = {
+    audio_base64: audioBase64,
+    media_type: mediaType,
+    duration_ms: durationMs,
+    sample_rate: sampleRate,
+    ready_for_device: Boolean(readyForDevice),
+    ...(enrollmentKey ? { enrollment_key: enrollmentKey } : {}),
+  };
   return rawRequest("/v1/voices/enrollments", {
     method: "POST",
     timeout: 120000,
-    data: {
-      audio_base64: audioBase64,
-      media_type: mediaType,
-      duration_ms: durationMs,
-      sample_rate: sampleRate,
-      ...(enrollmentKey ? { enrollment_key: enrollmentKey } : {}),
-    },
+    data,
+  }).catch((error) => {
+    if (!readyForDevice || error?.status !== 422) throw error;
+    const { ready_for_device: _ignored, ...legacy } = data;
+    return rawRequest("/v1/voices/enrollments", {
+      method: "POST",
+      timeout: 120000,
+      data: legacy,
+    });
   });
 }
 
@@ -894,6 +912,7 @@ module.exports = {
   createSpeakerEnrollmentIntent,
   grantVoiceCloneConsent,
   listVoiceProfiles,
+  readyVoiceForDevice,
   enrollVoiceClone,
   getGuardianLinks,
   getGuardianSummary,

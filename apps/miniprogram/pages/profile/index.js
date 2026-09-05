@@ -44,19 +44,22 @@ function clampCloneDuration(durationMs) {
 }
 
 function voiceCloneStatusLabel(payload) {
-  if (!payload) return "暂时无法读取自定义声音状态。";
+  if (!payload) return "暂时读不到自定义声音状态。";
   const items = Array.isArray(payload.items) ? payload.items : [];
   if (items.some((item) => item.status === "active")) {
-    return "自定义声音已可用于设备。";
+    return "自定义声音已就绪。下次在设备上说话就会用；听着不像，再录一段即可。";
   }
-  if (items.some((item) => item.status === "candidate" || item.status === "enrolling")) {
-    return "样本已提交，等待服务端评估通过后才会在设备上使用。在此之前仍使用系统声音。";
+  if (items.some((item) => item.status === "enrolling")) {
+    return "正在生成自定义声音，通常一分钟内完成。结果就在这一页，不用去别处看。";
+  }
+  if (items.some((item) => item.status === "candidate")) {
+    return "声音已经生成，正在接到设备上。";
   }
   if (items.some((item) => item.status === "failed")) {
-    return "上一份样本未通过评估，设备仍使用系统声音。";
+    return "这次没生成成功。请换一段 10–60 秒、更清楚的人声再试。";
   }
   if (payload.consent && !payload.consent.revoked_at) {
-    return "已授权声音复刻，还没有可用样本。";
+    return "还没有声音样本。录一段或上传音频后，大约一分钟就能用。";
   }
   return "还没有自定义声音样本。";
 }
@@ -513,13 +516,22 @@ Page({
 
   async loadVoiceCloneStatus() {
     try {
-      const payload = await api.listVoiceProfiles();
+      let payload = await api.listVoiceProfiles();
+      const pending = (payload.items || []).find((item) => item.status === "candidate");
+      if (pending?.profile_id) {
+        try {
+          await api.readyVoiceForDevice(pending.profile_id);
+          payload = await api.listVoiceProfiles();
+        } catch {
+          // Keep the listing we already have; the page still explains the current state.
+        }
+      }
       return { voiceCloneStatusLabel: voiceCloneStatusLabel(payload) };
     } catch (error) {
       if (error?.status === 403) {
         return { voiceCloneStatusLabel: "当前未开启声音复刻，或尚未完成授权。" };
       }
-      return { voiceCloneStatusLabel: error?.message || "暂时无法读取自定义声音状态。" };
+      return { voiceCloneStatusLabel: error?.message || "暂时读不到自定义声音状态。" };
     }
   },
 
@@ -662,7 +674,11 @@ Page({
   },
 
   async _enrollVoiceSample({ filePath, mediaType, durationMs, sampleRate }) {
-    this.setData({ voiceSampleBusy: true, error: "" });
+    this.setData({
+      voiceSampleBusy: true,
+      error: "",
+      voiceCloneStatusLabel: "正在生成自定义声音，大约一分钟，请先留在这一页。",
+    });
     try {
       const audioBase64 = await new Promise((resolve, reject) => {
         wx.getFileSystemManager().readFile({
@@ -677,20 +693,25 @@ Page({
       } catch (error) {
         if (error?.status !== 409) throw error;
       }
-      await api.enrollVoiceClone({
+      const enrolled = await api.enrollVoiceClone({
         audioBase64,
         mediaType,
         durationMs,
         sampleRate,
         enrollmentKey: `miniprogram-${Date.now()}`,
+        readyForDevice: true,
       });
       const voiceCloneState = await this.loadVoiceCloneStatus();
       this.setData(voiceCloneState);
-      wx.showToast({ title: "样本已提交", icon: "success" });
+      wx.showToast({
+        title: enrolled?.status === "active" ? "声音已就绪" : "声音处理中",
+        icon: "success",
+      });
     } catch (error) {
+      const message = error?.message || "这次没生成成功，请再试一次。";
       this.setData({
-        error: error?.message || "声音样本提交失败。",
-        voiceCloneStatusLabel: error?.message || "声音样本提交失败。",
+        error: message,
+        voiceCloneStatusLabel: message,
       });
     } finally {
       this.setData({ voiceSampleBusy: false });

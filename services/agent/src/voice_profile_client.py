@@ -16,6 +16,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
 
 DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 DOUBAO_PROVIDER = "volcengine_doubao"
+COSYVOICE_PROVIDER = "alibaba_model_studio"
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,11 +167,20 @@ class VoiceProfileClient:
         resource_id = payload.get("resource_id")
         voice_id = payload.get("voice_id")
         speaker_sha256 = payload.get("speaker_sha256")
+        doubao_personal = (
+            provider == DOUBAO_PROVIDER
+            and model == DOUBAO_PERSONAL_VOICE_MODEL
+            and resource_id == DOUBAO_PERSONAL_VOICE_MODEL
+        )
+        cosyvoice_personal = (
+            provider == COSYVOICE_PROVIDER
+            and isinstance(model, str)
+            and model.startswith("cosyvoice-v3.5-")
+            and resource_id == model
+        )
         if (
-            provider != DOUBAO_PROVIDER
-            or voice_kind != "personal"
-            or model != DOUBAO_PERSONAL_VOICE_MODEL
-            or resource_id != DOUBAO_PERSONAL_VOICE_MODEL
+            voice_kind != "personal"
+            or not (doubao_personal or cosyvoice_personal)
             or not all(isinstance(value, str) and value for value in (profile_id, voice_id))
             or profile_id != str(profile_id).strip()
             or voice_id != str(voice_id).strip()
@@ -184,7 +194,7 @@ class VoiceProfileClient:
             profile_id=str(profile_id),
             model=str(model),
             voice_id=str(voice_id),
-            provider=DOUBAO_PROVIDER,
+            provider=str(provider),
             voice_kind="personal",
             resource_id=str(resource_id),
             speaker_sha256=speaker_sha256,

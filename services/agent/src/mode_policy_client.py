@@ -627,15 +627,8 @@ class ModePolicyClient:
             )
             or voice_profile_version_invalid
             or relationship_profile_version_invalid
-            or not voice_contract_valid
-            or (
-                mode == "companion"
-                and any(
-                    value is not None
-                    for key, value in references.items()
-                    if key != "owner_display_name"
-                )
-            )
+            or (mode != "companion" and not voice_contract_valid)
+            or (mode == "companion" and not _companion_voice_contract_valid(references))
             or (
                 mode == "self_preview"
                 and (
@@ -754,10 +747,50 @@ class ModePolicyClient:
         if not _optional_bounded_string(owner_display_name):
             return ModePolicy.unavailable("payload_invalid")
 
-        references: tuple[tuple[str, PolicyReferenceValue], ...] = (
-            (("owner_display_name", owner_display_name),)
-            if owner_display_name is not None
-            else ()
+        raw_voice_profile_version = payload.get("voice_profile_version")
+        if raw_voice_profile_version is None:
+            voice_profile_version: str | None = None
+        elif (
+            isinstance(raw_voice_profile_version, int)
+            and not isinstance(raw_voice_profile_version, bool)
+            and raw_voice_profile_version >= 1
+        ):
+            voice_profile_version = str(raw_voice_profile_version)
+        else:
+            return ModePolicy.unavailable("payload_invalid")
+        voice_references = {
+            "voice_profile_id": payload.get("voice_profile_id"),
+            "voice_profile_version": voice_profile_version,
+            "voice_provider": payload.get("voice_provider"),
+            "voice_model": payload.get("voice_model"),
+            "voice_resource_id": payload.get("voice_resource_id"),
+            "voice_provider_expires_at": payload.get("voice_provider_expires_at"),
+            "voice_speaker_sha256": payload.get("voice_speaker_sha256"),
+            "fallback_voice_profile_id": payload.get("fallback_voice_profile_id"),
+            "fallback_voice_provider": payload.get("fallback_voice_provider"),
+            "fallback_voice_model": payload.get("fallback_voice_model"),
+            "fallback_voice_resource_id": payload.get("fallback_voice_resource_id"),
+        }
+        if expected_mode == "companion" and not _companion_voice_contract_valid(voice_references):
+            return ModePolicy.unavailable("payload_invalid")
+        if expected_mode != "companion" and any(
+            value is not None for value in voice_references.values()
+        ):
+            # Signed companion envelopes may carry a frozen clone; other modes
+            # keep voice contracts on the non-envelope parser path.
+            voice_references = {key: None for key in voice_references}
+
+        references: tuple[tuple[str, PolicyReferenceValue], ...] = tuple(
+            sorted(
+                (
+                    *((("owner_display_name", owner_display_name),) if owner_display_name else ()),
+                    *(
+                        (key, value)
+                        for key, value in voice_references.items()
+                        if value is not None
+                    ),
+                )
+            )
         )
         return replace(
             derived,
@@ -768,6 +801,64 @@ class ModePolicyClient:
             session_focus=cast(SessionFocus, session_focus),
             runtime_profile_version=runtime_profile_version,
         )
+
+
+def _companion_voice_contract_valid(references: dict[str, Any]) -> bool:
+    """Companion may omit voice refs or freeze one complete personal clone."""
+
+    personal_keys = (
+        "voice_profile_id",
+        "voice_profile_version",
+        "voice_provider",
+        "voice_model",
+        "voice_resource_id",
+        "voice_provider_expires_at",
+        "voice_speaker_sha256",
+    )
+    fallback_keys = (
+        "fallback_voice_profile_id",
+        "fallback_voice_provider",
+        "fallback_voice_model",
+        "fallback_voice_resource_id",
+    )
+    personal_values = tuple(references.get(key) for key in personal_keys)
+    fallback_values = tuple(references.get(key) for key in fallback_keys)
+    if all(value is None for value in (*personal_values, *fallback_values)):
+        return True
+    fallback_ok = (
+        all(value is not None for value in fallback_values)
+        and _bounded_string(references.get("fallback_voice_profile_id"))
+        and references.get("fallback_voice_provider") == "volcengine_doubao"
+        and references.get("fallback_voice_model") == "seed-tts-2.0"
+        and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
+    )
+    speaker = references.get("voice_speaker_sha256")
+    version = references.get("voice_profile_version")
+    version_ok = (isinstance(version, str) and version.isdigit() and int(version) >= 1) or (
+        isinstance(version, int) and not isinstance(version, bool) and version >= 1
+    )
+    if not (
+        fallback_ok
+        and _bounded_string(references.get("voice_profile_id"))
+        and version_ok
+        and isinstance(speaker, str)
+        and _valid_sha256(speaker)
+    ):
+        return False
+    provider = references.get("voice_provider")
+    model = references.get("voice_model")
+    resource = references.get("voice_resource_id")
+    if provider == "volcengine_doubao" and model == "seed-icl-2.0" and resource == "seed-icl-2.0":
+        return _valid_utc_timestamp(references.get("voice_provider_expires_at"))
+    if (
+        provider == "alibaba_model_studio"
+        and isinstance(model, str)
+        and model.startswith("cosyvoice-v3.5-")
+        and resource == model
+    ):
+        expires = references.get("voice_provider_expires_at")
+        return expires is None or _valid_utc_timestamp(expires)
+    return False
 
 
 def _bounded_string(value: Any) -> bool:

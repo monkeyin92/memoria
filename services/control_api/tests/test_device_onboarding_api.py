@@ -1118,6 +1118,44 @@ async def test_direct_reconnect_reuses_session_and_advances_only_transport_epoch
 
 
 @pytest.mark.asyncio
+async def test_direct_reconnect_refreshes_frozen_companion_from_current_profile(
+    tmp_path: Path,
+) -> None:
+    service, store, device_key, payload = _fixture()
+    manifest = _activate_device(service, store, device_key, payload)
+    settings_value, _signing_key = _direct_media_settings()
+    memory = _direct_memory(tmp_path)
+    authority = _DirectSessionAuthority(
+        binding_id=str(manifest["binding_id"]),
+        binding_version=int(manifest["binding_version"]),
+        subject_id="person_a",
+    )
+    app = _direct_app(service, memory, authority, settings_value)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await _post_direct_media_session(client, service, device_key)
+        assert first.status_code == 200, first.text
+        first_session = memory.get_voice_session_by_id(session_id=str(first.json()["session_id"]))
+        assert first_session is not None
+        assert first_session["companion_style_id"] == "starlight"
+        memory.update_profile(
+            user_id="person_a",
+            values={"companion_id": "xuanmo"},
+            now=datetime.now(UTC).isoformat(),
+        )
+        resumed = await _post_direct_media_session(
+            client,
+            service,
+            device_key,
+            resume_session_id=str(first.json()["session_id"]),
+        )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["session_id"] == first.json()["session_id"]
+    refreshed = memory.get_voice_session_by_id(session_id=str(first.json()["session_id"]))
+    assert refreshed is not None
+    assert refreshed["companion_style_id"] == "xuanmo"
+
+
+@pytest.mark.asyncio
 async def test_direct_unknown_safe_session_keeps_binding_owner_and_empty_runtime_subject(
     tmp_path: Path,
 ) -> None:

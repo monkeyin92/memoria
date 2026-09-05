@@ -51,10 +51,17 @@ def generation_voice_reject_reason(
         return "voice_kind"
     references = dict(policy.references)
     if voice_kind == "personal":
-        if resource_id != PERSONAL_VOICE_MODEL:
-            return "personal_resource"
         if not personal_voice_permitted:
             return "personal_not_permitted"
+        if policy.mode == "companion":
+            return _companion_personal_reject_reason(
+                policy,
+                profile_id=profile_id,
+                resource_id=resource_id,
+                speaker_sha256=speaker_sha256,
+            )
+        if resource_id != PERSONAL_VOICE_MODEL:
+            return "personal_resource"
         if policy.mode not in {"self_preview", "legacy"}:
             return "personal_mode"
         if policy.mode == "legacy" and references.get("legacy_voice_allowed") is not True:
@@ -219,10 +226,55 @@ def _valid_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
+def frozen_companion_clone_permitted(policy: ModePolicy) -> bool:
+    """True when companion mode froze a complete personal clone contract."""
+
+    return policy.mode == "companion" and _companion_personal_reject_reason(
+        policy,
+        profile_id=str(dict(policy.references).get("voice_profile_id") or ""),
+        resource_id=str(dict(policy.references).get("voice_resource_id") or ""),
+        speaker_sha256=str(dict(policy.references).get("voice_speaker_sha256") or ""),
+    ) is None
+
+
+def _companion_personal_reject_reason(
+    policy: ModePolicy,
+    *,
+    profile_id: str | None,
+    resource_id: str,
+    speaker_sha256: str,
+) -> str | None:
+    references = dict(policy.references)
+    provider = references.get("voice_provider")
+    model = references.get("voice_model")
+    if profile_id is None or profile_id != references.get("voice_profile_id"):
+        return "personal_profile"
+    if references.get("voice_profile_version") is None:
+        return "personal_version"
+    if speaker_sha256 != references.get("voice_speaker_sha256"):
+        return "personal_speaker"
+    if resource_id != references.get("voice_resource_id") or resource_id != model:
+        return "personal_resource_id"
+    if provider == "volcengine_doubao" and model == PERSONAL_VOICE_MODEL:
+        if references.get("voice_model") != PERSONAL_VOICE_MODEL:
+            return "personal_model"
+        if references.get("voice_provider_expires_at") is None:
+            return "personal_expires"
+        return None
+    if (
+        provider == "alibaba_model_studio"
+        and isinstance(model, str)
+        and model.startswith("cosyvoice-v3.5-")
+    ):
+        return None
+    return "personal_provider"
+
+
 __all__ = [
     "ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS",
     "VoiceKind",
     "anonymous_public_plan_allowed",
+    "frozen_companion_clone_permitted",
     "generation_voice_allowed",
     "generation_voice_must_match_plan",
     "generation_voice_profile_id",

@@ -50,6 +50,24 @@ def test_response_plan_instruction_uses_agent_identity_transparency_rule() -> No
     assert "用户问你是谁、叫什么或你由什么模型提供时，只简短说出这个名字" not in joined
     # Crisis support still trumps the generic refusal.
     assert "危机支持，绝不能用“我不知道”拒答" in joined
+    assert "星澜" in joined
+
+
+def test_response_plan_instruction_uses_custom_persona_name() -> None:
+    from services.common.custom_persona import CustomPersona
+
+    rules, _ = _instruction_text(
+        frozen=_frozen(),  # type: ignore[arg-type]
+        plan=_plan(),  # type: ignore[arg-type]
+        query="你是谁？",
+        now=datetime(2026, 8, 9, tzinfo=UTC),
+        custom_persona=CustomPersona(active=True, name="小北", text="说话短一点，像朋友。"),
+    )
+    joined = rules if isinstance(rules, str) else "\n".join(rules)
+    assert "小北" in joined
+    assert "说话短一点，像朋友。" in joined
+    assert "星澜" not in joined
+    assert "桃喜" not in joined
 
 
 def test_response_plan_instruction_keeps_style_fields_data_only() -> None:

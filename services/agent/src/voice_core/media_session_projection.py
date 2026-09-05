@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from services.agent.src.agent_voice_profile import generation_tts_voice_can_bind
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     CommittedTurn,
@@ -154,6 +155,7 @@ class MediaSessionProjectionMixin:
                 )
             if context.closed or context.runtime.fence.turn_id != 0:
                 return
+            generation_tts_voice_can_bind(runtime)
             context.device_wake_ack_fence = runtime.fence
             await self._speak_allowlisted_bridge_phrase(
                 context,
