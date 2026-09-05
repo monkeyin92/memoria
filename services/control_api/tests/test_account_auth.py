@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -642,6 +643,12 @@ async def test_wechat_phone_login_creates_one_stable_registered_identity_and_res
     assert subject["subject_category"] == "adult"
     assert subject["birth_year_band"] == "adult"
     assert subject["age_evidence_status"] == "verified"
+    person = await app.state.identity_service.get_person(
+        first.json()["user_id"], actor_person_id=first.json()["user_id"]
+    )
+    assert (person.subject_category, person.age_band, person.age_evidence_status) == (
+        "adult", "adult", "verified"
+    )
     assert first.json()["user_id"].startswith("wx_")
     assert first.json()["account_type"] == "registered"
     assert first.json()["display_name"] == "小林"
@@ -757,6 +764,147 @@ async def test_silent_restore_promotes_unknown_subject_when_phone_already_bound(
     assert promoted["subject_category"] == "adult"
     assert promoted["birth_year_band"] == "adult"
     assert promoted["age_evidence_status"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_wechat_restore_reconciles_existing_unknown_identity_idempotently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC)
+    user_id = "wx_existing_control_adult"
+    login_code = "dev-wechat-existing-control-adult"
+    app.state.memory_store.bind_external_identities(
+        preferred_user_id=user_id,
+        identities={
+            "wechat_openid": wechat_auth.openid_hash(f"dev-openid-{login_code}"),
+            "wechat_phone": "persisted-phone-hash",
+        },
+        now=now.isoformat(),
+    )
+    app.state.memory_store.update_subject_profile(
+        user_id=user_id, subject_category="adult", birth_year_band="adult",
+        age_evidence_status="verified", now=now.isoformat(),
+    )
+    identity = app.state.identity_service
+    original = await identity.register_person(
+        person_id=user_id, actor_person_id=user_id, display_name="主人",
+        timezone="Asia/Shanghai", now=now,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        restored = await client.post(
+            "/v1/auth/wechat-login", json={"login_code": login_code},
+        )
+        assert restored.status_code == 200
+        synced = await identity.get_person(user_id, actor_person_id=user_id)
+        assert (synced.subject_category, synced.age_band, synced.age_evidence_status) == (
+            "adult", "adult", "verified"
+        )
+        assert synced.person_id == original.person_id
+        assert synced.created_at == original.created_at
+        revision = app.state.memory_store.get_subject_profile(user_id=user_id)["subject_revision"]
+        replay = await client.post(
+            "/v1/auth/wechat-login", json={"login_code": login_code},
+        )
+        assert replay.status_code == 200
+        assert await identity.get_person(user_id, actor_person_id=user_id) == synced
+        assert app.state.memory_store.get_subject_profile(user_id=user_id)["subject_revision"] == revision
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", ["minor", "disputed", "disabled"])
+async def test_wechat_restore_rejects_conflicting_identity_without_issuing_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, protected: str,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC)
+    user_id = f"wx_protected_{protected}"
+    login_code = f"dev-wechat-protected-{protected}"
+    store = app.state.memory_store
+    store.bind_external_identities(
+        preferred_user_id=user_id,
+        identities={
+            "wechat_openid": wechat_auth.openid_hash(f"dev-openid-{login_code}"),
+            "wechat_phone": "persisted-phone-hash",
+        }, now=now.isoformat(),
+    )
+    store.update_subject_profile(
+        user_id=user_id, subject_category="adult", birth_year_band="adult",
+        age_evidence_status="verified", now=now.isoformat(),
+    )
+    identity = app.state.identity_service
+    original = await identity.register_person(
+        person_id=user_id, actor_person_id=user_id, display_name="受保护账号",
+        timezone="Asia/Shanghai", now=now,
+    )
+    person = (
+        replace(original, subject_category="minor", age_band="under_14") if protected == "minor"
+        else replace(original, age_evidence_status="disputed") if protected == "disputed"
+        else replace(original, status="disabled")
+    )
+    await identity._store.save_person(person)
+    revision = store.get_subject_profile(user_id=user_id)["subject_revision"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        result = await client.post(
+            "/v1/auth/wechat-login", json={"login_code": login_code},
+        )
+    assert result.status_code == 409
+    assert result.json()["detail"]["code"] == "subject_registration_conflict"
+    assert "access_token" not in result.json()
+    assert "set-cookie" not in result.headers
+    assert await identity.get_person(user_id, actor_person_id=user_id) == person
+    assert store.get_subject_profile(user_id=user_id)["subject_revision"] == revision
+    with store._connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM auth_sessions WHERE user_id = ?", (user_id,),
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_store", ["identity", "control"])
+async def test_wechat_registration_failure_issues_no_token_and_retry_finishes_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failed_store: str,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+    identity = app.state.identity_service
+    store = app.state.memory_store
+    login_code = f"dev-wechat-failed-{failed_store}"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with monkeypatch.context() as failing:
+            if failed_store == "identity":
+                async def unavailable(**kwargs: Any) -> None:
+                    raise TimeoutError("temporary Identity outage")
+                failing.setattr(identity, "reconcile_account_registration", unavailable)
+            else:
+                def unavailable_control(**kwargs: Any) -> None:
+                    raise sqlite3.OperationalError("database is locked")
+                failing.setattr(store, "update_subject_profile", unavailable_control)
+            failed = await client.post(
+                "/v1/auth/wechat-login",
+                json={"login_code": login_code, "phone_code": f"dev-phone-{failed_store}"},
+            )
+        assert failed.status_code == 503
+        assert failed.json()["detail"]["code"] == "subject_registration_unavailable"
+        assert "access_token" not in failed.json()
+        assert "set-cookie" not in failed.headers
+        user_id = store.external_identity_user(
+            provider="wechat_openid",
+            subject_hash=wechat_auth.openid_hash(f"dev-openid-{login_code}"),
+        )
+        assert store.get_subject_profile(user_id=user_id)["subject_category"] == "unknown"
+        before_retry = await identity.get_person(user_id, actor_person_id=user_id)
+        retried = await client.post(
+            "/v1/auth/wechat-login", json={"login_code": login_code},
+        )
+        assert retried.status_code == 200
+        assert store.get_subject_profile(user_id=user_id)["subject_category"] == "adult"
+        after_retry = await identity.get_person(user_id, actor_person_id=user_id)
+        assert after_retry.subject_category == "adult"
+        if failed_store == "control":
+            assert before_retry == after_retry
 
 
 @pytest.mark.asyncio

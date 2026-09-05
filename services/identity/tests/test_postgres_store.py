@@ -162,6 +162,93 @@ async def _drop_database(database: str) -> None:
         await admin.close()
 
 
+async def test_account_registration_reconciliation_transaction_and_role_boundary() -> None:
+    database = f"memoria_reconciliation_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _authority = await _service(dsns)
+        now = datetime.now(UTC)
+        evidence = "control-wechat-phone-v1:" + "a" * 64
+        person = await service.register_person(
+            person_id="legacy-owner", actor_person_id="legacy-owner",
+            display_name="主人", timezone="Asia/Shanghai", now=now,
+        )
+        # Concurrent login/binding retries may both observe unknown. The DB
+        # row lock guarantees one mutation and one audit/outbox pair.
+        results = await asyncio.gather(*(service.reconcile_account_registration(
+            person_id=person.person_id, evidence_id=evidence, source_revision=1, now=now,
+        ) for _ in range(2)))
+        assert results[0] == results[1]
+        assert results[0].subject_category == "adult"
+        assert results[0].created_at == person.created_at
+        admin = await asyncpg.connect(dsns["admin"])
+        registration = await asyncpg.connect(dsns["registration"])
+        api = await asyncpg.connect(dsns["api"])
+        query = "SELECT identity_reconcile_account_registration($1,$2,$3,$4,$5)"
+        try:
+            audits = await admin.fetch(
+                "SELECT * FROM identity_audit_events WHERE action = 'person.registration_reconciled'",
+            )
+            assert len(audits) == 1
+            payload = json.loads(audits[0]["payload_json"])
+            assert payload["source"] == "control.wechat_phone_registration.v1"
+            assert payload["source_profile_revision"] == 1
+            assert payload["evidence_id"] == evidence
+            assert "verifier_person_id" not in payload
+            assert await admin.fetchval(
+                "SELECT count(*) FROM identity_outbox WHERE event_id = $1", audits[0]["event_id"],
+            ) == 1
+            async with api.transaction():
+                await api.execute("SELECT set_config('app.identity_scope','registration',true)")
+                with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                    await api.execute(query, person.person_id, evidence, 1, now, now + timedelta(seconds=1))
+            # A failed transaction cannot leave a green person without its
+            # audit/outbox, and stale snapshots cannot overwrite a new fact.
+            untouched = await service.register_person(
+                person_id="retry-owner", display_name="待同步", timezone="Asia/Shanghai", now=now,
+            )
+            with pytest.raises(RuntimeError, match="rollback"):
+                async with registration.transaction():
+                    await registration.execute(query, untouched.person_id, evidence, 1, now, now + timedelta(seconds=1))
+                    raise RuntimeError("rollback")
+            assert await service.get_person(untouched.person_id, actor_person_id=untouched.person_id) == untouched
+            assert await admin.fetchval(
+                "SELECT count(*) FROM identity_audit_events WHERE person_id=$1 AND action='person.registration_reconciled'",
+                untouched.person_id,
+            ) == 0
+            with pytest.raises(asyncpg.PostgresError) as conflict:
+                await registration.execute(query, untouched.person_id, evidence, 1, now - timedelta(seconds=1), now + timedelta(seconds=1))
+            assert conflict.value.sqlstate == "II001"
+            for bad_evidence, revision in [("self-verified", 1), (evidence, 0)]:
+                with pytest.raises(asyncpg.PostgresError):
+                    await registration.execute(query, untouched.person_id, bad_evidence, revision, now, now + timedelta(seconds=1))
+            for category, band, status, person_status in (
+                ("minor", "under_14", "unverified", "active"),
+                ("unknown", "unknown", "disputed", "active"),
+                ("unknown", "unknown", "unverified", "disabled"),
+            ):
+                await admin.execute(
+                    "UPDATE identity_persons SET subject_category=$2,age_band=$3,age_evidence_status=$4,status=$5 WHERE person_id=$1",
+                    untouched.person_id, category, band, status, person_status,
+                )
+                with pytest.raises(asyncpg.PostgresError) as protected:
+                    await registration.execute(query, untouched.person_id, evidence, 1, now, now + timedelta(seconds=1))
+                assert protected.value.sqlstate == "II001"
+                with pytest.raises(IdentityConflictError):
+                    await service.reconcile_account_registration(
+                        person_id=untouched.person_id, evidence_id=evidence, source_revision=1, now=now,
+                    )
+        finally:
+            await admin.close()
+            await registration.close()
+            await api.close()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
 async def test_schema_roles_rls_and_version_chain() -> None:
     database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
     dsns = await _bootstrap(database)

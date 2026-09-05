@@ -33,6 +33,7 @@ from services.control_api.app.multi_subject_runtime import (
     SubjectSwitchForbiddenError,
 )
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
+from services.control_api.app.subject_verification import ensure_account_person
 from services.device_fleet.bootstrap_domain import (
     BindingInitialization,
     ClaimConflict,
@@ -263,24 +264,9 @@ async def _account_person(
     user_id: str,
     now: datetime,
 ) -> PersonSubject:
-    identity = _identity(request)
-    try:
-        return await identity.get_person(user_id, actor_person_id=user_id)
-    except IdentityNotFoundError:
-        profile = request.app.state.memory_store.get_subject_profile(user_id=user_id) or {}
-        return await identity.register_person(
-            person_id=user_id,
-            actor_person_id=user_id,
-            display_name=str(profile.get("display_name") or "朋友"),
-            timezone="Asia/Shanghai",
-            subject_category=cast(Any, profile.get("subject_category") or "unknown"),
-            age_band=cast(Any, profile.get("birth_year_band") or "unknown"),
-            age_evidence_status=cast(
-                Any,
-                profile.get("age_evidence_status") or "unverified",
-            ),
-            now=now,
-        )
+    return await ensure_account_person(
+        request.app.state.memory_store, _identity(request), user_id=user_id, now=now,
+    )
 
 
 async def _primary_subject(

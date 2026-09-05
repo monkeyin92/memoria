@@ -146,6 +146,15 @@ class AccountStoreMixin:
             ).fetchone()
         return row is not None
 
+    def external_identity_subject_hash(self, *, user_id: str, provider: str) -> str | None:
+        """Server-only receipt input; never return this from a client route."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT subject_hash FROM external_identities WHERE user_id = ? AND provider = ?",
+                (user_id, provider),
+            ).fetchone()
+        return str(row["subject_hash"]) if row is not None else None
+
     def bind_external_identities(
         self,
         *,

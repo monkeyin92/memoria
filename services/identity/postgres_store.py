@@ -339,6 +339,18 @@ class PostgresIdentityStore:
                     "identity API role must NOT EXECUTE "
                     "identity_verify_age_evidence"
                 )
+            reconciliation_denied = await connection.fetchval(
+                """
+                SELECT has_function_privilege(current_user, to_regprocedure(
+                    'identity_reconcile_account_registration(text,text,integer,'
+                    'timestamptz,timestamptz)'
+                ), 'EXECUTE')
+                """
+            )
+            if reconciliation_denied:
+                raise RuntimeError(
+                    "identity API role must NOT EXECUTE identity_reconcile_account_registration"
+                )
             audit_triggers = {
                 str(row["tgname"])
                 for row in await connection.fetch(
@@ -513,6 +525,23 @@ class PostgresIdentityStore:
                 raise RuntimeError(
                     "identity registration role must be able to EXECUTE "
                     "identity_verify_age_evidence"
+                )
+            reconciliation_port = await connection.fetchval(
+                """
+                SELECT pg_get_userbyid(p.proowner) = 'memoria_identity_owner'
+                       AND p.prosecdef
+                       AND 'row_security=on' = ANY(p.proconfig)
+                       AND 'search_path=pg_catalog, public' = ANY(p.proconfig)
+                       AND has_function_privilege(current_user, p.oid, 'EXECUTE')
+                FROM pg_proc p WHERE p.oid = to_regprocedure(
+                    'identity_reconcile_account_registration(text,text,integer,'
+                    'timestamptz,timestamptz)'
+                )
+                """
+            )
+            if not reconciliation_port:
+                raise RuntimeError(
+                    "identity registration reconciliation port missing or insecure"
                 )
             denied_ports = {
                 "identity_write_idempotency": (
@@ -741,6 +770,28 @@ class PostgresIdentityStore:
                     verifier_person_id,
                     _timestamp(person.updated_at, field="updated_at"),
                 )
+
+    async def reconcile_account_registration(
+        self, person: PersonSubject, *, expected_updated_at: datetime,
+        evidence_id: str, source_revision: int,
+        audit_event: AuditEvent, outbox_event: OutboxEvent,
+    ) -> None:
+        pool = self._registration_ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                try:
+                    await connection.execute(
+                        "SELECT identity_reconcile_account_registration($1, $2, $3, $4, $5)",
+                        person.person_id, evidence_id, source_revision,
+                        _timestamp(expected_updated_at, field="expected_updated_at"),
+                        _timestamp(person.updated_at, field="updated_at"),
+                    )
+                except asyncpg.PostgresError as exc:
+                    if exc.sqlstate == _REGISTRATION_CONFLICT_SQLSTATE:
+                        raise IdentityConflictError(
+                            "registration changed or has protected evidence"
+                        ) from exc
+                    raise
 
     async def update_person_profile(
         self,

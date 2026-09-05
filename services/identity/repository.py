@@ -131,6 +131,23 @@ class IdentityStore(Protocol):
         scope: str = "api",
     ) -> None: ...
 
+    async def reconcile_account_registration(
+        self,
+        person: PersonSubject,
+        *,
+        expected_updated_at: datetime,
+        evidence_id: str,
+        source_revision: int,
+        audit_event: AuditEvent,
+        outbox_event: OutboxEvent,
+    ) -> None:
+        """Registration authority only: reconcile an unspecified legacy person.
+
+        Never overwrites minor/disputed/inactive records. The age fields, audit
+        and outbox commit atomically; a verified-adult replay is a no-op.
+        """
+        ...
+
     async def get_person(
         self,
         person_id: str,

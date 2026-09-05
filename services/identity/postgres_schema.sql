@@ -953,6 +953,78 @@ BEGIN
 END
 $$;
 
+-- Mirror the existing Control registration policy, not the independent human
+-- age-verification action. Only the registration credential can execute this
+-- narrow unknown -> adult reconciliation; no caller-selectable age fields.
+CREATE OR REPLACE FUNCTION identity_reconcile_account_registration(
+    p_person_id text,
+    p_evidence_id text,
+    p_source_revision integer,
+    p_expected_updated_at timestamptz,
+    p_updated_at timestamptz
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE
+    v_person identity_persons%ROWTYPE;
+    v_event_id text;
+    v_payload jsonb;
+    v_suppress text;
+BEGIN
+    IF p_person_id IS NULL OR char_length(p_person_id) NOT BETWEEN 1 AND 128
+       OR p_evidence_id IS NULL
+       OR p_evidence_id !~ '^control-wechat-phone-v1:[a-f0-9]{64}$'
+       OR p_source_revision IS NULL OR p_source_revision < 1
+       OR p_expected_updated_at IS NULL OR p_updated_at IS NULL
+       OR p_updated_at <= p_expected_updated_at THEN
+        RAISE EXCEPTION 'invalid Control registration receipt';
+    END IF;
+    SELECT * INTO v_person FROM identity_persons
+    WHERE person_id = p_person_id FOR UPDATE;
+    IF NOT FOUND OR v_person.status <> 'active' THEN
+        RAISE EXCEPTION 'active registration required' USING ERRCODE = 'II001';
+    END IF;
+    IF v_person.subject_category = 'adult' AND v_person.age_band = 'adult'
+       AND v_person.age_evidence_status = 'verified' THEN
+        RETURN;
+    END IF;
+    IF v_person.subject_category <> 'unknown' OR v_person.age_band <> 'unknown'
+       OR v_person.age_evidence_status <> 'unverified'
+       OR v_person.updated_at <> p_expected_updated_at THEN
+        RAISE EXCEPTION 'registration changed or has protected evidence'
+            USING ERRCODE = 'II001';
+    END IF;
+    v_suppress := current_setting('app.identity_suppress_person_audit', true);
+    PERFORM set_config('app.identity_suppress_person_audit', '1', true);
+    UPDATE identity_persons
+    SET subject_category = 'adult', age_band = 'adult',
+        age_evidence_status = 'verified', updated_at = p_updated_at
+    WHERE person_id = p_person_id;
+    PERFORM set_config('app.identity_suppress_person_audit', COALESCE(v_suppress, ''), true);
+    v_event_id := 'evt:registration-reconciled:' || gen_random_uuid()::text;
+    SELECT to_jsonb(p) || jsonb_build_object(
+        'source', 'control.wechat_phone_registration.v1',
+        'evidence_id', p_evidence_id, 'source_profile_revision', p_source_revision,
+        'previous_subject_category', v_person.subject_category,
+        'previous_age_band', v_person.age_band,
+        'previous_age_evidence_status', v_person.age_evidence_status
+    ) INTO v_payload FROM identity_persons p WHERE p.person_id = p_person_id;
+    INSERT INTO identity_audit_events (
+        event_id, action, actor_person_id, subject_person_id, person_id,
+        device_id, binding_id, relationship_id, payload_json, created_at
+    ) VALUES (
+        v_event_id, 'person.registration_reconciled', p_person_id, p_person_id,
+        p_person_id, NULL, NULL, NULL, v_payload, p_updated_at
+    );
+    INSERT INTO identity_outbox (
+        outbox_id, event_id, topic, payload_json, status, attempts, created_at, updated_at
+    ) VALUES (
+        'outbox:' || v_event_id, v_event_id, 'identity.person.registration_reconciled',
+        v_payload, 'pending', 0, p_updated_at, p_updated_at
+    );
+END
+$$;
+
 CREATE OR REPLACE FUNCTION identity_write_idempotency(
     p_scope_key text,
     p_idempotency_key text,
@@ -1540,6 +1612,9 @@ REVOKE ALL ON FUNCTION identity_declare_age_evidence(
 REVOKE ALL ON FUNCTION identity_verify_age_evidence(
     text, text, text, text, text, timestamptz
 ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_reconcile_account_registration(
+    text, text, integer, timestamptz, timestamptz
+) FROM PUBLIC;
 
 -- Roles (admin bootstrap; LOGIN NOSUPERUSER NOBYPASSRLS) ----------------
 
@@ -1775,6 +1850,9 @@ BEGIN
         ) TO memoria_identity_registration;
         GRANT EXECUTE ON FUNCTION identity_verify_age_evidence(
             text, text, text, text, text, timestamptz
+        ) TO memoria_identity_registration;
+        GRANT EXECUTE ON FUNCTION identity_reconcile_account_registration(
+            text, text, integer, timestamptz, timestamptz
         ) TO memoria_identity_registration;
     END IF;
 

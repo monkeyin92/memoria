@@ -3,11 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.subject_verification import (
+    ensure_account_person,
     maybe_verify_adult_from_wechat_phone,
     speaker_enrollment_remediation,
 )
+from services.identity.in_memory_store import InMemoryIdentityStore
+from services.identity.service import IdentityService
 
 
 def _store(tmp_path: Path) -> MemoryStore:
@@ -57,6 +61,34 @@ def test_maybe_verify_adult_from_wechat_phone_is_idempotent_for_adult(tmp_path: 
         now=now,
     )
     assert maybe_verify_adult_from_wechat_phone(store, user_id="owner-1", now=now) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", ["minor", "disputed"])
+async def test_account_sync_does_not_promote_protected_control_profile(
+    tmp_path: Path, protected: str,
+) -> None:
+    store = _store(tmp_path)
+    now = datetime.now(UTC)
+    store.bind_external_identities(
+        preferred_user_id="owner-1", identities={"wechat_phone": "phone-hash"},
+        now=now.isoformat(),
+    )
+    store.update_subject_profile(
+        user_id="owner-1",
+        subject_category="minor" if protected == "minor" else "unknown",
+        birth_year_band="under_14" if protected == "minor" else "unknown",
+        age_evidence_status="unverified" if protected == "minor" else "disputed",
+        now=now.isoformat(),
+    )
+    original = store.get_subject_profile(user_id="owner-1")
+    identity = IdentityService(InMemoryIdentityStore())
+    person = await identity.register_person(
+        person_id="owner-1", actor_person_id="owner-1", display_name="主人",
+        timezone="Asia/Shanghai", now=now,
+    )
+    assert await ensure_account_person(store, identity, user_id="owner-1", now=now) == person
+    assert store.get_subject_profile(user_id="owner-1") == original
 
 
 def test_speaker_enrollment_remediation_for_missing_phone() -> None:

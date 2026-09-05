@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -50,6 +51,82 @@ def service(store: InMemoryIdentityStore | SqliteIdentityStore) -> IdentityServi
 
 def _now() -> datetime:
     return datetime(2026, 8, 9, 10, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_registration_reconciliation_is_audited_and_idempotent(
+    service: IdentityService, store: InMemoryIdentityStore | SqliteIdentityStore,
+) -> None:
+    original = await service.register_person(
+        person_id="old-owner", display_name="主人", timezone="Asia/Shanghai", now=_now(),
+    )
+    evidence = "control-wechat-phone-v1:" + "a" * 64
+    updated = await service.reconcile_account_registration(
+        person_id=original.person_id, evidence_id=evidence, source_revision=1, now=_now(),
+    )
+    assert updated.created_at == original.created_at
+    assert updated.updated_at > original.updated_at
+    assert (updated.subject_category, updated.age_band, updated.age_evidence_status) == (
+        "adult", "adult", "verified"
+    )
+    assert await service.reconcile_account_registration(
+        person_id=original.person_id, evidence_id=evidence, source_revision=1,
+        now=_now() + timedelta(days=1),
+    ) == updated
+    if isinstance(store, InMemoryIdentityStore):
+        audits = [event for event in store._audit if event.action == "person.registration_reconciled"]
+        assert len(audits) == 1
+        assert len([event for event in store._outbox.values() if event.event_id == audits[0].event_id]) == 1
+        payload = audits[0].payload
+    else:
+        with store._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM identity_audit_events WHERE action = 'person.registration_reconciled'",
+            ).fetchall()
+            assert len(rows) == 1
+            assert connection.execute(
+                "SELECT count(*) FROM identity_outbox WHERE event_id = ?", (rows[0]["event_id"],),
+            ).fetchone()[0] == 1
+            payload = json.loads(rows[0]["payload_json"])
+    assert payload["source"] == "control.wechat_phone_registration.v1"
+    assert payload["evidence_id"] == evidence
+    assert payload["source_profile_revision"] == 1
+    assert payload["previous_subject_category"] == "unknown"
+    assert "verifier_person_id" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protected", ["minor", "disputed", "disabled"])
+async def test_registration_reconciliation_does_not_override_protected_subjects(
+    service: IdentityService, store: InMemoryIdentityStore | SqliteIdentityStore,
+    protected: str,
+) -> None:
+    original = await service.register_person(
+        person_id="protected", display_name="不可提升", timezone="Asia/Shanghai", now=_now(),
+    )
+    person = (
+        replace(original, subject_category="minor", age_band="under_14") if protected == "minor"
+        else replace(original, age_evidence_status="disputed") if protected == "disputed"
+        else replace(original, status="disabled")
+    )
+    await store.save_person(person)
+    with pytest.raises(IdentityConflictError):
+        await service.reconcile_account_registration(
+            person_id=person.person_id, evidence_id="control-wechat-phone-v1:" + "b" * 64,
+            source_revision=1, now=_now(),
+        )
+    assert await service.get_person(person.person_id, actor_person_id=person.person_id) == person
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence,revision", [("", 1), ("self-asserted-adult", 1), ("control-wechat-phone-v1:" + "a" * 64, 0)])
+async def test_registration_reconciliation_requires_policy_receipt(
+    service: IdentityService, evidence: str, revision: int,
+) -> None:
+    with pytest.raises(AgeEvidenceError):
+        await service.reconcile_account_registration(
+            person_id="owner", evidence_id=evidence, source_revision=revision, now=_now(),
+        )
 
 
 _TEST_AUTHORITY = TestTransferAuthority(b"test-secret-that-is-at-least-32-bytes")

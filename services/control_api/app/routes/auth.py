@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 from urllib.parse import urlsplit
 
+import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 
@@ -37,7 +38,7 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
-from services.control_api.app.subject_verification import maybe_verify_adult_from_wechat_phone
+from services.control_api.app.subject_verification import ensure_account_person
 from services.control_api.app.wechat_auth import (
     WechatAuthError,
     code_to_phone,
@@ -47,6 +48,7 @@ from services.control_api.app.wechat_auth import (
     phone_subject_hash,
     wechat_user_id,
 )
+from services.identity.domain import IdentityConflictError
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 _DUMMY_PASSWORD_HASH = (
@@ -360,10 +362,21 @@ async def login_wechat(
         phone_number_masked=masked_phone,
         now=now,
     )
-    # Promote on every login once wechat_phone exists. Fresh phone_code used to
-    # be the only trigger; silent restore then left unknown+phone accounts stuck
-    # on subject_capability_forbidden with no UI path back to getPhoneNumber.
-    maybe_verify_adult_from_wechat_phone(store, user_id=user_id, now=now)
+    try:
+        await ensure_account_person(
+            store, request.app.state.identity_service,
+            user_id=user_id, now=datetime.fromisoformat(now),
+        )
+    except IdentityConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "subject_registration_conflict"},
+        ) from exc
+    except (asyncpg.PostgresError, sqlite3.Error, OSError, RuntimeError) as exc:
+        # No access/refresh session is issued on a partial cross-store sync.
+        # Retrying this login reconciles the same persisted registration.
+        raise HTTPException(
+            status_code=503, detail={"code": "subject_registration_unavailable"},
+        ) from exc
     issued = _issue_session(request=request, response=response, user_id=user_id)
     assert issued is not None
     token, ttl = issued

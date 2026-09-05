@@ -593,6 +593,40 @@ class SqliteIdentityStore:
                 ),
             )
 
+    async def reconcile_account_registration(
+        self, person: PersonSubject, *, expected_updated_at: datetime,
+        evidence_id: str, source_revision: int,
+        audit_event: AuditEvent, outbox_event: OutboxEvent,
+    ) -> None:
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM identity_persons WHERE person_id = ?",
+                (person.person_id,),
+            ).fetchone()
+            if row is None or row["status"] != "active":
+                raise IdentityConflictError("active registration required")
+            current = _person(row)
+            fields = (current.subject_category, current.age_band, current.age_evidence_status)
+            if fields == ("adult", "adult", "verified"):
+                return
+            if fields != ("unknown", "unknown", "unverified") or (
+                current.updated_at != expected_updated_at
+            ):
+                raise IdentityConflictError("registration changed or has protected evidence")
+            connection.execute(
+                """
+                UPDATE identity_persons
+                SET subject_category = 'adult', age_band = 'adult',
+                    age_evidence_status = 'verified', updated_at = ?
+                WHERE person_id = ?
+                """,
+                (_ts(person.updated_at, field="updated_at"), person.person_id),
+            )
+            _insert_audit(connection, audit_event)
+            _insert_outbox(connection, outbox_event)
+
     async def update_person_profile(
         self,
         person: PersonSubject,

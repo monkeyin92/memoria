@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -386,6 +387,67 @@ class IdentityService:
             scope="registration",
         )
         return updated
+
+    async def reconcile_account_registration(
+        self,
+        *,
+        person_id: str,
+        evidence_id: str,
+        source_revision: int,
+        now: datetime | None = None,
+    ) -> PersonSubject:
+        """Mirror the Control plane's existing WeChat registration decision.
+
+        This server-only registration action is NOT human age verification or
+        speaker authentication. Its receipt must come from persisted Control
+        phone binding + subject revision, never request-body age fields. The
+        ordinary distinct-verifier age-verification port remains unchanged.
+        """
+        if (
+            not re.fullmatch(r"control-wechat-phone-v1:[a-f0-9]{64}", evidence_id)
+            or type(source_revision) is not int
+            or source_revision < 1
+        ):
+            raise AgeEvidenceError("persisted Control registration evidence required")
+        person = await self.get_person(person_id, actor_person_id=person_id)
+        if person.status != "active":
+            raise IdentityConflictError("inactive registration cannot be reconciled")
+        current = (person.subject_category, person.age_band, person.age_evidence_status)
+        if current == ("adult", "adult", "verified"):
+            return person
+        if current != ("unknown", "unknown", "unverified"):
+            raise IdentityConflictError("registration conflicts with existing age evidence")
+        timestamp = max(_now(now), person.updated_at + timedelta(microseconds=1))
+        updated = replace(
+            person, subject_category="adult", age_band="adult",
+            age_evidence_status="verified", updated_at=timestamp,
+        )
+        event_id = _new_id()
+        payload: dict[str, object] = {
+            **updated.to_dict(),
+            "source": "control.wechat_phone_registration.v1",
+            "evidence_id": evidence_id,
+            "source_profile_revision": source_revision,
+            "previous_subject_category": person.subject_category,
+            "previous_age_band": person.age_band,
+            "previous_age_evidence_status": person.age_evidence_status,
+        }
+        await self._store.reconcile_account_registration(
+            updated, expected_updated_at=person.updated_at,
+            evidence_id=evidence_id, source_revision=source_revision,
+            audit_event=AuditEvent(
+                event_id=event_id, action="person.registration_reconciled",
+                actor_person_id=person_id, subject_person_id=person_id,
+                person_id=person_id, device_id=None, binding_id=None,
+                relationship_id=None, payload=payload, created_at=timestamp,
+            ),
+            outbox_event=OutboxEvent(
+                outbox_id=_new_id(), event_id=event_id,
+                topic="identity.person.registration_reconciled",
+                payload=payload, created_at=timestamp,
+            ),
+        )
+        return await self.get_person(person_id, actor_person_id=person_id)
 
     async def update_person_profile(
         self,
