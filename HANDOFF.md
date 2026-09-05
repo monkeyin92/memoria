@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-05
-resume_checkpoint: owner_voiceprint_active_awaiting_board_match
+resume_checkpoint: wechat_identity_synced_awaiting_board_owner_match
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -34,10 +34,10 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-05 09:39 CST）
+## 下次接着从这里开始（2026-09-05 16:33 CST）
 
 ```yaml
-resume_focus: epoch1390_ticket_lookup_awaiting_board_retest
+resume_focus: account_identity_synced_ticket_lookup_awaiting_board_retest
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -47,6 +47,8 @@ lookup_filler_fence_fix: published_dup_start_and_stack_env_healed
 weekday_after_weather: published_retest_fail_target_non_owner
 epoch1386_filler_speaker_fix: published_awaiting_board_retest
 subject_adult_verified: true
+identity_subject_adult_verified: true
+account_registration_sync: published_backfill_and_idempotence_verified
 speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
@@ -82,7 +84,7 @@ direct_real_device_verified: false
 
 **下一步（按顺序）**
 
-1. 真机复测：星期几/天气保持正常；查车票不要把「稍」卡断。不要放宽 `reject_non_owner_voice`。
+1. 重新唤醒建立新会话，真机复测主人匹配、星期几/天气和车票完整播报。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
 2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -91,13 +93,13 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260905-half-duplex-heard-lookup-v2-agent-component`（源 `3a1133c5cb63f2473556680f01c7c1e56003968d`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260905-half-duplex-heard-lookup-v2-agent-component`（源 `3a1133c5cb63f2473556680f01c7c1e56003968d`）。Control API overlay 源提交为 `a43f60f9ef12ee74448808643dbb2d29d565e2fc`（标签 `20260905-1610-wechat-identity-sync-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
 - Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260905-half-duplex-heard-lookup-v2-agent-component`，revision `3a1133c5cb63f2473556680f01c7c1e56003968d`，image `sha256:5fe86327788899d1d5f81ad2663a7f105395d404dfb1bb6e125f085288b51d65`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260905-half-duplex-heard-lookup-v2-agent-component/`。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`（镜像 `20260905-clock-fact-heard-playback-agent-component` / `sha256:772a54be0c2a0576ef3ac6aeba025e7151a0e59cc76c422c523430632f37c8ed`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。查车票垫话不要卡「稍」待真机复测。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
-- Control API：`memoria-control-api:20260903-1820-owner-enroll-active-control-api`，overlay revision `1a7a9390adc806adcae3aade1b8a01022b4f1368`（合格登记直接 active；classify 不再把 unavailable 反欺骗当拒绝；管理员可发新 intent 重录）。演示账号 profile `1b5b577b` 已 **active**。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`；healthy。回滚 `rollback-20260903-1820-owner-enroll-active-control-api-pre-control`（镜像 `20260903-1745-enrollment-keep-intent-control-api`）。
+- Control API：`memoria-control-api:20260905-1610-wechat-identity-sync-control-api`，overlay revision `a43f60f9ef12ee74448808643dbb2d29d565e2fc`，image `sha256:3ae31d83a2122f8a8b9641c49480d185d8ec33e58d1f360c2e2e0d8f41c3e1ed`。仅覆盖本次账号同步的 10 个源文件，依赖层与有效环境不变；2026-09-05 16:20 CST 切流，healthy、restart=0。回滚 `rollback-20260905-1610-wechat-identity-sync-control-api-pre-control`（镜像 `20260903-1820-owner-enroll-active-control-api` / `sha256:9ed2c09a9c003435e310a0e3b1d0a1d5b0cf6ab3f2a22c51404149b9e03ff8f4`）。合格登记即 active 的既有能力保留，演示账号 profile `1b5b577b` 未改动。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`。
 - 小程序开发版 **0.8.75**（2026-09-03 微信开发者工具 CLI 上传）：「我的」支持主人声纹重新录制；开箱完成会请求设备登记。请在微信里切到该版本后刷新。miniprogram-ci 因 IP 白名单 `121.237.160.230` 失败，改走本机 DevTools。
 - Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
@@ -114,6 +116,22 @@ direct_real_device_verified: false
 Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose + 已验证在线镜像快照 + 当前 override”。旧 component override 被普通制品清理后不再阻塞后续发布；收口前会验证 Agent/Bridge 共享同一 runnable image，且所有仍存在的 component override 只能包含这两个服务的 image 字段。
 
 服务器普通制品只保留当前运行版本和一个已确认可运行的紧邻回滚。执行任何回滚前必须现场读取容器 image ID、Compose override 和证据目录，不从本文猜测标签；数据库、WAL、MinIO、安全与合规备份不属于该两版本清理策略。
+
+### 微信账号主体跨库同步（2026-09-05）
+
+根因：微信手机号登录只将 Control SQLite 的账号登记为 `adult/adult/verified`，Identity PostgreSQL 中的同一人仍是 `unknown/unknown/unverified`。声纹 profile 已 active 不能补齐这份主体资料；之前笼统的“主人已 verified”只覆盖了 Control 一侧。
+
+`code=complete`：登录与设备绑定共用 `ensure_account_person`；先提交 Identity 登记审计，再提交 SQLite profile/session 事务，两侧成功才发登录凭证。只允许服务端持久化微信手机号登记将 active 的纯 unknown 主体补齐；minor、disputed、disabled 拒绝。沿用既有手机号登记政策，不把微信手机号授权冒称为真实年龄核验，也不修改独立年龄验证人规则。
+
+`wired=production_control_login_and_binding`；`enabled=true`：生产已安装限定 `memoria_identity_registration` 执行的 SECURITY DEFINER 函数；普通 API 角色与 PUBLIC 无执行权限，owner/search_path/RLS 门禁通过。
+
+`verified=2026-09-05_16:27_CST`：182 项关联测试、11 项真实 PostgreSQL 测试、Ruff/mypy 通过。目标账号经已发布业务路径回填后两库一致；审计和 outbox 各新增 1 条，第二次运行无更新、无重复记录。SQLite revision/session、声纹模板与样本、其他主体均未变化。现有设备绑定的运行时权威查询已读到 adult；未创建测试会话或伪造说话人。公网 live/ready、12/12 具名核心项、Qwen/FunASR/Doubao/InterruptSemantic/LiveKit 真实冒烟及切流后延迟日志复核通过，其余 13 个运行容器未变。
+
+制品保留已收口：删除 22 个过期 Control tag 和 4 个旧组件目录，保留当前与已实启验证的紧邻回滚两个独立镜像版本；数据库备份未动。2026-09-05 16:33 CST 最终复核 Control healthy、restart=0，公网 ready、12/12 核心项 ready，回滚镜像仍可读取。
+
+边界：微信手机端实际重新登录、主人当轮声纹匹配和车票 Actual Heard 仍待用户真机复测；旧 runtime profile 不自动恢复，应重新唤醒建会话。新 outbox 是已持久化 `pending`，未宣称消费者已处理。两库没有分布式事务：Identity 提交后 SQLite 失败会暂时单侧同步，登录仍拒绝发凭证，重试幂等补齐。display_name 不在本次同步范围。
+
+发布/回滚收据：`/opt/memoria/component-releases/20260905-1610-wechat-identity-sync-control-api/`（`manifest.json`、`rollback.json`、`schema.json`、`cutover.json`、`backfill.json`、`runtime-authority.json`、`delayed-review.json`、`cleanup.json`）。数据库备份：`/var/backups/memoria/20260905-1610-wechat-identity-sync-control-api/`。仅回滚 Control 镜像时保留新增受限函数及有效账号资料；不要用全库恢复代替组件回滚。
 
 ## 设备首次启用与安全配网
 
