@@ -760,8 +760,8 @@ class MediaOutputDispatchMixin:
         owner = context.output_owner
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
-        heard = self._owner_has_started_playback(context, owner)
-        if heard and (
+        owner_started = self._owner_has_started_playback(context, owner)
+        if owner_started and (
             not context.runtime.barge_in_enabled
             or self._fast_ack_has_started_playback(context, owner)
             or int(getattr(work.intent, "kind", 0))
