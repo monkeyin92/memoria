@@ -9,11 +9,13 @@ function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
 }
 
-test("all three tab pages keep a useful guest state instead of redirecting on show", () => {
+test("tab pages keep a useful guest state instead of redirecting on show", () => {
+  const home = read("pages/home/index.wxml");
   const device = read("pages/device/index.js");
   const memory = read("pages/memory/index.wxml");
   const profile = read("pages/profile/index.wxml");
 
+  assert.match(home, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后照看你的机器人/);
   assert.doesNotMatch(
     device,
     /onShow\(\)\s*\{[\s\S]{0,220}navigateTo\(\{\s*url:\s*"\/pages\/auth\/index"/,
@@ -99,6 +101,7 @@ test("logout clears private profile state without relying on a tab navigation re
 
 test("auth cleanup broadcasts to every page that can hold private state", () => {
   const appScript = read("app.js");
+  const homeScript = read("pages/home/index.js");
   const deviceScript = read("pages/device/index.js");
   const memoryScript = read("pages/memory/index.js");
   const profileScript = read("pages/profile/index.js");
@@ -107,6 +110,7 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
 
   assert.match(appScript, /subscribeAuthCleared\(listener\)/);
   assert.match(appScript, /for \(const listener of \[\.\.\.this\._authClearedListeners\]\)/);
+  assert.match(homeScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(deviceScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(
     deviceScript,

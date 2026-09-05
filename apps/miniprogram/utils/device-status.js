@@ -25,11 +25,11 @@ function deviceStatusSummary(activation, profile) {
   return {
     online: ready,
     onlineLabel: ready
-      ? "在线，可直接对话"
+      ? "在线，可以唤醒"
       : activation?.network?.internet === true
         ? "已联网，等待激活"
         : activation
-          ? "暂未确认在线"
+          ? "离线，请检查电源和网络"
           : profile
             ? "绑定已确认，设备状态待同步"
             : "状态暂不可用",

@@ -3,7 +3,7 @@
 <view class="page-shell">
   <text class="eyebrow">设备与成员</text>
   <text class="page-title">谁在用，由谁决定</text>
-  <text class="page-subtitle">首次绑定只决定默认用途；当前使用者与敏感能力由服务端 Runtime Profile 决定。</text>
+  <text class="page-subtitle">小程序用于管理设备和回顾，对话请在机器人上完成。陪伴机器人随人移动，不按客厅、卧室这类房间来标记。首次绑定只决定默认用途；当前使用者与敏感能力由服务端 Runtime Profile 决定。</text>
 
   <view wx:if="{{loading}}" class="card">
     <text class="loading-text">正在读取设备状态…</text>
@@ -111,11 +111,11 @@
             <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeWordLabel}}</view>
           </picker>
           <text wx:if="{{wakeWordNote}}" class="setting-control-note">{{wakeWordNote}}</text>
-          <text class="setting-control-note">预设唤醒词会在设备下次连接时生效。</text>
+          <text class="setting-control-note">保存后会在线同步到设备。设备应用新唤醒词后需要重启才会生效，请保持设备在线。</text>
         </view>
         <view class="setting-control custom-wake-word">
           <text class="setting-control-label">自定义唤醒词</text>
-          <text class="setting-control-note">填写中文显示名与拼音（空格分音节，如 xiao hei）。保存后设备下次连接生效。</text>
+          <text class="setting-control-note">填写中文显示名与拼音（空格分音节，如 xiao hei）。保存后会在线同步到设备，设备重启后生效。</text>
           <input class="field-input wake-word-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
           <input class="field-input wake-word-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="拼音，例如：xiao hei" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
           <button class="secondary-button wake-word-save" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="saveCustomWakeWord">保存自定义唤醒词</button>

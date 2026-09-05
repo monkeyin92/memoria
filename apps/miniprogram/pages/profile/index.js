@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const compliance = require("../../utils/compliance");
-const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
+const { companions, defaultCompanionId } = require("../../utils/companions");
+const { encodeCustomPersona, parseCustomPersona } = require("../../utils/custom-persona");
 const { requireLogin } = require("../../utils/auth-gate");
 const { readBindingManifest } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -16,28 +17,54 @@ const defaultProfile = {
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
 
-function profileFaceStyleFor(companionId) {
-  const face = companionById(companionId).face;
-  return (
-    `left:${face.left};top:${face.top};width:${face.width};height:${face.height};` +
-    `--profile-face-ink:${face.ink};--profile-eye-top:${face.eyeTop};` +
-    `--profile-eye-bottom:${face.eyeBottom};--profile-eye-glow:${face.glow};`
-  );
+function mediaTypeForPath(filePath) {
+  const lower = String(filePath || "").toLowerCase();
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".m4a") || lower.endsWith(".mp4")) return "audio/mp4";
+  if (lower.endsWith(".aac")) return "audio/aac";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".flac")) return "audio/flac";
+  return "";
 }
 
-function companionFaceStyleFor(companion) {
-  const face = companion.face;
-  return (
-    `left:${face.left};top:${face.top};width:${face.width};height:${face.height};` +
-    `--companion-face-ink:${face.ink};--companion-eye-top:${face.eyeTop};` +
-    `--companion-eye-bottom:${face.eyeBottom};--companion-eye-glow:${face.glow};`
-  );
+function estimateDurationMs(byteLength, mediaType) {
+  const bytes = Number(byteLength) || 0;
+  if (mediaType === "audio/wav" || mediaType === "audio/x-wav") {
+    return Math.round((bytes / 32000) * 1000);
+  }
+  return Math.round((bytes * 8) / 48);
 }
 
-const companionCards = companions.map((companion) => ({
-  ...companion,
-  faceStyle: companionFaceStyleFor(companion),
-}));
+function clampCloneDuration(durationMs) {
+  const value = Math.round(Number(durationMs) || 0);
+  if (value < 10000) return 10000;
+  if (value > 60000) return 60000;
+  return value;
+}
+
+function voiceCloneStatusLabel(payload) {
+  if (!payload) return "暂时无法读取自定义声音状态。";
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  if (items.some((item) => item.status === "active")) {
+    return "自定义声音已可用于设备。";
+  }
+  if (items.some((item) => item.status === "candidate" || item.status === "enrolling")) {
+    return "样本已提交，等待服务端评估通过后才会在设备上使用。在此之前仍使用系统声音。";
+  }
+  if (items.some((item) => item.status === "failed")) {
+    return "上一份样本未通过评估，设备仍使用系统声音。";
+  }
+  if (payload.consent && !payload.consent.revoked_at) {
+    return "已授权声音复刻，还没有可用样本。";
+  }
+  return "还没有自定义声音样本。";
+}
+
+function profileInitialFor(displayName) {
+  const name = String(displayName || "").trim();
+  return name ? name.slice(0, 1) : "友";
+}
 
 function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -108,8 +135,8 @@ Page({
   data: {
     identity: null,
     profile: defaultProfile,
-    profileFaceStyle: profileFaceStyleFor(defaultCompanionId),
-    companions: companionCards,
+    profileInitial: profileInitialFor(defaultProfile.display_name),
+    companions,
     stats: { totalDays: 0, moments: 0, streak: 0 },
     loading: false,
     saving: false,
@@ -133,6 +160,14 @@ Page({
     speakerEnrollmentProfileCount: 0,
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
+    customPersonaActive: false,
+    customPersonaName: "",
+    customPersonaText: "",
+    voiceCloneAllowed: false,
+    voiceCloneStatusLabel: "还没有自定义声音样本。",
+    voiceSampleBusy: false,
+    recording: false,
+    recordSeconds: 0,
     complianceCopy: {
       positioning: compliance.PRODUCT_POSITIONING,
       aiDisclosure: compliance.AI_DISCLOSURE,
@@ -161,6 +196,14 @@ Page({
   },
 
   onUnload() {
+    this._stopRecordingTimer();
+    if (this.data.recording && this._recorder) {
+      try {
+        this._recorder.stop();
+      } catch {
+        // Recorder stop is best effort when leaving the page.
+      }
+    }
     if (this._unsubscribeAuthCleared) {
       this._unsubscribeAuthCleared();
       this._unsubscribeAuthCleared = null;
@@ -172,7 +215,7 @@ Page({
       authenticated: false,
       identity: null,
       profile: defaultProfile,
-      profileFaceStyle: profileFaceStyleFor(defaultCompanionId),
+      profileInitial: profileInitialFor(defaultProfile.display_name),
       stats: { totalDays: 0, moments: 0, streak: 0 },
       saving: false,
       error: "",
@@ -194,6 +237,14 @@ Page({
       speakerEnrollmentProfileCount: 0,
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
+      customPersonaActive: false,
+      customPersonaName: "",
+      customPersonaText: "",
+      voiceCloneAllowed: false,
+      voiceCloneStatusLabel: "还没有自定义声音样本。",
+      voiceSampleBusy: false,
+      recording: false,
+      recordSeconds: 0,
     });
   },
 
@@ -205,17 +256,23 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const [capabilityState, speakerState] = await Promise.all([
+      const custom = parseCustomPersona(profile.bio);
+      const [capabilityState, speakerState, voiceCloneState] = await Promise.all([
         this.loadRuntimeCapabilities(),
         this.loadSpeakerEnrollmentStatus(),
+        this.loadVoiceCloneStatus(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         profile,
-        profileFaceStyle: profileFaceStyleFor(profile.companion_id),
+        profileInitial: profileInitialFor(profile.display_name),
         isMinor: profile.subject_category === "minor",
+        customPersonaActive: custom.active,
+        customPersonaName: custom.name,
+        customPersonaText: custom.text,
         ...capabilityState,
         ...speakerState,
+        ...voiceCloneState,
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -279,6 +336,7 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
+        voiceCloneAllowed: false,
         profileUnavailableReason: "还没有绑定设备，无法取得 Runtime Profile。",
       };
     }
@@ -293,6 +351,7 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
+          voiceCloneAllowed: false,
           profileUnavailableReason: "能力状态正在刷新，请稍后重试。",
         };
       }
@@ -304,6 +363,7 @@ Page({
           digitalSelfEntryAllowed: false,
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
+          voiceCloneAllowed: false,
           profileUnavailableReason: "服务端返回的 Runtime Profile 校验失败，敏感能力已关闭。",
         };
       }
@@ -315,6 +375,7 @@ Page({
         digitalSelfEntryAllowed: capabilities.includes(contracts.Capability.DigitalSelfPreview),
         guardianEntryAllowed: capabilities.includes(contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: capabilities.includes(contracts.Capability.RawAudioRetention),
+        voiceCloneAllowed: capabilities.includes(contracts.Capability.VoiceCloneUse),
         profileUnavailableReason: "",
       };
       this._lastCapabilityState = state;
@@ -327,6 +388,7 @@ Page({
         digitalSelfEntryAllowed: false,
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
+        voiceCloneAllowed: false,
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
     }
@@ -378,9 +440,46 @@ Page({
   async chooseCompanion(event) {
     if (!(await requireLogin({ reason: "edit_profile" }))) return;
     const companionId = event.currentTarget.dataset.id;
+    const nextProfile = {
+      ...this.data.profile,
+      companion_id: companionId,
+    };
+    if (parseCustomPersona(nextProfile.bio).active) {
+      nextProfile.bio = "";
+    }
     this.setData({
-      "profile.companion_id": companionId,
-      profileFaceStyle: profileFaceStyleFor(companionId),
+      profile: nextProfile,
+      customPersonaActive: false,
+    });
+    await this.saveProfile();
+  },
+
+  chooseCustomPersona() {
+    this.setData({ customPersonaActive: true });
+  },
+
+  onCustomPersonaName(event) {
+    this.setData({ customPersonaName: event.detail.value });
+  },
+
+  onCustomPersonaText(event) {
+    this.setData({ customPersonaText: event.detail.value });
+  },
+
+  async saveCustomPersona() {
+    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    const encoded = encodeCustomPersona({
+      name: this.data.customPersonaName,
+      text: this.data.customPersonaText,
+    });
+    if (!encoded) {
+      wx.showToast({ title: "请填写名字和人格描述", icon: "none" });
+      return;
+    }
+    this.setData({
+      customPersonaActive: true,
+      "profile.bio": encoded,
+      "profile.companion_id": this.data.profile.companion_id || defaultCompanionId,
     });
     await this.saveProfile();
   },
@@ -394,13 +493,207 @@ Page({
     try {
       const profile = await api.updateProfile(identity.user_id, this.data.profile);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ profile: { ...this.data.profile, ...profile } });
+      const merged = { ...this.data.profile, ...profile };
+      const custom = parseCustomPersona(merged.bio);
+      this.setData({
+        profile: merged,
+        profileInitial: profileInitialFor(merged.display_name),
+        customPersonaActive: custom.active,
+        customPersonaName: custom.name || this.data.customPersonaName,
+        customPersonaText: custom.text || this.data.customPersonaText,
+      });
       wx.showToast({ title: "已保存", icon: "success" });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "保存失败。" });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ saving: false });
+    }
+  },
+
+  async loadVoiceCloneStatus() {
+    try {
+      const payload = await api.listVoiceProfiles();
+      return { voiceCloneStatusLabel: voiceCloneStatusLabel(payload) };
+    } catch (error) {
+      if (error?.status === 403) {
+        return { voiceCloneStatusLabel: "当前未开启声音复刻，或尚未完成授权。" };
+      }
+      return { voiceCloneStatusLabel: error?.message || "暂时无法读取自定义声音状态。" };
+    }
+  },
+
+  _stopRecordingTimer() {
+    if (this._recordTimer) {
+      clearInterval(this._recordTimer);
+      this._recordTimer = null;
+    }
+  },
+
+  _ensureRecorder() {
+    if (this._recorder) return this._recorder;
+    const recorder = wx.getRecorderManager();
+    recorder.onStart(() => {
+      this._stopRecordingTimer();
+      this.setData({ recording: true, recordSeconds: 0 });
+      this._recordTimer = setInterval(() => {
+        this.setData({ recordSeconds: this.data.recordSeconds + 1 });
+      }, 1000);
+    });
+    recorder.onStop((result) => {
+      this._stopRecordingTimer();
+      this.setData({ recording: false });
+      this._submitRecordedSample(result);
+    });
+    recorder.onError((error) => {
+      this._stopRecordingTimer();
+      this.setData({ recording: false, voiceSampleBusy: false });
+      wx.showToast({ title: error?.errMsg || "录音失败", icon: "none" });
+    });
+    this._recorder = recorder;
+    return recorder;
+  },
+
+  async _ensureRecordPermission() {
+    const setting = await new Promise((resolve) => {
+      wx.getSetting({
+        success: resolve,
+        fail: () => resolve({ authSetting: {} }),
+      });
+    });
+    if (setting?.authSetting?.["scope.record"]) return true;
+    const authorized = await new Promise((resolve) => {
+      wx.authorize({
+        scope: "scope.record",
+        success: () => resolve(true),
+        fail: () => resolve(false),
+      });
+    });
+    if (authorized) return true;
+    const open = await new Promise((resolve) => {
+      wx.showModal({
+        title: "需要麦克风权限",
+        content: "录制自定义声音样本需要麦克风。请在设置中允许。",
+        confirmText: "去设置",
+        success: (result) => resolve(Boolean(result.confirm)),
+      });
+    });
+    if (!open) return false;
+    await new Promise((resolve) => {
+      wx.openSetting({ complete: resolve });
+    });
+    const after = await new Promise((resolve) => {
+      wx.getSetting({
+        success: resolve,
+        fail: () => resolve({ authSetting: {} }),
+      });
+    });
+    return Boolean(after?.authSetting?.["scope.record"]);
+  },
+
+  async toggleVoiceRecord() {
+    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    if (this.data.voiceSampleBusy) return;
+    if (this.data.recording) {
+      this._ensureRecorder().stop();
+      return;
+    }
+    if (!(await this._ensureRecordPermission())) return;
+    this._ensureRecorder().start({
+      duration: 60000,
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      encodeBitRate: 48000,
+      format: "mp3",
+    });
+  },
+
+  async uploadVoiceSample() {
+    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    if (this.data.voiceSampleBusy || this.data.recording) return;
+    const chosen = await new Promise((resolve, reject) => {
+      wx.chooseMessageFile({
+        count: 1,
+        type: "file",
+        extension: ["mp3", "wav", "m4a", "aac", "ogg", "flac"],
+        success: resolve,
+        fail: (error) => {
+          if (String(error?.errMsg || "").includes("cancel")) resolve(null);
+          else reject(error);
+        },
+      });
+    });
+    const file = chosen?.tempFiles?.[0];
+    if (!file?.path) return;
+    const mediaType = mediaTypeForPath(file.path) || mediaTypeForPath(file.name);
+    if (!mediaType) {
+      wx.showToast({ title: "请选择 wav / mp3 / m4a 音频", icon: "none" });
+      return;
+    }
+    const size = Number(file.size) || 0;
+    if (size < 20000) {
+      wx.showToast({ title: "音频太短，请使用 10–60 秒样本", icon: "none" });
+      return;
+    }
+    await this._enrollVoiceSample({
+      filePath: file.path,
+      mediaType,
+      durationMs: clampCloneDuration(estimateDurationMs(size, mediaType)),
+      sampleRate: 16000,
+    });
+  },
+
+  async _submitRecordedSample(result) {
+    const duration = Number(result?.duration) || 0;
+    if (duration < 10000) {
+      wx.showToast({ title: "请至少录 10 秒", icon: "none" });
+      return;
+    }
+    if (!result?.tempFilePath) {
+      wx.showToast({ title: "没有录到声音", icon: "none" });
+      return;
+    }
+    await this._enrollVoiceSample({
+      filePath: result.tempFilePath,
+      mediaType: "audio/mpeg",
+      durationMs: clampCloneDuration(duration),
+      sampleRate: 16000,
+    });
+  },
+
+  async _enrollVoiceSample({ filePath, mediaType, durationMs, sampleRate }) {
+    this.setData({ voiceSampleBusy: true, error: "" });
+    try {
+      const audioBase64 = await new Promise((resolve, reject) => {
+        wx.getFileSystemManager().readFile({
+          filePath,
+          encoding: "base64",
+          success: (file) => resolve(file.data),
+          fail: (error) => reject(error),
+        });
+      });
+      try {
+        await api.grantVoiceCloneConsent();
+      } catch (error) {
+        if (error?.status !== 409) throw error;
+      }
+      await api.enrollVoiceClone({
+        audioBase64,
+        mediaType,
+        durationMs,
+        sampleRate,
+        enrollmentKey: `miniprogram-${Date.now()}`,
+      });
+      const voiceCloneState = await this.loadVoiceCloneStatus();
+      this.setData(voiceCloneState);
+      wx.showToast({ title: "样本已提交", icon: "success" });
+    } catch (error) {
+      this.setData({
+        error: error?.message || "声音样本提交失败。",
+        voiceCloneStatusLabel: error?.message || "声音样本提交失败。",
+      });
+    } finally {
+      this.setData({ voiceSampleBusy: false });
     }
   },
 

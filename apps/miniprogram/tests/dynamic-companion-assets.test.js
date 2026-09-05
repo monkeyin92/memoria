@@ -4,14 +4,6 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.join(__dirname, "..");
-const profileTemplate = fs.readFileSync(
-  path.join(root, "pages/profile/index.wxml"),
-  "utf8",
-);
-const profileScript = fs.readFileSync(
-  path.join(root, "pages/profile/index.js"),
-  "utf8",
-);
 const pageTemplates = fs
   .readdirSync(path.join(root, "pages"), { recursive: true })
   .filter((name) => name.endsWith(".wxml"))
@@ -23,32 +15,20 @@ const projectConfig = JSON.parse(
   fs.readFileSync(path.join(root, "project.config.example.json"), "utf8"),
 );
 
-const companionIds = ["starlight", "taoxi", "mianmian", "axu", "xuanmo"];
-
-test("companion images use literal source paths so real packages retain them", () => {
-  assert.ok(
-    projectConfig.packOptions.include.some(
+test("Mini Program pages do not pack or render companion robot artwork", () => {
+  assert.equal(
+    (projectConfig.packOptions.include || []).some(
       (entry) =>
-        entry.type === "folder" && entry.value === "assets/companions/miniprogram",
+        entry.type === "folder" && String(entry.value).includes("assets/companions"),
     ),
+    false,
   );
-  for (const companionId of companionIds) {
-    const assetPath = `/assets/companions/miniprogram/${companionId}.png`;
-    assert.match(profileTemplate, new RegExp(`src="${assetPath}"`));
-    const asset = fs.readFileSync(path.join(root, assetPath));
-    assert.deepEqual(
-      [...asset.subarray(0, 8)],
-      [137, 80, 78, 71, 13, 10, 26, 10],
-      `${assetPath} must be a local PNG supported by physical Mini Program WebViews`,
-    );
-  }
-  assert.doesNotMatch(
-    profileTemplate,
-    /\/assets\/companions\/miniprogram\/\{\{item\.id\}\}\.png/,
-  );
-  assert.doesNotMatch(profileScript, /\/assets\/companions\/miniprogram\/\$\{.+?\}\.png/);
-  assert.doesNotMatch(profileTemplate, /src="\/[^"]+\.webp"/);
   for (const template of pageTemplates) {
+    assert.doesNotMatch(
+      template.source,
+      /\/assets\/companions\//,
+      `${template.name} must not reference companion robot images`,
+    );
     assert.doesNotMatch(
       template.source,
       /src="\/[^"]+\.webp"/,

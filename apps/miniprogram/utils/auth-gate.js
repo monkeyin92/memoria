@@ -4,14 +4,14 @@ function currentRoute() {
   try {
     const pages = getCurrentPages();
     const page = pages[pages.length - 1];
-    if (!page?.route) return "/pages/device/index";
+    if (!page?.route) return "/pages/home/index";
     const query = Object.entries(page.options || {})
       .filter(([, value]) => value !== undefined && value !== null)
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
       .join("&");
     return `/${page.route}${query ? `?${query}` : ""}`;
   } catch {
-    return "/pages/device/index";
+    return "/pages/home/index";
   }
 }
 

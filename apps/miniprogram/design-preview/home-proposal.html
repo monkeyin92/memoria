@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Memoria 首页提案</title>
+  <style>
+    :root {
+      --bg: #070b1a;
+      --fg: #f2f5ff;
+      --muted: #8d99c4;
+      --dim: #5d688f;
+      --cyan: #22e5ff;
+      --cyan-soft: #7ceaff;
+      --card: rgba(16, 23, 52, 0.78);
+      --line: rgba(94, 234, 255, 0.16);
+      --ok: #3ee0b0;
+      --warn: #ffb020;
+      --off: #ff8ba3;
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      color: var(--fg);
+      background: #050814;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.5;
+    }
+
+    .page {
+      display: grid;
+      grid-template-columns: minmax(280px, 420px) 1fr;
+      gap: 40px;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 40px 32px 80px;
+    }
+
+    .brief h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0.02em;
+    }
+    .brief .lede {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .brief h2 {
+      margin: 28px 0 10px;
+      color: var(--cyan-soft);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .brief p, .brief li {
+      color: #c7d0ef;
+      font-size: 14px;
+    }
+    .brief ul { padding-left: 18px; }
+    .brief table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .brief th, .brief td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+    .brief th { color: var(--dim); font-weight: 600; width: 28%; }
+    .brief td strong { color: var(--fg); font-weight: 650; }
+
+    .stage { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+    .switches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .switches button {
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }
+    .switches button[aria-pressed="true"] {
+      border-color: rgba(34, 229, 255, 0.55);
+      background: rgba(34, 229, 255, 0.12);
+      color: var(--cyan-soft);
+    }
+    .switches button:focus-visible,
+    .phone button:focus-visible,
+    .card-link:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 42px;
+      background: #070b1a;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+    }
+    .phone-bg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.55;
+    }
+    .phone-ui {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 28px 0;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .nav {
+      display: grid;
+      grid-template-columns: 44px 1fr 44px;
+      align-items: center;
+      min-height: 44px;
+      padding: 4px 12px 0;
+    }
+    .nav h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 650;
+    }
+    .ghost {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 8px 20px 18px;
+    }
+    .greet {
+      margin: 8px 0 4px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+    .headline {
+      margin: 0 0 6px;
+      font-size: 26px;
+      font-weight: 760;
+      line-height: 1.25;
+      letter-spacing: 0.01em;
+    }
+    .subhead {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .card {
+      margin-bottom: 12px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card);
+      backdrop-filter: blur(16px);
+    }
+    .card-link {
+      display: block;
+      width: 100%;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    .card-link:active { transform: none; opacity: 0.86; }
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .kicker {
+      margin: 0 0 6px;
+      color: var(--cyan-soft);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .meta { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .body { margin: 10px 0 0; color: #c4cfef; font-size: 14px; line-height: 1.6; }
+    .thumb {
+      flex: none;
+      width: 72px;
+      height: 72px;
+      object-fit: cover;
+      border-radius: 16px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      min-height: 28px;
+      color: var(--fg);
+      font-size: 13px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ok);
+    }
+    .dot.warn { background: var(--warn); }
+    .dot.off { background: var(--off); }
+    .go {
+      margin-top: 12px;
+      color: var(--cyan-soft);
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .facts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 16px;
+      margin-top: 12px;
+    }
+    .facts dt { color: var(--dim); font-size: 12px; }
+    .facts dd { margin: 2px 0 0; font-size: 14px; }
+
+    .empty {
+      padding: 28px 16px 20px;
+      text-align: center;
+    }
+    .empty img {
+      width: 120px;
+      height: 120px;
+      object-fit: cover;
+      margin-bottom: 12px;
+      border-radius: 28px;
+    }
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      margin-top: 16px;
+      padding: 0 22px;
+      border: 0;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #19b8d8, #22e5ff);
+      color: #06202a;
+      font-size: 16px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      min-height: 64px;
+      padding: 6px 4px 10px;
+      border-top: 1px solid rgba(94, 234, 255, 0.12);
+      background: rgba(11, 16, 38, 0.92);
+    }
+    .tab {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      min-height: 48px;
+      border: 0;
+      background: transparent;
+      color: var(--dim);
+      font-size: 11px;
+    }
+    .tab[aria-current="page"] { color: var(--cyan); }
+    .tab svg { width: 22px; height: 22px; }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 920px) {
+      .page { grid-template-columns: 1fr; padding: 24px 16px 48px; }
+      .phone { margin: 0 auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <article class="brief">
+      <h1>首页该是家庭状况台</h1>
+      <p class="lede">对话发生在设备上。手机首页只回答三件事：设备好不好、现在用哪种人格和声音、今天记下了什么。</p>
+
+      <h2>市面怎么做</h2>
+      <p>同类产品几乎都把「手机」做成控制面，而不是第二个聊天窗口。</p>
+      <ul>
+        <li><strong>Alexa App 2024–2026 改版</strong>：首页是设备状态和快捷操作；聊天被收到角落入口。官方理由是用户在 App 里最常用的是控设备，不是打字对话。</li>
+        <li><strong>米家 / 小爱</strong>：首页是设备卡片、在线状态、场景。说话仍对着音箱。手机负责配网、音量、成员。</li>
+        <li><strong>Apple Home</strong>：首页是可扫一眼的状态砖（开着几盏灯、谁在家），详细控制进房间页。</li>
+        <li><strong>小度</strong>：首页进设备，再进设置 / 对话记录。记录是回看，不是现聊。</li>
+        <li><strong>Loona / Emo</strong>：角色宠物产品，App 会放大大形象和玩法。Memoria 的定位是家庭档案终端，不应学这一路。</li>
+      </ul>
+
+      <h2>现稿问题</h2>
+      <ul>
+        <li>大形象 +「在线，可直接对话」会让人以为要在小程序里开口。</li>
+        <li>「未获取」「Runtime Profile」「Soul &amp; Persona」是内部词，不是用户词。</li>
+        <li>勿扰、音量、学习模式属于设备页，堆在首页会和「设备」Tab 打架。</li>
+      </ul>
+
+      <h2>首页放什么</h2>
+      <ol>
+        <li>问候 + 一句产品边界</li>
+        <li>设备摘要：在线、当前使用者、唤醒词</li>
+        <li>人格与声音：名字和音色，不放机器人立绘</li>
+        <li>今天：段数、一句摘要、待确认</li>
+      </ol>
+
+      <h2>全部文案</h2>
+      <table>
+        <tr><th>位置</th><th>文案</th></tr>
+        <tr><td>导航</td><td><strong>首页</strong></td></tr>
+        <tr><td>问候</td><td><strong>早上好 / 下午好 / 晚上好 / 夜深了，{称呼}</strong><br>称呼来自注册「怎么称呼你？」，不要写「主人」。</td></tr>
+        <tr><td>主标题</td><td><strong>对话在设备上完成</strong></td></tr>
+        <tr><td>副标题</td><td>这里只照看设备、人格和今天记下的内容。</td></tr>
+        <tr><td>设备卡标题</td><td><strong>Memoria</strong>（不写客厅、卧室等房间；陪伴机器人随人移动）</td></tr>
+        <tr><td>在线</td><td>在线，可以唤醒</td></tr>
+        <tr><td>离线</td><td>离线，请检查电源和网络</td></tr>
+        <tr><td>唤醒词</td><td>保存后在线同步到设备，设备重启后生效</td></tr>
+        <tr><td>设备动作</td><td>查看设备详情</td></tr>
+        <tr><td>人格卡</td><td><strong>人格与声音</strong> · 系统默认几种，也可自定义人格并上传/录制声音</td></tr>
+        <tr><td>今天</td><td><strong>今天</strong> · 3 段对话 · 1 条待你确认 · 下午问起程和天气。具体内容在回顾里。 · 打开回顾</td></tr>
+        <tr><td>今天空</td><td>今天还没有可回顾的内容。对着设备说几句后，再回来看。</td></tr>
+        <tr><td>未绑定标题</td><td><strong>还没有绑定设备</strong></td></tr>
+        <tr><td>未绑定正文</td><td>扫设备屏幕上的码，完成配网和认领。绑定后，对话只在设备上进行。</td></tr>
+        <tr><td>未绑定按钮</td><td><strong>添加设备</strong></td></tr>
+        <tr><td>底栏</td><td>首页 · 设备 · 回顾 · 我的</td></tr>
+      </table>
+    </article>
+
+    <div class="stage">
+      <div class="switches" role="group" aria-label="首页状态">
+        <button type="button" data-state="online" aria-pressed="true">已绑定 · 在线</button>
+        <button type="button" data-state="offline" aria-pressed="false">已绑定 · 离线</button>
+        <button type="button" data-state="empty" aria-pressed="false">未绑定</button>
+      </div>
+
+      <div class="phone" aria-label="首页稿面">
+        <img class="phone-bg" src="memoria-home-night.jpg" alt="" />
+        <div class="phone-ui">
+          <div class="status-bar"><span>22:36</span><span>WeChat</span></div>
+          <header class="nav">
+            <span class="ghost" aria-hidden="true"></span>
+            <h1>首页</h1>
+            <span class="ghost" aria-hidden="true"></span>
+          </header>
+
+          <main class="scroll">
+            <p class="greet">晚上好，朋友</p>
+            <p class="headline">对话在设备上完成</p>
+            <p class="subhead">这里只照看设备、人格和今天记下的内容。</p>
+
+            <section id="bound">
+              <button class="card card-link" type="button">
+                <div class="card-top">
+                  <div>
+                    <p class="kicker">设备</p>
+                    <p class="card-title">Memoria</p>
+                    <p class="status"><span class="dot" id="statusDot"></span><span id="statusText">在线，可以唤醒</span></p>
+                  </div>
+                  <img class="thumb" src="memoria-home-device.png" alt="" />
+                </div>
+                <dl class="facts">
+                  <div><dt>当前使用者</dt><dd>已确认 · 朋友</dd></div>
+                  <div><dt>唤醒词</dt><dd>茉莉</dd></div>
+                </dl>
+                <p class="go">查看设备详情</p>
+              </button>
+
+              <button class="card card-link" type="button">
+                <div class="card-top">
+                  <div>
+                    <p class="kicker">人格与声音</p>
+                    <p class="card-title">桃喜</p>
+                    <p class="meta">声音 · 元气搭子</p>
+                    <p class="body">轻快回应，少量追问。也可自定义人格，并上传或录一段声音。</p>
+                  </div>
+                  <img class="thumb" src="memoria-home-voice.png" alt="" />
+                </div>
+                <p class="go">更换人格与声音</p>
+              </button>
+
+              <button class="card card-link" type="button">
+                <p class="kicker">档案</p>
+                <p class="card-title">今天</p>
+                <p class="meta">3 段对话 · 1 条待你确认</p>
+                <p class="body">下午问起程和天气。具体内容在回顾里。</p>
+                <p class="go">打开回顾</p>
+              </button>
+            </section>
+
+            <section id="unbound" class="card empty hidden">
+              <img src="memoria-home-device.png" alt="" />
+              <p class="card-title">还没有绑定设备</p>
+              <p class="body">扫设备屏幕上的码，完成配网和认领。绑定后，对话只在设备上进行。</p>
+              <button class="cta" type="button">添加设备</button>
+            </section>
+          </main>
+
+          <nav class="tabs" aria-label="主导航">
+            <button class="tab" type="button" aria-current="page">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"/></svg>
+              首页
+            </button>
+            <button class="tab" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="7" width="14" height="12" rx="2"/><path d="M9 7V5h6v2"/></svg>
+              设备
+            </button>
+            <button class="tab" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="M8 10h8M8 14h5"/></svg>
+              回顾
+            </button>
+            <button class="tab" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 19c1.5-3 4-4.5 7-4.5S17.5 16 19 19"/></svg>
+              我的
+            </button>
+          </nav>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const bound = document.getElementById("bound");
+    const unbound = document.getElementById("unbound");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const buttons = document.querySelectorAll(".switches button");
+
+    function setState(state) {
+      buttons.forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.state === state));
+      });
+      const isEmpty = state === "empty";
+      bound.classList.toggle("hidden", isEmpty);
+      unbound.classList.toggle("hidden", !isEmpty);
+      if (state === "offline") {
+        statusDot.className = "dot warn";
+        statusText.textContent = "离线，请检查电源和网络";
+      } else {
+        statusDot.className = "dot";
+        statusText.textContent = "在线，可以唤醒";
+      }
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => setState(button.dataset.state));
+    });
+  </script>
+</body>
+</html>

@@ -535,16 +535,19 @@ Page({
         wake_word_display: display,
         wake_word_pinyin: pinyin,
       });
-      await this.saveDeviceSetting({
-        wake_word_id: "custom",
-        wake_word_display: validated.wake_word_display,
-        wake_word_pinyin: validated.wake_word_pinyin,
-      });
+      await this.saveDeviceSetting(
+        {
+          wake_word_id: "custom",
+          wake_word_display: validated.wake_word_display,
+          wake_word_pinyin: validated.wake_word_pinyin,
+        },
+        { silentWakeWordNotice: Boolean((validated.warnings || []).length) },
+      );
       this.setData({ customWakeWordWarnings: validated.warnings || [] });
       if ((validated.warnings || []).length) {
         wx.showModal({
           title: "自定义唤醒词已保存",
-          content: validated.warnings.join("\n"),
+          content: `${validated.warnings.join("\n")}\n\n已写入云端并将在线同步到设备。设备重启后，新唤醒词才会生效。`,
           showCancel: false,
         });
       }
@@ -561,7 +564,7 @@ Page({
     await this.saveDeviceSetting({ allowed_barge_in: kinds });
   },
 
-  async saveDeviceSetting(changes) {
+  async saveDeviceSetting(changes, options = {}) {
     const binding = this.data.binding;
     const current = this.data.settings;
     if (!binding || !current || this.data.settingsSaving) return;
@@ -609,6 +612,14 @@ Page({
           return checked;
         })(),
       });
+      if (!options.silentWakeWordNotice && Object.prototype.hasOwnProperty.call(changes, "wake_word_id")) {
+        wx.showModal({
+          title: "唤醒词已保存",
+          content: "已写入云端并将在线同步到设备。设备应用新唤醒词后需要重启才会生效，请保持设备在线。",
+          showCancel: false,
+          confirmText: "知道了",
+        });
+      }
     } catch (error) {
       // 服务端没有确认就不保留本地假状态；重新展示最后一个权威版本。
       this.setData({

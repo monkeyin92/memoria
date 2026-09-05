@@ -52,9 +52,8 @@ test("production package contains no realtime voice surface at all", () => {
   const files = productionSources();
   assert.ok(files.length > 20, "生产包扫描应覆盖 pages 与 utils");
 
-  // §4.5 静态门禁：麦克风授权、媒体 WSS、实时音频播放与媒体会话类一律禁止。
-  matches(files, /scope\.record/, "scope.record 麦克风授权");
-  matches(files, /getRecorderManager|RecorderManager/, "RecorderManager 录音器");
+  // §4.5 静态门禁：实时对话、媒体 WSS 与实时音频播放一律禁止。
+  // 自定义声音样本允许在「我的」页使用有界录音，不在此一律封死。
   matches(files, /wx\.connectSocket|connectSocket\s*\(/, "媒体 WSS 连接");
   matches(files, /wss:\/\//, "媒体 Gateway WSS 地址");
   matches(files, /MiniProgramMediaSession/, "小程序媒体会话");
@@ -80,9 +79,10 @@ test("test sources are explicitly excluded from the WeChat package", () => {
   assert.ok(ignoredFolders.has("tests"), "tests 必须排除出微信生产包");
 });
 
-test("cold start, memory and device surfaces never create a RecorderManager", () => {
+test("cold start, memory, home and device surfaces never create a RecorderManager", () => {
   const scoped = [
     path.join(root, "app.js"),
+    path.join(root, "pages", "home", "index.js"),
     ...fs.readdirSync(path.join(root, "pages", "memory")).map((name) =>
       path.join(root, "pages", "memory", name),
     ),
@@ -90,18 +90,20 @@ test("cold start, memory and device surfaces never create a RecorderManager", ()
       path.join(root, "pages", "device", name),
     ),
   ];
-  matches(scoped, /getRecorderManager/, "冷启动/回顾/设备页创建 RecorderManager");
+  matches(scoped, /getRecorderManager/, "冷启动/首页/回顾/设备页创建 RecorderManager");
 });
 
-test("production package contains no RecorderManager usage at all", () => {
-  // 整改方案 PR-02 严格口径：手机声纹录取已移除（说话人登记在机器人端完成），
-  // 生产包不再允许任何 wx.getRecorderManager / RecorderManager / scope.record 出现。
+test("RecorderManager is limited to custom voice samples on the profile page", () => {
   const files = productionSources();
-  const hits = files.filter((file) => {
-    const source = fs.readFileSync(file, "utf8");
-    return /getRecorderManager|RecorderManager/.test(source);
-  });
-  assert.deepEqual(hits, [], "生产包不得再出现 RecorderManager");
+  const hits = files
+    .filter((file) => /getRecorderManager|RecorderManager/.test(fs.readFileSync(file, "utf8")))
+    .map((file) => path.relative(root, file));
+  assert.deepEqual(hits, ["pages/profile/index.js"]);
+  const recordHits = files
+    .filter((file) => /scope\.record/.test(fs.readFileSync(file, "utf8")))
+    .map((file) => path.relative(root, file))
+    .sort();
+  assert.deepEqual(recordHits, ["app.json", "pages/profile/index.js"]);
 });
 
 test("phone voiceprint enrollment page is fully removed", () => {
@@ -156,8 +158,12 @@ test("control api exposes no miniprogram media session endpoints", () => {
   }
 });
 
-test("home voice dashboard page stays removed", () => {
-  assert.equal(fs.existsSync(path.join(root, "pages", "home")), false);
+test("home status board has no realtime voice dashboard", () => {
+  assert.equal(fs.existsSync(path.join(root, "pages", "home", "index.wxml")), true);
   const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
-  assert.equal(appConfig.pages.includes("pages/home/index"), false);
+  assert.equal(appConfig.pages.includes("pages/home/index"), true);
+  const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
+  assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
+  assert.doesNotMatch(script, /getRecorderManager|startVoice|connectSocket/);
 });

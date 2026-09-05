@@ -5,13 +5,13 @@
       {
         "value": "tests",
         "type": "folder"
+      },
+      {
+        "value": "design-preview",
+        "type": "folder"
       }
     ],
     "include": [
-      {
-        "value": "assets/companions/miniprogram",
-        "type": "folder"
-      },
       {
         "value": "assets/bg/night-stars.png",
         "type": "file"

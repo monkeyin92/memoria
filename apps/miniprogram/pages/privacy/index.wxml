@@ -19,6 +19,6 @@
 
   <view class="card privacy-note">
     <text class="privacy-note-title">身份与媒体边界</text>
-    <text class="privacy-detail">小程序只通过 HTTPS 访问 Control API，不采集麦克风、不播放实时语音、不加入 LiveKit 房间、不接触设备媒体票据或服务端密钥；说话人、历史资格、数字分身与权限均由服务端判定。</text>
+    <text class="privacy-detail">小程序通过 HTTPS 访问 Control API，不播放实时语音、不加入 LiveKit 房间、不接触设备媒体票据或服务端密钥。默认不采集麦克风；只有你主动录制自定义声音样本时才会申请麦克风权限，样本用于声音复刻，不用于小程序内对话。说话人、历史资格、数字分身与权限均由服务端判定。</text>
   </view>
 </view>

@@ -21,23 +21,8 @@
         mode="aspectFill"
         aria-label="微信头像"
       />
-      <view wx:else class="profile-mascot-shell">
-        <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
-        <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
-        <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
-        <image wx:if="{{profile.companion_id === 'axu'}}" class="hero-avatar" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
-        <image wx:if="{{profile.companion_id === 'xuanmo'}}" class="hero-avatar" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
-        <view class="profile-face" style="{{profileFaceStyle}}">
-          <view class="profile-face-eye profile-face-eye-l">
-            <view class="profile-face-iris"></view>
-            <view class="profile-face-shine"></view>
-          </view>
-          <view class="profile-face-eye profile-face-eye-r">
-            <view class="profile-face-iris"></view>
-            <view class="profile-face-shine"></view>
-          </view>
-          <view class="profile-face-mouth"></view>
-        </view>
+      <view wx:else class="hero-initial" aria-hidden="true">
+        <text class="hero-initial-text">{{profileInitial}}</text>
       </view>
     </view>
     <view class="hero-copy">
@@ -80,34 +65,75 @@
     </view>
   </view>
 
-  <view class="card">
-    <text class="settings-title">陪伴方式</text>
-    <view wx:for="{{companions}}" wx:key="id" class="companion-row {{profile.companion_id === item.id ? 'companion-selected' : ''}}" data-id="{{item.id}}" bindtap="chooseCompanion">
-      <view class="companion-mascot-shell">
-        <image wx:if="{{item.id === 'starlight'}}" class="companion-image" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
-        <image wx:if="{{item.id === 'taoxi'}}" class="companion-image" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
-        <image wx:if="{{item.id === 'mianmian'}}" class="companion-image" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
-        <image wx:if="{{item.id === 'axu'}}" class="companion-image" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
-        <image wx:if="{{item.id === 'xuanmo'}}" class="companion-image" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
-        <view class="companion-face {{profile.companion_id === item.id ? 'companion-face-happy' : ''}}" style="{{item.faceStyle}}">
-          <view class="companion-face-eye companion-face-eye-l">
-            <view class="companion-face-iris"></view>
-            <view class="companion-face-shine"></view>
-          </view>
-          <view class="companion-face-eye companion-face-eye-r">
-            <view class="companion-face-iris"></view>
-            <view class="companion-face-shine"></view>
-          </view>
-          <view class="companion-face-mouth"></view>
-        </view>
+  <view class="card" aria-role="radiogroup" aria-label="人格与声音">
+    <text class="settings-title">人格与声音</text>
+    <text class="setting-desc">对话只在机器人上进行。可选用系统默认人格与声音，也可以自己写人格，并上传或录一段声音。</text>
+    <view
+      wx:for="{{companions}}"
+      wx:key="id"
+      class="persona-row {{!customPersonaActive && profile.companion_id === item.id ? 'persona-selected' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="chooseCompanion"
+      aria-role="radio"
+      aria-checked="{{!customPersonaActive && profile.companion_id === item.id}}"
+      aria-label="{{item.name}}，声音 {{item.voiceName}}"
+    >
+      <view class="persona-copy">
+        <text class="persona-name">{{item.name}}</text>
+        <text class="persona-tagline">{{item.tagline}}</text>
+        <text class="persona-voice">声音 · {{item.voiceName}}</text>
       </view>
-      <view class="companion-copy">
-        <text class="companion-name">{{item.name}}</text>
-        <text class="companion-tagline">{{item.tagline}}</text>
+      <view class="persona-check {{!customPersonaActive && profile.companion_id === item.id ? 'persona-check-on' : ''}}" aria-hidden="true">
+        <text wx:if="{{!customPersonaActive && profile.companion_id === item.id}}">✓</text>
       </view>
-      <view class="companion-check {{profile.companion_id === item.id ? 'companion-check-on' : ''}}">
-        <text wx:if="{{profile.companion_id === item.id}}">✓</text>
+    </view>
+
+    <view
+      class="persona-row {{customPersonaActive ? 'persona-selected' : ''}}"
+      bindtap="chooseCustomPersona"
+      aria-role="radio"
+      aria-checked="{{customPersonaActive}}"
+      aria-label="自定义人格与声音"
+    >
+      <view class="persona-copy">
+        <text class="persona-name">自定义</text>
+        <text class="persona-tagline">自己写性格，再用上传或录音作为声音</text>
+        <text class="persona-voice">声音 · 你提供的样本</text>
       </view>
+      <view class="persona-check {{customPersonaActive ? 'persona-check-on' : ''}}" aria-hidden="true">
+        <text wx:if="{{customPersonaActive}}">✓</text>
+      </view>
+    </view>
+
+    <view wx:if="{{customPersonaActive}}" class="custom-persona-panel">
+      <text class="field-label">人格名字</text>
+      <input
+        class="field-input"
+        value="{{customPersonaName}}"
+        maxlength="16"
+        placeholder="例如：小黑"
+        placeholder-class="field-placeholder"
+        bindinput="onCustomPersonaName"
+      />
+      <text class="field-label">人格描述</text>
+      <textarea
+        class="field-textarea"
+        value="{{customPersonaText}}"
+        maxlength="420"
+        placeholder="用几句话写出它怎么说话、怎么陪你。保存后会写入资料，下一次在设备上对话生效。"
+        placeholder-class="field-placeholder"
+        bindinput="onCustomPersonaText"
+        auto-height
+      />
+      <button class="secondary-button custom-save" loading="{{saving}}" bindtap="saveCustomPersona">保存自定义人格</button>
+      <text class="setting-desc">自定义声音需要 10–60 秒清晰人声。评估通过前，设备仍使用系统音色。</text>
+      <text class="persona-voice">{{voiceCloneStatusLabel}}</text>
+      <view class="button-row voice-sample-row">
+        <button class="secondary-button" loading="{{voiceSampleBusy}}" disabled="{{voiceSampleBusy || recording}}" bindtap="uploadVoiceSample">上传音频</button>
+        <button class="secondary-button" loading="{{voiceSampleBusy}}" disabled="{{voiceSampleBusy}}" bindtap="toggleVoiceRecord">{{recording ? '结束录音' : '对着麦克风录'}}</button>
+      </view>
+      <text wx:if="{{recording}}" class="recording-hint">正在录音 {{recordSeconds}} 秒，请说满 10 秒后再点结束。</text>
+      <text wx:if="{{!voiceCloneAllowed}}" class="setting-desc">当前绑定未开启声音复刻时，提交样本可能被拒绝。</text>
     </view>
   </view>
 

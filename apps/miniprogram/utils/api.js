@@ -196,7 +196,9 @@ function errorFromResponse(response) {
                             ? "绑定码无效、已过期或年龄段不符合要求。"
                             : code === "guardian_consent_conflict"
                               ? "这项授权已经存在，请刷新后再试。"
-                              : code === "minor_forbidden"
+                              : code === "voice_clone_forbidden" || code === "voice_clone"
+                            ? "当前账号未开启声音复刻。"
+                          : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
                                 : code === "CLAIM_CONFLICT"
                                   ? "设备认领状态已变化，请刷新二维码后重试。"
@@ -220,6 +222,7 @@ function rawRequest(path, options = {}) {
     data,
     authenticated = true,
     idempotencyKey = "",
+    timeout = 60000,
   } = options;
   if (authenticated) requireAuthenticatedIdentity();
   const headers = {
@@ -233,6 +236,7 @@ function rawRequest(path, options = {}) {
       url: `${CONTROL_API_BASE_URL}${path}`,
       method,
       data,
+      timeout,
       header: headers,
       success(response) {
         if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -366,6 +370,37 @@ function getProfile(userId) {
  */
 function getSpeakerEnrollmentStatus() {
   return rawRequest("/v1/speakers/status");
+}
+
+function grantVoiceCloneConsent() {
+  return rawRequest("/v1/voices/consent", {
+    method: "POST",
+    data: { accepted: true, policy_version: "voice-clone-v1" },
+  });
+}
+
+function listVoiceProfiles() {
+  return rawRequest("/v1/voices/profiles");
+}
+
+function enrollVoiceClone({
+  audioBase64,
+  mediaType,
+  durationMs,
+  sampleRate = 16000,
+  enrollmentKey,
+}) {
+  return rawRequest("/v1/voices/enrollments", {
+    method: "POST",
+    timeout: 120000,
+    data: {
+      audio_base64: audioBase64,
+      media_type: mediaType,
+      duration_ms: durationMs,
+      sample_rate: sampleRate,
+      ...(enrollmentKey ? { enrollment_key: enrollmentKey } : {}),
+    },
+  });
 }
 
 function createSpeakerEnrollmentIntent() {
@@ -857,6 +892,9 @@ module.exports = {
   getProfile,
   getSpeakerEnrollmentStatus,
   createSpeakerEnrollmentIntent,
+  grantVoiceCloneConsent,
+  listVoiceProfiles,
+  enrollVoiceClone,
   getGuardianLinks,
   getGuardianSummary,
   createGuardianLink,

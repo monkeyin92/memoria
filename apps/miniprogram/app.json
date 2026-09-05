@@ -1,5 +1,6 @@
 {
   "pages": [
+    "pages/home/index",
     "pages/device/index",
     "pages/memory/index",
     "pages/profile/index",
@@ -24,6 +25,10 @@
     "borderStyle": "black",
     "list": [
       {
+        "pagePath": "pages/home/index",
+        "text": "首页"
+      },
+      {
         "pagePath": "pages/device/index",
         "text": "设备"
       },
@@ -36,5 +41,10 @@
         "text": "我的"
       }
     ]
+  },
+  "permission": {
+    "scope.record": {
+      "desc": "仅用于录制自定义声音样本，供机器人使用；不用于小程序内对话。"
+    }
   }
 }

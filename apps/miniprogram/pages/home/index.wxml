@@ -1,0 +1,69 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
+
+<view class="page-shell">
+  <text class="eyebrow">首页</text>
+  <text class="greet">{{greeting}}</text>
+  <text class="page-title">对话在设备上完成</text>
+  <text class="page-subtitle">这里只照看设备、人格和今天记下的内容。陪伴机器人随人移动，不按房间固定。</text>
+
+  <view wx:if="{{!authenticated}}" class="card guest-home">
+    <text class="guest-title">登录后照看你的机器人</text>
+    <text class="guest-copy">未登录时不会读取设备状态、人格或回顾。对话始终在机器人上完成。</text>
+    <button class="primary-button guest-login-button" bindtap="loginFromHome">微信登录</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{loading}}" class="card">
+      <text class="loading-text">正在读取状态…</text>
+    </view>
+
+    <block wx:elif="{{!hasBinding}}">
+      <view class="card empty-card">
+        <text class="empty-badge">还没有绑定设备</text>
+        <text class="empty-title">先把机器人认领过来</text>
+        <text class="empty-copy">扫设备屏幕上的码，完成配网和认领。绑定后，对话只在设备上进行。</text>
+        <button class="primary-button empty-button" bindtap="openOnboarding">添加设备</button>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view class="card status-card" bindtap="openDevice" hover-class="card-pressed">
+        <text class="kicker">设备</text>
+        <text class="card-heading">Memoria</text>
+        <view class="status-line">
+          <view class="status-dot {{online ? 'status-dot-on' : 'status-dot-off'}}"></view>
+          <text class="status-text">{{onlineLabel}}</text>
+        </view>
+        <view class="facts">
+          <view class="fact">
+            <text class="fact-label">当前使用者</text>
+            <text class="fact-value">{{currentUserLabel}}</text>
+          </view>
+          <view class="fact">
+            <text class="fact-label">唤醒词</text>
+            <text class="fact-value">{{wakeWordLabel}}</text>
+          </view>
+        </view>
+        <text class="go">查看设备详情</text>
+      </view>
+
+      <view class="card status-card" bindtap="openProfile" hover-class="card-pressed">
+        <text class="kicker">人格与声音</text>
+        <text class="card-heading">{{personaName}}</text>
+        <text class="persona-voice">声音 · {{personaVoice}}</text>
+        <text class="persona-body">{{personaSummary}}</text>
+        <text class="go">更换人格与声音</text>
+      </view>
+
+      <view class="card status-card" bindtap="openMemory" hover-class="card-pressed">
+        <text class="kicker">档案</text>
+        <text class="card-heading">今天</text>
+        <text class="today-meta">{{todayMeta}}</text>
+        <text class="persona-body">{{todayOverview}}</text>
+        <text class="go">打开回顾</text>
+      </view>
+    </block>
+
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  </block>
+</view>

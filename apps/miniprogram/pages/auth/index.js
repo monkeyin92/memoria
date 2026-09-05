@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 
 const TAB_ROUTES = new Set([
+  "/pages/home/index",
   "/pages/device/index",
   "/pages/memory/index",
   "/pages/profile/index",
@@ -8,7 +9,7 @@ const TAB_ROUTES = new Set([
 
 function reasonText(reason) {
   return {
-    view_dashboard: "登录后即可查看设备状态与回顾。",
+    view_dashboard: "登录后即可查看设备和今天记下的内容。",
     generate_review: "登录后才能生成并查看你的专属回顾。",
     edit_profile: "登录后才能保存你的资料与陪伴偏好。",
     view_memory: "登录后即可查看你的专属回顾。",
@@ -25,7 +26,7 @@ Page({
     consented: false,
     loading: false,
     error: "",
-    redirect: "/pages/device/index",
+    redirect: "/pages/home/index",
     reasonHint: "",
     needsSalutation: false,
   },
@@ -34,7 +35,7 @@ Page({
     const redirect =
       typeof options.redirect === "string" && options.redirect.startsWith("/")
         ? options.redirect
-        : "/pages/device/index";
+        : "/pages/home/index";
     this.setData({
       redirect,
       reasonHint: reasonText(options.reason),
@@ -139,7 +140,7 @@ Page({
   },
 
   finishLogin() {
-    const redirect = this.data.redirect || "/pages/device/index";
+    const redirect = this.data.redirect || "/pages/home/index";
     const route = redirect.split("?", 1)[0];
     if (TAB_ROUTES.has(route)) {
       wx.switchTab({ url: route });

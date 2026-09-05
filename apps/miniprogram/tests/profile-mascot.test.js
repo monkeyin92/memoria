@@ -7,24 +7,24 @@ const root = path.join(__dirname, "..");
 const template = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
 const styles = fs.readFileSync(path.join(root, "pages/profile/index.wxss"), "utf8");
 
-test("profile hero keeps a visible default mascot face overlay", () => {
+test("profile hero uses the WeChat avatar or a name initial, not a robot mascot", () => {
   assert.match(template, /wx:if="\{\{profile\.avatar_url\}\}"[\s\S]*class="user-avatar"/);
-  assert.match(template, /wx:else class="profile-mascot-shell"/);
-  assert.match(template, /class="profile-face"/);
-  assert.match(template, /class="profile-face-eye profile-face-eye-l"/);
-  assert.match(template, /class="profile-face-mouth"/);
-  assert.match(styles, /\.profile-face\s*\{[^}]*position:\s*absolute/s);
-  assert.match(styles, /\.profile-face-eye\s*\{/);
-  assert.match(styles, /\.profile-face-mouth\s*\{/);
+  assert.match(template, /class="hero-initial"/);
+  assert.match(template, /class="hero-initial-text"\>\{\{profileInitial\}\}/);
+  assert.doesNotMatch(template, /profile-mascot-shell|profile-face|hero-avatar"/);
+  assert.doesNotMatch(styles, /\.profile-face\s*\{/);
   assert.match(styles, /\.user-avatar\s*\{[^}]*border-radius:\s*50%/s);
 });
 
-test("every companion option keeps a visible face instead of a blank body image", () => {
-  assert.match(template, /class="companion-mascot-shell"/);
-  assert.match(template, /class="companion-face \{\{profile\.companion_id === item\.id/);
-  assert.match(template, /class="companion-face-eye companion-face-eye-l"/);
-  assert.match(template, /class="companion-face-mouth"/);
-  assert.match(styles, /\.companion-face\s*\{[^}]*position:\s*absolute/s);
-  assert.match(styles, /\.companion-face-eye\s*\{/);
-  assert.match(styles, /\.companion-face-happy \.companion-face-mouth\s*\{/);
+test("profile companion picker is persona and voice text, not robot artwork", () => {
+  assert.match(template, /人格与声音/);
+  assert.match(template, /对话只在机器人上进行/);
+  assert.match(template, /声音 · \{\{item\.voiceName\}\}/);
+  assert.match(template, /自定义人格与声音/);
+  assert.doesNotMatch(template, /陪伴方式/);
+  assert.doesNotMatch(template, /companion-mascot-shell|companion-face|companion-image/);
+  assert.doesNotMatch(template, /assets\/companions/);
+  assert.match(template, /class="persona-row \{\{!customPersonaActive && profile\.companion_id === item\.id/);
+  assert.match(styles, /\.persona-row\s*\{[^}]*min-height:\s*96rpx/s);
+  assert.match(styles, /\.persona-selected\s*\{/);
 });

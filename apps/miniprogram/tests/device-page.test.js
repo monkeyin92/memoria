@@ -30,6 +30,7 @@ global.wx = {
     delete storage[key];
   },
   showToast() {},
+  showModal() {},
   navigateTo() {},
   stopPullDownRefresh() {},
   request(options) {
