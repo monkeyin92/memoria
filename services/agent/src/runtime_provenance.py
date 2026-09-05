@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.generation_output_policy import generation_voice_allowed
+from services.agent.src.generation_output_policy import (
+    frozen_companion_clone_permitted,
+    generation_voice_allowed,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.mode_policy_client import ModePolicy
@@ -117,7 +120,8 @@ class DuplexRuntimeProvenanceMixin:
                 policy,
                 personal_voice_permitted=self.profile_permits(
                     fence, capability="voice_clone_use"
-                ),
+                )
+                or frozen_companion_clone_permitted(policy),
                 profile_id=profile_id,
                 resource_id=resource_id,
                 speaker_sha256=speaker_sha256,

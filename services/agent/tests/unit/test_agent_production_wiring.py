@@ -2118,6 +2118,62 @@ def test_companion_realigns_wrong_designed_tts_before_binding() -> None:
     assert snapshot.profile_id == "warm_companion"
 
 
+def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> None:
+    import hashlib
+
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    speaker_sha256 = hashlib.sha256(voice_id.encode()).hexdigest()
+    runtime = DuplexRuntime.create(session_id="companion-cosyvoice-clone-bind")
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=False,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+        include_voice_clone=False,
+    )
+    runtime.set_mode_policy(
+        replace(
+            runtime.mode_policy,
+            companion_style_id="taoxi",
+            references=tuple(
+                sorted(
+                    {
+                        "voice_profile_id": "voice-profile-personal",
+                        "voice_profile_version": "2",
+                        "voice_provider": "alibaba_model_studio",
+                        "voice_model": "cosyvoice-v3.5-flash",
+                        "voice_resource_id": "cosyvoice-v3.5-flash",
+                        "voice_speaker_sha256": speaker_sha256,
+                        "fallback_voice_profile_id": "bright_peer",
+                        "fallback_voice_provider": "volcengine_doubao",
+                        "fallback_voice_model": "seed-tts-2.0",
+                        "fallback_voice_resource_id": "seed-tts-2.0",
+                    }.items()
+                )
+            ),
+        )
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="voice-profile-personal",
+        current_model="cosyvoice-v3.5-flash",
+        current_voice=voice_id,
+        current_voice_kind="personal",
+        apply_voice_profile=lambda **_kwargs: None,
+        use_baseline_voice=lambda: None,
+    )
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    assert agent._bind_current_tts_voice(runtime.fence)
+    snapshot = runtime.generation_voice_for(runtime.fence)
+    assert snapshot is not None
+    assert snapshot.profile_id == "voice-profile-personal"
+    assert snapshot.resource_id == "cosyvoice-v3.5-flash"
+    assert snapshot.voice_kind == "personal"
+
+
 @pytest.mark.asyncio
 async def test_identity_rotation_still_binds_companion_generation_voice() -> None:
     from services.agent.tests.unit.runtime_profile_test_helpers import (

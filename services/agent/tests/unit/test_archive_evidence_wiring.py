@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -504,6 +505,51 @@ def test_companion_without_style_binds_catalog_designed_voice() -> None:
         resource_id="seed-tts-2.0",
         speaker_sha256=approved_hash,
         voice_kind="designed",
+    )
+
+
+def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> None:
+    from dataclasses import replace
+
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    speaker_sha256 = hashlib.sha256(voice_id.encode()).hexdigest()
+    runtime = DuplexRuntime.create(session_id="session-companion-cosyvoice-clone")
+    bind_owner_policy(runtime, include_voice_clone=False)
+    runtime.set_mode_policy(
+        replace(
+            runtime.mode_policy,
+            references=tuple(
+                sorted(
+                    {
+                        "voice_profile_id": "voice-profile-personal",
+                        "voice_profile_version": "2",
+                        "voice_provider": "alibaba_model_studio",
+                        "voice_model": "cosyvoice-v3.5-flash",
+                        "voice_resource_id": "cosyvoice-v3.5-flash",
+                        "voice_speaker_sha256": speaker_sha256,
+                        "fallback_voice_profile_id": "bright_peer",
+                        "fallback_voice_provider": "volcengine_doubao",
+                        "fallback_voice_model": "seed-tts-2.0",
+                        "fallback_voice_resource_id": "seed-tts-2.0",
+                    }.items()
+                )
+            ),
+        )
+    )
+    fence = runtime.fence
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="voice-profile-personal",
+        resource_id="cosyvoice-v3.5-flash",
+        speaker_sha256=speaker_sha256,
+        voice_kind="personal",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="voice-profile-personal",
+        resource_id="seed-icl-2.0",
+        speaker_sha256=speaker_sha256,
+        voice_kind="personal",
     )
 
 
