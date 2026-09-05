@@ -476,6 +476,37 @@ def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() 
     )
 
 
+def test_companion_without_style_binds_catalog_designed_voice() -> None:
+    runtime = DuplexRuntime.create(session_id="session-companion-no-style")
+    runtime.set_mode_policy(
+        ModePolicy(
+            mode="companion",
+            policy_version="derived",
+            companion_style_id=None,
+            style_version=None,
+            references=(),
+            capabilities=(("conversation", True),),
+            companion_style=None,
+        )
+    )
+    approved_hash = designed_voice_speaker_sha256("warm_companion")
+    assert approved_hash is not None
+    assert runtime.bind_generation_voice(
+        runtime.fence,
+        profile_id="warm_companion",
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        runtime.fence,
+        profile_id="not-a-catalog-voice",
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
+    )
+
+
 @pytest.mark.asyncio
 async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -> None:
     runtime = DuplexRuntime.create(session_id="session-owner-audio")

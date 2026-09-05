@@ -41,7 +41,7 @@ from services.agent.src.identity_state import (
     drain_epoch_rotation,
     invalidate_identity_epochs,
 )
-from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.mode_policy_client import ModePolicy, mode_policy_after_identity_rotation
 from services.agent.src.observability.audio_trace import parse_client_audio_trace
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -958,10 +958,10 @@ class DuplexRuntime(
         self._reset_identity_private_caches()
         clear_identity_private_state(self)
         if install_policy:
-            self._mode_policy = (
-                ModePolicy.from_runtime_profile(profile)
-                if profile is not None
-                else ModePolicy.degraded_unknown_safe()
+            # Keep companion style across epoch rotation so designed TTS can bind.
+            self._mode_policy = mode_policy_after_identity_rotation(
+                self._mode_policy,
+                profile,
             )
             self._mode_policy_by_fence = {
                 fence: old

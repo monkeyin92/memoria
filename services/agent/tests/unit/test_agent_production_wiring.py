@@ -1986,6 +1986,189 @@ async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bi
     assert runtime.generation_voice_for(runtime.fence) is None
 
 
+@pytest.mark.asyncio
+async def test_live_lookup_does_not_start_when_generation_voice_cannot_bind() -> None:
+    runtime = DuplexRuntime.create(session_id="lookup-voice-bind")
+    runtime.set_mode_policy(
+        ModePolicy(
+            mode="legacy",
+            policy_version="s9-v1",
+            companion_style_id=None,
+            style_version=None,
+            references=(
+                ("fallback_voice_profile_id", "not-approved"),
+                ("fallback_voice_provider", "volcengine_doubao"),
+                ("fallback_voice_model", "seed-tts-2.0"),
+                ("fallback_voice_resource_id", "seed-tts-2.0"),
+                ("legacy_voice_allowed", False),
+            ),
+            capabilities=(("conversation", True),),
+            companion_style=None,
+        )
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="wrong-designed-profile",
+        current_model="seed-tts-2.0",
+        current_voice="wrong-speaker",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+    started: list[str] = []
+
+    async def starter(text: str, _fence: GenerationFence) -> None:
+        started.append(text)
+
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    runtime.set_delegation_starter(starter)
+    with pytest.raises(StopResponse):
+        await agent._prepare_committed_turn(
+            text="今天南京天气怎么样",
+            speaker=SimpleNamespace(classification="owner"),
+            input_modality="audio",
+        )
+    assert started == []
+    assert runtime.generation_voice_for(runtime.fence) is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_live_lookup_starts_on_the_bound_generation() -> None:
+    runtime = DuplexRuntime.create(session_id="lookup-voice-ok")
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=False,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+    started: list[GenerationFence] = []
+
+    async def starter(_text: str, fence: GenerationFence) -> None:
+        started.append(fence)
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
+            return ResponsePlanFetch(
+                _plan_for_fence(fence, instructions="先查天气再回答。"),
+                "ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    runtime.set_delegation_starter(starter)
+    fence = await agent._prepare_committed_turn(
+        text="今天南京天气怎么样",
+        speaker=SimpleNamespace(classification="owner"),
+        input_modality="audio",
+    )
+    assert started == [fence]
+    assert runtime.generation_voice_for(fence) is not None
+    await runtime.close()
+
+
+def test_companion_realigns_wrong_designed_tts_before_binding() -> None:
+    runtime = DuplexRuntime.create(session_id="companion-realign-tts")
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=False,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+
+    class AligningTTS:
+        current_voice_profile_id = "bright_peer"
+        current_model = "seed-tts-2.0"
+        current_voice = "zh_female_tianmeitaozi_uranus_bigtts"
+        current_voice_kind = "designed"
+
+        def bind_fence(self, _fence: GenerationFence) -> None:
+            return None
+
+        def apply_voice_profile(self, **kwargs: object) -> None:
+            self.current_model = str(kwargs["model"])
+            self.current_voice = str(kwargs["voice"])
+            self.current_voice_profile_id = str(kwargs["profile_id"])
+            self.current_voice_kind = str(kwargs["voice_kind"])
+
+    tts = AligningTTS()
+    runtime.tts = tts
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    assert agent._bind_current_tts_voice(runtime.fence)
+    assert tts.current_voice_profile_id == "warm_companion"
+    snapshot = runtime.generation_voice_for(runtime.fence)
+    assert snapshot is not None
+    assert snapshot.profile_id == "warm_companion"
+
+
+@pytest.mark.asyncio
+async def test_identity_rotation_still_binds_companion_generation_voice() -> None:
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+    )
+
+    runtime = DuplexRuntime.create(session_id="rotate-companion-voice")
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=True,
+        owner_evidence=True,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+    runtime.orchestrator.runtime_profiles.verify_key = TEST_VERIFY_KEY
+    switched = canonical_wire_payload(
+        session_id="rotate-companion-voice",
+        runtime_profile_id="rp_switched_voice",
+        active_subject_id="person_parent",
+        subject_category="adult",
+        age_band="adult",
+        speaker_state="confirmed",
+        service_mode="adult_companion",
+        session_epoch=2,
+        capabilities=["chat", "memory_recall_private"],
+        persona={
+            "persona_id": "person_parent",
+            "version": 4,
+            "relationship_stage": "familiar",
+        },
+    )
+    applied = runtime.apply_runtime_profile(switched)
+    assert applied is not None
+    assert runtime.mode_policy.companion_style_id == "starlight"
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    assert agent._bind_current_tts_voice(runtime.fence)
+    snapshot = runtime.generation_voice_for(runtime.fence)
+    assert snapshot is not None
+    assert snapshot.profile_id == "warm_companion"
+
+
 def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() -> None:
     runtime = DuplexRuntime.create(session_id="self-preview-selected-fallback")
     runtime.set_mode_policy(

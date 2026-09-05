@@ -32,6 +32,90 @@ _PUBLIC_DESIGNED_SPEAKER_SHA256S = frozenset(
 _PLAN_VOICE_BOUND_MODES = frozenset({"self_preview", "legacy", "unknown_safe"})
 
 
+def generation_voice_reject_reason(
+    policy: ModePolicy,
+    *,
+    personal_voice_permitted: bool,
+    profile_id: str | None,
+    resource_id: str,
+    speaker_sha256: str,
+    voice_kind: VoiceKind,
+) -> str | None:
+    """Return the first contract field that rejects this applied voice."""
+
+    if profile_id is not None and not _bounded_profile_id(profile_id):
+        return "profile_id"
+    if not _valid_sha256(speaker_sha256):
+        return "speaker_sha256"
+    if voice_kind not in {"designed", "personal"}:
+        return "voice_kind"
+    references = dict(policy.references)
+    if voice_kind == "personal":
+        if resource_id != PERSONAL_VOICE_MODEL:
+            return "personal_resource"
+        if not personal_voice_permitted:
+            return "personal_not_permitted"
+        if policy.mode not in {"self_preview", "legacy"}:
+            return "personal_mode"
+        if policy.mode == "legacy" and references.get("legacy_voice_allowed") is not True:
+            return "legacy_voice_allowed"
+        if profile_id is None or profile_id != references.get("voice_profile_id"):
+            return "personal_profile"
+        if references.get("voice_profile_version") is None:
+            return "personal_version"
+        if references.get("voice_provider") != "volcengine_doubao":
+            return "personal_provider"
+        if references.get("voice_model") != PERSONAL_VOICE_MODEL:
+            return "personal_model"
+        if references.get("voice_resource_id") != PERSONAL_VOICE_MODEL:
+            return "personal_resource_id"
+        if references.get("voice_provider_expires_at") is None:
+            return "personal_expires"
+        if speaker_sha256 != references.get("voice_speaker_sha256"):
+            return "personal_speaker"
+        return None
+    if resource_id != DESIGNED_VOICE_MODEL:
+        return "designed_resource"
+    if policy.mode == "companion":
+        companion = companion_definition(policy.companion_style_id)
+        expected = companion.designed_voice_profile if companion is not None else None
+        if expected is None:
+            if (
+                isinstance(profile_id, str)
+                and profile_id in DESIGNED_VOICE_SPEAKERS
+                and speaker_sha256 == designed_voice_speaker_sha256(profile_id)
+            ):
+                return None
+            return "companion_catalog"
+        if profile_id != expected:
+            return "companion_profile"
+        if speaker_sha256 != designed_voice_speaker_sha256(expected):
+            return "companion_speaker"
+        return None
+    if policy.mode in {"self_preview", "legacy"}:
+        fallback_profile = references.get("fallback_voice_profile_id")
+        if not isinstance(fallback_profile, str):
+            return "fallback_profile"
+        if profile_id != fallback_profile:
+            return "fallback_profile"
+        if references.get("fallback_voice_provider") != "volcengine_doubao":
+            return "fallback_provider"
+        if references.get("fallback_voice_model") != DESIGNED_VOICE_MODEL:
+            return "fallback_model"
+        if references.get("fallback_voice_resource_id") != DESIGNED_VOICE_MODEL:
+            return "fallback_resource"
+        if speaker_sha256 != designed_voice_speaker_sha256(fallback_profile):
+            return "fallback_speaker"
+        return None
+    if not policy.allows_anonymous_public_conversation():
+        return "unknown_safe_surface"
+    if profile_id is not None:
+        return "unknown_safe_profile"
+    if speaker_sha256 not in _PUBLIC_DESIGNED_SPEAKER_SHA256S:
+        return "unknown_safe_speaker"
+    return None
+
+
 def generation_voice_allowed(
     policy: ModePolicy,
     *,
@@ -43,52 +127,16 @@ def generation_voice_allowed(
 ) -> bool:
     """Validate the actual voice against one mode-frozen contract."""
 
-    if (
-        (profile_id is not None and not _bounded_profile_id(profile_id))
-        or not _valid_sha256(speaker_sha256)
-        or voice_kind not in {"designed", "personal"}
-    ):
-        return False
-    references = dict(policy.references)
-    if voice_kind == "personal":
-        return (
-            resource_id == PERSONAL_VOICE_MODEL
-            and personal_voice_permitted
-            and policy.mode in {"self_preview", "legacy"}
-            and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
-            and profile_id is not None
-            and profile_id == references.get("voice_profile_id")
-            and references.get("voice_profile_version") is not None
-            and references.get("voice_provider") == "volcengine_doubao"
-            and references.get("voice_model") == PERSONAL_VOICE_MODEL
-            and references.get("voice_resource_id") == PERSONAL_VOICE_MODEL
-            and references.get("voice_provider_expires_at") is not None
-            and speaker_sha256 == references.get("voice_speaker_sha256")
-        )
-    if resource_id != DESIGNED_VOICE_MODEL:
-        return False
-    if policy.mode == "companion":
-        companion = companion_definition(policy.companion_style_id)
-        expected = companion.designed_voice_profile if companion is not None else None
-        return (
-            expected is not None
-            and profile_id == expected
-            and speaker_sha256 == designed_voice_speaker_sha256(expected)
-        )
-    if policy.mode in {"self_preview", "legacy"}:
-        fallback_profile = references.get("fallback_voice_profile_id")
-        return (
-            isinstance(fallback_profile, str)
-            and profile_id == fallback_profile
-            and references.get("fallback_voice_provider") == "volcengine_doubao"
-            and references.get("fallback_voice_model") == DESIGNED_VOICE_MODEL
-            and references.get("fallback_voice_resource_id") == DESIGNED_VOICE_MODEL
-            and speaker_sha256 == designed_voice_speaker_sha256(fallback_profile)
-        )
     return (
-        policy.allows_anonymous_public_conversation()
-        and profile_id is None
-        and speaker_sha256 in _PUBLIC_DESIGNED_SPEAKER_SHA256S
+        generation_voice_reject_reason(
+            policy,
+            personal_voice_permitted=personal_voice_permitted,
+            profile_id=profile_id,
+            resource_id=resource_id,
+            speaker_sha256=speaker_sha256,
+            voice_kind=voice_kind,
+        )
+        is None
     )
 
 
@@ -178,4 +226,5 @@ __all__ = [
     "generation_voice_allowed",
     "generation_voice_must_match_plan",
     "generation_voice_profile_id",
+    "generation_voice_reject_reason",
 ]

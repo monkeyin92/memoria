@@ -17,6 +17,8 @@ from services.agent.src.action_policy_client import is_action_policy_capability
 from services.agent.src.agent_voice_profile import (
     _apply_cached_voice_profile,
     _frozen_designed_fallback,
+    bind_generation_tts_voice,
+    generation_tts_voice_can_bind,
 )
 from services.agent.src.agent_voice_profile import (
     _heard_only_chat_context as _heard_only_chat_context,  # noqa: F401
@@ -383,27 +385,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         return self._runtime.bind_response_provenance(fence, payload)
 
     def _bind_current_tts_voice(self, fence: GenerationFence) -> bool:
-        tts_plugin = self._runtime.tts
-        if tts_plugin is None:
-            return False
-        profile_id = getattr(tts_plugin, "current_voice_profile_id", None)
-        resource_id = getattr(tts_plugin, "current_model", None)
-        speaker = getattr(tts_plugin, "current_voice", None)
-        voice_kind = getattr(tts_plugin, "current_voice_kind", None)
-        if not isinstance(profile_id, str) or not profile_id or not isinstance(resource_id, str) or not resource_id or not isinstance(speaker, str) or not speaker or not isinstance(voice_kind, str) or not voice_kind:
-            return False
-        archive_profile_id = output_policy.generation_voice_profile_id(
-            self._runtime.mode_policy_for_fence(fence),
-            profile_id=profile_id,
-            voice_kind=voice_kind,
-        )
-        return self._runtime.bind_generation_voice(
-            fence,
-            profile_id=archive_profile_id,
-            resource_id=resource_id,
-            speaker_sha256=hashlib.sha256(speaker.encode()).hexdigest(),
-            voice_kind=cast(Literal["designed", "personal"], voice_kind),
-        )
+        """Align TTS to this fence's policy and freeze the speaking voice.
+
+        The helper logs the rejected contract field when binding fails, so a
+        silent weather body can be traced without guessing empty custom voice.
+        """
+
+        return bind_generation_tts_voice(self._runtime, fence)
 
     def _observe_tts_voice_fallback(
         self,
@@ -1071,21 +1059,33 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     ) -> GenerationFence:
         await self._runtime.resolve_live_lookup_needed(text)
         await self._runtime.resolve_conversation_close_needed(text)
-        policy = self._runtime.mode_policy
-        if (
-            input_modality == "audio"
-            and self._voice_profile_client is not None
-            and self._runtime.tts is not None
-            and self._runtime.profile_permits(self._runtime.fence, capability="voice_clone_use")
-        ):
-            await self._runtime.wait_for_voice_profile_refresh()
-            _apply_cached_voice_profile(
-                tts_plugin=self._runtime.tts,
-                client=self._voice_profile_client,
-                session_id=self._runtime.session_id,
-                mode=policy.mode,
-                policy=policy,
+        # Live lookup starts inside on_turn_committed. A voice-bind failure after
+        # that point leaves filler on a new generation and drops the weather
+        # result as stale. Refresh and reject before the lookup task is created.
+        if input_modality == "audio" and self._runtime.tts is not None:
+            clone_use = self._runtime.profile_permits(
+                self._runtime.fence, capability="voice_clone_use"
             )
+            if self._voice_profile_client is not None and clone_use:
+                await self._runtime.wait_for_voice_profile_refresh()
+            await self._runtime.refresh_runtime_profile()
+            policy = self._runtime.mode_policy
+            if self._voice_profile_client is not None and clone_use:
+                _apply_cached_voice_profile(
+                    tts_plugin=self._runtime.tts,
+                    client=self._voice_profile_client,
+                    session_id=self._runtime.session_id,
+                    mode=policy.mode,
+                    policy=policy,
+                )
+            if not generation_tts_voice_can_bind(self._runtime):
+                logger.error(
+                    "generation voice binding rejected session_id=%s turn_id=%s generation_id=%s",
+                    self._runtime.session_id,
+                    self._runtime.fence.turn_id,
+                    self._runtime.fence.generation_id,
+                )
+                raise StopResponse()
         fence = await self._runtime.on_turn_committed(
             text,
             input_modality=input_modality,

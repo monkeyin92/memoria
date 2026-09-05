@@ -158,6 +158,53 @@ def test_derived_policy_learning_requires_tutor_surface_and_no_persistence() -> 
         assert policy.allows_learning("owner") is expected
 
 
+def test_identity_rotation_keeps_previous_companion_style() -> None:
+    from services.agent.src.mode_policy_client import (
+        ModePolicy,
+        mode_policy_after_identity_rotation,
+    )
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+        parse_runtime_profile,
+    )
+
+    previous = ModePolicy.companion_for_test(
+        policy_version="s1",
+        private_context=True,
+        owner_evidence=True,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+    verified = parse_runtime_profile(
+        canonical_wire_payload(
+            session_id="ses_rotate_style",
+            session_epoch=3,
+            active_subject_id="person_parent",
+            subject_category="adult",
+            age_band="adult",
+            service_mode="adult_companion",
+            capabilities=["chat", "memory_recall_private"],
+            persona={
+                "persona_id": "person_parent",
+                "version": 4,
+                "relationship_stage": "familiar",
+            },
+        ),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert verified is not None
+    derived = ModePolicy.from_runtime_profile(verified)
+    assert derived.mode == "companion"
+    assert derived.companion_style_id is None
+
+    rotated = mode_policy_after_identity_rotation(previous, verified)
+    assert rotated.mode == "companion"
+    assert rotated.companion_style_id == "starlight"
+    assert rotated.companion_style is not None
+
+
 @pytest.mark.asyncio
 async def test_fetch_freezes_companion_policy_from_the_authoritative_session_response() -> None:
     seen: dict[str, object] = {}

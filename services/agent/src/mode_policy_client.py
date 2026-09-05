@@ -321,6 +321,40 @@ class ModePolicy:
         )
 
 
+def mode_policy_after_identity_rotation(
+    previous: ModePolicy,
+    profile: VerifiedRuntimeProfile | None,
+) -> ModePolicy:
+    """Re-derive capabilities, but keep a valid companion style for TTS binding."""
+
+    if profile is None:
+        return ModePolicy.degraded_unknown_safe()
+    derived = ModePolicy.from_runtime_profile(profile)
+    if derived.mode != "companion":
+        return derived
+    style_id = previous.companion_style_id if previous.mode == "companion" else None
+    style_version = previous.style_version if previous.mode == "companion" else None
+    if style_id is None:
+        style_id = profile.profile.persona_id
+        style_version = COMPANION_STYLE_VERSION
+    if not isinstance(style_id, str) or not isinstance(style_version, str):
+        return derived
+    style = _style_for(style_id, style_version)
+    if style is None:
+        return derived
+    references = dict(derived.references)
+    owner_name = dict(previous.references).get("owner_display_name")
+    if previous.mode == "companion" and isinstance(owner_name, str) and owner_name:
+        references["owner_display_name"] = owner_name
+    return replace(
+        derived,
+        companion_style_id=style_id,
+        style_version=style_version,
+        companion_style=style,
+        references=tuple(sorted(references.items())),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ModePolicyClientConfig:
     endpoint: str
