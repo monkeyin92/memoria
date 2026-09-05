@@ -34,10 +34,10 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-05 01:41 CST）
+## 下次接着从这里开始（2026-09-05 09:39 CST）
 
 ```yaml
-resume_focus: epoch1390_ticket_slight_cut_local_unreleased
+resume_focus: epoch1390_ticket_lookup_awaiting_board_retest
 work_order: half_duplex_investor_demo
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -51,7 +51,7 @@ speaker_enrollment_state: active
 speaker_enrollment_intent_id: 6bcb7345-d65d-4264-bd2c-b7c9b8927585
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
-last_wake_epoch: 1386
+last_wake_epoch: 1390
 device_enrollment_prompts: quality_enroll_is_owner_active
 miniprogram_devtools_publish: uploaded_0.8.75_devtools_cli
 direct_real_device_verified: false
@@ -77,10 +77,12 @@ direct_real_device_verified: false
 16. **垫话出声 + 播后声纹修复已切流**：源 `8a8eb9ade975b7eae1c3709e5d3434bff26a8d6f`，标签 `20260905-filler-post-playback-speaker-agent-component`。已出声 FAST_ACK 不再 preempt；同 turn `first_frame` 后天气去掉 `LIVE_LOOKUP_FILLER`；无 AEC 播后 2s 内 quality 低于 0.85 的 formal guest 记 `post_playback_untrusted`，并丢掉 400ms preroll。不放宽 `reject_non_owner_voice`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-filler-post-playback-speaker-agent-component-pre-agent/-pre-bridge`。
 17. **epoch 1388/1389 复测**：1388 唤醒后星期几仍 `target_non_owner`。1389 session `09f38e59` 星期几+天气都答了，但每轮 `first_frame` 后 `output_task_cancelled`，听感「稍」截断再正文。星期几被语义分类器当成联网查询（`interaction_delegation_started` + qwen-plus 7 字）；天气 LLM/垫话出声后被 DEEP_RESULT 掐。
 18. **clock-fact 不再垫话 + 已出声不 flush 已切流**：源 `59833bd5deb3c15b98da4261d4252c7357297079`（代码 `aa2435d`），标签 `20260905-clock-fact-heard-playback-agent-component`。日期/时间不再 live-lookup；lookup claim 未就绪时不抢先开 LLM；已出声 owner 不被 DEEP_RESULT flush。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-clock-fact-heard-playback-agent-component-pre-agent/-pre-bridge`。
+19. **epoch 1390 车票「稍」截断**：session `a42ee4c1`。星期几/天气 PASS；车票 live-query `text_len=26` 垫话 `first_frame` 后被并行 LLM 抢占（qwen-plus 5661ms 之后才播正文）。
+20. **半双工已出声不 flush + lookup 不再并行 LLM 已切流**：源 `3a1133c5cb63f2473556680f01c7c1e56003968d`，标签 `20260905-half-duplex-heard-lookup-v2-agent-component`。联网查询中不另开 conversation_reply；设备 `barge_in=false` 时已出声 owner 不再 preempt。mypy 修了 `heard` 变量冲突。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`。
 
 **下一步（按顺序）**
 
-1. 真机复测：星期几不要「稍」；天气不要把「稍」卡断。不要放宽 `reject_non_owner_voice`。
+1. 真机复测：星期几/天气保持正常；查车票不要把「稍」卡断。不要放宽 `reject_non_owner_voice`。
 2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -89,9 +91,9 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260905-clock-fact-heard-playback-agent-component`（源 `59833bd5deb3c15b98da4261d4252c7357297079`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260905-half-duplex-heard-lookup-v2-agent-component`（源 `3a1133c5cb63f2473556680f01c7c1e56003968d`）。Control API overlay 源提交为 `1a7a9390adc806adcae3aade1b8a01022b4f1368`（标签 `20260903-1820-owner-enroll-active-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260905-clock-fact-heard-playback-agent-component`，revision `59833bd5deb3c15b98da4261d4252c7357297079`，image `sha256:772a54be0c2a0576ef3ac6aeba025e7151a0e59cc76c422c523430632f37c8ed`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260905-clock-fact-heard-playback-agent-component/`。回滚 `rollback-20260905-clock-fact-heard-playback-agent-component-pre-agent/-pre-bridge`（镜像 `20260905-filler-post-playback-speaker-agent-component` / `sha256:7a9378c7c90ae38db270ed1015c73a62349dbf99828dbfa8f36ab2fe4de34651`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。星期几不要「稍」+ 天气不要卡断「稍」待真机复测。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260905-half-duplex-heard-lookup-v2-agent-component`，revision `3a1133c5cb63f2473556680f01c7c1e56003968d`，image `sha256:5fe86327788899d1d5f81ad2663a7f105395d404dfb1bb6e125f085288b51d65`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260905-half-duplex-heard-lookup-v2-agent-component/`。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`（镜像 `20260905-clock-fact-heard-playback-agent-component` / `sha256:772a54be0c2a0576ef3ac6aeba025e7151a0e59cc76c422c523430632f37c8ed`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。查车票垫话不要卡「稍」待真机复测。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
