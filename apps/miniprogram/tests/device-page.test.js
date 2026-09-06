@@ -7,6 +7,7 @@ const root = path.join(__dirname, "..");
 const api = require("../utils/api");
 const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
+const { readSubjectLabel } = require("../utils/subject-label");
 
 const storage = {};
 const activeSubjectCalls = [];
@@ -266,6 +267,26 @@ test("no binding manifest shows the empty state", async () => {
   await page.onShow();
   assert.equal(page.data.loading, false);
   assert.equal(page.data.hasBinding, false);
+});
+
+test("device page can set the bind-time subject remark used on home", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireUnknownSafeProfile({
+    runtime_profile_id: "rp_alias",
+    session_id: "ses_alias",
+    session_epoch: 1,
+  });
+  resolutionPayload = familyResolution();
+
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.subjectAliasLabel, "");
+  page.onSubjectAliasInput({ detail: { value: "老爸" } });
+  page.saveSubjectAlias();
+  assert.equal(page.data.subjectAliasLabel, "老爸");
+  assert.equal(readSubjectLabel(familyManifest()), "老爸");
+  binding.clearBindingManifest();
+  assert.equal(readSubjectLabel(familyManifest()), "");
 });
 
 test("family mode loads candidates and switches with an epoch-bumped profile", async () => {

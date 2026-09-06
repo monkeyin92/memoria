@@ -4,6 +4,7 @@ const test = require("node:test");
 const binding = require("../utils/device-binding");
 const contracts = require("../utils/multi-subject-contracts");
 const { canonicalManifest } = require("./manifest-fixtures");
+const subjectLabel = require("../utils/subject-label");
 
 function validRequest(overrides = {}) {
   return {
@@ -1028,4 +1029,30 @@ test("binding manifest storage round-trips and fails closed without wx", () => {
   assert.equal(binding.readCachedRuntimeProfile(cacheContext()), null);
   binding.saveBindingManifest(canonicalManifest());
   assert.equal(binding.readCachedRuntimeProfile(cacheContext()), null);
+});
+
+test("clearing or replacing a binding drops the local subject remark", () => {
+  withWxStorage({}, () => {
+    binding.saveBindingManifest(canonicalManifest());
+    assert.equal(
+      subjectLabel.saveSubjectLabel({ bindingId: "bd_1", deviceId: "dev_1", label: "老爸" }),
+      true,
+    );
+    assert.equal(subjectLabel.readSubjectLabel(canonicalManifest()), "老爸");
+    binding.clearBindingManifest();
+    assert.equal(subjectLabel.readSubjectLabel(canonicalManifest()), "");
+
+    binding.saveBindingManifest(canonicalManifest());
+    subjectLabel.saveSubjectLabel({ bindingId: "bd_1", deviceId: "dev_1", label: "老爸" });
+    binding.saveBindingManifest(
+      canonicalManifest({ binding_id: "bd_2", device_id: "dev_2" }),
+    );
+    assert.equal(subjectLabel.readSubjectLabel(canonicalManifest()), "");
+    assert.equal(
+      subjectLabel.readSubjectLabel(
+        canonicalManifest({ binding_id: "bd_2", device_id: "dev_2" }),
+      ),
+      "",
+    );
+  });
 });

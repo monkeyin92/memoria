@@ -14,13 +14,8 @@
   display: block;
 }
 
-.auth-copy .eyebrow {
-  display: inline-flex;
-}
-
 .auth-copy .page-title {
   font-size: 46rpx;
-  text-shadow: 0 0 32rpx rgba(34, 229, 255, 0.3);
 }
 
 .auth-card {
@@ -31,7 +26,7 @@
 .field-help,
 .login-note {
   display: block;
-  color: #8d99c4;
+  color: #596a78;
   font-size: 25rpx;
   line-height: 1.6;
 }
@@ -39,14 +34,13 @@
 .compliance-notice {
   margin: 24rpx 0;
   padding: 24rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.18);
   border-radius: 24rpx;
-  background: rgba(16, 23, 52, 0.55);
+  background: #e8f0ef;
 }
 
 .compliance-line {
   display: block;
-  color: #a8b4dc;
+  color: #285b5c;
   font-size: 24rpx;
   line-height: 1.65;
 }
@@ -65,10 +59,10 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border: 2rpx solid rgba(94, 234, 255, 0.48);
+  border: 2rpx solid #c9d5dd;
   border-radius: 50%;
-  color: #7ceaff;
-  background: rgba(34, 229, 255, 0.08);
+  color: #326e70;
+  background: #f4f6f8;
   font-size: 24rpx;
 }
 
@@ -87,37 +81,13 @@
   text-align: center;
 }
 
-.field-label {
-  display: block;
-  margin: 28rpx 0 12rpx;
-  color: #9db4e8;
-  font-size: 26rpx;
-  font-weight: 600;
-  letter-spacing: 2rpx;
-}
-
-.field-input {
-  height: 88rpx;
-  box-sizing: border-box;
-  padding: 0 26rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.26);
-  border-radius: 999rpx;
-  color: #f2f5ff;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 29rpx;
-}
-
-.field-placeholder {
-  color: #5d688f;
-}
-
 .consent-row {
   display: flex;
   min-height: 88rpx;
   margin-top: 18rpx;
   align-items: center;
   justify-content: center;
-  color: #9aa6cf;
+  color: #596a78;
   font-size: 25rpx;
 }
 
@@ -132,11 +102,7 @@
   min-height: 88rpx;
   margin-left: 8rpx;
   align-items: center;
-  color: #7ceaff;
-}
-
-.auth-error {
-  color: #ff8ba3;
+  color: #326e70;
 }
 
 .auth-submit {

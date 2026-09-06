@@ -1,5 +1,3 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell auth-page">
   <view class="auth-copy">
     <text class="eyebrow auth-copy-line">家庭桌面档案终端</text>
@@ -9,7 +7,7 @@
   <view class="card auth-card">
     <text class="auth-intro">{{reasonHint}}</text>
     <view class="compliance-notice">
-      <text class="compliance-line">Memoria 是家庭档案终端，不是拟人化陪伴服务。</text>
+      <text class="compliance-line">连接设备、查看回顾、管理资料。对话在设备上完成，手机不录音。</text>
       <text class="compliance-line">设备回应由人工智能生成，会明确标识；模型训练默认关闭。</text>
       <text class="compliance-line">声纹属于敏感生物识别信息，只在设备端采集。</text>
     </view>
@@ -41,7 +39,7 @@
 
     <checkbox-group class="consent-row" bindchange="onConsentChange">
       <label class="consent-label">
-        <checkbox value="accepted" checked="{{consented}}" color="#22e5ff" />
+        <checkbox value="accepted" checked="{{consented}}" color="#326e70" />
         <text>我已阅读并同意</text>
       </label>
       <text class="privacy-link" bindtap="openPrivacy">《隐私保护指引》</text>

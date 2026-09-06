@@ -1,0 +1,45 @@
+.role-track {
+  white-space: nowrap;
+  margin: 8rpx -10rpx 12rpx;
+}
+
+.role-card {
+  display: inline-flex;
+  flex-direction: column;
+  width: 240rpx;
+  margin-right: 16rpx;
+  padding: 20rpx 16rpx 28rpx;
+  border-radius: 28rpx;
+  background: #fff;
+  vertical-align: top;
+}
+
+.role-card-on {
+  background: #e8f0ef;
+}
+
+.role-photo {
+  width: 208rpx;
+  height: 200rpx;
+}
+
+.role-name {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.role-desc {
+  display: block;
+  margin-top: 6rpx;
+  color: #596a78;
+  font-size: 22rpx;
+  white-space: normal;
+}
+
+.choice-radio-on {
+  border-color: #172f43;
+  background: #172f43;
+  box-shadow: inset 0 0 0 8rpx #fff;
+}

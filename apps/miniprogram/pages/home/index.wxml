@@ -1,91 +1,110 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell">
-  <text class="eyebrow">首页</text>
-  <text class="greet">{{greeting}}</text>
-  <text class="page-title">对话在设备上完成</text>
-  <text class="page-subtitle">这里只照看设备、人格和今天记下的内容。陪伴机器人随人移动，不按房间固定。</text>
-
-  <view wx:if="{{!authenticated}}" class="card guest-home">
-    <text class="guest-title">登录后照看你的机器人</text>
-    <text class="guest-copy">未登录时不会读取设备状态、人格或回顾。对话始终在机器人上完成。</text>
-    <button class="primary-button guest-login-button" bindtap="loginFromHome">微信登录</button>
+  <view wx:if="{{!authenticated}}">
+    <text class="page-title">你好，欢迎来到 Memoria</text>
+    <text class="page-lede">把设备连好，再慢慢留下日常。</text>
+    <view class="home-hero">
+      <view class="hero-top">
+        <text class="device-place">家中的设备，手边的回顾</text>
+      </view>
+      <text class="hero-heading">记住哪些事，由你决定。</text>
+      <text class="hero-caption">在设备上记录，在这里确认与整理。</text>
+      <image class="hero-image" src="{{companionImage}}" mode="aspectFit" />
+      <view class="hero-bottom">
+        <text>登录后查看设备和今天记下的内容</text>
+      </view>
+    </view>
+    <view class="stack" style="margin-top: 46rpx;">
+      <button class="primary-button" bindtap="loginFromHome">微信登录，找回我的设备</button>
+      <button class="secondary-button" bindtap="openHowItWorks">先了解怎么用</button>
+    </view>
+    <text class="privacy-note">对话在设备上完成。手机用来连接、确认和整理，不录音。</text>
   </view>
 
   <block wx:else>
+    <text class="page-title">{{greeting}}</text>
+    <text class="page-lede">{{pageLede}}</text>
+
     <view wx:if="{{loading}}" class="card">
       <text class="loading-text">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
     </view>
 
-    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card empty-card">
-      <text class="empty-badge sync-error-badge">同步未完成</text>
-      <text class="empty-title">暂时无法确认设备信息</text>
-      <text class="empty-copy">{{bindingSyncError}}</text>
+    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card">
+      <text class="empty-title">设备信息暂未同步</text>
+      <text class="empty-copy">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
       <button class="primary-button empty-button" bindtap="retryBindingSync">重新同步</button>
     </view>
 
-    <view wx:elif="{{needsBindingChoice}}" class="card empty-card">
-      <text class="empty-badge">选择设备</text>
-      <text class="empty-title">这次要管理哪一台？</text>
-      <text class="empty-copy">你的账号绑定了多台设备，请选择一台作为当前设备。</text>
-      <view wx:for="{{bindingChoices}}" wx:key="bindingId" class="binding-choice" data-binding-id="{{item.bindingId}}" bindtap="chooseDeviceBinding">
-        <view class="binding-choice-copy">
-          <text class="binding-choice-name">{{item.label}}</text>
-          <text class="binding-choice-meta">{{item.modeLabel}}</text>
+    <view wx:elif="{{needsBindingChoice}}">
+      <text class="page-lede">设备信息已从账号找到。选择你要查看的设备。</text>
+      <view
+        wx:for="{{bindingChoices}}"
+        wx:key="bindingId"
+        class="choice-card"
+        data-binding-id="{{item.bindingId}}"
+        bindtap="chooseDeviceBinding"
+      >
+        <image class="choice-photo" src="{{item.image}}" mode="aspectFit" />
+        <view class="row-copy">
+          <text class="row-title">{{item.label}}</text>
+          <text class="row-meta">{{item.modeLabel}}</text>
         </view>
-        <text class="binding-choice-arrow">›</text>
+        <text class="row-chevron">›</text>
       </view>
+      <text class="caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
     </view>
 
-    <block wx:elif="{{!hasBinding}}">
-      <view class="card empty-card">
-        <text class="empty-badge">还没有绑定设备</text>
-        <text class="empty-title">先把机器人认领过来</text>
-        <text class="empty-copy">扫设备屏幕上的码，完成配网和认领。绑定后，对话只在设备上进行。</text>
-        <button class="primary-button empty-button" bindtap="openOnboarding">添加设备</button>
-      </view>
-    </block>
+    <view wx:elif="{{!hasBinding}}" class="empty-block">
+      <image class="empty-photo" src="{{companionImage}}" mode="aspectFit" />
+      <text class="empty-title">还没有绑定设备</text>
+      <text class="empty-copy">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
+      <button class="primary-button empty-button" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
+      <button class="text-button" bindtap="showSyncHelp">其他手机上已经有设备？</button>
+    </view>
 
     <block wx:else>
-      <view class="card status-card" bindtap="openDevice" hover-class="card-pressed">
-        <text class="kicker">设备</text>
-        <text class="card-heading">Memoria</text>
-        <view class="status-line">
-          <view class="status-dot {{online ? 'status-dot-on' : 'status-dot-off'}}"></view>
-          <text class="status-text">{{onlineLabel}}</text>
-        </view>
-        <view class="facts">
-          <view class="fact">
-            <text class="fact-label">当前使用者</text>
-            <text class="fact-value">{{currentUserLabel}}</text>
-          </view>
-          <view class="fact">
-            <text class="fact-label">唤醒词</text>
-            <text class="fact-value">{{wakeWordLabel}}</text>
+      <view class="home-hero {{online ? '' : 'home-hero-offline'}}">
+        <view class="hero-top">
+          <text class="device-place">{{devicePlaceName}}</text>
+          <view class="pill {{online ? '' : 'pill-amber'}}">
+            <view class="pill-dot"></view>
+            <text>{{online ? '设备在线' : '暂时离线'}}</text>
           </view>
         </view>
-        <text class="go">查看设备详情</text>
+        <text class="hero-heading">{{heroTitle}}</text>
+        <text class="hero-caption">{{heroCaption}}</text>
+        <image class="hero-image" src="{{companionImage}}" mode="aspectFit" />
+        <view class="hero-bottom">
+          <text>{{heroFoot}}</text>
+          <text class="hero-link" bindtap="openDevice">{{online ? '管理设备' : '检查连接'}} ›</text>
+        </view>
       </view>
 
-      <view class="card status-card" bindtap="openProfile" hover-class="card-pressed">
-        <text class="kicker">人格与声音</text>
-        <text class="card-heading">{{personaName}}</text>
-        <text class="persona-voice">声音 · {{personaVoice}}</text>
-        <text class="persona-body">{{personaSummary}}</text>
-        <text class="go">更换人格与声音</text>
+      <view wx:if="{{pendingCount}}" class="next-action" bindtap="openPendingMemory">
+        <view class="next-action-copy">
+          <text class="next-action-title">{{pendingCount}} 条内容，等你确认</text>
+          <text class="next-action-meta">确认后才会加入记忆档案</text>
+        </view>
+        <text class="row-chevron">›</text>
       </view>
+      <view wx:else class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
 
-      <view class="card status-card" bindtap="openMemory" hover-class="card-pressed">
-        <text class="kicker">档案</text>
-        <text class="card-heading">今天</text>
-        <text class="today-meta">{{todayMeta}}</text>
-        <text class="persona-body">{{todayOverview}}</text>
-        <text class="go">打开回顾</text>
+      <view class="section-head">
+        <text class="section-head-title">最近的回顾</text>
+        <text class="text-button" bindtap="openMemory">全部 ›</text>
       </view>
+      <view wx:if="{{todayTitle}}" class="recap-preview" bindtap="openMemory">
+        <view class="recap-meta">
+          <text>{{todayMeta}}</text>
+          <text class="pill pill-neutral">AI 整理</text>
+        </view>
+        <text class="recap-title">{{todayTitle}}</text>
+        <text class="recap-body">{{todayOverview}}</text>
+        <text class="recap-read">打开这段回顾 ›</text>
+      </view>
+      <view wx:else class="notice">今天还没有可回顾的内容。在设备旁唤醒「茉莉」后，再回来查看。</view>
     </block>
 
-    <text wx:if="{{bindingSyncError && hasBinding}}" class="sync-warning">{{bindingSyncError}}</text>
-    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    <text class="privacy-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
   </block>
 </view>

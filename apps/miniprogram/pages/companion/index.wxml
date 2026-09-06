@@ -1,0 +1,41 @@
+<view class="page-shell">
+  <text class="page-title">角色与声音</text>
+  <text class="page-lede">选一种让你自在的表达方式。</text>
+
+  <scroll-view class="role-track" scroll-x enable-flex show-scrollbar="{{false}}">
+    <view
+      wx:for="{{companions}}"
+      wx:key="id"
+      class="role-card {{!customPersonaActive && profile.companion_id === item.id ? 'role-card-on' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="chooseCompanion"
+    >
+      <image class="role-photo" src="{{item.image}}" mode="aspectFit" />
+      <text class="role-name">{{item.name}}</text>
+      <text class="role-desc">{{item.tagline}}</text>
+    </view>
+  </scroll-view>
+
+  <view class="section-head">
+    <text class="section-head-title">{{currentName}}的声音</text>
+  </view>
+  <view class="list">
+    <view class="list-row" bindtap="chooseCatalogVoice">
+      <view class="choice-radio {{!customPersonaActive ? 'choice-radio-on' : ''}}"></view>
+      <view class="row-copy">
+        <text class="row-title">角色默认声音</text>
+        <text class="row-meta">{{currentTone}}</text>
+      </view>
+    </view>
+    <view class="list-row" bindtap="chooseCustomPersona">
+      <view class="choice-radio {{customPersonaActive ? 'choice-radio-on' : ''}}"></view>
+      <view class="row-copy">
+        <text class="row-title">我的自定义声音</text>
+        <text class="row-meta">需要单独同意与可用声音样本，在「我的」里录制或上传</text>
+      </view>
+    </view>
+  </view>
+
+  <text class="caption">角色只影响表达风格，不改变你的资料权限。换角色后，下次唤醒才会换成对应声音。</text>
+  <button class="primary-button empty-button" loading="{{saving}}" bindtap="saveCurrent">使用{{currentName}}的默认声音</button>
+</view>

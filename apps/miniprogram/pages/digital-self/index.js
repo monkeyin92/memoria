@@ -18,6 +18,7 @@ Page({
     persona: null,
     dimensions: [],
     versions: [],
+    showEngineering: false,
   },
 
   onLoad() {
@@ -59,7 +60,12 @@ Page({
       persona: null,
       dimensions: [],
       versions: [],
+      showEngineering: false,
     });
+  },
+
+  toggleEngineering() {
+    this.setData({ showEngineering: !this.data.showEngineering });
   },
 
   onPullDownRefresh() {

@@ -1,10 +1,16 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
-const { companionById } = require("../../utils/companions");
+const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { parseCustomPersona } = require("../../utils/custom-persona");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
-const { deviceStatusSummary } = require("../../utils/device-status");
-const { greetingFor } = require("../../utils/greeting");
+const {
+  currentUserSummary,
+  devicePlaceName,
+  deviceStatusSummary,
+} = require("../../utils/device-status");
+const { greetingFor, formatDateLabel } = require("../../utils/greeting");
+const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
+const { readSubjectLabel } = require("../../utils/subject-label");
 const contracts = require("../../utils/multi-subject-contracts");
 
 function todayKey(date = new Date()) {
@@ -13,7 +19,16 @@ function todayKey(date = new Date()) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+function pendingOnboarding() {
+  try {
+    return Boolean(readOnboardingSessionId());
+  } catch {
+    return false;
+  }
+}
+
 function emptyDashboard() {
+  const companion = companionById(defaultCompanionId);
   return {
     loading: false,
     syncingBindings: false,
@@ -22,25 +37,38 @@ function emptyDashboard() {
     needsBindingChoice: false,
     error: "",
     hasBinding: false,
+    hasPendingOnboarding: pendingOnboarding(),
     online: false,
     onlineLabel: "状态待同步",
-    currentUserLabel: "待确认",
+    currentUserLabel: "未读取",
     wakeWordLabel: "未读取",
-    personaName: "星澜",
-    personaVoice: "暖阳青年",
-    personaSummary: "系统默认人格与声音。",
-    todayMeta: "今天还没有可回顾的内容",
-    todayOverview: "对着设备说几句后，再回来看。",
+    personaName: companion.name,
+    personaVoice: companion.voiceName,
+    personaSummary: companion.description,
+    companionImage: companion.image,
+    devicePlaceName: "家中的设备",
+    pageLede: formatDateLabel(),
+    heroTitle: "给今天，留一点回味。",
+    heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
+    heroFoot: "在设备上使用，手机不录音",
+    pendingCount: 0,
+    todayMeta: "",
+    todayTitle: "",
+    todayOverview: "",
   };
 }
 
 function bindingChoiceItems(bindings) {
-  return (bindings || []).map((binding) => ({
-    binding,
-    bindingId: binding.binding_id,
-    label: `Memoria · ${String(binding.device_id || "").slice(-4) || "未知"}`,
-    modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
-  }));
+  return (bindings || []).map((binding) => {
+    const companion = companionById(defaultCompanionId);
+    return {
+      binding,
+      bindingId: binding.binding_id,
+      label: devicePlaceName(binding, companion.name),
+      modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
+      image: companion.image,
+    };
+  });
 }
 
 Page({
@@ -64,6 +92,7 @@ Page({
     this.setData({
       authenticated,
       greeting: `${greetingFor()}，${name}`,
+      pageLede: formatDateLabel(),
     });
     if (!authenticated) {
       this._enterGuestState();
@@ -92,6 +121,7 @@ Page({
     this.setData({
       authenticated: false,
       greeting: `${greetingFor()}，朋友`,
+      pageLede: "把设备连好，再慢慢留下日常。",
       ...emptyDashboard(),
     });
   },
@@ -102,8 +132,44 @@ Page({
     await this.loadHome();
   },
 
+  openHowItWorks() {
+    wx.showModal({
+      title: "怎么用",
+      content:
+        "在设备旁唤醒「茉莉」说话。手机用来连接设备、确认回顾和管理资料，不录音，也不代替设备对话。",
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
+  showSyncHelp() {
+    wx.showModal({
+      title: "手机和电脑显示不同？",
+      content:
+        "设备跟随微信账号同步。请先登录后点重新同步。同步失败不代表未绑定，也不需要重新配网。",
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
   openOnboarding() {
-    wx.navigateTo({ url: "/pages/device-onboarding/index?fresh=1" });
+    if (pendingOnboarding()) {
+      wx.showModal({
+        title: "继续上次启用？",
+        content: "上次已开始连接，可以继续设置，也可以重新开始。",
+        confirmText: "继续上次",
+        cancelText: "重新开始",
+        success: (result) => {
+          wx.navigateTo({
+            url: result.confirm
+              ? "/pages/device-onboarding/index"
+              : "/pages/device-onboarding/index?fresh=1",
+          });
+        },
+      });
+      return;
+    }
+    wx.navigateTo({ url: "/pages/device-onboarding/index" });
   },
 
   openDevice() {
@@ -115,6 +181,10 @@ Page({
   },
 
   openMemory() {
+    wx.switchTab({ url: "/pages/memory/index" });
+  },
+
+  openPendingMemory() {
     wx.switchTab({ url: "/pages/memory/index" });
   },
 
@@ -158,6 +228,7 @@ Page({
       needsBindingChoice: false,
       bindingChoices: [],
       error: "",
+      hasPendingOnboarding: pendingOnboarding(),
     });
 
     const bindingState = await api.syncDeviceBindings();
@@ -166,12 +237,15 @@ Page({
     if (bindingState.status === "error") {
       this.setData({
         ...emptyDashboard(),
-        bindingSyncError: "设备同步失败，请检查网络后重试。",
+        bindingSyncError: "设备信息暂未同步。这不代表未绑定，无需重新配网。",
       });
       return;
     }
     if (bindingState.status === "empty") {
-      this.setData(emptyDashboard());
+      this.setData({
+        ...emptyDashboard(),
+        pageLede: "只需几步，把你的设备连接起来。",
+      });
       return;
     }
     if (bindingState.status === "choose") {
@@ -179,6 +253,7 @@ Page({
         ...emptyDashboard(),
         needsBindingChoice: true,
         bindingChoices: bindingChoiceItems(bindingState.bindings),
+        pageLede: "你的账号下有多台设备。",
       });
       return;
     }
@@ -217,19 +292,19 @@ Page({
       profileResult.status === "fulfilled" && profileResult.value !== null
         ? profileResult.value
         : null;
-    const today =
-      todayResult.status === "fulfilled" ? todayResult.value : emptyDashboard();
+    const today = todayResult.status === "fulfilled" ? todayResult.value : {};
     const summary = deviceStatusSummary(activation, runtime);
     const custom = parseCustomPersona(profile?.bio);
     const companion = companionById(profile?.companion_id);
     const personaName = custom.active ? custom.name : companion.name;
-    const personaVoice = custom.active ? "自定义声音，评估通过前使用系统音色" : companion.voiceName;
+    const personaVoice = custom.active ? "你提供的声音样本" : companion.voiceName;
     const personaSummary = custom.active
       ? custom.text
       : companion.description || companion.tagline;
     const failures = [activationResult, runtimeResult].filter(
       (result) => result.status === "rejected",
     );
+    const online = summary.online;
 
     this.setData({
       loading: false,
@@ -241,23 +316,38 @@ Page({
       bindingChoices: [],
       needsBindingChoice: false,
       hasBinding: true,
-      online: summary.online,
+      hasPendingOnboarding: pendingOnboarding(),
+      online,
       onlineLabel: summary.onlineLabel,
-      currentUserLabel: runtime?.active_subject_id ? "已确认" : "待在设备上确认",
+      currentUserLabel: currentUserSummary({
+        subjectLabel: readSubjectLabel(binding),
+      }),
       wakeWordLabel: settings?.wake_word_display || "未读取",
       personaName,
       personaVoice,
       personaSummary,
-      todayMeta: today.todayMeta,
-      todayOverview: today.todayOverview,
+      companionImage: companion.image,
+      devicePlaceName: devicePlaceName(binding, personaName),
+      pageLede: formatDateLabel(),
+      heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",
+      heroCaption: online
+        ? "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。"
+        : "可查看已同步的回顾。设备恢复连接后再记录。",
+      heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
+      pendingCount: today.pendingCount || 0,
+      todayMeta: today.todayMeta || "",
+      todayTitle: today.todayTitle || "",
+      todayOverview: today.todayOverview || "",
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },
 
   async _loadToday(identity) {
     const empty = {
-      todayMeta: "今天还没有可回顾的内容",
-      todayOverview: "对着设备说几句后，再回来看。",
+      pendingCount: 0,
+      todayMeta: "",
+      todayTitle: "",
+      todayOverview: "",
     };
     if (!identity) return empty;
     const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
@@ -272,9 +362,12 @@ Page({
     const pending = (reviewResult?.memory_candidates || []).length;
     const overview =
       day?.summary?.overview || day?.overview || day?.summary_text || "";
+    const title = day?.summary?.title || day?.title || "";
     if (!count && !pending) return empty;
     return {
-      todayMeta: `${count} 段对话 · ${pending} 条待你确认`,
+      pendingCount: pending,
+      todayMeta: count ? `今天 · ${count} 段对话` : "今天",
+      todayTitle: title || (pending ? "有内容等你确认" : ""),
       todayOverview: overview || "具体内容在回顾里。",
     };
   },

@@ -15,6 +15,26 @@
       {
         "value": "assets/bg/night-stars.png",
         "type": "file"
+      },
+      {
+        "value": "assets/companions/starlight.jpg",
+        "type": "file"
+      },
+      {
+        "value": "assets/companions/taoxi.jpg",
+        "type": "file"
+      },
+      {
+        "value": "assets/companions/mianmian.jpg",
+        "type": "file"
+      },
+      {
+        "value": "assets/companions/axu.jpg",
+        "type": "file"
+      },
+      {
+        "value": "assets/companions/xuanmo.jpg",
+        "type": "file"
       }
     ]
   },

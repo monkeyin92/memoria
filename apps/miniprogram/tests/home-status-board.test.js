@@ -9,7 +9,7 @@ const {
   parseCustomPersona,
 } = require("../utils/custom-persona");
 const { greetingFor } = require("../utils/greeting");
-const { deviceStatusSummary } = require("../utils/device-status");
+const { currentUserSummary, deviceStatusSummary } = require("../utils/device-status");
 
 test("custom persona round-trips through the profile bio marker", () => {
   const encoded = encodeCustomPersona({ name: "小黑", text: "说话短一点，陪我散步。" });
@@ -30,24 +30,31 @@ test("home greeting bands do not invent a room or a master title", () => {
   assert.equal(greetingFor(new Date(2026, 8, 5, 23)), "夜深了");
 });
 
-test("online status copy is wake-oriented, not in-app chat", () => {
+test("online status copy is device-oriented, not in-app chat", () => {
   const ready = deviceStatusSummary({ status: "ready_for_conversation" }, {});
-  assert.equal(ready.onlineLabel, "在线，可以唤醒");
+  assert.equal(ready.onlineLabel, "设备在线");
   assert.doesNotMatch(ready.onlineLabel, /可直接对话/);
   const offline = deviceStatusSummary({ status: "failed", network: { internet: false } }, {});
-  assert.equal(offline.onlineLabel, "离线，请检查电源和网络");
+  assert.equal(offline.onlineLabel, "暂时离线");
 });
 
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(template, /对话在设备上完成/);
-  assert.match(template, /card-heading">Memoria/);
-  assert.match(template, /陪伴机器人随人移动，不按房间固定/);
-  assert.doesNotMatch(template, /客厅|卧室|书房/);
+  assert.match(template, /欢迎来到 Memoria|page-title">\{\{greeting\}\}/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
-  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后照看你的机器人/);
+  assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*登录后查看设备和今天/);
   assert.match(script, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
+  assert.doesNotMatch(script, /待在设备上确认/);
+  assert.doesNotMatch(script, /resolveSessionSubject/);
+  assert.match(script, /readSubjectLabel/);
+});
+
+test("current user on home is the bind-time remark, not the WeChat name", () => {
+  assert.equal(currentUserSummary({ subjectLabel: "老爸" }), "老爸");
+  assert.equal(currentUserSummary({ subjectLabel: "亲爱的儿子" }), "亲爱的儿子");
+  assert.equal(currentUserSummary({}), "未设置");
+  assert.equal(currentUserSummary({ subjectLabel: "   " }), "未设置");
 });
 
 test("device wake word copy tells users it syncs then restarts", () => {
@@ -56,6 +63,9 @@ test("device wake word copy tells users it syncs then restarts", () => {
   assert.match(template, /重启后生效/);
   assert.doesNotMatch(template, /下次连接生效/);
   assert.match(template, /不按客厅、卧室这类房间来标记/);
+  assert.match(template, /使用者备注/);
+  assert.match(template, /保存备注/);
+  assert.match(template, /此刻是谁在用/);
 });
 
 test("profile supports catalog and custom persona plus voice sample", () => {
@@ -68,4 +78,9 @@ test("profile supports catalog and custom persona plus voice sample", () => {
   assert.match(script, /encodeCustomPersona/);
   assert.match(script, /enrollVoiceClone/);
   assert.match(script, /getRecorderManager/);
+  assert.match(script, /readyForDevice:\s*true/);
+  assert.match(script, /readyVoiceForDevice/);
+  assert.match(script, /正在生成自定义声音，大约一分钟/);
+  assert.doesNotMatch(script, /等待服务端评估/);
+  assert.doesNotMatch(template, /评估通过前/);
 });

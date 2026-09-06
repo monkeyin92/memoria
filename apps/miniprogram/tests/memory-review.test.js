@@ -411,11 +411,13 @@ test("guest state clears every private review partition", async () => {
   });
 });
 
-test("memory review WXML exposes the three sections with approximate labels", () => {
+test("memory review WXML exposes daily recap, pending memory, and approximate heard labels", () => {
   const wxml = fs.readFileSync(
     path.join(__dirname, "../pages/memory/index.wxml"),
     "utf8",
   );
+  assert.match(wxml, /日常回顾/);
+  assert.match(wxml, /记住的事/);
   assert.match(wxml, /实际听到的回复/);
   assert.match(wxml, /待你确认的记忆/);
   assert.match(wxml, /已确认的记忆/);

@@ -1,5 +1,3 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell onboarding-page">
   <text class="eyebrow">{{mode === 'reprovision' ? '重新配网' : '首次启用'}}</text>
   <text class="page-title">{{stateLabel}}</text>

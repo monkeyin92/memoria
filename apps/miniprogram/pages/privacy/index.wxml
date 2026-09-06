@@ -1,24 +1,31 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell">
-  <text class="eyebrow">隐私与授权</text>
-  <text class="page-title">每一份授权都可撤回</text>
-  <text class="page-subtitle">默认不会因为机器人上的语音陪伴而自动保存原始音频。</text>
+  <text class="page-title">隐私与数据</text>
+  <text class="page-lede">每一份授权都可以撤回。默认不会因为机器人上的语音陪伴而自动保存原始音频。</text>
 
-  <view class="card consent-card {{consent ? 'consent-on' : ''}}">
-    <view class="consent-shield">
-      <text class="consent-shield-icon">{{consent ? '✓' : '✧'}}</text>
-    </view>
-    <text class="privacy-status">{{consent ? '原始语音归档已授权' : '原始语音归档未授权'}}</text>
-    <text wx:if="{{consent}}" class="privacy-detail">授权时间：{{consent.granted_at}}<br />策略：{{consent.retention_policy}}</text>
-    <text wx:else class="privacy-detail">机器人的对话音频是否归档需要单独明确同意；小程序只做授权管理，不采集或中转实时音频。</text>
-    <button wx:if="{{!consent}}" class="primary-button privacy-button" loading="{{acting}}" bindtap="grant">明确授权原始语音归档</button>
-    <button wx:else class="danger-button privacy-button" loading="{{acting}}" bindtap="revoke">撤回并删除受授权音频</button>
+  <text class="group-label">录音与声音</text>
+  <view class="card">
+    <text class="setting-name">{{consent ? '原始语音归档已授权' : '原始语音归档未授权'}}</text>
+    <text wx:if="{{consent}}" class="setting-desc">授权时间：{{consent.granted_at}}</text>
+    <text wx:if="{{consent}}" class="setting-desc">策略：{{consent.retention_policy}}</text>
+    <text wx:else class="setting-desc">机器人的对话音频是否归档需要单独明确同意。小程序只做授权管理，不采集或中转实时音频。</text>
+    <button wx:if="{{!consent}}" class="primary-button empty-button" loading="{{acting}}" bindtap="grant">明确授权原始语音归档</button>
+    <button wx:else class="danger-button empty-button" loading="{{acting}}" bindtap="revoke">撤回并删除受授权音频</button>
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
   </view>
+  <view class="card">
+    <text class="setting-name">自定义声音样本</text>
+    <text class="setting-desc">默认不采集麦克风。只有你主动在「我的」录制自定义声音样本时才会申请麦克风权限，样本用于声音复刻，不用于小程序内对话。</text>
+  </view>
 
-  <view class="card privacy-note">
-    <text class="privacy-note-title">身份与媒体边界</text>
-    <text class="privacy-detail">小程序通过 HTTPS 访问 Control API，不播放实时语音、不加入 LiveKit 房间、不接触设备媒体票据或服务端密钥。默认不采集麦克风；只有你主动录制自定义声音样本时才会申请麦克风权限，样本用于声音复刻，不用于小程序内对话。说话人、历史资格、数字分身与权限均由服务端判定。</text>
+  <text class="group-label">回顾与记忆</text>
+  <view class="card">
+    <text class="setting-name">待确认草稿不会自动变成记忆</text>
+    <text class="setting-desc">日常回顾由 AI 整理，可能有偏差。未确认的内容不会进入记忆档案。</text>
+  </view>
+
+  <text class="group-label">数据</text>
+  <view class="card">
+    <text class="setting-name">身份与媒体边界</text>
+    <text class="setting-desc">小程序通过 HTTPS 访问 Control API，不播放实时语音、不加入 LiveKit 房间、不接触设备媒体票据或服务端密钥。说话人、历史资格、数字分身与权限均由服务端判定。</text>
   </view>
 </view>

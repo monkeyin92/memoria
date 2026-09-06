@@ -1,220 +1,215 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell">
-  <text class="eyebrow">设备与成员</text>
-  <text class="page-title">谁在用，由谁决定</text>
-  <text class="page-subtitle">小程序用于管理设备和回顾，对话请在机器人上完成。陪伴机器人随人移动，不按客厅、卧室这类房间来标记。首次绑定只决定默认用途；当前使用者与敏感能力由服务端 Runtime Profile 决定。</text>
+  <text class="page-title">设备</text>
 
-  <view wx:if="{{loading}}" class="card">
-    <text class="loading-text">{{syncingBindings ? '正在同步你的设备…' : '正在读取设备状态…'}}</text>
+  <view wx:if="{{!authenticated}}">
+    <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
+    <view class="notice">登录后即可查看你的设备。</view>
+    <button class="primary-button empty-button" bindtap="retryBindingSync">登录后查看设备</button>
   </view>
 
-  <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card empty-card">
-    <text class="empty-badge sync-error-badge">同步未完成</text>
-    <text class="empty-title">暂时无法确认设备信息</text>
-    <text class="empty-copy">{{bindingSyncError}}</text>
-    <button class="primary-button empty-button" bindtap="retryBindingSync">重新同步</button>
-  </view>
-
-  <view wx:elif="{{needsBindingChoice}}" class="card empty-card">
-    <text class="empty-badge">选择设备</text>
-    <text class="empty-title">这次要管理哪一台？</text>
-    <text class="empty-copy">你的账号绑定了多台设备，请选择一台作为当前设备。</text>
-    <view wx:for="{{bindingChoices}}" wx:key="bindingId" class="binding-choice" data-binding-id="{{item.bindingId}}" bindtap="chooseDeviceBinding">
-      <view class="binding-choice-copy">
-        <text class="binding-choice-name">{{item.label}}</text>
-        <text class="binding-choice-meta">{{item.modeLabel}}</text>
-      </view>
-      <text class="binding-choice-arrow">›</text>
-    </view>
-    <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
-  </view>
-
-  <!-- 未绑定 -->
-  <block wx:elif="{{!hasBinding}}">
-    <view class="card empty-card">
-      <text class="empty-badge">还没有绑定设备</text>
-      <text class="empty-copy">把这里当作机器人管理入口：添加时扫码、近场配网、认领和首次初始化会在独立流程完成；绑定后小程序主要用于查看设备状态、管理设置和回顾信息。</text>
-      <button class="primary-button empty-button" bindtap="openOnboarding">添加机器人</button>
-      <button wx:if="{{hasPendingOnboarding}}" class="secondary-button empty-button" bindtap="resumeOnboarding">恢复未完成启用</button>
-    </view>
-  </block>
-
-  <!-- 已绑定 -->
   <block wx:else>
-    <text wx:if="{{bindingSyncError}}" class="sync-warning">{{bindingSyncError}}</text>
-    <view class="card">
-      <text class="settings-title">机器人状态</text>
-      <view class="device-status-grid">
-        <view class="device-status-item"><text class="device-status-label">在线状态</text><text class="device-status-value">{{onlineLabel}}</text></view>
-        <view class="device-status-item"><text class="device-status-label">固件版本</text><text class="device-status-value">{{firmwareVersion}}</text></view>
-        <view class="device-status-item"><text class="device-status-label">网络状态</text><text class="device-status-value">{{networkLabel}}</text></view>
-        <view class="device-status-item"><text class="device-status-label">激活状态</text><text class="device-status-value">{{activationLabel}}</text></view>
-      </view>
-      <view class="button-row device-action-row">
-        <button class="secondary-button" bindtap="openReprovision">重新配网</button>
-        <button class="primary-button" bindtap="openOnboarding">添加另一个</button>
-      </view>
-      <text class="form-note">重新配网只更新 Wi‑Fi，不解除设备归属；设备状态与激活状态以服务端和机器人回执为准。</text>
+    <view wx:if="{{loading}}" class="card">
+      <text class="loading-text">{{syncingBindings ? '正在同步你的设备…' : '正在读取设备状态…'}}</text>
     </view>
 
-    <view class="card">
-      <text class="settings-title">绑定信息</text>
-      <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value summary-mono">{{binding.binding_id}}</text></view>
-      <view wx:if="{{binding.binding_version}}" class="summary-row"><text class="summary-key">版本</text><text class="summary-value">v{{binding.binding_version}}</text></view>
-      <view wx:if="{{bindingRoles.length > 0}}" class="summary-row">
-        <text class="summary-key">角色</text>
-        <text class="summary-value">{{bindingRoles}}</text>
-      </view>
-      <text class="form-note">更换主要使用者会产生新的绑定版本，旧版本保留用于审计；购买者不自动获得内容读取权限。</text>
+    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card">
+      <text class="empty-title">设备信息暂未同步</text>
+      <text class="empty-copy">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
+      <button class="primary-button empty-button" bindtap="retryBindingSync">重新同步</button>
     </view>
 
-    <!-- 当前使用者 -->
-    <view class="card">
-      <text class="settings-title">当前使用者</text>
-      <view wx:if="{{currentUserLabel}}" class="current-user-chip">
-        <text class="current-user-name">{{currentUserLabel}}</text>
-        <text class="current-user-state">已确认</text>
+    <view wx:elif="{{needsBindingChoice}}">
+      <text class="page-lede">设备信息已从账号找到。选择你要查看的设备。</text>
+      <view
+        wx:for="{{bindingChoices}}"
+        wx:key="bindingId"
+        class="choice-card"
+        data-binding-id="{{item.bindingId}}"
+        bindtap="chooseDeviceBinding"
+      >
+        <view class="row-copy">
+          <text class="row-title">{{item.label}}</text>
+          <text class="row-meta">{{item.modeLabel}}</text>
+        </view>
+        <text class="row-chevron">›</text>
       </view>
+      <text class="caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
+      <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
+    </view>
 
-      <block wx:if="{{candidates.length > 0 && !currentUserLabel}}">
-        <text class="setting-desc">无法自动确认是谁在使用，请选择并确认：</text>
-        <view wx:for="{{candidates}}" wx:key="person_id" class="candidate-row {{selectedCandidateId === item.person_id ? 'candidate-selected' : ''}}" data-person-id="{{item.person_id}}" bindtap="selectCandidate">
-          <view class="candidate-copy">
-            <text class="candidate-name">{{item.display_name}}</text>
-            <text wx:if="{{item.relationship_label}}" class="candidate-relation">{{item.relationship_label}}</text>
+    <view wx:elif="{{!hasBinding}}" class="empty-block">
+      <image class="empty-photo" src="{{companionImage}}" mode="aspectFit" />
+      <text class="empty-title">还没有绑定设备</text>
+      <text class="empty-copy">已确认当前账号下没有设备。接通电源后，即可开始添加。</text>
+      <button class="primary-button empty-button" bindtap="{{hasPendingOnboarding ? 'resumeOnboarding' : 'openOnboarding'}}">{{hasPendingOnboarding ? '继续上次启用' : '添加设备'}}</button>
+    </view>
+
+    <block wx:else>
+      <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
+
+      <view class="device-portrait">
+        <image class="portrait-image" src="{{companionImage}}" mode="aspectFit" />
+        <text class="portrait-name">{{devicePlaceName}}</text>
+        <view class="portrait-pills">
+          <view class="pill {{online ? '' : 'pill-amber'}}">
+            <view class="pill-dot"></view>
+            <text>{{online ? '在线' : '离线'}}</text>
           </view>
-          <view class="candidate-confidence">
-            <view class="confidence-track"><view class="confidence-value {{item.confidence >= 0.5 ? 'confidence-high' : 'confidence-low'}}" style="width: {{item.confidence * 100}}%;"></view></view>
-            <text class="confidence-label {{item.confidence >= 0.5 ? '' : 'confidence-low-text'}}">{{item.confidence >= 0.5 ? '置信度 ' + Math.round(item.confidence * 100) + '%' : '置信度较低'}}</text>
+          <view class="pill pill-neutral">{{bindingModeLabel}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{!online}}" class="notice notice-warn">
+        <text class="notice-title">设备暂时无法连接</text>
+        <text>请检查电源和家庭 Wi-Fi。绑定关系仍在，无需重新认领。</text>
+      </view>
+
+      <view class="two-stats">
+        <view class="two-stats-cell">
+          <text class="two-stats-value">{{onlineLabel}}</text>
+          <text class="two-stats-label">最近状态</text>
+        </view>
+        <view class="two-stats-cell">
+          <text class="two-stats-value">{{currentUserLabel}}</text>
+          <text class="two-stats-label">当前使用者</text>
+        </view>
+      </view>
+
+      <view class="section-head">
+        <text class="section-head-title">常用设置</text>
+      </view>
+      <view class="list">
+        <view wx:if="{{settings}}" class="setting-control">
+          <view class="setting-row">
+            <text class="setting-name">设备音量</text>
+            <text class="setting-desc">{{settings.volume_limit}}%</text>
+          </view>
+          <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#326e70" block-color="#172f43" />
+        </view>
+        <view class="list-row" bindtap="openCompanion">
+          <view class="row-copy">
+            <text class="row-title">角色与声音</text>
+            <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" bindtap="{{online ? '' : 'showConnectionHelp'}}">
+          <view class="row-copy">
+            <text class="row-title">网络连接</text>
+            <text class="row-meta">{{online ? '家庭网络已连接' : '等待重新连接'}}</text>
           </view>
         </view>
-        <button class="primary-button confirm-button" loading="{{switching}}" disabled="{{!canConfirmWithApp}}" bindtap="confirmSubject">确认是我</button>
-        <text wx:if="{{!canConfirmWithApp}}" class="form-note">当前会话需要通过语音确认身份，应用内切换暂不可用。</text>
+      </view>
+
+      <view class="section-head">
+        <text class="section-head-title">使用者与设备</text>
+      </view>
+      <view class="list">
+        <view class="list-row">
+          <view class="row-copy">
+            <text class="row-title">使用者备注</text>
+            <text class="row-meta">首页显示这条备注，不是微信昵称。不按客厅、卧室这类房间来标记。</text>
+          </view>
+        </view>
+        <view class="alias-edit">
+          <input class="field-input" value="{{subjectAliasDraft}}" placeholder="例如：亲爱的儿子、老爸" placeholder-class="field-placeholder" maxlength="16" bindinput="onSubjectAliasInput" />
+          <button class="secondary-button" bindtap="saveSubjectAlias">保存备注</button>
+        </view>
+        <view class="list-row" bindtap="openGuardian">
+          <view class="row-copy">
+            <text class="row-title">家庭成员</text>
+            <text class="row-meta">邀请与权限分别管理</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" bindtap="openOnboarding">
+          <view class="row-copy">
+            <text class="row-title">添加其他设备</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" bindtap="openReprovision">
+          <view class="row-copy">
+            <text class="row-title">重新配网</text>
+            <text class="row-meta">只更新 Wi-Fi，不解除绑定</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+      </view>
+
+      <block wx:if="{{candidates.length > 0 && !currentUserLabelConfirmed}}">
+        <view class="card">
+          <text class="setting-name">此刻是谁在用</text>
+          <text class="setting-desc">无法自动确认时，请选择并确认。详细置信度见下方诊断。</text>
+          <view wx:for="{{candidates}}" wx:key="person_id" class="choice-card {{selectedCandidateId === item.person_id ? 'choice-card-on' : ''}}" data-person-id="{{item.person_id}}" bindtap="selectCandidate">
+            <view class="row-copy">
+              <text class="row-title">{{item.display_name}}</text>
+              <text wx:if="{{item.relationship_label}}" class="row-meta">{{item.relationship_label}}</text>
+            </view>
+          </view>
+          <button class="primary-button empty-button" loading="{{switching}}" disabled="{{!canConfirmWithApp}}" bindtap="confirmSubject">确认是我</button>
+          <text wx:if="{{!canConfirmWithApp}}" class="caption">当前会话需要通过语音确认身份，应用内切换暂不可用。</text>
+        </view>
       </block>
 
-      <view wx:if="{{candidates.length === 0 && !currentUserLabel}}" class="current-user-empty">
-        <text class="empty-copy">暂时没有可确认的成员档案。</text>
-      </view>
-    </view>
-
-    <!-- 可解释降级 -->
-
-    <!-- 设备设置：版本化写入服务端 Runtime Profile，设备在下一安全点生效 -->
-    <view class="card">
-      <text class="settings-title">设备设置</text>
-      <text class="setting-desc">设置以版本化方式写入服务端 Runtime Profile，设备在下一安全点生效；未保存成功不保留本地假状态。</text>
-      <block wx:if="{{settings}}">
-        <view class="setting-control">
-          <text class="setting-control-label">音量</text>
-          <slider min="0" max="100" step="1" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#22e5ff" block-color="#7ceaff" />
-        </view>
-        <view class="setting-control">
-          <text class="setting-control-label">屏幕亮度</text>
-          <slider min="0" max="100" step="1" value="{{settings.screen_brightness}}" bindchange="changeBrightness" disabled="{{settingsSaving}}" activeColor="#22e5ff" block-color="#7ceaff" />
-        </view>
-        <view class="setting-control">
-          <text class="setting-control-label">期望音频模式（{{currentAudioModeLabel}}）</text>
-          <picker wx:if="{{audioModeOptions.length > 0}}" range="{{audioModeOptions}}" range-key="label" value="{{audioModeIndex}}" bindchange="selectAudioMode" disabled="{{settingsSaving}}">
-            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{audioModeOptions[audioModeIndex].label}}</view>
-          </picker>
-          <text wx:else class="setting-control-note">声学能力未知，音频模式暂不可修改（fail-closed）。</text>
-        </view>
-        <view class="setting-control">
-          <text class="setting-control-label">唤醒方式</text>
-          <picker range="{{wakeModeOptions}}" range-key="label" value="{{wakeModeIndex}}" bindchange="selectWakeMode" disabled="{{settingsSaving}}">
-            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeModeLabel}}</view>
-          </picker>
-        </view>
-        <view class="setting-control">
-          <text class="setting-control-label">唤醒词</text>
-          <picker wx:if="{{wakeWordOptions.length > 0}}" range="{{wakeWordOptions}}" range-key="label" value="{{wakeWordIndex}}" bindchange="selectWakeWord" disabled="{{settingsSaving}}">
-            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeWordLabel}}</view>
-          </picker>
-          <text wx:if="{{wakeWordNote}}" class="setting-control-note">{{wakeWordNote}}</text>
-          <text class="setting-control-note">保存后会在线同步到设备。设备应用新唤醒词后需要重启才会生效，请保持设备在线。</text>
-        </view>
-        <view class="setting-control custom-wake-word">
-          <text class="setting-control-label">自定义唤醒词</text>
-          <text class="setting-control-note">填写中文显示名与拼音（空格分音节，如 xiao hei）。保存后会在线同步到设备，设备重启后生效。</text>
-          <input class="field-input wake-word-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
-          <input class="field-input wake-word-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="拼音，例如：xiao hei" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
-          <button class="secondary-button wake-word-save" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="saveCustomWakeWord">保存自定义唤醒词</button>
-          <view wx:for="{{customWakeWordWarnings}}" wx:key="*this">
-            <text class="setting-control-note">{{item}}</text>
-          </view>
-        </view>
-        <view class="setting-control">
-          <text class="setting-control-label">允许的打断方式</text>
-          <checkbox-group bindchange="toggleBargeIn">
-            <label wx:for="{{bargeInOptions}}" wx:key="value" class="barge-in-option">
-              <checkbox value="{{item.value}}" checked="{{bargeInChecked[item.value]}}" color="#22e5ff" disabled="{{settingsSaving}}" />
-              <text class="barge-in-label">{{item.label}}</text>
-            </label>
-          </checkbox-group>
-        </view>
-        <text wx:if="{{settingsSaving}}" class="setting-control-note">正在保存…</text>
+      <view wx:if="{{settings}}" class="card">
+        <text class="setting-name">唤醒词</text>
+        <text class="setting-desc">保存后会在线同步到设备。重启后生效，请保持设备在线。</text>
+        <picker wx:if="{{wakeWordOptions.length > 0}}" range="{{wakeWordOptions}}" range-key="label" value="{{wakeWordIndex}}" bindchange="selectWakeWord" disabled="{{settingsSaving}}">
+          <view class="choice-card">{{wakeWordLabel}}</view>
+        </picker>
+        <text wx:if="{{wakeWordNote}}" class="caption">{{wakeWordNote}}</text>
+        <text class="field-label">自定义唤醒词</text>
+        <input class="field-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
+        <input class="field-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="拼音，例如：xiao hei" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
+        <button class="secondary-button empty-button" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="saveCustomWakeWord">保存自定义唤醒词</button>
+        <text wx:for="{{customWakeWordWarnings}}" wx:key="*this" class="caption">{{item}}</text>
+        <text wx:if="{{settingsSaving}}" class="caption">正在保存…</text>
         <text wx:if="{{settingsError}}" class="error-text">{{settingsError}}</text>
-      </block>
-      <text wx:else class="setting-control-note">设备设置暂时无法读取，请下拉刷新；未取得权威设置前不开放修改。</text>
-    </view>
+      </view>
 
-    <!-- 诊断信息：只展示服务端权威字段（PR-18），客户端不拼接连接质量数据 -->
-    <view class="card">
-      <text class="settings-title">诊断信息</text>
-      <block wx:if="{{diagnostics}}">
-        <view wx:if="{{diagnostics.generated_at}}" class="summary-row"><text class="summary-key">最近诊断时间</text><text class="summary-value">{{diagnostics.generated_at}}</text></view>
-        <view wx:if="{{diagnostics.binding}}" class="summary-row"><text class="summary-key">绑定版本 / 激活状态</text><text class="summary-value">v{{diagnostics.binding.binding_version}} · {{diagnostics.binding.activation_status}}</text></view>
-        <view class="summary-row"><text class="summary-key">Runtime Profile 版本</text><text class="summary-value">v{{diagnostics.runtime_profile_version}}</text></view>
-        <view class="summary-row"><text class="summary-key">实际音频模式</text><text class="summary-value">{{effectiveAudioModeLabel}}</text></view>
-        <view class="summary-row"><text class="summary-key">实时链路</text><text class="summary-value">{{liveRuntimeStatusLabel}}</text></view>
-        <view class="summary-row"><text class="summary-key">允许的音频模式</text><text class="summary-value">{{allowedAudioModesLabel}}</text></view>
-        <block wx:if="{{acousticCapability}}">
-          <text class="setting-desc acoustic-heading">声学能力登记（服务端权威）</text>
-          <view class="summary-row"><text class="summary-key">板型</text><text class="summary-value">{{acousticCapability.board_profile}}</text></view>
-          <view class="summary-row"><text class="summary-key">固件范围</text><text class="summary-value">{{acousticCapability.firmware_version_range}}</text></view>
-          <view class="summary-row"><text class="summary-key">声学档案版本</text><text class="summary-value">v{{acousticCapability.acoustic_profile_version}}</text></view>
-          <view class="summary-row"><text class="summary-key">AEC 验收</text><text class="summary-value">{{acousticCapability.aec_verified ? '已通过' : '未通过'}}</text></view>
-          <view class="summary-row"><text class="summary-key">AEC 参考类型</text><text class="summary-value">{{acousticCapability.aec_reference_type}}</text></view>
-          <view class="summary-row"><text class="summary-key">最大打断等级</text><text class="summary-value">{{acousticCapability.max_barge_in_level}}</text></view>
-          <view class="summary-row"><text class="summary-key">测试音量范围</text><text class="summary-value">{{acousticCapability.tested_volume_range}}</text></view>
-          <view wx:if="{{acousticCapability.tested_distance_m !== null}}" class="summary-row"><text class="summary-key">测试距离</text><text class="summary-value">{{acousticCapability.tested_distance_m}} m</text></view>
-        </block>
-        <text wx:else class="setting-control-note">尚未登记声学能力：只允许半双工安全模式，不开放全双工或语音打断。</text>
-        <text class="form-note">诊断只展示服务端权威字段；连接质量（丢包/欠载/重连）等字段由服务端补齐后才会展示。</text>
-      </block>
-      <text wx:else class="setting-control-note">诊断信息暂时不可用（服务端未返回），不展示推断数据。</text>
-    </view>
-    <view wx:if="{{degradation}}" class="card degradation-card">
-      <text class="degradation-badge">安全模式</text>
-      <text wx:for="{{degradation.reasons}}" wx:key="*this" class="degradation-reason">{{item}}</text>
-      <view class="degradation-columns">
-        <view class="degradation-column">
-          <text class="degradation-column-title">仍然可用</text>
-          <text wx:for="{{degradation.allowed}}" wx:key="*this" class="degradation-item">{{item}}</text>
-        </view>
-        <view class="degradation-column">
-          <text class="degradation-column-title">受限</text>
-          <text wx:for="{{degradation.restricted}}" wx:key="*this" class="degradation-item">{{item}}</text>
-        </view>
-        <view class="degradation-column">
-          <text class="degradation-column-title degradation-forbidden-title">保持关闭</text>
-          <text wx:for="{{degradation.forbidden}}" wx:key="*this" class="degradation-item degradation-forbidden">{{item}}</text>
+      <view class="fold">
+        <text class="fold-summary">设备信息与诊断</text>
+        <view class="diagnostic">
+          <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
+          <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{binding.binding_id}}</text></view>
+          <view wx:if="{{binding.binding_version}}" class="summary-row"><text class="summary-key">版本</text><text class="summary-value">v{{binding.binding_version}}</text></view>
+          <view wx:if="{{firmwareVersion}}" class="summary-row"><text class="summary-key">固件</text><text class="summary-value">{{firmwareVersion}}</text></view>
+          <view class="summary-row"><text class="summary-key">激活</text><text class="summary-value">{{activationLabel}}</text></view>
+          <view class="summary-row"><text class="summary-key">交互方式</text><text class="summary-value">对话请在机器人上完成</text></view>
+          <block wx:if="{{diagnostics}}">
+            <view wx:if="{{diagnostics.generated_at}}" class="summary-row"><text class="summary-key">最近诊断</text><text class="summary-value">{{diagnostics.generated_at}}</text></view>
+            <view class="summary-row"><text class="summary-key">配置版本</text><text class="summary-value">v{{diagnostics.runtime_profile_version}}</text></view>
+            <view class="summary-row"><text class="summary-key">实际音频模式</text><text class="summary-value">{{effectiveAudioModeLabel}}</text></view>
+          </block>
+          <block wx:if="{{candidates.length}}">
+            <text class="caption">说话人候选仅供诊断，不代替当前使用者备注。</text>
+            <view wx:for="{{candidates}}" wx:key="person_id" class="summary-row">
+              <text class="summary-key">{{item.display_name}}</text>
+              <text class="summary-value">{{item.confidenceLow ? '置信度较低' : '匹配 ' + item.confidencePercent + '%'}}</text>
+            </view>
+          </block>
+          <text class="caption">设备归属、在线状态、主人识别和私密权限分别确认，不能互相替代。</text>
+          <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
       </view>
-    </view>
 
-    <!-- 敏感入口由服务端 capabilities 驱动 -->
-    <view wx:if="{{sensitiveEntries.length > 0}}" class="card">
-      <text class="settings-title">可用能力</text>
-      <text class="setting-desc">以下入口由服务端按当前主体授权，而不是由本机推断年龄。</text>
-      <view wx:for="{{sensitiveEntries}}" wx:key="key" class="nav-card" data-page="{{item.page}}" bindtap="openEntry">
-        <view><text class="setting-name">{{item.title}}</text><text class="setting-desc">{{item.description}}</text></view>
-        <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+      <view wx:if="{{degradation}}" class="notice notice-warn">
+        <text class="notice-title">安全模式</text>
+        <text wx:for="{{degradation.reasons}}" wx:key="*this">{{item}}</text>
       </view>
-    </view>
 
-    <text wx:if="{{error}}" class="error-text device-error">{{error}}</text>
+      <view wx:if="{{sensitiveEntries.length > 0}}" class="list">
+        <view wx:for="{{sensitiveEntries}}" wx:key="key" class="list-row" data-page="{{item.page}}" bindtap="openEntry">
+          <view class="row-copy">
+            <text class="row-title">{{item.title}}</text>
+            <text class="row-meta">{{item.description}}</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+      </view>
+
+      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    </block>
   </block>
 </view>

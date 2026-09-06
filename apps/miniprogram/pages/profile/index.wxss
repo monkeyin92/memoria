@@ -1,82 +1,23 @@
-/* ——— 资料 Hero ——— */
-.profile-hero {
-  position: relative;
+.account {
   display: flex;
   align-items: center;
-  margin-top: 24rpx;
-  padding: 32rpx;
-  overflow: hidden;
-  border: 1rpx solid rgba(94, 234, 255, 0.22);
-  border-radius: 40rpx;
-  background: linear-gradient(135deg, rgba(20, 30, 66, 0.9) 0%, rgba(36, 24, 70, 0.88) 100%);
-  box-shadow:
-    0 20rpx 52rpx rgba(0, 0, 0, 0.42),
-    0 0 40rpx rgba(34, 229, 255, 0.1);
+  gap: 24rpx;
+  margin-bottom: 8rpx;
 }
 
-.guest-profile {
-  padding: 52rpx 36rpx;
-  text-align: center;
+.account-lede {
+  margin: 4rpx 0 0;
 }
 
-.guest-profile-badge,
-.guest-profile-title,
-.guest-profile-copy {
-  display: block;
-}
-
-.guest-profile-badge {
-  color: #7ceaff;
-  font-size: 23rpx;
-  letter-spacing: 4rpx;
-}
-
-.guest-profile-title {
-  margin-top: 20rpx;
-  color: #f2f5ff;
-  font-size: 36rpx;
-  font-weight: 760;
-}
-
-.guest-profile-copy {
-  margin-top: 18rpx;
-  color: #8d99c4;
-  font-size: 26rpx;
-  line-height: 1.7;
-}
-
-.guest-profile-button {
-  margin-top: 32rpx;
-}
-
-.hero-glow {
-  position: absolute;
-  top: -140rpx;
-  right: -100rpx;
-  width: 340rpx;
-  height: 340rpx;
+.user-avatar,
+.hero-initial {
+  width: 112rpx;
+  height: 112rpx;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 77, 219, 0.18) 0%, rgba(255, 77, 219, 0) 68%);
-}
-
-.hero-avatar-ring {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 156rpx;
-  height: 156rpx;
-  border: 2rpx solid rgba(94, 234, 255, 0.5);
-  border-radius: 50%;
-  background: radial-gradient(circle at 34% 30%, rgba(34, 229, 255, 0.16), rgba(16, 23, 52, 0.9));
-  box-shadow:
-    0 0 32rpx rgba(34, 229, 255, 0.3),
-    inset 0 0 24rpx rgba(34, 229, 255, 0.14);
+  flex-shrink: 0;
 }
 
 .user-avatar {
-  width: 144rpx;
-  height: 144rpx;
   border-radius: 50%;
 }
 
@@ -84,545 +25,48 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 144rpx;
-  height: 144rpx;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(34, 229, 255, 0.22), rgba(123, 92, 255, 0.28));
+  background: #e8edf2;
 }
 
 .hero-initial-text {
-  color: #f2f5ff;
-  font-size: 52rpx;
-  font-weight: 760;
-  letter-spacing: 2rpx;
-}
-
-.hero-copy {
-  flex: 1;
-  margin-left: 26rpx;
-}
-
-.hero-name,
-.hero-account {
-  display: block;
-}
-
-.hero-name {
-  color: #f2f5ff;
   font-size: 40rpx;
-  font-weight: 800;
-  letter-spacing: 1rpx;
-}
-
-.hero-account {
-  margin-top: 12rpx;
-  color: #6b7699;
-  font-size: 21rpx;
-  letter-spacing: 1rpx;
-}
-
-/* ——— 陪伴统计 ——— */
-.stats-grid {
-  display: flex;
-  gap: 18rpx;
-  margin-top: 24rpx;
-}
-
-.stat-cell {
-  flex: 1;
-  padding: 24rpx 12rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.14);
-  border-radius: 28rpx;
-  background: rgba(16, 23, 52, 0.72);
-  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.3);
-  text-align: center;
-}
-
-.stat-value {
-  display: block;
-  background: linear-gradient(120deg, #22e5ff, #a06bff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-size: 44rpx;
-  font-weight: 800;
-}
-
-.stat-label {
-  display: block;
-  margin-top: 6rpx;
-  color: #8d99c4;
-  font-size: 22rpx;
-  letter-spacing: 2rpx;
-}
-
-/* ——— 表单 ——— */
-.field-label {
-  display: block;
-  margin: 20rpx 0 12rpx;
-  color: #9db4e8;
-  font-size: 26rpx;
   font-weight: 600;
-  letter-spacing: 2rpx;
 }
 
-.field-input {
-  height: 88rpx;
-  box-sizing: border-box;
-  padding: 0 26rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.22);
-  border-radius: 999rpx;
-  color: #f2f5ff;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 29rpx;
-}
-
-.field-placeholder {
-  color: #5d688f;
-}
-
-.save-button {
-  margin-top: 28rpx;
-}
-
-.settings-title,
-.setting-name,
-.setting-desc {
-  display: block;
-}
-
-.settings-title {
-  color: #e6ecff;
-  font-size: 31rpx;
-  font-weight: 700;
-  letter-spacing: 1rpx;
-}
-
-/* ——— 人格与声音 ——— */
-.persona-row {
+.profile-character {
   display: flex;
   align-items: center;
-  min-height: 96rpx;
-  margin-top: 16rpx;
-  padding: 22rpx 20rpx;
-  border: 1rpx solid transparent;
-  border-radius: 26rpx;
-  background: rgba(255, 255, 255, 0.02);
+  gap: 20rpx;
+  margin: 24rpx 0;
+  padding: 20rpx 24rpx;
+  border-radius: 32rpx;
+  background: #fff;
 }
 
-.persona-row:first-of-type {
-  margin-top: 20rpx;
+.character-photo {
+  width: 112rpx;
+  height: 112rpx;
 }
 
-.persona-row:active {
-  background: rgba(34, 229, 255, 0.08);
+.binding-choices {
+  padding-bottom: 20rpx;
 }
 
-.persona-selected {
-  border-color: rgba(94, 234, 255, 0.55);
-  background: linear-gradient(120deg, rgba(34, 229, 255, 0.1), rgba(123, 92, 255, 0.12));
-  box-shadow: 0 0 28rpx rgba(34, 229, 255, 0.14);
-}
-
-.persona-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.persona-name,
-.persona-tagline,
-.persona-voice {
-  display: block;
-}
-
-.persona-name {
-  color: #e6ecff;
-  font-size: 29rpx;
-  font-weight: 700;
-  letter-spacing: 1rpx;
-}
-
-.persona-tagline,
-.setting-desc {
-  margin-top: 4rpx;
-  color: #6b7699;
-  font-size: 23rpx;
-  line-height: 1.45;
-}
-
-.persona-voice {
-  margin-top: 10rpx;
-  color: #7ceaff;
-  font-size: 22rpx;
-  letter-spacing: 1rpx;
-}
-
-.persona-check {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 44rpx;
-  height: 44rpx;
-  margin-left: 16rpx;
-  border: 2rpx solid rgba(94, 234, 255, 0.3);
-  border-radius: 50%;
-  color: #fff;
-  font-size: 24rpx;
-}
-
-.persona-check-on {
-  border: none;
-  background: linear-gradient(135deg, #19b8d8, #7b5cff);
-  box-shadow: 0 0 16rpx rgba(34, 229, 255, 0.55);
-}
-
-.custom-persona-panel {
-  margin-top: 24rpx;
-  padding-top: 8rpx;
-}
-
-.field-textarea {
-  width: 100%;
-  min-height: 180rpx;
-  box-sizing: border-box;
-  margin-top: 8rpx;
-  padding: 20rpx 26rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.22);
-  border-radius: 28rpx;
-  color: #f2f5ff;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 28rpx;
-  line-height: 1.55;
-}
-
-.custom-save {
-  margin-top: 24rpx;
-}
-
-.voice-sample-row {
-  margin-top: 20rpx;
-}
-
-.recording-hint {
-  display: block;
-  margin-top: 16rpx;
-  color: #ffc285;
-  font-size: 24rpx;
-}
-
-/* ——— 偏好设置 ——— */
-.setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24rpx 0;
-  border-bottom: 1rpx solid rgba(94, 234, 255, 0.08);
-}
-
-.setting-row:last-child {
-  border-bottom: none;
-}
-
-.setting-disabled {
-  opacity: 0.55;
-}
-
-.setting-name {
-  color: #c4cfef;
-  font-size: 28rpx;
-  font-weight: 600;
-  letter-spacing: 1rpx;
-}
-
-/* ——— 导航卡 ——— */
-.nav-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.nav-arrow {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 56rpx;
-  height: 56rpx;
-  margin-left: 20rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.3);
-  border-radius: 50%;
-  background: rgba(34, 229, 255, 0.08);
-}
-
-.nav-arrow-icon {
-  margin-top: -6rpx;
-  color: #7ceaff;
-  font-size: 40rpx;
-  font-weight: 300;
-}
-
-.guardian-entry {
-  border-color: rgba(255, 126, 219, 0.24);
-  background: linear-gradient(135deg, rgba(255, 77, 219, 0.08), rgba(34, 229, 255, 0.07));
-}
-
-.student-notice {
-  border-color: rgba(255, 126, 219, 0.3);
-  background: linear-gradient(135deg, rgba(123, 92, 255, 0.13), rgba(255, 77, 219, 0.08));
-}
-
-.student-notice-badge,
-.student-notice-title,
-.student-notice-copy {
-  display: block;
-}
-
-.student-notice-badge {
-  color: #f0a6e0;
-  font-size: 22rpx;
-  letter-spacing: 2rpx;
-}
-
-.student-notice-title {
-  margin-top: 12rpx;
-  color: #f2f5ff;
-  font-size: 31rpx;
-  font-weight: 750;
-  line-height: 1.45;
-}
-
-.student-notice-copy {
-  margin-top: 12rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.7;
-}
-
-/* ——— 账户与设备 ——— */
-.account-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24rpx 0;
-  border-bottom: 1rpx solid rgba(94, 234, 255, 0.08);
-}
-
-.account-row:last-child {
-  border-bottom: none;
-}
-
-.account-action {
-  flex: none;
-  margin-left: 20rpx;
-  padding: 10rpx 28rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.35);
-  border-radius: 999rpx;
-  color: #7ceaff;
-  background: rgba(34, 229, 255, 0.08);
-  font-size: 24rpx;
-}
-
-.account-action-danger {
-  border-color: rgba(255, 110, 140, 0.42);
-  color: #ff8ba3;
-  background: rgba(255, 77, 109, 0.1);
-}
-
-/* ——— 注销入口 ——— */
-.delete-entry {
-  margin-top: 36rpx;
-  text-align: center;
-}
-
-.delete-entry-text {
-  color: #ff8ba3;
-  font-size: 26rpx;
-  letter-spacing: 1rpx;
-}
-
-.delete-entry-desc {
-  display: block;
-  margin-top: 6rpx;
-  color: #5d688f;
-  font-size: 21rpx;
-}
-
-/* ——— 注销弹窗 ——— */
 .modal-mask {
   position: fixed;
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
-  z-index: 99;
+  z-index: 20;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(4, 7, 18, 0.72);
-  backdrop-filter: blur(8rpx);
+  align-items: flex-end;
+  background: rgba(25, 47, 65, 0.35);
 }
 
 .modal-card {
-  width: 600rpx;
-  box-sizing: border-box;
-  padding: 40rpx 36rpx;
-  border: 1rpx solid rgba(255, 110, 140, 0.3);
-  border-radius: 36rpx;
-  background: rgba(16, 23, 52, 0.96);
-  box-shadow: 0 24rpx 64rpx rgba(0, 0, 0, 0.5);
-}
-
-.modal-title {
-  display: block;
-  color: #ff8ba3;
-  font-size: 34rpx;
-  font-weight: 800;
-  letter-spacing: 1rpx;
-}
-
-.modal-desc {
-  display: block;
-  margin-top: 14rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.65;
-}
-
-.modal-input {
-  margin-top: 22rpx;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 18rpx;
-  margin-top: 30rpx;
-}
-
-.modal-button {
-  flex: 1;
-}
-
-.compliance-card .compliance-copy {
-  display: block;
-  margin-top: 14rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.65;
-}
-
-.delivered-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24rpx;
-  padding: 18rpx 0;
-  border-bottom: 1rpx solid rgba(94, 234, 255, 0.08);
-}
-
-.delivered-row:last-child {
-  border-bottom: none;
-}
-
-.delivered-label {
-  color: #c7d0ef;
-  font-size: 26rpx;
-}
-
-.delivered-value {
-  color: #7ceaff;
-  font-size: 26rpx;
-  font-weight: 650;
-  text-align: right;
-}
-
-.device-binding-status {
-  margin-top: 22rpx;
-  padding: 24rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.16);
-  border-radius: 24rpx;
-  background: rgba(9, 17, 36, 0.54);
-}
-
-.device-binding-status-error {
-  border-color: rgba(255, 107, 138, 0.34);
-  background: rgba(53, 16, 30, 0.38);
-}
-
-.device-binding-copy {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 18rpx;
-}
-
-.device-binding-state {
-  color: #e6ecff;
-  font-size: 29rpx;
-  font-weight: 700;
-}
-
-.device-binding-count {
-  color: #7ceaff;
-  font-size: 24rpx;
-  font-weight: 650;
-}
-
-.device-binding-detail {
-  display: block;
-  margin-top: 12rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.6;
-}
-
-.device-binding-choices {
-  margin-top: 20rpx;
-}
-
-.device-binding-choice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 88rpx;
-  padding: 16rpx 20rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.12);
-  border-radius: 22rpx;
-}
-
-.device-binding-choice + .device-binding-choice {
-  margin-top: 16rpx;
-}
-
-.device-binding-choice-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 5rpx;
-}
-
-.device-binding-choice-name {
-  color: #e6ecff;
-  font-size: 26rpx;
-  font-weight: 650;
-}
-
-.device-binding-choice-mode {
-  color: #8d99c4;
-  font-size: 22rpx;
-}
-
-.device-binding-choice-arrow {
-  color: #7ceaff;
-  font-size: 36rpx;
-  line-height: 1;
-}
-
-.device-binding-action {
-  margin-top: 22rpx;
-}
-
-.section-empty {
-  margin-top: 16rpx;
-  color: #8d99c4;
-  font-size: 25rpx;
+  width: 100%;
+  padding: 40rpx 46rpx 60rpx;
+  border-radius: 36rpx 36rpx 0 0;
+  background: #fff;
 }

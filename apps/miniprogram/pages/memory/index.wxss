@@ -1,317 +1,97 @@
-/* ——— 顶部操作卡 ——— */
-.summary-action {
-  padding: 28rpx 32rpx 32rpx;
+.segments {
+  display: flex;
+  gap: 8rpx;
+  margin: 8rpx 0 32rpx;
+  padding: 8rpx;
+  border-radius: 26rpx;
+  background: #e7edf1;
 }
 
-.summary-date-chip {
-  display: inline-flex;
-  align-items: center;
-  margin-bottom: 22rpx;
-  padding: 12rpx 26rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.3);
-  border-radius: 999rpx;
-  background: rgba(34, 229, 255, 0.08);
-}
-
-.summary-date-star {
-  margin-right: 10rpx;
-  color: #7ceaff;
-  font-size: 24rpx;
-  text-shadow: 0 0 12rpx rgba(34, 229, 255, 0.7);
-}
-
-.summary-action-label {
-  color: #9db4e8;
+.segment {
+  flex: 1;
+  min-height: 88rpx;
+  padding: 16rpx 12rpx;
+  border-radius: 20rpx;
+  color: #596a78;
   font-size: 26rpx;
-  font-weight: 600;
-  letter-spacing: 1rpx;
-}
-
-.summary-button {
-  margin-top: 4rpx;
-}
-
-.guest-review {
-  padding: 52rpx 36rpx;
   text-align: center;
+  line-height: 88rpx;
 }
 
-.guest-title,
-.guest-copy {
-  display: block;
-}
-
-.guest-title {
-  color: #f2f5ff;
-  font-size: 34rpx;
-  font-weight: 750;
-}
-
-.guest-copy {
-  margin-top: 18rpx;
-  color: #8d99c4;
-  font-size: 26rpx;
-  line-height: 1.7;
-}
-
-.guest-login-button {
-  margin-top: 30rpx;
-}
-
-/* ——— 时间线 ——— */
-.timeline {
-  margin-top: 8rpx;
+.segment-on {
+  background: #fff;
+  color: #192f41;
+  font-weight: 600;
 }
 
 .timeline-item {
-  display: flex;
-  align-items: stretch;
+  margin-bottom: 24rpx;
 }
 
-.timeline-rail {
-  display: flex;
-  width: 44rpx;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 52rpx;
-}
-
-.timeline-dot {
-  flex: none;
-  width: 16rpx;
-  height: 16rpx;
-  border: 4rpx solid rgba(94, 234, 255, 0.3);
-  border-radius: 50%;
-  background: #0b1026;
-}
-
-.timeline-dot-active {
-  border-color: rgba(94, 234, 255, 0.8);
-  background: linear-gradient(135deg, #22e5ff, #7b5cff);
-  box-shadow: 0 0 18rpx rgba(34, 229, 255, 0.7);
-}
-
-.timeline-line {
-  width: 2rpx;
-  flex: 1;
-  margin-top: 8rpx;
-  background: linear-gradient(180deg, rgba(94, 234, 255, 0.32), rgba(94, 234, 255, 0.04));
-}
-
-.timeline-item:last-child .timeline-line {
-  display: none;
-}
-
-.day-card {
-  flex: 1;
-  transition: transform 0.2s ease;
+.timeline-time {
+  display: block;
+  margin-bottom: 12rpx;
+  color: #596a78;
+  font-size: 22rpx;
 }
 
 .day-selected {
-  border-color: rgba(94, 234, 255, 0.55);
-  background: rgba(20, 30, 66, 0.85);
-  box-shadow:
-    0 18rpx 52rpx rgba(0, 0, 0, 0.42),
-    0 0 32rpx rgba(34, 229, 255, 0.14);
+  box-shadow: inset 0 0 0 2rpx #172f43;
 }
 
-.day-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.day-date {
-  color: #7ceaff;
-  font-size: 26rpx;
-  font-weight: 700;
-  letter-spacing: 2rpx;
-}
-
-.message-count {
-  padding: 6rpx 18rpx;
-  border: 1rpx solid rgba(123, 92, 255, 0.35);
-  border-radius: 999rpx;
-  color: #cdb4ff;
-  background: rgba(123, 92, 255, 0.12);
-  font-size: 21rpx;
-  letter-spacing: 1rpx;
-}
-
-.day-title,
-.day-overview,
-.day-suggestion {
+.recap-title {
   display: block;
-}
-
-.day-title {
-  margin-top: 16rpx;
-  color: #f2f5ff;
+  margin: 16rpx 0 10rpx;
   font-size: 32rpx;
-  font-weight: 800;
-  letter-spacing: 1rpx;
-}
-
-.day-overview {
-  margin-top: 12rpx;
-  color: #9aa6cf;
-  font-size: 27rpx;
-  line-height: 1.65;
-}
-
-.highlight-list {
-  margin-top: 16rpx;
-}
-
-.highlight {
-  display: block;
-  margin-top: 8rpx;
-  color: #8fb8e8;
-  font-size: 25rpx;
-  line-height: 1.6;
-}
-
-.day-suggestion {
-  margin-top: 18rpx;
-  padding: 16rpx 22rpx;
-  border: 1rpx solid rgba(255, 77, 219, 0.22);
-  border-radius: 20rpx;
-  color: #f0a6e0;
-  background: linear-gradient(120deg, rgba(255, 77, 219, 0.1), rgba(123, 92, 255, 0.1));
-  font-size: 25rpx;
-  line-height: 1.6;
-}
-
-/* ——— Conversation Review（PR-19） ——— */
-.review-section {
-  margin-top: 36rpx;
-}
-
-.section-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20rpx;
-  margin: 0 8rpx 20rpx;
-}
-
-.section-title {
-  color: #f2f5ff;
-  font-size: 32rpx;
-  font-weight: 800;
-  letter-spacing: 1rpx;
-}
-
-.section-caveat {
-  flex: none;
-  color: #8d99c4;
-  font-size: 22rpx;
+  font-weight: 600;
   line-height: 1.5;
-  text-align: right;
 }
 
-.section-empty {
-  padding: 34rpx 32rpx;
-  border: 1rpx dashed rgba(94, 234, 255, 0.18);
-  border-radius: 24rpx;
-  color: #7d8ab5;
-  background: rgba(11, 16, 38, 0.55);
-  font-size: 26rpx;
-  text-align: center;
-}
-
-.heard-item,
-.candidate-item,
-.memory-item {
-  margin-bottom: 20rpx;
-}
-
-.heard-text,
-.candidate-value,
-.memory-title,
-.memory-snippet {
+.recap-body {
   display: block;
+  color: #596a78;
+  font-size: 26rpx;
+  line-height: 1.8;
 }
 
-.heard-text {
-  color: #f2f5ff;
-  font-size: 28rpx;
-  line-height: 1.65;
-}
-
-.heard-meta,
-.candidate-meta,
-.memory-meta {
+.topic-tags {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
   gap: 12rpx;
-  margin-top: 14rpx;
+  margin-top: 20rpx;
 }
 
-.heard-badge {
+.topic-tag {
   padding: 6rpx 16rpx;
-  border-radius: 999rpx;
-  font-size: 21rpx;
-  font-weight: 700;
-  letter-spacing: 1rpx;
-}
-
-.badge-approx {
-  border: 1rpx solid rgba(255, 179, 92, 0.35);
-  color: #ffc38a;
-  background: rgba(255, 179, 92, 0.12);
-}
-
-.badge-exact {
-  border: 1rpx solid rgba(94, 234, 255, 0.4);
-  color: #7ceaff;
-  background: rgba(34, 229, 255, 0.1);
-}
-
-.heard-time,
-.memory-time {
-  color: #707da8;
+  border-radius: 12rpx;
+  background: #f0f4f6;
+  color: #62747e;
   font-size: 22rpx;
 }
 
-.candidate-value {
-  color: #f2f5ff;
-  font-size: 28rpx;
-  line-height: 1.65;
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
 }
 
-.candidate-reason {
-  display: block;
-  margin-top: 10rpx;
-  color: #9aa6cf;
+.filter-chip {
+  min-height: 72rpx;
+  padding: 12rpx 28rpx;
+  border: 1rpx solid #cedae1;
+  border-radius: 46rpx;
+  color: #596a78;
   font-size: 24rpx;
-  line-height: 1.55;
+  line-height: 48rpx;
 }
 
-.meta-chip {
-  padding: 6rpx 16rpx;
-  border: 1rpx solid rgba(123, 92, 255, 0.35);
-  border-radius: 999rpx;
-  color: #cdb4ff;
-  background: rgba(123, 92, 255, 0.12);
-  font-size: 21rpx;
-  letter-spacing: 1rpx;
+.filter-on {
+  background: #e1edeb;
+  border-color: #b4d1cd;
+  color: #2d6669;
 }
 
-.confirm-button {
-  margin-top: 22rpx;
-}
-
-.memory-title {
-  color: #f2f5ff;
-  font-size: 29rpx;
-  font-weight: 700;
-}
-
-.memory-snippet {
-  margin-top: 10rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.6;
+.memory-card {
+  margin-top: 20rpx;
 }

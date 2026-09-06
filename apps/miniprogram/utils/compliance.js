@@ -4,7 +4,7 @@ const FOREGROUND_REMINDER_MS = 2 * 60 * 60 * 1000;
 const REMINDER_CHECK_MS = 60 * 1000;
 
 const PRODUCT_POSITIONING =
-  "Memoria 是家庭桌面档案终端，不是拟人化陪伴服务。";
+  "Memoria 是家庭桌面档案终端：在设备上使用，在手机上查看和管理。";
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
 const TRAINING_DEFAULT_OFF = "你的对话与声纹默认不用于模型训练。";

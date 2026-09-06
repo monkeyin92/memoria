@@ -1,6 +1,6 @@
 const api = require("../../utils/api");
 const compliance = require("../../utils/compliance");
-const { companions, defaultCompanionId } = require("../../utils/companions");
+const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { encodeCustomPersona, parseCustomPersona } = require("../../utils/custom-persona");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
@@ -237,6 +237,10 @@ Page({
     deleteConfirmText: DELETE_CONFIRMATION_TEXT,
     authenticated: false,
     isMinor: false,
+    companionImage: companionById(defaultCompanionId).image,
+    personaHeadline: `${companionById(defaultCompanionId).name}，你的日常角色`,
+    accountId: "",
+    speakerEnrollmentHint: "识别身份，不等同于自定义声音",
     hasRuntimeProfile: false,
     runtimeCapabilities: [],
     speakerEntryAllowed: false,
@@ -526,6 +530,13 @@ Page({
         this.loadVoiceCloneStatus(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const speakerHint = {
+        active: "已允许用于识别本人，可随时在设备上重新录制",
+        pending: "上一版声纹还没生效。请唤醒设备，按提示再说几句话。",
+        requested: "已记录授权。唤醒设备，按提示说几句话即可。手机不录音。",
+        required: "在设备上完成，不在手机采集",
+      }[speakerState.speakerEnrollmentState] || speakerState.speakerEnrollmentBlockReason || "识别身份，不等同于自定义声音";
+      const companion = companionById(profile.companion_id);
       this.setData({
         profile,
         profileInitial: profileInitialFor(profile.display_name),
@@ -533,6 +544,10 @@ Page({
         customPersonaActive: custom.active,
         customPersonaName: custom.name,
         customPersonaText: custom.text,
+        companionImage: companion.image,
+        personaHeadline: `${custom.active ? custom.name || companion.name : companion.name}，你的日常角色`,
+        accountId: identity.user_id,
+        speakerEnrollmentHint: speakerHint,
         ...capabilityState,
         ...speakerState,
         ...voiceCloneState,
@@ -709,7 +724,35 @@ Page({
 
   onSwitch(event) {
     const key = event.currentTarget.dataset.key;
-    this.setData({ [`profile.${key}`]: event.detail.value });
+    const next = event.detail.value;
+    const previous = this.data.profile[key];
+    this.setData({ [`profile.${key}`]: next, error: "" });
+    this._savePreference(key, next, previous);
+  },
+
+  async _savePreference(key, next, previous) {
+    const identity = api.currentIdentity();
+    if (!identity) {
+      this.setData({ [`profile.${key}`]: previous });
+      return;
+    }
+    const authEpoch = api.currentAuthEpoch();
+    try {
+      const profile = await api.updateProfile(identity.user_id, {
+        ...this.data.profile,
+        [key]: next,
+      });
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ profile: { ...this.data.profile, ...profile } });
+      wx.showToast({ title: "已保存", icon: "success" });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({
+        [`profile.${key}`]: previous,
+        error: error?.message || "保存失败。",
+      });
+      wx.showToast({ title: "没保存成功，已恢复原来的设置", icon: "none" });
+    }
   },
 
   async chooseCompanion(event) {
@@ -994,6 +1037,19 @@ Page({
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     this.setData({ authenticated: true });
     await this._loadAuthenticatedData();
+  },
+
+  openCompanion() {
+    wx.navigateTo({ url: "/pages/companion/index" });
+  },
+
+  copyAccountId() {
+    const accountId = this.data.accountId;
+    if (!accountId) return;
+    wx.setClipboardData({
+      data: accountId,
+      success: () => wx.showToast({ title: "已复制账号编号", icon: "none" }),
+    });
   },
 
   async openDigitalSelf() {

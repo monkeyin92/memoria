@@ -6,6 +6,7 @@ const test = require("node:test");
 const root = path.join(__dirname, "..");
 const api = require("../utils/api");
 const { canonicalManifest } = require("./manifest-fixtures");
+const { readSubjectLabel } = require("../utils/subject-label");
 
 const storage = {};
 let lastWxRequest = null;
@@ -118,6 +119,12 @@ async function bootToMode(mode) {
   return page;
 }
 
+async function bootSelfUseReady(remark = "阿宁") {
+  const page = await bootToMode("self_use");
+  page.setData({ "form.selfNickname": remark });
+  return page;
+}
+
 test("app registers binding, device, and onboarding pages", () => {
   const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
   assert.ok(appConfig.pages.includes("pages/bind/index"));
@@ -138,9 +145,30 @@ test("binding page cannot enter from a device code or scanner", async () => {
   assert.equal(typeof page.scanDeviceCode, "undefined");
 });
 
-test("self_use flow keeps sensitive offers off by default and submits clean payload", async () => {
+test("binding page collects a required subject remark after choosing who it is for", async () => {
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(template, /使用者备注/);
+  assert.match(template, /亲爱的儿子/);
+  assert.match(template, /首页的当前使用者会显示这条备注/);
+  assert.doesNotMatch(template, /怎么称呼你（可选）/);
+
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootToMode("self_use");
+  assert.equal(page.data.form.selfNickname, "");
+  page.goToReview();
+  assert.ok(page.data.error.includes("备注"));
+  assert.equal(page.data.step, "form");
+  page.setData({ "form.selfNickname": "亲爱的儿子" });
+  page.goToReview();
+  assert.equal(page.data.step, "review");
+  assert.equal(page.data.reviewSubjectLabel, "亲爱的儿子");
+  await page.submitBinding();
+  assert.equal(readSubjectLabel(page.data.manifest), "亲爱的儿子");
+});
+
+test("self_use flow keeps sensitive offers off by default and submits clean payload", async () => {
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady("阿宁");
   const offers = page.data.offers;
   assert.equal(offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked, true);
   assert.equal(offers.find((offer) => offer.id === "offer_self_voice_profile_v1").checked, true);
@@ -173,11 +201,12 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
     "offer_self_voice_profile_v1",
   ]);
   assert.ok(!Object.prototype.hasOwnProperty.call(payload, "policy_version"));
+  assert.equal(readSubjectLabel(page.data.manifest), "阿宁");
 });
 
 test("checking digital self includes it in the submitted consent offers", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
-  const page = await bootToMode("self_use");
+  const page = await bootSelfUseReady();
   page.toggleOffer({ currentTarget: { dataset: { id: "offer_self_digital_self_v1" } } });
   assert.equal(
     page.data.offers.find((offer) => offer.id === "offer_self_digital_self_v1").checked,
@@ -195,7 +224,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.deepEqual(page.data.ageBands.map((band) => band.value), ["under_14", "14_17"]);
 
   page.goToReview();
-  assert.ok(page.data.error.includes("昵称"));
+  assert.ok(page.data.error.includes("备注"));
   assert.equal(page.data.step, "form");
 
   page.setData({ "form.childNickname": "小乐" });
@@ -220,6 +249,7 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
   assert.ok(payload.consent_offer_ids.includes("offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
+  assert.equal(readSubjectLabel(page.data.manifest), "小乐");
 });
 
 test("parent_for_child can reuse an existing linked child profile", async () => {
@@ -237,6 +267,7 @@ test("parent_for_child can reuse an existing linked child profile", async () => 
   const payload = lastWxRequest.data;
   assert.equal(payload.primary_subject.person_id, "person_child");
   assert.equal(payload.primary_subject.subject_draft, undefined);
+  assert.equal(readSubjectLabel(page.data.manifest), "小乐");
 });
 
 test("late child-profile lookup is ignored after switching away from parent_for_child", async () => {
@@ -298,15 +329,19 @@ test("child_for_parent never submits parent self-acceptance and keeps admin scop
     display_name: "妈妈",
     age_band: "adult",
   });
+  assert.equal(readSubjectLabel(page.data.manifest), "妈妈");
 });
 
-test("family_shared flow keeps member drafts client-side", async () => {
+test("family_shared flow keeps extra members off the binding request", async () => {
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  assert.match(template, /家庭名称与其他成员可以稍后添加/);
+  assert.doesNotMatch(template, /家庭空间 \*/);
+
   nextResponse = successResponse(defaultManifestResponse("family_shared"));
   const page = await bootToMode("family_shared");
   page.goToReview();
-  assert.ok(page.data.error.includes("家庭空间"));
-  page.setData({ "form.familyName": "我们的小家" });
-  page.setData({ "form.familyDrafts[0].nickname": "小乐" });
+  assert.ok(page.data.error.includes("备注"));
+  page.setData({ "form.subjectAlias": "老爸" });
   page.goToReview();
   assert.equal(page.data.step, "review");
   await page.submitBinding();
@@ -317,7 +352,9 @@ test("family_shared flow keeps member drafts client-side", async () => {
     memory_level: "family_shared",
     shared_persona_enabled: true,
   });
-  assert.ok(!JSON.stringify(payload).includes("小乐"), "成员档案不应随绑定请求提交");
+  assert.ok(!Object.prototype.hasOwnProperty.call(payload, "familyName"));
+  assert.ok(!JSON.stringify(payload).includes("familyDrafts"));
+  assert.equal(readSubjectLabel(page.data.manifest), "老爸");
 });
 
 test("binding failures surface explainable errors and stay on review", async () => {
@@ -325,7 +362,7 @@ test("binding failures surface explainable errors and stay on review", async () 
     statusCode: 400,
     data: { detail: { code: "device_claim_token_invalid", message: "设备码无效" } },
   };
-  const page = await bootToMode("self_use");
+  const page = await bootSelfUseReady();
   page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "review");
@@ -335,11 +372,48 @@ test("binding failures surface explainable errors and stay on review", async () 
 
 test("done step shows the binding manifest and offers device management", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
-  const page = await bootToMode("self_use");
+  const page = await bootSelfUseReady();
   page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   assert.equal(page.data.manifest.binding_id, "bd_test_1");
   page.openDevicePage();
   assert.ok(navigations.includes("/pages/device/index"));
+});
+
+test("subject remark helpers normalize, scope, and extract bind-form labels", () => {
+  const {
+    normalizeSubjectLabel,
+    subjectLabelFromBindForm,
+    saveSubjectLabel,
+    readSubjectLabel,
+    clearSubjectLabel,
+  } = require("../utils/subject-label");
+
+  assert.equal(normalizeSubjectLabel("  老爸  "), "老爸");
+  assert.equal(subjectLabelFromBindForm("self_use", { selfNickname: "我自己" }), "我自己");
+  assert.equal(
+    subjectLabelFromBindForm("parent_for_child", { childNickname: "亲爱的儿子" }),
+    "亲爱的儿子",
+  );
+  assert.equal(
+    subjectLabelFromBindForm(
+      "parent_for_child",
+      { subjectSource: "existing", subjectAlias: "" },
+      { existingLabel: "小乐" },
+    ),
+    "小乐",
+  );
+  assert.equal(subjectLabelFromBindForm("child_for_parent", { parentNickname: "老爸" }), "老爸");
+  assert.equal(subjectLabelFromBindForm("family_shared", { subjectAlias: "老爸" }), "老爸");
+
+  const binding = { binding_id: "bd_scope", device_id: "dev_scope" };
+  assert.equal(
+    saveSubjectLabel({ bindingId: binding.binding_id, deviceId: binding.device_id, label: "老爸" }),
+    true,
+  );
+  assert.equal(readSubjectLabel(binding), "老爸");
+  assert.equal(readSubjectLabel({ binding_id: "bd_other", device_id: "dev_scope" }), "");
+  clearSubjectLabel();
+  assert.equal(readSubjectLabel(binding), "");
 });

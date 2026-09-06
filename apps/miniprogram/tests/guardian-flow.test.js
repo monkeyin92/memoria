@@ -26,6 +26,7 @@ test("guardian page covers child confirmation, granular consent, summary, and al
 
 test("student notice and bind consent remain explicit client choices", () => {
   const profile = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
+  const profileScript = fs.readFileSync(path.join(root, "pages/profile/index.js"), "utf8");
   const bind = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const api = fs.readFileSync(path.join(root, "utils/api.js"), "utf8");
 
@@ -36,7 +37,7 @@ test("student notice and bind consent remain explicit client choices", () => {
   assert.match(profile, /rawVoiceEntryAllowed/);
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);
   assert.match(profile, /成长小结与监护授权/);
-  assert.match(profile, /敏感能力入口已关闭/);
+  assert.match(profileScript, /敏感能力入口已关闭/);
   assert.match(bind, /英语口语陪练/);
   assert.match(api, /updateDeviceSettings/);
   assert.match(api, /learning_mode/);

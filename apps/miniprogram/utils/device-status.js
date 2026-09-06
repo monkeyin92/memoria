@@ -20,16 +20,40 @@ function activationLabel(status) {
   return ACTIVATION_LABELS[status] || "状态待同步";
 }
 
+function currentUserSummary({ subjectLabel = "" } = {}) {
+  const label = String(subjectLabel || "").trim();
+  return label || "未设置";
+}
+
+function devicePlaceName(binding, companionName) {
+  const name = String(companionName || "Memoria").trim() || "Memoria";
+  const mode = binding?.declared_mode;
+  if (mode === "family_shared" || mode === "child_for_parent") return `家人的${name}`;
+  if (mode === "parent_for_child") return `孩子的${name}`;
+  return `我的${name}`;
+}
+
+function presentSpeakerCandidates(candidates) {
+  return (candidates || []).map((item) => {
+    const confidence = Number(item.confidence) || 0;
+    return {
+      ...item,
+      confidencePercent: Math.round(confidence * 100),
+      confidenceLow: confidence < 0.5,
+    };
+  });
+}
+
 function deviceStatusSummary(activation, profile) {
   const ready = activation?.status === "ready_for_conversation";
   return {
     online: ready,
     onlineLabel: ready
-      ? "在线，可以唤醒"
+      ? "设备在线"
       : activation?.network?.internet === true
         ? "已联网，等待激活"
         : activation
-          ? "离线，请检查电源和网络"
+          ? "暂时离线"
           : profile
             ? "绑定已确认，设备状态待同步"
             : "状态暂不可用",
@@ -42,5 +66,8 @@ function deviceStatusSummary(activation, profile) {
 module.exports = {
   ACTIVATION_LABELS,
   activationLabel,
+  currentUserSummary,
+  devicePlaceName,
+  presentSpeakerCandidates,
   deviceStatusSummary,
 };

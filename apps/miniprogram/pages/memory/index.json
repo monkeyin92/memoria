@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "回顾"
+  "navigationBarTitleText": "回顾",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
 }

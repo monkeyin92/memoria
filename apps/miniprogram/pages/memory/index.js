@@ -82,6 +82,8 @@ function privatePartitionsClear() {
     memoryCandidates: [],
     confirmedMemories: [],
     reviewingClaimId: "",
+    pendingCount: 0,
+    visibleMemories: [],
   };
 }
 
@@ -92,11 +94,17 @@ Page({
     memoryCandidates: [],
     confirmedMemories: [],
     reviewingClaimId: "",
+      pendingCount: 0,
+      visibleMemories: [],
     loading: false,
     summarizing: false,
     error: "",
     selectedDate: today(),
     authenticated: false,
+    memoryTab: "reviews",
+    memoryFilter: "all",
+    pendingCount: 0,
+    visibleMemories: [],
   },
 
   onLoad() {
@@ -131,6 +139,8 @@ Page({
       memoryCandidates: [],
       confirmedMemories: [],
       reviewingClaimId: "",
+      pendingCount: 0,
+      visibleMemories: [],
       loading: false,
       summarizing: false,
       error: "",
@@ -176,6 +186,12 @@ Page({
         heardTurns: review.heardTurns,
         memoryCandidates: review.memoryCandidates,
         confirmedMemories: review.confirmedMemories,
+        pendingCount: review.memoryCandidates.length,
+        visibleMemories: this._visibleMemories(
+          review.memoryCandidates,
+          review.confirmedMemories,
+          this.data.memoryFilter,
+        ),
       });
       return "ok";
     } catch (error) {
@@ -192,6 +208,55 @@ Page({
 
   chooseDay(event) {
     this.setData({ selectedDate: event.currentTarget.dataset.date });
+  },
+
+  showReviews() {
+    this.setData({ memoryTab: "reviews" });
+  },
+
+  showMemories() {
+    this.setData({
+      memoryTab: "memories",
+      visibleMemories: this._visibleMemories(
+        this.data.memoryCandidates,
+        this.data.confirmedMemories,
+        this.data.memoryFilter,
+      ),
+    });
+  },
+
+  setMemoryFilter(event) {
+    const memoryFilter = event.currentTarget.dataset.filter || "all";
+    this.setData({
+      memoryFilter,
+      visibleMemories: this._visibleMemories(
+        this.data.memoryCandidates,
+        this.data.confirmedMemories,
+        memoryFilter,
+      ),
+    });
+  },
+
+  _visibleMemories(candidates, confirmed, filter) {
+    const pending = (candidates || []).map((item) => ({
+      id: item.claim_id,
+      pending: true,
+      title: item.value,
+      body: item.reason || "确认后才会加入记忆档案。",
+    }));
+    const kept = (confirmed || []).map((item) => ({
+      id: item.memory_id,
+      pending: false,
+      title: item.title || item.snippet,
+      body: item.snippet || item.occurred_at || "你已确认的记忆",
+    }));
+    if (filter === "pending") return pending;
+    if (filter === "confirmed") return kept;
+    return pending.concat(kept);
+  },
+
+  openArchive() {
+    wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
   async loginForReview() {

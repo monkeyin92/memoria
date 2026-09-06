@@ -1,64 +1,46 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell">
-  <text class="eyebrow">数字分身成长</text>
-  <text class="page-title">由你确认，慢慢成长</text>
-  <text class="page-subtitle">这里展示服务端的成长状态；不会把小程序端的临时状态当成你的事实或人格材料。</text>
+  <text class="page-title">我的记忆档案</text>
+  <text class="page-lede">只保留你确认过的事。这里展示服务端状态，不会把手机上的临时操作当成事实。</text>
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <view class="card persona-card">
-    <view class="persona-glow"></view>
-    <text class="section-title">Persona 学习状态</text>
-    <view class="persona-status-row">
-      <view class="persona-beacon {{persona && persona.enabled ? 'persona-beacon-on' : ''}}"></view>
-      <text class="status-value">{{persona && persona.enabled ? '已启用' : '尚未启用或尚无可用材料'}}</text>
-    </view>
-    <text class="status-detail">Persona、记忆和数字分身版本继续由现有服务端权限与证据规则决定。</text>
+  <view class="card">
+    <text class="setting-name">档案状态</text>
+    <text class="setting-desc">{{persona && persona.enabled ? '已启用记忆档案' : '尚未启用，或还没有可展示的材料'}}</text>
   </view>
 
   <view class="card">
-    <text class="section-title">成长维度</text>
+    <text class="section-head-title">已确认的内容</text>
     <block wx:if="{{loading}}">
-      <view class="empty-state">正在读取成长状态…</view>
+      <text class="loading-text">正在读取记忆档案…</text>
     </block>
     <block wx:elif="{{dimensions.length}}">
-      <view wx:for="{{dimensions}}" wx:key="key" class="dimension-row">
-        <view>
-          <text class="dimension-name">{{item.key}}</text>
-          <text class="dimension-detail">状态：{{item.status}} · 已采纳 {{item.adopted_sources.length || 0}} 条来源</text>
+      <view wx:for="{{dimensions}}" wx:key="key" class="list-row">
+        <view class="row-copy">
+          <text class="row-title">{{item.key}}</text>
+          <text class="row-meta">状态：{{item.status}} · 已采纳 {{item.adopted_sources.length || 0}} 条来源</text>
         </view>
-        <text class="dimension-ready">{{item.version_readiness.status}}</text>
+        <text class="row-meta">{{item.version_readiness.status}}</text>
       </view>
     </block>
     <block wx:else>
-      <view class="empty-state">
-        <text class="empty-spark">✧</text>
-        <text class="empty-copy">还没有可展示的成长维度。</text>
+      <view class="empty-block">
+        <text class="empty-title">还没有可展示的内容</text>
+        <text class="empty-copy">确认记住的事后，会显示在这里。</text>
       </view>
     </block>
   </view>
 
-  <view class="card">
-    <text class="section-title">版本</text>
-    <block wx:if="{{versions.length}}">
-      <view wx:for="{{versions}}" wx:key="version_id" class="version-row">
-        <view class="version-badge">v{{item.version_number || '—'}}</view>
-        <view class="version-copy">
-          <text class="version-name">版本 {{item.version_number || '—'}}</text>
-          <text class="version-detail">{{item.status}} · {{item.manifest_sha256 ? '已绑定资料摘要' : '资料待整理'}}</text>
+  <view class="fold" bindtap="toggleEngineering">
+    <text class="fold-summary">{{showEngineering ? '收起技术状态' : '查看技术状态'}}</text>
+    <block wx:if="{{showEngineering}}">
+      <block wx:if="{{versions.length}}">
+        <view wx:for="{{versions}}" wx:key="version_id" class="summary-row">
+          <text class="summary-key">版本 {{item.version_number || '—'}}</text>
+          <text class="summary-value">{{item.status}} · {{item.manifest_sha256 ? '已绑定资料摘要' : '资料待整理'}}</text>
         </view>
-      </view>
+      </block>
+      <text wx:else class="caption">尚未构建数字分身版本。</text>
+      <text class="caption">复杂的版本构建、评测、冻结、传承授权和密码确认仍由服务端高风险流程收口；小程序不会绕过这些保护。</text>
     </block>
-    <block wx:else>
-      <view class="empty-state">
-        <text class="empty-spark">✧</text>
-        <text class="empty-copy">尚未构建数字分身版本。</text>
-      </view>
-    </block>
-  </view>
-
-  <view class="card disclosure-card">
-    <text class="section-title">边界说明</text>
-    <text class="status-detail">复杂的版本构建、评测、冻结、传承授权和密码确认仍由服务端高风险流程收口；小程序不会绕过这些保护。</text>
   </view>
 </view>

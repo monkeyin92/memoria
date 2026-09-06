@@ -9,6 +9,11 @@ const {
   consentOffersFor,
 } = require("../../utils/device-binding");
 const { isExpired } = require("../../utils/device-onboarding/state");
+const {
+  MAX_LABEL,
+  saveSubjectLabel,
+  subjectLabelFromBindForm,
+} = require("../../utils/subject-label");
 
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -59,6 +64,7 @@ function defaultForm(mode, identity) {
   if (mode === "parent_for_child") {
     return {
       childNickname: "",
+      subjectAlias: "",
       childAgeBand: "under_14",
       tutorEnabled: true,
       englishPracticeEnabled: true,
@@ -71,7 +77,7 @@ function defaultForm(mode, identity) {
   }
   if (mode === "self_use") {
     return {
-      selfNickname: identity?.display_name || "",
+      selfNickname: "",
       memoryLevelIndex: 0,
       interviewFrequencyIndex: 0,
     };
@@ -86,6 +92,7 @@ function defaultForm(mode, identity) {
   }
   return {
     familyName: "",
+    subjectAlias: "",
     adminNickname: identity?.display_name || "",
     sharedPersonaEnabled: true,
     familyDrafts: [freshFamilyDraft()],
@@ -122,6 +129,8 @@ Page({
     error: "",
     submitting: false,
     manifest: null,
+    reviewSubjectLabel: "",
+    maxSubjectLabel: MAX_LABEL,
   },
 
   onLoad(options = {}) {
@@ -244,7 +253,13 @@ Page({
   },
 
   onExistingSubjectChange(event) {
-    this.setData({ "form.existingSubjectIndex": Number(event.detail.value), error: "" });
+    const index = Number(event.detail.value);
+    const label = this.data.existingSubjectOptions[index]?.label || "";
+    const updates = { "form.existingSubjectIndex": index, error: "" };
+    if (!String(this.data.form.subjectAlias || "").trim() && label) {
+      updates["form.subjectAlias"] = label;
+    }
+    this.setData(updates);
   },
 
   onFieldInput(event) {
@@ -339,24 +354,32 @@ Page({
     this.setData({ offers, acceptedOfferIds, error: "" });
   },
 
+  _subjectLabel() {
+    const form = this.data.form || {};
+    const existingLabel =
+      this.data.existingSubjectOptions[form.existingSubjectIndex]?.label || "";
+    return subjectLabelFromBindForm(this.data.declaredMode, form, { existingLabel });
+  },
+
   validateForm() {
     const mode = this.data.declaredMode;
     const form = this.data.form;
+    if (mode === "self_use" && !form.selfNickname.trim()) {
+      return "请填写使用者备注，例如：我自己。";
+    }
     if (mode === "parent_for_child") {
       if (form.subjectSource === "new" && !form.childNickname.trim()) {
-        return "请填写孩子的昵称。";
+        return "请填写使用者备注，例如：亲爱的儿子。";
       }
       if (form.subjectSource === "existing" && this.data.existingSubjectOptions.length === 0) {
         return "还没有可用的孩子档案，请选择新建档案。";
       }
     }
     if (mode === "child_for_parent" && !form.parentNickname.trim()) {
-      return "请填写父母怎么称呼（例如：妈妈、爸爸、爷爷）。";
+      return "请填写使用者备注，例如：老爸。";
     }
-    if (mode === "family_shared") {
-      if (!form.familyName.trim()) return "请给家庭空间起个名字。";
-      const emptyMember = form.familyDrafts.some((draft) => !draft.nickname.trim());
-      if (emptyMember) return "请填写每位家庭成员的称呼。";
+    if (mode === "family_shared" && !form.subjectAlias.trim()) {
+      return "请填写使用者备注，例如：老爸。";
     }
     return "";
   },
@@ -367,7 +390,11 @@ Page({
       this.setData({ error });
       return;
     }
-    this.setData({ step: "review", error: "" });
+    this.setData({
+      step: "review",
+      error: "",
+      reviewSubjectLabel: this._subjectLabel(),
+    });
   },
 
   backToForm() {
@@ -447,7 +474,16 @@ Page({
       const manifest = await api.createDeviceBinding(request, {
         idempotencyKey: this._idempotencyKey,
       });
-      this.setData({ manifest, step: "done" });
+      saveSubjectLabel({
+        bindingId: manifest.binding_id,
+        deviceId: manifest.device_id,
+        label: this._subjectLabel(),
+      });
+      this.setData({
+        manifest,
+        step: "done",
+        reviewSubjectLabel: this._subjectLabel(),
+      });
     } catch (error) {
       this.setData({ error: error?.message || "绑定失败，请稍后重试。" });
     } finally {

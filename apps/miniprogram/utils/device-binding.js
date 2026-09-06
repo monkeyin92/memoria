@@ -15,6 +15,7 @@
  */
 
 const contracts = require("./multi-subject-contracts");
+const { clearSubjectLabel } = require("./subject-label");
 
 const MODE_META = Object.freeze({
   parent_for_child: {
@@ -1271,6 +1272,12 @@ function saveBindingManifest(manifest) {
     // 换设备 / 换绑定 / binding 版本变化：旧 Runtime Profile 一律失效。
     clearCachedRuntimeProfile();
   }
+  if (
+    previous &&
+    (previous.device_id !== normalized.device_id || previous.binding_id !== normalized.binding_id)
+  ) {
+    clearSubjectLabel();
+  }
   wx.setStorageSync(BINDING_MANIFEST_KEY, normalized);
 }
 
@@ -1293,6 +1300,7 @@ function clearBindingManifest() {
   } catch {
     // 清理失败不影响会话流程。
   }
+  clearSubjectLabel();
 }
 
 /*

@@ -4,6 +4,7 @@
     "pages/device/index",
     "pages/memory/index",
     "pages/profile/index",
+    "pages/companion/index",
     "pages/guardian/index",
     "pages/auth/index",
     "pages/digital-self/index",
@@ -12,17 +13,17 @@
     "pages/device-onboarding/index"
   ],
   "window": {
-    "backgroundColor": "#070b1a",
+    "backgroundColor": "#f4f6f8",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#070b1a",
-    "navigationBarTextStyle": "white",
+    "navigationBarBackgroundColor": "#f4f6f8",
+    "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
-    "color": "#5d688f",
-    "selectedColor": "#22e5ff",
-    "backgroundColor": "#0b1026",
-    "borderStyle": "black",
+    "color": "#6a7a86",
+    "selectedColor": "#326e70",
+    "backgroundColor": "#f9fbfc",
+    "borderStyle": "white",
     "list": [
       {
         "pagePath": "pages/home/index",

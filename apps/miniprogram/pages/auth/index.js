@@ -14,7 +14,7 @@ function reasonText(reason) {
     edit_profile: "登录后才能保存你的资料与陪伴偏好。",
     view_memory: "登录后即可查看你的专属回顾。",
     view_profile: "登录后即可管理你的资料与陪伴偏好。",
-    view_digital_self: "登录后即可查看你的数字分身成长状态。",
+    view_digital_self: "登录后即可查看你的记忆档案。",
     manage_privacy: "登录后即可查看和管理你的语音授权。",
   }[reason] || "登录后即可继续刚才的操作。";
 }

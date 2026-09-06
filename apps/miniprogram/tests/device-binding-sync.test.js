@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { beforeEach, test } = require("node:test");
 
 const binding = require("../utils/device-binding");
+const subjectLabel = require("../utils/subject-label");
 const { canonicalManifest } = require("./manifest-fixtures");
 
 const storage = {};
@@ -142,6 +143,11 @@ test("a newer active binding for the same device replaces the cached version", a
 test("only an explicit empty server list clears local device context", async () => {
   const local = manifest("bd_local", "dev_local");
   binding.saveBindingManifest(local);
+  subjectLabel.saveSubjectLabel({
+    bindingId: local.binding_id,
+    deviceId: local.device_id,
+    label: "老爸",
+  });
   storage[RUNTIME_PROFILE_KEY] = { profile: { runtime_profile_id: "old" } };
   const syncing = api.syncDeviceBindings();
   respond([]);
@@ -149,6 +155,7 @@ test("only an explicit empty server list clears local device context", async () 
   const state = await syncing;
   assert.equal(state.status, "empty");
   assert.equal(binding.readBindingManifest(), null);
+  assert.equal(subjectLabel.readSubjectLabel(local), "");
   assert.equal(storage[RUNTIME_PROFILE_KEY], undefined);
 });
 
@@ -200,6 +207,41 @@ test("binding discovery rejects non-canonical, inactive, and duplicate results",
       assert.equal(binding.readBindingManifest(), null);
     });
   }
+});
+
+test("401 and local logout both clear binding, remark, and runtime cache", async (t) => {
+  async function seed() {
+    const local = manifest("bd_private", "dev_private");
+    binding.saveBindingManifest(local);
+    subjectLabel.saveSubjectLabel({
+      bindingId: local.binding_id,
+      deviceId: local.device_id,
+      label: "妈妈",
+    });
+    storage[RUNTIME_PROFILE_KEY] = { profile: { runtime_profile_id: "private" } };
+    return local;
+  }
+
+  await t.test("401", async () => {
+    const local = await seed();
+    const syncing = api.syncDeviceBindings();
+    takeRequest().success({ statusCode: 401, data: { detail: "expired" } });
+    const state = await syncing;
+    assert.equal(state.status, "error");
+    assert.equal(binding.readBindingManifest(), null);
+    assert.equal(subjectLabel.readSubjectLabel(local), "");
+    assert.equal(storage[RUNTIME_PROFILE_KEY], undefined);
+    assert.equal(app.globalData.identity, null);
+  });
+
+  await t.test("logout", async () => {
+    resetApp();
+    const local = await seed();
+    api.logoutLocal();
+    assert.equal(binding.readBindingManifest(), null);
+    assert.equal(subjectLabel.readSubjectLabel(local), "");
+    assert.equal(storage[RUNTIME_PROFILE_KEY], undefined);
+  });
 });
 
 test("a late discovery response cannot overwrite a newer device selection", async () => {

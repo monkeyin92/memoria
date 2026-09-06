@@ -1,103 +1,79 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
 <view class="page-shell">
-  <text class="eyebrow">回顾</text>
-  <text class="page-title">把今天慢慢收好</text>
-  <text class="page-subtitle">只读取服务端确认可进入个人回顾的内容。</text>
+  <text class="page-title">回顾</text>
+  <text class="page-lede">留下一些事，也可以选择不留。</text>
 
-  <view wx:if="{{!authenticated}}" class="card guest-review">
-    <text class="guest-title">登录后查看你的专属回顾</text>
-    <text class="guest-copy">未登录时不会读取或展示任何对话整理内容。你可以先浏览，准备好后再登录。</text>
-    <button class="primary-button guest-login-button" bindtap="loginForReview">微信登录后查看</button>
+  <view wx:if="{{!authenticated}}">
+    <view class="notice">登录后查看你的专属回顾。未登录时不会读取或展示任何对话整理内容。</view>
+    <button class="primary-button empty-button" bindtap="loginForReview">微信登录后查看</button>
   </view>
 
   <block wx:else>
-    <view class="card summary-action">
-      <view class="summary-date-chip">
-        <text class="summary-date-star">✦</text>
-        <text class="summary-action-label">选中的日期：{{selectedDate}}</text>
-      </view>
-      <button class="primary-button summary-button" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新回顾</button>
-      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    <view class="segments">
+      <view class="segment {{memoryTab === 'reviews' ? 'segment-on' : ''}}" bindtap="showReviews">日常回顾</view>
+      <view class="segment {{memoryTab === 'memories' ? 'segment-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>
     </view>
 
-    <view wx:if="{{loading}}" class="empty-state">正在读取回顾…</view>
-    <view wx:elif="{{!days.length}}" class="card empty-state">
-      <text class="empty-spark">✧</text>
-      <text class="empty-copy">还没有可回顾的内容。和伙伴聊一聊，之后再回来看看。</text>
-    </view>
-    <view wx:elif="{{days.length}}" class="timeline">
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    <view wx:if="{{loading}}" class="card"><text class="loading-text">正在读取回顾…</text></view>
+
+    <block wx:elif="{{memoryTab === 'reviews'}}">
+      <button class="primary-button" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
+      <view wx:if="{{!days.length}}" class="empty-block">
+        <text class="empty-title">还没有可回顾的内容</text>
+        <text class="empty-copy">在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。</text>
+      </view>
       <view wx:for="{{days}}" wx:key="date" class="timeline-item">
-        <view class="timeline-rail">
-          <view class="timeline-dot {{selectedDate === item.date ? 'timeline-dot-active' : ''}}"></view>
-          <view class="timeline-line"></view>
-        </view>
-        <view class="card day-card {{selectedDate === item.date ? 'day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
-          <view class="day-heading">
-            <text class="day-date">{{item.date}}</text>
-            <text class="message-count">{{item.count}} 条对话</text>
+        <text class="timeline-time">{{item.date}}</text>
+        <view class="card {{selectedDate === item.date ? 'day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
+          <text class="pill pill-neutral">AI 整理</text>
+          <text class="recap-title">{{item.title}}</text>
+          <text class="recap-body">{{item.overview}}</text>
+          <view class="topic-tags">
+            <text wx:for="{{item.highlights}}" wx:for-item="tag" wx:key="*this" class="topic-tag">{{tag}}</text>
           </view>
-          <text class="day-title">{{item.title}}</text>
-          <text class="day-overview">{{item.overview}}</text>
-          <view wx:if="{{item.highlights.length}}" class="highlight-list">
-            <text wx:for="{{item.highlights}}" wx:key="*this" class="highlight">✦ {{item}}</text>
+        </view>
+      </view>
+      <view class="notice">AI 整理可能有偏差。未确认的内容不会自动变成长期记忆。</view>
+      <view class="fold">
+        <text class="fold-summary">实际听到的回复</text>
+        <block wx:if="{{heardTurns.length}}">
+          <view wx:for="{{heardTurns}}" wx:key="event_id" class="diagnostic">
+            <text class="recap-body">{{item.text}}</text>
+            <text class="caption">{{item.approximate ? '近似播放记录' : '精确播放记录'}}</text>
           </view>
-          <text wx:if="{{item.suggestion}}" class="day-suggestion">{{item.suggestion}}</text>
-        </view>
+        </block>
+        <text wx:else class="caption">还没有可展示的听到记录。</text>
       </view>
-    </view>
+    </block>
 
-    <!-- 实际听到的回复（PR-19） -->
-    <view class="review-section">
-      <view class="section-heading">
-        <text class="section-title">实际听到的回复</text>
-        <text class="section-caveat">缺少精确声道证据时一律按近似播放记录展示。</text>
+    <block wx:else>
+      <view class="filter-bar">
+        <view class="filter-chip {{memoryFilter === 'all' ? 'filter-on' : ''}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
+        <view class="filter-chip {{memoryFilter === 'pending' ? 'filter-on' : ''}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
+        <view class="filter-chip {{memoryFilter === 'confirmed' ? 'filter-on' : ''}}" data-filter="confirmed" bindtap="setMemoryFilter">已确认的记忆</view>
       </view>
-      <view wx:if="{{!heardTurns.length}}" class="section-empty">还没有听到的回复记录。</view>
-      <view wx:for="{{heardTurns}}" wx:key="event_id" class="card heard-item">
-        <text class="heard-text">{{item.text}}</text>
-        <view class="heard-meta">
-          <text class="heard-badge {{item.approximate ? 'badge-approx' : 'badge-exact'}}">{{item.approximate ? '近似播放记录' : '精确播放记录'}}</text>
-          <text class="heard-time">{{item.occurred_at}}</text>
-        </view>
-      </view>
-    </view>
 
-    <!-- 待你确认的记忆（PR-19） -->
-    <view class="review-section">
-      <view class="section-heading">
-        <text class="section-title">待你确认的记忆</text>
-        <text class="section-caveat">确认后才会进入已确认的记忆。</text>
-      </view>
-      <view wx:if="{{!memoryCandidates.length}}" class="section-empty">没有待确认的记忆。</view>
-      <view wx:for="{{memoryCandidates}}" wx:key="claim_id" class="card candidate-item">
-        <text class="candidate-value">{{item.value}}</text>
-        <text wx:if="{{item.reason}}" class="candidate-reason">{{item.reason}}</text>
-        <view class="candidate-meta">
-          <text wx:if="{{item.domain_category}}" class="meta-chip">{{item.domain_category}}</text>
-          <text wx:if="{{item.memory_kind}}" class="meta-chip">{{item.memory_kind}}</text>
-          <text wx:if="{{item.conflict_state}}" class="meta-chip">{{item.conflict_state}}</text>
+      <block wx:if="{{visibleMemories.length}}">
+        <view wx:for="{{visibleMemories}}" wx:key="id" class="card memory-card">
+          <text class="pill {{item.pending ? 'pill-amber' : ''}}">{{item.pending ? '待你确认' : '你已确认'}}</text>
+          <text class="recap-title">{{item.title}}</text>
+          <text class="recap-body">{{item.body}}</text>
+          <view wx:if="{{item.pending}}" class="button-row">
+            <button class="secondary-button" data-claim-id="{{item.id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认记住</button>
+          </view>
         </view>
-        <button class="primary-button confirm-button" data-claim-id="{{item.claim_id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认</button>
+      </block>
+      <view wx:else class="empty-block">
+        <text class="empty-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
+        <text class="empty-copy">需要时再来看看，一切由你决定。</text>
       </view>
-    </view>
-
-    <!-- 已确认的记忆（PR-19） -->
-    <view class="review-section">
-      <view class="section-heading">
-        <text class="section-title">已确认的记忆</text>
-        <text class="section-caveat">只展示服务端确认可回顾的记忆。</text>
-      </view>
-      <view wx:if="{{!confirmedMemories.length}}" class="section-empty">还没有已确认的记忆。</view>
-      <view wx:for="{{confirmedMemories}}" wx:key="memory_id" class="card memory-item">
-        <text wx:if="{{item.title}}" class="memory-title">{{item.title}}</text>
-        <text wx:if="{{item.snippet}}" class="memory-snippet">{{item.snippet}}</text>
-        <view class="candidate-meta">
-          <text wx:if="{{item.domain_category}}" class="meta-chip">{{item.domain_category}}</text>
-          <text wx:if="{{item.memory_kind}}" class="meta-chip">{{item.memory_kind}}</text>
-          <text wx:if="{{item.occurred_at}}" class="memory-time">{{item.occurred_at}}</text>
+      <view class="list-row" bindtap="openArchive">
+        <view class="row-copy">
+          <text class="row-title">查看我的记忆档案</text>
+          <text class="row-meta">已确认的偏好、来源与版本</text>
         </view>
+        <text class="row-chevron">›</text>
       </view>
-    </view>
+    </block>
   </block>
 </view>

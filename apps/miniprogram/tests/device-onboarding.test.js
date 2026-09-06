@@ -593,7 +593,9 @@ test("bind page removes scanner/token source and onboarding clears password on h
   const bindScript = fs.readFileSync(path.join(root, "pages/bind/index.js"), "utf8");
   const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const onboardingScript = fs.readFileSync(path.join(root, "pages/device-onboarding/index.js"), "utf8");
+  const onboardingStyles = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxss"), "utf8");
   assert.doesNotMatch(bindScript, /device_claim_token|scanDeviceCode|deviceClaimToken/);
   assert.doesNotMatch(bindTemplate, /设备码|bind-token-input|scanDeviceCode/);
   assert.match(onboardingScript, /onHide\(\)[\s\S]*_clearWifiPassword\(\)/);
+  assert.match(onboardingStyles, /\.wifi-list\s*\{[^}]*overflow-y:\s*scroll/s);
 });

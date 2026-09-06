@@ -7,8 +7,14 @@ const {
   degradationFor,
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
-const { deviceStatusSummary } = require("../../utils/device-status");
+const { companionById, defaultCompanionId } = require("../../utils/companions");
+const {
+  devicePlaceName,
+  deviceStatusSummary,
+  presentSpeakerCandidates,
+} = require("../../utils/device-status");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
+const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 
 
 const ROLE_LABELS = Object.freeze({
@@ -90,17 +96,26 @@ function currentUserLabel(profile, candidates) {
 }
 
 function bindingChoiceItems(bindings) {
+  const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
     binding,
     bindingId: binding.binding_id,
-    label: `Memoria · ${String(binding.device_id || "").slice(-4) || "未知"}`,
+    label: devicePlaceName(binding, companion.name),
     modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
   }));
 }
 
 Page({
   data: {
+    authenticated: false,
     loading: true,
+    companionImage: companionById(defaultCompanionId).image,
+    devicePlaceName: "设备",
+    personaName: "星澜",
+    personaVoice: "角色默认声音",
+    currentUserLabelConfirmed: false,
+    online: false,
+    onlineLabel: "状态待同步",
     syncingBindings: false,
     bindingSyncError: "",
     bindingChoices: [],
@@ -119,6 +134,8 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     currentUserLabel: "",
+    subjectAliasLabel: "",
+    subjectAliasDraft: "",
     activation: null,
     onlineLabel: "状态待同步",
     firmwareVersion: "未读取",
@@ -160,7 +177,9 @@ Page({
   },
 
   async onShow() {
-    if (!(await requireLogin({ reason: "manage_device" }))) {
+    const authenticated = api.hasAuthenticatedSession();
+    this.setData({ authenticated });
+    if (!authenticated) {
       this._enterGuestState();
       return;
     }
@@ -177,6 +196,7 @@ Page({
   _enterGuestState() {
     this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
+      authenticated: false,
       loading: false,
       syncingBindings: false,
       bindingSyncError: "",
@@ -196,6 +216,8 @@ Page({
       degradation: null,
       sensitiveEntries: [],
       currentUserLabel: "",
+      subjectAliasLabel: "",
+      subjectAliasDraft: "",
       activation: null,
       onlineLabel: "状态待同步",
       firmwareVersion: "未读取",
@@ -284,6 +306,8 @@ Page({
         bindingChoices: [],
         needsBindingChoice: false,
         hasPendingOnboarding,
+        subjectAliasLabel: "",
+        subjectAliasDraft: "",
       });
       return;
     }
@@ -351,13 +375,17 @@ Page({
         ? await api.resolveSessionSubject({ deviceId: binding.device_id })
         : null;
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-      const candidates = resolution?.candidate_subjects || [];
+      const candidates = presentSpeakerCandidates(resolution?.candidate_subjects || []);
       const summary = deviceStatusSummary(activation, profile);
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
       );
+      const subjectAliasLabel = readSubjectLabel(binding);
+      const speakerLabel = currentUserLabel(profile, candidates);
+      const companion = companionById(profile?.persona?.persona_id);
       this.setData({
         hasBinding: true,
+        authenticated: true,
         syncingBindings: false,
         bindingSyncError:
           bindingState.status === "cached"
@@ -379,8 +407,16 @@ Page({
         ),
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
-        currentUserLabel: currentUserLabel(profile, candidates),
+        currentUserLabel: subjectAliasLabel || speakerLabel || "未设置",
+        currentUserLabelConfirmed: Boolean(speakerLabel),
+        subjectAliasLabel,
+        subjectAliasDraft: subjectAliasLabel,
+        companionImage: companion.image,
+        devicePlaceName: devicePlaceName(binding, companion.name),
+        personaName: companion.name,
+        personaVoice: companion.voiceName,
         activation,
+        online: summary.online,
         onlineLabel: summary.onlineLabel,
         firmwareVersion: summary.firmwareVersion,
         networkLabel: summary.networkLabel,
@@ -478,6 +514,23 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
+  openCompanion() {
+    wx.navigateTo({ url: "/pages/companion/index" });
+  },
+
+  openGuardian() {
+    wx.navigateTo({ url: "/pages/guardian/index" });
+  },
+
+  showConnectionHelp() {
+    wx.showModal({
+      title: "检查连接",
+      content: "请确认设备已通电，并连上家庭 Wi-Fi。已同步的回顾仍可查看，绑定关系不受影响。",
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
   openOnboarding() {
     wx.navigateTo({ url: "/pages/device-onboarding/index?fresh=1" });
   },
@@ -552,9 +605,9 @@ Page({
         ? await api.resolveSessionSubject({ deviceId: this.data.binding.device_id })
         : null;
       if (flowSeq !== this._flowSeq) return;
-      const candidates = resolutionNext
-        ? resolutionNext.candidate_subjects || []
-        : this.data.candidates;
+      const candidates = presentSpeakerCandidates(
+        resolutionNext ? resolutionNext.candidate_subjects || [] : this.data.candidates,
+      );
       this.setData({
         profile: nextProfile,
         resolution: resolutionNext,
@@ -570,12 +623,33 @@ Page({
         sensitiveEntries: sensitiveEntriesFor(nextProfile),
         currentUserLabel: currentUserLabel(nextProfile, candidates),
       });
-      wx.showToast({ title: "已切换使用者", icon: "success" });
+      wx.showToast({ title: "已确认此刻是谁", icon: "success" });
     } catch (error) {
       this.setData({ error: error?.message || "切换失败，请稍后重试。" });
     } finally {
       this.setData({ switching: false });
     }
+  },
+
+  onSubjectAliasInput(event) {
+    this.setData({ subjectAliasDraft: event.detail.value, error: "" });
+  },
+
+  saveSubjectAlias() {
+    const binding = this.data.binding;
+    if (!binding?.binding_id || !binding?.device_id) return;
+    const saved = saveSubjectLabel({
+      bindingId: binding.binding_id,
+      deviceId: binding.device_id,
+      label: this.data.subjectAliasDraft,
+    });
+    if (!saved) {
+      this.setData({ error: "请填写使用者备注，例如：老爸。" });
+      return;
+    }
+    const subjectAliasLabel = readSubjectLabel(binding);
+    this.setData({ subjectAliasLabel, subjectAliasDraft: subjectAliasLabel, error: "" });
+    wx.showToast({ title: "已保存备注", icon: "success" });
   },
 
   openEntry(event) {

@@ -1,3 +1,5 @@
 {
-  "navigationBarTitleText": "数字分身成长"
+  "navigationBarTitleText": "我的记忆档案",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
 }

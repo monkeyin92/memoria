@@ -1,66 +1,71 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
-
-<view class="page-shell guardian-page">
-  <view class="guardian-header">
-    <text class="eyebrow">MEMORIA · FAMILY TRUST</text>
-    <text class="guardian-title">{{role === 'minor' ? '学生模式与监护授权' : '监护与成长小结'}}</text>
-    <text class="guardian-subtitle">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
-  </view>
+<view class="page-shell">
+  <text class="page-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
+  <text class="page-lede">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
 
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
   <block wx:if="{{role === 'minor'}}">
-    <view class="card trust-card">
-      <text class="card-title">你会知道分享了什么</text>
-      <text class="card-copy">每周成长小结只包含情绪趋势、学习时长和话题分布，不包含具体对话。原始语音默认不保存。</text>
+    <view class="card">
+      <text class="setting-name">你会知道分享了什么</text>
+      <text class="setting-desc">每周成长小结只包含情绪趋势、学习时长和话题分布，不包含具体对话。原始语音默认不保存。</text>
     </view>
-    <view wx:if="{{!pendingLinks.length}}" class="card empty-card">
-      <text class="card-title">暂无待确认绑定</text>
-      <text class="card-copy">请让爸爸妈妈先输入你的账号 ID 发起绑定。</text>
+    <view wx:if="{{!pendingLinks.length}}" class="empty-block">
+      <text class="empty-title">暂无待确认绑定</text>
+      <text class="empty-copy">请让爸爸妈妈打开「我的」，复制账号编号后发起邀请。</text>
     </view>
-    <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card link-card">
-      <text class="card-title">{{item.relation}}正在请求绑定</text>
-      <text class="card-copy">账号：{{item.displayName}} · {{item.statusLabel}}</text>
+    <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card">
+      <text class="setting-name">{{item.relation}}正在请求绑定</text>
+      <text class="setting-desc">账号：{{item.displayName}} · {{item.statusLabel}}</text>
       <input class="field-input" type="number" maxlength="8" value="{{bindingCode}}" placeholder="输入 8 位绑定码" bindinput="onBindingCode" />
       <picker range="{{birthBands}}" range-key="label" value="{{birthBandIndex}}" bindchange="onBirthBand">
-        <view class="picker-field">年龄段：{{birthBands[birthBandIndex].label}}</view>
+        <view class="picker-row"><text class="picker-label">年龄段</text><text class="picker-value">{{birthBands[birthBandIndex].label}}</text></view>
       </picker>
-      <button class="primary-button" loading="{{working}}" data-link-id="{{item.linkId}}" bindtap="confirmLink">确认并开通学生模式</button>
+      <button class="primary-button empty-button" loading="{{working}}" data-link-id="{{item.linkId}}" bindtap="confirmLink">确认并开通学生模式</button>
     </view>
   </block>
 
   <block wx:elif="{{role === 'guardian'}}">
-    <view class="card bind-card">
-      <text class="card-title">绑定一个孩子账号</text>
-      <text class="card-copy">输入孩子“我的”页面显示的账号 ID，生成的 8 位码由孩子本人确认。</text>
-      <input class="field-input" value="{{minorUserId}}" placeholder="孩子账号 ID" bindinput="onMinorUserId" />
-      <button class="primary-button" loading="{{working}}" disabled="{{!minorUserId}}" bindtap="createLink">生成绑定码</button>
+    <view class="card">
+      <text class="setting-name">邀请一个孩子账号</text>
+      <text class="setting-desc">打开孩子手机上的「我的」，复制「账号编号」后填在这里。生成的 8 位码由孩子本人确认。</text>
+      <input class="field-input" value="{{minorUserId}}" placeholder="孩子账号编号" bindinput="onMinorUserId" />
+      <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId}}" bindtap="createLink">生成绑定码</button>
       <view wx:if="{{createdBindingCode}}" class="binding-result">
-        <text class="binding-label">请告诉{{createdMinorName}}这个绑定码</text>
+        <text class="caption">请告诉{{createdMinorName}}这个绑定码</text>
         <text class="binding-code">{{createdBindingCode}}</text>
-        <text class="binding-expiry">15 分钟内有效；服务端只保存哈希。</text>
+        <text class="caption">15 分钟内有效；服务端只保存哈希。</text>
       </view>
     </view>
 
-    <view wx:if="{{pendingLinks.length}}" class="section-block">
-      <text class="section-title">等待孩子确认</text>
-      <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card compact-card">
-        <text class="card-title">{{item.displayName}}</text>
-        <text class="card-copy">{{item.statusLabel}}</text>
+    <block wx:if="{{pendingLinks.length}}">
+      <view class="section-head">
+        <text class="section-head-title">等待孩子确认</text>
       </view>
-    </view>
+      <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card">
+        <text class="setting-name">{{item.displayName}}</text>
+        <text class="setting-desc">{{item.statusLabel}}</text>
+      </view>
+    </block>
 
-    <view wx:if="{{activeLinks.length}}" class="section-block">
-      <text class="section-title">分项授权</text>
-      <view wx:for="{{activeLinks}}" wx:key="linkId" class="card link-card">
-        <view class="link-heading" data-minor-id="{{item.minorUserId}}" bindtap="selectMinor">
-          <view><text class="card-title">{{item.displayName}}</text><text class="card-copy">{{item.relation}} · 已绑定</text></view>
-          <text class="view-summary">查看小结 ›</text>
+    <view wx:if="{{activeLinks.length}}" class="section-head">
+      <text class="section-head-title">分项授权</text>
+    </view>
+    <view wx:if="{{activeLinks.length}}">
+      <view wx:for="{{activeLinks}}" wx:key="linkId" class="card">
+        <view class="list-row" data-minor-id="{{item.minorUserId}}" bindtap="selectMinor">
+          <view class="row-copy">
+            <text class="row-title">{{item.displayName}}</text>
+            <text class="row-meta">{{item.relation}} · 已绑定</text>
+          </view>
+          <text class="row-chevron">查看小结 ›</text>
         </view>
-        <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="consent-row">
-          <view class="consent-copy"><text class="consent-name">{{consent.label}}</text><text class="consent-desc">{{consent.description}}</text></view>
+        <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="setting-row">
+          <view>
+            <text class="setting-name">{{consent.label}}</text>
+            <text class="setting-desc">{{consent.description}}</text>
+          </view>
           <button
-            class="consent-button {{consent.active ? 'is-active' : ''}}"
+            class="secondary-button"
             loading="{{working}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
@@ -73,31 +78,35 @@
       </view>
     </view>
 
-    <view class="section-block">
-      <text class="section-title">成长小结</text>
-      <view wx:if="{{summaryState === 'loading'}}" class="card empty-card"><text class="card-copy">正在整理最近一周…</text></view>
-      <view wx:elif="{{summaryState === 'unauthorized'}}" class="card empty-card"><text class="card-copy">请先完成绑定并开启“每周成长小结”。</text></view>
-      <view wx:elif="{{summaryState === 'empty'}}" class="card empty-card"><text class="card-copy">本周还没有足够的成长记录。</text></view>
-      <view wx:elif="{{summaryState === 'ready'}}" class="card summary-card">
-        <text class="summary-period">{{summary.periodLabel}}</text>
-        <view class="metric-row"><text>学习陪伴</text><text class="metric-value">{{summary.studyDurationLabel}}</text></view>
-        <text class="metric-label">情绪趋势</text>
-        <view wx:for="{{summary.emotionItems}}" wx:key="key" class="bar-row"><text>{{item.label}}</text><view class="bar-track"><view class="bar-fill" style="width:{{item.width}}"></view></view><text>{{item.count}}</text></view>
-        <text class="metric-label">话题分布</text>
-        <view class="topic-list"><text wx:for="{{summary.topicItems}}" wx:key="key" class="topic-pill">{{item.label}} · {{item.count}}</text></view>
-        <text class="privacy-note">不含对话原文，也不提供心理诊断或严重度评分。</text>
+    <view class="section-head">
+      <text class="section-head-title">成长小结</text>
+    </view>
+    <view wx:if="{{summaryState === 'loading'}}" class="card"><text class="loading-text">正在整理最近一周…</text></view>
+    <view wx:elif="{{summaryState === 'unauthorized'}}" class="card"><text class="empty-copy">请先完成绑定并开启“每周成长小结”。</text></view>
+    <view wx:elif="{{summaryState === 'empty'}}" class="card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
+    <view wx:elif="{{summaryState === 'ready'}}" class="card">
+      <text class="caption">{{summary.periodLabel}}</text>
+      <view class="summary-row"><text class="summary-key">学习陪伴</text><text class="summary-value">{{summary.studyDurationLabel}}</text></view>
+      <text class="group-label">情绪趋势</text>
+      <view wx:for="{{summary.emotionItems}}" wx:key="key" class="bar-row"><text>{{item.label}}</text><view class="bar-track"><view class="bar-fill" style="width:{{item.width}}"></view></view><text>{{item.count}}</text></view>
+      <text class="group-label">话题分布</text>
+      <view class="topic-tags">
+        <text wx:for="{{summary.topicItems}}" wx:key="key" class="topic-tag">{{item.label}} · {{item.count}}</text>
       </view>
+      <text class="caption">不含对话原文，也不提供心理诊断或严重度评分。</text>
     </view>
 
-    <view wx:if="{{notifications.length}}" class="section-block">
-      <text class="section-title">需要及时关注</text>
-      <view wx:for="{{notifications}}" wx:key="notification_id" class="card alert-card">
-        <text class="card-title">{{item.minor_display_name}}</text>
-        <text class="card-copy">{{item.message}}</text>
-        <text class="alert-meta">{{item.occurred_at}} · {{item.delivery_status}}</text>
+    <block wx:if="{{notifications.length}}">
+      <view class="section-head">
+        <text class="section-head-title">需要及时关注</text>
       </view>
-    </view>
+      <view wx:for="{{notifications}}" wx:key="notification_id" class="card">
+        <text class="setting-name">{{item.minor_display_name}}</text>
+        <text class="setting-desc">{{item.message}}</text>
+        <text class="caption">{{item.occurred_at}} · {{item.delivery_status}}</text>
+      </view>
+    </block>
   </block>
 
-  <view wx:if="{{role === 'unknown' && !loading}}" class="card empty-card"><text class="card-copy">账号资料尚未加载完成。</text></view>
+  <view wx:if="{{role === 'unknown' && !loading}}" class="notice">账号资料尚未加载完成。</view>
 </view>

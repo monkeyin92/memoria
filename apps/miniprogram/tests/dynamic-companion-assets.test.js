@@ -14,21 +14,16 @@ const pageTemplates = fs
 const projectConfig = JSON.parse(
   fs.readFileSync(path.join(root, "project.config.example.json"), "utf8"),
 );
+const companions = require("../utils/companions");
 
-test("Mini Program pages do not pack or render companion robot artwork", () => {
-  assert.equal(
-    (projectConfig.packOptions.include || []).some(
-      (entry) =>
-        entry.type === "folder" && String(entry.value).includes("assets/companions"),
-    ),
-    false,
-  );
+test("companion portraits are packed as JPEG and never referenced as local WebP", () => {
+  const included = (projectConfig.packOptions.include || []).map((entry) => entry.value);
+  for (const companion of companions.companions) {
+    assert.match(companion.image, /^\/assets\/companions\/[a-z]+\.jpg$/);
+    assert.ok(fs.existsSync(path.join(root, companion.image.slice(1))));
+    assert.ok(included.includes(companion.image.slice(1)));
+  }
   for (const template of pageTemplates) {
-    assert.doesNotMatch(
-      template.source,
-      /\/assets\/companions\//,
-      `${template.name} must not reference companion robot images`,
-    );
     assert.doesNotMatch(
       template.source,
       /src="\/[^"]+\.webp"/,
