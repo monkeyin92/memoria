@@ -317,6 +317,15 @@ Page({
   },
 
   _enterGuestState() {
+    this._profileDataSeq = (this._profileDataSeq || 0) + 1;
+    this._deviceBindingSeq = (this._deviceBindingSeq || 0) + 1;
+    this._profileDataBusy = false;
+    this._profileDataBusyKey = "";
+    this._profileDataRequest = null;
+    this._deviceBindingBusy = false;
+    this._deviceBindingBusyKey = "";
+    this._deviceBindingRequest = null;
+    this._lastCapabilityState = null;
     this.setData({
       authenticated: false,
       identity: null,
@@ -464,7 +473,11 @@ Page({
   },
 
   async retryDeviceBindingSync() {
-    if (!api.hasAuthenticatedSession()) return;
+    if (!(await requireLogin({ reason: "view_profile" }))) {
+      this._enterGuestState();
+      return;
+    }
+    this.setData({ authenticated: true });
     await this._loadAuthenticatedData();
   },
 

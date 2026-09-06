@@ -442,9 +442,12 @@ Page({
     }
   },
 
-  retryBindingSync() {
-    if (!api.hasAuthenticatedSession()) return;
-    this.loadDevice();
+  async retryBindingSync() {
+    if (!(await requireLogin({ reason: "manage_device" }))) {
+      this._enterGuestState();
+      return;
+    }
+    await this.loadDevice();
   },
 
   async chooseDeviceBinding(event) {

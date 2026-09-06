@@ -118,9 +118,13 @@ Page({
     wx.switchTab({ url: "/pages/memory/index" });
   },
 
-  retryBindingSync() {
-    if (!api.hasAuthenticatedSession()) return;
-    this.loadHome();
+  async retryBindingSync() {
+    if (!(await requireLogin({ reason: "view_dashboard" }))) {
+      this._enterGuestState();
+      return;
+    }
+    this.setData({ authenticated: true });
+    await this.loadHome();
   },
 
   async chooseDeviceBinding(event) {
