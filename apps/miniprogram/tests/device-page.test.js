@@ -633,6 +633,8 @@ test("device page loads authoritative settings and diagnostics (half-duplex fail
   assert.equal(page.data.currentAudioModeLabel, "半双工安全模式");
   assert.equal(page.data.effectiveAudioModeLabel, "未连接，暂无实际模式");
   assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
+  assert.equal(page.data.online, false);
+  assert.equal(page.data.onlineLabel, "暂时离线");
   assert.equal(page.data.wakeModeLabel, "按键唤醒");
   assert.deepEqual(
     page.data.bargeInOptions.map((option) => option.value),
@@ -697,6 +699,8 @@ test("device page shows the Edge-negotiated effective audio mode, not the reques
   assert.equal(page.data.currentAudioModeLabel, "打断辅助");
   assert.equal(page.data.effectiveAudioModeLabel, "半双工安全模式");
   assert.equal(page.data.liveRuntimeStatusLabel, "已连接 · epoch 18");
+  assert.equal(page.data.online, true);
+  assert.equal(page.data.onlineLabel, "设备在线");
 });
 
 test("diagnostics unavailable fails closed for acoustics controls", async () => {
@@ -709,6 +713,8 @@ test("diagnostics unavailable fails closed for acoustics controls", async () => 
   await page.onShow();
   assert.equal(page.data.diagnostics, null);
   assert.equal(page.data.diagnosticsUnavailable, true);
+  assert.equal(page.data.online, false);
+  assert.equal(page.data.onlineLabel, "绑定已确认，设备状态待同步");
   assert.deepEqual(page.data.audioModeOptions, [], "诊断不可用时音频模式不可选");
   assert.deepEqual(
     page.data.bargeInOptions.map((option) => option.value),

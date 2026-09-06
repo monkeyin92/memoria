@@ -1,8 +1,8 @@
 /*
  * 设备在线/固件/网络/激活状态的服务端权威展示（单一决策点）。
  * 首页 Dashboard 与设备页共用同一份标签与状态推导，避免两处文案漂移；
- * 展示只消费 Control API 的 activation 与 runtime profile 响应，
- * 不读取或伪造任何实时媒体/网络本地状态。
+ * 展示消费 Control API 的 activation、diagnostics (live_runtime) 与 runtime profile 响应，
+ * 不伪造任何实时媒体/网络本地状态。
  */
 const ACTIVATION_LABELS = Object.freeze({
   pending_manifest: "等待配置",
@@ -44,22 +44,57 @@ function presentSpeakerCandidates(candidates) {
   });
 }
 
-function deviceStatusSummary(activation, profile) {
-  const ready = activation?.status === "ready_for_conversation";
-  return {
-    online: ready,
-    onlineLabel: ready
+function offlineLabelFor(status, activation, profile) {
+  if (status === "ready_for_conversation") return "暂时离线";
+  if (activation?.network?.internet === true) return "已联网，等待激活";
+  if (status || activation) return "暂时离线";
+  if (profile) return "绑定已确认，设备状态待同步";
+  return "状态暂不可用";
+}
+
+function deviceStatusSummary(activation, profile, diagnostics) {
+  const status = activation?.status || diagnostics?.binding?.activation_status;
+  const activationReady = status === "ready_for_conversation";
+  const diagnosticsProvided = diagnostics !== undefined;
+  const liveRuntime = diagnostics?.live_runtime;
+  const hasLiveConnected =
+    liveRuntime && typeof liveRuntime.connected === "boolean";
+
+  let online = false;
+  let onlineLabel = "状态暂不可用";
+
+  if (diagnosticsProvided) {
+    if (hasLiveConnected) {
+      if (liveRuntime.connected && activationReady) {
+        online = true;
+        onlineLabel = "设备在线";
+      } else {
+        online = false;
+        onlineLabel = offlineLabelFor(status, activation, profile);
+      }
+    } else if (diagnostics === null || liveRuntime === null) {
+      online = false;
+      onlineLabel = activationReady ? "状态待同步" : offlineLabelFor(status, activation, profile);
+    } else {
+      online = false;
+      onlineLabel = offlineLabelFor(status, activation, profile);
+    }
+  } else {
+    online = activationReady;
+    onlineLabel = activationReady
       ? "设备在线"
-      : activation?.network?.internet === true
-        ? "已联网，等待激活"
-        : activation
-          ? "暂时离线"
-          : profile
-            ? "绑定已确认，设备状态待同步"
-            : "状态暂不可用",
-    firmwareVersion: activation?.firmware_version || "未读取",
+      : offlineLabelFor(status, activation, profile);
+  }
+
+  return {
+    online,
+    onlineLabel,
+    firmwareVersion:
+      diagnostics?.live_runtime?.firmware_version ||
+      activation?.firmware_version ||
+      "未读取",
     networkLabel: activation?.network?.status || "未读取",
-    activationLabel: activationLabel(activation?.status),
+    activationLabel: activationLabel(status),
   };
 }
 

@@ -38,6 +38,53 @@ test("online status copy is device-oriented, not in-app chat", () => {
   assert.equal(offline.onlineLabel, "暂时离线");
 });
 
+test("online status distinguishes activation readiness from live connection", () => {
+  // 设备已激活，但未连接（关机或断网）：必须显示暂时离线
+  const poweredOff = deviceStatusSummary(
+    { status: "ready_for_conversation" },
+    {},
+    { live_runtime: { connected: false, device_id: "dev_1" } },
+  );
+  assert.equal(poweredOff.online, false);
+  assert.equal(poweredOff.onlineLabel, "暂时离线");
+
+  // 设备已激活，且 WebSocket 已连接：显示设备在线
+  const connected = deviceStatusSummary(
+    { status: "ready_for_conversation" },
+    {},
+    { live_runtime: { connected: true, stream_epoch: 2 } },
+  );
+  assert.equal(connected.online, true);
+  assert.equal(connected.onlineLabel, "设备在线");
+
+  // 诊断接口失败或 Edge 不可用时，fail closed，不谎报在线
+  const diagUnavailable = deviceStatusSummary(
+    { status: "ready_for_conversation" },
+    {},
+    null,
+  );
+  assert.equal(diagUnavailable.online, false);
+  assert.equal(diagUnavailable.onlineLabel, "状态待同步");
+
+  // diagnostics 内部 live_runtime 为 null（Edge 未连上）
+  const edgeDown = deviceStatusSummary(
+    { status: "ready_for_conversation" },
+    {},
+    { live_runtime: null },
+  );
+  assert.equal(edgeDown.online, false);
+  assert.equal(edgeDown.onlineLabel, "状态待同步");
+
+  // 设备未完成激活，即使连接上也不能算在线
+  const activating = deviceStatusSummary(
+    { status: "device_downloading", network: { internet: true } },
+    {},
+    { live_runtime: { connected: true } },
+  );
+  assert.equal(activating.online, false);
+  assert.equal(activating.onlineLabel, "已联网，等待激活");
+});
+
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");

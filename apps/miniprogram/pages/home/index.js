@@ -266,14 +266,21 @@ Page({
     }
 
     const identity = api.currentIdentity();
-    const [activationResult, runtimeResult, settingsResult, profileResult, todayResult] =
-      await Promise.allSettled([
-        api.getActivationStatus(binding.device_id),
-        api.getRuntimeProfile(binding.device_id),
-        api.getDeviceSettings(binding.device_id),
-        identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
-        this._loadToday(identity),
-      ]);
+    const [
+      activationResult,
+      runtimeResult,
+      settingsResult,
+      profileResult,
+      todayResult,
+      diagnosticsResult,
+    ] = await Promise.allSettled([
+      api.getActivationStatus(binding.device_id),
+      api.getRuntimeProfile(binding.device_id),
+      api.getDeviceSettings(binding.device_id),
+      identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
+      this._loadToday(identity),
+      api.getDeviceDiagnostics(binding.device_id),
+    ]);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     const activation =
@@ -291,7 +298,11 @@ Page({
         ? profileResult.value
         : null;
     const today = todayResult.status === "fulfilled" ? todayResult.value : {};
-    const summary = deviceStatusSummary(activation, runtime);
+    const diagnostics =
+      diagnosticsResult.status === "fulfilled" && diagnosticsResult.value !== null
+        ? diagnosticsResult.value
+        : null;
+    const summary = deviceStatusSummary(activation, runtime, diagnostics);
     const custom = parseCustomPersona(profile?.bio);
     const companion = companionById(profile?.companion_id);
     const personaName = custom.active ? custom.name : companion.name;

@@ -375,7 +375,7 @@ Page({
         : null;
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       const candidates = presentSpeakerCandidates(resolution?.candidate_subjects || []);
-      const summary = deviceStatusSummary(activation, profile);
+      const summary = deviceStatusSummary(activation, profile, diagnostics);
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
       );

@@ -189,6 +189,7 @@ test("home retry 恢复登录后正常同步", async () => {
     getActivationStatus: async () => null,
     getRuntimeProfile: async () => null,
     getDeviceSettings: async () => null,
+    getDeviceDiagnostics: async () => null,
     getProfile: async () => ({ display_name: "主人" }),
     requireRuntimeCapability: async () => ({ allowed: false }),
   });
