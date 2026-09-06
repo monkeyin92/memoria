@@ -760,6 +760,97 @@ async def test_api_role_rls_rejects_cross_actor_binding_read_and_write() -> None
         await _drop_database(database)
 
 
+@pytest.mark.asyncio
+async def test_list_active_bindings_for_person_respects_force_rls() -> None:
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 8, 12, 10, 0, tzinfo=UTC)
+        owner = (
+            await service.register_person(
+                display_name="RLS列表主人",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-pg-list-owner",
+                now=now,
+            )
+        ).person_id
+        child = (
+            await service.register_person(
+                display_name="RLS列表孩子",
+                timezone="Asia/Shanghai",
+                subject_category="minor",
+                age_band="under_14",
+                age_evidence_status="unverified",
+                now=now,
+            )
+        ).person_id
+        member = (
+            await service.register_person(
+                display_name="RLS列表成员",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-pg-list-member",
+                now=now,
+            )
+        ).person_id
+        foreign_actor = (
+            await service.register_person(
+                display_name="RLS外部用户",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-pg-list-foreign",
+                now=now,
+            )
+        ).person_id
+        await _guardian(service, guardian=owner, ward=child, now=now)
+        manifest = await service.create_binding(
+            device_id=f"dev-pg-list-{uuid.uuid4().hex[:8]}",
+            declared_mode="family_shared",
+            account_owner_person_id=owner,
+            primary_subject_ids=(child,),
+            roles=((member, "member"),),
+            family_space_id=f"family-pg-list-{uuid.uuid4().hex[:8]}",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            now=now,
+        )
+
+        owner_visible = await store.list_active_bindings_for_person(
+            owner, now=now, actor_person_id=owner
+        )
+        member_visible = await store.list_active_bindings_for_person(
+            member, now=now, actor_person_id=member
+        )
+        foreign_visible = await store.list_active_bindings_for_person(
+            member, now=now, actor_person_id=foreign_actor
+        )
+        foreign_own = await service.list_active_manifests_for_person(
+            foreign_actor, now=now, actor_person_id=foreign_actor
+        )
+
+        assert [binding.binding_id for binding in owner_visible] == [
+            manifest.binding_id
+        ]
+        assert [binding.binding_id for binding in member_visible] == [
+            manifest.binding_id
+        ]
+        assert foreign_visible == ()
+        assert foreign_own == ()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
 async def test_initialize_rejects_schema_without_force_rls() -> None:
     database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
     dsns = await _bootstrap(database)

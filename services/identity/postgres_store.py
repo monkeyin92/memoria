@@ -1200,6 +1200,54 @@ class PostgresIdentityStore:
                     return _binding(row, roles)
             return None
 
+    async def list_active_bindings_for_person(
+        self,
+        person_id: str,
+        now: datetime,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[DeviceBinding, ...]:
+        pool = self._ready()
+        timestamp = _timestamp(now, field="now")
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                rows = await connection.fetch(
+                    """
+                    SELECT * FROM identity_device_bindings AS binding
+                    WHERE binding.status = 'active'
+                      AND binding.valid_from <= $2
+                      AND (binding.valid_until IS NULL OR binding.valid_until > $2)
+                      AND (
+                        binding.account_owner_person_id = $1
+                        OR EXISTS (
+                            SELECT 1 FROM identity_device_binding_roles AS role
+                            WHERE role.binding_id = binding.binding_id
+                              AND role.person_id = $1
+                              AND role.status = 'active'
+                              AND role.ended_at IS NULL
+                        )
+                      )
+                    ORDER BY binding.device_id, binding.binding_version DESC
+                    """,
+                    person_id,
+                    timestamp,
+                )
+                bindings: list[DeviceBinding] = []
+                for row in rows:
+                    roles = await connection.fetch(
+                        """
+                        SELECT * FROM identity_device_binding_roles
+                        WHERE binding_id = $1
+                        """,
+                        str(row["binding_id"]),
+                    )
+                    bindings.append(_binding(row, roles))
+            return tuple(bindings)
+
     async def list_binding_versions(
         self,
         device_id: str,

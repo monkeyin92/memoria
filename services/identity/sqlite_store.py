@@ -933,6 +933,70 @@ class SqliteIdentityStore:
                 return _binding(row, roles)
             return None
 
+    async def list_active_bindings_for_person(
+        self,
+        person_id: str,
+        now: datetime,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[DeviceBinding, ...]:
+        self._ready()
+        # Mirrors the PostgreSQL ``identity_api_bindings`` RLS policy: the
+        # actor must itself own the binding or hold an active role, on top
+        # of the person_id filter, and a missing actor fails closed.
+        if actor_person_id is None:
+            return ()
+        timestamp = _ts(now, field="now")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM identity_device_bindings AS binding
+                WHERE binding.status = 'active'
+                  AND binding.valid_from <= ?
+                  AND (binding.valid_until IS NULL OR binding.valid_until > ?)
+                  AND (
+                    binding.account_owner_person_id = ?
+                    OR EXISTS (
+                        SELECT 1 FROM identity_device_binding_roles AS role
+                        WHERE role.binding_id = binding.binding_id
+                          AND role.person_id = ?
+                          AND role.status = 'active'
+                          AND role.ended_at IS NULL
+                    )
+                  )
+                  AND (
+                    binding.account_owner_person_id = ?
+                    OR EXISTS (
+                        SELECT 1 FROM identity_device_binding_roles AS actor_role
+                        WHERE actor_role.binding_id = binding.binding_id
+                          AND actor_role.person_id = ?
+                          AND actor_role.status = 'active'
+                          AND actor_role.ended_at IS NULL
+                    )
+                  )
+                ORDER BY binding.device_id, binding.binding_version DESC
+                """,
+                (
+                    timestamp,
+                    timestamp,
+                    person_id,
+                    person_id,
+                    actor_person_id,
+                    actor_person_id,
+                ),
+            ).fetchall()
+            return tuple(
+                _binding(
+                    row,
+                    connection.execute(
+                        "SELECT * FROM identity_device_binding_roles WHERE binding_id = ?",
+                        (str(row["binding_id"]),),
+                    ).fetchall(),
+                )
+                for row in rows
+            )
+
     async def list_binding_versions(
         self,
         device_id: str,

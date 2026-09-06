@@ -322,6 +322,24 @@ def _binding_roles(
     return ()
 
 
+@router.get("/v1/device-bindings")
+async def list_device_bindings(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    try:
+        manifests = await _identity(request).list_active_manifests_for_person(
+            user.user_id,
+            now=datetime.now(UTC),
+            actor_person_id=user.user_id,
+        )
+    except IdentityAccessDeniedError as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "binding_forbidden"}
+        ) from exc
+    return {"bindings": [manifest.to_dict() for manifest in manifests]}
+
+
 @router.post(
     "/v1/device-bindings",
     status_code=status.HTTP_201_CREATED,
@@ -486,7 +504,9 @@ async def get_device_binding(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, object]:
-    manifest: BindingManifest | None = await _identity(request).get_active_manifest(device_id)
+    manifest: BindingManifest | None = await _identity(request).get_active_manifest(
+        device_id, actor_person_id=user.user_id
+    )
     if manifest is None:
         raise HTTPException(status_code=404, detail={"code": "binding_not_found"})
     if user.user_id not in {manifest.account_owner_id, *manifest.device_admin_ids}:

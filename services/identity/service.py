@@ -1706,6 +1706,22 @@ class IdentityService:
         )
         return manifest_from_binding(binding) if binding is not None else None
 
+    async def list_active_manifests_for_person(
+        self,
+        person_id: str,
+        now: datetime | None = None,
+        actor_person_id: str | None = None,
+    ) -> tuple[BindingManifest, ...]:
+        bindings = await self._store.list_active_bindings_for_person(
+            person_id,
+            _now(now),
+            actor_person_id=actor_person_id or person_id,
+        )
+        manifests = tuple(manifest_from_binding(binding) for binding in bindings)
+        for manifest in manifests:
+            validate_manifest_wire(manifest)
+        return manifests
+
     async def get_binding(
         self, binding_id: str, actor_person_id: str | None = None
     ) -> DeviceBinding:

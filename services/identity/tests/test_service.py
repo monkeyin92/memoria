@@ -10,8 +10,11 @@ from pathlib import Path
 
 import pytest
 from services.identity.domain import (
+    ROLE_DEFAULT_PERMISSIONS,
     AgeEvidenceError,
     BindingManifest,
+    DeviceBinding,
+    DeviceBindingRole,
     IdentityAccessDeniedError,
     IdentityConflictError,
     IdentityNotFoundError,
@@ -996,6 +999,282 @@ async def test_expire_timeboxed_binding(service: IdentityService) -> None:
     assert await service.expire_bindings(now=now + timedelta(hours=2)) == 1
     versions = await service.list_binding_versions("dev-expiry")
     assert versions[0].status == "expired"
+
+
+@pytest.mark.asyncio
+async def test_list_active_manifests_for_person_is_scoped_to_owner_and_active_roles(
+    service: IdentityService,
+    store: InMemoryIdentityStore | SqliteIdentityStore,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "列表主人", now)
+    member = await _adult(service, "列表成员", now)
+    child = await _minor(service, "列表孩子", now)
+    stranger = await _adult(service, "无关用户", now)
+    await _establish_guardian(service, guardian=owner, ward=child, now=now)
+    await _establish_relationship(
+        service,
+        relation_type="family_member_of",
+        source=member,
+        target=child,
+        now=now,
+    )
+
+    self_manifest = await service.create_binding(
+        device_id="dev-list-self",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    family_manifest = await service.create_binding(
+        device_id="dev-list-family",
+        declared_mode="family_shared",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child,),
+        roles=((member, "member"),),
+        family_space_id="family-list",
+        service_profile_version="family-v1",
+        policy_bundle_version="policy-family-v1",
+        now=now,
+    )
+
+    owner_manifests = await service.list_active_manifests_for_person(
+        owner, now=now, actor_person_id=owner
+    )
+    assert [manifest.binding_id for manifest in owner_manifests] == [
+        family_manifest.binding_id,
+        self_manifest.binding_id,
+    ]
+    member_manifests = await service.list_active_manifests_for_person(
+        member, now=now, actor_person_id=member
+    )
+    assert [manifest.binding_id for manifest in member_manifests] == [
+        family_manifest.binding_id
+    ]
+    child_manifests = await service.list_active_manifests_for_person(
+        child, now=now, actor_person_id=child
+    )
+    assert [manifest.binding_id for manifest in child_manifests] == [
+        family_manifest.binding_id
+    ]
+    assert await service.list_active_manifests_for_person(
+        stranger, now=now, actor_person_id=stranger
+    ) == ()
+
+    await service.create_binding(
+        device_id="dev-list-revoked",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    await service.revoke_binding(
+        device_id="dev-list-revoked",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=1),
+    )
+    await service.create_binding(
+        device_id="dev-list-superseded",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now + timedelta(minutes=2),
+    )
+    await service.create_binding(
+        device_id="dev-list-expired",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        valid_until=now + timedelta(hours=2),
+        now=now + timedelta(minutes=3),
+    )
+    await service.supersede_binding(
+        device_id="dev-list-superseded",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v2",
+        policy_bundle_version="policy-self-v2",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=4),
+    )
+    await service.expire_bindings(now=now + timedelta(hours=3))
+    future_id = "binding-list-future"
+    await store.persist_binding(
+        DeviceBinding(
+            binding_id=future_id,
+            device_id="dev-list-future",
+            declared_mode="self_use",
+            account_owner_person_id=owner,
+            primary_subject_ids=(owner,),
+            binding_version=1,
+            valid_from=now + timedelta(hours=4),
+            created_at=now + timedelta(hours=4),
+            roles=(
+                DeviceBindingRole(
+                    binding_id=future_id,
+                    person_id=owner,
+                    role="account_owner",
+                    permissions=frozenset({"binding.manage"}),
+                    granted_at=now + timedelta(hours=4),
+                ),
+            ),
+            service_profile_version="self-v1",
+            policy_bundle_version="policy-self-v1",
+        )
+    )
+
+    active = await service.list_active_manifests_for_person(
+        owner,
+        now=now + timedelta(hours=3, minutes=1),
+        actor_person_id=owner,
+    )
+    versions = {
+        (manifest.device_id, manifest.binding_version) for manifest in active
+    }
+    assert ("dev-list-self", self_manifest.binding_version) in versions
+    assert ("dev-list-family", family_manifest.binding_version) in versions
+    assert ("dev-list-superseded", 2) in versions
+    assert ("dev-list-revoked", 1) not in versions
+    assert ("dev-list-superseded", 1) not in versions
+    assert ("dev-list-expired", 1) not in versions
+    assert ("dev-list-future", 1) not in versions
+
+
+@pytest.mark.asyncio
+async def test_list_active_bindings_for_person_actor_contract(
+    service: IdentityService,
+    store: InMemoryIdentityStore | SqliteIdentityStore,
+) -> None:
+    """Store list mirrors the Postgres api-role double visibility."""
+    now = _now()
+    owner = await _adult(service, "契约主人", now)
+    member = await _adult(service, "契约成员", now)
+    child = await _minor(service, "契约孩子", now)
+    stranger = await _adult(service, "契约外人", now)
+    await _establish_guardian(service, guardian=owner, ward=child, now=now)
+    await _establish_relationship(
+        service,
+        relation_type="family_member_of",
+        source=member,
+        target=child,
+        now=now,
+    )
+    self_manifest = await service.create_binding(
+        device_id="dev-actor-self",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    family_manifest = await service.create_binding(
+        device_id="dev-actor-family",
+        declared_mode="family_shared",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child,),
+        roles=((member, "member"),),
+        family_space_id="family-actor",
+        service_profile_version="family-v1",
+        policy_bundle_version="policy-family-v1",
+        now=now,
+    )
+
+    # 共享可见：actor 是参与者时按 person/actor 双重资格可见，
+    # 而不是 actor != person 一律拒绝。
+    owner_actors_for_member = await store.list_active_bindings_for_person(
+        member, now=now, actor_person_id=owner
+    )
+    assert [binding.binding_id for binding in owner_actors_for_member] == [
+        family_manifest.binding_id
+    ]
+    member_actors_for_owner = await store.list_active_bindings_for_person(
+        owner, now=now, actor_person_id=member
+    )
+    assert [binding.binding_id for binding in member_actors_for_owner] == [
+        family_manifest.binding_id
+    ]
+
+    # 无关 actor：person 参与但 actor 与绑定无关 -> 空。
+    assert await store.list_active_bindings_for_person(
+        member, now=now, actor_person_id=stranger
+    ) == ()
+    assert await store.list_active_bindings_for_person(
+        owner, now=now, actor_person_id=stranger
+    ) == ()
+
+    # 已结束/撤销 role 的 actor 失去 actor 资格。
+    revoked_id = "binding-actor-revoked"
+    await store.persist_binding(
+        DeviceBinding(
+            binding_id=revoked_id,
+            device_id="dev-actor-revoked",
+            declared_mode="family_shared",
+            account_owner_person_id=owner,
+            primary_subject_ids=(child,),
+            family_space_id="family-actor",
+            binding_version=1,
+            valid_from=now,
+            created_at=now,
+            roles=(
+                DeviceBindingRole(
+                    binding_id=revoked_id,
+                    person_id=owner,
+                    role="account_owner",
+                    permissions=ROLE_DEFAULT_PERMISSIONS["account_owner"],
+                    granted_at=now,
+                ),
+                DeviceBindingRole(
+                    binding_id=revoked_id,
+                    person_id=child,
+                    role="primary_subject",
+                    permissions=ROLE_DEFAULT_PERMISSIONS["primary_subject"],
+                    granted_at=now,
+                ),
+                DeviceBindingRole(
+                    binding_id=revoked_id,
+                    person_id=member,
+                    role="member",
+                    permissions=ROLE_DEFAULT_PERMISSIONS["member"],
+                    granted_at=now,
+                    status="revoked",
+                    ended_at=now + timedelta(minutes=1),
+                ),
+            ),
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+        )
+    )
+    with_revoked_actor = await store.list_active_bindings_for_person(
+        owner, now=now, actor_person_id=member
+    )
+    assert [binding.binding_id for binding in with_revoked_actor] == [
+        family_manifest.binding_id
+    ]
+
+    # 无 actor fail closed；scope 值不解锁（PG api 池策略不看 scope GUC）。
+    assert await store.list_active_bindings_for_person(owner, now=now) == ()
+    assert await store.list_active_bindings_for_person(
+        owner, now=now, actor_person_id=None, scope="migration"
+    ) == ()
+    migration_scoped = await store.list_active_bindings_for_person(
+        owner, now=now, actor_person_id=owner, scope="migration"
+    )
+    assert {binding.binding_id for binding in migration_scoped} == {
+        self_manifest.binding_id,
+        family_manifest.binding_id,
+        revoked_id,
+    }
 
 
 # ---------------------------------------------------------------------------

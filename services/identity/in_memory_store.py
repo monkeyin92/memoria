@@ -342,6 +342,54 @@ class InMemoryIdentityStore:
                 return binding
             return None
 
+    async def list_active_bindings_for_person(
+        self,
+        person_id: str,
+        now: datetime,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[DeviceBinding, ...]:
+        # Mirrors the PostgreSQL ``identity_api_bindings`` RLS policy: the
+        # api-role constraint is role-scoped and does not consult the scope
+        # GUC, so the actor must itself own the binding or hold an active
+        # role on it, and a missing actor fails closed.
+        if actor_person_id is None:
+            return ()
+        with self._lock:
+            visible = []
+            for binding in self._bindings.values():
+                if binding.status != "active":
+                    continue
+                if binding.valid_from > now:
+                    continue
+                if binding.valid_until is not None and binding.valid_until <= now:
+                    continue
+                has_active_role = any(
+                    role.person_id == person_id
+                    and role.status == "active"
+                    and role.ended_at is None
+                    for role in binding.roles
+                )
+                if binding.account_owner_person_id != person_id and not has_active_role:
+                    continue
+                actor_is_owner = binding.account_owner_person_id == actor_person_id
+                actor_has_active_role = any(
+                    role.person_id == actor_person_id
+                    and role.status == "active"
+                    and role.ended_at is None
+                    for role in binding.roles
+                )
+                if not (actor_is_owner or actor_has_active_role):
+                    continue
+                visible.append(binding)
+            return tuple(
+                sorted(
+                    visible,
+                    key=lambda item: (item.device_id, -item.binding_version),
+                )
+            )
+
     async def list_binding_versions(
         self,
         device_id: str,

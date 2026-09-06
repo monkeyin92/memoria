@@ -65,8 +65,9 @@ class IdentityStore(Protocol):
 
     ``actor_person_id`` and ``scope`` carry the request context.  The
     PostgreSQL adapter uses them for transaction-local RLS context
-    (``app.identity_actor`` / ``app.identity_scope``); SQLite and in-memory
-    adapters ignore them because their query filters already scope reads.
+    (``app.identity_actor`` / ``app.identity_scope``). SQLite and in-memory
+    adapters generally rely on query filters; account-level binding discovery
+    also enforces actor visibility explicitly, matching PostgreSQL RLS.
     """
 
     async def initialize(self) -> None: ...
@@ -232,6 +233,15 @@ class IdentityStore(Protocol):
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding | None: ...
+
+    async def list_active_bindings_for_person(
+        self,
+        person_id: str,
+        now: datetime,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[DeviceBinding, ...]: ...
 
     async def list_binding_versions(
         self,
