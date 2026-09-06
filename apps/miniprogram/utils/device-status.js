@@ -54,41 +54,19 @@ function offlineLabelFor(status, activation, profile) {
 
 function deviceStatusSummary(activation, profile, diagnostics) {
   const status = activation?.status || diagnostics?.binding?.activation_status;
-  const activationReady = status === "ready_for_conversation";
-  const diagnosticsProvided = diagnostics !== undefined;
-  const liveRuntime = diagnostics?.live_runtime;
-  const hasLiveConnected =
-    liveRuntime && typeof liveRuntime.connected === "boolean";
-
-  let online = false;
-  let onlineLabel = "状态暂不可用";
-
-  if (diagnosticsProvided) {
-    if (hasLiveConnected) {
-      if (liveRuntime.connected && activationReady) {
-        online = true;
-        onlineLabel = "设备在线";
-      } else {
-        online = false;
-        onlineLabel = offlineLabelFor(status, activation, profile);
-      }
-    } else if (diagnostics === null || liveRuntime === null) {
-      online = false;
-      onlineLabel = activationReady ? "状态待同步" : offlineLabelFor(status, activation, profile);
-    } else {
-      online = false;
-      onlineLabel = offlineLabelFor(status, activation, profile);
-    }
-  } else {
-    online = activationReady;
-    onlineLabel = activationReady
-      ? "设备在线"
-      : offlineLabelFor(status, activation, profile);
-  }
+  const ready = status === "ready_for_conversation";
 
   return {
-    online,
-    onlineLabel,
+    online: ready,
+    onlineLabel: ready
+      ? "设备在线"
+      : activation?.network?.internet === true
+        ? "已联网，等待激活"
+        : activation
+          ? "暂时离线"
+          : profile
+            ? "绑定已确认，设备状态待同步"
+            : "状态暂不可用",
     firmwareVersion:
       diagnostics?.live_runtime?.firmware_version ||
       activation?.firmware_version ||

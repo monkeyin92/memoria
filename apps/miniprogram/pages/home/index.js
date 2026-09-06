@@ -45,7 +45,7 @@ function emptyDashboard() {
     personaName: companion.name,
     personaVoice: companion.voiceName,
     personaSummary: companion.description,
-    devicePlaceName: "家中的设备",
+    devicePlaceName: "我的设备",
     pageLede: formatDateLabel(),
     heroTitle: "给今天，留一点回味。",
     heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
@@ -128,16 +128,6 @@ Page({
     if (!(await requireLogin({ reason: "view_dashboard" }))) return;
     this.setData({ authenticated: true });
     await this.loadHome();
-  },
-
-  openHowItWorks() {
-    wx.showModal({
-      title: "怎么用",
-      content:
-        "在设备旁唤醒「茉莉」说话。手机用来连接设备、确认回顾和管理资料，不录音，也不代替设备对话。",
-      showCancel: false,
-      confirmText: "知道了",
-    });
   },
 
   showSyncHelp() {

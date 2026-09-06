@@ -633,8 +633,8 @@ test("device page loads authoritative settings and diagnostics (half-duplex fail
   assert.equal(page.data.currentAudioModeLabel, "半双工安全模式");
   assert.equal(page.data.effectiveAudioModeLabel, "未连接，暂无实际模式");
   assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
-  assert.equal(page.data.online, false);
-  assert.equal(page.data.onlineLabel, "暂时离线");
+  assert.equal(page.data.online, true);
+  assert.equal(page.data.onlineLabel, "设备在线");
   assert.equal(page.data.wakeModeLabel, "按键唤醒");
   assert.deepEqual(
     page.data.bargeInOptions.map((option) => option.value),

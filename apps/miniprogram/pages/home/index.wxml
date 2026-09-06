@@ -3,9 +3,6 @@
     <text class="page-title">你好，欢迎来到 Memoria</text>
     <text class="page-lede">把设备连好，再慢慢留下日常。</text>
     <view class="home-hero">
-      <view class="hero-top">
-        <text class="device-place">家中的设备，手边的回顾</text>
-      </view>
       <text class="hero-heading">记住哪些事，由你决定。</text>
       <text class="hero-caption">在设备上记录，在这里确认与整理。</text>
       <view class="hero-bottom">
@@ -14,7 +11,6 @@
     </view>
     <view class="stack" style="margin-top: 46rpx;">
       <button class="primary-button" bindtap="loginFromHome">微信登录，找回我的设备</button>
-      <button class="secondary-button" bindtap="openHowItWorks">先了解怎么用</button>
     </view>
     <text class="privacy-note">对话在设备上完成。手机用来连接、确认和整理，不录音。</text>
   </view>
