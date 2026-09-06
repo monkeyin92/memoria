@@ -4,8 +4,10 @@ const {
   buildBindingRequest,
   normalizeRuntimeProfile,
   normalizeSubjectResolution,
+  validateBindingManifest,
   readBindingManifest,
   saveBindingManifest,
+  clearBindingManifest,
   saveCachedRuntimeProfile,
   clearCachedRuntimeProfile,
   canonicalWireJson,
@@ -34,6 +36,7 @@ const {
  */
 const runtimeProfileSeqs = new Map();
 const acceptedProfileFloors = new Map(); // contextKey -> { epoch, fingerprint }
+let deviceBindingContextRevision = 0;
 
 function runtimeProfileContextKey(context) {
   return [
@@ -48,11 +51,15 @@ function beginRuntimeProfileRequest(context) {
   const key = runtimeProfileContextKey(context);
   const seq = (runtimeProfileSeqs.get(key) || 0) + 1;
   runtimeProfileSeqs.set(key, seq);
-  return { key, seq };
+  return { key, seq, contextRevision: deviceBindingContextRevision, authEpoch: currentAuthEpoch() };
 }
 
 function isRuntimeProfileRequestCurrent(token) {
-  return runtimeProfileSeqs.get(token.key) === token.seq;
+  return (
+    runtimeProfileSeqs.get(token.key) === token.seq &&
+    token.contextRevision === deviceBindingContextRevision &&
+    isAuthEpochCurrent(token.authEpoch)
+  );
 }
 
 function profileIdentityFingerprint(profile) {
@@ -68,6 +75,13 @@ function profileIdentityFingerprint(profile) {
 function clearRuntimeProfileMemory() {
   runtimeProfileSeqs.clear();
   acceptedProfileFloors.clear();
+}
+
+function clearDeviceBindingContext() {
+  deviceBindingContextRevision += 1;
+  clearBindingManifest();
+  clearCachedRuntimeProfile();
+  clearRuntimeProfileMemory();
 }
 
 function profileMatchesExpectedContext(profile, context) {
@@ -225,10 +239,12 @@ function rawRequest(path, options = {}) {
     timeout = 60000,
   } = options;
   if (authenticated) requireAuthenticatedIdentity();
+  const requestAuthEpoch = currentAuthEpoch();
+  const requestAccessToken = authenticated ? currentAccessToken() : "";
   const headers = {
     Accept: "application/json",
     ...(data === undefined ? {} : { "content-type": "application/json" }),
-    ...(authenticated ? { Authorization: `Bearer ${currentAccessToken()}` } : {}),
+    ...(authenticated ? { Authorization: `Bearer ${requestAccessToken}` } : {}),
     ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
   };
   return new Promise((resolve, reject) => {
@@ -244,10 +260,12 @@ function rawRequest(path, options = {}) {
           return;
         }
         const error = errorFromResponse(response);
-        if (authenticated && response.statusCode === 401) {
-          // 登录态失效：本地的 Runtime Profile 缓存一并失效。
-          clearCachedRuntimeProfile();
-          clearRuntimeProfileMemory();
+        if (authenticated && response.statusCode === 401 &&
+            requestAuthEpoch === currentAuthEpoch() &&
+            requestAccessToken === currentApp()?.globalData?.accessToken) {
+          // 登录态失效：账号绑定、主体备注与 Runtime Profile 全部失效，
+          // 防止切换微信账号后继续展示上一账号的设备。
+          clearDeviceBindingContext();
           currentApp()?.clearAuthenticatedIdentity?.();
         }
         reject(error);
@@ -335,8 +353,7 @@ async function uploadWechatAvatar(filePath) {
 }
 
 function logoutLocal() {
-  clearCachedRuntimeProfile();
-  clearRuntimeProfileMemory();
+  clearDeviceBindingContext();
   const app = currentApp();
   if (app) app.clearAuthenticatedIdentity();
 }
@@ -692,24 +709,163 @@ function getActivationStatus(deviceId) {
  */
 function createDeviceBinding(request, { idempotencyKey = "" } = {}) {
   const payload = buildBindingRequest(request);
-  const previous = readBindingManifest();
   return rawRequest("/v1/device-bindings", {
     method: "POST",
     data: payload,
     idempotencyKey,
-  }).then((manifest) => {
-    saveBindingManifest(manifest);
-    if (
-      !previous ||
-      previous.device_id !== manifest.device_id ||
-      previous.binding_id !== manifest.binding_id ||
-      previous.binding_version !== manifest.binding_version
-    ) {
-      // 重新绑定/版本变化：清空内存守卫，避免旧 epoch floor/代次残留。
-      clearRuntimeProfileMemory();
+  }).then((manifest) => selectDeviceBinding(manifest));
+}
+
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function invalidBindingDiscovery(detail) {
+  return new ApiError(`设备同步结果无效：${detail}`, {
+    code: "invalid_device_bindings",
+  });
+}
+
+function normalizeDeviceBindings(payload) {
+  if (!isPlainObject(payload)) {
+    throw invalidBindingDiscovery("响应不是对象");
+  }
+  if (!Array.isArray(payload.bindings)) {
+    throw invalidBindingDiscovery("bindings 必须是数组");
+  }
+  const bindingIds = new Set();
+  const deviceIds = new Set();
+  const bindings = payload.bindings.map((item) => {
+    const result = validateBindingManifest(item);
+    if (!result.valid) {
+      throw invalidBindingDiscovery(result.reasons[0] || "绑定清单不完整");
     }
+    const manifest = result.manifest;
+    if (manifest.status !== "active") {
+      throw invalidBindingDiscovery("服务端返回了非生效绑定");
+    }
+    if (bindingIds.has(manifest.binding_id)) {
+      throw invalidBindingDiscovery("存在重复绑定编号");
+    }
+    if (deviceIds.has(manifest.device_id)) {
+      throw invalidBindingDiscovery("同一设备存在多个生效绑定");
+    }
+    bindingIds.add(manifest.binding_id);
+    deviceIds.add(manifest.device_id);
     return manifest;
   });
+  return bindings;
+}
+
+/*
+ * 账号级绑定发现。手机、电脑微信与开发者工具的本地存储彼此隔离，
+ * 所以登录后必须从服务端恢复账号可见的 active BindingManifest，不能把
+ * “本机无缓存”直接解释成“账号没有设备”。
+ */
+function listDeviceBindings() {
+  return rawRequest("/v1/device-bindings").then(normalizeDeviceBindings);
+}
+
+function selectDeviceBinding(manifest) {
+  const validated = validateBindingManifest(manifest);
+  if (!validated.valid || validated.manifest.status !== "active") {
+    throw invalidBindingDiscovery(validated.reasons[0] || "绑定已失效");
+  }
+  const next = validated.manifest;
+  const previous = readBindingManifest();
+  // 先推进上下文代次，再写入本地。任何更早发起的账号级发现请求即使后到，
+  // 也只能读取当前选择，不能把旧选择重新写回来。
+  deviceBindingContextRevision += 1;
+  saveBindingManifest(next);
+  if (
+    !previous ||
+    previous.device_id !== next.device_id ||
+    previous.binding_id !== next.binding_id ||
+    previous.binding_version !== next.binding_version
+  ) {
+    // 新客户端恢复、换设备或绑定版本变化时，旧请求代次与 epoch floor
+    // 都不能继续约束新的 Runtime Profile。
+    clearRuntimeProfileMemory();
+  }
+  return next;
+}
+
+function bindingStateAfterContextChange(bindings = []) {
+  const current = readBindingManifest();
+  if (current) {
+    return {
+      status: "ready",
+      binding: current,
+      bindings,
+      contextChanged: true,
+    };
+  }
+  return {
+    status: "empty",
+    binding: null,
+    bindings: [],
+    contextChanged: true,
+  };
+}
+
+async function syncDeviceBindings() {
+  const startedAtRevision = deviceBindingContextRevision;
+  const startedAtAuthEpoch = currentAuthEpoch();
+  try {
+    const bindings = await listDeviceBindings();
+    if (
+      startedAtRevision !== deviceBindingContextRevision ||
+      startedAtAuthEpoch !== currentAuthEpoch() ||
+      !hasAuthenticatedSession()
+    ) {
+      return bindingStateAfterContextChange(bindings);
+    }
+    if (bindings.length === 0) {
+      // 只有服务端明确确认账号没有 active binding 时，才清理本地上下文。
+      clearDeviceBindingContext();
+      return { status: "empty", binding: null, bindings: [] };
+    }
+
+    let selected = null;
+    const cached = readBindingManifest();
+    if (cached) {
+      selected =
+        bindings.find((item) => item.binding_id === cached.binding_id) ||
+        bindings.find((item) => item.device_id === cached.device_id) ||
+        null;
+    }
+    if (!selected && bindings.length === 1) selected = bindings[0];
+
+    if (selected) {
+      return {
+        status: "ready",
+        binding: selectDeviceBinding(selected),
+        bindings,
+      };
+    }
+    // 当前账号仍有设备，但此前选中的绑定已不可见；不要让其他页面复用它。
+    if (cached) clearDeviceBindingContext();
+    return { status: "choose", binding: null, bindings };
+  } catch (error) {
+    // 另一页面已选择设备或账号已登出时，只读取当前上下文；绝不能用本次
+    // 请求开始时的旧快照回填。401 已由 rawRequest 完成全量清理。
+    if (error?.status === 401) {
+      return { status: "error", binding: null, bindings: [], error };
+    }
+    if (
+      startedAtRevision !== deviceBindingContextRevision ||
+      startedAtAuthEpoch !== currentAuthEpoch()
+    ) {
+      return bindingStateAfterContextChange();
+    }
+    const current = readBindingManifest();
+    if (current) {
+      return { status: "cached", binding: current, bindings: [], error };
+    }
+    return { status: "error", binding: null, bindings: [], error };
+  }
 }
 
 /*
@@ -871,13 +1027,40 @@ function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confi
  * 所有敏感页面（数字分身/成长小结/原始语音/私人回顾）必须经此门禁。
  */
 async function requireRuntimeCapability(capability, { sessionId = null } = {}) {
-  const binding = readBindingManifest();
+  const authEpoch = currentAuthEpoch();
+  let binding = readBindingManifest();
   if (!binding || typeof binding.device_id !== "string") {
-    return { allowed: false, reason: "no_binding", profile: null };
+    if (!hasAuthenticatedSession()) {
+      return { allowed: false, reason: "unauthenticated", profile: null };
+    }
+    // 回顾、隐私等页面也可以成为登录后的第一站，不能依赖首页先恢复缓存。
+    // 账号绑定发现只恢复设备上下文，绝不代替下方的服务端能力校验。
+    const discovered = await syncDeviceBindings();
+    if (!isAuthEpochCurrent(authEpoch) || !hasAuthenticatedSession()) {
+      return { allowed: false, reason: "superseded", profile: null };
+    }
+    if (discovered.status === "choose") {
+      return { allowed: false, reason: "device_selection_required", profile: null };
+    }
+    if (discovered.contextChanged && !discovered.binding) {
+      return { allowed: false, reason: "superseded", profile: null };
+    }
+    if (discovered.status === "empty") {
+      return { allowed: false, reason: "no_binding", profile: null };
+    }
+    if (!discovered.binding) {
+      return {
+        allowed: false,
+        reason: "binding_sync_failed",
+        profile: null,
+        error: discovered.error,
+      };
+    }
+    binding = discovered.binding;
   }
   try {
     const profile = await getRuntimeProfile(binding.device_id, { sessionId });
-    if (profile === null) {
+    if (!isAuthEpochCurrent(authEpoch) || profile === null) {
       return { allowed: false, reason: "superseded", profile: null };
     }
     if (profile.valid !== true) {
@@ -942,6 +1125,9 @@ module.exports = {
   getDeviceClaim,
   getActivationStatus,
   createDeviceBinding,
+  listDeviceBindings,
+  syncDeviceBindings,
+  selectDeviceBinding,
   getDeviceBinding,
   getDeviceSettings,
   getWakeWordCatalog,

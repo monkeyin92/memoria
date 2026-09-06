@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById } = require("../../utils/companions");
 const { parseCustomPersona } = require("../../utils/custom-persona");
-const { readBindingManifest } = require("../../utils/device-binding");
+const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const { deviceStatusSummary } = require("../../utils/device-status");
 const { greetingFor } = require("../../utils/greeting");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -16,6 +16,10 @@ function todayKey(date = new Date()) {
 function emptyDashboard() {
   return {
     loading: false,
+    syncingBindings: false,
+    bindingSyncError: "",
+    bindingChoices: [],
+    needsBindingChoice: false,
     error: "",
     hasBinding: false,
     online: false,
@@ -28,6 +32,15 @@ function emptyDashboard() {
     todayMeta: "今天还没有可回顾的内容",
     todayOverview: "对着设备说几句后，再回来看。",
   };
+}
+
+function bindingChoiceItems(bindings) {
+  return (bindings || []).map((binding) => ({
+    binding,
+    bindingId: binding.binding_id,
+    label: `Memoria · ${String(binding.device_id || "").slice(-4) || "未知"}`,
+    modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
+  }));
 }
 
 Page({
@@ -75,6 +88,7 @@ Page({
   },
 
   _enterGuestState() {
+    this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
       authenticated: false,
       greeting: `${greetingFor()}，朋友`,
@@ -104,13 +118,73 @@ Page({
     wx.switchTab({ url: "/pages/memory/index" });
   },
 
+  retryBindingSync() {
+    if (!api.hasAuthenticatedSession()) return;
+    this.loadHome();
+  },
+
+  async chooseDeviceBinding(event) {
+    const bindingId = event.currentTarget.dataset.bindingId;
+    const choice = this.data.bindingChoices.find((item) => item.bindingId === bindingId);
+    if (!choice) return;
+    try {
+      api.selectDeviceBinding(choice.binding);
+      this.setData({
+        loading: true,
+        syncingBindings: false,
+        bindingSyncError: "",
+        needsBindingChoice: false,
+      });
+      await this.loadHome();
+    } catch (error) {
+      this.setData({
+        bindingSyncError: error?.message || "无法切换到这台设备，请重试。",
+      });
+    }
+  },
+
   async loadHome() {
+    const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
     const authEpoch = api.currentAuthEpoch();
-    this.setData({ loading: true, error: "" });
-    const binding = readBindingManifest();
+    const cachedBinding = readBindingManifest();
+    this.setData({
+      loading: true,
+      syncingBindings: !cachedBinding,
+      bindingSyncError: "",
+      needsBindingChoice: false,
+      bindingChoices: [],
+      error: "",
+    });
+
+    const bindingState = await api.syncDeviceBindings();
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+
+    if (bindingState.status === "error") {
+      this.setData({
+        ...emptyDashboard(),
+        bindingSyncError: "设备同步失败，请检查网络后重试。",
+      });
+      return;
+    }
+    if (bindingState.status === "empty") {
+      this.setData(emptyDashboard());
+      return;
+    }
+    if (bindingState.status === "choose") {
+      this.setData({
+        ...emptyDashboard(),
+        needsBindingChoice: true,
+        bindingChoices: bindingChoiceItems(bindingState.bindings),
+      });
+      return;
+    }
+
+    const binding = bindingState.binding;
     if (!binding || typeof binding.device_id !== "string") {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
-      this.setData({ loading: false, hasBinding: false });
+      this.setData({
+        ...emptyDashboard(),
+        bindingSyncError: "设备同步结果不完整，请重试。",
+      });
       return;
     }
 
@@ -123,7 +197,7 @@ Page({
         identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
         this._loadToday(identity),
       ]);
-    if (!api.isAuthEpochCurrent(authEpoch)) return;
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     const activation =
       activationResult.status === "fulfilled" ? activationResult.value : null;
@@ -155,6 +229,13 @@ Page({
 
     this.setData({
       loading: false,
+      syncingBindings: false,
+      bindingSyncError:
+        bindingState.status === "cached"
+          ? "设备列表暂时无法同步，已显示本机保存的设备。"
+          : "",
+      bindingChoices: [],
+      needsBindingChoice: false,
       hasBinding: true,
       online: summary.online,
       onlineLabel: summary.onlineLabel,

@@ -46,6 +46,45 @@
     </view>
   </view>
 
+  <view class="card device-binding-card" aria-live="polite">
+    <text class="settings-title">设备绑定</text>
+    <text class="setting-desc">设备清单以服务端同步结果为准，不把本机没有缓存当成账号没有设备。</text>
+    <view class="device-binding-status {{deviceBindingState === 'error' ? 'device-binding-status-error' : ''}}">
+      <view class="device-binding-copy">
+        <text class="device-binding-state">{{deviceBindingStateLabel}}</text>
+        <text class="device-binding-count">{{deviceBindingCountLabel}}</text>
+      </view>
+      <text class="device-binding-detail">{{deviceBindingDetail}}</text>
+    </view>
+    <view wx:if="{{deviceBindingChoices.length}}" class="device-binding-choices" aria-label="选择当前设备">
+      <view
+        wx:for="{{deviceBindingChoices}}"
+        wx:key="bindingId"
+        class="device-binding-choice"
+        data-binding-id="{{item.bindingId}}"
+        bindtap="chooseDeviceBinding"
+      >
+        <view class="device-binding-choice-copy">
+          <text class="device-binding-choice-name">{{item.label}}</text>
+          <text class="device-binding-choice-mode">{{item.modeLabel}}</text>
+        </view>
+        <text class="device-binding-choice-arrow">›</text>
+      </view>
+    </view>
+    <button
+      wx:if="{{deviceBindingState === 'error' || deviceBindingState === 'cached'}}"
+      class="secondary-button device-binding-action"
+      loading="{{deviceBindingSyncing}}"
+      disabled="{{deviceBindingSyncing}}"
+      bindtap="retryDeviceBindingSync"
+    >重新同步设备</button>
+    <button
+      wx:elif="{{deviceBindingState === 'empty'}}"
+      class="secondary-button device-binding-action"
+      bindtap="openDevice"
+    >去绑定设备</button>
+  </view>
+
   <view class="card compliance-card">
     <text class="settings-title">合规说明</text>
     <text class="compliance-copy">{{complianceCopy.positioning}}</text>

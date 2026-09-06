@@ -14,7 +14,28 @@
 
   <block wx:else>
     <view wx:if="{{loading}}" class="card">
-      <text class="loading-text">正在读取状态…</text>
+      <text class="loading-text">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
+    </view>
+
+    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card empty-card">
+      <text class="empty-badge sync-error-badge">同步未完成</text>
+      <text class="empty-title">暂时无法确认设备信息</text>
+      <text class="empty-copy">{{bindingSyncError}}</text>
+      <button class="primary-button empty-button" bindtap="retryBindingSync">重新同步</button>
+    </view>
+
+    <view wx:elif="{{needsBindingChoice}}" class="card empty-card">
+      <text class="empty-badge">选择设备</text>
+      <text class="empty-title">这次要管理哪一台？</text>
+      <text class="empty-copy">你的账号绑定了多台设备，请选择一台作为当前设备。</text>
+      <view wx:for="{{bindingChoices}}" wx:key="bindingId" class="binding-choice" data-binding-id="{{item.bindingId}}" bindtap="chooseDeviceBinding">
+        <view class="binding-choice-copy">
+          <text class="binding-choice-name">{{item.label}}</text>
+          <text class="binding-choice-meta">{{item.modeLabel}}</text>
+        </view>
+        <text class="binding-choice-arrow">›</text>
+      </view>
+      <text wx:if="{{bindingSyncError}}" class="error-text">{{bindingSyncError}}</text>
     </view>
 
     <block wx:elif="{{!hasBinding}}">
@@ -64,6 +85,7 @@
       </view>
     </block>
 
+    <text wx:if="{{bindingSyncError && hasBinding}}" class="sync-warning">{{bindingSyncError}}</text>
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
   </block>
 </view>

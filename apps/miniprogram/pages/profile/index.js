@@ -3,7 +3,7 @@ const compliance = require("../../utils/compliance");
 const { companions, defaultCompanionId } = require("../../utils/companions");
 const { encodeCustomPersona, parseCustomPersona } = require("../../utils/custom-persona");
 const { requireLogin } = require("../../utils/auth-gate");
-const { readBindingManifest } = require("../../utils/device-binding");
+const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
 
 const defaultProfile = {
@@ -69,6 +69,93 @@ function profileInitialFor(displayName) {
   return name ? name.slice(0, 1) : "友";
 }
 
+function deviceBindingLabel(binding) {
+  const tail = String(binding?.device_id || "").slice(-4);
+  return "Memoria · " + (tail || "未知");
+}
+
+function deviceBindingModeLabel(binding) {
+  return MODE_META[binding?.declared_mode]?.title || "已绑定设备";
+}
+
+function deviceBindingChoiceItems(bindings) {
+  return (bindings || []).map((binding) => ({
+    binding,
+    bindingId: binding.binding_id,
+    label: deviceBindingLabel(binding),
+    modeLabel: deviceBindingModeLabel(binding),
+  }));
+}
+
+function deviceBindingReset(accountId = "", syncing = false) {
+  return {
+    deviceBindingAccountId: accountId,
+    deviceBindingState: syncing ? "syncing" : "idle",
+    deviceBindingSyncing: syncing,
+    deviceBindingStateLabel: syncing ? "同步中" : "待同步",
+    deviceBindingDetail: syncing
+      ? "正在从服务端恢复账号可见设备。"
+      : "登录后从服务端同步账号可见设备。",
+    deviceBindingError: "",
+    deviceBinding: null,
+    deviceBindingCountLabel: "未确认",
+    deviceBindingChoices: [],
+  };
+}
+
+function deviceBindingStateData(state) {
+  const status = state?.status || "error";
+  const binding = state?.binding || null;
+  const bindings = Array.isArray(state?.bindings) ? state.bindings : [];
+  const error = state?.error?.message || "";
+  const view = {
+    deviceBindingState: status,
+    deviceBindingSyncing: false,
+    deviceBindingError: error,
+    deviceBinding: binding,
+    deviceBindingCountLabel: "未确认",
+    deviceBindingChoices: [],
+  };
+
+  if ((status === "ready" || status === "cached") && binding) {
+    view.deviceBindingLabel = deviceBindingLabel(binding);
+    view.deviceBindingModeLabel = deviceBindingModeLabel(binding);
+    view.deviceBindingCountLabel = status === "cached"
+      ? "当前 1 台（列表未同步）"
+      : bindings.length ? bindings.length + " 台" : "当前 1 台";
+  } else {
+    view.deviceBindingLabel = "";
+    view.deviceBindingModeLabel = "";
+  }
+
+  if (status === "ready") {
+    view.deviceBindingStateLabel = "已绑定设备";
+    view.deviceBindingDetail = view.deviceBindingModeLabel + " · " + view.deviceBindingLabel;
+    view.deviceBindingChoices = deviceBindingChoiceItems(bindings);
+  } else if (status === "cached") {
+    view.deviceBindingStateLabel = "已绑定设备";
+    view.deviceBindingDetail = view.deviceBindingModeLabel + " · " + view.deviceBindingLabel +
+      "；设备列表暂时无法同步，当前为本机保存的绑定。";
+  } else if (status === "empty") {
+    view.deviceBindingCountLabel = "0 台";
+    view.deviceBindingStateLabel = "未绑定设备";
+    view.deviceBindingDetail = "服务端确认这个账号还没有生效绑定。";
+  } else if (status === "choose") {
+    view.deviceBindingCountLabel = bindings.length + " 台待选择";
+    view.deviceBindingStateLabel = "待选择设备";
+    view.deviceBindingDetail = "服务端找到多台生效设备，请选择当前设备。";
+    view.deviceBindingChoices = deviceBindingChoiceItems(bindings);
+  } else if (status === "syncing") {
+    view.deviceBindingStateLabel = "同步中";
+    view.deviceBindingDetail = "正在从服务端恢复账号可见设备。";
+  } else {
+    view.deviceBindingStateLabel = "同步失败";
+    view.deviceBindingDetail = "设备信息暂未同步，这不代表未绑定。请稍后重新同步，无需重新配网。";
+  }
+
+  return view;
+}
+
 function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -98,7 +185,6 @@ function formatDeliveredCapabilityRows(payload) {
   return [
     { label: "微信已绑定", value: payload.wechat_bound ? "是" : "否" },
     { label: "手机号已验证", value: payload.wechat_phone_verified ? "是" : "否" },
-    { label: "已绑定设备", value: String(payload.devices_bound ?? 0) },
     {
       label: "主人声纹",
       value: `${payload.speaker_profiles_active ?? 0} 个活跃`,
@@ -171,6 +257,7 @@ Page({
     voiceSampleBusy: false,
     recording: false,
     recordSeconds: 0,
+    ...deviceBindingReset(),
     complianceCopy: {
       positioning: compliance.PRODUCT_POSITIONING,
       aiDisclosure: compliance.AI_DISCLOSURE,
@@ -188,17 +275,33 @@ Page({
 
   onShow() {
     const authenticated = api.hasAuthenticatedSession();
-    this.setData({ authenticated });
+    const identity = api.currentIdentity();
+    if (identity && identity.user_id !== this.data.deviceBindingAccountId) {
+      this.setData({
+        ...deviceBindingReset(identity.user_id, true),
+        authenticated,
+      });
+    } else {
+      this.setData({ authenticated });
+    }
     if (!authenticated) {
       this._enterGuestState();
       return;
     }
-    this.loadProfile();
-    this.loadStats();
-    this.loadDeliveredCapabilities();
+    this._loadAuthenticatedData();
   },
 
   onUnload() {
+    this._profileDataSeq = (this._profileDataSeq || 0) + 1;
+    this._deviceBindingSeq = (this._deviceBindingSeq || 0) + 1;
+    // 卸载后清空忙位与在途请求引用：迟到的请求因 seq 已递增会被丢弃，
+    // 其 finally 因为 busy key 已清空不会再误改这里的释放状态。
+    this._profileDataBusy = false;
+    this._profileDataBusyKey = "";
+    this._profileDataRequest = null;
+    this._deviceBindingBusy = false;
+    this._deviceBindingBusyKey = "";
+    this._deviceBindingRequest = null;
     this._stopRecordingTimer();
     if (this.data.recording && this._recorder) {
       try {
@@ -248,7 +351,151 @@ Page({
       voiceSampleBusy: false,
       recording: false,
       recordSeconds: 0,
+      ...deviceBindingReset(),
     });
+  },
+
+  _deviceBindingStale(flowSeq, authEpoch) {
+    return (
+      flowSeq !== this._deviceBindingSeq || !api.isAuthEpochCurrent(authEpoch)
+    );
+  },
+
+  async loadDeviceBindingSync() {
+    const identity = api.currentIdentity();
+    if (!identity || !api.hasAuthenticatedSession()) return null;
+    const authEpoch = api.currentAuthEpoch();
+    const busyKey = authEpoch + ":" + identity.user_id;
+    if (
+      this._deviceBindingBusy &&
+      this._deviceBindingBusyKey === busyKey &&
+      this._deviceBindingRequest
+    ) {
+      // 同一账号同一 epoch 的在途同步直接复用，避免重复请求竞态。
+      return this._deviceBindingRequest || null;
+    }
+
+    const flowSeq = (this._deviceBindingSeq = (this._deviceBindingSeq || 0) + 1);
+    const accountChanged = identity.user_id !== this.data.deviceBindingAccountId;
+    this.setData({
+      ...(accountChanged ? deviceBindingReset(identity.user_id, true) : {}),
+      deviceBindingState: "syncing",
+      deviceBindingSyncing: true,
+    });
+
+    this._deviceBindingBusy = true;
+    this._deviceBindingBusyKey = busyKey;
+    const request = (async () => {
+      try {
+        const state = await api.syncDeviceBindings();
+        if (this._deviceBindingStale(flowSeq, authEpoch)) return null;
+        this.setData(deviceBindingStateData(state));
+        return state;
+      } catch (error) {
+        if (this._deviceBindingStale(flowSeq, authEpoch)) return null;
+        const state = { status: "error", binding: null, bindings: [], error };
+        this.setData(deviceBindingStateData(state));
+        return state;
+      } finally {
+        // 只有仍持有同一 busy key 的请求才能清忙位；账号切换后旧请求
+        // 迟到时不能吞掉新账号正在进行的同步。
+        if (this._deviceBindingBusyKey === busyKey) {
+          this._deviceBindingBusy = false;
+          this._deviceBindingBusyKey = "";
+        }
+        if (this._deviceBindingRequest === request) {
+          this._deviceBindingRequest = null;
+        }
+      }
+    })();
+    this._deviceBindingRequest = request;
+    return request;
+  },
+
+  async _loadAuthenticatedData() {
+    const identity = api.currentIdentity();
+    if (!identity || !api.hasAuthenticatedSession()) return null;
+    const authEpoch = api.currentAuthEpoch();
+    const busyKey = authEpoch + ":" + identity.user_id;
+    if (
+      this._profileDataBusy &&
+      this._profileDataBusyKey === busyKey &&
+      this._profileDataRequest
+    ) {
+      // 同一账号同一 epoch 的在途加载直接复用；不同账号/epoch 必须允许
+      // 发起新请求，否则换账号会被旧账号的忙位卡死在“同步中”。
+      return this._profileDataRequest;
+    }
+
+    const flowSeq = (this._profileDataSeq = (this._profileDataSeq || 0) + 1);
+    this._profileDataBusy = true;
+    this._profileDataBusyKey = busyKey;
+    const request = (async () => {
+      try {
+        const bindingState = await this.loadDeviceBindingSync();
+        if (
+          !bindingState ||
+          flowSeq !== this._profileDataSeq ||
+          !api.isAuthEpochCurrent(authEpoch) ||
+          !api.currentIdentity()
+        ) {
+          return null;
+        }
+        await Promise.all([
+          this.loadProfile(),
+          this.loadStats(),
+          this.loadDeliveredCapabilities(),
+        ]);
+        return bindingState;
+      } finally {
+        // 只有仍持有同一 busy key 的请求才能清忙位；换账号后旧请求迟到
+        // 时不能清掉新账号正在进行的加载忙位。
+        if (this._profileDataBusyKey === busyKey) {
+          this._profileDataBusy = false;
+          this._profileDataBusyKey = "";
+        }
+        if (this._profileDataRequest === request) {
+          this._profileDataRequest = null;
+        }
+      }
+    })();
+    this._profileDataRequest = request;
+    return request;
+  },
+
+  async retryDeviceBindingSync() {
+    if (!api.hasAuthenticatedSession()) return;
+    await this._loadAuthenticatedData();
+  },
+
+  async chooseDeviceBinding(event) {
+    if (this._profileDataBusy || this._deviceBindingBusy) return;
+    const bindingId = event.currentTarget.dataset.bindingId;
+    const choice = this.data.deviceBindingChoices.find(
+      (item) => item.bindingId === bindingId,
+    );
+    if (!choice) return;
+
+    const flowSeq = (this._deviceBindingSeq = (this._deviceBindingSeq || 0) + 1);
+    const authEpoch = api.currentAuthEpoch();
+    try {
+      const binding = api.selectDeviceBinding(choice.binding);
+      if (this._deviceBindingStale(flowSeq, authEpoch)) return;
+      this.setData({
+        ...deviceBindingStateData({
+          status: "ready",
+          binding,
+          bindings: this.data.deviceBindingChoices.map((item) => item.binding),
+        }),
+        deviceBindingDetail: "已选择当前设备，正在刷新页面状态。",
+      });
+      await this._loadAuthenticatedData();
+    } catch (error) {
+      if (this._deviceBindingStale(flowSeq, authEpoch)) return;
+      this.setData({
+        deviceBindingError: error?.message || "无法切换到这台设备，请重试。",
+      });
+    }
   },
 
   async loadProfile() {
@@ -332,6 +579,13 @@ Page({
   async loadRuntimeCapabilities() {
     const binding = readBindingManifest();
     if (!binding || typeof binding.device_id !== "string") {
+      const reasonByState = {
+        idle: "设备绑定尚未同步，暂不能读取 Runtime Profile。",
+        syncing: "设备绑定正在同步，暂不能读取 Runtime Profile。",
+        choose: "请先选择当前设备，再读取 Runtime Profile。",
+        error: "设备绑定同步失败，暂不能读取 Runtime Profile。",
+        empty: "服务端确认还没有绑定设备，无法取得 Runtime Profile。",
+      };
       return {
         hasRuntimeProfile: false,
         runtimeCapabilities: [],
@@ -340,7 +594,8 @@ Page({
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         voiceCloneAllowed: false,
-        profileUnavailableReason: "还没有绑定设备，无法取得 Runtime Profile。",
+        profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
+          "设备绑定状态不完整，无法取得 Runtime Profile。",
       };
     }
     try {
@@ -419,6 +674,10 @@ Page({
   async loadStats() {
     const identity = api.currentIdentity();
     if (!identity) return;
+    if (this.data.deviceBindingState !== "ready" && this.data.deviceBindingState !== "cached") {
+      this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
+      return;
+    }
     // 私人回顾统计也是 memory_recall_private 敏感动作：未授权时保持 0，不请求。
     const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
     if (!gate.allowed) {
@@ -721,7 +980,7 @@ Page({
   async loginFromProfile() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
     this.setData({ authenticated: true });
-    await Promise.all([this.loadProfile(), this.loadStats(), this.loadDeliveredCapabilities()]);
+    await this._loadAuthenticatedData();
   },
 
   async openDigitalSelf() {

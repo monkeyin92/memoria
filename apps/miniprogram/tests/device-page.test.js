@@ -146,6 +146,12 @@ api.currentIdentity = () => ({ user_id: "person_owner", display_name: "主人" }
 api.currentAccessToken = () => "test-token";
 api.currentAuthEpoch = () => 0;
 api.isAuthEpochCurrent = () => true;
+api.syncDeviceBindings = async () => {
+  const local = binding.readBindingManifest();
+  return local
+    ? { status: "ready", binding: local, bindings: [local] }
+    : { status: "empty", binding: null, bindings: [] };
+};
 
 function setPath(data, key, value) {
   const parts = key.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean);
@@ -368,6 +374,7 @@ test("late refresh response cannot overwrite the switched profile", async () => 
   // 拉刷新（refresh）与切换（switch）并发：先发 refresh，后发 switch。
   deferProfileResponses = true;
   const refreshFlow = page.loadDevice();
+  await new Promise((resolve) => setImmediate(resolve));
   const switchFlow = page.confirmSubject();
   await Promise.resolve();
   assert.equal(deferredResponses.length, 2);

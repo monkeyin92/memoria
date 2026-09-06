@@ -89,9 +89,22 @@ function currentUserLabel(profile, candidates) {
   return match?.display_name || "已确认的使用者";
 }
 
+function bindingChoiceItems(bindings) {
+  return (bindings || []).map((binding) => ({
+    binding,
+    bindingId: binding.binding_id,
+    label: `Memoria · ${String(binding.device_id || "").slice(-4) || "未知"}`,
+    modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
+  }));
+}
+
 Page({
   data: {
     loading: true,
+    syncingBindings: false,
+    bindingSyncError: "",
+    bindingChoices: [],
+    needsBindingChoice: false,
     error: "",
     hasBinding: false,
     binding: null,
@@ -162,8 +175,13 @@ Page({
   },
 
   _enterGuestState() {
+    this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
       loading: false,
+      syncingBindings: false,
+      bindingSyncError: "",
+      bindingChoices: [],
+      needsBindingChoice: false,
       error: "",
       hasBinding: false,
       binding: null,
@@ -213,16 +231,60 @@ Page({
 
   async loadDevice() {
     const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
-    this.setData({ loading: true, error: "" });
-    const binding = readBindingManifest();
-    if (!binding || typeof binding.device_id !== "string") {
+    const authEpoch = api.currentAuthEpoch();
+    const cachedBinding = readBindingManifest();
+    this.setData({
+      loading: true,
+      syncingBindings: !cachedBinding,
+      bindingSyncError: "",
+      bindingChoices: [],
+      needsBindingChoice: false,
+      error: "",
+    });
+
+    const bindingState = await api.syncDeviceBindings();
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+
+    if (bindingState.status === "error") {
+      this.setData({
+        loading: false,
+        syncingBindings: false,
+        hasBinding: false,
+        binding: null,
+        bindingSyncError: "设备同步失败，请检查网络后重试。",
+      });
+      return;
+    }
+    if (bindingState.status === "choose") {
+      this.setData({
+        loading: false,
+        syncingBindings: false,
+        hasBinding: false,
+        binding: null,
+        bindingChoices: bindingChoiceItems(bindingState.bindings),
+        needsBindingChoice: true,
+      });
+      return;
+    }
+
+    const binding = bindingState.binding;
+    if (bindingState.status === "empty" || !binding || typeof binding.device_id !== "string") {
       let hasPendingOnboarding = false;
       try {
         hasPendingOnboarding = Boolean(readOnboardingSessionId());
       } catch {
         hasPendingOnboarding = false;
       }
-      this.setData({ loading: false, hasBinding: false, hasPendingOnboarding });
+      this.setData({
+        loading: false,
+        syncingBindings: false,
+        hasBinding: false,
+        binding: null,
+        bindingSyncError: "",
+        bindingChoices: [],
+        needsBindingChoice: false,
+        hasPendingOnboarding,
+      });
       return;
     }
     try {
@@ -234,7 +296,7 @@ Page({
           api.getDeviceDiagnostics(binding.device_id),
           api.getWakeWordCatalog(),
         ]);
-      if (flowSeq !== this._flowSeq) return; // 晚到响应丢弃
+      if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
         profileResult.status === "fulfilled" && profileResult.value !== null
           ? profileResult.value
@@ -288,7 +350,7 @@ Page({
       const resolution = needResolution
         ? await api.resolveSessionSubject({ deviceId: binding.device_id })
         : null;
-      if (flowSeq !== this._flowSeq) return;
+      if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       const candidates = resolution?.candidate_subjects || [];
       const summary = deviceStatusSummary(activation, profile);
       const failures = [profileResult, activationResult].filter(
@@ -296,6 +358,13 @@ Page({
       );
       this.setData({
         hasBinding: true,
+        syncingBindings: false,
+        bindingSyncError:
+          bindingState.status === "cached"
+            ? "设备列表暂时无法同步，已显示本机保存的设备。"
+            : "",
+        bindingChoices: [],
+        needsBindingChoice: false,
         binding,
         bindingModeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
         bindingRoles: uniqueLabels(roleLabels(binding.roles || [])),
@@ -361,12 +430,40 @@ Page({
             : "",
       });
     } catch (error) {
+      if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         hasBinding: true,
         error: error?.message || "设备信息加载失败。",
       });
     } finally {
-      this.setData({ loading: false });
+      if (flowSeq === this._flowSeq && api.isAuthEpochCurrent(authEpoch)) {
+        this.setData({ loading: false, syncingBindings: false });
+      }
+    }
+  },
+
+  retryBindingSync() {
+    if (!api.hasAuthenticatedSession()) return;
+    this.loadDevice();
+  },
+
+  async chooseDeviceBinding(event) {
+    const bindingId = event.currentTarget.dataset.bindingId;
+    const choice = this.data.bindingChoices.find((item) => item.bindingId === bindingId);
+    if (!choice) return;
+    try {
+      api.selectDeviceBinding(choice.binding);
+      this.setData({
+        loading: true,
+        syncingBindings: false,
+        bindingSyncError: "",
+        needsBindingChoice: false,
+      });
+      await this.loadDevice();
+    } catch (error) {
+      this.setData({
+        bindingSyncError: error?.message || "无法切换到这台设备，请重试。",
+      });
     }
   },
 

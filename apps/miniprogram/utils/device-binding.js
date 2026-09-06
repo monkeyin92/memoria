@@ -345,6 +345,15 @@ function configActionGate(action) {
  */
 function capabilityGateMessage(result, capability) {
   const title = entryForCapability(capability)?.title || "该能力";
+  if (result?.reason === "unauthenticated") {
+    return "请先登录，再查看这项内容。";
+  }
+  if (result?.reason === "binding_sync_failed") {
+    return "设备信息尚未同步，暂时无法查看这项内容。请到「设备」页重新同步，无需重新绑定。";
+  }
+  if (result?.reason === "device_selection_required") {
+    return "账号下有多台设备，请先到「设备」页选择当前设备。";
+  }
   if (result?.reason === "no_binding") {
     return "还没有绑定设备，无法取得 Runtime Profile；请先在「设备与成员」完成首次绑定。";
   }

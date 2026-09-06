@@ -53,9 +53,55 @@
   letter-spacing: 4rpx;
 }
 
+.sync-error-badge {
+  border-color: rgba(255, 179, 92, 0.38);
+  background: rgba(255, 155, 64, 0.1);
+  color: #ffc285;
+}
+
 .loading-text {
   color: #8d99c4;
   font-size: 26rpx;
+}
+
+.binding-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  box-sizing: border-box;
+  margin-top: 18rpx;
+  padding: 24rpx 26rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.18);
+  border-radius: 24rpx;
+  background: rgba(8, 14, 36, 0.5);
+}
+
+.binding-choice-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.binding-choice-name,
+.binding-choice-meta {
+  display: block;
+}
+
+.binding-choice-name {
+  color: #f2f5ff;
+  font-size: 28rpx;
+  font-weight: 650;
+}
+
+.binding-choice-meta {
+  margin-top: 6rpx;
+  color: #8d99c4;
+  font-size: 22rpx;
+}
+
+.binding-choice-arrow {
+  color: #7ceaff;
+  font-size: 38rpx;
 }
 
 .status-card {
@@ -169,4 +215,12 @@
   margin-top: 24rpx;
   color: #ff8ba3;
   font-size: 24rpx;
+}
+
+.sync-warning {
+  display: block;
+  margin-top: 24rpx;
+  color: #ffc285;
+  font-size: 24rpx;
+  line-height: 1.6;
 }

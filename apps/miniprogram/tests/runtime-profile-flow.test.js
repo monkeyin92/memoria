@@ -411,6 +411,7 @@ test("logout clears in-memory epoch floors and request seqs", async () => {
   resolveRequest(0, wire);
   await first;
   api.logoutLocal();
+  bindDevice();
   // 内存 floor 清空后，同 session 同 epoch 不同内容也应被接受（而非被旧 floor 拒绝）。
   const again = api.getRuntimeProfile("dev_flow", { sessionId: "ses_mem" });
   resolveRequest(
@@ -438,6 +439,7 @@ test("auth 401 clears in-memory runtime profile guards", async () => {
   await assert.rejects(failing);
 
   // 401 清理后同 session 同 epoch 不同内容应被接受；旧 floor 残留会被误拒。
+  bindDevice();
   const again = api.getRuntimeProfile("dev_flow", { sessionId: "ses_401" });
   resolveRequest(
     0,
@@ -530,7 +532,10 @@ test("requireRuntimeCapability gates all five capabilities fail-closed", async (
 test("requireRuntimeCapability denies every capability without a binding or profile", async () => {
   binding.clearBindingManifest();
   for (const capability of binding.SENSITIVE_CAPABILITIES) {
-    const result = await api.requireRuntimeCapability(capability, { sessionId: "ses_none" });
+    const checking = api.requireRuntimeCapability(capability, { sessionId: "ses_none" });
+    assert.deepEqual(currentPaths(), ["/v1/device-bindings"]);
+    resolveRequest(0, { bindings: [] });
+    const result = await checking;
     assert.equal(result.allowed, false);
     assert.equal(result.reason, "no_binding");
   }
@@ -545,6 +550,68 @@ test("requireRuntimeCapability denies every capability without a binding or prof
   assert.equal(result.reason, "invalid_profile");
 });
 
+test("a protected deep link restores its account binding before checking capability", async () => {
+  binding.clearBindingManifest();
+  const checking = api.requireRuntimeCapability("memory_recall_private", {
+    sessionId: "ses_deep_link",
+  });
+  assert.deepEqual(currentPaths(), ["/v1/device-bindings"]);
+  resolveRequest(0, {
+    bindings: [canonicalManifest({ binding_id: "bd_flow", device_id: "dev_flow" })],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(currentPaths(), ["/v1/devices/dev_flow/runtime-profile?session_id=ses_deep_link"]);
+  resolveRequest(0, validWireProfile({
+    session_id: "ses_deep_link",
+    capabilities: ["chat", "memory_recall_private"],
+  }));
+  const result = await checking;
+  assert.equal(result.allowed, true);
+  assert.equal(binding.readBindingManifest().device_id, "dev_flow");
+});
+
+test("restoring a binding does not grant a capability absent from the runtime profile", async () => {
+  binding.clearBindingManifest();
+  const checking = api.requireRuntimeCapability("memory_recall_private", {
+    sessionId: "ses_deep_denied",
+  });
+  resolveRequest(0, {
+    bindings: [canonicalManifest({ binding_id: "bd_flow", device_id: "dev_flow" })],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  resolveRequest(0, validWireProfile({ session_id: "ses_deep_denied", capabilities: ["chat"] }));
+  const result = await checking;
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "capability_missing");
+});
+
+test("protected deep links distinguish discovery failure from an unbound account", async () => {
+  binding.clearBindingManifest();
+  const checking = api.requireRuntimeCapability("memory_recall_private");
+  resolveRequest(0, { detail: "Method Not Allowed" }, 405);
+  const result = await checking;
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "binding_sync_failed");
+  assert.equal(pendingRequests.length, 0);
+  assert.match(binding.capabilityGateMessage(result), /无需重新绑定/);
+  assert.doesNotMatch(binding.capabilityGateMessage(result), /还没有绑定设备/);
+});
+
+test("protected deep links require selection instead of guessing among multiple devices", async () => {
+  binding.clearBindingManifest();
+  const checking = api.requireRuntimeCapability("memory_recall_private");
+  resolveRequest(0, { bindings: [
+    canonicalManifest({ binding_id: "bd_a", device_id: "dev_a" }),
+    canonicalManifest({ binding_id: "bd_b", device_id: "dev_b" }),
+  ] });
+  const result = await checking;
+  assert.equal(result.allowed, false);
+  assert.equal(result.reason, "device_selection_required");
+  assert.equal(binding.readBindingManifest(), null);
+  assert.equal(pendingRequests.length, 0);
+  assert.match(binding.capabilityGateMessage(result), /选择当前设备/);
+});
+
 test("refresh failure fails closed through requireRuntimeCapability", async () => {
   bindDevice();
   const denied = api.requireRuntimeCapability("memory_recall_private", {
@@ -555,4 +622,66 @@ test("refresh failure fails closed through requireRuntimeCapability", async () =
   const result = await denied;
   assert.equal(result.allowed, false);
   assert.equal(result.reason, "unavailable");
+});
+
+test("discovery timeout is not an unbound account", async () => {
+  binding.clearBindingManifest(); api.clearRuntimeProfileMemory();
+  const checking = api.requireRuntimeCapability("memory_recall_private");
+  pendingRequests.shift().fail({ errMsg: "request:fail timeout" });
+  assert.equal((await checking).reason, "binding_sync_failed");
+  assert.equal(pendingRequests.length, 0);
+});
+
+test("logout or account change during discovery cannot grant a capability", async () => {
+  const originalGetApp = global.getApp;
+  const session = originalGetApp();
+  global.getApp = () => session;
+  try {
+    for (const mode of ["logout", "account_change", "unauthorized"]) {
+      binding.clearBindingManifest(); api.clearRuntimeProfileMemory();
+      session.globalData.identity = { user_id: "person_owner" };
+      session.globalData.accessToken = "test-token";
+      session.clearAuthenticatedIdentity = function () {
+        this.globalData.authEpoch += 1;
+        this.globalData.identity = null;
+        this.globalData.accessToken = "";
+      };
+      const checking = api.requireRuntimeCapability("memory_recall_private");
+      if (mode === "unauthorized") {
+        resolveRequest(0, { detail: "expired" }, 401);
+      } else {
+        if (mode === "logout") api.logoutLocal();
+        else {
+          session.globalData.authEpoch += 1;
+          session.globalData.identity = { user_id: "another_owner" };
+          session.globalData.accessToken = "another-token";
+        }
+        resolveRequest(0, { bindings: [canonicalManifest({ binding_id: "bd_flow", device_id: "dev_flow" })] });
+      }
+      const result = await checking;
+      assert.equal(result.allowed, false, mode);
+      assert.equal(result.reason, "superseded", mode);
+      assert.equal(binding.readBindingManifest(), null, mode);
+      assert.equal(pendingRequests.length, 0, mode);
+    }
+  } finally {
+    global.getApp = originalGetApp;
+    binding.clearBindingManifest(); api.clearRuntimeProfileMemory();
+  }
+});
+
+test("a late profile cannot reuse a reset sequence and overwrite a new session", async () => {
+  binding.clearBindingManifest(); api.clearRuntimeProfileMemory();
+  bindDevice();
+  const oldRequest = api.getRuntimeProfile("dev_flow", { sessionId: "ses_aba" });
+  api.logoutLocal();
+  bindDevice();
+  const currentRequest = api.getRuntimeProfile("dev_flow", { sessionId: "ses_aba" });
+  resolveRequest(1, validWireProfile({ session_id: "ses_aba", runtime_profile_id: "rp_new_account" }));
+  assert.equal((await currentRequest).runtime_profile_id, "rp_new_account");
+  resolveRequest(0, validWireProfile({ session_id: "ses_aba", session_epoch: 99, runtime_profile_id: "rp_stale" }));
+  assert.equal(await oldRequest, null);
+  assert.equal(binding.readCachedRuntimeProfile({
+    deviceId: "dev_flow", bindingId: "bd_flow", bindingVersion: 1, sessionId: "ses_aba",
+  }).runtime_profile_id, "rp_new_account");
 });
