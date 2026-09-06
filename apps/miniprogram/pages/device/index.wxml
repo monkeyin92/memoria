@@ -38,7 +38,6 @@
     </view>
 
     <view wx:elif="{{!hasBinding}}" class="empty-block">
-      <image class="empty-photo" src="{{companionImage}}" mode="aspectFit" />
       <text class="empty-title">还没有绑定设备</text>
       <text class="empty-copy">已确认当前账号下没有设备。接通电源后，即可开始添加。</text>
       <button class="primary-button empty-button" bindtap="{{hasPendingOnboarding ? 'resumeOnboarding' : 'openOnboarding'}}">{{hasPendingOnboarding ? '继续上次启用' : '添加设备'}}</button>
@@ -47,9 +46,8 @@
     <block wx:else>
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
 
-      <view class="device-portrait">
-        <image class="portrait-image" src="{{companionImage}}" mode="aspectFit" />
-        <text class="portrait-name">{{devicePlaceName}}</text>
+      <view class="device-header">
+        <text class="page-title">{{devicePlaceName}}</text>
         <view class="portrait-pills">
           <view class="pill {{online ? '' : 'pill-amber'}}">
             <view class="pill-dot"></view>

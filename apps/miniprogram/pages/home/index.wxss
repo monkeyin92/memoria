@@ -1,7 +1,4 @@
 .home-hero {
-  position: relative;
-  overflow: hidden;
-  min-height: 572rpx;
   margin-top: 12rpx;
   padding: 46rpx 44rpx 0;
   border-radius: 52rpx;
@@ -38,9 +35,6 @@
 
 .hero-heading {
   display: block;
-  position: relative;
-  z-index: 1;
-  max-width: 380rpx;
   margin: 22rpx 0 18rpx;
   font-size: 44rpx;
   font-weight: 500;
@@ -49,20 +43,9 @@
 
 .hero-caption {
   display: block;
-  position: relative;
-  z-index: 1;
-  max-width: 310rpx;
   color: #c3d5e1;
   font-size: 24rpx;
   line-height: 1.75;
-}
-
-.hero-image {
-  position: absolute;
-  right: -26rpx;
-  top: 98rpx;
-  width: 376rpx;
-  height: 388rpx;
 }
 
 .hero-bottom {
@@ -72,7 +55,7 @@
   position: relative;
   z-index: 1;
   min-height: 102rpx;
-  margin-top: 70rpx;
+  margin-top: 36rpx;
   border-top: 1rpx solid rgba(255, 255, 255, 0.14);
   color: #c3d5e1;
   font-size: 24rpx;
@@ -81,12 +64,6 @@
 .hero-link {
   color: #edf8fc;
   font-size: 24rpx;
-}
-
-.choice-photo {
-  width: 88rpx;
-  height: 88rpx;
-  flex-shrink: 0;
 }
 
 .next-action {

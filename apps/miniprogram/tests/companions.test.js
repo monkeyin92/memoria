@@ -27,5 +27,6 @@ test("the Mini Program keeps the five approved companion styles", () => {
   for (const companion of companions) {
     assert.equal(companion.face, undefined);
     assert.equal(companion.chest, undefined);
+    assert.equal(companion.image, undefined);
   }
 });

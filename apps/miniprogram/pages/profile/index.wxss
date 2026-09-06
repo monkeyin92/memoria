@@ -33,21 +33,6 @@
   font-weight: 600;
 }
 
-.profile-character {
-  display: flex;
-  align-items: center;
-  gap: 20rpx;
-  margin: 24rpx 0;
-  padding: 20rpx 24rpx;
-  border-radius: 32rpx;
-  background: #fff;
-}
-
-.character-photo {
-  width: 112rpx;
-  height: 112rpx;
-}
-
 .binding-choices {
   padding-bottom: 20rpx;
 }

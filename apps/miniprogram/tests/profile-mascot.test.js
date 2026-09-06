@@ -24,7 +24,8 @@ test("profile keeps custom persona recording and opens the companion picker", ()
   assert.match(template, /自定义人格与声音/);
   assert.match(template, /openCompanion/);
   assert.doesNotMatch(template, /class="persona-row/);
-  assert.doesNotMatch(template, /companion-mascot-shell|companion-face/);
+  assert.doesNotMatch(template, /companion-mascot-shell|companion-face|character-photo/);
+  assert.doesNotMatch(template, /assets\/companions/);
   assert.match(companionTemplate, /角色默认声音/);
   assert.match(companionTemplate, /我的自定义声音/);
 });

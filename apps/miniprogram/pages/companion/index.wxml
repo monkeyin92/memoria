@@ -2,19 +2,20 @@
   <text class="page-title">角色与声音</text>
   <text class="page-lede">选一种让你自在的表达方式。</text>
 
-  <scroll-view class="role-track" scroll-x enable-flex show-scrollbar="{{false}}">
+  <view class="list">
     <view
       wx:for="{{companions}}"
       wx:key="id"
-      class="role-card {{!customPersonaActive && profile.companion_id === item.id ? 'role-card-on' : ''}}"
+      class="list-row {{!customPersonaActive && profile.companion_id === item.id ? 'choice-card-on' : ''}}"
       data-id="{{item.id}}"
       bindtap="chooseCompanion"
     >
-      <image class="role-photo" src="{{item.image}}" mode="aspectFit" />
-      <text class="role-name">{{item.name}}</text>
-      <text class="role-desc">{{item.tagline}}</text>
+      <view class="row-copy">
+        <text class="row-title">{{item.name}}</text>
+        <text class="row-meta">{{item.tagline}} · {{item.voiceName}}</text>
+      </view>
     </view>
-  </scroll-view>
+  </view>
 
   <view class="section-head">
     <text class="section-head-title">{{currentName}}的声音</text>

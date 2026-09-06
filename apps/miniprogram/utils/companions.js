@@ -1,4 +1,4 @@
-// 伙伴目录。人格与设计音色一一对应；角色图只用于识别，不替代设备上的对话。
+// 伙伴目录。人格与设计音色一一对应；角色名只用于识别，不替代设备上的对话。
 const companions = Object.freeze([
   {
     id: "starlight",
@@ -8,7 +8,6 @@ const companions = Object.freeze([
     voiceId: "warm_companion",
     voiceName: "暖阳青年",
     tone: "清澈、自然",
-    image: "/assets/companions/starlight.jpg",
   },
   {
     id: "taoxi",
@@ -18,7 +17,6 @@ const companions = Object.freeze([
     voiceId: "bright_peer",
     voiceName: "元气搭子",
     tone: "明亮、轻盈",
-    image: "/assets/companions/taoxi.jpg",
   },
   {
     id: "mianmian",
@@ -28,7 +26,6 @@ const companions = Object.freeze([
     voiceId: "soft_confidante",
     voiceName: "温柔知己",
     tone: "轻柔、舒缓",
-    image: "/assets/companions/mianmian.jpg",
   },
   {
     id: "axu",
@@ -38,7 +35,6 @@ const companions = Object.freeze([
     voiceId: "calm_guide",
     voiceName: "沉稳向导",
     tone: "平稳、利落",
-    image: "/assets/companions/axu.jpg",
   },
   {
     id: "xuanmo",
@@ -48,7 +44,6 @@ const companions = Object.freeze([
     voiceId: "low_magnetic",
     voiceName: "低音笃定",
     tone: "低沉、从容",
-    image: "/assets/companions/xuanmo.jpg",
   },
 ]);
 

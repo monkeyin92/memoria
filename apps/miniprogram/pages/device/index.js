@@ -109,7 +109,6 @@ Page({
   data: {
     authenticated: false,
     loading: true,
-    companionImage: companionById(defaultCompanionId).image,
     devicePlaceName: "设备",
     personaName: "星澜",
     personaVoice: "角色默认声音",
@@ -411,7 +410,6 @@ Page({
         currentUserLabelConfirmed: Boolean(speakerLabel),
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
-        companionImage: companion.image,
         devicePlaceName: devicePlaceName(binding, companion.name),
         personaName: companion.name,
         personaVoice: companion.voiceName,

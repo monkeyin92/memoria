@@ -27,13 +27,14 @@
       </view>
     </view>
 
-    <view class="profile-character" bindtap="openCompanion">
-      <image class="character-photo" src="{{companionImage}}" mode="aspectFit" />
-      <view class="row-copy">
-        <text class="row-title">{{personaHeadline}}</text>
-        <text class="row-meta">人格与声音。下次唤醒才会换成对应声音</text>
+    <view class="list">
+      <view class="list-row" bindtap="openCompanion">
+        <view class="row-copy">
+          <text class="row-title">{{personaHeadline}}</text>
+          <text class="row-meta">人格与声音。下次唤醒才会换成对应声音</text>
+        </view>
+        <text class="row-chevron">›</text>
       </view>
-      <text class="row-chevron">›</text>
     </view>
 
     <view class="list">

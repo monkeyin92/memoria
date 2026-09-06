@@ -1,25 +1,13 @@
-.device-portrait {
-  padding: 8rpx 16rpx 34rpx;
-  text-align: center;
+.device-header {
+  padding: 8rpx 0 12rpx;
 }
 
-.portrait-image {
-  display: block;
-  width: 374rpx;
-  height: 346rpx;
-  margin: 16rpx auto 0;
-}
-
-.portrait-name {
-  display: block;
-  margin: 8rpx 0 14rpx;
-  font-size: 46rpx;
-  font-weight: 600;
+.device-header .page-title {
+  margin-bottom: 12rpx;
 }
 
 .portrait-pills {
   display: flex;
-  justify-content: center;
   flex-wrap: wrap;
   gap: 8rpx;
 }

@@ -8,7 +8,6 @@
       </view>
       <text class="hero-heading">记住哪些事，由你决定。</text>
       <text class="hero-caption">在设备上记录，在这里确认与整理。</text>
-      <image class="hero-image" src="{{companionImage}}" mode="aspectFit" />
       <view class="hero-bottom">
         <text>登录后查看设备和今天记下的内容</text>
       </view>
@@ -43,7 +42,6 @@
         data-binding-id="{{item.bindingId}}"
         bindtap="chooseDeviceBinding"
       >
-        <image class="choice-photo" src="{{item.image}}" mode="aspectFit" />
         <view class="row-copy">
           <text class="row-title">{{item.label}}</text>
           <text class="row-meta">{{item.modeLabel}}</text>
@@ -55,7 +53,6 @@
     </view>
 
     <view wx:elif="{{!hasBinding}}" class="empty-block">
-      <image class="empty-photo" src="{{companionImage}}" mode="aspectFit" />
       <text class="empty-title">还没有绑定设备</text>
       <text class="empty-copy">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
       <button class="primary-button empty-button" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
@@ -73,7 +70,6 @@
         </view>
         <text class="hero-heading">{{heroTitle}}</text>
         <text class="hero-caption">{{heroCaption}}</text>
-        <image class="hero-image" src="{{companionImage}}" mode="aspectFit" />
         <view class="hero-bottom">
           <text>{{heroFoot}}</text>
           <text class="hero-link" bindtap="openDevice">{{online ? '管理设备' : '检查连接'}} ›</text>

@@ -45,7 +45,6 @@ function emptyDashboard() {
     personaName: companion.name,
     personaVoice: companion.voiceName,
     personaSummary: companion.description,
-    companionImage: companion.image,
     devicePlaceName: "家中的设备",
     pageLede: formatDateLabel(),
     heroTitle: "给今天，留一点回味。",
@@ -66,7 +65,6 @@ function bindingChoiceItems(bindings) {
       bindingId: binding.binding_id,
       label: devicePlaceName(binding, companion.name),
       modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
-      image: companion.image,
     };
   });
 }
@@ -326,7 +324,6 @@ Page({
       personaName,
       personaVoice,
       personaSummary,
-      companionImage: companion.image,
       devicePlaceName: devicePlaceName(binding, personaName),
       pageLede: formatDateLabel(),
       heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",

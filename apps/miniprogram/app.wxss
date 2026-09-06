@@ -226,13 +226,6 @@ button::after {
   text-align: center;
 }
 
-.empty-photo {
-  display: block;
-  width: 390rpx;
-  height: 364rpx;
-  margin: 0 auto 32rpx;
-}
-
 .empty-title {
   display: block;
   color: #192f41;
