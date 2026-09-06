@@ -90,7 +90,7 @@ direct_real_device_verified: false
 **下一步（按顺序）**
 
 1. 重新唤醒建立新会话，真机复测天气完整播报（不应只听到「稍等我查询一下」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
-2. 微信里切到开发版 **0.8.83** 并刷新「我的」与「设备」，检查关机后正确显示「离线/暂时离线」，开机连接后显示「在线」；上传不等于体验版已设置或正式发布。
+2. 微信里切到开发版 **0.8.84** 并刷新「我的」与「设备」，检查设备在线/可唤醒状态与首页新文案；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
 
@@ -99,12 +99,12 @@ direct_real_device_verified: false
 ## 小程序体验与跨端设备同步（2026-09-06）
 
 - 交付：`RESEARCH.md` 的 R-20260906-01 与原型 `apps/miniprogram/design-preview/memoria-mobile-redesign.html` 已落到正式四 Tab 控制面（首页 / 设备 / 回顾 / 我的），另增非 Tab「角色与声音」。小程序仍只做控制面，不承担实时麦克风、TTS、WSS 或 LiveKit。
-- `code`：前端 `0f5632a` 已 commit/push。在线状态由仅依赖激活记录改为结合 Media Edge 实时连接证据（`diagnostics.live_runtime.connected`）；关机/断开时正确显示「暂时离线」，开机连入且已激活显示「设备在线」；诊断不可用时 fail-closed。账号级 `GET /v1/device-bindings`、登录过期后同步恢复仍在；偏好开关立即保存失败回滚；绑定不再要求未提交的家庭名称/成员草稿；「我的」展示可复制账号编号供家庭邀请。角色与声音为纯文字列表。
-- `wired`：首页与设备页均调用账号同步并拉取诊断与实时运行状态；三个重试入口先恢复登录，失败进入 guest、废弃旧请求。换账号/设备与迟到响应有 fence，绑定关系不升级为主人声纹或私密能力。
-- `enabled`：Control API 仍为 2026-09-06 15:11 CST 切流。官方 DevTools CLI 已上传开发版 **0.8.83**（23:04 CST，903,820 bytes）。源码 `0f5632a`，tests/design-preview 由 packOptions 排除。未提交审核或正式发布，也未设为体验版。
-- `verified`：小程序单测 211/211；本机编译上传成功。手机/电脑微信与开发工具尚未对 0.8.83 做真实验收，不得写成三端 PASS。0.8.77 开发工具找回 095c 的证据不自动继承到本版 UI。
+- `code`：前端 `7e5137a` 已 commit/push。在线状态恢复为依据服务端权威就绪记录（`ready_for_conversation`），解决开机待命时因无长音频流被误判为离线的问题。首页去掉了未登录时的「先了解怎么用」按钮和「家中的设备，手边的回顾」文案；默认设备名改为「我的设备」。角色与声音保持纯文字列表。
+- `wired`：首页与设备页均调用账号同步并拉取诊断与运行状态；重试入口先恢复登录，失败进入 guest、废弃旧请求。换账号/设备与迟到响应有 fence，绑定关系不升级为主人声纹或私密能力。
+- `enabled`：Control API 仍为 2026-09-06 15:11 CST 切流。官方 DevTools CLI 已上传开发版 **0.8.84**（23:58 CST，903,051 bytes）。源码 `7e5137a`，tests/design-preview 由 packOptions 排除。未提交审核或正式发布，也未设为体验版。
+- `verified`：小程序单测 211/211；本机编译上传成功。手机/电脑微信与开发工具尚未对 0.8.84 做真实验收，不得写成三端 PASS。0.8.77 开发工具找回 095c 的证据不自动继承到本版 UI。
 - **边界**：运行配置 GET 404、Runtime Profile 失败导致敏感入口关闭、公网 `/health/ready` smoke 过期 503，均未在本轮处理。未改硬件、声纹、绑定或生产容器。
-- 下一验收：微信切开发版 **0.8.83**，核对设备关机后首页与设备页显示离线、开机后显示在线，以及同账号设备 095c、瓷白文字控制面、偏好保存与家庭邀请账号编号；需要时再在公众平台设体验版或提交审核。
+- 下一验收：微信切开发版 **0.8.84**，核对设备开机后显示「设备在线」、首页文案已去除「家中的设备」与「先了解怎么用」、同账号设备 095c、偏好保存与家庭邀请账号编号；需要时再在公众平台设体验版或提交审核。
 
 ## 当前生产
 
@@ -115,7 +115,7 @@ direct_real_device_verified: false
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
 - Control API：`memoria-control-api:20260906-1458-account-device-discovery-control-api`，overlay revision `4a3b91bfa156f946f67b92e0b0ced17fab108a67`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。2026-09-06 15:11 CST 切流，延迟复核 healthy、restart=0；账号设备发现已返回真实绑定，生产 PG/RLS 只读 canary 通过。13 个非目标容器、有效环境、绑定/角色和声纹未改；自定义声音与合格登记 active 能力保留。紧邻回滚 `memoria-control-api:rollback-20260906-1458-account-device-discovery-control-api-pre-control`（原 `20260906-0048-companion-custom-voice-control-api`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`）。收据 `/opt/memoria/component-releases/20260906-1458-account-device-discovery-control-api/` 下 `cutover.json`、`readonly-canary.json`、`candidate-provider-smoke.json`。栈 env 仍为 `20260901-0945-wake-word-whitelist`；当前 ready 503 与运行配置 404 边界见上节，不据容器 healthy 宣称全链路通过。
-- 小程序开发版 **0.8.83**（2026-09-06 23:04 CST，官方 DevTools CLI；源码 `0f5632a`，903,820 bytes）：在线状态改为结合实时连接证据（关机显示离线）、瓷白控制面、去掉角色立绘、账号设备同步。未正式发布、未设体验版；手机/电脑微信待验。
+- 小程序开发版 **0.8.84**（2026-09-06 23:58 CST，官方 DevTools CLI；源码 `7e5137a`，903,051 bytes）：恢复依据服务端就绪状态显示在线、解决开机待命误报离线、去掉角色立绘与文案清理、账号设备同步。未正式发布、未设体验版；手机/电脑微信待验。
 - Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
