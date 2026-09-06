@@ -6,14 +6,18 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-05
-resume_checkpoint: lookup_voice_bind_published_awaiting_weather_retest
+as_of_date: 2026-09-06
+resume_checkpoint: device_sync_devtools_verified_phone_desktop_and_weather_retest_pending
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 miniprogram_role: control_plane_only
+miniprogram_development_version: 0.8.77
+miniprogram_account_device_sync: devtools_verified_phone_desktop_pending
+production_readiness: not_ready_smoke_evidence_expired
+production_readiness_observed_at: 2026-09-06T20:49:35+08:00
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
@@ -34,7 +38,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-## 下次接着从这里开始（2026-09-05 21:08 CST）
+## 硬件验收断点（2026-09-05 21:08 CST；小程序发布状态于 9 月 6 日更新）
 
 ```yaml
 resume_focus: lookup_voice_bind_published_awaiting_weather_retest
@@ -55,7 +59,7 @@ speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
 last_wake_epoch: 1390
 device_enrollment_prompts: quality_enroll_is_owner_active
-miniprogram_devtools_publish: uploaded_0.8.75_devtools_cli
+miniprogram_devtools_publish: uploaded_0.8.77_devtools_cli
 direct_real_device_verified: false
 ```
 
@@ -86,22 +90,37 @@ direct_real_device_verified: false
 **下一步（按顺序）**
 
 1. 重新唤醒建立新会话，真机复测天气完整播报（不应只听到「稍等我查询一下」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
-2. 微信里把开发版 **0.8.75** 设为体验版并刷新「我的」，应变为已激活。
+2. 微信里切到开发版 **0.8.77** 并刷新「我的」，检查设备与声纹状态；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
 
+## 小程序体验与跨端设备同步（2026-09-06）
+
+- 交付：`RESEARCH.md` 的 R-20260906-01 保存 10 页审查、四组官方竞品资料、首用旅程与 P1/P2；`apps/miniprogram/design-preview/memoria-mobile-redesign.html` 为 11 视图、6 模拟状态的独立手机端 HTML。没有替换正式小程序整体视觉。
+- `code`：后端业务 `f74cf83`、发布源码 `4a3b91b`；前端发现 `f6009e9`、过期重试 `69315ae2f8d67bcd1dc0f68c9853a0430fc8814f` 均已 commit/push。账号级 `GET /v1/device-bindings` 只返回 owner/active role 有权看到的 canonical BindingManifest，不用本机缺缓存推断账号未绑定。
+- `wired`：首页、设备、我的与无缓存敏感入口调用账号同步；三个重试入口先恢复登录，失败进入 guest、废弃旧请求。换账号/设备与迟到响应有 fence，绑定关系不升级为主人声纹或私密能力。
+- `enabled`：Control API 于 2026-09-06 15:11 CST 切流；官方 DevTools CLI 已上传开发版 **0.8.77**（21:08 CST，928,605 bytes）。源码来自干净隔离项目 `/tmp/memoria-miniprogram-auth-retry-release/apps/miniprogram`；tests/design-preview/node_modules 明确排除，原型及其余 dirty UI 未混包。未提交审核或正式发布。
+- `verified`：后端 CI `34017812489` 为 4,696 passed、9 skipped；另有真实生产 PostgreSQL/RLS **只读** canary，账号发现/详情一致、missing/foreign actor 拒绝、binding/roles 不变。最终发布源码 202/202、编译 110 文件、前端 CI `34035109757` 成功；主工作区含其余 dirty 的 210/210 是另一测试范围。
+- **开发工具真实验收（21:09 CST）**：新隔离项目从未登录首页恢复微信登录，首页和设备页恢复设备；「我的」显示「微信账号已安全登录 / 已绑定设备 / 1 台 / 给自己使用 · Memoria · 095c」。绑定 v2，诊断时间 `2026-09-06T13:09:38.097565Z`、配置投影 v300、链路 epoch1412。未重新绑定、修改角色、设置或声纹。
+- **边界**：手机和电脑微信未在最终开发版实测，不能说三端 PASS。真实过期 token 重试只有 6 条新回归测试，未篡改 token 演示。运行配置 GET 在 20:30–20:55 CST 日志窗口 12 次均 404；未捕获响应体，路由或业务资源来源未定。21:09「我的」仍提示 Runtime Profile 获取失败，敏感入口保持关闭；设备诊断投影不等于权限配置可用。
+- **当前健康边界**：20:37 与 20:49 CST 公网 `/health/ready` 持续 503，`smokes=expired`、missing=[]、core 无 unavailable、Agent ready。既有记录 `2026-09-05T08:25:50.775378Z` 按 86,400s TTL 于 9 月 6 日 16:25:50 CST 过期；候选 provider smoke 通过不等于栈级 evidence 刷新。Control healthy/restart0，观察到发现请求 200×7、401×1、无 5xx。未重启/盲目回滚、伪造 smoke 或改 TTL，额外生产 smoke refresh 未执行。
+- 原型：31 项多视口/页面几何检查、核心交互和虚构 JSON 实际下载已检查；房间式设备名改为「我的星澜 / 家人的绵绵」，320px 首页与设备页复验通过，脚本语法通过，warn/error 日志为空，已回首页交付。旧截图仍为旧名称；图片输入不可用，未做像素级视觉验收。原型不连生产、不录音、不控制设备。
+- 证据：忽略目录 `outputs/device-binding-release-20260906/` 的 `delayed-review.json`、`miniprogram-release-0.8.77.json`、上传及测试日志；`outputs/miniprogram-ux-20260906/` 的截图、布局/命名检查 JSON 与虚构导出。生产收据和紧邻回滚见下一节。
+- 下一验收：手机/电脑微信切最终开发版核对同微信账号与 095c；只读定位运行配置 404。额外生产 smoke refresh 须明确范围，真实运行并更新证据后再判 ready；最终验收前暂留恢复材料，未做普通制品清理，数据库/WAL/MinIO 备份不动。
+- 留存建议：偏好开关保存、家庭邀请 ID 缺入口/家庭必填未提交、启用恢复、刷新及模板适配仍未在正式 UI 批量改动。现存 `scope.record`/RecorderManager 与控制面规则冲突已报告，未擅删已有功能或更改硬件/语音生产状态。
+
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260906-0105-companion-clone-weather-bind-agent-component`（源 `e67c2a68aa60d95406911120cfae5b2be4040757`）。Control API overlay 源提交为 `4edfaa576dd8a11c3933579f1276ec6f18ca60cf`（标签 `20260906-0048-companion-custom-voice-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260906-0105-companion-clone-weather-bind-agent-component`（源 `e67c2a68aa60d95406911120cfae5b2be4040757`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
 - Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260906-0105-companion-clone-weather-bind-agent-component`，revision `e67c2a68aa60d95406911120cfae5b2be4040757`，image `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260906-0105-companion-clone-weather-bind-agent-component/`。回滚 `rollback-20260906-0105-companion-clone-weather-bind-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0048-companion-custom-voice-agent-component` / `sha256:f6c8f49fbbff42eb95f2358bf67276eead466da11c14ffa520185e0a26c7d759`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。自定义声音唤醒已真机听到；天气正文待本轮 Agent 热修后复测。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
-- Control API：`memoria-control-api:20260906-0048-companion-custom-voice-control-api`，overlay revision `4edfaa576dd8a11c3933579f1276ec6f18ca60cf`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`。覆盖自定义人格解析、陪伴会话克隆冻结、设备 resume 重冻与会话解析 8 个源文件；依赖层与有效环境不变；2026-09-06 00:44 CST 切流，healthy、restart=0。回滚 `rollback-20260906-0048-companion-custom-voice-control-api-pre-control`（镜像 `20260905-1610-wechat-identity-sync-control-api` / `sha256:3ae31d83a2122f8a8b9641c49480d185d8ec33e58d1f360c2e2e0d8f41c3e1ed`）。合格登记即 active 与微信账号同步能力保留，演示账号 profile `1b5b577b` 未改动。栈环境字段仍对齐 `20260901-0945-wake-word-whitelist`。
-- 小程序开发版 **0.8.75**（2026-09-03 微信开发者工具 CLI 上传）：「我的」支持主人声纹重新录制；开箱完成会请求设备登记。请在微信里切到该版本后刷新。miniprogram-ci 因 IP 白名单 `121.237.160.230` 失败，改走本机 DevTools。
+- Control API：`memoria-control-api:20260906-1458-account-device-discovery-control-api`，overlay revision `4a3b91bfa156f946f67b92e0b0ced17fab108a67`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。2026-09-06 15:11 CST 切流，延迟复核 healthy、restart=0；账号设备发现已返回真实绑定，生产 PG/RLS 只读 canary 通过。13 个非目标容器、有效环境、绑定/角色和声纹未改；自定义声音与合格登记 active 能力保留。紧邻回滚 `memoria-control-api:rollback-20260906-1458-account-device-discovery-control-api-pre-control`（原 `20260906-0048-companion-custom-voice-control-api`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`）。收据 `/opt/memoria/component-releases/20260906-1458-account-device-discovery-control-api/` 下 `cutover.json`、`readonly-canary.json`、`candidate-provider-smoke.json`。栈 env 仍为 `20260901-0945-wake-word-whitelist`；当前 ready 503 与运行配置 404 边界见上节，不据容器 healthy 宣称全链路通过。
+- 小程序开发版 **0.8.77**（2026-09-06 21:08 CST，官方 DevTools CLI；源码 `69315ae`，928,605 bytes）：包含账号设备发现和登录过期后的同步恢复；开发工具已找回 1 台 095c，手机/电脑微信最终版本待验。未正式发布、未整体替换 UI。
 - Agent/Bridge、Control API、Media Edge 目标容器 healthy；2026-09-01 切流后 `GET /v1/devices/wake-word-catalog` smoke：`mei_mo_li_ya` 可见。
 - 2026-08-30 10:20 CST 切流后容器内 provider smoke：Qwen Realtime Search、Doubao、FunASR 6/6、DeepSeek、Interrupt Semantic PASS。
 - 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
@@ -569,7 +588,7 @@ fcdr_proxy_verified: local_agent_full_regression_mypy_and_low_cardinality_contra
 
 ## 生产拓扑
 
-- Control API：`https://aigcnice.com:8443/memoria-api/`。
+- Control API：`memoria-control-api:20260906-1458-account-device-discovery-control-api`，overlay revision `4a3b91bfa156f946f67b92e0b0ced17fab108a67`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。2026-09-06 15:11 CST 切流，延迟复核 healthy、restart=0；账号设备发现已返回真实绑定，生产 PG/RLS 只读 canary 通过。13 个非目标容器、有效环境、绑定/角色和声纹未改；自定义声音与合格登记 active 能力保留。紧邻回滚 `memoria-control-api:rollback-20260906-1458-account-device-discovery-control-api-pre-control`（原 `20260906-0048-companion-custom-voice-control-api`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`）。收据 `/opt/memoria/component-releases/20260906-1458-account-device-discovery-control-api/` 下 `cutover.json`、`readonly-canary.json`、`candidate-provider-smoke.json`。栈 env 仍为 `20260901-0945-wake-word-whitelist`；当前 ready 503 与运行配置 404 边界见上节，不据容器 healthy 宣称全链路通过。
 - 当前 runtime：`/opt/memoria/current` 原子软链；候选目录：`/opt/memoria/releases/`。
 - 已退役 H5：`/memoria-h5` 固定返回 `410 Gone`，不再发布或切流静态前端。
 - LiveKit：`livekit/livekit-server:v1.13.5`，Compose project `memoria-livekit`。
