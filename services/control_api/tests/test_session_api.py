@@ -40,6 +40,7 @@ def _configure(
         "test-runtime-profile-signing-secret-32-bytes",
     )
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-test-a")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
     monkeypatch.setenv("READINESS_GATE_TTL_S", "86400")
     monkeypatch.setenv("OFFLINE_MOCK", "true" if offline else "false")
     if offline:

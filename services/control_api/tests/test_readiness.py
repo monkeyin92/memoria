@@ -298,6 +298,7 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         DASHSCOPE_API_KEY="dashscope-key",
         MEMORIA_AUTH_SECRET="control-auth-material-that-is-long-enough",
         MEMORIA_RELEASE_TAG="release-readiness-test",
+        LLM_PROVIDER="bailian_deepseek",
         OFFLINE_MOCK=False,
     )
     body = {

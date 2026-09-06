@@ -812,6 +812,20 @@ async def test_list_active_bindings_for_person_respects_force_rls() -> None:
             )
         ).person_id
         await _guardian(service, guardian=owner, ward=child, now=now)
+        family = await service.propose_relationship(
+            source_person_id=member,
+            target_person_id=child,
+            relation_type="family_member_of",
+            established_evidence_id="evidence-pg-list-family",
+            actor_person_id=member,
+            now=now,
+        )
+        for person_id in (member, child):
+            await service.confirm_relationship(
+                relationship_id=family.relationship_id,
+                person_id=person_id,
+                now=now,
+            )
         manifest = await service.create_binding(
             device_id=f"dev-pg-list-{uuid.uuid4().hex[:8]}",
             declared_mode="family_shared",
