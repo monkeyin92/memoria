@@ -37,7 +37,7 @@
 
 ## 本周约束
 
-- 扫描日期：2026-09-07。本轮新增 R-20260907-01（LiveKit Agents 1.8.0 升级评估）与 R-20260907-02（VoCat 下一 SKU，勿混入 ATK 半双工）。2026-09-06 产品工作仍是 R-20260906-01。R-20260904-01..03 已在 main（草稿 PR #9 未走 GitHub 合并，内容由 `5760dcb` 补回）。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。大型个人信息处理者征求意见稿反馈窗口于 2026-09-07 截止，盯正式文本。
+- 扫描日期：2026-09-07。本轮新增 R-20260907-01（LiveKit Agents 1.8.0 升级评估）、R-20260907-02（VoCat 下一 SKU，勿混入 ATK 半双工）、R-20260907-03（SiphonAI 协议/运维借鉴）、R-20260907-04（电话入线 sidecar，长期）、R-20260907-05（不做：用 siphon-ai 替换 Go Edge / 现板 auto_clear）。2026-09-06 产品工作仍是 R-20260906-01。R-20260904-01..03 已在 main（草稿 PR #9 未走 GitHub 合并，内容由 `5760dcb` 补回）。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。大型个人信息处理者征求意见稿反馈窗口于 2026-09-07 截止，盯正式文本。
 - 当前出货 SKU 只允许受控半双工；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。
 - 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。`direct_real_device_verified` 仍为 false。
 - 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词。安静环境阶段 4 已有 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。不要开播放期 KWS。
@@ -605,9 +605,43 @@
 - 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/user_guide_v1.2.html
 - 开发备注：
 
+### R-20260907-03 SiphonAI 可借鉴媒体/AI 分层与协议工程，不换栈
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-07
+- 最近更新：2026-09-07
+- 为何现在相关：[SiphonAI](https://github.com/thevoiceguy/siphon-ai) v0.51.0 是 SIP↔WebSocket 媒体桥（MIT/Apache），daemon 内禁止 STT/LLM/TTS。与 Memoria「Go Media Edge 不调模型、Python 才是交互权威」同构，但入线是电话 RTP 不是 ESP32 media-v2。值得学的是协议当公开 API、对端 conformance harness、20 ms 热路径纪律、WS/AI 掉线保会话、路径质量进话轮、升级前 config check、用数字写容量。generation fence、Actual Heard、主人声纹已比它的 seq/mark 更严，不要退化。
+- 建议下一步：现 SKU 只评估不改产品行为的四件事：(1) 假 ESP32 客户端打真实 Edge 的 media-v2 harness；(2) Bridge/Agent 宕机时 Edge 本地短提示 + 有界重连，超时再 typed close；(3) WSS 丢帧/乱序投影进 ConversationProjection UNCERTAIN，不改 commit；(4) 切流 dry-run 验未知配置键与半双工围栏。不要引入 siphon-rs/forge-media。打断 pause 模式只对照 R-20260907-02 / 阶段 8。
+- 来源：https://github.com/thevoiceguy/siphon-ai ；https://github.com/thevoiceguy/siphon-ai/blob/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/docs/PROTOCOL.md ；https://github.com/thevoiceguy/siphon-ai/blob/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/CLAUDE.md
+- 开发备注：
+
+### R-20260907-04 电话入线可把 SiphonAI 当 SIP sidecar，Memoria 做 WS server
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-07
+- 最近更新：2026-09-07
+- 为何现在相关：SiphonAI 明确不做 AI，只把 SIP/RTP 变成 20 ms PCM16 + JSON 控制。若以后要「打电话进陪伴」，这是现成组件，不必自研 SIP 栈。身份模型不同：电话是主叫号码 / STIR，Memoria 是主人声纹；不得把 PSTN 腿标成 owner。现板半双工 demo 不需要电话入线。
+- 建议下一步：不混入 half_duplex_investor_demo。若产品确认要 PSTN，另开工单：部署 siphon-ai，Voice Core 实现其 WS 协议（可用官方 Python SDK 做适配层），映射到既有 generation fence；guest/uncertain 权限默认拒绝私人记忆与工具。先不要改 ESP32 协议。
+- 来源：https://github.com/thevoiceguy/siphon-ai ；https://github.com/thevoiceguy/siphon-ai/blob/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/docs/PROTOCOL.md ；https://github.com/thevoiceguy/siphon-ai/tree/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/sdks
+- 开发备注：
+
 ---
 
 ## 明确不做
+
+### R-20260907-05 用 siphon-ai / forge-media 替换 Go Media Edge，或现板开 auto_clear barge-in
+
+- 类别：产品技术
+- 状态：不做
+- 首次写入：2026-09-07
+- 最近更新：2026-09-07
+- 为何现在相关：SiphonAI 是 SIP/RTP daemon，设备链是 media-v2 WSS。替换 Edge 等于拆 `ESP32 → Go Media Edge → Python Voice Core`。其默认 `auto_clear` 在无 AEC 板上会把回声当抢话。
+- 建议下一步：无。电话入线见 R-20260907-04（另开产品）。协议借鉴见 R-20260907-03。
+- 来源：https://github.com/thevoiceguy/siphon-ai
+- 原因：不拆现权威链；现板 `aec_mode=none`、`barge_in_enabled=false`；BOOT 仍是唯一硬停。与 R-20260831-16 同类。
+- 开发备注：
 
 ### R-20260831-15 现板开 barge-in / TurnPhase 副作用 / 播放期 KWS / 谎称 AEC
 
