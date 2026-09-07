@@ -32,7 +32,7 @@ index 41b256d..9301c21 100644
              HandleActivationDoneEvent();
          }
 +
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        if (bits & MAIN_EVENT_MEMORIA_TRANSPORT) {
 +            auto* memoria_protocol =
 +                static_cast<memoria::MemoriaProtocol*>(protocol_.get());

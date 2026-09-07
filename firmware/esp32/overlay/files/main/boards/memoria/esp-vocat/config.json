@@ -1,11 +1,13 @@
 {
     "manufacturer": "memoria",
-    "type": "memoria-atk-dnesp32s3-v1",
+    "type": "memoria-esp-vocat",
     "target": "esp32s3",
     "builds": [
         {
-            "name": "memoria-atk-dnesp32s3-v1",
+            "name": "memoria-esp-vocat",
             "sdkconfig_append": [
+                "CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/32m.csv\"",
                 "CONFIG_USE_DEVICE_AEC=n",
                 "CONFIG_OTA_URL=\"\"",
                 "CONFIG_USE_CUSTOM_WAKE_WORD=y",
@@ -24,7 +26,8 @@
                 "CONFIG_LV_USE_QRCODE=n",
                 "CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y",
                 "CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=n",
-                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/16m.csv\""
+                "CONFIG_MMAP_FILE_NAME_LENGTH=32",
+                "CONFIG_FLASH_EXPRESSION_ASSETS=y"
             ]
         }
     ]

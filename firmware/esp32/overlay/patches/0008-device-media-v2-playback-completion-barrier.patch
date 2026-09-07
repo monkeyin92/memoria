@@ -79,7 +79,7 @@ diff --git a/main/application.cc b/main/application.cc
 +    callbacks.on_playback_output = [this](uint32_t generation_id,
 +                                          uint64_t rendered_sample_end,
 +                                          uint32_t received_sequence) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        if (memoria_protocol != nullptr) {
 +            memoria_protocol->NotifyPlaybackOutput(generation_id, rendered_sample_end,

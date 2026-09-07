@@ -15,7 +15,7 @@ diff --git a/main/boards/common/wifi_board.cc b/main/boards/common/wifi_board.cc
  
      // Initialize WiFi manager
      WifiManagerConfig config;
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    config.ssid_prefix = "Memoria";
 +    config.show_ota_config = false;
 +#else
@@ -33,7 +33,7 @@ diff --git a/main/mcp_server.cc b/main/mcp_server.cc
 @@ -149,5 +149,6 @@ void McpServer::AddCommonTools() {
          });
  
-+#if !CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if !CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      // Firmware upgrade
      AddUserOnlyTool("self.upgrade_firmware", "Upgrade firmware from a specific URL. This will download and install the firmware, then reboot the device.",
          PropertyList({
@@ -52,7 +52,7 @@ diff --git a/main/application.cc b/main/application.cc
  }
  
  bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    (void)url;
 +    (void)version;
 +    ESP_LOGW(TAG, "Memoria OTA is disabled; install a signed product firmware through the controlled release path");

@@ -22,7 +22,7 @@ diff --git a/main/application.h b/main/application.h
 @@ -182,6 +187,7 @@ private:
      void HandleWakeWordDetectedEvent();
      void ContinueOpenAudioChannel(ListeningMode mode);
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    void HandleMediaTransportClosedEvent();
      void ContinueMediaRecovery();
      void CancelMediaRecovery(bool terminal_close);
@@ -40,7 +40,7 @@ diff --git a/main/application.cc b/main/application.cc
      while (true) {
          auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
  
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        if (bits & MAIN_EVENT_MEMORIA_MEDIA_CLOSED) {
 +            // Freeze the active conversation state before MAIN_EVENT_ERROR can
 +            // collapse it to idle. This event is the transport-close authority;
@@ -50,12 +50,12 @@ diff --git a/main/application.cc b/main/application.cc
 +#endif
 +
          if (bits & MAIN_EVENT_ERROR) {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
              if (media_recovery_pending_) {
 @@ -454,6 +463,44 @@ void Application::HandleNetworkDisconnectedEvent() {
  }
  
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +void Application::HandleMediaTransportClosedEvent() {
 +    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +    const uint32_t closed_transport_attempt = media_closed_transport_attempt_.load();
@@ -101,7 +101,7 @@ diff --git a/main/application.cc b/main/application.cc
      });
  
      protocol_->OnAudioChannelClosed([this, &board]() {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
          auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
          const uint32_t closed_transport_attempt =
              memoria_protocol != nullptr ? memoria_protocol->TransportAttemptId() : 0;
@@ -109,7 +109,7 @@ diff --git a/main/application.cc b/main/application.cc
 -#endif
          board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 -        Schedule([this
--#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+-#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 -                  , closed_transport_attempt
 -#endif
 -        ]() {
@@ -119,7 +119,7 @@ diff --git a/main/application.cc b/main/application.cc
 +        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 +        Schedule([this]() {
              auto display = Board::GetInstance().GetDisplay();
--#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+-#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 -            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 -            if (memoria_protocol != nullptr &&
 -                memoria_protocol->TransportAttemptId() != closed_transport_attempt) {
@@ -130,7 +130,7 @@ diff --git a/main/application.cc b/main/application.cc
 -            }
 -#endif
              display->SetChatMessage("system", "");
--#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+-#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 -            const DeviceState state = GetDeviceState();
 -            if (!media_recovery_pending_ && memoria_protocol != nullptr &&
 -                memoria_protocol->CanResumeSession() &&

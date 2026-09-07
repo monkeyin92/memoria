@@ -3,7 +3,7 @@ diff --git a/main/application.cc b/main/application.cc
 +++ b/main/application.cc
 @@ -85,9 +85,9 @@ void Application::Initialize() {
      callbacks.on_vad_change = [this](bool speaking) {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 -        const bool listening = GetDeviceState() == kDeviceStateListening;
 -        Schedule([this, speaking, listening]() {
 +        Schedule([this, speaking]() {
@@ -18,7 +18,7 @@ diff --git a/main/application.cc b/main/application.cc
  
      // Add state change listeners
      state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        if (old_state == kDeviceStateListening && new_state != kDeviceStateListening) {
 +            Schedule([this]() {
 +                auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
@@ -35,7 +35,7 @@ diff --git a/main/application.cc b/main/application.cc
          return;
      }
  
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    // This simplex board has no playback-reference channel. Play the local
 +    // listening cue before opening the microphone so it cannot create a
 +    // device VAD epoch; the playback-drained event resumes this same seam.

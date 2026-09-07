@@ -23,7 +23,7 @@ rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
     "$SCRIPT_DIR/build.sh" || die "product build must use the board's Memoria wake word by default"
 
 "$python_bin" -m json.tool \
-    "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/atk-dnesp32s3-v1/config.json" \
+    "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/esp-vocat/config.json" \
     >/dev/null
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
@@ -35,18 +35,18 @@ cmp -s \
     "$MEMORIA_UPSTREAM_DIR/dependencies.lock" || \
     die "upstream ESP component dependency lock differs from the overlay pin"
 
-board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/atk-dnesp32s3-v1"
-[[ -f "$board_dir/memoria_atk_dnesp32s3_v1.cc" ]] || die "board source missing"
+board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat"
+[[ -f "$board_dir/memoria_esp_vocat.cc" ]] || die "board source missing"
 [[ -f "$board_dir/config.h" ]] || die "board config missing"
 [[ -f "$board_dir/config.json" ]] || die "board manifest missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.h" ]] || die "device identity header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.cc" ]] || die "device identity source missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h" ]] || die "audio frame header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.cc" ]] || die "audio frame source missing"
-[[ -f "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" ]] || die "Memoria partition table missing"
+[[ -f "$MEMORIA_UPSTREAM_DIR/partitions/v2/32m.csv" ]] || die "Memoria partition table missing"
 
 rg -q '^memoria_identity,[[:space:]]*data,[[:space:]]*nvs,[[:space:]]*0x10000,[[:space:]]*64K' \
-    "$MEMORIA_UPSTREAM_DIR/partitions/v2/16m.csv" || die "identity partition is not at 0x10000/64K"
+    "$MEMORIA_UPSTREAM_DIR/partitions/v2/32m.csv" || die "identity partition is not at 0x10000/64K"
 rg -q 'espressif/libsodium:[[:space:]]*\^1\.0\.22' "$MEMORIA_UPSTREAM_DIR/main/idf_component.yml" || \
     die "libsodium dependency missing"
 rg -q 'memoria/device_identity\.cc' "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || die "device identity is not in CMake"
@@ -57,11 +57,11 @@ rg -q 'PARTITION_OFFSET = 0x10000' "$MEMORIA_FIRMWARE_ROOT/scripts/provision_ide
     die "identity provisioning script does not pin the flash range"
 
 if rg -n 'esp_video|EspVideo|GetCamera|InitializeCamera|CAM_PIN|OV_' \
-    "$board_dir/memoria_atk_dnesp32s3_v1.cc" "$board_dir/config.h"; then
+    "$board_dir/memoria_esp_vocat.cc" "$board_dir/config.h"; then
     die "camera code/config leaked into Memoria board"
 fi
 
-rg -q 'memoria-atk-dnesp32s3-v1' "$board_dir/config.json" || die "wrong board identity"
+rg -q 'memoria-esp-vocat' "$board_dir/config.json" || die "wrong board identity"
 rg -q '^project\(memoria\)$' "$MEMORIA_UPSTREAM_DIR/CMakeLists.txt" || \
     die "Memoria build must use project(memoria)"
 if rg -q '^project\(xiaozhi\)$' "$MEMORIA_UPSTREAM_DIR/CMakeLists.txt"; then
@@ -71,7 +71,7 @@ rg -q 'config.ssid_prefix = "Memoria";' "$MEMORIA_UPSTREAM_DIR/main/boards/commo
     die "Memoria Wi-Fi identity prefix is missing"
 rg -q 'config.show_ota_config = false;' "$MEMORIA_UPSTREAM_DIR/main/boards/common/wifi_board.cc" || \
     die "Memoria Wi-Fi OTA configuration must be hidden"
-rg -q '#if !CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1' "$MEMORIA_UPSTREAM_DIR/main/mcp_server.cc" || \
+rg -q '#if !CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT' "$MEMORIA_UPSTREAM_DIR/main/mcp_server.cc" || \
     die "upstream firmware upgrade MCP tool is not removed for Memoria"
 rg -q 'Memoria OTA is disabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
     die "Application OTA must fail closed for Memoria"
@@ -119,8 +119,8 @@ import json
 import sys
 
 variants = json.load(sys.stdin)
-match = [item for item in variants if item.get("name") == "memoria-atk-dnesp32s3-v1"]
-if len(match) != 1 or match[0].get("type") != "memoria-atk-dnesp32s3-v1":
+match = [item for item in variants if item.get("name") == "memoria-esp-vocat"]
+if len(match) != 1 or match[0].get("type") != "memoria-esp-vocat":
     raise SystemExit("Memoria board variant is not in upstream build manifest")
 if match[0].get("target") != "esp32s3":
     raise SystemExit("Memoria board target is not esp32s3")

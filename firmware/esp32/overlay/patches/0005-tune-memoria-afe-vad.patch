@@ -5,8 +5,8 @@ diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_aud
      afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;
      afe_config->ns_init = false;
      afe_config->vad_init = kUseAfeForVoiceProcessing;
-+#if defined(CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1) && \
-+    CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if defined(CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT) && \
++    CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    // ES8388 on the Memoria simplex board has no playback reference. ESP-SR
 +    // defines larger VAD modes as having a higher speech-trigger probability,
 +    // so keep the strictest mode to reject steady room/playback noise. Retain

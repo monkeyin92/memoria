@@ -44,7 +44,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
          ParseWakenetModelConfig();
      }
  
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    std::string active_command;
 +    std::string active_display;
 +    if (memoria::WakeWordRegistry::GetInstance().ApplyActiveCommand(
@@ -70,7 +70,7 @@ diff --git a/scripts/build_default_assets.py b/scripts/build_default_assets.py
 +    if not os.path.exists(sdkconfig_path):
 +        return False
 +    with io.open(sdkconfig_path, "r", encoding="utf-8") as handle:
-+        return "CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1=y" in handle.read()
++        return "CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT=y" in handle.read()
 +
 +
 +def read_memoria_wake_word_commands():

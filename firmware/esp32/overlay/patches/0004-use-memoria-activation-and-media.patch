@@ -27,7 +27,7 @@ diff --git a/main/application.cc b/main/application.cc
  #include <driver/gpio.h>
 @@ -80,7 +82,22 @@ void Application::Initialize() {
      callbacks.on_vad_change = [this](bool speaking) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        const bool listening = GetDeviceState() == kDeviceStateListening;
 +        Schedule([this, speaking, listening]() {
 +            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
@@ -39,7 +39,7 @@ diff --git a/main/application.cc b/main/application.cc
          xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
      };
      callbacks.on_playback_drained = [this]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        if (memoria_protocol != nullptr) {
 +            memoria_protocol->NotifyPlaybackDrained();
@@ -52,7 +52,7 @@ diff --git a/main/application.cc b/main/application.cc
      SystemInfo::PrintHeapStats();
      SetDeviceState(kDeviceStateIdle);
 
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    has_server_time_ = true;
 +    auto display = Board::GetInstance().GetDisplay();
 +    std::string message = std::string(Lang::Strings::VERSION) + esp_app_get_description()->version;
@@ -76,7 +76,7 @@ diff --git a/main/application.cc b/main/application.cc
  }
 
  void Application::ActivationTask() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    if (!InitializeProtocol()) {
 +        return;
 +    }
@@ -107,7 +107,7 @@ diff --git a/main/application.cc b/main/application.cc
      display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
 -    if (ota_->HasMqttConfig()) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    protocol_ = std::make_unique<memoria::MemoriaProtocol>();
 +#else
 +    if (ota_ != nullptr && ota_->HasMqttConfig()) {
@@ -124,7 +124,7 @@ diff --git a/main/application.cc b/main/application.cc
 
 @@ -521,5 +550,14 @@ void Application::InitializeProtocol() {
      protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto pending_packet = std::make_shared<std::unique_ptr<AudioStreamPacket>>(std::move(packet));
 +        Schedule([this, pending_packet]() mutable {
 +            if (GetDeviceState() == kDeviceStateSpeaking) {
@@ -150,7 +150,7 @@ diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
 --- a/main/audio/audio_service.h
 +++ b/main/audio/audio_service.h
 @@ -39,4 +39,8 @@
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +#define OPUS_FRAME_DURATION_MS 20
 +#else
  #define OPUS_FRAME_DURATION_MS 60

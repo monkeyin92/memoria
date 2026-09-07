@@ -118,7 +118,7 @@ diff --git a/main/application.cc b/main/application.cc
          xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
      };
 +    callbacks.on_playback_decode_error = [this]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        if (memoria_protocol != nullptr) {
 +            memoria_protocol->NotifyPlaybackDecodeError();
@@ -130,7 +130,7 @@ diff --git a/main/application.cc b/main/application.cc
      // Add state change listeners
 @@ -548,6 +556,8 @@
  
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      protocol_ = std::make_unique<memoria::MemoriaProtocol>();
 +    static_cast<memoria::MemoriaProtocol*>(protocol_.get())
 +        ->SetLocalFlushCallback([this]() { audio_service_.ResetDecoder(); });
@@ -138,7 +138,7 @@ diff --git a/main/application.cc b/main/application.cc
      if (ota_ != nullptr && ota_->HasMqttConfig()) {
          protocol_ = std::make_unique<MqttProtocol>();
 @@ -570,7 +580,10 @@
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
          auto pending_packet = std::make_shared<std::unique_ptr<AudioStreamPacket>>(std::move(packet));
          Schedule([this, pending_packet]() mutable {
 -            if (GetDeviceState() == kDeviceStateSpeaking) {
@@ -153,7 +153,7 @@ diff --git a/main/application.cc b/main/application.cc
              ;
  
          if (state == kDeviceStateListening) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            // Symmetric with the speaking branch: close the current mic epoch
 +            // and defer to StartListeningAudio's cue-first seam, so the local
 +            // cue cannot create a device VAD epoch on this simplex board. The
@@ -179,7 +179,7 @@ diff --git a/main/application.cc b/main/application.cc
  void Application::AbortSpeaking(AbortReason reason) {
      ESP_LOGI(TAG, "Abort speaking");
      aborted_ = true;
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    // L0 physical hard stop: flush the local playback pipeline synchronously
 +    // so nothing more is heard, then report the stop with the pre-flush fence
 +    // and local flush sample end. The server closes the generation gate;

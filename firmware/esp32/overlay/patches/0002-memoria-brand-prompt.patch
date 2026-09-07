@@ -6,7 +6,7 @@ index 2d464e4..0000000 100644
      // Setup the display
      auto display = board.GetDisplay();
      display->SetupUI();
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    display->ShowNotification("Memoria", 1500);
 +#endif
      // Print board name/version info

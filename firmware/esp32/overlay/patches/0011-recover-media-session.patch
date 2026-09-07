@@ -6,7 +6,7 @@ index 832a4ff..41b256d 100644
          switch (event) {
              case NetworkEvent::Scanning:
                  display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                media_network_connected_.store(false);
 +#endif
                  xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
@@ -16,14 +16,14 @@ index 832a4ff..41b256d 100644
                  std::string msg = Lang::Strings::CONNECTED_TO;
                  msg += data;
                  display->ShowNotification(msg.c_str(), 30000);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                media_network_connected_.store(true);
 +#endif
                  xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_CONNECTED);
                  break;
              }
              case NetworkEvent::Disconnected:
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                media_network_connected_.store(false);
 +#endif
                  xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
@@ -33,7 +33,7 @@ index 832a4ff..41b256d 100644
          auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
  
          if (bits & MAIN_EVENT_ERROR) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            if (media_recovery_pending_) {
 +                // A failed recovery attempt is retried by the bounded timer;
 +                // do not collapse RECOVERING to idle or play an error sound
@@ -46,7 +46,7 @@ index 832a4ff..41b256d 100644
              SetDeviceState(kDeviceStateIdle);
              Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
                    Lang::Sounds::OGG_EXCLAMATION);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            }
 +#endif
          }
@@ -56,7 +56,7 @@ index 832a4ff..41b256d 100644
  
          if (bits & MAIN_EVENT_CLOCK_TICK) {
              clock_ticks_++;
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            auto* memoria_protocol =
 +                static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +            if (!media_recovery_pending_ && memoria_protocol != nullptr) {
@@ -74,7 +74,7 @@ index 832a4ff..41b256d 100644
  void Application::HandleNetworkConnectedEvent() {
      ESP_LOGI(TAG, "Network connected");
      auto state = GetDeviceState();
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    if (!media_network_connected_.load()) {
 +        // Event bits can contain an older Connected together with a newer
 +        // Disconnected. Only the callback's latest observation is authority.
@@ -88,7 +88,7 @@ index 832a4ff..41b256d 100644
              },
              "activation", 4096 * 2, this, 2, &activation_task_handle_);
      }
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    else if (media_recovery_pending_) {
 +        ContinueMediaRecovery();
 +    }
@@ -100,7 +100,7 @@ index 832a4ff..41b256d 100644
  }
  
  void Application::HandleNetworkDisconnectedEvent() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    if (media_network_connected_.load()) {
 +        // Symmetric coalescing case: Disconnected was followed by Connected
 +        // before the main loop consumed either bit.
@@ -109,7 +109,7 @@ index 832a4ff..41b256d 100644
 +#endif
      // Close current conversation when network disconnected
      auto state = GetDeviceState();
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    if (state == kDeviceStateRecovering) {
 +        return;
 +    }
@@ -124,7 +124,7 @@ index 832a4ff..41b256d 100644
 -        state == kDeviceStateSpeaking) {
 +        state == kDeviceStateSpeaking || has_resumable_idle_session) {
          ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        media_recovery_previous_state_ = state;
 +        media_recovery_pending_ = memoria_protocol != nullptr &&
 +                                  memoria_protocol->CanResumeSession();
@@ -149,7 +149,7 @@ index 832a4ff..41b256d 100644
      display->UpdateStatusBar(true);
  }
  
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +void Application::CancelMediaRecovery(bool terminal_close) {
 +    media_recovery_pending_ = false;
 +    media_reconnect_attempt_ = 0;
@@ -215,7 +215,7 @@ index 832a4ff..41b256d 100644
 @@ -608,9 +737,15 @@ bool Application::InitializeProtocol() {
  
      protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        const uint32_t audio_transport_attempt =
 +            memoria_protocol != nullptr ? memoria_protocol->TransportAttemptId() : 0;
@@ -233,7 +233,7 @@ index 832a4ff..41b256d 100644
 @@ -633,17 +768,65 @@ bool Application::InitializeProtocol() {
  
      protocol_->OnAudioChannelClosed([this, &board]() {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        const uint32_t closed_transport_attempt =
 +            memoria_protocol != nullptr ? memoria_protocol->TransportAttemptId() : 0;
@@ -242,12 +242,12 @@ index 832a4ff..41b256d 100644
          board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 -        Schedule([this]() {
 +        Schedule([this
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                  , closed_transport_attempt
 +#endif
 +        ]() {
              auto display = Board::GetInstance().GetDisplay();
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +            if (memoria_protocol != nullptr &&
 +                memoria_protocol->TransportAttemptId() != closed_transport_attempt) {
@@ -258,7 +258,7 @@ index 832a4ff..41b256d 100644
 +            }
 +#endif
              display->SetChatMessage("system", "");
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            const DeviceState state = GetDeviceState();
 +            if (!media_recovery_pending_ && memoria_protocol != nullptr &&
 +                memoria_protocol->CanResumeSession() &&
@@ -289,7 +289,7 @@ index 832a4ff..41b256d 100644
      });
  
      protocol_->OnIncomingJson([this, display](const cJSON* root) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +        const uint32_t json_transport_attempt =
 +            memoria_protocol != nullptr ? memoria_protocol->TransportAttemptId() : 0;
@@ -303,11 +303,11 @@ index 832a4ff..41b256d 100644
              if (strcmp(state->valuestring, "start") == 0) {
 -                Schedule([this]() {
 +                Schedule([this
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                          , json_transport_attempt
 +#endif
 +                ]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                    auto* memoria_protocol =
 +                        static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +                    if (memoria_protocol == nullptr ||
@@ -321,11 +321,11 @@ index 832a4ff..41b256d 100644
              } else if (strcmp(state->valuestring, "stop") == 0) {
 -                Schedule([this]() {
 +                Schedule([this
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                          , json_transport_attempt
 +#endif
 +                ]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                    auto* memoria_protocol =
 +                        static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +                    if (memoria_protocol == nullptr ||
@@ -344,11 +344,11 @@ index 832a4ff..41b256d 100644
 -                              glyphs = std::move(glyphs), bpp]() {
 +                    Schedule([this, display, message = std::string(text->valuestring),
 +                              glyphs = std::move(glyphs), bpp
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                              , json_transport_attempt
 +#endif
 +                    ]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                        auto* memoria_protocol =
 +                            static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +                        if (memoria_protocol == nullptr ||
@@ -367,11 +367,11 @@ index 832a4ff..41b256d 100644
 -                          glyphs = std::move(glyphs), bpp]() {
 +                Schedule([this, display, message = std::string(text->valuestring),
 +                          glyphs = std::move(glyphs), bpp
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                          , json_transport_attempt
 +#endif
 +                ]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                    auto* memoria_protocol =
 +                        static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +                    if (memoria_protocol == nullptr ||
@@ -388,11 +388,11 @@ index 832a4ff..41b256d 100644
              if (cJSON_IsString(emotion)) {
 -                Schedule([display, emotion_str = std::string(emotion->valuestring)]() {
 +                Schedule([this, display, emotion_str = std::string(emotion->valuestring)
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                          , json_transport_attempt
 +#endif
 +                ]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                    auto* memoria_protocol =
 +                        static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +                    if (memoria_protocol == nullptr ||
@@ -407,7 +407,7 @@ index 832a4ff..41b256d 100644
          return;
      }
  
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    if (state == kDeviceStateRecovering) {
 +        // The same physical action that ends an active conversation also
 +        // cancels recovery; terminal close clears the resumable Session id.
@@ -423,7 +423,7 @@ index 832a4ff..41b256d 100644
  
      if (!protocol_->IsAudioChannelOpened()) {
          if (!protocol_->OpenAudioChannel()) {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +            if (memoria_protocol != nullptr && memoria_protocol->CanResumeSession()) {
 +                // The signed Session already exists even though this WSS did
@@ -447,7 +447,7 @@ index 832a4ff..41b256d 100644
              display->SetEmotion("neutral");
              display->SetChatMessage("system", "");
              break;
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        case kDeviceStateRecovering:
 +            display->SetStatus(Lang::Strings::CONNECTING);
 +            display->SetEmotion("neutral");
@@ -463,14 +463,14 @@ index 832a4ff..41b256d 100644
  void Application::ResetProtocol() {
      Schedule([this]() {
 -        // Close audio channel if opened
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        media_recovery_pending_ = false;
 +        media_reconnect_attempt_ = 0;
 +        media_reconnect_due_us_ = 0;
 +#endif
 +        // Close audio channel if opened (or always for Memoria, where a
 +        // transport can be closed while its resumable Session is still live).
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        if (protocol_) {
 +            protocol_->CloseAudioChannel();
 +        }
@@ -498,7 +498,7 @@ index 54c90fe..ec7baf1 100644
      bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
      int clock_ticks_ = 0;
      TaskHandle_t activation_task_handle_ = nullptr;
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    // WSS transport recovery is separate from terminal Session close. The
 +    // previous semantic state decides whether a successful same-Session epoch
 +    // returns to idle/listening, while session.accepted alone may restore an
@@ -524,7 +524,7 @@ index 54c90fe..ec7baf1 100644
      void HandleActivationDoneEvent();
      void HandleWakeWordDetectedEvent();
      void ContinueOpenAudioChannel(ListeningMode mode);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    void ContinueMediaRecovery();
 +    void CancelMediaRecovery(bool terminal_close);
 +#endif

@@ -133,7 +133,7 @@ diff --git a/main/application.cc b/main/application.cc
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -575,7 +575,9 @@ bool Application::InitializeProtocol() {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
      protocol_ = std::make_unique<memoria::MemoriaProtocol>();
      static_cast<memoria::MemoriaProtocol*>(protocol_.get())
 -        ->SetLocalFlushCallback([this]() { audio_service_.ResetDecoder(); });
@@ -159,7 +159,7 @@ diff --git a/main/application.cc b/main/application.cc
      });
  
      protocol_->OnAudioChannelClosed([this, &board]() {
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        audio_service_.ResetDecoderForServerGeneration(0);
 +#endif
          board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
@@ -168,7 +168,7 @@ diff --git a/main/application.cc b/main/application.cc
 @@ -1141,16 +1146,16 @@ void Application::AbortSpeaking(AbortReason reason) {
      ESP_LOGI(TAG, "Abort speaking");
      aborted_ = true;
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 -    // L0 physical hard stop: flush the local playback pipeline synchronously
 -    // so nothing more is heard, then report the stop with the pre-flush fence
 -    // and local flush sample end. The server closes the generation gate;

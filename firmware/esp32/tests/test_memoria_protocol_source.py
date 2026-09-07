@@ -143,7 +143,7 @@ BOARD_CONFIG = json.loads(
         / "main"
         / "boards"
         / "memoria"
-        / "atk-dnesp32s3-v1"
+        / "esp-vocat"
         / "config.json"
     ).read_text(encoding="utf-8")
 )
@@ -154,8 +154,8 @@ BOARD_SOURCE = (
     / "main"
     / "boards"
     / "memoria"
-    / "atk-dnesp32s3-v1"
-    / "memoria_atk_dnesp32s3_v1.cc"
+    / "esp-vocat"
+    / "memoria_esp_vocat.cc"
 ).read_text(encoding="utf-8")
 CONTRACTS_README = FIRMWARE_README
 
@@ -175,15 +175,13 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
 
 
 def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:
-    assert "constexpr float kMicInputGainDb = 21.0f;" in BOARD_SOURCE
-    assert "audio_codec.SetInputGain(kMicInputGainDb);" in BOARD_SOURCE
-    assert "SetInputGain(12.0f)" not in BOARD_SOURCE
-    assert "SetInputGain(24.0f)" not in BOARD_SOURCE
-    assert "Keep the strict local AFE VAD" in BOARD_SOURCE
+    assert "constexpr float kMicInputGainDb = 30.0f;" in BOARD_SOURCE
+    assert "AUDIO_INPUT_REFERENCE, kMicInputGainDb);" in BOARD_SOURCE
+    assert "strict local AFE VAD" in BOARD_SOURCE
 
 
 def test_simplex_playback_cannot_grant_wake_word_local_stop_authority() -> None:
-    assert PATCH_0018.count("CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1") == 2
+    assert PATCH_0018.count("CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT") == 2
     assert "audio_service_.EnableWakeWordDetection(false);" in PATCH_0018
     assert "Ignoring wake word detected during simplex playback" in PATCH_0018
     late_event_guard = PATCH_0018[PATCH_0018.index("state == kDeviceStateSpeaking") :]
@@ -250,7 +248,7 @@ def test_afe_vad_is_fenced_and_sent_on_the_device_media_protocol() -> None:
 
 
 def test_memoria_afe_uses_bounded_noise_tolerant_endpointing() -> None:
-    assert "CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1" in AFE_PATCH
+    assert "CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT" in AFE_PATCH
     assert "larger VAD modes as having a higher speech-trigger probability" in AFE_PATCH
     assert "afe_config->vad_mode = VAD_MODE_0" in AFE_PATCH
     assert "afe_config->vad_mode = VAD_MODE_2" not in AFE_PATCH
@@ -1440,8 +1438,8 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
         / "main"
         / "boards"
         / "memoria"
-        / "atk-dnesp32s3-v1"
-        / "memoria_atk_dnesp32s3_v1.cc"
+        / "esp-vocat"
+        / "memoria_esp_vocat.cc"
     ).read_text(encoding="utf-8")
     assert "state == kDeviceStateRecovering" in board_source
     assert "app.ToggleChatState()" in board_source

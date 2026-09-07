@@ -184,15 +184,26 @@ miniprogram_experience_version: 0.8.75
 
 ## 当前板卡与固件
 
-- 固件 app version：2.4.2；ES8388 输入增益：**21 dB（保留在当前镜像）**。NS off 现场基线仍是 2026-09-02 的 app SHA `1af5a39e…`（前 `c11fb87e…` 为 18 dB）：epoch1351 30–60 cm 正常音量 DTLN 后 RMS **939/764**。
-- **板端 WebRTC 降噪（2026-09-04 10:17 CST 已刷写；epoch 1379 双轮+短告别已过，嘈杂环境未定量）**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS；`CONFIG_SR_NSN_WEBRTC=y`。刷写未写身份区。epoch **1379** session `e3422df6-57fe-4c46-8302-102dcca56990`：设备 VAD 全部 `vad_end`（用户段 6.64 s / 5.98 s / 告别 1.54 s），**没有 20 s 硬兜底**。FunASR 两轮 RMS 470 / 685（NS off 基线 epoch1351 为 939/764，本轮更低但仍提交成功）。尾段低电平 32–53 被标 `asr_empty_class=low_rms`，未挡主轮。天气轮 generation 3 曾 `transport_rejected`（fence 仍钉在 turn2/gen2），generation 4 补播成功，操作员听感无中断失败。短告别 `text_len=6` → `conversation_end_explicit` → 设备 idle（最后 VAD end 后 126 ms）。tap 全文件 RMS 518、19.92 s。**未做**：明确嘈杂环境噪声底、误/漏唤醒计数、`media_vad.go` MinRMS 重标定、17 字 overlap 原句。NS 不够时仍按序 NSNET2 → `vadnet1_medium`。
-- app SHA-256：`6bb2af5db28825b6d647dadff0e9c2c2307476535a77736603716980c37e0aad`。
-- merged SHA-256：`a02cd168eabeb4e62138f5773ab09e754efd57f9572f7861a4e76b373679c062`。
-- overlay SHA-256：`536a73952297cdca52a5d687b86f0d9221efb2d1ce9a25e5f1c76bd861e952b1`（含 patch `0022` WebRTC NS 与 20 s fence pin）。
-- 默认出厂唤醒词仍为「茉莉」（`mo li`）；assets 同时打包 `mei mo li ya`，运行时经 device settings / NVS 切换；自定义词走 MultiNet 拼音命令（v1，非云端 WakeNet 训练）。
-- `memoria_identity` 上次逐字节核验 SHA-256：`b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`（2026-09-01）；本次刷写未重读该分区。
-- 2026-09-01 曾用 `scripts/flash.sh --port /dev/cu.usbmodem101 --build` 写入同类分区、未写身份区。2026-09-04 本次未加 `--build`，二进制指纹与构建候选一致。
-- Speaking 期间关闭 KWS 并忽略迟到 wake event；回到 idle 后恢复。BOOT 始终是本地物理硬停止。
+- **硬件目标平台**：乐鑫 ESP-VoCat N32R16（ESP32-S3-WROOM-1-N32R16，32MB Flash / 16MB Octal PSRAM）。旧板卡（`atk-dnesp32s3-v1` 16MB）固件与驱动已彻底移除清理。
+- **固件标识与版本**：board `memoria-esp-vocat`，app version 2.4.2。
+- **音频系统**：ES8311（音频输出/DAC/PA，GPIO4/15 动态 PCB 适配）+ ES7210（双麦克风阵列 ADC，输入增益 **30.0 dB**）。采用 `BoxAudioCodec`，已通过 patch `0017` 增加 `i2s_channel_register_event_callback` 监听 `on_sent` TX DMA 完成中断，实现精准的 `HasExactOutputCompletion` 和 `OutputCompletionCounter` 硬件播放水线回执。
+- **外设与交互**：
+  - 屏幕：1.85 寸 QSPI 圆形 LCD（ST77916，360x360 分辨率，40MHz SPI 驱动，带自动背光调节）。
+  - 触摸：CST816S I2C 触控屏（支持单击打断/切换对话/退出聆听、中断驱动）+ 触摸电容滑条/按键（PCB v1.0/v1.2 自动兼容）。
+  - 传感器与电源：BMI270 六轴运动传感器（摇晃动作检测，score 阈值 4000，冷却 2.5s）、BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
+  - 按键：BOOT 按键（单击切换状态/打断，长按进入配网 / Protocomm BLE 凭证下发）。
+- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间屏蔽唤醒词并忽略迟到 wake event。
+- **分区表布局（32MB Flash）**：`partitions/v2/32m.csv`。
+  - `memoria_identity` 位于 `0x10000`（64KB，受写保护，仅限 provision_identity.py 刷写）。
+  - 双 8MB OTA app 分区（`ota_0` 0x20000 8MB, `ota_1` 8MB）。
+  - 16MB SPIFFS assets 分区（`assets` 0x1000000 16MB）。
+- **最新固件构建产物与指纹**（2026-09-07 构建）：
+  - app SHA-256：`95668ca749e8bbdf613ccf41f03f00d8a58a8d2a826fcbca7c20c64897639d41`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
+  - merged SHA-256：`cfc07bc507cb1302de78a88e9bf46e2e0cf89b9f9b14191bdc6f4fed632474d5`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
+  - bootloader SHA-256：`7679065d3ca0232e3b24b36ba0a067722b2a0d56b70ff5b7a5db17013fd7fcf8`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
+  - partition-table SHA-256：`97f0584b1936c02e0f951efdcc19c0f77d48f73781b83bd41a10b0856dda9189`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`）
+  - overlay hash：`45a90c87bb12f73bba28bf01003ace59dc918e2761cd38956e476a7063de338f`
+- 刷写命令：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`（或直接使用 auto 探测）。首次全量烧录建议使用 `merged` 固件：`esptool.py write_flash 0x0 firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`。
 
 epoch 1379 已有串口 VAD、bridge Actual Heard / `playback.ended`、Edge 显式结束和操作员听感；仍不等于全局 `direct_real_device_verified`，也不等于嘈杂环境定量抗噪。
 
@@ -351,7 +362,7 @@ demo_ready: true
 | 角色 | 阶段 | 只动这些（除非阶段 2 分支证明必须扩） |
 | --- | --- | --- |
 | Agent | 0、3–7、发版 | `services/agent/src/voice_core/media_session_*`、`services/agent/src/providers/funasr_stt.py`、`services/agent/src/clock_fact_queries.py`；LiveKit 路径仍见 `device_vad.py` |
-| 固件现场 | 1、2、4 | `firmware/esp32/overlay/`（边沿/ES8388 PGA）；hello 能力字段禁止改成真 AEC；刷写 `firmware/esp32/scripts/flash.sh` |
+| 固件现场 | 1、2、4 | `firmware/esp32/overlay/`（边沿/ES7210 PGA）；hello 能力字段禁止改成真 AEC；刷写 `firmware/esp32/scripts/flash.sh` |
 | Media Edge | 1、2 无播放/无 close | `services/media_edge/`；确认 Direct WSS `wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`，不要落到 LiveKit compat |
 | 控制面 | 3、5 | 设备 tab 确认在线、主人 subject capability；配网/激活不在本工单 |
 | 路演 | 7 | 不改代码；按锁定剧本念，口径跟 `advertised_duplex_level: none` |
@@ -425,7 +436,7 @@ notes:
 
 现场不要按 BOOT/RESET，除非该步明确测硬停。说话距离 30–60 cm、正常音量。欢迎语未结束不要插话（半双工契约）。FunASR 空转写与设备门控必须分账：容器内直连干净 PCM 的 FunASR smoke 失败则记供应商，不改 VAD。
 
-排障顺序（与 README 一致，本工单强制先走这一条再改代码）：无响应 = 设备状态/票据 → WSS epoch → VAD → ASR final → generation → 首个 0/0 下行帧 → playback terminal。电平问题先看 ES8388 PGA、原始 PCM RMS、DTLN 出入，再动云端阈值。
+排障顺序（与 README 一致，本工单强制先走这一条再改代码）：无响应 = 设备状态/票据 → WSS epoch → VAD → ASR final → generation → 首个 0/0 下行帧 → playback terminal。电平问题先看 ES7210 PGA、原始 PCM RMS、DTLN 出入，再动云端阈值。
 
 ### 阶段 0 — 契约冻结（开发，先做）
 
@@ -470,7 +481,7 @@ cd services/media_edge && go test ./...
 失败时只按下列分支修，禁止同时改增益、VAD 和 ASR：
 
 - 串口无第二轮 `vad.start`：门控/边沿/holdoff。对照「播放后 VAD 上行门控死锁候选」；修 `DeviceVadProjector` 或固件边沿，不得丢弃状态同步。
-- 有 `vad.start` 且 tap RMS 过低（历史失败曾见降噪后 RMS 约 8–296）：只调 ES8388 输入增益或采集距离，用 tap WAV 校准；DTLN makeup 已 8.0x，禁止再作为第一手段上调。
+- 有 `vad.start` 且 tap RMS 过低（历史失败曾见降噪后 RMS 约 8–296）：只调 ES7210 输入增益或采集距离，用 tap WAV 校准；DTLN makeup 已 8.0x，禁止再作为第一手段上调。
 - tap RMS 正常但 `text_len=0`：先在同一容器跑 FunASR 干净 PCM；失败记供应商并确认 SenseVoice 兜底是否触发。成功则查上行是否被 preroll 丢弃或 task 未重建。
 - 有 ASR 无播放：查 generation fence、首帧 0/0、旧 generation 丢弃、playback drain。
 

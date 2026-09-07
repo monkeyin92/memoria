@@ -5,7 +5,7 @@ diff --git a/main/application.cc b/main/application.cc
  
      if (state == kDeviceStateIdle) {
          BeginWakeWordInvoke(wake_word);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    } else if (state == kDeviceStateSpeaking) {
 +        // This board has no playback-reference channel. A late detector event
 +        // can therefore be the assistant's own speaker output; it must never
@@ -20,7 +20,7 @@ diff --git a/main/application.cc b/main/application.cc
  
              if (listening_mode_ != kListeningModeRealtime) {
                  audio_service_.EnableVoiceProcessing(false);
-+#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +                // No AEC/reference channel is wired on this simplex board.
 +                // Keep the physical button as the playback stop authority;
 +                // wake-word detection here can hear the assistant itself.

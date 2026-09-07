@@ -7,5 +7,5 @@ ESP_IDF_REPOSITORY=https://github.com/espressif/esp-idf.git
 ESP_IDF_VERSION=v6.0.2
 ESP_IDF_TARGET=esp32s3
 PYTHON_PREFERRED_VERSION=3.12
-BOARD_PATH=memoria/atk-dnesp32s3-v1
-BOARD_NAME=memoria-atk-dnesp32s3-v1
+BOARD_PATH=memoria/esp-vocat
+BOARD_NAME=memoria-esp-vocat

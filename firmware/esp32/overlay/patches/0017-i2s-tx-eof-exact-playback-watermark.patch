@@ -86,6 +86,82 @@ diff --git a/main/audio/codecs/es8388_audio_codec.cc b/main/audio/codecs/es8388_
      ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
      ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
      ESP_LOGI(TAG, "Duplex channels created");
+diff --git a/main/audio/codecs/box_audio_codec.h b/main/audio/codecs/box_audio_codec.h
+--- a/main/audio/codecs/box_audio_codec.h
++++ b/main/audio/codecs/box_audio_codec.h
+@@ -5,6 +5,7 @@
+ 
+ #include <esp_codec_dev.h>
+ #include <esp_codec_dev_defaults.h>
++#include <atomic>
+ #include <mutex>
+ 
+ 
+@@ -22,6 +23,11 @@ private:
+     std::mutex data_if_mutex_;
+     int reference_gain_channel_ = -1;
+     float reference_gain_ = 0.0f;
++    std::atomic<uint32_t> output_completion_counter_{0};
++
++    static bool IRAM_ATTR OnOutputSent(i2s_chan_handle_t handle,
++                                       i2s_event_data_t* event,
++                                       void* user_ctx);
+ 
+     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout,
+                               gpio_num_t din);
+@@ -40,6 +46,10 @@ public:
+     virtual void SetOutputVolume(int volume) override;
+     virtual void EnableInput(bool enable) override;
+     virtual void EnableOutput(bool enable) override;
++    virtual bool HasExactOutputCompletion() const override { return true; }
++    virtual uint64_t OutputCompletionCounter() const override {
++        return output_completion_counter_.load(std::memory_order_acquire);
++    }
+ };
+ 
+ #endif // _BOX_AUDIO_CODEC_H
+diff --git a/main/audio/codecs/box_audio_codec.cc b/main/audio/codecs/box_audio_codec.cc
+--- a/main/audio/codecs/box_audio_codec.cc
++++ b/main/audio/codecs/box_audio_codec.cc
+@@ -1,11 +1,24 @@
+ #include "box_audio_codec.h"
+ 
+ #include <esp_log.h>
++#include <esp_attr.h>
+ #include <driver/i2c_master.h>
+ #include <driver/i2s_tdm.h>
+ 
+ #define TAG "BoxAudioCodec"
+ 
++bool IRAM_ATTR BoxAudioCodec::OnOutputSent(i2s_chan_handle_t handle,
++                                          i2s_event_data_t* event,
++                                          void* user_ctx) {
++    (void)handle;
++    (void)event;
++    auto* codec = static_cast<BoxAudioCodec*>(user_ctx);
++    if (codec != nullptr) {
++        codec->output_completion_counter_.fetch_add(1, std::memory_order_release);
++    }
++    return false;
++}
++
+ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
+                              gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout,
+                              gpio_num_t din, gpio_num_t pa_pin, uint8_t es8311_addr,
+@@ -180,6 +193,13 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
+ 
+     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
+     ESP_ERROR_CHECK(i2s_channel_init_tdm_mode(rx_handle_, &tdm_cfg));
++    const i2s_event_callbacks_t callbacks = {
++        .on_recv = nullptr,
++        .on_recv_q_ovf = nullptr,
++        .on_sent = OnOutputSent,
++        .on_send_q_ovf = nullptr,
++    };
++    ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle_, &callbacks, this));
+     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+     ESP_LOGI(TAG, "Duplex channels created");
 diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
 --- a/main/audio/audio_service.h
 +++ b/main/audio/audio_service.h
@@ -204,7 +280,7 @@ diff --git a/main/application.cc b/main/application.cc
 -                                          uint32_t received_sequence) {
 +                                          uint32_t received_sequence,
 +                                          bool approximate) {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
          auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
          if (memoria_protocol != nullptr) {
              memoria_protocol->NotifyPlaybackOutput(generation_id, rendered_sample_end,

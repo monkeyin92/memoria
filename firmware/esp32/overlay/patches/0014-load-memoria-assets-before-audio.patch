@@ -2,7 +2,7 @@ diff --git a/main/application.cc b/main/application.cc
 --- a/main/application.cc
 +++ b/main/application.cc
 @@ -358,5 +358,15 @@ void Application::ActivationTask() {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    // The Memoria activation path intentionally skips OTA asset version
 +    // checks, but the local assets partition still owns the ESP-SR models.
 +    // Apply it before the first audio-engine initialization; otherwise the

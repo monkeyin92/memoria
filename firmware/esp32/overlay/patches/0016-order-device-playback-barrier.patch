@@ -4,7 +4,7 @@ diff --git a/main/application.cc b/main/application.cc
 @@ -809,18 +809,19 @@ bool Application::InitializeProtocol() {
  
      protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
- #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +        // HandleDownlink invokes this callback in WSS wire order. Keep the
 +        // thread-safe AudioService enqueue in that order so a following
 +        // generation.completed barrier cannot observe an empty queue and

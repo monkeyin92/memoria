@@ -10,8 +10,8 @@ diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_aud
 +// both the on-device VAD and the uplink, so steady room noise cannot hold the
 +// energy VADs open until the 20 s turn hard fence. WebRTC NS needs no model
 +// and no reference channel; NSNET2 is the follow-up if field tests fall short.
-+#if defined(CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1) && \
-+    CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#if defined(CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT) && \
++    CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +static constexpr bool kUseAfeNoiseSuppression = true;
 +#else
 +static constexpr bool kUseAfeNoiseSuppression = false;
@@ -27,8 +27,8 @@ diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_aud
 -    afe_config->ns_init = false;
 +    afe_config->ns_init = kUseAfeNoiseSuppression;
      afe_config->vad_init = kUseAfeForVoiceProcessing;
- #if defined(CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1) && \
-     CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+ #if defined(CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT) && \
+     CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 @@ -146,6 +158,8 @@
      // The protocol layer still supplies the independent 20 s hard fence.
      afe_config->vad_mode = VAD_MODE_0;
