@@ -1245,11 +1245,18 @@ async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -
 @pytest.mark.asyncio
 async def test_hello_capabilities_carry_negotiated_audio_mode() -> None:
     captured: list[SessionIdentity] = []
+    audio_seen = asyncio.Event()
 
     async def on_session_connected(session) -> None:
         captured.append(session.identity)
 
-    bridge = MediaBridgeGrpcServer(on_session_connected=on_session_connected)
+    async def on_audio_frame(_session, frame) -> None:
+        audio_seen.set()
+
+    bridge = MediaBridgeGrpcServer(
+        on_session_connected=on_session_connected,
+        on_audio_frame=on_audio_frame,
+    )
     requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
     identity = media_pb2.SessionIdentity(
         session_id="device-audio-mode",
@@ -1272,4 +1279,46 @@ async def test_hello_capabilities_carry_negotiated_audio_mode() -> None:
     )
     await anext(stream)
     assert captured[0].audio_mode == "interrupt_assist"
+
+    await requests.put(
+        media_pb2.MediaToCore(
+            audio=media_pb2.AudioFrame(
+                identity=identity,
+                sequence=0,
+                capture_start_sample=0,
+                frame_samples=2,
+                payload=b"\x00\x00\x01\x00",
+            )
+        )
+    )
+    await asyncio.wait_for(audio_seen.wait(), timeout=1)
     await requests.put(None)
+
+
+def test_require_identity_ignores_hello_audio_mode() -> None:
+    identity = SessionIdentity(
+        "device-audio-mode-fence",
+        account_id="account",
+        device_id="dev-1",
+        client_type="device",
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=1,
+        audio_mode="interrupt_assist",
+    )
+    bridge = MediaBridgeGrpcServer()
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    proto = media_pb2.SessionIdentity(
+        session_id=identity.session_id,
+        account_id=identity.account_id,
+        device_id=identity.device_id,
+        client_type=identity.client_type,
+        stream_epoch=identity.stream_epoch,
+        binding_id=identity.binding_id,
+        binding_version=identity.binding_version,
+        runtime_profile_version=identity.runtime_profile_version,
+    )
+    MediaBridgeGrpcServer._require_identity(connection, proto)  # noqa: SLF001
+    proto.session_id = "other-session"
+    with pytest.raises(ValueError, match="media event identity does not match the session"):
+        MediaBridgeGrpcServer._require_identity(connection, proto)  # noqa: SLF001

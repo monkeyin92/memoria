@@ -11,7 +11,7 @@ import base64
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, cast
 
@@ -115,6 +115,16 @@ class SessionIdentity:
             and self.runtime_profile_version == other.runtime_profile_version
             and self.audio_mode == other.audio_mode
         )
+
+    def matches_event_identity(self, other: SessionIdentity) -> bool:
+        """Compare the wire session fence, ignoring hello-only capabilities.
+
+        Media Edge keeps ``audio_mode`` on hello capabilities, not on
+        ``SessionIdentity`` protobuf events.  A reconnect may still require
+        the same negotiated mode via ``has_same_reconnect_authority``.
+        """
+
+        return replace(self, audio_mode="") == replace(other, audio_mode="")
 
 
 def device_barge_in_enabled(identity: SessionIdentity) -> bool:

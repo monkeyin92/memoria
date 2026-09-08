@@ -986,7 +986,9 @@ class MediaBridgeGrpcServer:
 
     @staticmethod
     def _require_identity(connection: _Connection, identity: Any) -> None:
-        if _identity_from_proto(identity) != connection.session.identity:
+        if not connection.session.identity.matches_event_identity(
+            _identity_from_proto(identity)
+        ):
             raise ValueError("media event identity does not match the session")
 
     async def _error(self, connection: _Connection, code: str, message: str) -> None:
