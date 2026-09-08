@@ -913,7 +913,7 @@ async def test_direct_device_media_session_never_touches_livekit(
     assert claims["subject_id"] == authority.profile.active_subject_id
     assert claims["device_settings"] == {
         "settings_version": 0,
-        "volume_limit": 72,
+        "volume_limit": 30,
         "screen_brightness": 80,
         "night_mode": False,
         "do_not_disturb": False,

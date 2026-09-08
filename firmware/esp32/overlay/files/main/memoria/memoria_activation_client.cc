@@ -491,11 +491,18 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     const int32_t counter = std::max<int32_t>(1, previous_counter + 1);
     const std::string applied_at = FormatRfc3339Utc(time(nullptr));
     const std::string ack = BuildAckPayload(identity_, *profile, config_hash, counter, applied_at, true);
+    int ack_status = 0;
     if (applied_at.empty() || ack.empty() ||
         !HttpRequest("POST",
                      JoinUrl(profile->control_api_url,
                              "/v1/devices/" + identity_.device_id() + "/activation-ack"),
-                     {}, ack, nullptr)) {
+                     {}, ack, nullptr, &ack_status)) {
+        if (ack_status == 409) {
+            runtime.SetInt("activation_v", profile->activation_version);
+            ESP_LOGW(kTag, "Activation ACK already acknowledged by server (status 409), resuming version=%ld",
+                     static_cast<long>(profile->activation_version));
+            return ESP_OK;
+        }
         return ESP_FAIL;
     }
     runtime.SetInt("activation_ctr", counter);

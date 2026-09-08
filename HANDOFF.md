@@ -195,8 +195,8 @@ miniprogram_experience_version: 0.8.75
 - **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间屏蔽唤醒词并忽略迟到 wake event。
 - **分区表布局（32MB Flash）**：`partitions/v2/32m.csv`。
   - `memoria_identity` 位于 `0x10000`（64KB，受写保护，仅限 provision_identity.py 刷写）。
-  - 双 8MB OTA app 分区（`ota_0` 0x20000 8MB, `ota_1` 8MB）。
-  - 16MB SPIFFS assets 分区（`assets` 0x1000000 16MB）。
+  - 双 4MB OTA app 分区（`ota_0` 0x20000 0x3f0000, `ota_1` 0x3f0000）。
+  - 8MB SPIFFS assets 分区（`assets` 0x800000 8MB，完全落在 24-bit MMU 物理映射区内且满足 PSRAM 16MB 下的 13MB mmap 上限）。
 - **最新固件构建产物与指纹**（2026-09-07 构建）：
   - app SHA-256：`95668ca749e8bbdf613ccf41f03f00d8a58a8d2a826fcbca7c20c64897639d41`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
   - merged SHA-256：`cfc07bc507cb1302de78a88e9bf46e2e0cf89b9f9b14191bdc6f4fed632474d5`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）

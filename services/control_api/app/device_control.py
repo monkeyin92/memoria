@@ -36,7 +36,7 @@ BARGE_IN_KINDS = ("none", "button", "keyword", "voice")
 LEARNING_MODES = ("off", "tutor_english", "tutor_homework")
 
 DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
-    "volume_limit": 72,
+    "volume_limit": 30,
     "screen_brightness": 80,
     "night_mode": False,
     "do_not_disturb": False,
