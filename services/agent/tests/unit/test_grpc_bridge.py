@@ -1240,3 +1240,36 @@ async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -
     assert resumed.audio.identity.stream_epoch == 2
     assert resumed.audio.sequence == 1
     assert resumed.audio.source_start_sample == 1
+
+
+@pytest.mark.asyncio
+async def test_hello_capabilities_carry_negotiated_audio_mode() -> None:
+    captured: list[SessionIdentity] = []
+
+    async def on_session_connected(session) -> None:
+        captured.append(session.identity)
+
+    bridge = MediaBridgeGrpcServer(on_session_connected=on_session_connected)
+    requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
+    identity = media_pb2.SessionIdentity(
+        session_id="device-audio-mode",
+        account_id="account",
+        device_id="dev-1",
+        client_type="device",
+        stream_epoch=1,
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    stream = bridge.connect(_request_stream(requests), None)  # type: ignore[arg-type]
+    await requests.put(
+        media_pb2.MediaToCore(
+            hello=media_pb2.SessionHello(
+                identity=identity,
+                capabilities={"audio_mode": "interrupt_assist"},
+            )
+        )
+    )
+    await anext(stream)
+    assert captured[0].audio_mode == "interrupt_assist"
+    await requests.put(None)

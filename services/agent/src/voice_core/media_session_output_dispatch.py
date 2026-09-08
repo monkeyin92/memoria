@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     MediaReplyChunk,
@@ -643,9 +644,8 @@ class MediaOutputDispatchMixin:
         context.assistant_text = ""
         context.provider_complete = False
         context.output_complete_emitted = False
-        # Close the ASR task when playback starts to avoid idle timeout during
-        # half-duplex assistant speech (defect 3: 23-second timeout fix).
-        await context.provider.pause_asr_for_playback(context.identity)
+        if should_pause_asr_for_playback(context.identity):
+            await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, next_fence)
         if not await self.bridge.emit_generation(
             next_fence.session_id,

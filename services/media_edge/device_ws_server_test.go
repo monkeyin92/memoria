@@ -313,6 +313,24 @@ func deviceGenerationEvent(sessionID string, epoch uint64, sequence uint64, turn
 	}}
 }
 
+func deviceAssistantExpressionEvent(sessionID string, epoch, turnID, generationID uint64, expression string) *mediav1.CoreToMedia {
+	payload, err := json.Marshal(map[string]any{
+		"v": 1, "protocol": "media-v1", "type": "assistant_expression",
+		"payload": map[string]any{"expression": expression},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Client{
+		Client: &mediav1.ClientEvent{
+			Identity: deviceCoreIdentity(sessionID, epoch),
+			Type:     "assistant_expression",
+			JsonPayload: payload,
+			TurnId: turnID, GenerationId: generationID,
+		},
+	}}
+}
+
 func deviceClosedStateEvent(sessionID string, epoch uint64, sequence uint64, reason string) *mediav1.CoreToMedia {
 	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_State{
 		State: &mediav1.StateEvent{
@@ -360,7 +378,8 @@ func TestDeviceWSSV2SessionAcceptedAndUplinkForwarded(t *testing.T) {
 	request := env.requests["session_1"]
 	env.mu.Unlock()
 	if request.SubjectID != "subject_1" || request.BindingID != "binding_1" ||
-		request.BindingVersion != 3 || request.RuntimeProfileVersion != 27 {
+		request.BindingVersion != 3 || request.RuntimeProfileVersion != 27 ||
+		request.AudioMode != DeviceAudioModeHalfDuplexSafe {
 		t.Fatalf("ticket authority fence did not reach runtime factory: %+v", request)
 	}
 	encoder, err := newOpusEncoder(16_000, 1)
@@ -521,6 +540,34 @@ func TestDeviceWSSFullDuplexRefusedAboveRegisteredBargeLevel(t *testing.T) {
 	accepted := deviceReadAccepted(t, connection)
 	if accepted.AudioMode == DeviceAudioModeFullDuplex {
 		t.Fatal("full duplex opened above the registered barge-in level")
+	}
+}
+
+func TestDeviceWSSForwardsAssistantExpressionToScreen(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, nil), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	env.mu.Lock()
+	request := env.requests["session_1"]
+	env.mu.Unlock()
+	env.server.ForwardCoreEventForSession(
+		request,
+		deviceAssistantExpressionEvent("session_1", 18, 1, 2, "caring"),
+	)
+	_, payload, err := readDeviceMessage(connection, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expression deviceScreenExpression
+	if err := json.Unmarshal(payload, &expression); err != nil {
+		t.Fatalf("payload=%s err=%v", payload, err)
+	}
+	if expression.Type != "screen.expression" || expression.Expression != "loving" {
+		t.Fatalf("unexpected screen expression: %+v", expression)
+	}
+	if expression.Fence.TurnID != 1 || expression.Fence.GenerationID != 2 {
+		t.Fatalf("expression fence = %+v", expression.Fence)
 	}
 }
 

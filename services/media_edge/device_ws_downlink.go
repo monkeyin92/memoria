@@ -9,6 +9,7 @@ package mediaedge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"math"
@@ -383,6 +384,46 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		}
 		log.Printf("media edge projected conversation close session=%s device=%s epoch=%d reason=%s control_sequence=%d", c.sessionID, c.deviceID, c.epoch, reason, controlSequence)
 		c.sendControl(deviceControlPriority("session.close"), payload)
+	case event.GetClient() != nil:
+		client := event.GetClient()
+		if client.GetType() != "assistant_expression" {
+			return
+		}
+		var envelope struct {
+			Payload struct {
+				Expression string `json:"expression"`
+			} `json:"payload"`
+			Expression string `json:"expression"`
+		}
+		if err := json.Unmarshal(client.GetJsonPayload(), &envelope); err != nil {
+			return
+		}
+		expression := envelope.Payload.Expression
+		if expression == "" {
+			expression = envelope.Expression
+		}
+		if expression == "" {
+			return
+		}
+		expression = deviceScreenEmotion(expression)
+		fence := deviceFence{
+			TurnID:       client.GetTurnId(),
+			GenerationID: client.GetGenerationId(),
+			ToolEpoch:    client.GetToolEpoch(),
+			SessionEpoch: uint64(c.epoch),
+		}
+		payload, err := marshalDeviceControl(deviceScreenExpression{
+			Type: "screen.expression", Version: 2,
+			SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
+			ControlSequence:   c.nextServerSequence(),
+			ServerMonotonicMS: now,
+			Fence:             fence,
+			Expression:        expression,
+		})
+		if err != nil {
+			return
+		}
+		c.sendControl(deviceControlPriority("screen.expression"), payload)
 	case event.GetError() != nil:
 		coreError := event.GetError()
 		payload, err := marshalDeviceControl(deviceSessionError{

@@ -918,7 +918,7 @@ async def test_direct_device_media_session_never_touches_livekit(
         "night_mode": False,
         "do_not_disturb": False,
         "learning_mode": "off",
-        "audio_mode": "half_duplex_safe",
+        "audio_mode": "interrupt_assist",
         "wake_mode": "button_or_keyword",
         "allowed_barge_in": ["button", "keyword"],
         "wake_word_id": "mo_li",
@@ -952,7 +952,7 @@ async def test_direct_device_media_session_never_touches_livekit(
     assert record["subject_id"] == "person_a"
     assert record["active_subject_id"] == "person_a"
     assert record["settings_version"] == 0
-    assert record["audio_mode_requested"] == "half_duplex_safe"
+    assert record["audio_mode_requested"] == "interrupt_assist"
     assert record["ticket_jti"] == claims["jti"]
     assert replay.status_code == 409
 

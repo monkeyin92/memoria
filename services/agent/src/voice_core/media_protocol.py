@@ -18,6 +18,9 @@ from typing import Any, cast
 MEDIA_PROTOCOL = "media-v1"
 MAX_ENVELOPE_BYTES = 256 * 1024
 _DEVICE_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+DEVICE_AUDIO_MODES = frozenset(
+    {"half_duplex_safe", "interrupt_assist", "full_duplex_verified"}
+)
 
 
 class AudioEncoding(StrEnum):
@@ -67,6 +70,7 @@ class SessionIdentity:
     binding_id: str = ""
     binding_version: int = 0
     runtime_profile_version: int = 0
+    audio_mode: str = ""
 
     def __post_init__(self) -> None:
         _required_string(self.session_id, "session_id")
@@ -79,6 +83,8 @@ class SessionIdentity:
             (self.runtime_profile_version, "runtime_profile_version"),
         ):
             _non_negative_int(value, name)
+        if self.audio_mode and self.audio_mode not in DEVICE_AUDIO_MODES:
+            raise ValueError("audio_mode is invalid")
         binding_fence = (
             bool(self.binding_id.strip()),
             self.binding_version > 0,
@@ -107,7 +113,27 @@ class SessionIdentity:
             and self.binding_id == other.binding_id
             and self.binding_version == other.binding_version
             and self.runtime_profile_version == other.runtime_profile_version
+            and self.audio_mode == other.audio_mode
         )
+
+
+def device_barge_in_enabled(identity: SessionIdentity) -> bool:
+    """Return whether a device session may open barge-in from negotiated audio_mode."""
+
+    return identity.client_type == "device" and identity.audio_mode in {
+        "interrupt_assist",
+        "full_duplex_verified",
+    }
+
+
+def should_pause_asr_for_playback(identity: SessionIdentity) -> bool:
+    """Half-duplex capture stops during playback; keep FunASR from idling out.
+
+    interrupt_assist / full duplex keep the microphone open, so rotating the
+    ASR task here would drop barge-in audio.
+    """
+
+    return not device_barge_in_enabled(identity)
 
 
 @dataclass(frozen=True, slots=True)

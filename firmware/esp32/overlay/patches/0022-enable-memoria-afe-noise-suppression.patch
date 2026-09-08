@@ -1,15 +1,14 @@
 diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
 --- a/main/audio/engines/afe_audio_engine.cc
 +++ b/main/audio/engines/afe_audio_engine.cc
-@@ -20,6 +20,18 @@
+@@ -20,6 +20,17 @@
  static constexpr bool kUseAfeForVoiceProcessing = false;
  #endif
  
-+// Memoria (ATK-DNESP32S3, simplex ES8388, no playback reference) keeps the
-+// ESP-SR WebRTC noise suppressor on inside the AFE pipeline. NS runs before
-+// both the on-device VAD and the uplink, so steady room noise cannot hold the
-+// energy VADs open until the 20 s turn hard fence. WebRTC NS needs no model
-+// and no reference channel; NSNET2 is the follow-up if field tests fall short.
++// Memoria VoCat keeps the ESP-SR WebRTC noise suppressor on inside the AFE
++// pipeline. NS runs before both the on-device VAD and the uplink, so steady
++// room noise cannot hold the energy VADs open until the 20 s turn hard fence.
++// WebRTC NS needs no model; NSNET2 is the follow-up if field tests fall short.
 +#if defined(CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT) && \
 +    CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +static constexpr bool kUseAfeNoiseSuppression = true;

@@ -396,6 +396,25 @@ async def test_device_factory_enables_explicit_subject_fence() -> None:
     )
     gate = runtime.orchestrator.runtime_profiles
     assert runtime.barge_in_enabled is False
+    interrupt_identity = SessionIdentity(
+        "device-fence-interrupt",
+        account_id="account",
+        device_id="dev-1",
+        client_type="device",
+        subject_id="",
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=19,
+        audio_mode="interrupt_assist",
+    )
+    interrupt_runtime = factory._new_runtime(
+        interrupt_identity.session_id,
+        tts,
+        device_id=interrupt_identity.device_id,
+        identity=interrupt_identity,
+    )
+    assert interrupt_runtime.barge_in_enabled is True
+    await interrupt_runtime.close()
     assert gate.expected_active_subject_id == ""
     assert gate.expected_subject_fence_enabled is True
     assert gate.expected_binding_id == "binding-1"

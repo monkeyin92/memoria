@@ -170,24 +170,25 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
     assert "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n" in sdkconfig
     assert "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n" in sdkconfig
     assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
+    assert "CONFIG_USE_DEVICE_AEC=y" in sdkconfig
     assert "默认出厂唤醒词为「茉莉」（`mo li`）" in FIRMWARE_README
     assert "白名单词「梅莫里亚」（`mei mo li ya`）" in FIRMWARE_README
 
 
 def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:
-    assert "constexpr float kMicInputGainDb = 30.0f;" in BOARD_SOURCE
+    assert "constexpr float kMicInputGainDb = 36.0f;" in BOARD_SOURCE
     assert "AUDIO_INPUT_REFERENCE, kMicInputGainDb);" in BOARD_SOURCE
-    assert "strict local AFE VAD" in BOARD_SOURCE
+    assert "Strict local AFE VAD" in BOARD_SOURCE
 
 
-def test_simplex_playback_cannot_grant_wake_word_local_stop_authority() -> None:
-    assert PATCH_0018.count("CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT") == 2
+def test_playback_cannot_grant_wake_word_local_stop_authority() -> None:
+    assert PATCH_0018.count("CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT") == 3
     assert "audio_service_.EnableWakeWordDetection(false);" in PATCH_0018
-    assert "Ignoring wake word detected during simplex playback" in PATCH_0018
+    assert "Ignoring wake word detected during playback" in PATCH_0018
     late_event_guard = PATCH_0018[PATCH_0018.index("state == kDeviceStateSpeaking") :]
     late_event_guard = late_event_guard[: late_event_guard.index("#endif")]
     assert "AbortSpeaking" not in late_event_guard
-    assert "physical button as the playback stop authority" in PATCH_0018
+    assert "BOOT remains the" in PATCH_0018
 
 
 def test_memoria_activation_applies_assets_before_audio_engine_can_load_models() -> None:
@@ -249,7 +250,7 @@ def test_afe_vad_is_fenced_and_sent_on_the_device_media_protocol() -> None:
 
 def test_memoria_afe_uses_bounded_noise_tolerant_endpointing() -> None:
     assert "CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT" in AFE_PATCH
-    assert "larger VAD modes as having a higher speech-trigger probability" in AFE_PATCH
+    assert "higher speech-trigger" in AFE_PATCH
     assert "afe_config->vad_mode = VAD_MODE_0" in AFE_PATCH
     assert "afe_config->vad_mode = VAD_MODE_2" not in AFE_PATCH
     assert "afe_config->vad_min_noise_ms = 900" in AFE_PATCH
@@ -290,7 +291,8 @@ def test_simplex_playback_and_state_changes_cannot_leave_a_vad_epoch_open() -> N
     )
     assert play_cue < send_start
     assert "pending_listening_start_ = true" in HALF_DUPLEX_PATCH[start:send_start]
-    assert "playback-drained event resumes this same seam" in HALF_DUPLEX_PATCH
+    assert "playback-drained event" in HALF_DUPLEX_PATCH
+    assert "resumes this same seam" in HALF_DUPLEX_PATCH
 
 
 def test_esp_component_versions_are_pinned_for_clean_rebuilds() -> None:
@@ -376,29 +378,27 @@ def test_json_integer_parsing_is_finite_and_fail_closed_at_uint64_bound() -> Non
     )
 
 
-def test_hello_v2_declares_only_honest_simplex_capabilities() -> None:
+def test_hello_v2_declares_honest_vocat_interrupt_assist_capabilities() -> None:
     start = SOURCE.index("std::string MemoriaProtocol::DeviceHelloV2()")
     end = SOURCE.index("bool MemoriaProtocol::SendText", start)
     hello_v2 = SOURCE[start:end]
 
     assert '"version", 2' in hello_v2
     assert '"simultaneous_capture_playback"' in hello_v2
-    assert 'cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", false)' in hello_v2
-    assert 'cJSON_AddStringToObject(capabilities, "aec_mode", "none")' in hello_v2
-    assert 'cJSON_AddStringToObject(capabilities, "aec_reference", "none")' in hello_v2
+    assert 'cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", true)' in hello_v2
+    assert 'cJSON_AddStringToObject(capabilities, "aec_mode", "fd_low_cost")' in hello_v2
+    assert 'cJSON_AddStringToObject(capabilities, "aec_reference", "software_post_gain_pre_i2s")' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "aec_reference_verified", false)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_duck", false)' in hello_v2
-    assert 'cJSON_AddNumberToObject(capabilities, "barge_in_level", 0)' in hello_v2
+    assert 'cJSON_AddNumberToObject(capabilities, "barge_in_level", 1)' in hello_v2
     assert 'cJSON_AddStringToObject(capabilities, "playback_watermark", "exact")' in hello_v2
     assert '"local_vad"' in hello_v2
     assert '"physical_stop_button"' in hello_v2
 
-    # No AEC/offline KWS/natural barge-in claims anywhere in the v2 hello.
+    # AEC is declared but not T1-T14 verified; local stop keyword remains off.
     for forbidden in (
-        '"fd_low_cost"',
         '"fd_high_quality"',
-        '"software_post_gain_pre_i2s"',
         '"hardware_loopback"',
         '"keyword.detected"',
         '"full_duplex_verified"',
@@ -449,12 +449,10 @@ def test_session_accepted_v2_parses_the_complete_generation_fence() -> None:
         "tool_epoch",
     ):
         assert f'"{field}"' in accepted
-    # Physical stop + local VAD permit interrupt_assist, while unverified full
-    # duplex still fails closed.
     assert '"half_duplex_safe"' in accepted
     assert '"interrupt_assist"' in accepted
-    assert 'audio_mode != "half_duplex_safe" &&' in accepted
-    assert 'audio_mode != "interrupt_assist"' in accepted
+    assert '"full_duplex_verified"' in accepted
+    assert "audio_mode_ = audio_mode" in accepted
     assert "contradicts device capabilities" in accepted
     assert "kDownlinkFrameSamples16k" in accepted
     assert "kDownlinkFrameSamples24k" in accepted

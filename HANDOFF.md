@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-06
-resume_checkpoint: miniprogram_0_8_83_uploaded_phone_desktop_and_weather_retest_pending
+as_of_date: 2026-09-08
+resume_checkpoint: vocat_interrupt_assist_firmware_flashed_backend_not_cutover
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -22,16 +22,16 @@ realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
 livekit_room_allowed: false
-current_work_order: half_duplex_investor_demo
-code: complete
-wired: esp32_to_go_media_edge_to_python_voice_core_agent
-enabled: production_agent_bridge_edge_and_current_firmware_true
+current_work_order: vocat_interrupt_assist
+code: in_progress
+wired: local_firmware_flashed_backend_not_cutover
+enabled: false
 verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_cutover
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
 advertised_duplex_level: none
-hardware_aec: pending
+hardware_aec: present_unverified
 hardware_double_talk_matrix: pending_real_hardware
 T1_T14: 0_pass_14_blocked_0_failed
 ```
@@ -41,8 +41,8 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 硬件验收断点（2026-09-05 21:08 CST；小程序发布状态于 9 月 6 日更新）
 
 ```yaml
-resume_focus: lookup_voice_bind_published_awaiting_weather_retest
-work_order: half_duplex_investor_demo
+resume_focus: vocat_interrupt_assist_pending_flash_and_aec_probe
+work_order: vocat_interrupt_assist
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
 llm_classifiers: qwen-flash
@@ -86,10 +86,11 @@ direct_real_device_verified: false
 19. **epoch 1390 车票「稍」截断**：session `a42ee4c1`。星期几/天气 PASS；车票 live-query `text_len=26` 垫话 `first_frame` 后被并行 LLM 抢占（qwen-plus 5661ms 之后才播正文）。
 20. **半双工已出声不 flush + lookup 不再并行 LLM 已切流**：源 `3a1133c5cb63f2473556680f01c7c1e56003968d`，标签 `20260905-half-duplex-heard-lookup-v2-agent-component`。联网查询中不另开 conversation_reply；设备 `barge_in=false` 时已出声 owner 不再 preempt。mypy 修了 `heard` 变量冲突。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`。
 21. **天气正文音色绑定已切流**：源 `18ea9c798b87cfca73292586149096088c9c69e2`，标签 `20260905-lookup-voice-bind-agent-component`。音频轮在 `on_turn_committed` 启动查询前先对齐并绑定助手音色；失败则不启动垫话/查询，避免天气结果被新代次丢弃。身份 epoch 轮换保留 companion style。拒绝日志带 `reason=`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-lookup-voice-bind-agent-component-pre-agent/-pre-bridge`。
+23. **长天气 45s 墙钟超时已切流**：源 `fb0311d06d2add524e791d98386cdde808e61165`，标签 `20260908-1300-output-stall-timeout-agent-component`。epoch 1418 天气 `first_frame` 后约 44s 被 `output_timeout` 掐断（`provider_completed=False`），Edge WSS `close_code=1005`，屏上「连接中」后 epoch 1423 自动再播唤醒。根因是下行 PCM 按 24 kHz 实时节奏发送，整代次却套 45s 墙钟。现改为每成功下一帧 PCM 重置超时；卡住仍 abort。门禁 PASS。2026-09-08 13:03 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `_bump_output_stall_deadline`。回滚 `rollback-20260908-1300-output-stall-timeout-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0105-companion-clone-weather-bind-agent-component` / `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`）。**长天气尚未真机复测**。
 
 **下一步（按顺序）**
 
-1. 重新唤醒建立新会话，真机复测天气完整播报（不应只听到「稍等我查询一下」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
+1. 重新唤醒建立新会话，真机复测**长天气完整播报**（不应在约 45 秒停、不应只听到「稍等我查询一下」、不应掉线进「连接中」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
 2. 微信里切到开发版 **0.8.84** 并刷新「我的」与「设备」，检查设备在线/可唤醒状态与首页新文案；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -108,9 +109,9 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260906-0105-companion-clone-weather-bind-agent-component`（源 `e67c2a68aa60d95406911120cfae5b2be4040757`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260908-1300-output-stall-timeout-agent-component`（源 `fb0311d06d2add524e791d98386cdde808e61165`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260906-0105-companion-clone-weather-bind-agent-component`，revision `e67c2a68aa60d95406911120cfae5b2be4040757`，image `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260906-0105-companion-clone-weather-bind-agent-component/`。回滚 `rollback-20260906-0105-companion-clone-weather-bind-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0048-companion-custom-voice-agent-component` / `sha256:f6c8f49fbbff42eb95f2358bf67276eead466da11c14ffa520185e0a26c7d759`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。自定义声音唤醒已真机听到；天气正文待本轮 Agent 热修后复测。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260908-1300-output-stall-timeout-agent-component`，revision `fb0311d06d2add524e791d98386cdde808e61165`，image `sha256:fdb5f3d675e8d1780ccd3b180d99dcc66e748df0d90f1b27a4c145dc48f758c5`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260908-1300-output-stall-timeout-agent-component/`。回滚 `rollback-20260908-1300-output-stall-timeout-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0105-companion-clone-weather-bind-agent-component` / `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。自定义声音唤醒已真机听到；长天气正文待本轮切流后复测。
 - Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
@@ -186,24 +187,26 @@ miniprogram_experience_version: 0.8.75
 
 - **硬件目标平台**：乐鑫 ESP-VoCat N32R16（ESP32-S3-WROOM-1-N32R16，32MB Flash / 16MB Octal PSRAM）。旧板卡（`atk-dnesp32s3-v1` 16MB）固件与驱动已彻底移除清理。
 - **固件标识与版本**：board `memoria-esp-vocat`，app version 2.4.2。
-- **音频系统**：ES8311（音频输出/DAC/PA，GPIO4/15 动态 PCB 适配）+ ES7210（双麦克风阵列 ADC，输入增益 **30.0 dB**）。采用 `BoxAudioCodec`，已通过 patch `0017` 增加 `i2s_channel_register_event_callback` 监听 `on_sent` TX DMA 完成中断，实现精准的 `HasExactOutputCompletion` 和 `OutputCompletionCounter` 硬件播放水线回执。
+- **音频系统**：ES8311（音频输出/DAC/PA，GPIO4/15 动态 PCB 适配）+ ES7210（双麦克风阵列 ADC，输入增益 **36.0 dB**）。采用 `BoxAudioCodec`，已通过 patch `0017` 增加 `i2s_channel_register_event_callback` 监听 `on_sent` TX DMA 完成中断，实现精准的 `HasExactOutputCompletion` 和 `OutputCompletionCounter` 硬件播放水线回执。
 - **外设与交互**：
   - 屏幕：1.85 寸 QSPI 圆形 LCD（ST77916，360x360 分辨率，40MHz SPI 驱动，带自动背光调节）。
   - 触摸：CST816S I2C 触控屏（支持单击打断/切换对话/退出聆听、中断驱动）+ 触摸电容滑条/按键（PCB v1.0/v1.2 自动兼容）。
   - 传感器与电源：BMI270 六轴运动传感器（摇晃动作检测，score 阈值 4000，冷却 2.5s）、BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
   - 按键：BOOT 按键（单击切换状态/打断，长按进入配网 / Protocomm BLE 凭证下发）。
-- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间屏蔽唤醒词并忽略迟到 wake event。
+- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间忽略迟到 wake event，BOOT / 触摸仍是本地硬停。
 - **分区表布局（32MB Flash）**：`partitions/v2/32m.csv`。
   - `memoria_identity` 位于 `0x10000`（64KB，受写保护，仅限 provision_identity.py 刷写）。
   - 双 4MB OTA app 分区（`ota_0` 0x20000 0x3f0000, `ota_1` 0x3f0000）。
   - 8MB SPIFFS assets 分区（`assets` 0x800000 8MB，完全落在 24-bit MMU 物理映射区内且满足 PSRAM 16MB 下的 13MB mmap 上限）。
-- **最新固件构建产物与指纹**（2026-09-07 构建）：
-  - app SHA-256：`95668ca749e8bbdf613ccf41f03f00d8a58a8d2a826fcbca7c20c64897639d41`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
-  - merged SHA-256：`cfc07bc507cb1302de78a88e9bf46e2e0cf89b9f9b14191bdc6f4fed632474d5`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
-  - bootloader SHA-256：`7679065d3ca0232e3b24b36ba0a067722b2a0d56b70ff5b7a5db17013fd7fcf8`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
-  - partition-table SHA-256：`97f0584b1936c02e0f951efdcc19c0f77d48f73781b83bd41a10b0856dda9189`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`）
-  - overlay hash：`45a90c87bb12f73bba28bf01003ace59dc918e2761cd38956e476a7063de338f`
+- **最新固件构建产物与指纹**（2026-09-08 interrupt_assist 构建，默认开机音量 30%，ES7210 36.0 dB；**已 app-only 刷到 `/dev/cu.usbmodem101`，身份区未写**）：
+  - app SHA-256：`8c08ba23c8de6e70ded13deb7b87ce5c9829fd7ef1bd45734a7a6ea283fd7590`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
+  - merged SHA-256：`86146ebbd9fbfc44886f8a4a848630faca29853ee8ede1282e39b8f9f0e857c8`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
+  - bootloader SHA-256：`61a2cba146b738a5e0b4fe1bd68e49eea1b32c3bd2009db185a3607096d75d0f`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
+  - partition-table SHA-256：`da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`）
+  - overlay hash：`31292b0f3bced2a09f87392b3f34fad8055c45dbedc4f9e58d399bee734c3cdb`
 - 刷写命令：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`（或直接使用 auto 探测）。首次全量烧录建议使用 `merged` 固件：`esptool.py write_flash 0x0 firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`。
+
+22. **epoch 1417（2026-09-08 12:35 CST）ES7210 36.0 dB 远场 30~60cm 双轮验证 PASS**：session `a4639927-1ab6-4b66-af3d-df579c369047`。用户在 30~60cm 距离唤醒「茉莉」并提问天气。TAP 录音分析（`media-uplink-a4639927-epoch1417.wav`）：时长 19.22s，峰值满量程 32768，平均能量 RMS 达到 **3519.3**（较 30.0 dB 时的 189.4 提升约 18 倍），FunASR 精准识别 `sentence_id=2 text_len=10`（南京天气查询），Qwen + Open-Meteo 成功返回南京天气，CosyVoice TTS 流式下发，设备完整出声且收到 `actual_heard=True` 与 `playback_ended=True`，远场唤醒与弱音识别彻底闭环。
 
 epoch 1379 已有串口 VAD、bridge Actual Heard / `playback.ended`、Edge 显式结束和操作员听感；仍不等于全局 `direct_real_device_verified`，也不等于嘈杂环境定量抗噪。
 
@@ -296,276 +299,46 @@ full_duplex_verified: false
 
 本地 Agent 全套测试、strict mypy、ruff、`git diff --check` 与 Media Edge `go test ./...` 通过；候选镜像构建/import smoke、Agent/Bridge 切流、健康检查、bridge socket、heartbeat 和 restart=0 均有远端收据。2026-08-31 操作员真机「星期几 + 天气」两轮听感 pass；正式 receipt（串口 `vad.start`/`vad.end`、tap WAV、session fence 日志）与 60 s watchdog 触发仍待补，不能更新 `direct_real_device_verified` 或 `full_duplex_verified`。
 
-## 当前开发工单：半双工投资人 Demo
+## 当前开发工单：VoCat interrupt_assist
 
 ```yaml
-candidate: half_duplex_investor_demo
-as_of_date: 2026-09-02
-hardware: atk_dnesp32s3_v1_es8388_1mic_0_playback_afe
-audio_mode: half_duplex_safe
+candidate: vocat_interrupt_assist
+as_of_date: 2026-09-08
+hardware: memoria_esp_vocat_es7210_es8311
+audio_mode: interrupt_assist
 advertised_duplex_level: none
-barge_in: forbidden
+barge_in: negotiated_interrupt_assist
 turn_phase_side_effects: forbidden
 direct_real_device_verified: false
 full_duplex_verified: false
-stage_2: pass_2026_09_03_receipt_1256_serial_vad_present
-stage_3: pass_2026_09_01_operator_receipt_pending_template_fields
-stage_4: pass_2026_09_01_quiet_mo_li_10of10_0false
-stage_5: pass_2026_09_01_operator_pending_template_receipt
-stage_6: pass_2026_09_02_operator_receipt_pending_template_fields
-stage_7: pass_2026_09_03_receipt_1303_serial_vad_present
-success: two_natural_turns_actual_heard_then_wake_standby_script
-demo_script: outputs/acceptance/half_duplex_investor_demo-stage7-script.md
-demo_ready: true
+hardware_aec: present_unverified
+code: in_progress
+wired: local_firmware_flashed_backend_not_cutover
+enabled: false
+verified: false
+retired_work_order: half_duplex_investor_demo
 ```
 
-本工单取代上一轮「只列五条验收、顺序把连续两轮放最后」的做法。**阶段 0–7 操作员 pass 已齐**，`demo_ready: true`。阶段 2 / 7 权威收据现为 `20260903-1256` / `20260903-1303`（均含串口 Device VAD + 四件套，镜像 `20260903-1248-…`）。全局 `direct_real_device_verified` 仍 false（主人 subject capability / 幻影轮 / 天气 ledger 缺口未关）。长期契约见 `PROJECT_RULES.md`「当前出货声学契约」。开发人员只执行本节阶段 0–7；阶段 8 是后续 SKU，本工单内禁止开工。
+ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+ES8311）。hello 如实报 simultaneous capture 与 `aec_mode=fd_low_cost`，`aec_reference_verified=false`。默认协商 `interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。`full_duplex_verified` 仍要 T1–T14。对客口径保持 `advertised_duplex_level: none`。
 
-**阶段 3（2026-09-01 操作员 pass）**：收据 `outputs/acceptance/stage3_device_initiated-20260901-1545.md`（session `a4719c8f-fdc8-4397-a152-a13e9442049e`，stream_epoch=1346）。硬件端唤醒「茉莉」→ 欢迎语 →「今天星期几」完整回答 → `owner_silence_timeout` 关闭；fence/playback 链齐全。Turn 2 曾因 RMS 过低丢弃，Turn 3 clock-fact 成功。**未按 `half_duplex_investor_demo-<YYYYMMDD-HHMM>.md` 模板落盘**，缺 `firmware_app_sha256`、镜像 ID、串口 `vad.start`/`vad.end`、tap 路径；不得据此单独升级 `verified` 或 `direct_real_device_verified`。
+**本轮代码**
 
-**阶段 4（2026-09-01 操作员 pass，仅安静环境 `mo_li`）**：收据 `outputs/acceptance/stage4_wake_word_count-20260901-1530.md`。`scripts/wake_word_field_count.py` 对生产 bridge 日志计数：主动唤醒 10/10（epoch 1334–1343），5 分钟静默误唤醒 0。测试前 epoch 1333 曾由底噪 VAD 卡住，由 60 s watchdog 结束。电视/家庭噪声已归阶段 6（2026-09-02 pass）；同上，收据未填模板四件套，不得单独升级全局 `direct_real_device_verified`。
+1. 固件 hello 报 `simultaneous_capture_playback=true`、`aec_mode=fd_low_cost`、`aec_reference=software_post_gain_pre_i2s`、`barge_in_level=1`；`CONFIG_USE_DEVICE_AEC=y`。播放期不再停录；唤醒词仍不是本地停播权威。
+2. Edge 把协商 `audio_mode` 写入 Voice Core hello capabilities。
+3. Agent Direct 路径按 `interrupt_assist` / `full_duplex_verified` 开 barge-in，不再「凡 device 都半双工」。LiveKit 设备路径仍半双工。播放期 `pause_asr_for_playback` 只在半双工时关闭 FunASR 任务。
+4. Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。笑/苦/惊讶走 `happy`/`sad`/`surprised`；关切/好奇映射 xiaozhi 的 `loving`/`thinking`。待机闭眼是 idle `neutral`，说话时才切脸。
+5. Control 默认设备设置改为 `audio_mode=interrupt_assist`。新设备默认会升档；现网已有设备仍要改设置，旧票据不会自行升档。
 
-**阶段 2（2026-09-02 操作员 pass，固件 `1af5a39e…` / ES8388 21 dB）**：收据 `outputs/acceptance/half_duplex_investor_demo-20260902-1907.md`（`run-20260902-1904`，session `467f72bb…` / stream_epoch=1353）。安静 30–60 cm、板卡 RESET 后：唤醒「茉莉」→「今天天气怎么样」→「今天星期几」两轮 Actual Heard pass（DTLN RMS 1781/1121，tap `epoch1353`，SenseVoice 救援）；操作员确认天气与星期几均完整听到。模板 receipt 已落盘（tap / RMS / 镜像 ID / 固件 SHA 已填）；**仍缺串口 `Device VAD start/end`**，故不得升级 `verified` 或全局 `direct_real_device_verified`。旧口述 pass（固件 `c11fb87e…`）与 receipt `1850` 可被本 receipt 取代作 stage-2 权威证据。
+**下一步（按顺序）**
 
-**阶段 6（2026-09-02 操作员 pass）**：安静 / 电视人声 / 家庭噪声三环境：非主人声与裸 VAD 均未续命主人静默窗口，会话仍按 timeout 关闭。操作员口述验收；**未按模板落盘 receipt**；不得单独升级全局 `direct_real_device_verified`。
+1. 串口确认开机 `Initialized FD AFE` 与 hello `aec_mode=fd_low_cost`。当前板已 app-only 刷到 `/dev/cu.usbmodem101`。
+2. 切 Agent/Bridge + Media Edge。表情和 interrupt_assist 都依赖 Direct Edge 转发；Agent overlay 带不上 Edge。现网设备设置改成 `audio_mode=interrupt_assist`（旧票据不会自行升档）。Control 默认可后切，只影响新设备。
+3. 播 TTS 时采近端残差：有 reference 通道、回声明显下降才算 AEC 接线。未过证不得改 `aec_reference_verified`。
+4. 真机：助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
+5. 长天气完整播报与主人匹配仍待复测，不要放宽 `reject_non_owner_voice`。
+6. T1–T14 过了再谈 `full_duplex_verified`。
 
-**阶段 7（2026-09-03 权威 receipt，锁定剧本）**：`outputs/acceptance/half_duplex_investor_demo-20260903-1303.md`（`run-20260903-1300-stage7`，session `54f9e3f4…` epoch 1363 + 再唤醒 `7429a174…` epoch 1364，镜像 `20260903-1248-…`）。步骤 2–6 齐：唤醒 → 天气（live-query forced）→ 星期几（gen3 失败后 gen4 Actual Heard）→ `owner_silence_timeout` Idle → 再唤醒 welcome +「你好」Actual Heard。串口 VAD / tap / 镜像 / 固件四件套齐全。云端备注：天气轮缺标准 `actual_heard=True` 事件（板端 speaking + Open-Meteo 成功）；不得仅凭本 receipt 升级全局 `direct_real_device_verified`。旧口述 pass `1907` 可被本 receipt 取代作 stage-7 权威证据。
-
-### 下一阶段（按顺序，2026-08-31 10:55 起）
-
-0. ~~**阶段 5 真机复测**~~ **已通过（2026-09-01 操作员，两轮）**——见上。2026-09-01 早先 FAIL 根因（缺陷 A/B）已修并验证。
-   - **A（已修，2026-09-01）。空轮次「没听清」提示未校验主人权威。** 此前 `empty_media_turn` 与 ASR tail timeout 均可触发 `_nudge_missed_hearing`，且 `allow_without_endpoint=True` 绕过了 endpoint 检查（该参数原是为唤醒 TTS 回声保留，现已有 `device_wake_ack_fence`）。修法：删除 `allow_without_endpoint`；新增 `_owner_speech_is_established()`，仅当 `current_speaker_class == "owner"` 且 `authority_verified` 时才提示。分类前空轮次直接静默；「主人真说了话但 ASR 出空」由 tail timeout + 主人权威路径兜底，符合半双工契约。顺带修复 timeout 路径在 `_clear_pending_turn_state` 清掉 `turn_endpoint_sample` 后 nudge 被误挡的隐性 bug（改传 `endpoint_sample=`）。Agent 切片 `20260901-1248-owner-authority-missed-hearing-agent-component`（`88d46c9`/`297d2e0`）已切流；回归测试 `test_device_empty_asr_asks_user_to_repeat`、`test_device_empty_asr_without_owner_stays_silent`。
-   - **B（已修，2026-09-01）。提示语自己重置主人静默窗口。** `_speak_missed_hearing_ack` 播完回 `listening`，`_sync_owner_silence_phase` 原先走 `_arm_owner_silence_timer(reset=True)` 并清 `owner_silence_grace_used`，等于每次提示重开满 10 秒 + 再给一次 3 s grace。修法：`listening` 接缝改为 `reset=False`（续用剩余预算），满窗刷新只保留在 `_finish_owner_silence_turn` 的 `owner_verified` 分支——那是唯一真正确立主人活动的地方；grace 也只在主人活动时清。语义变为「主人拿到的是 10 秒**净聆听**预算，助手说话期间暂停不计，每个已验证主人轮次重新给满」，与半双工契约一致（主人在助手说话时本就无法开口，不该被扣时间）。回归测试 `test_assistant_nudge_playback_does_not_extend_owner_silence_window`（`test_media_session.py`）已验证：旧语义下不产生 CLOSED，新语义下正常 `owner_silence_timeout` 关闭。
-   - **D（已补测试，2026-09-01；代码未改）。满窗刷新此前零覆盖。** B 的三个既有测试都只驱动 `_sync_owner_silence_phase`，没有一个走 `_finish_owner_silence_turn`，也没有一个设置 `authority_verified` —— 也就是说「每个已验证主人轮次重新给满」这半句语义从来没被测过。新增两个测试钉住实际算术：`test_owner_silence_budget_is_not_refreshed_without_verified_authority` 用两个已提交话轮验证权威缺失时预算只被消耗、从不回填，最终在残额耗尽后正常 `owner_silence_timeout` 关闭；`test_verified_owner_turn_refreshes_the_full_owner_silence_window` 是对照组，断言已验证主人轮次把 `owner_silence_remaining_s` 刷回满窗且清掉 `owner_silence_grace_used`。这正是 receipt `half_duplex_investor_demo-20260901-1439.md` 里 `close: owner_silence_timeout ~0.1s after playback_ended`（当轮权威为 `subject_capability_forbidden`）的代码侧解释：跨轮消耗单一窗口是当前设计的既有行为，不是计时器 bug。是否该让未验证说话人也拿到刷新，属于产品决策，本次未改行为。
-   A/B 代码均已合入 `main` 并发布。**阶段 5 现场复测已通过（2026-09-01 操作员，两轮）**：`20260901-1248-owner-authority-missed-hearing-agent-component` 上两轮「星期几 + 天气」后安静 10 s 均静默 `owner_silence_timeout` 关闭，未再自发说「没听清」；再唤醒可继续对话。操作员听感 pass；**尚未按模板落盘正式 receipt**（无串口/tap/镜像 ID/固件 SHA 四件套），故不得升级全局 `direct_real_device_verified`。同日 `outputs/acceptance/half_duplex_investor_demo-20260901-1439.md` 记的是阶段 2 剧本（天气 + 星期几），其中星期几 Actual Heard 为操作员 FAIL，不得与阶段 5 pass 混用。
-   - **C（已修，2026-09-01 14:58）。「今天星期几」第一遍被识别成韩语。** 同一轮操作员复测中天气回答正常、「今天星期几」第一遍出谚文、第二遍才对。根因不在 FunASR：session `0703b3a8-1618-4ec5-a8ac-85813865acf0`（tap `epoch1331`）里 4 个话轮的文本**全部**来自 `funasr segment rescued offline`，FunASR 实时链一次未出文本，即 SenseVoice 救援当时是主路径而非边缘。sidecar 把请求里的 `language=zh` 只写进日志、从不传给 recognizer，`from_sense_voice(language='')` 因此走内置 LID。用生产 tap 原始音频在容器内做 A/B 定性（非推断）：`language=''` 在 `t=10.0s` 窗口输出 `직리한 생지지.`（正是用户听到的那一遍）且 `t=8.0s` 另有错字 `今年星期几`；`language='zh'` 同一批 7/7 稳定输出 `今天星期几？`。修法见「当前生产」SenseVoice 条目。跨容器端到端复验（bridge → sidecar HTTP，同一段故障音频）：`zh` → `今天星期几？`、`auto` → `직리한 생지지.`、`xx` → 415。
-     未验证边界：只换了 sidecar 镜像，**未做真机复测**；本条不构成阶段 5 receipt，也不得据此升级 `direct_real_device_verified`。另外「FunASR 实时链在这次会话中全程空转写、全靠离线救援兜底」是独立的待跟进问题，本次未动，识别延迟仍受救援路径影响。
-1. ~~**阶段 2（当前固件 `c11fb87e…` 连续两轮）**~~ **已通过（2026-09-02 操作员）**——见上。旧 receipt `half_duplex_investor_demo-20260831-0949.md`（固件 `f15a3b35…`）仍不得复用；若要与阶段 7 合并验收，建议用标准模板重录并补齐四件套。
-2. ~~**阶段 3**~~ **已通过（2026-09-01）**——见上 `stage3_device_initiated-20260901-1545.md`；若要与阶段 7 合并验收，建议下次现场用标准模板重录并补齐四件套。
-3. ~~**阶段 4（安静环境 `mo_li` ×10）**~~ **已通过（2026-09-01）**——见上 `stage4_wake_word_count-20260901-1530.md`。
-4. ~~**阶段 6（安静 / 电视 / 家庭噪声）**~~ **已通过（2026-09-02 操作员）**——见上。
-5. ~~**阶段 7（锁定投资人路演剧本 + 完整彩排）**~~ **已通过（2026-09-03 权威 receipt `1303`，含串口）**——见上；旧口述 `1907` 可被取代。
-
-阶段 8（AEC 新板、全双工 SKU）本 demo 工单内禁止开工；`demo_ready: true` 后另开候选规划阶段 8。
-
-### 怎么开工（给开发人员）
-
-1. 读完本节 + 上面的「播放后 VAD 上行门控死锁候选」+ `PROJECT_RULES.md`「当前出货声学契约」。不要另开计划文档。
-2. 阶段 0 先跑门禁，确认没有人把设备 barge-in 打开。
-3. 阶段 1 把串口、Agent 日志、Edge 日志、PCM tap 四件套同时接上，再进阶段 2。
-4. **阶段 0–7 操作员 pass 已齐（2026-09-02）**；本候选 `demo_ready: true`。Stage-2 权威 receipt 为 `half_duplex_investor_demo-20260902-1907.md`（tap/镜像/固件 SHA 已齐）。若需升级 `verified` 或 `direct_real_device_verified`，**仅需补串口 `Device VAD start/end`**（建议 commit VAD UART patch 后专跑步骤 2–4，单实例串口采集）。
-5. 每次真机失败只走一个分支（VAD / RMS / FunASR / fence），改完用新 receipt，不用旧日志升级 `verified`。
-6. 阶段 0–7 已绿；`full_duplex_verified` 本工单内永远保持 false。阶段 8（AEC 新板）可另开候选，不得混进本 demo 工单。
-
-### 分工与入口文件
-
-| 角色 | 阶段 | 只动这些（除非阶段 2 分支证明必须扩） |
-| --- | --- | --- |
-| Agent | 0、3–7、发版 | `services/agent/src/voice_core/media_session_*`、`services/agent/src/providers/funasr_stt.py`、`services/agent/src/clock_fact_queries.py`；LiveKit 路径仍见 `device_vad.py` |
-| 固件现场 | 1、2、4 | `firmware/esp32/overlay/`（边沿/ES7210 PGA）；hello 能力字段禁止改成真 AEC；刷写 `firmware/esp32/scripts/flash.sh` |
-| Media Edge | 1、2 无播放/无 close | `services/media_edge/`；确认 Direct WSS `wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`，不要落到 LiveKit compat |
-| 控制面 | 3、5 | 设备 tab 确认在线、主人 subject capability；配网/激活不在本工单 |
-| 路演 | 7 | 不改代码；按锁定剧本念，口径跟 `advertised_duplex_level: none` |
-
-不要改、不要当修复入口：`input_policy` / `capture_allowed`（只对 H5 有效）、设备会话 `barge_in_enabled`、hello 谎称 AEC、`TurnPhase` 生产副作用、DTLN makeup 再往上加。
-
-### 现场 receipt 模板
-
-每次尝试复制到被 gitignore 的 `outputs/acceptance/half_duplex_investor_demo-<YYYYMMDD-HHMM>.md`（或同目录 JSON）。填空，禁止用「容器 healthy」当 pass。
-
-```text
-work_order: half_duplex_investor_demo
-phase: 2
-datetime_cst:
-operator:
-distance_cm: 30-60
-device_id:
-firmware_app_version:
-firmware_app_sha256:
-wake_word_id: mo_li|mei_mo_li_ya|custom
-agent_image_id:
-agent_source_commit:
-edge_image_id:
-session_id / stream_epoch / turn_ids / generation_ids:
-serial_vad_start_end: present|missing
-tap_wav_path:
-dtln_post_rms_turn1:
-dtln_post_rms_turn2:
-asr_turn1: final|empty+vendor|empty+gating
-asr_turn2: final|empty+vendor|empty+gating
-sensevoice_fallback: yes|no
-playback_ended_turn1: yes|no
-playback_ended_turn2: yes|no
-actual_heard_turn1: yes|no
-actual_heard_turn2: yes|no
-fail_branch: none|no_vad_start|low_rms|funasr_empty|fence_playback
-notes:
-```
-
-结构化验收仍用 `scripts/hardware_realtime_acceptance.py verify`（有 JSON receipt 时）。本工单不要求 T1–T14 双讲格。
-
-### 目标与非目标
-
-目标（阶段 0–7 操作员 pass 已齐，`demo_ready: true`；`direct_real_device_verified` 仍只覆盖下列半双工场景，不升 `full_duplex_verified`）：
-
-- 现板契约保持受控半双工：用户说完 → 设备听完一整段回答 → 再听下一句。播放期间不形成抢话 turn。
-- 投资人可复现剧本：唤醒「茉莉」→ 连续两问都有同 fence 的 `playback.ended` + 听感 Actual Heard → 设备能回待命再唤醒。
-- 对外口径只说陪伴/档案/半双工听完再答；BOOT 可作为「随时能停」，不演示语音打断。
-
-非目标（本工单内出现即 REJECT 该改动，即使测试变绿）：
-
-- 打开设备会话 `barge_in_enabled` / `interruptions_enabled`，或把 hello 改成谎称 AEC。
-- 启用 `TurnPhase` 生产副作用、T1–T14 双讲矩阵、新 AEC 板 overlay。
-- 为「听不清」继续堆 DTLN makeup gain、播放期丢弃 `vad.start`、或用 H5 的 `capture_allowed` 去补设备防回声。
-- 宣传全双工、自然抢话、或用 H5 语音冒充设备 demo。
-
-允许的代码改动：只修半双工主链上已被 PCM tap / 日志定性的根因（门控、电平、ASR 空转写分流、fence、待命）。改完必须能指出失败轮是「VAD 没开」「RMS 不够」「FunASR 空转写」「holdoff 误判」中的哪一种。
-
-### 证据与现场纪律
-
-每次真机尝试绑定同一组身份，写入被忽略的 `outputs/acceptance/`，不要提交 Git：
-
-- 生产 Agent/Bridge/Edge image ID 与 source commit（以现场容器为准，不从本文猜测标签）。
-- 固件 app 版本、app SHA-256、`memoria_identity` 刷后摘要。
-- 设备 `device_id`、session/stream/turn/`generation_id`/`tool_epoch`。
-- 串口：`vad.start` / `vad.end`、播放 drain、`session.close`。
-- Agent：ASR partial/final 或空转写、`text_len`、DTLN 后 RMS、SenseVoice 是否兜底。
-- Edge：WSS close cause、typed `CONVERSATION_STATE_CLOSED` 原因。
-- `/tmp/media-pcm-tap` WAV（容器内，4 MB/会话上限）；需要时拷到 `outputs/acceptance/` 并隐私处理。
-- 听感：每一轮是否完整听到回答，记 pass/fail，禁止用「容器 healthy」代替。
-
-现场不要按 BOOT/RESET，除非该步明确测硬停。说话距离 30–60 cm、正常音量。欢迎语未结束不要插话（半双工契约）。FunASR 空转写与设备门控必须分账：容器内直连干净 PCM 的 FunASR smoke 失败则记供应商，不改 VAD。
-
-排障顺序（与 README 一致，本工单强制先走这一条再改代码）：无响应 = 设备状态/票据 → WSS epoch → VAD → ASR final → generation → 首个 0/0 下行帧 → playback terminal。电平问题先看 ES7210 PGA、原始 PCM RMS、DTLN 出入，再动云端阈值。
-
-### 阶段 0 — 契约冻结（开发，先做）
-
-确认当前树仍满足半双工诚实声明，不在本阶段改行为：
-
-1. 固件 hello v2 仍为 `simultaneous_capture_playback=false`、`aec_mode=none`（见 `firmware/esp32/tests/test_memoria_protocol_source.py` 中 `test_hello_v2_declares_only_honest_simplex_capabilities`）。
-2. `services/agent/src/session_entrypoint.py` 中 `device_session` 仍使 `controlled_half_duplex_session` 为真，从而 `barge_in_enabled=false` 且 `interruptions_enabled=false`。
-3. `TurnPhase` 候选保持 `enabled: false`、无生产副作用。
-4. 跑定向门禁后再下现场：
-
-```bash
-uv run ruff check .
-uv run pytest services/agent/tests/unit/test_device_vad.py \
-  services/agent/tests/unit/test_agent_production_wiring.py -q
-uv run pytest firmware/esp32/tests/test_memoria_protocol_source.py -q
-cd services/media_edge && go test ./...
-```
-
-阶段 0 不改生产行为。完整 `uv run pytest` 仅在阶段 2 需要发版时再跑。
-
-通过标准：上述断言仍成立，本阶段无行为 diff。若有人打开设备 barge-in，工单停止并回滚。
-
-### 阶段 1 — 现场工具就位（运维 + 固件）
-
-1. 确认设备仍走 Direct Edge：`wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`，容器 healthy，不要误落到 LiveKit compat（无待命）。
-2. 确认 Agent 容器 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap` 可写；每轮对话后立刻把该会话 WAV 取走，避免被 4 MB 上限丢掉。
-3. 串口 monitor 保持到验收结束：`firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX --monitor`（已刷过则只 monitor）。Mac 下载模式仍是按住 BOOT、轻按 RESET、松开 RESET、松开 BOOT。
-4. 小程序设备页已显示「在线，可开始对话」之后，直接在硬件端开对话；激活 200 不计入本工单。
-
-通过标准：能同时拿到串口、Agent 日志、Edge 日志和至少一段非静音 tap WAV。缺一项不准进入阶段 2。
-
-### 阶段 2 — 正常距离连续两轮（固件现场 + Agent 日志）
-
-剧本（欢迎语播放完毕、设备回到 listening 后再开口）：
-
-1. 唤醒「茉莉」（若已在会话中则跳过唤醒，仍记录 session_epoch）。
-2. 问「今天天气怎么样」，等待完整回答结束（听感 + `playback.ended`）。
-3. 再问「今天星期几」，等待完整回答结束。
-
-每一轮必须同时有：ASR final 或已记录的供应商空转写分流、当前 fence 首个下行 0/0、`playback.started`、`playback.ended`、听感 Actual Heard。任一轮沉默、截断、播旧 generation，本阶段 fail。
-
-失败时只按下列分支修，禁止同时改增益、VAD 和 ASR：
-
-- 串口无第二轮 `vad.start`：门控/边沿/holdoff。对照「播放后 VAD 上行门控死锁候选」；修 `DeviceVadProjector` 或固件边沿，不得丢弃状态同步。
-- 有 `vad.start` 且 tap RMS 过低（历史失败曾见降噪后 RMS 约 8–296）：只调 ES7210 输入增益或采集距离，用 tap WAV 校准；DTLN makeup 已 8.0x，禁止再作为第一手段上调。
-- tap RMS 正常但 `text_len=0`：先在同一容器跑 FunASR 干净 PCM；失败记供应商并确认 SenseVoice 兜底是否触发。成功则查上行是否被 preroll 丢弃或 task 未重建。
-- 有 ASR 无播放：查 generation fence、首帧 0/0、旧 generation 丢弃、playback drain。
-
-需要发版则走现有最小切片（Agent-only 仅当 diff 只在 `services/agent/**`），切流后重跑本阶段，不得用旧 receipt 升级 `verified`。
-
-**2026-09-02 操作员 pass（固件 `c11fb87e…`）**：唤醒 → 天气 → 星期几两轮 Actual Heard，安静 10 s `owner_silence_timeout`。口述验收，未落盘标准模板 receipt。
-
-通过标准：同一 candidate、同一固件摘要下，连续两轮各一次自然完成。然后才允许改 `HANDOFF.md` 里本候选的两轮对话证据日期；仍不得把 `full_duplex_verified` 改为 true。
-
-### 阶段 3 — 单次会话从设备端发起
-
-设备在线且小程序设备 tab 已确认状态后，在硬件端实际发起一次对话（可与阶段 2 同一天，但日志要能区分「设备端起手」）。激活成功、二维码、BLE 配网不计入。
-
-**2026-09-01 操作员 pass**：`outputs/acceptance/stage3_device_initiated-20260901-1545.md`（session `a4719c8f-…`，epoch 1346）。硬件 KWS 起手 → 欢迎语 →「今天星期几」→ `owner_silence_timeout`。收据未用标准模板，缺固件 SHA / 镜像 ID / 串口 / tap 路径。
-
-通过标准：用户听到完整回答，且阶段 2 的 fence/playback 证据齐全。
-
-### 阶段 4 — 唤醒稳定（可与阶段 2 同一固件，勿穿插调音）
-
-待机、30–60 cm、正常音量说「茉莉」10 次。记录漏唤醒/误唤醒。安静环境先做；电视/噪声放到阶段 6。
-
-**2026-09-01 安静环境 pass**：`outputs/acceptance/stage4_wake_word_count-20260901-1530.md`，`mo_li` 10/10 漏唤醒 0、5 分钟误唤醒 0（`scripts/wake_word_field_count.py` 对 bridge 日志计数）。电视/家庭噪声见阶段 6（2026-09-02 pass）。
-
-通过标准：漏唤醒与误唤醒次数写入 receipt。两音节「茉莉」若误唤醒过高，只调 KWS 阈值或改回更长词，不开放播放期 KWS。
-
-### 阶段 5 — 再见与再唤醒（本 demo 已书面降级）
-
-**已降级（2026-08-30）**：主人 subject capability 未就绪。此前真机「再见」已落到 `subject_capability_forbidden` / `conversation_end_owner_unverified`（见「茉莉唤醒与自动待命候选」）。能力就绪前不要把「再见」当 pass 路径，也不要声称「再见」可用。`advertised_duplex_level` 仍为 `none`。禁止为赶路演关闭 `reject_non_owner_voice` 或把 guest 升级为 owner。
-
-**2026-09-01 操作员 pass（超时待命 + 再唤醒路径）**：两轮「星期几 + 天气」后安静 10 s `owner_silence_timeout` 关闭，未自发「没听清」，再唤醒可继续。听感 pass，**未按模板落盘 receipt**（无串口/tap/镜像/固件四件套）。不得与 `half_duplex_investor_demo-20260901-1439.md`（阶段 2 剧本、星期几 Actual Heard FAIL）混用。
-
-Demo 收尾与再唤醒（阶段 7 可抄；阶段 2 pass 后整段路演剧本可锁定）：
-
-1. 两轮答完后保持安静；主人静默 `owner_silence_timeout_s=10`。
-2. 期望：`owner_silence_timeout` → typed `CONVERSATION_STATE_CLOSED` → Edge `session.close` → 设备 Idle。
-3. 再唤醒「茉莉」，确认新 session_epoch 可对话。
-
-`conversation_end_explicit` 仍 pending。本降级不阻塞阶段 2 最小剧本。
-
-### 阶段 6 — 环境与非主人（投资人剧本不依赖则可后置）
-
-安静、电视人声、家庭噪声三种环境：非主人声音不得重置主人静默窗口。裸 VAD/环境声不能续命会话。
-
-**2026-09-02 操作员 pass**：三环境均未续命主人静默窗口，会话仍按 timeout 关闭。口述验收，未落盘标准模板 receipt。
-
-通过标准：三种环境各有日志。本阶段失败不回滚阶段 2，但不得宣称「嘈杂也能听」。
-
-### 阶段 7 — 锁定投资人 Demo 剧本
-
-**2026-09-02 已锁定**：完整剧本见 `outputs/acceptance/half_duplex_investor_demo-stage7-script.md`（`uv run python scripts/half_duplex_receipt.py stage7-script` 可重新生成）。问句顺序与阶段 2 已验证路径一致：天气 → 星期几 → 静默关闭 → 再唤醒。
-
-锁定剧本摘要（路演当天照此执行，禁止临场改问句或演示抢话）：
-
-1. 小程序展示设备在线（不采集麦克风）。
-2. 30–60 cm 对板说「茉莉」；欢迎语播完后再开口。
-3. 「今天天气怎么样」——听完完整回答。
-4. 「今天星期几」——听完完整回答。
-5. 安静 10 s → `owner_silence_timeout` → Idle；**不要说「再见」**。
-6. 再唤醒「茉莉」+ 短句，证明非一次性会话。
-7. 对观众口径：这一代听完再答；抢话等带 AEC 的下一 SKU；BOOT 硬停。
-
-**2026-09-02 操作员 pass（锁定剧本彩排）**：天气 → 星期几 → 静默关闭 → 再唤醒，与锁定剧本一致。口述验收，未落盘标准模板 receipt。
-
-路演当天禁止改增益、禁止刷未经阶段 2 复验的固件、禁止临场演示打断。
-
-### 阶段 8 — 本工单之后才允许的全双工 SKU（不要提前开工）
-
-阶段 2 未绿之前，固件不得为新板开 overlay。Demo 绿了之后另开候选，不得混进本工单：
-
-1. 采购一块已有小智 AEC 板型的板（立创实战派或 ESP32-S3-BOX-3），现板继续当半双工 demo 机。
-2. overlay 新 board；hello 如实报 reference / simultaneous capture。
-3. 把 `session_entrypoint.py` 的「凡 device 都半双工」改成按协商 `audio_mode` 决定 `barge_in_enabled`；默认 SKU 仍半双工。
-4. 设备路径真正消费播放期采集策略；不要再用只对 H5 有效的 `capture_allowed` 空操作。
-5. Edge 声学 registry 登记该 `board_profile`；先 `interrupt_assist`，T1–T14 过了再谈 `full_duplex_verified`。
-6. XMOS（ReSpeaker）列为更后的声学 SKU，不与本 demo 抢人。
-
-记忆、主人权限、generation fence、Actual Heard 不因换板重写。
-
-### 完成时如何改本文件
-
-- 阶段 2+3+7 pass（含模板四件套、当前固件 `c11fb87e…`、串口）：可把本候选 `verified` 写成带日期的两轮 Actual Heard；仍保持 `full_duplex_verified: false`、`advertised_duplex_level: none`。阶段 0–7 已有操作员 pass（2026-09-02），`demo_ready: true`，但收据未达此门槛。
-- 阶段 4 安静环境已有 2026-09-01 数字（10/10、误唤醒 0）；阶段 6 三环境 2026-09-02 操作员 pass。阶段 5 已书面降级为超时待命，不得把 `conversation_end_explicit` / 「再见」写成已验证；各阶段操作员 pass 仍缺模板 receipt。
-- 五项历史验收（设备端对话、再见、10 次唤醒、三环境、天气+星期几）全部自然完成后，才把全局 `direct_real_device_verified` 改为 true。这仍不自动更新 AEC 或全双工。
-- 原始 receipt 继续用 `scripts/hardware_realtime_acceptance.py verify`；本工单不要求跑通 T1–T14 双讲格。
+**勿做**：宣传全双工；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用。
 
 ## 实时话轮状态层候选
 

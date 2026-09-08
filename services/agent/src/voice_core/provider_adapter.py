@@ -481,10 +481,9 @@ class ExistingVoiceProviderAdapter:
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
         """Close the current ASR task when playback starts to avoid idle timeout.
 
-        In half-duplex mode, playback stops audio capture for the duration of
-        assistant speech. The ASR provider expects continuous audio and will
-        timeout after 23 seconds of silence. Rotating the task when playback
-        starts prevents this timeout; a new task will start when capture resumes.
+        Half-duplex playback stops capture, so FunASR would idle-timeout after
+        23 seconds. Rotating the task here prevents that; a new task starts
+        when capture resumes. interrupt_assist callers must not invoke this.
         """
 
         if self._asr is None or not self._audio_since_finalize:

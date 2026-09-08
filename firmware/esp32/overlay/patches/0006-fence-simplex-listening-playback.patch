@@ -36,9 +36,9 @@ diff --git a/main/application.cc b/main/application.cc
      }
  
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
-+    // This simplex board has no playback-reference channel. Play the local
-+    // listening cue before opening the microphone so it cannot create a
-+    // device VAD epoch; the playback-drained event resumes this same seam.
++    // Play the local listening cue before opening the microphone so the cue
++    // itself cannot create a device VAD epoch; the playback-drained event
++    // resumes this same seam.
 +    if (play_popup_on_listening_) {
 +        play_popup_on_listening_ = false;
 +        pending_listening_start_ = true;

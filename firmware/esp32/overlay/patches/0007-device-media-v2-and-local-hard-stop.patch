@@ -156,8 +156,8 @@ diff --git a/main/application.cc b/main/application.cc
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +            // Symmetric with the speaking branch: close the current mic epoch
 +            // and defer to StartListeningAudio's cue-first seam, so the local
-+            // cue cannot create a device VAD epoch on this simplex board. The
-+            // playback-drained event resumes this same seam.
++            // cue cannot create a device VAD epoch. The playback-drained event
++            // resumes this same seam.
 +            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
 +            if (memoria_protocol != nullptr) {
 +                memoria_protocol->SendVadState(false, audio_service_.LastUplinkRms());

@@ -287,6 +287,8 @@ def test_assistant_reply_expression_follows_safe_delivery_semantics() -> None:
     assert mascot_expression_for_reply(plan=happy, text="太好了！") == "happy"
     assert mascot_expression_for_reply(plan=curious, text="可以，先从第一步开始。") == "curious"
     assert mascot_expression_for_reply(plan=direct, text="今天星期三。") == "neutral"
+    assert mascot_expression_for_reply(plan=direct, text="真抱歉，刚才没听清。") == "sad"
+    assert mascot_expression_for_reply(plan=direct, text="哇，没想到会这样。") == "surprised"
 
 
 def test_transcribed_acoustic_laughter_can_drive_delivery_without_claiming_happy() -> None:

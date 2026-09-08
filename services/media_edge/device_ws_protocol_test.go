@@ -239,6 +239,26 @@ func TestDeviceControlPriorityLanes(t *testing.T) {
 	if priority := deviceControlPriority("device.telemetry"); priority != 3 {
 		t.Fatalf("telemetry must be P3, got %d", priority)
 	}
+	if priority := deviceControlPriority("screen.expression"); priority != 3 {
+		t.Fatalf("screen.expression must be P3, got %d", priority)
+	}
+}
+
+func TestDeviceScreenEmotionMapsMascotFacesOntoXiaozhiNames(t *testing.T) {
+	cases := map[string]string{
+		"happy":     "happy",
+		"sad":       "sad",
+		"surprised": "surprised",
+		"curious":   "thinking",
+		"caring":    "loving",
+		"neutral":   "neutral",
+		"unknown":   "neutral",
+	}
+	for input, want := range cases {
+		if got := deviceScreenEmotion(input); got != want {
+			t.Fatalf("deviceScreenEmotion(%q)=%q, want %q", input, got, want)
+		}
+	}
 }
 
 func TestParseDeviceControlLeavesTypedFieldsForTheHandler(t *testing.T) {

@@ -41,7 +41,7 @@ DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
     "night_mode": False,
     "do_not_disturb": False,
     "learning_mode": "off",
-    "audio_mode": "half_duplex_safe",
+    "audio_mode": "interrupt_assist",
     "wake_mode": "button_or_keyword",
     "wake_word_id": DEFAULT_WAKE_WORD_ID,
     "wake_word_pinyin": "mo li",

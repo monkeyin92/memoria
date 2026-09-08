@@ -77,6 +77,7 @@ type BridgeIdentity struct {
 	BindingID             string
 	BindingVersion        uint64
 	RuntimeProfileVersion uint64
+	AudioMode             string
 }
 
 func (i BridgeIdentity) validate() error {
@@ -104,6 +105,11 @@ func (i BridgeIdentity) validate() error {
 	if i.ClientType != "device" && (i.SubjectID != "" || i.BindingID != "" ||
 		i.BindingVersion != 0 || i.RuntimeProfileVersion != 0) {
 		return fmt.Errorf("runtime profile authority fence is device-only")
+	}
+	if i.AudioMode != "" && i.AudioMode != DeviceAudioModeHalfDuplexSafe &&
+		i.AudioMode != DeviceAudioModeInterruptAssist &&
+		i.AudioMode != DeviceAudioModeFullDuplex {
+		return fmt.Errorf("audio_mode is invalid")
 	}
 	return nil
 }
@@ -142,7 +148,9 @@ func identityFromProto(value *mediav1.SessionIdentity) BridgeIdentity {
 }
 
 func (i BridgeIdentity) equal(other *mediav1.SessionIdentity) bool {
-	return i == identityFromProto(other)
+	wire := identityFromProto(other)
+	i.AudioMode = ""
+	return i == wire
 }
 
 // BridgeAudioFormat is kept small so a WebRTC adapter cannot accidentally
@@ -461,12 +469,16 @@ func (b *VoiceCoreBridge) ConnectWithHandshakeContext(
 		requireAudioOrigin: true,
 		traceparent:        traceparent,
 	}
+	capabilities := map[string]string{"media_only": "true", "generation_gate": "true"}
+	if identity.AudioMode != "" {
+		capabilities["audio_mode"] = identity.AudioMode
+	}
 	if err := session.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Hello{
 		Hello: &mediav1.SessionHello{
 			Identity:             identity.proto(),
 			UplinkFormat:         uplink.proto(),
 			DownlinkFormat:       downlink.proto(),
-			Capabilities:         map[string]string{"media_only": "true", "generation_gate": "true"},
+			Capabilities:         capabilities,
 			InteractionAuthority: b.interactionAuthority,
 			Traceparent:          traceparent,
 		},

@@ -66,6 +66,6 @@ async def delivered_capabilities(
         "advertised_duplex_level": "none",
         "notes": (
             "Counts only delivered control-plane and identity signals. "
-            "Device wake accuracy and half-duplex turn latency require hardware receipts."
+            "Device wake accuracy and duplex receipts require hardware evidence."
         ),
     }

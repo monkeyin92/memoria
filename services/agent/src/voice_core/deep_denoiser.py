@@ -24,12 +24,10 @@ _MODEL_SHA256 = {
 _BLOCK_LEN = 512
 _BLOCK_SHIFT = 128
 _INITIAL_OUTPUT_DELAY = _BLOCK_SHIFT - 1
-# The board microphone PGA is pinned at 21 dB (ES8388, +3 dB from 18 dB as of
-# 2026-09-02 field evidence) to keep normal 30–60 cm speech above FunASR's
-# low-RMS floor after DTLN. Restore makeup gain after suppression so FunASR
-# sees enough energy at normal speaking distance, with the PCM conversion below
-# providing a hard saturation fence. Tune per site with MEMORIA_DTLN_MAKEUP_GAIN
-# using PCM tap evidence, never above the clamp.
+# Restore makeup gain after suppression so FunASR sees enough energy at
+# normal speaking distance. The VoCat ES7210 PGA is 36.0 dB; PCM conversion
+# below provides a hard saturation fence. Tune per site with
+# MEMORIA_DTLN_MAKEUP_GAIN using PCM tap evidence, never above the clamp.
 _DEFAULT_OUTPUT_MAKEUP_GAIN = 8.0
 _MAKEUP_GAIN_ENV = "MEMORIA_DTLN_MAKEUP_GAIN"
 _makeup_gain_warned = False
