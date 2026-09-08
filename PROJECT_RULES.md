@@ -50,7 +50,7 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 
 播放期歧义 final 的小模型只能给 `CONTROL_ONLY / HAS_USER_CONTENT / UNSURE` 证据：确定性规则优先，模型不得直接执行 stop/chat/ack/clear。请求只能绑定当前 speech epoch、sticky 首文本、冻结助手文本与完整 generation fence；超时、非法输出和迟到结果 fail closed。
 
-播放期 noise、backchannel 和 echo 由 `PlaybackInputGuard` 处理。Simplex ESP32 在 speaking 期间关闭 KWS；BOOT 物理按钮仍是本地停止权威。任何 stop、cancel、PCM 或 playback 回执都必须带 `session_epoch + turn_id + generation_id + tool_epoch`，旧代先于连续性检查丢弃。
+播放期 noise、backchannel 和 echo 由 `PlaybackInputGuard` 处理。VoCat 播放期保持采集、关闭本地 KWS 停播；BOOT / 触摸仍是本地硬停。任何 stop、cancel、PCM 或 playback 回执都必须带 `session_epoch + turn_id + generation_id + tool_epoch`，旧代先于连续性检查丢弃。
 
 ## 身份、历史与权限
 
@@ -81,12 +81,12 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 
 ## 当前出货声学契约
 
-- 当前演示/出货 SKU（ATK ES8388 单麦、AFE 无 playback reference）只允许受控半双工：`audio_mode=half_duplex_safe`。设备会话必须保持 `barge_in_enabled=false` 与 `interruptions_enabled=false`。
-- 固件 hello v2 必须诚实上报 `simultaneous_capture_playback=false`、`aec_mode=none`、`aec_reference=none`。禁止为演示把未验证 AEC 写成已验证。
-- 播放期间以停录或不形成用户 turn 为契约；BOOT 是本地物理硬停。禁止用云端 holdoff、丢弃 VAD 边沿或加大 DTLN 增益去模拟抢话。
-- `TurnPhase` 在当前 SKU 半双工两轮对话未 `verified` 前，不得从 shadow 改为有副作用的生产策略。
-- 全双工/抢话按 SKU 升档：新板必须有 AEC reference，hello 如实上报，Edge 声学 registry 登记后才能协商 `interrupt_assist`；`full_duplex_verified` 另需 T1–T14。禁止把所有 `device_session` 一次性打开 barge-in。
-- 路演、对客和投资人口径必须与 `HANDOFF.md` 的 `advertised_duplex_level` 一致。当前工单步骤只写在 `HANDOFF.md`，不另建计划文档。
+- 当前硬件 SKU 是 ESP-VoCat（ES7210 双麦 + ES8311，`board_profile=memoria-esp-vocat`）。旧 ATK ES8388 单麦半双工板已退役，不得再作为实现约束或对客口径。
+- 协商上限默认 `audio_mode=interrupt_assist`：hello 如实报 simultaneous capture 与 AEC reference，`aec_reference_verified=false`。Agent 只按协商 `audio_mode` 开 barge-in，禁止「凡 device_session 都半双工」。
+- `full_duplex_verified` 另需 Edge 声学 registry 登记、真实 AEC residual、双讲 T1–T14 和 Actual Heard。未过证不得改 hello `aec_reference_verified`，不得宣传全双工。
+- 播放期保持采集；BOOT / 触摸仍是本地硬停。禁止用云端 holdoff、丢弃 VAD 边沿或加大 DTLN 增益去假装 AEC。
+- `TurnPhase` 在 interrupt_assist 真机打断未 `verified` 前，不得从 shadow 改为有副作用的生产策略。
+- 路演、对客口径必须与 `HANDOFF.md` 的 `advertised_duplex_level` 一致。当前工单步骤只写在 `HANDOFF.md`，不另建计划文档。
 
 ## 发布、回滚与保留
 

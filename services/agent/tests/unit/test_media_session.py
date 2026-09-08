@@ -2587,6 +2587,48 @@ async def test_commit_pauses_provider_asr_when_playback_starts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_interrupt_assist_commit_keeps_provider_asr_open() -> None:
+    identity = SessionIdentity(
+        "commit-keeps-asr",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+        audio_mode="interrupt_assist",
+    )
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="你好")
+
+    async def classify_owner(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _verified_owner_decision()
+
+    context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+
+    assert fence is not None, f"turn did not commit: {reason}"
+    assert provider.pause_asr_calls == []
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_stale_asr_final_rejection_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -4499,6 +4541,55 @@ async def test_stalled_output_generation_times_out_and_discards_partial_playback
         for task in asyncio.all_tasks()
         if not task.done() and task.get_name() == "test-stalled-output-generation"
     ]
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout() -> None:
+    """Long TTS is paced to realtime; the deadline is a stall watchdog."""
+
+    class SlowProgressProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                for index in range(4):
+                    if index:
+                        await asyncio.sleep(0.04)
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"\x02\x00\x03\x00",
+                        source_start_sample=index * 2,
+                        text="今" if index == 0 else "",
+                        first=index == 0,
+                        final=index == 3,
+                    )
+
+            return chunks()
+
+    bridge = MediaBridgeGrpcServer()
+    provider = SlowProgressProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        output_generation_timeout_s=0.08,
+    )
+    registry.install()
+    identity = SessionIdentity("progressing-output-generation")
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("今天天气怎么样")
+    context.playback.start(fence)
+
+    result = await asyncio.wait_for(
+        registry.generate_reply(identity.session_id, "今天天气怎么样", fence),
+        timeout=1,
+    )
+
+    assert result is True
+    assert context.output_owner is None
+    assert provider.cancelled == []
     await registry._finalize_session(identity.session_id)
 
 

@@ -66,7 +66,7 @@ public:
     void NotifyPlaybackDrained();
 
     // Called by Application when AudioService advances a playback boundary.
-    // The Memoria ES8388 path reports a GDMA TX-EOF-confirmed boundary;
+    // The VoCat I2S path reports a GDMA TX-EOF-confirmed boundary;
     // other codecs must keep approximate=true.
     void NotifyPlaybackOutput(uint32_t generation_id, uint64_t rendered_sample_end,
                               uint32_t received_sequence, bool approximate);
@@ -213,6 +213,7 @@ private:
     uint32_t protocol_violations_ = 0;
     uint32_t runtime_profile_version_ = 0;      // acked from session.accepted v2
     uint32_t settings_version_ = 0;
+    std::string audio_mode_;                    // negotiated; empty until session.accepted
     bool runtime_profile_pending_ = false;
     uint32_t runtime_profile_pending_version_ = 0;
     ProfileApplyMode runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

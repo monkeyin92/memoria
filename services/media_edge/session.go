@@ -64,6 +64,7 @@ type Session struct {
 	BindingID                  string
 	BindingVersion             uint64
 	RuntimeProfileVersion      uint64
+	AudioMode                  string
 	Generation                 Fence
 	generationActive           bool
 	floorState                 ShadowFloorState
@@ -130,6 +131,7 @@ func (s *Session) OpenRequestSnapshot() OpenSessionRequest {
 		BindingID:             s.BindingID,
 		BindingVersion:        s.BindingVersion,
 		RuntimeProfileVersion: s.RuntimeProfileVersion,
+		AudioMode:             s.AudioMode,
 	}
 }
 
@@ -157,6 +159,7 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 		BindingID:              request.BindingID,
 		BindingVersion:         request.BindingVersion,
 		RuntimeProfileVersion:  request.RuntimeProfileVersion,
+		AudioMode:              request.AudioMode,
 		Generation:             Fence{SessionID: request.SessionID},
 		generationActive:       true,
 		floorState:             ShadowFloorSilence,

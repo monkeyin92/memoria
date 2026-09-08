@@ -9,7 +9,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 微信小程序 --------------------------------> 控制面、档案与设备管理（绑定与查看）
 ```
 
-小程序不是实时媒体终端：不采集麦克风、不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间。ESP32 是机器人产品的实时语音入口。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工。
+小程序不是实时媒体终端：不采集麦克风、不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间。ESP-VoCat 是机器人产品的实时语音入口。当前协商上限是 `interrupt_assist`；未完成真实 AEC、双讲 T1–T14 和连续轮次验收前，不得宣称全双工。
 
 ## 文档与权威
 
@@ -420,4 +420,4 @@ DTLN 降噪固定到 `breizhn/DTLN` commit `1de1f15a8b5b7e1c44905618ff2ef70ca827
 - 打断后仍播旧内容：先推进 generation，再取消 provider/session，并在 Edge、设备和投影处比较完整 fence。
 - 设备 transport 已连但不可用：必须等当前 Agent 的显式 `assistant_state: ready`，不能把 LiveKit connected 当业务 ready。
 
-当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。当前开发工单是半双工投资人 Demo（`half_duplex_investor_demo`），不要并行做设备抢话或全双工。
+当前线上镜像、证据层级、发布与剩余真实设备验收见 `HANDOFF.md`。当前开发工单是 VoCat interrupt_assist（`vocat_interrupt_assist`）：播放期保持采集，按协商 `audio_mode` 开 barge-in；`full_duplex_verified` 另需 T1–T14。

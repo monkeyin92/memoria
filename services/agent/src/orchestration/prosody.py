@@ -22,7 +22,7 @@ VoiceEmotion = Literal[
 DeliveryMode = Literal["direct", "deliberative", "light_laughter", "supportive"]
 VoiceDialect = Literal["standard", "sichuan", "beijing"]
 VoiceTone = Literal["natural", "coquettish", "intimate", "argumentative", "sweet"]
-MascotExpression = Literal["neutral", "happy", "curious", "caring"]
+MascotExpression = Literal["neutral", "happy", "sad", "surprised", "curious", "caring"]
 
 _LAUGHTER_MARKERS = ("哈哈", "呵呵", "嘿嘿")
 _MARKUP_TAG = re.compile(
@@ -85,6 +85,22 @@ _ASSISTANT_HAPPY_MARKERS = (
     "值得庆祝",
     "开心",
     "高兴",
+)
+_ASSISTANT_SAD_MARKERS = (
+    "很难过",
+    "伤心",
+    "抱歉",
+    "对不起",
+    "遗憾",
+    "心疼",
+)
+_ASSISTANT_SURPRISED_MARKERS = (
+    "没想到",
+    "竟然",
+    "真的吗",
+    "哇",
+    "天哪",
+    "这么巧",
 )
 _ASSISTANT_CARING_MARKERS = (
     "听起来",
@@ -535,6 +551,10 @@ def mascot_expression_for_reply(
     spoken = strip_paralinguistic_markup(text)
     if any(marker in spoken for marker in _ASSISTANT_CARING_MARKERS):
         return "caring"
+    if any(marker in spoken for marker in _ASSISTANT_SAD_MARKERS):
+        return "sad"
+    if any(marker in spoken for marker in _ASSISTANT_SURPRISED_MARKERS):
+        return "surprised"
     if any(marker in spoken for marker in _ASSISTANT_HAPPY_MARKERS):
         return "happy"
     if "？" in spoken or "?" in spoken:

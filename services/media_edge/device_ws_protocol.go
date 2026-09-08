@@ -403,6 +403,8 @@ func deviceControlPriority(messageType string) int {
 		return 1
 	case "assistant.audio.frame", "generation.completed":
 		return 2
+	case "screen.subtitle", "screen.expression", "device.telemetry":
+		return 3
 	default:
 		return 3
 	}
@@ -493,6 +495,30 @@ type deviceServerSessionClose struct {
 	ControlSequence   uint64 `json:"control_sequence"`
 	ServerMonotonicMS uint64 `json:"server_monotonic_ms"`
 	Reason            string `json:"reason,omitempty"`
+}
+
+type deviceScreenExpression struct {
+	Type              string      `json:"type"`
+	Version           uint64      `json:"version"`
+	SessionID         string      `json:"session_id"`
+	StreamEpoch       uint64      `json:"stream_epoch"`
+	ControlSequence   uint64      `json:"control_sequence"`
+	ServerMonotonicMS uint64      `json:"server_monotonic_ms"`
+	Fence             deviceFence `json:"fence"`
+	Expression        string      `json:"expression"`
+}
+
+func deviceScreenEmotion(expression string) string {
+	switch expression {
+	case "happy", "sad", "surprised", "neutral", "angry", "thinking", "loving":
+		return expression
+	case "curious":
+		return "thinking"
+	case "caring":
+		return "loving"
+	default:
+		return "neutral"
+	}
 }
 
 type deviceRuntimeProfileInvalidated struct {

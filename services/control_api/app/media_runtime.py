@@ -325,7 +325,7 @@ def _validate_device_settings_claim(
         # production route always passes the current authoritative snapshot.
         return {
             "settings_version": 0,
-            "volume_limit": 72,
+            "volume_limit": 30,
             "screen_brightness": 80,
             "night_mode": False,
             "do_not_disturb": False,

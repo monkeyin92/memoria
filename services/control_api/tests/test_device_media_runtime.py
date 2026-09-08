@@ -151,7 +151,7 @@ def test_direct_ticket_is_eddsa_with_full_binding_claims() -> None:
     assert claims["stream_epoch"] == 1
     assert claims["runtime_profile_version"] == 27
     assert claims["device_settings"]["audio_mode"] == "half_duplex_safe"
-    assert claims["device_settings"]["volume_limit"] == 72
+    assert claims["device_settings"]["volume_limit"] == 30
     assert claims["iat"] == claims["nbf"]
 
 

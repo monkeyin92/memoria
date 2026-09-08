@@ -137,10 +137,9 @@ class DeviceVadProjector:
     def set_playback_active(self, active: bool) -> None:
         """Track whether the device speaker is still emitting audio.
 
-        The board has no hardware AEC reference, so speech that begins while
-        the speaker is live is treated as loudspeaker echo. Device sessions are
-        controlled half-duplex and never accept barge-in, so discarding it
-        matches the product contract instead of losing a real turn.
+        Speech that begins while the speaker is live may still be echo until
+        AEC is T1-T14 verified. Half-duplex sessions discard it; interrupt
+        assist / full duplex leave barge-in to the negotiated audio_mode.
         """
 
         self._playback_active = bool(active)

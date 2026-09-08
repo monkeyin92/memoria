@@ -1199,13 +1199,14 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         ResolveWakeWordSelection(wake_word_id, wake_word_pinyin, wake_word_display);
     WakeWordRegistry::GetInstance().Configure(selection);
     WakeWordRegistry::GetInstance().PersistToNvs();
-    ESP_LOGI(kTag, "applying device settings version=%u profile=%u wake_word=%s command=%s",
-             settings_version, profile_version, selection.id.c_str(), selection.command.c_str());
-    // This board declares no AEC reference, no simultaneous capture and
-    // playback, no local stop keyword and no duck. The physical stop button
-    // and local VAD honestly permit interrupt_assist, but never verified full
-    // duplex. Anything outside those two modes is a protocol violation.
-    if (audio_mode != "half_duplex_safe" && audio_mode != "interrupt_assist") {
+    ESP_LOGI(kTag, "applying device settings version=%u profile=%u wake_word=%s command=%s audio_mode=%s",
+             settings_version, profile_version, selection.id.c_str(), selection.command.c_str(),
+             audio_mode.c_str());
+    // VoCat can keep capture open during playback. interrupt_assist is the
+    // current ceiling until T1-T14 attest full_duplex_verified. Anything
+    // outside the three contracted modes is a protocol violation.
+    if (audio_mode != "half_duplex_safe" && audio_mode != "interrupt_assist" &&
+        audio_mode != "full_duplex_verified") {
         ESP_LOGE(kTag, "session.accepted audio_mode=%s contradicts device capabilities",
                  audio_mode.c_str());
         ++protocol_violations_;
@@ -1239,6 +1240,10 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     server_sample_rate_ = downlink_rate;
     runtime_profile_version_ = profile_version;
     settings_version_ = settings_version;
+    {
+        std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+        audio_mode_ = audio_mode;
+    }
     runtime_profile_pending_ = false;
     if (on_local_flush_requested_ != nullptr) {
         on_local_flush_requested_(playback_active_ ? fence_.generation_id : 0);
@@ -1321,8 +1326,8 @@ bool MemoriaProtocol::HandleGenerationPauseResume(const cJSON* root,
         return false;
     }
     if (pause) {
-        // No local duck on this simplex board: pausing stops rendering until
-        // resume. P0 closes the atomic queue gate on the receive path.
+        // No local duck yet: pausing stops rendering until resume. P0 closes
+        // the atomic queue gate on the receive path.
         playback_paused_ = true;
         playback_audio_ready_ = false;
         if (on_local_flush_requested_ != nullptr) {
@@ -1948,21 +1953,20 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
     cJSON_AddBoolToObject(capabilities, "display", true);
     cJSON_AddBoolToObject(capabilities, "microphone", true);
     cJSON_AddBoolToObject(capabilities, "speaker", true);
-    // Honest capability declaration for this simplex board: no AEC reference,
-    // no simultaneous capture and playback, no local stop keyword, no local
-    // duck. Playback watermarks are confirmed by I2S GDMA TX EOF; this is an
-    // exact digital boundary but still not acoustic DAC/speaker proof. The server must not
-    // open full duplex on top of these capabilities.
-    cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", false);
-    cJSON_AddStringToObject(capabilities, "aec_mode", "none");
-    cJSON_AddStringToObject(capabilities, "aec_reference", "none");
+    // VoCat ES7210+ES8311 exposes a playback-reference channel and can keep
+    // capture open during playback. AEC is present but not T1-T14 verified,
+    // so the server may open interrupt_assist and must not claim
+    // full_duplex_verified from this hello alone.
+    cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", true);
+    cJSON_AddStringToObject(capabilities, "aec_mode", "fd_low_cost");
+    cJSON_AddStringToObject(capabilities, "aec_reference", "software_post_gain_pre_i2s");
     cJSON_AddBoolToObject(capabilities, "aec_reference_verified", false);
     cJSON_AddBoolToObject(capabilities, "local_vad", true);
     cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false);
     cJSON_AddBoolToObject(capabilities, "physical_stop_button", true);
     cJSON_AddStringToObject(capabilities, "playback_watermark", "exact");
     cJSON_AddBoolToObject(capabilities, "local_duck", false);
-    cJSON_AddNumberToObject(capabilities, "barge_in_level", 0);
+    cJSON_AddNumberToObject(capabilities, "barge_in_level", 1);
     cJSON_AddItemToObject(root.value, "capabilities", capabilities);
     cJSON* audio = cJSON_CreateObject();
     cJSON_AddStringToObject(audio, "uplink_codec", "opus");
@@ -2551,6 +2555,7 @@ void MemoriaProtocol::ResetSessionState() {
     protocol_violations_ = 0;
     runtime_profile_version_ = 0;
     settings_version_ = 0;
+    audio_mode_.clear();
     runtime_profile_pending_ = false;
     runtime_profile_pending_version_ = 0;
     runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

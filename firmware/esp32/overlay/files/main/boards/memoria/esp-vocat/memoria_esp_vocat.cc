@@ -433,10 +433,11 @@ private:
 
 class MemoriaEspVocat : public WifiBoard {
 private:
-    // The ES7210 microphone array default gain is 30 dB.
-    // Simplex mode and strict local AFE VAD keep room noise
-    // below the gateway noise-gate floor.
-    static constexpr float kMicInputGainDb = 30.0f;
+    // The ES7210 microphone array gain is configured to 36 dB (+6 dB from 30 dB)
+    // to ensure normal 30-60 cm speech maintains healthy RMS above the gateway
+    // noise floor and improves far-field wake word detection.
+    // Strict local AFE VAD keeps room noise below the gateway noise-gate floor.
+    static constexpr float kMicInputGainDb = 36.0f;
 
     i2c_master_bus_handle_t i2c_bus_;
     i2c_bus_handle_t shared_i2c_bus_handle_ = nullptr;

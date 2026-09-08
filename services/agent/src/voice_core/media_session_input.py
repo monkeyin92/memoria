@@ -20,7 +20,11 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
-from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
+from services.agent.src.voice_core.media_protocol import (
+    AudioFrame,
+    SessionIdentity,
+    should_pause_asr_for_playback,
+)
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -460,9 +464,8 @@ class MediaSessionInputMixin:
                         context.playback.start(cancelled)
                         context.provider_complete = False
                         context.output_complete_emitted = False
-                        # Close the ASR task when playback starts to avoid idle timeout during
-                        # half-duplex assistant speech (defect 3: 23-second timeout fix).
-                        await context.provider.pause_asr_for_playback(context.identity)
+                        if should_pause_asr_for_playback(context.identity):
+                            await context.provider.pause_asr_for_playback(context.identity)
                         await self._cancel_reply_task(context, previous_fence)
                         await self._emit_cancel_generation(
                             context,

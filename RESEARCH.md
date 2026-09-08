@@ -8,7 +8,7 @@
 
 1. 研究助手扫描后：同一想法复用已有 id 并更新「最近更新」；新想法新增 `R-YYYYMMDD-NN`，状态先标「待评估」。
 2. 开发评估后：只改「状态」「最近更新」「开发备注」。已完成 / 不做 / 废弃的行永不删除，只改状态并追加一行注明日期的备注。
-3. 建议不得违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。
+3. 建议不得违反当前 SKU：VoCat、`interrupt_assist`、`advertised_duplex_level=none`、唤醒词「茉莉」。未过 T1–T14 不得建议宣传全双工或把 `aec_reference_verified` 改成 true。
 4. 扫描更新必须是合并：禁止把本文件改回只剩标题。写入前若正文行数会大幅变少，停止并报错。
 
 ## 状态词（只准用这些）
@@ -31,19 +31,18 @@
 - 同一想法再次出现时合并到原 id，禁止复制一条。
 - 永不删除「已完成 / 不做 / 废弃」行；只改状态，并在开发备注追加注明日期的一行说明。
 - 不写生产密钥、环境路径、镜像 SHA、设备 ID、HANDOFF 运维细节。
-- 不建议违反当前 SKU：半双工、无 barge-in、`advertised_duplex_level=none`、唤醒词「茉莉」。不要建议播放期 KWS、现板谎称 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
+- 不建议违反当前 SKU：VoCat、`interrupt_assist`、`advertised_duplex_level=none`、唤醒词「茉莉」。不要建议播放期 KWS、谎称已验证 AEC、或把 TurnPhase 从 shadow 改成有副作用的生产策略。
 
 ---
 
 ## 本周约束
 
-- 扫描日期：2026-09-08。本轮新增 R-20260908-01（ES8388 供应链 EOL → 加速 VoCat，勿深改现板 ALC/AEC）。LiveKit ESP32 定制硬件指南并入 R-20260907-02，不另开 id。加强：R-20260907-01（1.8.0 含 #7064/#6865/#7104 OTel/PII）、R-20260907-02（VoCat 顺序与档案终端叙事）、R-20260903-03（征求意见截止已过，仍无定稿）、FunASR 钉档、U1、JUOS、Plaud One、Seed-TTS schema。NEW_LAW_IDS 空。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。
-- 当前出货 / 投资人 demo SKU 只允许受控半双工（ATK ES8388 1-mic，无 AEC）；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。不得在现板开 barge-in / 全双工 / AEC。
-- 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。`direct_real_device_verified` 仍为 false。
-- 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词。安静环境阶段 4 已有 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。不要开播放期 KWS。
-- 现板无 AEC reference；hello 必须 `aec_mode=none`。换 AEC 板属于阶段 8，不要混进半双工 demo 工单。xiaozhi #2036 截至 2026-09-04 仍 open（最后活动 2026-07-07）。不得用 ESP-SR `AEC_MODE_SR_*` 宣称双工或 barge-in。下一硬件 SKU 路径是 VoCat（喵伴/EchoEar，ES7210+ES8311 双麦），与 ATK 半双工 demo 分轨；见 R-20260907-02。固件树已有 VoCat overlay，仍按买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in；官方全双工定位与圆屏萌宠叙事不得抄进现板或对外档案终端故事。ES8388 停产风险见 R-20260908-01。
-- ES8388 PGA 已到 21 dB（2026-09-02）。因 EOL 风险，不要在 ES8388 上深改 ALC/AEC；ATK 只做 demo。DTLN makeup 已冻结 `8.0×`，不要再抬。
-- 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。BOOT 是唯一硬停。LiveKit Agents PyPI 仍 1.8.0（2026-09-05）；现 SKU 必须显式 `interruption.enabled=False` 与 `preemptive_generation.enabled=False`；不要开 `user_turn_limit` 或 `expressive=True`。升级评估见 R-20260907-01（含 #7104 OTel/PII）。#7064 已进 1.8.0，不再当「等下一版」观察项。
+- 扫描日期：2026-09-08。本轮新增 R-20260908-01（ES8388 供应链 EOL → 加速 VoCat，勿深改退役 ATK 板 ALC/AEC）。当前工单是 VoCat interrupt_assist（R-20260907-02 已开工）。ATK ES8388 半双工 demo 板与 `half_duplex_investor_demo` 已退役，不再作为实现约束。未过 T1–T14 不得宣传全双工。LiveKit ESP32 定制硬件指南并入 R-20260907-02，不另开 id。加强：R-20260907-01（1.8.0 含 #7064/#6865/#7104 OTel/PII）、R-20260903-03（征求意见截止已过，仍无定稿）、FunASR 钉档、U1、JUOS、Plaud One、Seed-TTS schema。NEW_LAW_IDS 空。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。
+- 当前出货 SKU 是 ESP-VoCat；默认协商 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。Agent barge-in 跟协商 `audio_mode`，不是「凡设备都半双工」。退役 ATK ES8388 1-mic demo 仍是半双工、无 AEC、`barge_in_enabled=false` 的历史围栏，不得在退役板上开 barge-in / 全双工 / AEC（R-20260908-01）。
+- 对外口径 `advertised_duplex_level=none`。未完成真实 AEC residual、双讲和连续轮次验收前，不得宣称全双工。`direct_real_device_verified` 仍为 false。
+- 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词。播放期 KWS 仍关；BOOT / 触摸是本地硬停。安静环境阶段 4 已有 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
+- VoCat ES7210 输入增益 36.0 dB。DTLN makeup 已冻结 `8.0×`，不要再抬。因 EOL 风险，不要在退役 ES8388 上深改 ALC/AEC。
+- 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation。LiveKit Agents PyPI 仍 1.8.0（2026-09-05）；升级评估见 R-20260907-01（含 #7104 OTel/PII），不要因此开 `user_turn_limit` 或 `expressive=True`。#7064 已进 1.8.0，不再当「等下一版」观察项。
 - 云端 FunASR 钉 ≥1.4.14（见 R-20260904-01）；sidecar 仍 ≥1.3.29。H5 已移除；控制面只留小程序绑定 / 回顾 / 我的。微信个人 bot API 不是小程序控制面，见 R-20260831-14。
 
 ---
@@ -75,13 +74,13 @@
 ### R-20260831-03 远场先动 ES8388 模拟，DTLN makeup 已冻结
 
 - 类别：硬件
-- 状态：待评估
+- 状态：废弃
 - 首次写入：2026-08-31
 - 最近更新：2026-09-08
-- 为何现在相关：2026-09-02 已把 ES8388 PGA 从 18 dB 刷到 21 dB；30–60 cm 正常音量 DTLN 后 RMS 约 939/764，两轮可 commit+播报。数字侧 DTLN makeup 仍冻结 8.0×，再抬会削波或假装远场已解决。ES8388 另有 2026 停产风险，见 R-20260908-01。
-- 建议下一步：PGA 21 dB 已落地。不要在 ES8388 上深改 ALC/AEC；远场若仍低 RMS，只对比 tap WAV pre/post DTLN，或把精力转到 VoCat（R-20260907-02）。不要再抬 DTLN，也不要为远场去开 barge-in。
+- 为何现在相关：ES8388 板已退役。VoCat ES7210 输入增益 36.0 dB；DTLN makeup 仍冻结 8.0×。ES8388 另有 2026 停产风险，见 R-20260908-01。
+- 建议下一步：无。远场调音只动 VoCat PGA / tap RMS，不抬 DTLN。不要在退役 ES8388 上深改 ALC/AEC。
 - 来源：https://docs.espressif.com/projects/esp-adf/en/latest/api-reference/abstraction/es8388.html ；https://github.com/espressif/esp-adf/issues/1539
-- 开发备注：2026-09-03 HANDOFF：PGA 21 dB 已刷写；远场若仍低 RMS，先 ALC/noise gate，不抬 DTLN。状态仍「待评估」（ALC 未做）。2026-09-08：因 #1539 经销商称 ES8388 将于 2026 停产，ALC 不再作为现板长期投入；ATK 只做 demo。
+- 开发备注：2026-09-03 HANDOFF：PGA 21 dB 已刷写；远场若仍低 RMS，先 ALC/noise gate，不抬 DTLN。2026-09-08 ATK ES8388 路径退役，本条废弃。2026-09-08 扫描：因 #1539 经销商称 ES8388 将于 2026 停产，ALC 不再作为现板长期投入；ATK 只做 demo。
 
 ### R-20260831-04 陪伴感靠 generation fence，不靠抢话
 
@@ -97,13 +96,13 @@
 ### R-20260831-05 下一块 AEC 板：立创实战派优先
 
 - 类别：硬件
-- 状态：待评估
+- 状态：废弃
 - 首次写入：2026-08-31
 - 最近更新：2026-09-08
-- 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着（2026-09-04 复核：仍 open，最后活动 2026-07-07，无新评论）。硬件 MIC3 回灌不等于 AFE 吃到参考通道。买板不能假定 MIC3 loopback 已可用，还要核 `channel_mask` 与 `aec_ref_type`（EXTERNAL_ADC vs INTERNAL）。VoCat（喵伴/EchoEar）是另一条下一 SKU 工作流，见 R-20260907-02，不要和立创阶段 8 或现 ATK demo 混单。
-- 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3 是否进入 AEC reference。阶段 8 才买/刷 AEC 板；半双工 demo 工单不要混进新板。VoCat 全双工定位不得抄进 ATK。
+- 为何现在相关：现板已是 VoCat，不再买立创实战派当前板。ES8388 停产风险（R-20260908-01）是采购理由，不是在退役 ATK 开 AEC/barge-in 的理由。
+- 建议下一步：无。AEC residual 与 interrupt_assist 验收走 R-20260907-02。
 - 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
-- 开发备注：2026-09-03 xiaozhi #2036 无新评论。阶段 7 剧本已锁定，换板仍是阶段 8。2026-09-04 xiaozhi #2036 仍 open，最后活动 2026-07-07，无新评论。2026-09-07 xiaozhi #1179（2025 ES8388 AEC 板）是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。VoCat 分轨见 R-20260907-02。2026-09-08：ES8388 停产风险（R-20260908-01）是采购理由，不是在 ATK 开 AEC/barge-in 的理由。下一主路径仍是 VoCat，立创阶段 8 备选不变。
+- 开发备注：2026-09-03 xiaozhi #2036 无新评论。阶段 7 剧本已锁定，换板仍是阶段 8。2026-09-04 xiaozhi #2036 仍 open，最后活动 2026-07-07，无新评论。2026-09-07 xiaozhi #1179（2025 ES8388 AEC 板）是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。VoCat 分轨见 R-20260907-02。2026-09-08 VoCat 已成为当前 SKU，本条废弃。立创 MIC3 自验清单不再作为前置。2026-09-08 扫描：ES8388 停产风险（R-20260908-01）是采购理由，不是在 ATK 开 AEC/barge-in 的理由。
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
 
@@ -597,13 +596,13 @@
 ### R-20260907-02 VoCat（喵伴/EchoEar）是下一硬件 SKU，勿混入 ATK 半双工 demo
 
 - 类别：硬件
-- 状态：待评估
+- 状态：进行中
 - 首次写入：2026-09-07
 - 最近更新：2026-09-08
-- 为何现在相关：乐鑫文档仍列 ESP-VoCat（EchoEar）：ESP32-S3、1.85 寸圆屏、双麦阵列、ES7210 ADC + ES8311 codec，官方定位全双工语音交互。这是下一 SKU 工作流，不是当前 ATK ES8388 1-mic 半双工 demo 板。barge-in、降噪、声纹、全双工只挂这条路径，不得提前写进现板 hello 或投资人 demo。ES8388 停产风险（R-20260908-01）只加速 VoCat 采购，不改变现板半双工围栏。LiveKit 官方 ESP32 定制硬件指南（Waveshare ESP32-S3-Touch-LCD-1.83，同为 ES8311 DAC + ES7210 ADC TDM，`esp_capture_new_audio_aec_src`）可作 VoCat AEC/初始化参考；8-bit I2C 地址坑：ES7210 `0x80` / ES8311 `0x30`。
-- 建议下一步：VoCat 另开工单，顺序固定为买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in。不要改 ATK hello / barge_in / AEC 声明。现板继续 `aec_mode=none`、半双工。对外叙事仍是桌面档案终端，不是圆屏萌宠。立创实战派仍是阶段 8 AEC 备选（R-20260831-05），与 VoCat 分轨。xiaozhi #1179 是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。
+- 为何现在相关：乐鑫文档仍列 ESP-VoCat（EchoEar）：ESP32-S3、1.85 寸圆屏、双麦阵列、ES7210 ADC + ES8311 codec，官方定位全双工语音交互。当前出货板已是 VoCat；ATK 半双工 demo 已退役。ES8388 停产风险（R-20260908-01）只加速 VoCat 采购，不改变对外 `advertised_duplex_level=none`。LiveKit 官方 ESP32 定制硬件指南（Waveshare ESP32-S3-Touch-LCD-1.83，同为 ES8311 DAC + ES7210 ADC TDM，`esp_capture_new_audio_aec_src`）可作 VoCat AEC/初始化参考；8-bit I2C 地址坑：ES7210 `0x80` / ES8311 `0x30`。
+- 建议下一步：刷固件，量 AEC residual，真机测 interrupt_assist 打断。未过 T1–T14 不得改 `aec_reference_verified` 或宣传全双工。立创实战派不再作为本 SKU 前置。对外叙事仍是桌面档案终端，不是圆屏萌宠。
 - 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/user_guide_v1.2.html ；https://livekit.com/blog/esp32-custom-hardware-quickstart
-- 开发备注：2026-09-08：固件树已有 VoCat overlay，仍与 ATK 投资人 demo 分轨。LiveKit 指南只作 ES7210/ES8311 + AEC 参考，不把 Waveshare 圆屏产品叙事抄进 memoria。
+- 开发备注：2026-09-08 阶段 8 已开工：hello 报 simultaneous capture / fd_low_cost；默认协商 interrupt_assist；Agent barge-in 跟 audio_mode。ATK 半双工工单退役。2026-09-08 扫描：固件树已有 VoCat overlay。LiveKit 指南只作 ES7210/ES8311 + AEC 参考，不把 Waveshare 圆屏产品叙事抄进 memoria。
 
 ### R-20260907-03 SiphonAI 可借鉴媒体/AI 分层与协议工程，不换栈
 
@@ -623,7 +622,7 @@
 - 首次写入：2026-09-07
 - 最近更新：2026-09-07
 - 为何现在相关：SiphonAI 明确不做 AI，只把 SIP/RTP 变成 20 ms PCM16 + JSON 控制。若以后要「打电话进陪伴」，这是现成组件，不必自研 SIP 栈。身份模型不同：电话是主叫号码 / STIR，Memoria 是主人声纹；不得把 PSTN 腿标成 owner。现板半双工 demo 不需要电话入线。
-- 建议下一步：不混入 half_duplex_investor_demo。若产品确认要 PSTN，另开工单：部署 siphon-ai，Voice Core 实现其 WS 协议（可用官方 Python SDK 做适配层），映射到既有 generation fence；guest/uncertain 权限默认拒绝私人记忆与工具。先不要改 ESP32 协议。
+- 建议下一步：不混入 vocat_interrupt_assist。若产品确认要 PSTN，另开工单：部署 siphon-ai，Voice Core 实现其 WS 协议（可用官方 Python SDK 做适配层），映射到既有 generation fence；guest/uncertain 权限默认拒绝私人记忆与工具。先不要改 ESP32 协议。
 - 来源：https://github.com/thevoiceguy/siphon-ai ；https://github.com/thevoiceguy/siphon-ai/blob/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/docs/PROTOCOL.md ；https://github.com/thevoiceguy/siphon-ai/tree/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/sdks
 - 开发备注：
 
@@ -637,10 +636,10 @@
 - 状态：待评估
 - 首次写入：2026-09-08
 - 最近更新：2026-09-08
-- 为何现在相关：espressif/esp-adf#1539（2025-09-24 开，2026-03-10 评论）：经销商称 ES8388 将于 2026 停产；社区问 ES8390；并记 ES8388 调音量/启停爆破音。当前投资人 demo SKU 是 ATK ES8388 1-mic 半双工、无 AEC。这是采购/生命周期风险，论证不要长期押 ES8388，并保持 VoCat（ES7210+ES8311）为下一主 SKU——**不是**在现板开 barge-in/AEC 的理由。对照 R-20260907-02 / R-20260831-03。
-- 建议下一步：把 ES8388 EOL 写成采购风险；ATK 板只做 demo，不长期投入。继续 VoCat：买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in。不要在 ES8388 上深改 ALC/AEC，也不要把停产或爆破音写成现板全双工借口。
+- 为何现在相关：espressif/esp-adf#1539（2025-09-24 开，2026-03-10 评论）：经销商称 ES8388 将于 2026 停产；社区问 ES8390；并记 ES8388 调音量/启停爆破音。扫描当时投资人 demo SKU 是 ATK ES8388 1-mic 半双工、无 AEC；同日稍后 main 已把该板退役，出货切 VoCat。这是采购/生命周期风险，论证不要长期押 ES8388——**不是**在退役 ATK 板上开 barge-in/AEC 的理由。对照 R-20260907-02 / R-20260831-03。
+- 建议下一步：把 ES8388 EOL 写成采购风险；ATK 板已退役，不长期投入。VoCat 已开工 interrupt_assist：量 AEC residual 后再谈对外全双工口径。不要在 ES8388 上深改 ALC/AEC，也不要把停产或爆破音写成全双工借口。
 - 来源：https://github.com/espressif/esp-adf/issues/1539
-- 开发备注：
+- 开发备注：2026-09-08 main 已把 ATK ES8388 半双工 demo 退役，VoCat interrupt_assist 开工（R-20260907-02）。本条仍记 EOL 采购风险。
 
 ---
 
@@ -655,7 +654,7 @@
 - 为何现在相关：SiphonAI 是 SIP/RTP daemon，设备链是 media-v2 WSS。替换 Edge 等于拆 `ESP32 → Go Media Edge → Python Voice Core`。其默认 `auto_clear` 在无 AEC 板上会把回声当抢话。
 - 建议下一步：无。电话入线见 R-20260907-04（另开产品）。协议借鉴见 R-20260907-03。
 - 来源：https://github.com/thevoiceguy/siphon-ai
-- 原因：不拆现权威链；现板 `aec_mode=none`、`barge_in_enabled=false`；BOOT 仍是唯一硬停。与 R-20260831-16 同类。
+- 原因：不拆现权威链。VoCat 走协商 interrupt_assist，不是 siphon auto_clear。BOOT / 触摸仍是本地硬停。与 R-20260831-16 同类。
 - 开发备注：
 
 ### R-20260831-15 现板开 barge-in / TurnPhase 副作用 / 播放期 KWS / 谎称 AEC
@@ -663,12 +662,12 @@
 - 类别：语音
 - 状态：不做
 - 首次写入：2026-08-31
-- 最近更新：2026-08-31
-- 为何现在相关：现板开这些能力会违反当前 SKU。
-- 建议下一步：无。
+- 最近更新：2026-09-08
+- 为何现在相关：ATK 半双工板上开这些能力会违反当时 SKU。VoCat 已按协商 interrupt_assist 开工，本条不再挡住当前板。
+- 建议下一步：无。播放期 KWS、谎称已验证 AEC、TurnPhase 副作用仍禁止。
 - 来源：
-- 原因：现板半双工、无 barge-in、无播放期 KWS、hello 必须 `aec_mode=none`，不得谎称 AEC。
-- 开发备注：
+- 原因：当时 ATK 板无 AEC reference。2026-09-08 备注：VoCat 可开协商 barge-in，但不得把 `aec_reference_verified` 写成 true，也不得开播放期 KWS。
+- 开发备注：2026-09-08 范围收窄为「禁止谎称已验证 AEC / 播放期 KWS / TurnPhase 副作用」；协商 interrupt_assist 走 R-20260907-02。
 
 ### R-20260831-16 用 LiveKit client-sdk-esp32 替换 Go Media Edge
 
@@ -729,3 +728,4 @@
 - 来源：
 - 原因：不得公开宣称全双工、持续聆听、情感灵魂、替代亲情、家庭入口、唤醒 99%。
 - 开发备注：2026-09-03 不要开 LiveKit Agents 1.7.0 `expressive=True`（会话情感标签驱动 TTS 韵律），也不要把二白Mini「领养/生命模块」或 Bubbo「有灵魂的生命体」写进对外口径。
+

@@ -113,6 +113,7 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         ):
             assert key in body
         assert body["learning_mode"] == "off"
+        assert body["audio_mode"] == "interrupt_assist"
         assert body["wake_word_id"] == "mo_li"
         assert body["wake_word_display"] == "茉莉"
         assert body["wake_word_pinyin"] == "mo li"
@@ -223,7 +224,7 @@ async def test_device_settings_matrix_and_learning_mode_versioning(
         )
         assert allowed_audio.status_code == 200, allowed_audio.text
         assert allowed_audio.json()["audio_mode"] == "full_duplex_verified"
-        assert allowed_audio.json()["runtime_profile_version"] == 5
+        assert allowed_audio.json()["runtime_profile_version"] == 4
 
 
 @pytest.mark.asyncio

@@ -523,6 +523,7 @@ func (c *DeviceConnection) handleHello(data []byte) error {
 		SubjectID: c.claims.SubjectID, BindingID: c.claims.BindingID,
 		BindingVersion:        c.claims.BindingVersion,
 		RuntimeProfileVersion: c.claims.RuntimeProfileVersion,
+		AudioMode:             audioMode,
 	}
 	session, err := NewSession(request, c.server.MaxPendingFrames)
 	if err != nil {

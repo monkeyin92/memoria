@@ -36,12 +36,12 @@ BARGE_IN_KINDS = ("none", "button", "keyword", "voice")
 LEARNING_MODES = ("off", "tutor_english", "tutor_homework")
 
 DEFAULT_DEVICE_SETTINGS: dict[str, object] = {
-    "volume_limit": 72,
+    "volume_limit": 30,
     "screen_brightness": 80,
     "night_mode": False,
     "do_not_disturb": False,
     "learning_mode": "off",
-    "audio_mode": "half_duplex_safe",
+    "audio_mode": "interrupt_assist",
     "wake_mode": "button_or_keyword",
     "wake_word_id": DEFAULT_WAKE_WORD_ID,
     "wake_word_pinyin": "mo li",

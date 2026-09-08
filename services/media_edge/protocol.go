@@ -98,6 +98,7 @@ type OpenSessionRequest struct {
 	BindingID             string `json:"binding_id,omitempty"`
 	BindingVersion        uint64 `json:"binding_version,omitempty"`
 	RuntimeProfileVersion uint64 `json:"runtime_profile_version,omitempty"`
+	AudioMode             string `json:"audio_mode,omitempty"`
 }
 
 func (r OpenSessionRequest) Validate() error {
@@ -128,6 +129,11 @@ func (r OpenSessionRequest) Validate() error {
 	if r.ClientType != "device" && (r.SubjectID != "" || r.BindingID != "" ||
 		r.BindingVersion != 0 || r.RuntimeProfileVersion != 0) {
 		return fmt.Errorf("runtime profile authority fence is device-only")
+	}
+	if r.AudioMode != "" && r.AudioMode != DeviceAudioModeHalfDuplexSafe &&
+		r.AudioMode != DeviceAudioModeInterruptAssist &&
+		r.AudioMode != DeviceAudioModeFullDuplex {
+		return fmt.Errorf("audio_mode is invalid")
 	}
 	return nil
 }

@@ -12,6 +12,15 @@ diff --git a/main/audio/audio_codec.h b/main/audio/audio_codec.h
      virtual bool InputData(std::vector<int16_t>& data);
      virtual void Start();
  
+@@ -61,7 +65,7 @@ protected:
+     int output_sample_rate_ = 0;
+     int input_channels_ = 1;
+     int output_channels_ = 1;
+-    int output_volume_ = 70;
++    int output_volume_ = 30;
+     float input_gain_ = 0.0;
+ 
+     virtual int Read(int16_t* dest, int samples) = 0;
 diff --git a/main/audio/codecs/es8388_audio_codec.h b/main/audio/codecs/es8388_audio_codec.h
 --- a/main/audio/codecs/es8388_audio_codec.h
 +++ b/main/audio/codecs/es8388_audio_codec.h

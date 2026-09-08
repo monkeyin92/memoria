@@ -1,33 +1,35 @@
 diff --git a/main/application.cc b/main/application.cc
 --- a/main/application.cc
 +++ b/main/application.cc
-@@ -1234,6 +1234,14 @@ void Application::HandleWakeWordDetectedEvent() {
+@@ -1234,6 +1234,15 @@ void Application::HandleWakeWordDetectedEvent() {
  
      if (state == kDeviceStateIdle) {
          BeginWakeWordInvoke(wake_word);
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
 +    } else if (state == kDeviceStateSpeaking) {
-+        // This board has no playback-reference channel. A late detector event
-+        // can therefore be the assistant's own speaker output; it must never
-+        // acquire local stop authority over the active generation.
-+        ESP_LOGW(TAG, "Ignoring wake word detected during simplex playback");
++        // Wake during playback is not a local stop keyword. Keep capture open
++        // in realtime mode so the server can judge barge-in; BOOT remains the
++        // on-device hard stop until AEC is T1-T14 verified.
++        ESP_LOGW(TAG, "Ignoring wake word detected during playback");
 +        audio_service_.EnableWakeWordDetection(false);
++        return;
 +#endif
      } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
          AbortSpeaking(kAbortReasonWakeWordDetected);
          // Clear send queue to avoid sending residues to server
-@@ -1391,8 +1399,15 @@ void Application::HandleStateChangedEvent() {
+@@ -1391,8 +1400,16 @@ void Application::HandleStateChangedEvent() {
  
              if (listening_mode_ != kListeningModeRealtime) {
                  audio_service_.EnableVoiceProcessing(false);
 +#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
-+                // No AEC/reference channel is wired on this simplex board.
-+                // Keep the physical button as the playback stop authority;
-+                // wake-word detection here can hear the assistant itself.
 +                audio_service_.EnableWakeWordDetection(false);
 +#else
                  // Only AFE wake word can be detected in speaking mode
                  audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
++#endif
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            } else {
++                audio_service_.EnableWakeWordDetection(false);
 +#endif
              }
              audio_service_.ResetDecoder();

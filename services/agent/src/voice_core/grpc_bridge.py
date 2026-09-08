@@ -37,6 +37,7 @@ from services.agent.src.voice_core.media_bridge_server import (
     PCMFrame,
 )
 from services.agent.src.voice_core.media_protocol import (
+    DEVICE_AUDIO_MODES,
     AudioFrame,
     MediaEnvelope,
     PlaybackEventType,
@@ -317,6 +318,16 @@ class _Connection:
     close_notified: bool = False
 
 
+def _audio_mode_from_hello(hello: Any) -> str:
+    capabilities = getattr(hello, "capabilities", None)
+    if capabilities is None:
+        return ""
+    getter = getattr(capabilities, "get", None)
+    if callable(getter):
+        return str(getter("audio_mode", "") or "")
+    return ""
+
+
 def _identity_from_proto(value: Any) -> SessionIdentity:
     return SessionIdentity(
         session_id=str(value.session_id),
@@ -560,7 +571,10 @@ class MediaBridgeGrpcServer:
                         int(request.hello.interaction_authority)
                     )
                     connection = self._open_connection(
-                        _identity_from_proto(request.hello.identity),
+                        replace(
+                            _identity_from_proto(request.hello.identity),
+                            audio_mode=_audio_mode_from_hello(request.hello),
+                        ),
                         traceparent=str(request.hello.traceparent or ""),
                         interaction_authority=interaction_authority,
                     )
@@ -599,6 +613,9 @@ class MediaBridgeGrpcServer:
                 raise ValueError(f"media hello {field_name} is required")
         if str(getattr(identity, "client_type", "")).strip() not in {"h5", "device"}:
             raise ValueError("media hello client_type must be h5 or device")
+        audio_mode = _audio_mode_from_hello(hello)
+        if audio_mode and audio_mode not in DEVICE_AUDIO_MODES:
+            raise ValueError("media hello audio_mode is invalid")
 
         expected = {
             "uplink_format": (16_000, 1, 20),

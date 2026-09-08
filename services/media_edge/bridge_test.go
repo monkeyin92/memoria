@@ -144,6 +144,25 @@ func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *tes
 	}
 }
 
+func TestVoiceCoreBridgeHelloCarriesNegotiatedAudioMode(t *testing.T) {
+	service := &fakeVoiceCore{helloReceived: make(chan *mediav1.SessionHello, 1)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	identity := bridgeIdentity()
+	identity.AudioMode = DeviceAudioModeInterruptAssist
+	session, err := bridge.Connect(ctx, identity, bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	hello := <-service.helloReceived
+	if hello.GetCapabilities()["audio_mode"] != DeviceAudioModeInterruptAssist {
+		t.Fatalf("hello audio_mode = %q, want interrupt_assist", hello.GetCapabilities()["audio_mode"])
+	}
+}
+
 func TestVoiceCoreBridgeHandshakeContextDoesNotOwnAcceptedStream(t *testing.T) {
 	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 1)}
 	bridge, cleanup := newBufconnBridge(t, service)

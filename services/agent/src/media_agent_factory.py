@@ -43,7 +43,10 @@ from services.agent.src.response_planner_client import (
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.agent.src.session_entrypoint import should_enable_legacy_speaker_verifier
 from services.agent.src.tutor_session import production_system_prompt
-from services.agent.src.voice_core.media_protocol import SessionIdentity
+from services.agent.src.voice_core.media_protocol import (
+    SessionIdentity,
+    device_barge_in_enabled,
+)
 from services.agent.src.voice_core.media_session import MediaSessionResources
 from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderAdapter,
@@ -258,7 +261,11 @@ class ProductionMediaSessionFactory:
             device_id=device_id,
             tts=tts,
             input_guard_enabled=True,
-            barge_in_enabled=not device_session,
+            barge_in_enabled=(
+                device_barge_in_enabled(identity)
+                if identity is not None and identity.client_type == "device"
+                else True
+            ),
             capture_release_holdoff_s=(
                 DEVICE_POST_PLAYBACK_HOLDOFF_S if device_session else 0.0
             ),

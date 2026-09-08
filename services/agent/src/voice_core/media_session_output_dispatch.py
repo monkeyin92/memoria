@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     MediaReplyChunk,
@@ -163,6 +164,7 @@ class MediaOutputDispatchMixin:
             chunks: Any,
             *,
             measure_tts_first_frame: bool,
+            stall_deadline: asyncio.Timeout,
         ) -> OutputDispatchResult: ...
 
         def _output_chunks(
@@ -642,9 +644,8 @@ class MediaOutputDispatchMixin:
         context.assistant_text = ""
         context.provider_complete = False
         context.output_complete_emitted = False
-        # Close the ASR task when playback starts to avoid idle timeout during
-        # half-duplex assistant speech (defect 3: 23-second timeout fix).
-        await context.provider.pause_asr_for_playback(context.identity)
+        if should_pause_asr_for_playback(context.identity):
+            await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, next_fence)
         if not await self.bridge.emit_generation(
             next_fence.session_id,
@@ -871,6 +872,9 @@ class MediaOutputDispatchMixin:
                 deadline = asyncio.timeout(self.output_generation_timeout_s)
                 try:
                     async with deadline:
+                        # Wall-clock duration of a long reply is not a failure.
+                        # `_stream_output` reschedules this deadline on each
+                        # PCM chunk so only a stalled provider/iterator aborts.
                         return await self._stream_output(
                             context,
                             fence.session_id,
@@ -878,6 +882,7 @@ class MediaOutputDispatchMixin:
                             lease,
                             chunks,
                             measure_tts_first_frame=_output_work_uses_tts(work),
+                            stall_deadline=deadline,
                         )
                 except TimeoutError:
                     if not deadline.expired():
