@@ -4503,6 +4503,55 @@ async def test_stalled_output_generation_times_out_and_discards_partial_playback
 
 
 @pytest.mark.asyncio
+async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout() -> None:
+    """Long TTS is paced to realtime; the deadline is a stall watchdog."""
+
+    class SlowProgressProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                for index in range(4):
+                    if index:
+                        await asyncio.sleep(0.04)
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"\x02\x00\x03\x00",
+                        source_start_sample=index * 2,
+                        text="今" if index == 0 else "",
+                        first=index == 0,
+                        final=index == 3,
+                    )
+
+            return chunks()
+
+    bridge = MediaBridgeGrpcServer()
+    provider = SlowProgressProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        output_generation_timeout_s=0.08,
+    )
+    registry.install()
+    identity = SessionIdentity("progressing-output-generation")
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("今天天气怎么样")
+    context.playback.start(fence)
+
+    result = await asyncio.wait_for(
+        registry.generate_reply(identity.session_id, "今天天气怎么样", fence),
+        timeout=1,
+    )
+
+    assert result is True
+    assert context.output_owner is None
+    assert provider.cancelled == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_provider_timeout_error_is_not_reclassified_as_generation_deadline() -> None:
     class ProviderTimeout(FakeMediaProvider):
         def generate_reply(

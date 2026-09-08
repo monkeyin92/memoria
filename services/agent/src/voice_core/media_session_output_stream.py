@@ -50,6 +50,17 @@ def _playback_terminal(event_type: PlaybackEventType) -> bool | None:
     return event_type in {PlaybackEventType.ENDED, PlaybackEventType.ERROR}
 
 
+def _bump_output_stall_deadline(
+    deadline: asyncio.Timeout,
+    timeout_s: float,
+    *,
+    extra_s: float = 0.0,
+) -> None:
+    """Restart the generation stall watchdog after proven output progress."""
+
+    deadline.reschedule(asyncio.get_running_loop().time() + timeout_s + max(0.0, extra_s))
+
+
 def _next_pcm_send_slot(
     *,
     now: float,
@@ -74,6 +85,7 @@ class MediaOutputStreamMixin:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
         reconnect_grace_s: float
+        output_generation_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
         def _event_versions(
@@ -362,6 +374,7 @@ class MediaOutputStreamMixin:
         chunks: AsyncIterator[MediaReplyChunk],
         *,
         measure_tts_first_frame: bool,
+        stall_deadline: asyncio.Timeout,
     ) -> OutputDispatchResult:
         """Send one selected source through the shared owner and PCM ledger."""
 
@@ -374,6 +387,7 @@ class MediaOutputStreamMixin:
         context.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
         try:
             async for chunk in chunks:
+                _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
                 if not self._output_owner_is_current(context, lease):
                     self.metrics.inc_media_stale_generation()
                     await self._abort_unheard_stream(
@@ -399,6 +413,11 @@ class MediaOutputStreamMixin:
                     frame_samples=len(chunk.pcm_s16le) // 2,
                 )
                 if delay_s > 0:
+                    _bump_output_stall_deadline(
+                        stall_deadline,
+                        self.output_generation_timeout_s,
+                        extra_s=delay_s,
+                    )
                     await asyncio.sleep(delay_s)
                     if not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
@@ -540,6 +559,7 @@ class MediaOutputStreamMixin:
                     )
                     context.tts_started_ns = None
                 emitted_audio = True
+                _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
                 if not context.first_audio_observed and context.turn_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "first_audio",

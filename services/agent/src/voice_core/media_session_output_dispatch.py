@@ -163,6 +163,7 @@ class MediaOutputDispatchMixin:
             chunks: Any,
             *,
             measure_tts_first_frame: bool,
+            stall_deadline: asyncio.Timeout,
         ) -> OutputDispatchResult: ...
 
         def _output_chunks(
@@ -871,6 +872,9 @@ class MediaOutputDispatchMixin:
                 deadline = asyncio.timeout(self.output_generation_timeout_s)
                 try:
                     async with deadline:
+                        # Wall-clock duration of a long reply is not a failure.
+                        # `_stream_output` reschedules this deadline on each
+                        # PCM chunk so only a stalled provider/iterator aborts.
                         return await self._stream_output(
                             context,
                             fence.session_id,
@@ -878,6 +882,7 @@ class MediaOutputDispatchMixin:
                             lease,
                             chunks,
                             measure_tts_first_frame=_output_work_uses_tts(work),
+                            stall_deadline=deadline,
                         )
                 except TimeoutError:
                     if not deadline.expired():

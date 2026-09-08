@@ -170,6 +170,10 @@ class AgentSettings(BaseSettings):
         ge=0.1,
         le=300.0,
         alias="MEDIA_OUTPUT_GENERATION_TIMEOUT_S",
+        description=(
+            "Stall watchdog for one generation provider iterator. Each accepted "
+            "PCM chunk resets it; it is not a wall-clock cap on reply duration."
+        ),
     )
     media_owner_silence_timeout_s: float = Field(
         default=10.0,
