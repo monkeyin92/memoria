@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-08
-resume_checkpoint: vocat_interrupt_assist_firmware_flashed_backend_not_cutover
+resume_checkpoint: vocat_interrupt_assist_hello_audio_mode_identity_cutover_awaiting_barge_in_and_expression_test
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -23,9 +23,9 @@ realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
 livekit_room_allowed: false
 current_work_order: vocat_interrupt_assist
-code: in_progress
-wired: local_firmware_flashed_backend_not_cutover
-enabled: false
+code: complete
+wired: agent_bridge_edge_cutover_firmware_flashed
+enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
 verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_cutover
 production_runtime_verified: true
 direct_real_device_verified: false
@@ -41,7 +41,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 硬件验收断点（2026-09-05 21:08 CST；小程序发布状态于 9 月 6 日更新）
 
 ```yaml
-resume_focus: vocat_interrupt_assist_pending_flash_and_aec_probe
+resume_focus: vocat_interrupt_assist_expression_and_barge_in
 work_order: vocat_interrupt_assist
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -87,10 +87,11 @@ direct_real_device_verified: false
 20. **半双工已出声不 flush + lookup 不再并行 LLM 已切流**：源 `3a1133c5cb63f2473556680f01c7c1e56003968d`，标签 `20260905-half-duplex-heard-lookup-v2-agent-component`。联网查询中不另开 conversation_reply；设备 `barge_in=false` 时已出声 owner 不再 preempt。mypy 修了 `heard` 变量冲突。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`。
 21. **天气正文音色绑定已切流**：源 `18ea9c798b87cfca73292586149096088c9c69e2`，标签 `20260905-lookup-voice-bind-agent-component`。音频轮在 `on_turn_committed` 启动查询前先对齐并绑定助手音色；失败则不启动垫话/查询，避免天气结果被新代次丢弃。身份 epoch 轮换保留 companion style。拒绝日志带 `reason=`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-lookup-voice-bind-agent-component-pre-agent/-pre-bridge`。
 23. **长天气 45s 墙钟超时已切流**：源 `fb0311d06d2add524e791d98386cdde808e61165`，标签 `20260908-1300-output-stall-timeout-agent-component`。epoch 1418 天气 `first_frame` 后约 44s 被 `output_timeout` 掐断（`provider_completed=False`），Edge WSS `close_code=1005`，屏上「连接中」后 epoch 1423 自动再播唤醒。根因是下行 PCM 按 24 kHz 实时节奏发送，整代次却套 45s 墙钟。现改为每成功下一帧 PCM 重置超时；卡住仍 abort。门禁 PASS。2026-09-08 13:03 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `_bump_output_stall_deadline`。回滚 `rollback-20260908-1300-output-stall-timeout-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0105-companion-clone-weather-bind-agent-component` / `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`）。**长天气尚未真机复测**。
+24. **hello `audio_mode` 身份比对已切流**：源 `8170117880bbee4097ff1e61cea2af7802677858`，标签 `20260908-1815-hello-audio-mode-identity-agent-component`。`interrupt_assist` 切流后 hello 把 `audio_mode` 写进 Python 会话身份，Edge PCM/VAD protobuf 不含该字段，Bridge 全等失败并掐 gRPC；设备 `dev_atk_a4cb8fd6095c` 停在「连接中」，session `d4f2277e` 约每 5 秒重连（epoch 1640→1880）。现比对忽略 hello-only `audio_mode`，错误 session 仍拒绝。2026-09-08 18:18 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `matches_event_identity`。切流后 identity mismatch=0；epoch **1881** 已 ingest ASR 并以 `conversation_end_explicit` 关闭，之后无 5 秒重连风暴。回滚 `rollback-20260908-1815-hello-audio-mode-identity-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1600-vocat-interrupt-assist-agent-component` / `sha256:eb093dddfb2035d5270b01a15dab5a64c66077ceee1bfb3ca2df4069d99a48d1`）。**屏幕离开「连接中」、表情和 barge-in 尚未操作员确认。**
 
 **下一步（按顺序）**
 
-1. 重新唤醒建立新会话，真机复测**长天气完整播报**（不应在约 45 秒停、不应只听到「稍等我查询一下」、不应掉线进「连接中」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
+1. 看屏幕是否已离开「连接中」。需要时重新唤醒建立新会话，真机复测**长天气完整播报**（不应在约 45 秒停、不应只听到「稍等我查询一下」、不应掉线进「连接中」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
 2. 微信里切到开发版 **0.8.84** 并刷新「我的」与「设备」，检查设备在线/可唤醒状态与首页新文案；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -109,10 +110,10 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260908-1300-output-stall-timeout-agent-component`（源 `fb0311d06d2add524e791d98386cdde808e61165`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260908-1815-hello-audio-mode-identity-agent-component`（源 `8170117880bbee4097ff1e61cea2af7802677858`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260908-1300-output-stall-timeout-agent-component`，revision `fb0311d06d2add524e791d98386cdde808e61165`，image `sha256:fdb5f3d675e8d1780ccd3b180d99dcc66e748df0d90f1b27a4c145dc48f758c5`。两者 **healthy**、restart=0。收据 `/opt/memoria/component-releases/20260908-1300-output-stall-timeout-agent-component/`。回滚 `rollback-20260908-1300-output-stall-timeout-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0105-companion-clone-weather-bind-agent-component` / `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** `direct_real_device_verified` 保持 false。自定义声音唤醒已真机听到；长天气正文待本轮切流后复测。
-- Media Edge：`memoria-media-edge:20260901-0945-wake-word-whitelist`，revision `7ca3d4ec531305d968d67ef1bb13b944e566e4cf`，容器 healthy、`127.0.0.1:8794` 监听。`session.accepted` 已下发 `wake_word_id` / `wake_word_pinyin` / `wake_word_display`。紧邻回滚镜像 `memoria-media-edge:20260825-1730-jasmine-standby-prod-edge-component-v4`（revision `4c3971fef0bfdfc30e9bff742c40ffdd848c0e7c`）；`/tmp/media-runtime.override.yml` 只钉 Media Edge，不再钉 Agent/Bridge。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260908-1815-hello-audio-mode-identity-agent-component`，revision `8170117880bbee4097ff1e61cea2af7802677858`，image `sha256:7e67007b0b7a2bd4c128792675e29198ac60036d2083a779fd3a3db372ae2a0d`。两者 **healthy**、restart=0。容器内 overlay 含 `matches_event_identity`。收据 `/opt/memoria/component-releases/20260908-1815-hello-audio-mode-identity-agent-component/`。回滚 `rollback-20260908-1815-hello-audio-mode-identity-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1600-vocat-interrupt-assist-agent-component` / `sha256:eb093dddfb2035d5270b01a15dab5a64c66077ceee1bfb3ca2df4069d99a48d1`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** 现网设备 `dev_atk_a4cb8fd6095c` 已由 Control 权威路径改为 `audio_mode=interrupt_assist`（settings_version 11→12，`vocat_interrupt_assist_enable`）。Control 镜像仍是 `20260906-1458`，新设备默认值未切。`direct_real_device_verified` 保持 false。
+- Media Edge：`memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component`，容器 healthy、restart=0。override `/tmp/media-runtime.override.yml` 钉该镜像。回滚镜像 `memoria-media-edge:20260901-0945-wake-word-whitelist`；override 备份 `/tmp/media-runtime.override.yml.pre-20260908-1600-vocat-interrupt-assist`。Control SQLite 挂载 `/data <- /var/lib/memoria`，权威库 `/data/memoria.sqlite3`。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
 - Control API：`memoria-control-api:20260906-1458-account-device-discovery-control-api`，overlay revision `4a3b91bfa156f946f67b92e0b0ced17fab108a67`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。2026-09-06 15:11 CST 切流，延迟复核 healthy、restart=0；账号设备发现已返回真实绑定，生产 PG/RLS 只读 canary 通过。13 个非目标容器、有效环境、绑定/角色和声纹未改；自定义声音与合格登记 active 能力保留。紧邻回滚 `memoria-control-api:rollback-20260906-1458-account-device-discovery-control-api-pre-control`（原 `20260906-0048-companion-custom-voice-control-api`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`）。收据 `/opt/memoria/component-releases/20260906-1458-account-device-discovery-control-api/` 下 `cutover.json`、`readonly-canary.json`、`candidate-provider-smoke.json`。栈 env 仍为 `20260901-0945-wake-word-whitelist`；当前 ready 503 与运行配置 404 边界见上节，不据容器 healthy 宣称全链路通过。
@@ -312,9 +313,9 @@ turn_phase_side_effects: forbidden
 direct_real_device_verified: false
 full_duplex_verified: false
 hardware_aec: present_unverified
-code: in_progress
-wired: local_firmware_flashed_backend_not_cutover
-enabled: false
+code: complete
+wired: agent_bridge_edge_cutover_firmware_flashed
+enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
 verified: false
 retired_work_order: half_duplex_investor_demo
 ```
@@ -331,12 +332,12 @@ ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+E
 
 **下一步（按顺序）**
 
-1. 串口确认开机 `Initialized FD AFE` 与 hello `aec_mode=fd_low_cost`。当前板已 app-only 刷到 `/dev/cu.usbmodem101`。
-2. 切 Agent/Bridge + Media Edge。表情和 interrupt_assist 都依赖 Direct Edge 转发；Agent overlay 带不上 Edge。现网设备设置改成 `audio_mode=interrupt_assist`（旧票据不会自行升档）。Control 默认可后切，只影响新设备。
-3. 播 TTS 时采近端残差：有 reference 通道、回声明显下降才算 AEC 接线。未过证不得改 `aec_reference_verified`。
-4. 真机：助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
+1. 确认屏幕已离开「连接中」。旧会话 `d4f2277e` 已在 epoch 1881 关闭；需要时重新唤醒。
+2. 真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。
+3. 助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
+4. 播 TTS 时采近端残差。未过证不得改 `aec_reference_verified`。
 5. 长天气完整播报与主人匹配仍待复测，不要放宽 `reject_non_owner_voice`。
-6. T1–T14 过了再谈 `full_duplex_verified`。
+6. Control 默认镜像可后切，只影响新设备。T1–T14 过了再谈 `full_duplex_verified`。
 
 **勿做**：宣传全双工；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用。
 
