@@ -37,14 +37,14 @@
 
 ## 本周约束
 
-- 扫描日期：2026-09-07。本轮新增 R-20260907-01（LiveKit Agents 1.8.0 升级评估）、R-20260907-02（VoCat 下一 SKU，勿混入 ATK 半双工）、R-20260907-03（SiphonAI 协议/运维借鉴）、R-20260907-04（电话入线 sidecar，长期）、R-20260907-05（不做：用 siphon-ai 替换 Go Edge / 现板 auto_clear）。2026-09-06 产品工作仍是 R-20260906-01。R-20260904-01..03 已在 main（草稿 PR #9 未走 GitHub 合并，内容由 `5760dcb` 补回）。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。大型个人信息处理者征求意见稿反馈窗口于 2026-09-07 截止，盯正式文本。
-- 当前出货 SKU 只允许受控半双工；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。
+- 扫描日期：2026-09-08。本轮新增 R-20260908-01（ES8388 供应链 EOL → 加速 VoCat，勿深改现板 ALC/AEC）。LiveKit ESP32 定制硬件指南并入 R-20260907-02，不另开 id。加强：R-20260907-01（1.8.0 含 #7064/#6865/#7104 OTel/PII）、R-20260907-02（VoCat 顺序与档案终端叙事）、R-20260903-03（征求意见截止已过，仍无定稿）、FunASR 钉档、U1、JUOS、Plaud One、Seed-TTS schema。NEW_LAW_IDS 空。云端 FunASR 仍钉 ≥1.4.14（无 1.4.15/1.5）；sidecar 仍 ≥1.3.29。
+- 当前出货 / 投资人 demo SKU 只允许受控半双工（ATK ES8388 1-mic，无 AEC）；设备会话 `barge_in_enabled=false`，`interruptions_enabled=false`。不得在现板开 barge-in / 全双工 / AEC。
 - 对外口径 `advertised_duplex_level=none`。未完成真实 AEC、双讲和连续轮次验收前，不得宣称全双工或持续聆听。`direct_real_device_verified` 仍为 false。
 - 唤醒词默认「茉莉」，已支持白名单切换 / MultiNet 自定义词。安静环境阶段 4 已有 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。不要开播放期 KWS。
-- 现板无 AEC reference；hello 必须 `aec_mode=none`。换 AEC 板属于阶段 8，不要混进半双工 demo 工单。xiaozhi #2036 截至 2026-09-04 仍 open（最后活动 2026-07-07）。不得用 ESP-SR `AEC_MODE_SR_*` 宣称双工或 barge-in。下一硬件 SKU 路径是 VoCat（喵伴/EchoEar，ES7210+ES8311 双麦），与 ATK 半双工 demo 分轨；见 R-20260907-02。官方全双工定位不得抄进现板。
-- ES8388 PGA 已到 21 dB（2026-09-02）；下一步才是 ALC / noise gate。DTLN makeup 已冻结 `8.0×`，不要再抬。
-- 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。BOOT 是唯一硬停。LiveKit Agents PyPI 已到 1.8.0（2026-09-05）；现 SKU 必须显式 `interruption.enabled=False` 与 `preemptive_generation.enabled=False`；不要开 `user_turn_limit` 或 `expressive=True`。升级评估见 R-20260907-01。
-- 云端 FunASR 钉 ≥1.4.14（见 R-20260904-01）；sidecar 仍 ≥1.3.29。H5 已移除；控制面只留小程序绑定 / 回顾 / 我的。
+- 现板无 AEC reference；hello 必须 `aec_mode=none`。换 AEC 板属于阶段 8，不要混进半双工 demo 工单。xiaozhi #2036 截至 2026-09-04 仍 open（最后活动 2026-07-07）。不得用 ESP-SR `AEC_MODE_SR_*` 宣称双工或 barge-in。下一硬件 SKU 路径是 VoCat（喵伴/EchoEar，ES7210+ES8311 双麦），与 ATK 半双工 demo 分轨；见 R-20260907-02。固件树已有 VoCat overlay，仍按买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in；官方全双工定位与圆屏萌宠叙事不得抄进现板或对外档案终端故事。ES8388 停产风险见 R-20260908-01。
+- ES8388 PGA 已到 21 dB（2026-09-02）。因 EOL 风险，不要在 ES8388 上深改 ALC/AEC；ATK 只做 demo。DTLN makeup 已冻结 `8.0×`，不要再抬。
+- 陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。BOOT 是唯一硬停。LiveKit Agents PyPI 仍 1.8.0（2026-09-05）；现 SKU 必须显式 `interruption.enabled=False` 与 `preemptive_generation.enabled=False`；不要开 `user_turn_limit` 或 `expressive=True`。升级评估见 R-20260907-01（含 #7104 OTel/PII）。#7064 已进 1.8.0，不再当「等下一版」观察项。
+- 云端 FunASR 钉 ≥1.4.14（见 R-20260904-01）；sidecar 仍 ≥1.3.29。H5 已移除；控制面只留小程序绑定 / 回顾 / 我的。微信个人 bot API 不是小程序控制面，见 R-20260831-14。
 
 ---
 
@@ -66,44 +66,44 @@
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：空转写仍在真机路径上出现。FunASR v1.3.29（2026-07-24）修的是无标点模型时 `sentence_info` 空时间轴；llama.cpp v0.2.4（2026-08-29）修的是 GGUF SenseVoice 空白，是另一条路径，不能当成云端 FunASR 已关闭。sidecar 仍钉 FunASR ≥1.3.29；云端 FunASR 钉路径见 R-20260904-01（≥1.4.14）；R-20260903-01 的 1.4.13 是前一档。
 - 建议下一步：按 empty+vendor_error / empty+silent / empty+gating / low_rms 分账。同一切片不要再改 VAD。sidecar 空时间轴先核 FunASR 版本。云端钉 ≥1.4.14。不要为对齐 ASR 终点去拧设备 VAD（#3591 已接受最多一个 decode chunk 的 VAD overrun）。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/runtime-llamacpp-v0.2.4 ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29 ；https://github.com/modelscope/FunASR/releases/tag/v1.4.4 ；https://github.com/modelscope/FunASR/releases/tag/v1.4.9 ；https://github.com/modelscope/FunASR/releases/tag/v1.4.12 ；https://github.com/modelscope/FunASR/releases/tag/v1.4.13 ；https://github.com/modelscope/FunASR/releases/tag/v1.4.14 ；https://github.com/modelscope/FunASR/pull/3591
-- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。2026-09-01 sidecar 应钉 FunASR ≥1.3.29；llama.cpp v0.2.4 与云端 FunASR 空转写分账。2026-09-02 云端 FunASR 钉 ≥1.4.12（R-20260902-01），sidecar 仍 ≥1.3.29。2026-09-01 rescue 不得覆盖真实 final；empty 分账拆 vendor_error / silent；SenseVoice `language=zh`；`pause_asr_for_playback` 防 23s timeout。2026-09-03 FunASR v1.4.13（2026-09-02 15:12 CST）#3591 修「完整 partial 被锁成哎」；云端钉见 R-20260903-01。sidecar 仍 ≥1.3.29。2026-09-04 云端钉路径见 R-20260904-01（≥1.4.14）；sidecar 仍 ≥1.3.29。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5；云端钉 ≥1.4.14 不变。
+- 开发备注：2026-08-31 Agent 侧已加 `funasr_empty_accounting` 分账与 `funasr_empty_transcript_total` 指标；真机 receipt 仍待补。2026-09-01 sidecar 应钉 FunASR ≥1.3.29；llama.cpp v0.2.4 与云端 FunASR 空转写分账。2026-09-02 云端 FunASR 钉 ≥1.4.12（R-20260902-01），sidecar 仍 ≥1.3.29。2026-09-01 rescue 不得覆盖真实 final；empty 分账拆 vendor_error / silent；SenseVoice `language=zh`；`pause_asr_for_playback` 防 23s timeout。2026-09-03 FunASR v1.4.13（2026-09-02 15:12 CST）#3591 修「完整 partial 被锁成哎」；云端钉见 R-20260903-01。sidecar 仍 ≥1.3.29。2026-09-04 云端钉路径见 R-20260904-01（≥1.4.14）；sidecar 仍 ≥1.3.29。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5；云端钉 ≥1.4.14 不变。2026-09-08 PyPI 仍 `funasr==1.4.14`，`numpy<2`；无 1.4.15+。NO_CHANGE。
 
 ### R-20260831-03 远场先动 ES8388 模拟，DTLN makeup 已冻结
 
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-09-03
-- 为何现在相关：2026-09-02 已把 ES8388 PGA 从 18 dB 刷到 21 dB；30–60 cm 正常音量 DTLN 后 RMS 约 939/764，两轮可 commit+播报。数字侧 DTLN makeup 仍冻结 8.0×，再抬会削波或假装远场已解决。
-- 建议下一步：PGA 21 dB 已落地。下一步才是 ES8388 ALC + noise gate，或对比 tap WAV 的 pre/post DTLN。不要再抬 DTLN，也不要为远场去开 barge-in。
-- 来源：https://docs.espressif.com/projects/esp-adf/en/latest/api-reference/abstraction/es8388.html
-- 开发备注：2026-09-03 HANDOFF：PGA 21 dB 已刷写；远场若仍低 RMS，先 ALC/noise gate，不抬 DTLN。状态仍「待评估」（ALC 未做）。
+- 最近更新：2026-09-08
+- 为何现在相关：2026-09-02 已把 ES8388 PGA 从 18 dB 刷到 21 dB；30–60 cm 正常音量 DTLN 后 RMS 约 939/764，两轮可 commit+播报。数字侧 DTLN makeup 仍冻结 8.0×，再抬会削波或假装远场已解决。ES8388 另有 2026 停产风险，见 R-20260908-01。
+- 建议下一步：PGA 21 dB 已落地。不要在 ES8388 上深改 ALC/AEC；远场若仍低 RMS，只对比 tap WAV pre/post DTLN，或把精力转到 VoCat（R-20260907-02）。不要再抬 DTLN，也不要为远场去开 barge-in。
+- 来源：https://docs.espressif.com/projects/esp-adf/en/latest/api-reference/abstraction/es8388.html ；https://github.com/espressif/esp-adf/issues/1539
+- 开发备注：2026-09-03 HANDOFF：PGA 21 dB 已刷写；远场若仍低 RMS，先 ALC/noise gate，不抬 DTLN。状态仍「待评估」（ALC 未做）。2026-09-08：因 #1539 经销商称 ES8388 将于 2026 停产，ALC 不再作为现板长期投入；ATK 只做 demo。
 
 ### R-20260831-04 陪伴感靠 generation fence，不靠抢话
 
 - 类别：语音
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：半双工 SKU 不能靠 barge-in 制造“在听”。对照 LiveKit agents #6451（`allow_interruptions=False`）：丢掉 thinking 中的旧 generation，比抢话更接近陪伴感。LiveKit `TurnHandlingOptions`：`interruption.enabled=False` + `preemptive_generation.enabled=False`；#6858 已由 #6865 于 2026-09-01 合入 livekit/agents main；#7016 于 2026-09-02 关闭（重复）。PyPI 现为 livekit-agents@1.8.0（2026-09-05）；changelog 含 #6865 与 #7064。文档仍默认 interruption/preemptive 为开。Adaptive interruption 是 Cloud 向 barge-in 模型，现 SKU 不得启用。
 - 建议下一步：屏上 idle / listening / speaking 可做。BOOT 仍是唯一硬停。半双工显式关打断与抢跑，见 R-20260902-02。1.7.1→1.8.0 升级评估见 R-20260907-01。不要因为 #6858/#6865 已进发行版就打开 preemptive_generation 或 user_turn_limit。
 - 来源：https://github.com/livekit/agents/pull/6451 ；https://docs.livekit.io/reference/agents/turn-handling-options/ ；https://github.com/livekit/agents/issues/7016 ；https://github.com/livekit/agents/issues/6858 ；https://github.com/livekit/agents/pull/6865 ；https://pypi.org/project/livekit-agents/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0
-- 开发备注：2026-09-02 半双工要对齐 LiveKit `turn_handling`：关打断、关抢跑；#7016 仍 open，不要把默认全双工选项抄进现 SKU。2026-09-03 #6858 已关（#6865 merged）；#7016 关闭为重复。未进 1.7.1。现 SKU 仍关打断与抢跑。不要开 LiveKit `expressive=True`（1.7.0 emotion tags，踩拟人化办法）。2026-09-04 仍无发行 >1.7.1；文档仍默认 interruption/preemptive 开；半双工围栏不变。Watch #7064 等下一版再评，且勿因此开 barge-in。2026-09-07 PyPI 1.8.0（2026-09-05）已含 #6865 与 #7064（有 NC 时默认关 AGC）。现 SKU 围栏不变。#7064 只对后续 VoCat/NC 路径有参考，勿因此开 barge-in。升级评估见 R-20260907-01。
+- 开发备注：2026-09-02 半双工要对齐 LiveKit `turn_handling`：关打断、关抢跑；#7016 仍 open，不要把默认全双工选项抄进现 SKU。2026-09-03 #6858 已关（#6865 merged）；#7016 关闭为重复。未进 1.7.1。现 SKU 仍关打断与抢跑。不要开 LiveKit `expressive=True`（1.7.0 emotion tags，踩拟人化办法）。2026-09-04 仍无发行 >1.7.1；文档仍默认 interruption/preemptive 开；半双工围栏不变。Watch #7064 等下一版再评，且勿因此开 barge-in。2026-09-07 PyPI 1.8.0（2026-09-05）已含 #6865 与 #7064（有 NC 时默认关 AGC）。现 SKU 围栏不变。#7064 只对后续 VoCat/NC 路径有参考，勿因此开 barge-in。升级评估见 R-20260907-01。2026-09-08：#7064 已合入 livekit-agents 1.8.0，不再是「等下一版」观察项。#7104 OTel/PII 见 R-20260907-01。半双工围栏不变。
 
 ### R-20260831-05 下一块 AEC 板：立创实战派优先
 
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：现板 ATK 无 reference，hello 必须 `aec_mode=none`。xiaozhi #2036 仍开着（2026-09-04 复核：仍 open，最后活动 2026-07-07，无新评论）。硬件 MIC3 回灌不等于 AFE 吃到参考通道。买板不能假定 MIC3 loopback 已可用，还要核 `channel_mask` 与 `aec_ref_type`（EXTERNAL_ADC vs INTERNAL）。VoCat（喵伴/EchoEar）是另一条下一 SKU 工作流，见 R-20260907-02，不要和立创阶段 8 或现 ATK demo 混单。
 - 建议下一步：立创实战派（ES7210 MIC3 loopback）优先，BOX-3 其次，XMOS 更后。买板要自验 MIC3 是否进入 AEC reference。阶段 8 才买/刷 AEC 板；半双工 demo 工单不要混进新板。VoCat 全双工定位不得抄进 ATK。
 - 来源：https://wiki.lckfb.com/zh-hans/szpi-esp32s3/beginner/introduction.html ；https://github.com/78/xiaozhi-esp32/issues/2036 ；https://www.cnblogs.com/wangya216/p/19455146
-- 开发备注：2026-09-03 xiaozhi #2036 无新评论。阶段 7 剧本已锁定，换板仍是阶段 8。2026-09-04 xiaozhi #2036 仍 open，最后活动 2026-07-07，无新评论。2026-09-07 xiaozhi #1179（2025 ES8388 AEC 板）是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。VoCat 分轨见 R-20260907-02。
+- 开发备注：2026-09-03 xiaozhi #2036 无新评论。阶段 7 剧本已锁定，换板仍是阶段 8。2026-09-04 xiaozhi #2036 仍 open，最后活动 2026-07-07，无新评论。2026-09-07 xiaozhi #1179（2025 ES8388 AEC 板）是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。VoCat 分轨见 R-20260907-02。2026-09-08：ES8388 停产风险（R-20260908-01）是采购理由，不是在 ATK 开 AEC/barge-in 的理由。下一主路径仍是 VoCat，立创阶段 8 备选不变。
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
 
@@ -136,11 +136,11 @@
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-08-31
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：公开价位夹在小智克隆 ¥87–199 与萤石 RK3 标准 ¥1299 / 适老 ¥2499 之间。钉钉 A1 约 ¥499/799、A1 Pro 约 ¥1299、安克×飞书约 ¥899；对照 Bubbo 主动陪伴。萤石 RK3 ¥1299/2499 避开（7 寸数字人 / 适老看护）。
 - 建议下一步：公开故事写成「家庭桌面记忆终端 / 声纹档案音箱」。不是 7 寸数字人、跌倒看护或智家中枢。按需档案带见 R-20260902-05；Bubbo 反定位见 R-20260902-06。
 - 来源：https://www.ys7.com/item/1004165.html ；https://www.ys7.com/item/927621.html ；https://www.donews.com/article/detail/8612/95906.html ；http://finance.people.com.cn/n1/2026/0822/c1004-40784302.html
-- 开发备注：2026-09-02 价格带对照钉钉 A1 / 安克×飞书录音+转写订阅，不对照 RK3 适老看护或 Bubbo 常在情感。2026-09-04 万元级人形交付日历：优必选 U1 红星资本局（2026-09-03）称 MedTech 奖、首批约 9/16 交付、京东 Pro 约 9/15 后有货/客服预售约 60 天发货、可退定金质疑。不是档案终端样板。https://www.163.com/dy/article/L5U2PKT60511U82T.html 2026-09-07：U1 首批交付窗口约 2026-09-16 临近。网易 2026-08 中旬分析：H1 工业人形收入强，消费 U1 预售转化/退定金风险仍开；Lite 11.98 万起。memoria 反定位是 ¥2000–4000 桌面档案+陪伴语音，不是 11.98 万+ 人形。https://www.163.com/dy/article/L5G0HRMD0519MB19.html
+- 开发备注：2026-09-02 价格带对照钉钉 A1 / 安克×飞书录音+转写订阅，不对照 RK3 适老看护或 Bubbo 常在情感。2026-09-04 万元级人形交付日历：优必选 U1 红星资本局（2026-09-03）称 MedTech 奖、首批约 9/16 交付、京东 Pro 约 9/15 后有货/客服预售约 60 天发货、可退定金质疑。不是档案终端样板。https://www.163.com/dy/article/L5U2PKT60511U82T.html 2026-09-07：U1 首批交付窗口约 2026-09-16 临近。网易 2026-08 中旬分析：H1 工业人形收入强，消费 U1 预售转化/退定金风险仍开；Lite 11.98 万起。memoria 反定位是 ¥2000–4000 桌面档案+陪伴语音，不是 11.98 万+ 人形。https://www.163.com/dy/article/L5G0HRMD0519MB19.html 2026-09-08：红星资本局 2026-09-03 仍有效——MedTechWorldAwards2026 获奖、9/16 首批交付临近、京东约 60 天发货、可退 3000 定金质疑；6/30 以来股价回撤 >20%。反定位不变，不新开 U1 id。
 
 ### R-20260831-09 投资人 3 分钟剧本卖证据档案
 
@@ -206,11 +206,11 @@
 - 类别：合规
 - 状态：已完成
 - 首次写入：2026-08-31
-- 最近更新：2026-09-02
+- 最近更新：2026-09-08
 - 为何现在相关：小程序 GTM 必须落在控制面，不承诺微信实时语音。微信 iLink 设备页可跳到厂商小程序控制面板（产品注册填 appid + page_path），不是微信实时语音通道。
 - 建议下一步：配网 / 选角 / 声纹在设备录、微信确认、学生账号、静音、回顾与导出。家庭共享。设备页 → 小程序，不承诺微信实时语音。
 - 来源：https://cloud.tencent.com/solution/smart-living ；https://iot.weixin.qq.com/doc
-- 开发备注：2026-08-31 已裁至绑定 + 回顾 + 我的三 Tab；移除 home 实时语音与 H5 跳转。2026-09-02 微信 iLink 设备页落到小程序控制面，不据此开实时语音。
+- 开发备注：2026-08-31 已裁至绑定 + 回顾 + 我的三 Tab；移除 home 实时语音与 H5 跳转。2026-09-02 微信 iLink 设备页落到小程序控制面，不据此开实时语音。2026-09-08：个人微信 bot API（含 iLink/ClawBot 类个人号通道）不是小程序控制面，不另开 memoria 产品路径。官方小程序定价/SKU 无变化。
 
 ---
 
@@ -298,22 +298,22 @@
 - 类别：合规
 - 状态：待评估
 - 首次写入：2026-09-01
-- 最近更新：2026-09-03
-- 为何现在相关：CAC 2026-01-10《互联网应用程序个人信息收集使用规定（征求意见稿）》第十五条：人脸/指纹/声纹须特定目的、最小必要；除法定或单独同意外应存于生物识别设备内、不得经互联网外传。第三十八条把小程序算进互联网应用程序。这与已落地的 AI 标识 + 2h 提醒不是同一层。仍是征求意见稿。CAC 令第25号（《小型个人信息处理者个人信息保护简化措施规定》）2026-09-01 已生效；处理声纹等敏感个人信息仍要单独同意，简化措施不免除声纹单独同意。2026-09-03《大型个人信息处理者个人信息保护规定（征求意见稿）》评论仍开至 2026-09-07，认定含处理 1000 万以上自然人个人信息；正式规章未出。当前 SKU 按令第25号小型处理者路径，见 R-20260903-03。
+- 最近更新：2026-09-08
+- 为何现在相关：CAC 2026-01-10《互联网应用程序个人信息收集使用规定（征求意见稿）》第十五条：人脸/指纹/声纹须特定目的、最小必要；除法定或单独同意外应存于生物识别设备内、不得经互联网外传。第三十八条把小程序算进互联网应用程序。这与已落地的 AI 标识 + 2h 提醒不是同一层。仍是征求意见稿。CAC 令第25号（《小型个人信息处理者个人信息保护简化措施规定》）2026-09-01 已生效；处理声纹等敏感个人信息仍要单独同意，简化措施不免除声纹单独同意。2026-09-03《大型个人信息处理者个人信息保护规定（征求意见稿）》反馈窗口已于 2026-09-07 截止，截至 2026-09-08 仍无定稿，见 R-20260903-03。认定含处理 1000 万以上自然人个人信息。当前 SKU 按令第25号小型处理者路径。
 - 建议下一步：默认云端只存转写+记忆条目；原始 wav/特征不长期留、不用于声纹登录。小程序不要为回顾开实时麦。隐私政策拆：对话文本 / 原始音频 / 是否训练。声纹单独同意，不因令第25号简化而并入一般同意。
 - 来源：https://www.cac.gov.cn/2026-01/10/c_1769603446094128.htm ；https://www.cac.gov.cn/2026-01/09/c_1769688003183197.htm ；https://www.news.cn/politics/20260110/f08e925cb322436ca77d39962bd704aa/c.html ；https://www.cac.gov.cn/2026-07/24/c_1786638889704872.htm ；https://www.cac.gov.cn/2026-07/24/c_1786638889443160.htm ；https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm
-- 开发备注：2026-09-02 CAC 令第25号 2026-09-01 生效；声纹仍要单独同意。合规无新法规号，本条只加强已有档案分级。2026-09-03 大型处理者征求意见未转正；声纹仍要单独同意。
+- 开发备注：2026-09-02 CAC 令第25号 2026-09-01 生效；声纹仍要单独同意。合规无新法规号，本条只加强已有档案分级。2026-09-03 大型处理者征求意见未转正；声纹仍要单独同意。2026-09-08：大型处理者征求意见截止已过，仍无定稿；无新声纹专规。盯 R-20260903-03。
 
 ### R-20260901-09 2026-04 标识执法落到导出文件的显式+隐式元数据
 
 - 类别：合规
 - 状态：待评估
 - 首次写入：2026-09-01
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：CAC 2026-04-28 对剪映/猫箱/即梦约谈处罚，依据含《人工智能生成合成内容标识办法》（2025-09-01 施行）。导出未加用户可感知显式标识、文件元数据未含隐式标识。小程序回顾/导出是用户语音+模型回复混合物；R-09 demo 若可下载，执法点在文件。豆包 Seed-TTS 已提供 `aigc_watermark` + `aigc_metadata` 可抄。
 - 建议下一步：导出 JSON/音频包里模型侧显式「AI 生成」；元数据写服务提供者+内容编号。用户原话与合成 TTS 分轨或分字段。TTS 合成对齐 `aigc_watermark` + `aigc_metadata`。豆包 Seed-Audio 1.0（2026-06-23 FORCE）是端到端 prompt→对白+BGM+SFX，方舟 API 邀测，不是实时 Seed-TTS 对话主路径；只可作后期档案/故事/配音实验。
 - 来源：https://www.cac.gov.cn/2026-04/28/c_1779119736411711.htm ；https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm ；https://docs.volcengine.com/docs/6561/1598757 ；https://www.ithome.com/0/967/748.htm ；https://developer.volcengine.com/articles/7667459245423788075
-- 开发备注：2026-09-02 豆包 Seed-TTS 用 `aigc_watermark` + `aigc_metadata` 做显式节奏标识与文件头隐式元数据。2026-09-04 清朗二阶段继续压 AI 标识落地；Seed-TTS 导出路径仍对齐 aigc_watermark + aigc_metadata（API 无新字段）。对照 R-20260831-13。2026-09-07 Seed-Audio 1.0（IT之家 2026-06-24 / 火山 2026-06-23 FORCE）端到端生成对白+BGM+SFX，方舟邀测；明确「非实时对话主路径」，不替换 Seed-TTS。清朗二阶段进展点名豆包/元宝/千问/文心一言标识落地，非正式规章。https://www.cs.com.cn/xwzx/01/2026/09/02/detail_2026090210036393.html
+- 开发备注：2026-09-02 豆包 Seed-TTS 用 `aigc_watermark` + `aigc_metadata` 做显式节奏标识与文件头隐式元数据。2026-09-04 清朗二阶段继续压 AI 标识落地；Seed-TTS 导出路径仍对齐 aigc_watermark + aigc_metadata（API 无新字段）。对照 R-20260831-13。2026-09-07 Seed-Audio 1.0（IT之家 2026-06-24 / 火山 2026-06-23 FORCE）端到端生成对白+BGM+SFX，方舟邀测；明确「非实时对话主路径」，不替换 Seed-TTS。清朗二阶段进展点名豆包/元宝/千问/文心一言标识落地，非正式规章。https://www.cs.com.cn/xwzx/01/2026/09/02/detail_2026090210036393.html 2026-09-08：火山文档 schema 未变（`additions.aigc_watermark` bool 默认 false；`aigc_metadata.enable`）。无新字段。无新清朗法规号 / AIGC 国标。
 
 ### R-20260901-10 华泰 2026-08：平价硬件 + 轻订阅 + 配件/家居，不是 LOVOT 强制月费
 
@@ -357,11 +357,11 @@
 - 类别：产品技术
 - 状态：待评估
 - 首次写入：2026-09-02
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：半双工 SKU 不能抄 LiveKit 默认全双工。`TurnHandlingOptions` 要把 `interruption.enabled=False` 与 `preemptive_generation.enabled=False` 写死。#6858 已由 #6865 于 2026-09-01 合入 main；#7016 于 2026-09-02 关闭（重复）。PyPI 现为 livekit-agents@1.8.0（2026-09-05），changelog 含 #6865 与 #7064。文档仍默认打断/抢跑为开，并有 `user_turn_limit`（超时抢话）——现 SKU 不要设。
 - 建议下一步：对照现会话 `barge_in_enabled=false` / `interruptions_enabled=false`，在 Voice Core 配置里显式关打断与抢跑。1.7.1→1.8.0 升级评估见 R-20260907-01。不要启用 `user_turn_limit` 或 `expressive=True`。不要因为发行版带上 #6865/#7064 就抄默认全双工。
 - 来源：https://docs.livekit.io/reference/agents/turn-handling-options/ ；https://github.com/livekit/agents/issues/7016 ；https://github.com/livekit/agents/issues/6858 ；https://github.com/livekit/agents/pull/6865 ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.7.1 ；https://pypi.org/project/livekit-agents/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0 ；https://github.com/livekit/agents/pull/7064
-- 开发备注：2026-09-03 文档渲染仍默认全双工选项；#6858 修在 main 不在 1.7.1。半双工围栏不变。2026-09-04 仍无发行 >1.7.1；文档仍默认 interruption/preemptive 开；半双工围栏不变。Watch #7064 等下一版再评，且勿因此开 barge-in。2026-09-07 1.8.0 已含 #6865 与 #7064（NC 时默认关 AGC）。现 SKU 仍关打断与抢跑。#7064 只对 VoCat/NC 路径有参考。
+- 开发备注：2026-09-03 文档渲染仍默认全双工选项；#6858 修在 main 不在 1.7.1。半双工围栏不变。2026-09-04 仍无发行 >1.7.1；文档仍默认 interruption/preemptive 开；半双工围栏不变。Watch #7064 等下一版再评，且勿因此开 barge-in。2026-09-07 1.8.0 已含 #6865 与 #7064（NC 时默认关 AGC）。现 SKU 仍关打断与抢跑。#7064 只对 VoCat/NC 路径有参考。2026-09-08：#7064 已合入 1.8.0，关闭「等下一版」观察。半双工仍 `interruption.enabled=False` + `preemptive_generation.enabled=False`。#7104 见 R-20260907-01。
 
 ### R-20260902-03 半双工三态 UX：空闲 / 聆听 / 播报（对讲机模式对标）
 
@@ -390,11 +390,11 @@
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-02
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：钉钉 A1 约 ¥499/799、A1 Pro 约 ¥1299、安克×飞书约 ¥899，卖的是录音入口 + 转写时长订阅。萤石 RK3 ¥1299/2499 是 7 寸数字人/适老看护，避开。
 - 建议下一步：公开价与订阅对齐按需档案带：硬件一次性 + 档案容量/席位/导出。不要卖常开陪伴月费。对照 R-20260831-08 / R-20260901-10。
 - 来源：https://www.donews.com/article/detail/8612/95906.html ；https://www.ys7.com/item/927621.html ；https://techcrunch.com/2026/08/27/plauds-new-earphones-come-with-an-esim-enabled-case-for-talking-to-ai-agents/ ；https://www.plaud.ai/blogs/news/plaud-one-ai-earbuds-sell-out-us-pre-sale-in-one-day
-- 开发备注：2026-09-03 奥维 2026Q2 份额仍未公开。2026-06 618 钉钉 A1 天猫/抖音/京东 AI 录音设备销量第一（量子位），不替代 Q1 额 1.4 亿 / 量 39.4 万 / PLAUD 份额 7.3% 这组数。来源 https://www.qbitai.com/2026/06/437308.html 2026-09-04：奥维 Q2 份额仍未公开；价格锚无新调价。Plaud One：IT之家 2026-09-01 机智连接 $249.99≈¥1684、限量 2000；官网发货区 US/FR/DE/UK/IT/ES/CA/NL，无中国大陆零售；Q4 发货。守桌面不跟耳机 Agent。2026-09-07：Plaud One Explorer Edition $249.99 / 2000 台美国预售已售罄（TechCrunch 2026-08-27；Plaud 官方 blog 称一日售罄）。9/4–9/7 扫描仍无中国大陆零售路径。钉钉 A1 / 安克×飞书 / 讯飞 / Bubbo / 二白Mini 官方定价无新 SKU。
+- 开发备注：2026-09-03 奥维 2026Q2 份额仍未公开。2026-06 618 钉钉 A1 天猫/抖音/京东 AI 录音设备销量第一（量子位），不替代 Q1 额 1.4 亿 / 量 39.4 万 / PLAUD 份额 7.3% 这组数。来源 https://www.qbitai.com/2026/06/437308.html 2026-09-04：奥维 Q2 份额仍未公开；价格锚无新调价。Plaud One：IT之家 2026-09-01 机智连接 $249.99≈¥1684、限量 2000；官网发货区 US/FR/DE/UK/IT/ES/CA/NL，无中国大陆零售；Q4 发货。守桌面不跟耳机 Agent。2026-09-07：Plaud One Explorer Edition $249.99 / 2000 台美国预售已售罄（TechCrunch 2026-08-27；Plaud 官方 blog 称一日售罄）。9/4–9/7 扫描仍无中国大陆零售路径。钉钉 A1 / 安克×飞书 / 讯飞 / Bubbo / 二白Mini 官方定价无新 SKU。2026-09-08：Plaud One 仍 $249.99 / 约 ¥1684、限量 2000；官网发货区仍 US/FR/DE/UK/IT/ES/CA/NL，无中国大陆零售。NO_CHANGE。
 
 ### R-20260902-06 Bubbo / 主动陪伴竞品：写成常在情感的反定位
 
@@ -416,11 +416,11 @@
 - 类别：语音
 - 状态：待评估
 - 首次写入：2026-09-03
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：FunASR v1.4.13 于 2026-09-02 15:12 CST 发布，叠在 1.4.12 长段 partial 保留之上。#3591 接受 decode 终点最多晚于 VAD 终点一个 realtime chunk（reporter 236 ms：partial 114430–126976 ms vs VAD 126740 ms；此前完整 partial 被锁成「哎」）。PyPI 核心依赖钉 `numpy<2`，防止 NumPy 2 ABI 导入失败。云端钉 ≥1.4.13；sidecar 仍钉 ≥1.3.29，见 R-20260831-02。不要把 Fun-ASR-Nano vLLM / Qwen3-ASR 示例当成现 SKU 实时路径（无 GPU、不上 ESP32）。
 - 建议下一步：云端 `funasr>=1.4.13` 且 lock `numpy<2`。不要为对齐 ASR 终点去拧设备 VAD。sidecar 不要跟升，除非先核 SenseVoice 时间轴。2026-09-04 后继 v1.4.14，云端改钉见 R-20260904-01；1.4.13 的 #3591/numpy 仍有效且被包含。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/v1.4.13 ；https://github.com/modelscope/FunASR/pull/3591 ；https://pypi.org/project/funasr/1.4.13/
-- 开发备注：2026-09-04 后继 v1.4.14，云端改钉见 R-20260904-01；1.4.13 的 #3591/numpy 仍有效且被包含。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5。
+- 开发备注：2026-09-04 后继 v1.4.14，云端改钉见 R-20260904-01；1.4.13 的 #3591/numpy 仍有效且被包含。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5。2026-09-08 PyPI 仍 `funasr==1.4.14`，`numpy<2`；无 1.4.15+。NO_CHANGE。
 
 ### R-20260903-02 二白Mini：声纹认主+生命模块是拟人化反例，不是档案门禁样板
 
@@ -433,16 +433,16 @@
 - 来源：https://www.36kr.com/p/3608882030593282 ；https://finance.sina.com.cn/tech/roll/2026-01-12/doc-inhfzysp6769203.shtml
 - 开发备注：
 
-### R-20260903-03 《大型个人信息处理者个人信息保护规定（征求意见稿）》评论至 2026-09-07；当前按小型处理者
+### R-20260903-03 《大型个人信息处理者个人信息保护规定（征求意见稿）》征求意见截止已过，仍无定稿；当前按小型处理者
 
 - 类别：合规
 - 状态：待评估
 - 首次写入：2026-09-03
-- 最近更新：2026-09-07
-- 为何现在相关：网信办 2026-08-07 征求意见，意见反馈截止 2026-09-07 **当日**。认定条件含处理 1000 万以上自然人个人信息。正式规章未出。现行令第25号（《小型个人信息处理者个人信息保护简化措施规定》）2026-09-01 已生效；声纹等敏感个人信息仍要单独同意。当前 SKU 不要按千万级「守门人 / 外部监督委员会」扩编合规组织。
-- 建议下一步：反馈窗口今日关闭后只盯正式文本或认定口径，不要另开法规 id。用户规模远低于 1000 万时继续令第25号简化路径，声纹单独同意不并入一般同意。清单化告知与敏感个人信息单独同意仍有架构卫生价值。对照 R-20260901-08。
-- 来源：https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm ；http://legalinfo.moj.gov.cn/pub/sfbzhfx/zhfxfzzx/fzzxyw/202608/t20260808_538357.html
-- 开发备注：2026-09-04：征求意见仍开至 2026-09-07；无正式规章/延期公告。2026-09-07：官方通知反馈截止仍为今日；扫描未见正式规章、延期公告或新法规号。memoria 远低于 1000 万 PII 门槛。令第25号声纹单独同意已生效，无新声纹专规 / 未成年人陪伴专法 / 静音摄像指示灯强制。
+- 最近更新：2026-09-08
+- 为何现在相关：网信办 2026-08-07 征求意见，意见反馈截止 2026-09-07。截至 2026-09-08 扫描：征求意见截止已过，仍无定稿、延期公告或认定口径。认定条件含处理 1000 万以上自然人个人信息。现行令第25号（《小型个人信息处理者个人信息保护简化措施规定》）2026-09-01 已生效；声纹等敏感个人信息仍要单独同意。当前 SKU 不要按千万级「守门人 / 外部监督委员会」扩编合规组织。不另开法规 id。
+- 建议下一步：继续盯正式文本或认定口径，不要另开法规 id。用户规模远低于 1000 万时继续令第25号简化路径，声纹单独同意不并入一般同意。清单化告知与敏感个人信息单独同意仍有架构卫生价值。对照 R-20260901-08。
+- 来源：https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm ；http://legalinfo.moj.gov.cn/pub/sfbzhfx/zhfxfzzx/fzzxyw/202608/t20260808_538357.html ；https://www.news.cn/politics/20260807/e990e3956d174041842ef9d62e98d2e5/c.html ；https://hongkong.dentons.com/en/insights/articles/2026/september/2/large-and-small-personal-information-handlers-each-have-their-own-path-forward
+- 开发备注：2026-09-04：征求意见仍开至 2026-09-07；无正式规章/延期公告。2026-09-07：官方通知反馈截止仍为今日；扫描未见正式规章、延期公告或新法规号。memoria 远低于 1000 万 PII 门槛。令第25号声纹单独同意已生效，无新声纹专规 / 未成年人陪伴专法 / 静音摄像指示灯强制。2026-09-08：征求意见截止已过，仍无定稿。新华社稿与 Dentons 2026-09-02 解读仍指向大小处理者分轨，非正式规章。NEW_LAW_IDS 空。无新清朗法规号 / 声纹专规 / AIGC 国标 / 未成年人陪伴法。
 
 ---
 
@@ -453,22 +453,22 @@
 - 类别：语音
 - 状态：待评估
 - 首次写入：2026-09-04
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：FunASR v1.4.14 于 2026-09-03 16:24 UTC 发布（叠在 1.4.13 #3591 之上）。#3632 默认 interim decode window 切到 8s（`--partial-window-sec` 仍可调），final 仍全段；#3631 增加 funasr-realtime-server `--enforce-eager`（CUDA eager、无 CUDA graph）降 VRAM/排障。仍钉 numpy<2。配套 runtime-llamacpp-v0.2.6 未变。MOSS-Transcribe-Diarize 可发现性增强只影响离线档案路径，不是现 SKU 实时半双工。sidecar 仍 ≥1.3.29。
 - 建议下一步：云端 `funasr>=1.4.14` 且 lock `numpy<2`；若用 funasr-realtime-server，先 A/B partial 窗，仅在 OOM/排障时试 `--enforce-eager`。不要为对齐 ASR 终点去拧设备 VAD。sidecar 不要跟升除非先核 SenseVoice 时间轴。对照 R-20260903-01 / R-20260831-02。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/v1.4.14 ；https://pypi.org/project/funasr/1.4.14/ ；https://github.com/modelscope/FunASR/pull/3632 ；https://github.com/modelscope/FunASR/pull/3631 ；https://github.com/modelscope/FunASR/compare/v1.4.13...v1.4.14
-- 开发备注：2026-09-06 从草稿 PR #9 / `cursor/research-scan-20260904-3084` 补回主分支；条目原文未改，仅记录合入日期。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5；云端钉 ≥1.4.14 不变。
+- 开发备注：2026-09-06 从草稿 PR #9 / `cursor/research-scan-20260904-3084` 补回主分支；条目原文未改，仅记录合入日期。2026-09-07 PyPI 仍 1.4.14，无 1.4.15/1.5；云端钉 ≥1.4.14 不变。2026-09-08 PyPI 仍 `funasr==1.4.14`，`numpy<2`；无 1.4.15+。NO_CHANGE。
 
 ### R-20260904-02 海信 JUOS：家庭智能伴侣级 AIOS / 全屋中枢是反定位，不是档案终端样板
 
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-04
-- 最近更新：2026-09-07
+- 最近更新：2026-09-08
 - 为何现在相关：海信 2026-08-31 发布「行业首个家庭智能伴侣级 AIOS」JUOS；报道称从被动响应迈向主动服务，超级小聚全时段陪伴，AI 个性桌面千人千面（人脸/声纹识别成员），联动电视/投影/全屋家电，首批机型 9 月起推送。这是客厅大屏/全屋 OS 入口，与家庭桌面记忆终端 / 声纹档案音箱相反，也踩「更懂家 / 全时段陪伴」叙事。对照 Bubbo（R-20260902-06）、二白Mini（R-20260903-02）、R-20260831-08/20。
 - 建议下一步：对外话术钉死「按需证据档案 + 声纹门禁」，禁止「家庭智能伴侣 OS」「全时段陪伴」「千人千面开机桌面」「全屋入口」。不把电视 OS 当竞品抄产品，只当反定位日历。
 - 来源：https://finance.sina.com.cn/jjxw/2026-09-03/doc-iniqpqxy2136783.shtml ；https://finance.sina.com.cn/jjxw/2026-09-01/doc-iniqhwmx8252279.shtml ；https://www.163.com/dy/article/L5M36U1E051191D6.html ；https://www.3elife.net/Art/ie/202609/04/109709.html
-- 开发备注：2026-09-06 从草稿 PR #9 / `cursor/research-scan-20260904-3084` 补回主分支。2026-09-07：9 月推送已开始覆盖海信 U/E/A 与 Vidda 中高端；「小聚识人」为人脸+声纹 opt-in 登记，官方称不默认采集。反定位不变：电视/家庭 AIOS ≠ memoria 桌面长期档案终端。三易生活 https://www.3elife.net/Art/ie/202609/04/109709.html ；新浪 2026-09-03 仍有效。
+- 开发备注：2026-09-06 从草稿 PR #9 / `cursor/research-scan-20260904-3084` 补回主分支。2026-09-07：9 月推送已开始覆盖海信 U/E/A 与 Vidda 中高端；「小聚识人」为人脸+声纹 opt-in 登记，官方称不默认采集。反定位不变：电视/家庭 AIOS ≠ memoria 桌面长期档案终端。三易生活 https://www.3elife.net/Art/ie/202609/04/109709.html ；新浪 2026-09-03 仍有效。2026-09-08：三易生活 2026-09-04 深挖仍有效——「小聚识人」opt-in 非默认；声纹或人脸二选一，用户可跳过生物识别；9 月起推送。反定位加强：客厅大屏生物识别开机 ≠ 桌面档案终端 + 设备端声纹门禁。
 
 ### R-20260904-03 Microduck $399 桌面具身玩具热度 ≠ 中国家庭记忆终端
 
@@ -588,22 +588,22 @@
 - 类别：产品技术
 - 状态：待评估
 - 首次写入：2026-09-07
-- 最近更新：2026-09-07
-- 为何现在相关：PyPI livekit-agents 已到 1.8.0（2026-09-05；前次扫描钉 1.7.1）。changelog 含 #6865（取消 parked preemptive generation）与 #7064（有 noise cancellation 时默认关 AGC）。Adaptive interruption 要求 Python SDK ≥1.5.0，是面向 Cloud 的 barge-in 模型，现 ATK 半双工 SKU 不得启用。
-- 建议下一步：在 Voice Agent 评估 1.7.1→1.8.0，先读 changelog 与现有半双工配置。现 SKU 保持 `interruption.enabled=False` 与 `preemptive_generation.enabled=False`，不要开 `user_turn_limit` 或 `expressive=True`。#7064 只对后续 VoCat/NC 路径有参考，不要因此在 ATK 开 barge-in 或把云端 NC+AGC 组合抄进现板。对照 R-20260902-02 / R-20260831-04 / R-20260907-02。
-- 来源：https://pypi.org/project/livekit-agents/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0 ；https://github.com/livekit/agents/pull/7064 ；https://github.com/livekit/agents/pull/6865 ；https://docs.livekit.io/reference/agents/turn-handling-options/
-- 开发备注：
+- 最近更新：2026-09-08
+- 为何现在相关：PyPI livekit-agents 仍 1.8.0（2026-09-05；现仓仍钉 1.6.10）。changelog 确认 #6865（取消 parked preemptive generation）与 #7064（有 noise cancellation 时默认关 AGC）已落在 1.8.0，不再是「等下一版」。另有破坏性 #7104：全面 OTel GenAI semantic conventions + 进程内 PII 剥离——对话内容不再作为 span events；项目级 redaction 开启时，内容在导出前剥离（含 LiveKit Cloud）。Agent 已有可选 OTLP 导出，升级要评这条。Adaptive interruption 是 Cloud 向 barge-in 模型，现 ATK 半双工 SKU 不得启用。
+- 建议下一步：评估 1.6.10/1.7.1→1.8.0 时先读 changelog 与现有半双工配置，并核 OTel/PII：若导出 traces，确认对话原文不再进 span events、redaction 与现有低基数 telemetry 不冲突。现 SKU 保持 `interruption.enabled=False` 与 `preemptive_generation.enabled=False`，不要开 `user_turn_limit` 或 `expressive=True`。#7064 只对后续 VoCat/NC 路径有参考，不要因此在 ATK 开 barge-in。对照 R-20260902-02 / R-20260831-04 / R-20260907-02。
+- 来源：https://pypi.org/project/livekit-agents/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0 ；https://github.com/livekit/agents/pull/7064 ；https://github.com/livekit/agents/pull/6865 ；https://github.com/livekit/agents/pull/7104 ；https://docs.livekit.io/reference/agents/turn-handling-options/ ；https://docs.livekit.io/deploy/observability/pii-redaction/
+- 开发备注：2026-09-08：#7064/#6865 已在 1.8.0。#7104 是升级评估的合规/观测面，不是开打断的理由。半双工围栏不变。
 
 ### R-20260907-02 VoCat（喵伴/EchoEar）是下一硬件 SKU，勿混入 ATK 半双工 demo
 
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-09-07
-- 最近更新：2026-09-07
-- 为何现在相关：乐鑫文档仍列 ESP-VoCat（EchoEar）：ESP32-S3、1.85 寸圆屏、双麦阵列、ES7210 ADC + ES8311 codec，官方定位全双工语音交互。这是下一 SKU 工作流，不是当前 ATK ES8388 1-mic 半双工 demo 板。barge-in、降噪、声纹、全双工只挂这条路径，不得提前写进现板 hello 或投资人 demo。
-- 建议下一步：VoCat 另开工单，不要改 ATK hello / barge_in / AEC 声明。现板继续 `aec_mode=none`、半双工。立创实战派仍是阶段 8 AEC 备选（R-20260831-05），与 VoCat 分轨评估。xiaozhi #1179（2025 ES8388 AEC 板）是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。
-- 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/user_guide_v1.2.html
-- 开发备注：
+- 最近更新：2026-09-08
+- 为何现在相关：乐鑫文档仍列 ESP-VoCat（EchoEar）：ESP32-S3、1.85 寸圆屏、双麦阵列、ES7210 ADC + ES8311 codec，官方定位全双工语音交互。这是下一 SKU 工作流，不是当前 ATK ES8388 1-mic 半双工 demo 板。barge-in、降噪、声纹、全双工只挂这条路径，不得提前写进现板 hello 或投资人 demo。ES8388 停产风险（R-20260908-01）只加速 VoCat 采购，不改变现板半双工围栏。LiveKit 官方 ESP32 定制硬件指南（Waveshare ESP32-S3-Touch-LCD-1.83，同为 ES8311 DAC + ES7210 ADC TDM，`esp_capture_new_audio_aec_src`）可作 VoCat AEC/初始化参考；8-bit I2C 地址坑：ES7210 `0x80` / ES8311 `0x30`。
+- 建议下一步：VoCat 另开工单，顺序固定为买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in。不要改 ATK hello / barge_in / AEC 声明。现板继续 `aec_mode=none`、半双工。对外叙事仍是桌面档案终端，不是圆屏萌宠。立创实战派仍是阶段 8 AEC 备选（R-20260831-05），与 VoCat 分轨。xiaozhi #1179 是历史 PR，不要据此在现 ATK demo 开 AEC/barge-in。
+- 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/user_guide_v1.2.html ；https://livekit.com/blog/esp32-custom-hardware-quickstart
+- 开发备注：2026-09-08：固件树已有 VoCat overlay，仍与 ATK 投资人 demo 分轨。LiveKit 指南只作 ES7210/ES8311 + AEC 参考，不把 Waveshare 圆屏产品叙事抄进 memoria。
 
 ### R-20260907-03 SiphonAI 可借鉴媒体/AI 分层与协议工程，不换栈
 
@@ -625,6 +625,21 @@
 - 为何现在相关：SiphonAI 明确不做 AI，只把 SIP/RTP 变成 20 ms PCM16 + JSON 控制。若以后要「打电话进陪伴」，这是现成组件，不必自研 SIP 栈。身份模型不同：电话是主叫号码 / STIR，Memoria 是主人声纹；不得把 PSTN 腿标成 owner。现板半双工 demo 不需要电话入线。
 - 建议下一步：不混入 half_duplex_investor_demo。若产品确认要 PSTN，另开工单：部署 siphon-ai，Voice Core 实现其 WS 协议（可用官方 Python SDK 做适配层），映射到既有 generation fence；guest/uncertain 权限默认拒绝私人记忆与工具。先不要改 ESP32 协议。
 - 来源：https://github.com/thevoiceguy/siphon-ai ；https://github.com/thevoiceguy/siphon-ai/blob/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/docs/PROTOCOL.md ；https://github.com/thevoiceguy/siphon-ai/tree/5e8f02ead7dfbb6ca14b471ab7b50841729a8bf0/sdks
+- 开发备注：
+
+---
+
+## 2026-09-08 追加
+
+### R-20260908-01 ES8388 供应链 EOL：加速 VoCat，勿深改现板 ALC/AEC
+
+- 类别：硬件
+- 状态：待评估
+- 首次写入：2026-09-08
+- 最近更新：2026-09-08
+- 为何现在相关：espressif/esp-adf#1539（2025-09-24 开，2026-03-10 评论）：经销商称 ES8388 将于 2026 停产；社区问 ES8390；并记 ES8388 调音量/启停爆破音。当前投资人 demo SKU 是 ATK ES8388 1-mic 半双工、无 AEC。这是采购/生命周期风险，论证不要长期押 ES8388，并保持 VoCat（ES7210+ES8311）为下一主 SKU——**不是**在现板开 barge-in/AEC 的理由。对照 R-20260907-02 / R-20260831-03。
+- 建议下一步：把 ES8388 EOL 写成采购风险；ATK 板只做 demo，不长期投入。继续 VoCat：买板 → 最小唤醒/半双工上云 → AEC/reference → 再谈 barge-in。不要在 ES8388 上深改 ALC/AEC，也不要把停产或爆破音写成现板全双工借口。
+- 来源：https://github.com/espressif/esp-adf/issues/1539
 - 开发备注：
 
 ---
