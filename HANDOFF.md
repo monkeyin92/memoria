@@ -7,8 +7,8 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-09
-resume_checkpoint: vocat_interrupt_assist_pulse_pat_flashed_awaiting_operator_tap_shake_pat
-firmware_face_acceptance: pulse_pat_flashed_awaiting_operator_tap_shake_pat
+resume_checkpoint: vocat_interrupt_assist_confirm_pat_operator_pass_awaiting_expression_photos
+firmware_face_acceptance: confirm_pat_operator_pass_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -42,7 +42,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 硬件验收断点（2026-09-05 21:08 CST；小程序发布状态于 9 月 6 日更新）
 
 ```yaml
-resume_focus: vocat_interrupt_assist_operator_pulse_pat_then_expression
+resume_focus: vocat_interrupt_assist_operator_expression_photos
 work_order: vocat_interrupt_assist
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -88,11 +88,11 @@ direct_real_device_verified: false
 20. **半双工已出声不 flush + lookup 不再并行 LLM 已切流**：源 `3a1133c5cb63f2473556680f01c7c1e56003968d`，标签 `20260905-half-duplex-heard-lookup-v2-agent-component`。联网查询中不另开 conversation_reply；设备 `barge_in=false` 时已出声 owner 不再 preempt。mypy 修了 `heard` 变量冲突。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-half-duplex-heard-lookup-v2-agent-component-pre-agent/-pre-bridge`。
 21. **天气正文音色绑定已切流**：源 `18ea9c798b87cfca73292586149096088c9c69e2`，标签 `20260905-lookup-voice-bind-agent-component`。音频轮在 `on_turn_committed` 启动查询前先对齐并绑定助手音色；失败则不启动垫话/查询，避免天气结果被新代次丢弃。身份 epoch 轮换保留 companion style。拒绝日志带 `reason=`。门禁 PASS。Agent/Bridge **healthy**、restart=0、overlay import PASS。回滚 `rollback-20260905-lookup-voice-bind-agent-component-pre-agent/-pre-bridge`。
 23. **长天气 45s 墙钟超时已切流**：源 `fb0311d06d2add524e791d98386cdde808e61165`，标签 `20260908-1300-output-stall-timeout-agent-component`。epoch 1418 天气 `first_frame` 后约 44s 被 `output_timeout` 掐断（`provider_completed=False`），Edge WSS `close_code=1005`，屏上「连接中」后 epoch 1423 自动再播唤醒。根因是下行 PCM 按 24 kHz 实时节奏发送，整代次却套 45s 墙钟。现改为每成功下一帧 PCM 重置超时；卡住仍 abort。门禁 PASS。2026-09-08 13:03 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `_bump_output_stall_deadline`。回滚 `rollback-20260908-1300-output-stall-timeout-agent-component-pre-agent/-pre-bridge`（镜像 `20260906-0105-companion-clone-weather-bind-agent-component` / `sha256:9f0de07f72968a7a35598c262607e5a95b81f0d526db084812c0a4fd06c9a81c`）。**长天气尚未真机复测**。
-24. **hello `audio_mode` 身份比对已切流**：源 `8170117880bbee4097ff1e61cea2af7802677858`，标签 `20260908-1815-hello-audio-mode-identity-agent-component`。`interrupt_assist` 切流后 hello 把 `audio_mode` 写进 Python 会话身份，Edge PCM/VAD protobuf 不含该字段，Bridge 全等失败并掐 gRPC；设备 `dev_atk_a4cb8fd6095c` 停在「连接中」，session `d4f2277e` 约每 5 秒重连（epoch 1640→1880）。现比对忽略 hello-only `audio_mode`，错误 session 仍拒绝。2026-09-08 18:18 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `matches_event_identity`。切流后 identity mismatch=0；epoch **1881** 已 ingest ASR 并以 `conversation_end_explicit` 关闭，之后无 5 秒重连风暴。回滚 `rollback-20260908-1815-hello-audio-mode-identity-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1600-vocat-interrupt-assist-agent-component` / `sha256:eb093dddfb2035d5270b01a15dab5a64c66077ceee1bfb3ca2df4069d99a48d1`）。**唤醒欢迎语已在 epoch 1892 听感 PASS；表情和 barge-in 尚未操作员确认。**
+24. **hello `audio_mode` 身份比对已切流**：源 `8170117880bbee4097ff1e61cea2af7802677858`，标签 `20260908-1815-hello-audio-mode-identity-agent-component`。`interrupt_assist` 切流后 hello 把 `audio_mode` 写进 Python 会话身份，Edge PCM/VAD protobuf 不含该字段，Bridge 全等失败并掐 gRPC；设备 `dev_atk_a4cb8fd6095c` 停在「连接中」，session `d4f2277e` 约每 5 秒重连（epoch 1640→1880）。现比对忽略 hello-only `audio_mode`，错误 session 仍拒绝。2026-09-08 18:18 CST 切流，Agent/Bridge **healthy**、restart=0、容器内 overlay 含 `matches_event_identity`。切流后 identity mismatch=0；epoch **1881** 已 ingest ASR 并以 `conversation_end_explicit` 关闭，之后无 5 秒重连风暴。回滚 `rollback-20260908-1815-hello-audio-mode-identity-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1600-vocat-interrupt-assist-agent-component` / `sha256:eb093dddfb2035d5270b01a15dab5a64c66077ceee1bfb3ca2df4069d99a48d1`）。**唤醒欢迎语已在 epoch 1892 听感 PASS；点屏/摇晃/短拍 16:08 操作员 PASS。表情照片和 barge-in 尚未确认。**
 
 **下一步（按顺序）**
 
-1. 唤醒欢迎语已在 epoch 1892 听感 PASS。短脉冲拍击已于 15:10 CST app-only 刷到本板（`269623b0…`）。操作员先确认：点屏保持月牙待命、摇晃不睁眼、短拍才闪惊讶脸；串口应见 `idle screen tap ignored` / `Device shake ignored` / `Device pat detected`。然后真机表情（待机闭眼 + 五表情照片），再 barge-in、长天气完整播报，以及主人匹配、星期几和车票。不要放宽 `reject_non_owner_voice`。刷机成功不等于交互验收。
+1. 点屏/摇晃/短拍已 PASS。操作员拍待机脸 `idle.jpg`，再唤醒「茉莉」按「屏幕表情」表引出五表情各拍一张，然后 barge-in、长天气、主人匹配。不要放宽 reject_non_owner_voice。刷机成功不等于表情验收。
 2. 微信里切到开发版 **0.8.84** 并刷新「我的」与「设备」，检查设备在线/可唤醒状态与首页新文案；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -107,22 +107,22 @@ code: complete
 wired: overlay_board_layer_memoria_face_display
 verified: host_renderer_tests_preview_esp32s3_clean_build_and_overlay_gate
 hardware_verified: false
-next_owner_action: 点屏保持月牙、摇晃不睁眼、短拍才惊讶脸；再拍 idle.jpg 并测五表情
+next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）
 operator_reference: 圆屏白闭眼黑底照片
 candidate_app: firmware/esp32/artifacts/memoria-esp-vocat-app.bin
-candidate_app_sha256: 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
+candidate_app_sha256: df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
 candidate_merged: firmware/esp32/artifacts/memoria-esp-vocat-merged.bin
-candidate_merged_sha256: d267470a66a99027933708cc27d795f0cc97e564978f3c8adbe44a0ba377135c
-candidate_built_at: 2026-09-09 15:05 CST
-overlay_hash: 7e0b41810c6483ae5b368eaf830b99252514242c6605687bc936c68a88090301
-on_device_app_sha256: 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
-on_device_flash: app_only_0x20000_20260909-1510
+candidate_merged_sha256: f40327479ce6caec029a79b680827960bdacd78a32b05a3a5f5f8ffe79574a35
+candidate_built_at: 2026-09-09 15:59 CST
+overlay_hash: 5a797f91a6289fc86d5bab189fb305ac779a6e3092757fcd4ffd0d8eb7475318
+on_device_app_sha256: df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
+on_device_flash: app_only_0x20000_20260909-1559-confirm-pat-bootfix
 pending_flash: none
 upstream_ref: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
 esp_idf: v6.0.2
-evidence_dir: outputs/acceptance/run-20260909-1510-pulse-pat
+evidence_dir: outputs/acceptance/run-20260909-1531-confirm-pat
 flash: app_only_0x20000_verified
-last_flashed_at: 2026-09-09 15:10 CST
+last_flashed_at: 2026-09-09 16:00 CST
 port: /dev/cu.usbmodem101
 backup_app: firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin
 backup_app_sha256: fc9134af604f8a383306b8b48cb526902eae44de8fb4a9eed75960200bacb774
@@ -130,9 +130,11 @@ identity_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d08484
 identity_unchanged: true
 device_ip: 192.168.8.142
 device_uuid: 1ac87deb-0fa3-4300-a304-ad6c472ab8c7
-on_device_compile_time: "Sep  9 2026 15:04:07"
+on_device_compile_time: "Sep  9 2026 15:59:27"
 visual_idle: pending_operator_photo
-idle_tap_pat_operator_verified: false
+idle_tap_pat_operator_verified: true
+operator_pulse_pat_result: tap_pass_shake_pass_pat_pass
+operator_verified_at: 2026-09-09 16:08 CST
 ```
 
 操作员要求：屏幕不要再显示 64px 黄色 Noto emoji，改成参考照片里「黑底白眼睛」的表情，并且六种情绪都用这套眼睛-only 风格。已按此实现。
@@ -157,11 +159,13 @@ idle_tap_pat_operator_verified: false
 2. 14:42 app-only 过敏拍击 `fc9134af…`。操作员 15:00 复测 FAIL：拍一下、点屏幕、摇晃都从月牙变圆眼。点屏路径本身不 `SetEmotion`；`dx+dy+dz>2200` 把 rumble 和持续晃动都当成拍击。
 3. 15:10 app-only 刷短脉冲候选 `269623b0…`。写前板上 app 头与 `fc9134af…` 一致；回滚 bin：`firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin`。esptool `Hash of data verified`。刷后身份区仍为 `b7a717fa…`；app 头 64KB 与候选一致。**未写 `0x10000`、分区表、NVS、assets。**
 4. 硬复位串口：Compile time `Sep  9 2026 15:04:07`，`BMI270 initialized`，无 `face buffer allocation failed`，`activating -> idle`，SSID `915`，STA `90:e5:b1:d7:83:2c`，IP `192.168.8.142`。证据：`outputs/acceptance/run-20260909-1510-pulse-pat/`。
-5. 点屏/摇晃/短拍尚未操作员确认。`hardware_verified` 保持 false。刷机成功不等于交互验收。
+5. 点屏/摇晃/短拍操作员已复测 15:10 固件：点屏月牙 PASS，摇晃月牙 PASS，短拍仍月牙 FAIL。hardware_verified 保持 false。刷机成功不等于交互验收。
+6. 漏检根因是 6000 阈值 + 最多 2 个高样本 + 落地必须立刻低于 2500。confirm-pat 阈值 3200、脉冲最多 120ms，落地后再确认 60ms。16:00 已 app-only 刷 df98d347；首刷 9b7e843f 在 LCD 复位时 CST816S ReadRegs abort 重启循环，已改为 LCD 后再挂触摸且读失败不重启。开机 Compile time Sep  9 2026 15:59:27，activating -> idle，身份区仍为 b7a717fa。USB 复位时串口见到 Device pat detected score=4153（当时 state≠idle，未改脸）。
+7. 16:08 CST 操作员复测 15:59 bootfix（`df98d347`）：点屏保持月牙 PASS，摇晃保持月牙 PASS，短拍闪圆眼约 1.5s 再回月牙且不开麦 PASS。串口 `outputs/acceptance/run-20260909-1531-confirm-pat/serial-follow.log`：多次 `idle screen tap ignored`；idle `state=3` 下 `Device pat detected` → `emotion=surprised open_eyes=1` → ~1.67s `emotion=neutral open_eyes=0`；无 `ToggleChatState` / listening。摇晃本段无 `Device shake ignored`（脉冲未过 120ms 窗），点屏未改脸已由 tap ignored 证明。`hardware_verified` 保持 false，仍缺 `idle.jpg` + 五表情。
 
-**下一步：操作员点屏/摇晃/短拍，再做真机视觉验收**
+**下一步：拍待机脸 idle.jpg，再唤醒测五表情**
 
-对照基准 `outputs/firmware-face-20260908/device-view.png`（左上角是待机脸）。本轮只改 app 侧显示与本地交互，**不动协议、分区表、身份区和 NVS**，刷完不用重新配网或重新绑定。短脉冲拍击已在板上。
+对照基准 `outputs/firmware-face-20260908/device-view.png`（左上角是待机脸）。点屏/摇晃/短拍已 PASS。照片存 `outputs/acceptance/run-20260909-1531-confirm-pat/`（`idle.jpg` + `happy.jpg` / `loving.jpg` / `sad.jpg` / `surprised.jpg` / `thinking.jpg`）。本轮只改 app 侧显示与本地交互，**不动协议、分区表、身份区和 NVS**。板上已是 16:00 bootfix `df98d347`，不用再刷。
 
 **0. 先确认候选没被改过（约 3 分钟，红在表情以外先停下报告）**
 
@@ -169,7 +173,7 @@ idle_tap_pat_operator_verified: false
 cd <repo>/firmware/esp32
 ./scripts/check-overlay.sh          # 期望最后一行：overlay check passed: memoria-esp-vocat
 shasum -a 256 artifacts/memoria-esp-vocat-app.bin
-# 期望 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
+# 期望 df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
 cd <repo> && uv run pytest firmware/esp32/tests/test_memoria_face.py -q   # 期望 25 passed
 ```
 
@@ -232,7 +236,7 @@ script -q outputs/acceptance/run-$stamp-face/serial.log ./scripts/monitor.sh --p
 
 **7. 证据归档与回填**
 
-- 证据目录：`outputs/acceptance/run-20260909-0943-face/`（已有 `serial.log` / `serial-follow.log`；还缺 `idle.jpg` + 五张表情照片）。
+- 证据目录：`outputs/acceptance/run-20260909-1531-confirm-pat/`（点屏/拍击串口已在 `serial-follow.log`；还缺 `idle.jpg` + 五张表情照片）。更早刷机串口在 `outputs/acceptance/run-20260909-0943-face/`。
 - 回填本节 yaml：`hardware_verified: false → true`，并补 `hardware_verified_at`、`evidence_dir`、`verified_by`。
 - **只有**待机脸 + 五张表情 + 不回归项都亲眼确认后才能改；编译通过、刷机成功、启动成功都不算。
 - 若只验到部分，把实际通过的项写进本节，`hardware_verified` 保持 false。
@@ -378,19 +382,19 @@ miniprogram_experience_version: 0.8.75
 - **外设与交互**：
   - 屏幕：1.85 寸 QSPI 圆形 LCD（ST77916，360x360 分辨率，40MHz SPI 驱动，带自动背光调节）。
   - 触摸：CST816S I2C 触控屏。说话中单击本地硬停，聆听中单击退出聆听，恢复中仍 `ToggleChatState`；**待机/连接中单击忽略，不开会话**。另有触摸电容滑条/按键（PCB v1.0/v1.2 自动兼容）。
-  - 传感器与电源：BMI270 六轴加速度计（无震动马达）。待机只认短拍脉冲（阈值 `dx+dy+dz>6000`、20 ms 采样、最多 2 个高样本后回落），冷却 2.5s，只闪 `surprised` 约 1.5s 再回 `neutral`。持续摇晃忽略；点屏期间 mute IMU 400 ms，避免 rumble 当拍。**不开麦、不 ToggleChatState**。BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
+  - 传感器与电源：BMI270 六轴加速度计（无震动马达）。待机只认短拍脉冲（阈值 dx+dy+dz>3200、20 ms 采样、最多 6 个高样本/120ms，落地后再确认 60ms 以便点屏 mute 取消），冷却 2.5s，只闪 surprised 约 1.5s 再回 neutral。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。不开麦、不 ToggleChatState。16:08 操作员复测 PASS（点屏月牙、摇晃月牙、短拍惊讶脸）。BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
   - 按键：BOOT 按键（单击仍可切换状态/打断，长按进入配网 / Protocomm BLE 凭证下发）。开麦权威仍是唤醒词「茉莉」或 BOOT。
-- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间忽略迟到 wake event。说话中 BOOT / 屏幕触摸仍是本地硬停。短脉冲拍击已于 15:10 CST app-only 刷到本板（`269623b0…`）。操作员点屏/摇晃/短拍尚未确认，不得把刷机成功当成交互验收。
+- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间忽略迟到 wake event。说话中 BOOT / 屏幕触摸仍是本地硬停。confirm-pat bootfix `df98d347` 已于 2026-09-09 16:00 CST app-only 刷到本板。点屏/摇晃/短拍 16:08 操作员 PASS。表情照片尚未拍，不得把刷机或拍击 PASS 当成 `hardware_verified`。
 - **分区表布局（32MB Flash）**：`partitions/v2/32m.csv`。
   - `memoria_identity` 位于 `0x10000`（64KB，受写保护，仅限 provision_identity.py 刷写）。
   - 双 4MB OTA app 分区（`ota_0` 0x20000 0x3f0000, `ota_1` 0x3f0000）。
   - 8MB SPIFFS assets 分区（`assets` 0x800000 8MB，完全落在 24-bit MMU 物理映射区内且满足 PSRAM 16MB 下的 13MB mmap 上限）。
-- **最新固件构建产物与指纹**（2026-09-09 15:05 CST 增量构建、15:10 CST app-only 已刷：短脉冲拍击；默认开机音量 30%，ES7210 36.0 dB）：
-  - app SHA-256：`269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
-  - merged SHA-256：`d267470a66a99027933708cc27d795f0cc97e564978f3c8adbe44a0ba377135c`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
-  - bootloader SHA-256：`d7daf2f6223fdfc9b80d65f8779f40adf7eae45302cb514ff69f79bb6dab90d6`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
-  - partition-table SHA-256：`da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`）
-  - overlay hash：`7e0b41810c6483ae5b368eaf830b99252514242c6605687bc936c68a88090301`
+- **最新固件构建产物与指纹**（2026-09-09 15:59 CST incremental bootfix，16:00 CST app-only 已刷；默认开机音量 30%，ES7210 36.0 dB）：
+  - app SHA-256：`df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
+  - merged SHA-256：`f40327479ce6caec029a79b680827960bdacd78a32b05a3a5f5f8ffe79574a35`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
+  - bootloader SHA-256：`95de33ee71d062ff439aa10bd154eb6ae7a2d0a7137f613d781df698baa938af`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`；本轮未写 bootloader）
+  - partition-table SHA-256：`da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`；本轮未写分区表）
+  - overlay hash：`5a797f91a6289fc86d5bab189fb305ac779a6e3092757fcd4ffd0d8eb7475318`
 - 刷写命令：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`（或直接使用 auto 探测）。首次全量烧录建议使用 `merged` 固件：`esptool.py write_flash 0x0 firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`。
 
 22. **epoch 1417（2026-09-08 12:35 CST）ES7210 36.0 dB 远场 30~60cm 双轮验证 PASS**：session `a4639927-1ab6-4b66-af3d-df579c369047`。用户在 30~60cm 距离唤醒「茉莉」并提问天气。TAP 录音分析（`media-uplink-a4639927-epoch1417.wav`）：时长 19.22s，峰值满量程 32768，平均能量 RMS 达到 **3519.3**（较 30.0 dB 时的 189.4 提升约 18 倍），FunASR 精准识别 `sentence_id=2 text_len=10`（南京天气查询），Qwen + Open-Meteo 成功返回南京天气，CosyVoice TTS 流式下发，设备完整出声且收到 `actual_heard=True` 与 `playback_ended=True`，远场唤醒与弱音识别彻底闭环。
@@ -518,7 +522,7 @@ ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+E
 
 **下一步（按顺序）**
 
-1. 短脉冲拍击已刷。操作员先确认点屏保持月牙、摇晃不睁眼、短拍才惊讶脸且不开麦。然后真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。**详细操作见「屏幕表情」runbook。** 唤醒欢迎语已在 epoch 1892 听感 PASS。
+1. 点屏/摇晃/短拍 16:08 操作员 PASS。下一步真机测表情：拍待机闭眼 `idle.jpg`；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`），反问变 `thinking`。说完回到待机闭眼。**详细操作见「屏幕表情」runbook。** 唤醒欢迎语已在 epoch 1892 听感 PASS。
 2. 助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
 3. 播 TTS 时采近端残差。未过证不得改 `aec_reference_verified`。
 4. 长天气完整播报与主人匹配仍待复测，不要放宽 `reject_non_owner_voice`。

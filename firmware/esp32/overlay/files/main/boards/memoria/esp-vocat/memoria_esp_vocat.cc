@@ -25,6 +25,7 @@
 #include "touch.h"
 #include "memoria_bootstrap.h"
 #include "memoria_face_display.h"
+#include "memoria_pat.h"
 #include "settings.h"
 
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
@@ -374,7 +375,15 @@ public:
     }
 
     void UpdateTouchPoint() {
-        ReadRegs(0x02, read_buffer_, 6);
+        uint8_t reg = 0x02;
+        esp_err_t err = i2c_master_transmit_receive(i2c_device_, &reg, 1, read_buffer_, 6, 100);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "CST816S read failed: %s", esp_err_to_name(err));
+            tp_.num = 0;
+            tp_.x = -1;
+            tp_.y = -1;
+            return;
+        }
         tp_.num = read_buffer_[0] & 0x0F;
         tp_.x = ((read_buffer_[1] & 0x0F) << 8) | read_buffer_[2];
         tp_.y = ((read_buffer_[3] & 0x0F) << 8) | read_buffer_[4];
@@ -478,12 +487,8 @@ private:
     }
 
     // BMI270 has no haptic motor. A body tap is a short accel impulse, not
-    // conversation start, screen tap rumble, or a sustained shake.
-    static constexpr int kPatDeltaThreshold = 6000;
-    static constexpr int kPatQuietMax = 2500;
-    static constexpr int kPatPulseMaxSamples = 2;
-    static constexpr int kShakePersistMin = 3;
-    static constexpr int64_t kPatCooldownMs = 2500;
+    // conversation start, screen tap rumble, or a sustained shake. The pulse
+    // classifier lives in memoria_pat.h so host tests can feed IMU sequences.
     static constexpr int64_t kTouchImuMuteMs = 400;
     static constexpr uint64_t kPatFaceHoldUs = 1500 * 1000;
 
@@ -545,18 +550,15 @@ private:
             return;
         }
 
-        int64_t last_pat_ms = 0;
+        memoria::PatDetector detector;
         struct bmi2_sens_data prev = {};
         bool has_prev = false;
-        int high_streak = 0;
-        int peak_score = 0;
 
         while (true) {
             struct bmi2_sens_data cur = {};
             if (!Bmi270Motion::ReadAccelRaw(cur)) {
+                detector.Reset();
                 has_prev = false;
-                high_streak = 0;
-                peak_score = 0;
                 vTaskDelay(pdMS_TO_TICKS(20));
                 continue;
             }
@@ -564,30 +566,18 @@ private:
                 int dx = abs(static_cast<int>(cur.acc.x) - static_cast<int>(prev.acc.x));
                 int dy = abs(static_cast<int>(cur.acc.y) - static_cast<int>(prev.acc.y));
                 int dz = abs(static_cast<int>(cur.acc.z) - static_cast<int>(prev.acc.z));
-                int pat_score = dx + dy + dz;
+                int score = dx + dy + dz;
                 int64_t now_ms = esp_timer_get_time() / 1000;
                 const bool muted =
                     now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
-                if (muted) {
-                    high_streak = 0;
-                    peak_score = 0;
-                } else if (pat_score > kPatDeltaThreshold) {
-                    high_streak++;
-                    if (pat_score > peak_score) {
-                        peak_score = pat_score;
-                    }
-                    if (high_streak == kShakePersistMin) {
-                        ESP_LOGI(TAG, "Device shake ignored (score: %d)", peak_score);
-                    }
-                } else {
-                    if (high_streak >= 1 && high_streak <= kPatPulseMaxSamples &&
-                        pat_score < kPatQuietMax &&
-                        (now_ms - last_pat_ms) > kPatCooldownMs) {
-                        last_pat_ms = now_ms;
-                        self->OnDevicePat(peak_score);
-                    }
-                    high_streak = 0;
-                    peak_score = 0;
+                const auto result = detector.Observe(score, muted, now_ms);
+                if (result.kind == memoria::PatKind::kPat) {
+                    self->OnDevicePat(result.peak);
+                } else if (result.kind == memoria::PatKind::kShake) {
+                    ESP_LOGI(TAG, "Device shake ignored (score: %d)", result.peak);
+                } else if (result.kind == memoria::PatKind::kTouchRumble) {
+                    ESP_LOGI(TAG, "Device pat ignored (touch rumble, score: %d)",
+                             result.peak);
                 }
             }
             prev = cur;
@@ -1027,11 +1017,11 @@ public:
         InitializeI2c();
         uint8_t pcb_version = DetectPcbVersion();
         InitializeCharge();
-        InitializeCst816sTouchPad();
         InitializeBmi270();
 
         InitializeSpi();
         InitializeSt77916Display(pcb_version);
+        InitializeCst816sTouchPad();
         InitializeButtons();
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
         InitializeCapacitiveTouchPads();

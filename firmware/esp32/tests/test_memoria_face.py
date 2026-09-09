@@ -362,10 +362,13 @@ def test_idle_screen_tap_and_body_pat_do_not_start_chat() -> None:
     assert "SetEmotion(" not in touch
 
     imu = board[board.index("static void imu_event_task") : board.index("void MuteImuForTouch()")]
-    assert "kPatDeltaThreshold = 6000" in board
+    assert '#include "memoria_pat.h"' in board
+    assert "memoria::PatDetector detector" in imu
     assert "Device shake ignored" in imu
-    assert "kPatPulseMaxSamples" in board
+    assert "Device pat ignored (touch rumble" in imu
     assert "imu_mute_until_ms_" in imu
+    assert "kPatDeltaThreshold = 6000" not in board
+    assert "kPatQuietMax" not in board
 
     pat = board[board.index("void OnDevicePat(") : board.index("static void imu_event_task")]
     assert 'SetEmotion("surprised")' in pat

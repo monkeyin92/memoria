@@ -43,8 +43,11 @@ board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat"
 [[ -f "$board_dir/memoria_face.cc" ]] || die "eyes-only face renderer missing"
 [[ -f "$board_dir/memoria_face_display.h" ]] || die "eyes-only face display header missing"
 [[ -f "$board_dir/memoria_face_display.cc" ]] || die "eyes-only face display missing"
+[[ -f "$board_dir/memoria_pat.h" ]] || die "body-pat detector header missing"
 rg -q 'new MemoriaFaceDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the eyes-only face display"
+rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
+    die "board does not use the host-testable pat detector"
 rg -Fq 'idle screen tap ignored; wake word or BOOT starts chat' \
     "$board_dir/memoria_esp_vocat.cc" || \
     die "idle screen tap must not start a conversation"
@@ -56,6 +59,8 @@ rg -Fq 'Device shake ignored' "$board_dir/memoria_esp_vocat.cc" || \
     die "sustained IMU shake must not be treated as a pat"
 rg -Fq 'MuteImuForTouch' "$board_dir/memoria_esp_vocat.cc" || \
     die "screen touch must mute IMU so a tap does not look like a pat"
+rg -Fq 'Device pat ignored (touch rumble' "$board_dir/memoria_esp_vocat.cc" || \
+    die "screen-tap rumble must cancel a pending body pat"
 rg -q 'GetTheme\("dark"\)' "$board_dir/memoria_face_display.cc" || \
     die "eyes-only face must pin the dark theme"
 rg -q 'bg_image_src' "$board_dir/memoria_face_display.cc" || \
