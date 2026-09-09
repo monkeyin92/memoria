@@ -45,6 +45,17 @@ board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat"
 [[ -f "$board_dir/memoria_face_display.cc" ]] || die "eyes-only face display missing"
 rg -q 'new MemoriaFaceDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the eyes-only face display"
+rg -Fq 'idle screen tap ignored; wake word or BOOT starts chat' \
+    "$board_dir/memoria_esp_vocat.cc" || \
+    die "idle screen tap must not start a conversation"
+rg -Fq 'Device pat detected' "$board_dir/memoria_esp_vocat.cc" || \
+    die "BMI270 pat must be wired to a local face, not ToggleChatState"
+rg -Fq 'SetEmotion("surprised")' "$board_dir/memoria_esp_vocat.cc" || \
+    die "idle body pat must show a local surprised face"
+rg -Fq 'Device shake ignored' "$board_dir/memoria_esp_vocat.cc" || \
+    die "sustained IMU shake must not be treated as a pat"
+rg -Fq 'MuteImuForTouch' "$board_dir/memoria_esp_vocat.cc" || \
+    die "screen touch must mute IMU so a tap does not look like a pat"
 rg -q 'GetTheme\("dark"\)' "$board_dir/memoria_face_display.cc" || \
     die "eyes-only face must pin the dark theme"
 rg -q 'bg_image_src' "$board_dir/memoria_face_display.cc" || \

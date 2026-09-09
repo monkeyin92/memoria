@@ -34,6 +34,7 @@ extern "C" {
 }
 #endif
 
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -448,6 +449,7 @@ private:
     LcdDisplay* display_ = nullptr;
     PwmBacklight* backlight_ = nullptr;
     esp_timer_handle_t touchpad_timer_;
+    esp_timer_handle_t pat_restore_timer_ = nullptr;
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
     TaskHandle_t imu_task_handle_ = nullptr;
@@ -458,6 +460,7 @@ private:
 #endif
     bool bmi270_ready_ = false;
     bool was_charging_ = false;
+    std::atomic<int64_t> imu_mute_until_ms_{0};
 
     static void battery_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
@@ -474,6 +477,67 @@ private:
         }
     }
 
+    // BMI270 has no haptic motor. A body tap is a short accel impulse, not
+    // conversation start, screen tap rumble, or a sustained shake.
+    static constexpr int kPatDeltaThreshold = 6000;
+    static constexpr int kPatQuietMax = 2500;
+    static constexpr int kPatPulseMaxSamples = 2;
+    static constexpr int kShakePersistMin = 3;
+    static constexpr int64_t kPatCooldownMs = 2500;
+    static constexpr int64_t kTouchImuMuteMs = 400;
+    static constexpr uint64_t kPatFaceHoldUs = 1500 * 1000;
+
+    static void PatRestoreCallback(void* arg) {
+        auto* self = static_cast<MemoriaEspVocat*>(arg);
+        if (self == nullptr) {
+            return;
+        }
+        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+            return;
+        }
+        auto* display = self->GetDisplay();
+        if (display != nullptr) {
+            display->SetEmotion("neutral");
+        }
+    }
+
+    void EnsurePatRestoreTimer() {
+        if (pat_restore_timer_ != nullptr) {
+            return;
+        }
+        const esp_timer_create_args_t args = {
+            .callback = &MemoriaEspVocat::PatRestoreCallback,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "vocat_pat_restore",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&args, &pat_restore_timer_) != ESP_OK) {
+            pat_restore_timer_ = nullptr;
+            ESP_LOGW(TAG, "pat restore timer unavailable");
+        }
+    }
+
+    void OnDevicePat(int score) {
+        auto& app = Application::GetInstance();
+        const auto state = app.GetDeviceState();
+        ESP_LOGI(TAG, "Device pat detected (score: %d) state=%d", score,
+                 static_cast<int>(state));
+        if (state != kDeviceStateIdle) {
+            return;
+        }
+        auto* display = GetDisplay();
+        if (display == nullptr) {
+            return;
+        }
+        EnsurePatRestoreTimer();
+        display->SetEmotion("surprised");
+        if (pat_restore_timer_ != nullptr) {
+            esp_timer_stop(pat_restore_timer_);
+            esp_timer_start_once(pat_restore_timer_, kPatFaceHoldUs);
+        }
+    }
+
     static void imu_event_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
         if (self == nullptr) {
@@ -481,33 +545,87 @@ private:
             return;
         }
 
-        constexpr int kShakeDeltaThreshold = 4000;
-        constexpr int64_t kShakeCooldownMs = 2500;
-        int64_t last_shake_ms = 0;
+        int64_t last_pat_ms = 0;
         struct bmi2_sens_data prev = {};
         bool has_prev = false;
+        int high_streak = 0;
+        int peak_score = 0;
 
         while (true) {
             struct bmi2_sens_data cur = {};
-            if (Bmi270Motion::ReadAccelRaw(cur)) {
-                if (has_prev) {
-                    int dx = abs(static_cast<int>(cur.acc.x) - static_cast<int>(prev.acc.x));
-                    int dy = abs(static_cast<int>(cur.acc.y) - static_cast<int>(prev.acc.y));
-                    int dz = abs(static_cast<int>(cur.acc.z) - static_cast<int>(prev.acc.z));
-                    int shake_score = dx + dy + dz;
-
-                    int64_t now_ms = esp_timer_get_time() / 1000;
-                    if (shake_score > kShakeDeltaThreshold &&
-                        (now_ms - last_shake_ms) > kShakeCooldownMs) {
-                        last_shake_ms = now_ms;
-                        ESP_LOGI(TAG, "Device shake detected (score: %d)", shake_score);
-                    }
-                }
-                prev = cur;
-                has_prev = true;
+            if (!Bmi270Motion::ReadAccelRaw(cur)) {
+                has_prev = false;
+                high_streak = 0;
+                peak_score = 0;
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
             }
-            vTaskDelay(pdMS_TO_TICKS(80));
+            if (has_prev) {
+                int dx = abs(static_cast<int>(cur.acc.x) - static_cast<int>(prev.acc.x));
+                int dy = abs(static_cast<int>(cur.acc.y) - static_cast<int>(prev.acc.y));
+                int dz = abs(static_cast<int>(cur.acc.z) - static_cast<int>(prev.acc.z));
+                int pat_score = dx + dy + dz;
+                int64_t now_ms = esp_timer_get_time() / 1000;
+                const bool muted =
+                    now_ms < self->imu_mute_until_ms_.load(std::memory_order_relaxed);
+                if (muted) {
+                    high_streak = 0;
+                    peak_score = 0;
+                } else if (pat_score > kPatDeltaThreshold) {
+                    high_streak++;
+                    if (pat_score > peak_score) {
+                        peak_score = pat_score;
+                    }
+                    if (high_streak == kShakePersistMin) {
+                        ESP_LOGI(TAG, "Device shake ignored (score: %d)", peak_score);
+                    }
+                } else {
+                    if (high_streak >= 1 && high_streak <= kPatPulseMaxSamples &&
+                        pat_score < kPatQuietMax &&
+                        (now_ms - last_pat_ms) > kPatCooldownMs) {
+                        last_pat_ms = now_ms;
+                        self->OnDevicePat(peak_score);
+                    }
+                    high_streak = 0;
+                    peak_score = 0;
+                }
+            }
+            prev = cur;
+            has_prev = true;
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
+    }
+
+    void MuteImuForTouch() {
+        imu_mute_until_ms_.store((esp_timer_get_time() / 1000) + kTouchImuMuteMs,
+                                 std::memory_order_relaxed);
+    }
+
+    void HandleScreenTouchRelease() {
+        MuteImuForTouch();
+        auto& app = Application::GetInstance();
+        const auto state = app.GetDeviceState();
+        if (state == kDeviceStateStarting) {
+            EnterWifiConfigMode();
+            return;
+        }
+        if (state == kDeviceStateSpeaking) {
+            app.AbortSpeaking(kAbortReasonNone);
+            return;
+        }
+        if (state == kDeviceStateRecovering) {
+            app.ToggleChatState();
+            return;
+        }
+        if (state == kDeviceStateListening) {
+            app.StopListening();
+            return;
+        }
+        if (state == kDeviceStateIdle || state == kDeviceStateConnecting) {
+            ESP_LOGI(TAG, "idle screen tap ignored; wake word or BOOT starts chat");
+            return;
+        }
+        ESP_LOGI(TAG, "screen tap ignored in state=%d", static_cast<int>(state));
     }
 
     void InitializeI2c() {
@@ -595,25 +713,15 @@ private:
 
         while (true) {
             if (touchpad->WaitForTouchEvent()) {
-                auto& app = Application::GetInstance();
-                auto& board = static_cast<WifiBoard&>(Board::GetInstance());
-
                 touchpad->UpdateTouchPoint();
                 auto touch_event = touchpad->CheckTouchEvent();
-
+                auto& board = static_cast<MemoriaEspVocat&>(Board::GetInstance());
+                if (touch_event == Cst816s::TOUCH_PRESS ||
+                    touch_event == Cst816s::TOUCH_HOLD) {
+                    board.MuteImuForTouch();
+                }
                 if (touch_event == Cst816s::TOUCH_RELEASE) {
-                    const auto state = app.GetDeviceState();
-                    if (state == kDeviceStateStarting) {
-                        board.EnterWifiConfigMode();
-                    } else if (state == kDeviceStateSpeaking) {
-                        app.AbortSpeaking(kAbortReasonNone);
-                    } else if (state == kDeviceStateRecovering) {
-                        app.ToggleChatState();
-                    } else if (state == kDeviceStateListening) {
-                        app.StopListening();
-                    } else {
-                        app.ToggleChatState();
-                    }
+                    board.HandleScreenTouchRelease();
                 }
             }
         }
@@ -648,7 +756,7 @@ private:
             xTaskCreatePinnedToCore(imu_event_task, "imu_task", 4 * 1024, this, 4,
                                     &imu_task_handle_, 1);
         } else {
-            ESP_LOGW(TAG, "BMI270 unavailable, shake motion disabled");
+            ESP_LOGW(TAG, "BMI270 unavailable, pat motion disabled");
         }
     }
 
@@ -873,6 +981,11 @@ private:
 
 public:
     ~MemoriaEspVocat() {
+        if (pat_restore_timer_ != nullptr) {
+            esp_timer_stop(pat_restore_timer_);
+            esp_timer_delete(pat_restore_timer_);
+            pat_restore_timer_ = nullptr;
+        }
         if (charge_task_handle_ != nullptr) {
             vTaskDelete(charge_task_handle_);
         }

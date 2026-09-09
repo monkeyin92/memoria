@@ -342,6 +342,46 @@ def test_board_wires_the_face_display() -> None:
     assert "emoji_label_, LV_OBJ_FLAG_HIDDEN" in display
 
 
+def test_idle_screen_tap_and_body_pat_do_not_start_chat() -> None:
+    board = BOARD_SOURCE.read_text(encoding="utf-8")
+    touch = board[
+        board.index("void HandleScreenTouchRelease()") : board.index(
+            "void InitializeI2c()"
+        )
+    ]
+    assert "kDeviceStateSpeaking" in touch
+    assert "AbortSpeaking(kAbortReasonNone)" in touch
+    assert "kDeviceStateListening" in touch
+    assert "StopListening()" in touch
+    assert "idle screen tap ignored; wake word or BOOT starts chat" in touch
+    assert "kDeviceStateIdle || state == kDeviceStateConnecting" in touch
+    idle_branch = touch[touch.index("kDeviceStateIdle") :]
+    assert "ToggleChatState()" not in idle_branch
+    assert "StartListening(" not in touch
+    assert "MuteImuForTouch()" in touch
+    assert "SetEmotion(" not in touch
+
+    imu = board[board.index("static void imu_event_task") : board.index("void MuteImuForTouch()")]
+    assert "kPatDeltaThreshold = 6000" in board
+    assert "Device shake ignored" in imu
+    assert "kPatPulseMaxSamples" in board
+    assert "imu_mute_until_ms_" in imu
+
+    pat = board[board.index("void OnDevicePat(") : board.index("static void imu_event_task")]
+    assert 'SetEmotion("surprised")' in pat
+    assert "kDeviceStateIdle" in pat
+    assert "ToggleChatState()" not in pat
+    assert "StartListening(" not in pat
+    assert "AbortSpeaking(" not in pat
+    restore = board[
+        board.index("static void PatRestoreCallback") : board.index(
+            "void EnsurePatRestoreTimer()"
+        )
+    ]
+    assert 'SetEmotion("neutral")' in restore
+    assert "ToggleChatState()" not in restore
+
+
 def test_renderer_stays_free_of_esp_dependencies() -> None:
     for path in (HEADER, RENDERER):
         source = path.read_text(encoding="utf-8")

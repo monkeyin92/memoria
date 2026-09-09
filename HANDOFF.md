@@ -7,8 +7,8 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-09
-resume_checkpoint: vocat_interrupt_assist_wake_greeting_heard_awaiting_expression_and_barge_in
-firmware_face_acceptance: flashed_awaiting_visual_idle_and_five_expressions
+resume_checkpoint: vocat_interrupt_assist_pulse_pat_flashed_awaiting_operator_tap_shake_pat
+firmware_face_acceptance: pulse_pat_flashed_awaiting_operator_tap_shake_pat
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -42,7 +42,7 @@ T1_T14: 0_pass_14_blocked_0_failed
 ## 硬件验收断点（2026-09-05 21:08 CST；小程序发布状态于 9 月 6 日更新）
 
 ```yaml
-resume_focus: vocat_interrupt_assist_expression_and_barge_in
+resume_focus: vocat_interrupt_assist_operator_pulse_pat_then_expression
 work_order: vocat_interrupt_assist
 firmware_ns: flashed_webrtc_two_turn_and_short_farewell_pass
 llm_conversation: qwen3.7-flash
@@ -92,7 +92,7 @@ direct_real_device_verified: false
 
 **下一步（按顺序）**
 
-1. 唤醒欢迎语已在 epoch 1892 听感 PASS。下一优先是真机表情（待机闭眼 + 五表情照片），然后 barge-in、长天气完整播报（不应在约 45 秒停、不应只听到「稍等我查询一下」、不应掉线进「连接中」），以及主人匹配、星期几和车票。账号资料已跨库补齐，但不代表本轮声纹已匹配主人，也未证明车票截断完全解决；不要放宽 `reject_non_owner_voice`。
+1. 唤醒欢迎语已在 epoch 1892 听感 PASS。短脉冲拍击已于 15:10 CST app-only 刷到本板（`269623b0…`）。操作员先确认：点屏保持月牙待命、摇晃不睁眼、短拍才闪惊讶脸；串口应见 `idle screen tap ignored` / `Device shake ignored` / `Device pat detected`。然后真机表情（待机闭眼 + 五表情照片），再 barge-in、长天气完整播报，以及主人匹配、星期几和车票。不要放宽 `reject_non_owner_voice`。刷机成功不等于交互验收。
 2. 微信里切到开发版 **0.8.84** 并刷新「我的」与「设备」，检查设备在线/可唤醒状态与首页新文案；上传不等于体验版已设置或正式发布。
 3. 若要定量抗噪：在明确嘈杂环境再跑一轮，记噪声底和误/漏唤醒；本轮未单独测噪声。epoch **1374** 那句 17 字「……我知道了，再见」overlap 原句仍未定点复测。
 4. 仍勿把 `direct_real_device_verified` 改为 true。
@@ -107,28 +107,32 @@ code: complete
 wired: overlay_board_layer_memoria_face_display
 verified: host_renderer_tests_preview_esp32s3_clean_build_and_overlay_gate
 hardware_verified: false
-next_owner_action: 拍待机 idle.jpg，再唤醒「茉莉」测五表情（runbook 第 3–7 步）
+next_owner_action: 点屏保持月牙、摇晃不睁眼、短拍才惊讶脸；再拍 idle.jpg 并测五表情
 operator_reference: 圆屏白闭眼黑底照片
 candidate_app: firmware/esp32/artifacts/memoria-esp-vocat-app.bin
-candidate_app_sha256: ebc7462db0165e471ad0440140884383e445747098ce03a3099744c3ed55b20f
+candidate_app_sha256: 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
 candidate_merged: firmware/esp32/artifacts/memoria-esp-vocat-merged.bin
-candidate_merged_sha256: c9aac8b9dad46f77714b06af916dd07b2471eecbefb119c187dbec81c734da7f
-candidate_built_at: 2026-09-08 21:28 CST
-overlay_hash: d9003c80d16841b1f30f463d67ce14383b1943be424e8cddeb428e359322f5ee
+candidate_merged_sha256: d267470a66a99027933708cc27d795f0cc97e564978f3c8adbe44a0ba377135c
+candidate_built_at: 2026-09-09 15:05 CST
+overlay_hash: 7e0b41810c6483ae5b368eaf830b99252514242c6605687bc936c68a88090301
+on_device_app_sha256: 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
+on_device_flash: app_only_0x20000_20260909-1510
+pending_flash: none
 upstream_ref: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
 esp_idf: v6.0.2
-evidence_dir: outputs/acceptance/run-20260909-0943-face
-flash: app_only_0x20000
-flashed_at: 2026-09-09 09:52 CST
+evidence_dir: outputs/acceptance/run-20260909-1510-pulse-pat
+flash: app_only_0x20000_verified
+last_flashed_at: 2026-09-09 15:10 CST
 port: /dev/cu.usbmodem101
-backup_app: firmware/esp32/artifacts/backups/pre-face-20260909-0943/app-before.bin
-backup_app_sha256: 1db35780e7db6188ec5a744de126b7f5bf925d5ff90b11c86403f71e35eb75e1
+backup_app: firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin
+backup_app_sha256: fc9134af604f8a383306b8b48cb526902eae44de8fb4a9eed75960200bacb774
 identity_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
 identity_unchanged: true
 device_ip: 192.168.8.142
 device_uuid: 1ac87deb-0fa3-4300-a304-ad6c472ab8c7
-on_device_compile_time: "Sep 8 2026 21:26:34"
+on_device_compile_time: "Sep  9 2026 15:04:07"
 visual_idle: pending_operator_photo
+idle_tap_pat_operator_verified: false
 ```
 
 操作员要求：屏幕不要再显示 64px 黄色 Noto emoji，改成参考照片里「黑底白眼睛」的表情，并且六种情绪都用这套眼睛-only 风格。已按此实现。
@@ -143,20 +147,21 @@ visual_idle: pending_operator_photo
 
 **已做验证（无硬件）**
 
-1. `firmware/esp32/tests/test_memoria_face.py` 用宿主 clang++ 直接编译固件渲染源并断言几何契约：眼宽 94 px、眼心 117/243、月牙高 47 px、眼尖落在中线、六种情绪各两只眼、happy/sad/loving 眼角方向、surprised 圆度、thinking 上移偏右、眨眼收敛、别名/大小写/未知回落、分辨率缩放。24 项全过。
+1. `firmware/esp32/tests/test_memoria_face.py` 用宿主 clang++ 直接编译固件渲染源并断言几何契约：眼宽 94 px、眼心 117/243、月牙高 47 px、眼尖落在中线、六种情绪各两只眼、happy/sad/loving 眼角方向、surprised 圆度、thinking 上移偏右、眨眼收敛、别名/大小写/未知回落、分辨率缩放；另断言待机点屏忽略、拍击只闪 `surprised`。25 项全过。
 2. `firmware/esp32/scripts/preview_memoria_face.py` 用同一份源码生成 PNG 预览；与参考照片比对月牙轮廓 IoU 0.86（差异来自照片倾斜与透视）。产物已存 `outputs/firmware-face-20260908/`，其中 `device-view.png` 是套圆屏边框的对照图。
 3. 全量 clean build（锁定 commit 重克隆 + 重放 overlay）通过；`./scripts/check-overlay.sh` 输出 `overlay check passed: memoria-esp-vocat`。候选见上方 yaml，app 分区余量 21%。
 
-**已做真机刷写（2026-09-09 09:52 CST；本机 `/dev/cu.usbmodem101`）**
+**已做真机刷写（2026-09-09 09:52 眼睛脸；14:42 过敏拍击；15:10 短脉冲拍击；本机 `/dev/cu.usbmodem101`）**
 
-1. app-only `write-flash 0x20000` 候选 `ebc7462d…b20f`。身份区 `0x10000` 刷前刷后 SHA 均为 `b7a717fa…`。回滚 bin：`firmware/esp32/artifacts/backups/pre-face-20260909-0943/app-before.bin`（`1db35780…`）。
-2. 硬复位后串口：Compile time `Sep  8 2026 21:26:34`，ST77916 创建成功，LcdDisplay 2MB PSRAM 图像缓存，无 `face buffer allocation failed`，`activating -> idle`，SSID `915`，STA `90:e5:b1:d7:83:2c`，IP `192.168.8.142`。
-3. 候选 bin 含 `MemoriaFaceDisplay` 与 `emotion=%s open_eyes=%d`。开机无 `emotion=neutral`：`emotion_` 默认已是 `neutral`，`SetEmotion` 只在变化时打日志；这不是回退彩色 emoji。
-4. 尚未拍 `idle.jpg`，五表情未测。`hardware_verified` 保持 false。
+1. 09:52 app-only 眼睛脸 `ebc7462d…`。身份区 `0x10000` SHA `b7a717fa…`。更早回滚：`firmware/esp32/artifacts/backups/pre-face-20260909-0943/app-before.bin`（`1db35780…`）。
+2. 14:42 app-only 过敏拍击 `fc9134af…`。操作员 15:00 复测 FAIL：拍一下、点屏幕、摇晃都从月牙变圆眼。点屏路径本身不 `SetEmotion`；`dx+dy+dz>2200` 把 rumble 和持续晃动都当成拍击。
+3. 15:10 app-only 刷短脉冲候选 `269623b0…`。写前板上 app 头与 `fc9134af…` 一致；回滚 bin：`firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin`。esptool `Hash of data verified`。刷后身份区仍为 `b7a717fa…`；app 头 64KB 与候选一致。**未写 `0x10000`、分区表、NVS、assets。**
+4. 硬复位串口：Compile time `Sep  9 2026 15:04:07`，`BMI270 initialized`，无 `face buffer allocation failed`，`activating -> idle`，SSID `915`，STA `90:e5:b1:d7:83:2c`，IP `192.168.8.142`。证据：`outputs/acceptance/run-20260909-1510-pulse-pat/`。
+5. 点屏/摇晃/短拍尚未操作员确认。`hardware_verified` 保持 false。刷机成功不等于交互验收。
 
-**下一步：真机视觉验收（步骤 0–2 已完成，从第 3 步继续）**
+**下一步：操作员点屏/摇晃/短拍，再做真机视觉验收**
 
-前置：一台已绑定可对话的 ESP-VoCat（`memoria-esp-vocat`，本仓 `firmware/esp32` 工作树）+ USB 数据线。对照基准 `outputs/firmware-face-20260908/device-view.png`（左上角是待机脸）。本轮只改 app 侧显示，**不动协议、分区表、身份区和 NVS**，刷完不用重新配网或重新绑定。本板已刷，不要重复刷机。
+对照基准 `outputs/firmware-face-20260908/device-view.png`（左上角是待机脸）。本轮只改 app 侧显示与本地交互，**不动协议、分区表、身份区和 NVS**，刷完不用重新配网或重新绑定。短脉冲拍击已在板上。
 
 **0. 先确认候选没被改过（约 3 分钟，红在表情以外先停下报告）**
 
@@ -164,8 +169,8 @@ visual_idle: pending_operator_photo
 cd <repo>/firmware/esp32
 ./scripts/check-overlay.sh          # 期望最后一行：overlay check passed: memoria-esp-vocat
 shasum -a 256 artifacts/memoria-esp-vocat-app.bin
-# 期望 ebc7462db0165e471ad0440140884383e445747098ce03a3099744c3ed55b20f
-cd <repo> && uv run pytest firmware/esp32/tests/test_memoria_face.py -q   # 期望 24 passed
+# 期望 269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c
+cd <repo> && uv run pytest firmware/esp32/tests/test_memoria_face.py -q   # 期望 25 passed
 ```
 
 **1. 接线、进入下载模式、备份当前 app**
@@ -221,7 +226,7 @@ script -q outputs/acceptance/run-$stamp-face/serial.log ./scripts/monitor.sh --p
 
 - 字幕/状态文字（「连接中」「聆听中」）仍是白字黑底、可读；
 - 长按 BOOT 进配网：二维码是白底黑码、盖在脸之上，关闭后回到脸；
-- 亮度调节、低电量弹窗、触摸/BOOT 打断仍正常。
+- 亮度调节、低电量弹窗仍正常；说话中触摸/BOOT 仍能硬停；**刷本轮固件后**待机点屏幕不得进对话。
 
 **6. 眨眼**：`surprised`/`thinking` 时每 4–7 秒一次约 150 ms 的闭合；`neutral` 等闭眼脸不眨。会话延迟不应变差（只在表情变化和眨眼帧重绘）。
 
@@ -239,7 +244,8 @@ script -q outputs/acceptance/run-$stamp-face/serial.log ./scripts/monitor.sh --p
 ```bash
 python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --after hard-reset \
   write-flash --flash-mode dio --flash-size 32MB --flash-freq 80m \
-  0x20000 artifacts/backups/pre-face-20260909-0943/app-before.bin
+  0x20000 artifacts/backups/pre-pulse-20260909-1510/app-before.bin
+# 更早回滚：pre-pat-20260909-1436（眼睛脸）或 pre-face-20260909-0943（表情前）
 ```
 
 2. 或改源码回滚：删除 `memoria_face*.cc|h` 四个 overlay 文件，把 `memoria_esp_vocat.cc` 的 `new MemoriaFaceDisplay(...)` 改回 `new SpiLcdDisplay(...)`，`./scripts/build.sh --clean` 重刷。
@@ -371,20 +377,20 @@ miniprogram_experience_version: 0.8.75
 - **音频系统**：ES8311（音频输出/DAC/PA，GPIO4/15 动态 PCB 适配）+ ES7210（双麦克风阵列 ADC，输入增益 **36.0 dB**）。采用 `BoxAudioCodec`，已通过 patch `0017` 增加 `i2s_channel_register_event_callback` 监听 `on_sent` TX DMA 完成中断，实现精准的 `HasExactOutputCompletion` 和 `OutputCompletionCounter` 硬件播放水线回执。
 - **外设与交互**：
   - 屏幕：1.85 寸 QSPI 圆形 LCD（ST77916，360x360 分辨率，40MHz SPI 驱动，带自动背光调节）。
-  - 触摸：CST816S I2C 触控屏（支持单击打断/切换对话/退出聆听、中断驱动）+ 触摸电容滑条/按键（PCB v1.0/v1.2 自动兼容）。
-  - 传感器与电源：BMI270 六轴运动传感器（摇晃动作检测，score 阈值 4000，冷却 2.5s）、BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
-  - 按键：BOOT 按键（单击切换状态/打断，长按进入配网 / Protocomm BLE 凭证下发）。
-- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间忽略迟到 wake event，BOOT / 触摸仍是本地硬停。
+  - 触摸：CST816S I2C 触控屏。说话中单击本地硬停，聆听中单击退出聆听，恢复中仍 `ToggleChatState`；**待机/连接中单击忽略，不开会话**。另有触摸电容滑条/按键（PCB v1.0/v1.2 自动兼容）。
+  - 传感器与电源：BMI270 六轴加速度计（无震动马达）。待机只认短拍脉冲（阈值 `dx+dy+dz>6000`、20 ms 采样、最多 2 个高样本后回落），冷却 2.5s，只闪 `surprised` 约 1.5s 再回 `neutral`。持续摇晃忽略；点屏期间 mute IMU 400 ms，避免 rumble 当拍。**不开麦、不 ToggleChatState**。BQ27220 电池电量计量与充放电检测、芯片片内温度传感器。
+  - 按键：BOOT 按键（单击仍可切换状态/打断，长按进入配网 / Protocomm BLE 凭证下发）。开麦权威仍是唤醒词「茉莉」或 BOOT。
+- **板端 WebRTC 降噪与唤醒**：overlay patch `0022` 打开 ESP-SR AFE WebRTC NS（`CONFIG_SR_NSN_WEBRTC=y`）；默认唤醒词「茉莉」（`mo li`），支持白名单与拼音自定义；Speaking 期间忽略迟到 wake event。说话中 BOOT / 屏幕触摸仍是本地硬停。短脉冲拍击已于 15:10 CST app-only 刷到本板（`269623b0…`）。操作员点屏/摇晃/短拍尚未确认，不得把刷机成功当成交互验收。
 - **分区表布局（32MB Flash）**：`partitions/v2/32m.csv`。
   - `memoria_identity` 位于 `0x10000`（64KB，受写保护，仅限 provision_identity.py 刷写）。
   - 双 4MB OTA app 分区（`ota_0` 0x20000 0x3f0000, `ota_1` 0x3f0000）。
   - 8MB SPIFFS assets 分区（`assets` 0x800000 8MB，完全落在 24-bit MMU 物理映射区内且满足 PSRAM 16MB 下的 13MB mmap 上限）。
-- **最新固件构建产物与指纹**（2026-09-08 interrupt_assist 构建，默认开机音量 30%，ES7210 36.0 dB；**已 app-only 刷到 `/dev/cu.usbmodem101`，身份区未写**）：
-  - app SHA-256：`8c08ba23c8de6e70ded13deb7b87ce5c9829fd7ef1bd45734a7a6ea283fd7590`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
-  - merged SHA-256：`86146ebbd9fbfc44886f8a4a848630faca29853ee8ede1282e39b8f9f0e857c8`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
-  - bootloader SHA-256：`61a2cba146b738a5e0b4fe1bd68e49eea1b32c3bd2009db185a3607096d75d0f`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
+- **最新固件构建产物与指纹**（2026-09-09 15:05 CST 增量构建、15:10 CST app-only 已刷：短脉冲拍击；默认开机音量 30%，ES7210 36.0 dB）：
+  - app SHA-256：`269623b09adee431bd6e008b2f8eb4c068d995cee8490427ef4d1ae348801d9c`（`firmware/esp32/artifacts/memoria-esp-vocat-app.bin`）
+  - merged SHA-256：`d267470a66a99027933708cc27d795f0cc97e564978f3c8adbe44a0ba377135c`（`firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`）
+  - bootloader SHA-256：`d7daf2f6223fdfc9b80d65f8779f40adf7eae45302cb514ff69f79bb6dab90d6`（`firmware/esp32/artifacts/memoria-esp-vocat-bootloader.bin`）
   - partition-table SHA-256：`da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（`firmware/esp32/artifacts/memoria-esp-vocat-partition-table.bin`）
-  - overlay hash：`31292b0f3bced2a09f87392b3f34fad8055c45dbedc4f9e58d399bee734c3cdb`
+  - overlay hash：`7e0b41810c6483ae5b368eaf830b99252514242c6605687bc936c68a88090301`
 - 刷写命令：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`（或直接使用 auto 探测）。首次全量烧录建议使用 `merged` 固件：`esptool.py write_flash 0x0 firmware/esp32/artifacts/memoria-esp-vocat-merged.bin`。
 
 22. **epoch 1417（2026-09-08 12:35 CST）ES7210 36.0 dB 远场 30~60cm 双轮验证 PASS**：session `a4639927-1ab6-4b66-af3d-df579c369047`。用户在 30~60cm 距离唤醒「茉莉」并提问天气。TAP 录音分析（`media-uplink-a4639927-epoch1417.wav`）：时长 19.22s，峰值满量程 32768，平均能量 RMS 达到 **3519.3**（较 30.0 dB 时的 189.4 提升约 18 倍），FunASR 精准识别 `sentence_id=2 text_len=10`（南京天气查询），Qwen + Open-Meteo 成功返回南京天气，CosyVoice TTS 流式下发，设备完整出声且收到 `actual_heard=True` 与 `playback_ended=True`，远场唤醒与弱音识别彻底闭环。
@@ -512,7 +518,7 @@ ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+E
 
 **下一步（按顺序）**
 
-1. 真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。**详细操作、命令、判定标准与证据回填见「屏幕表情：眼睛白描脸（2026-09-08）」一节的 runbook。** 唤醒欢迎语已在 epoch 1892 听感 PASS，不要重复刷脸固件。
+1. 短脉冲拍击已刷。操作员先确认点屏保持月牙、摇晃不睁眼、短拍才惊讶脸且不开麦。然后真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。**详细操作见「屏幕表情」runbook。** 唤醒欢迎语已在 epoch 1892 听感 PASS。
 2. 助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
 3. 播 TTS 时采近端残差。未过证不得改 `aec_reference_verified`。
 4. 长天气完整播报与主人匹配仍待复测，不要放宽 `reject_non_owner_voice`。

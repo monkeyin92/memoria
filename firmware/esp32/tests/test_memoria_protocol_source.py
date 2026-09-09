@@ -1442,6 +1442,19 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "state == kDeviceStateRecovering" in board_source
     assert "app.ToggleChatState()" in board_source
     assert "app.Schedule([this]() { EnterWifiConfigMode(); })" in board_source
+    touch = board_source[
+        board_source.index("void HandleScreenTouchRelease()") : board_source.index(
+            "void InitializeI2c()"
+        )
+    ]
+    assert "idle screen tap ignored; wake word or BOOT starts chat" in touch
+    idle = touch[touch.index("kDeviceStateIdle") :]
+    assert "ToggleChatState()" not in idle
+    assert "StartListening(" not in touch
+    assert "MuteImuForTouch()" in touch
+    assert "SetEmotion(" not in touch
+    assert "Device shake ignored" in board_source
+    assert "kPatDeltaThreshold = 6000" in board_source
 
 
 def test_transport_attempt_fence_blocks_late_old_websocket_callbacks() -> None:
