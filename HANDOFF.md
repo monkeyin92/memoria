@@ -259,20 +259,20 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 ```yaml
 change: ignore_empty_connect_vad_and_contextual_allowlisted_wake_greeting
 code: complete
-wired: false
-enabled: false
-verified: false
+wired: agent_bridge_overlay_cutover
+enabled: production_agent_bridge_true
+verified: overlay_import_and_container_health
 direct_real_device_verified: false
 ```
 
 真机 10:03 唤醒后进聆听，立刻出现 `Device VAD start sample=0 rms=0` 且从未 speaking。空 VAD 在欢迎语 `require_idle_input` 之前把 session 打成 `USER_SPEAKING`，allowlisted 欢迎语被掐掉。
 
-代码层（仅 Agent，未发布、未切流）：
+代码层已切流 Agent/Bridge（2026-09-09 11:27 CST）：
 
 1. `grpc_bridge` 把 `VadEvent.rms` 映到 `SpeechSegment.near_end_rms`。
 2. 连接期空 VAD（start：`rms=0`，或 pending 且 `sample=0` 且 rms 缺失）在 ingest 前丢弃；已开口的真实 VAD end 即使低 RMS 也保留。
 3. `_speak_device_wake_ack` 用 `try/finally` 清 `device_wake_ack_pending`，并按本地时段 / 周末 / 设备级 ≥12h 缺席 / 可选陪伴风格，从封闭集合选一句 allowlisted 短句。不猜城市、不在热路径查天气、不用主人私密记忆。
-4. 真机听感未做，`direct_real_device_verified` 保持 false。
+4. 发布标签 `20260909-1124-device-wake-greeting-agent-component`，源 `91ab187bbf7e7407c9bd1f3b48ee9e064715fb88`。容器 **healthy**、restart=0，overlay 含 `DEVICE_WAKE_GREETING_PHRASES` / `device_wake_ack_pending` / `near_end_rms`。真机听感未做，`direct_real_device_verified` 保持 false。
 
 **勿做**：把单元测试通过当成板端欢迎语已恢复；给动态欢迎语走非 allowlist 生成。
 
@@ -288,9 +288,9 @@ direct_real_device_verified: false
 
 ## 当前生产
 
-当前 Agent/Bridge 镜像为 `memoria-agent:20260908-1815-hello-audio-mode-identity-agent-component`（源 `8170117880bbee4097ff1e61cea2af7802677858`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
+当前 Agent/Bridge 镜像为 `memoria-agent:20260909-1124-device-wake-greeting-agent-component`（源 `91ab187bbf7e7407c9bd1f3b48ee9e064715fb88`）。Control API overlay 发布源码为 `4a3b91bfa156f946f67b92e0b0ced17fab108a67`（标签 `20260906-1458-account-device-discovery-control-api`）。Agent/Bridge/Control 的 env `MEMORIA_RELEASE_TAG` 均为 `20260901-0945-wake-word-whitelist`。**2026-09-04 文本模型切流（env）**：`LLM_PROVIDER=qwen`，主对话 `QWEN_FAST_MODEL=qwen3.7-flash`（关思考），分类器 `qwen-flash`（打断/联网/告别/危机/摘要/记忆抽取）。联网查询隔离源仍用 `QWEN_DEEP_MODEL=qwen-plus`。不再用即将下线的 `deepseek-v4-flash` 当对话模型，也不迁到更贵的 `deepseek-v4-flash-0731`。
 
-- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260908-1815-hello-audio-mode-identity-agent-component`，revision `8170117880bbee4097ff1e61cea2af7802677858`，image `sha256:7e67007b0b7a2bd4c128792675e29198ac60036d2083a779fd3a3db372ae2a0d`。两者 **healthy**、restart=0。容器内 overlay 含 `matches_event_identity`。收据 `/opt/memoria/component-releases/20260908-1815-hello-audio-mode-identity-agent-component/`。回滚 `rollback-20260908-1815-hello-audio-mode-identity-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1600-vocat-interrupt-assist-agent-component` / `sha256:eb093dddfb2035d5270b01a15dab5a64c66077ceee1bfb3ca2df4069d99a48d1`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** 现网设备 `dev_atk_a4cb8fd6095c` 已由 Control 权威路径改为 `audio_mode=interrupt_assist`（settings_version 11→12，`vocat_interrupt_assist_enable`）。Control 镜像仍是 `20260906-1458`，新设备默认值未切。`direct_real_device_verified` 保持 false。
+- Agent 与 Voice Core Media Bridge（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）：`memoria-agent:20260909-1124-device-wake-greeting-agent-component`，revision `91ab187bbf7e7407c9bd1f3b48ee9e064715fb88`，image `sha256:3dde10934e7e1c9ab0f436b387d2200b08c3d4188aafb33cffa49cdd092032ec`。两者 **healthy**、restart=0。容器内 overlay 含 `DEVICE_WAKE_GREETING_PHRASES`、`device_wake_ack_pending`、`near_end_rms`。收据 `/opt/memoria/component-releases/20260909-1124-device-wake-greeting-agent-component/`。回滚 `rollback-20260909-1124-device-wake-greeting-agent-component-pre-agent/-pre-bridge`（镜像 `20260908-1815-hello-audio-mode-identity-agent-component` / `sha256:7e67007b0b7a2bd4c128792675e29198ac60036d2083a779fd3a3db372ae2a0d`）。**subject：「主人」已 adult/verified；声纹 profile `1b5b577b` 已 active。** 现网设备 `dev_atk_a4cb8fd6095c` 已由 Control 权威路径改为 `audio_mode=interrupt_assist`（settings_version 11→12，`vocat_interrupt_assist_enable`）。Control 镜像仍是 `20260906-1458`，新设备默认值未切。`direct_real_device_verified` 保持 false。
 - Media Edge：`memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component`，容器 healthy、restart=0。override `/tmp/media-runtime.override.yml` 钉该镜像。回滚镜像 `memoria-media-edge:20260901-0945-wake-word-whitelist`；override 备份 `/tmp/media-runtime.override.yml.pre-20260908-1600-vocat-interrupt-assist`。Control SQLite 挂载 `/data <- /var/lib/memoria`，权威库 `/data/memoria.sqlite3`。
 - SenseVoice 兜底 sidecar：`memoria-sensevoice-asr:20260901-pin-language`（sherpa-onnx 1.13.6 + SenseVoice-small int8，`/opt/memoria/sidecars/sensevoice-asr/`，docker 网络 `memoria_default`，--cpus 2 --memory 1g，2026-09-01 14:58 CST 切换）。Agent 侧 `SENSEVOICE_URL=http://memoria-sensevoice-asr:8001/transcribe` 已配置；FunASR 空转写且 RMS≥100 时自动兜底（fail-open，2.5s 超时）。**本轮修掉语种漂移**：sidecar 此前收下 `language` 只写日志、从不传给 recognizer，`from_sense_voice(language='')` 走内置 LID，短促低电平普通话被判成韩语并原样输出谚文；现按语言缓存 recognizer（`_SUPPORTED_LANGUAGES` 闭集，默认 `SENSEVOICE_DEFAULT_LANGUAGE=zh` 并在启动预热），未知语言 415 fail closed。回滚：镜像 `memoria-sensevoice-asr:v1` + 脚本 `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Agent 侧回滚点 `rollback-20260829-0859-sensevoice-rescue-agent-component-pre-agent/-pre-bridge` 不变（本次未动 Agent 镜像）。
 - **sidecar 构建资产只存在于服务器**：`/opt/memoria/sidecars/sensevoice-asr/Dockerfile` 在仓库里没有副本，基础层 `python:3.11-slim` 与 pip 依赖都未钉版本，重建不可复现。本次重建后已现场校验 sherpa-onnx 仍为 1.13.6、Python 3.11.16，与旧 `v1` 一致；下次改动前应先把 Dockerfile 收进仓库并钉版本。服务器上的脚本副本与仓库 HEAD 曾有 import 排序差异（无功能差异），现已同源。
@@ -510,7 +510,7 @@ ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+E
 
 **下一步（按顺序）**
 
-1. 确认屏幕已离开「连接中」。旧会话 `d4f2277e` 已在 epoch 1881 关闭；需要时重新唤醒。
+1. 重新唤醒「茉莉」：应听到 allowlisted 欢迎短句（时段/周末/缺席/风格变体之一），屏幕离开「连接中」。旧会话 `d4f2277e` 已在 epoch 1881 关闭。听感未过不得把欢迎语或 `direct_real_device_verified` 写成 true。
 2. 真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。**详细操作、命令、判定标准与证据回填见「屏幕表情：眼睛白描脸（2026-09-08）」一节的 runbook。**
 3. 助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
 4. 播 TTS 时采近端残差。未过证不得改 `aec_reference_verified`。
