@@ -1,15 +1,13 @@
-"""Host-side checks for the Memoria eyes-only device face.
+"""Host-side checks for the Memoria conversation face.
 
 The firmware renderer in ``overlay/files/main/boards/memoria/esp-vocat/
 memoria_face.cc`` has no ESP-IDF or LVGL dependency on purpose, so these tests
-compile the exact firmware source with the host compiler, render the faces, and
-assert the geometry that was measured from the product reference photo:
+compile the exact firmware source with the host compiler and assert the v3
+conversation-face contract:
 
-    eye half width 0.26 R, eye centres +-0.35 R, dome centre on the centre line,
-    closed eye = dome trimmed by a shallow cut arc (the reference crescent).
-
-The reference photo itself cannot be shipped with the repository, so the numbers
-below are the contract.
+    eyes at +-0.30 R, y=-0.20 R, half width 0.205 R;
+    closed eye = crescent; open eye = almond sclera minus pupil;
+    mouth is the signature; unknown names fall back to neutral, never emoji.
 """
 
 from __future__ import annotations
@@ -56,7 +54,14 @@ int main(int argc, char** argv) {
     printf("right_openness=%.4f\n", face.right.openness);
     printf("left_cx=%.4f\n", face.left.center_x);
     printf("right_cx=%.4f\n", face.right.center_x);
+    printf("left_cy=%.4f\n", face.left.center_y);
+    printf("right_cy=%.4f\n", face.right.center_y);
     printf("half_width=%.4f\n", face.left.half_width);
+    printf("left_almond=%d\n", face.left.almond ? 1 : 0);
+    printf("right_almond=%d\n", face.right.almond ? 1 : 0);
+    printf("left_gaze_x=%.4f\n", face.left.gaze_x);
+    printf("left_gaze_y=%.4f\n", face.left.gaze_y);
+    printf("kind=%u\n", static_cast<unsigned>(face.kind));
     printf("blinks=%d\n", memoria::FaceBlinks(argv[1]) ? 1 : 0);
     printf("DATA\n");
     fflush(stdout);
@@ -114,9 +119,35 @@ def _render(face_tool: pathlib.Path, emotion: str, size: int = SCREEN, blink: fl
     return buffer, meta
 
 
-def _blobs(buffer, size: int) -> list[dict[str, float]]:
-    """Bright blobs (eyes), left to right."""
-    bright = [value > 0x8000 for value in buffer]
+def _px(buffer, x: int, y: int, size: int = SCREEN) -> int:
+    return buffer[y * size + x]
+
+
+def _bright(buffer, x: int, y: int, size: int = SCREEN, threshold: int = 0x8000) -> bool:
+    return _px(buffer, x, y, size) > threshold
+
+
+def _region_max(buffer, x0: int, y0: int, x1: int, y1: int, size: int = SCREEN) -> int:
+    brightest = 0
+    for y in range(y0, y1 + 1):
+        row = y * size
+        for x in range(x0, x1 + 1):
+            brightest = max(brightest, buffer[row + x])
+    return brightest
+
+
+def _region_min(buffer, x0: int, y0: int, x1: int, y1: int, size: int = SCREEN) -> int:
+    darkest = 0xFFFF
+    for y in range(y0, y1 + 1):
+        row = y * size
+        for x in range(x0, x1 + 1):
+            darkest = min(darkest, buffer[row + x])
+    return darkest
+
+
+def _blobs(buffer, size: int, threshold: int = 0x8000) -> list[dict[str, float]]:
+    """Bright blobs, left to right."""
+    bright = [value > threshold for value in buffer]
     seen = bytearray(size * size)
     found = []
     for start in range(size * size):
@@ -155,14 +186,28 @@ def _blobs(buffer, size: int) -> list[dict[str, float]]:
     return found
 
 
+def _left_eye_blob(buffer, size: int = SCREEN) -> dict[str, float]:
+    candidates = [
+        blob
+        for blob in _blobs(buffer, size)
+        if blob["cx"] < size / 2 and blob["cy"] < size * 0.55 and blob["count"] > 40
+    ]
+    assert candidates, "left eye blob missing"
+    return max(candidates, key=lambda blob: blob["count"])
+
+
 def _corner_y(buffer, size: int, blob, outer_is_left: bool) -> tuple[float, float]:
     """Mean y of the outermost and innermost pixel columns of one eye."""
-    columns = range(blob["min_x"], blob["min_x"] + 2) if outer_is_left else range(
-        blob["max_x"] - 1, blob["max_x"] + 1
+    y0 = int(blob["min_y"])
+    y1 = int(blob["max_y"]) + 1
+    columns = (
+        range(blob["min_x"], blob["min_x"] + 2)
+        if outer_is_left
+        else range(blob["max_x"] - 1, blob["max_x"] + 1)
     )
     outer = []
     for x in columns:
-        for y in range(size):
+        for y in range(y0, y1):
             if buffer[y * size + x] > 0x8000:
                 outer.append(y)
     inner_columns = (
@@ -172,9 +217,10 @@ def _corner_y(buffer, size: int, blob, outer_is_left: bool) -> tuple[float, floa
     )
     inner = []
     for x in inner_columns:
-        for y in range(size):
+        for y in range(y0, y1):
             if buffer[y * size + x] > 0x8000:
                 inner.append(y)
+    assert outer and inner, "eye corner samples missing"
     return sum(outer) / len(outer), sum(inner) / len(inner)
 
 
@@ -182,105 +228,139 @@ def test_renderer_compiles_clean(face_tool: pathlib.Path) -> None:
     assert face_tool.exists()
 
 
-def test_neutral_matches_reference_geometry(face_tool: pathlib.Path) -> None:
+def test_neutral_is_a_closed_conversation_face(face_tool: pathlib.Path) -> None:
     buffer, meta = _render(face_tool, "neutral")
-    blobs = _blobs(buffer, SCREEN)
-    assert len(blobs) == 2, "the neutral face must draw exactly two eyes"
-
-    left, right = blobs
-    # Eye half width 0.26 R -> 93.6 px wide on the 360 px panel.
-    assert left["width"] == pytest.approx(94, abs=3)
-    assert right["width"] == pytest.approx(94, abs=3)
-    # Closed crescent height: dome (1.0 hw) plus the shallow trim.
-    assert left["height"] == pytest.approx(47, abs=3)
-    # Eye centres at +-0.35 R = 117 / 243 px.
-    assert left["cx"] == pytest.approx(117, abs=2)
-    assert right["cx"] == pytest.approx(243, abs=2)
-    # The dome centre sits on the horizontal centre line, so the eye tips end
-    # there as well.
-    assert left["max_y"] == pytest.approx(RADIUS - 1, abs=3)
-    assert right["max_y"] == pytest.approx(RADIUS - 1, abs=3)
-    # Both eyes level.
-    assert left["min_y"] == pytest.approx(right["min_y"], abs=1)
-
     assert meta["left_openness"] == pytest.approx(0.0)
     assert meta["right_openness"] == pytest.approx(0.0)
-    assert meta["half_width"] == pytest.approx(0.26, abs=0.001)
-    assert meta["left_cx"] == pytest.approx(-0.35, abs=0.001)
-    assert meta["right_cx"] == pytest.approx(0.35, abs=0.001)
+    assert meta["left_almond"] == 0
+    assert meta["half_width"] == pytest.approx(0.205, abs=0.001)
+    assert meta["left_cx"] == pytest.approx(-0.30, abs=0.001)
+    assert meta["right_cx"] == pytest.approx(0.30, abs=0.001)
+    assert meta["left_cy"] == pytest.approx(-0.20, abs=0.001)
     assert meta["blinks"] == 0
 
+    left = _left_eye_blob(buffer)
+    assert left["cx"] == pytest.approx(126, abs=6)
+    assert left["cy"] == pytest.approx(127, abs=8)
+    assert left["width"] == pytest.approx(74, abs=8)
+    assert left["max_y"] < RADIUS - 8
 
-def test_eyes_are_white_on_black(face_tool: pathlib.Path) -> None:
+    # Mouth sits in the lower half; the exact screen centre stays dark.
+    assert _region_max(buffer, 160, 220, 200, 240) > 0x8000
+    assert _px(buffer, SCREEN // 2, SCREEN // 2) == 0x0000
+
+
+def test_face_is_white_on_black(face_tool: pathlib.Path) -> None:
     buffer, _ = _render(face_tool, "neutral")
     assert buffer[0] == 0x0000
     assert max(buffer) == 0xFFFF
-    # Inside the left eye, and on the screen centre between the eyes.
-    assert buffer[160 * SCREEN + 117] == 0xFFFF
-    assert buffer[SCREEN // 2 * SCREEN + SCREEN // 2] == 0x0000
+    left = _left_eye_blob(buffer)
+    assert _bright(buffer, int(round(left["cx"])), int(round(left["cy"])))
+    assert _px(buffer, SCREEN // 2, SCREEN // 2) == 0x0000
 
 
-@pytest.mark.parametrize("emotion", ["neutral", "happy", "sad", "surprised", "loving", "thinking"])
-def test_every_emotion_draws_two_eyes(face_tool: pathlib.Path, emotion: str) -> None:
+@pytest.mark.parametrize("emotion", ["neutral", "happy", "sad", "surprised", "loving", "thinking", "embarrassed", "wink", "speaking"])
+def test_every_emotion_draws_ink(face_tool: pathlib.Path, emotion: str) -> None:
     buffer, _ = _render(face_tool, emotion)
-    blobs = _blobs(buffer, SCREEN)
-    assert len(blobs) == 2, f"{emotion} must draw exactly two eyes"
+    assert max(buffer) == 0xFFFF
+    assert buffer[0] == 0x0000
+    assert any(value > 0x8000 for value in buffer)
 
 
-def test_happy_raises_the_outer_corners(face_tool: pathlib.Path) -> None:
+def test_happy_raises_the_outer_corners_and_smiles(face_tool: pathlib.Path) -> None:
     buffer, _ = _render(face_tool, "happy")
-    left = _blobs(buffer, SCREEN)[0]
+    left = _left_eye_blob(buffer)
     outer, inner = _corner_y(buffer, SCREEN, left, outer_is_left=True)
     assert outer < inner - 2, "happy must lift the outer corner of the left eye"
+    # Four-pointed stars in the upper corners, smile in the lower half.
+    assert _region_max(buffer, 50, 70, 90, 110) > 0x8000
+    assert _region_max(buffer, 270, 70, 310, 110) > 0x8000
+    assert _region_max(buffer, 150, 215, 210, 250) > 0x8000
 
 
-def test_sad_drops_the_outer_corners(face_tool: pathlib.Path) -> None:
+def test_sad_drops_the_outer_corners_and_has_a_tear(face_tool: pathlib.Path) -> None:
     buffer, _ = _render(face_tool, "sad")
-    left = _blobs(buffer, SCREEN)[0]
+    left = _left_eye_blob(buffer)
     outer, inner = _corner_y(buffer, SCREEN, left, outer_is_left=True)
     assert outer > inner + 2, "sad must drop the outer corner of the left eye"
+    # Tear on the right cheek.
+    assert _region_max(buffer, 240, 155, 290, 200) > 0x8000
 
 
 def test_loving_raises_the_inner_corners(face_tool: pathlib.Path) -> None:
     buffer, _ = _render(face_tool, "loving")
-    left = _blobs(buffer, SCREEN)[0]
+    left = _left_eye_blob(buffer)
     outer, inner = _corner_y(buffer, SCREEN, left, outer_is_left=True)
     assert inner < outer - 2, "loving must lift the inner corner of the left eye"
+    # Blush is grey, not full white.
+    cheek = _region_max(buffer, 70, 190, 110, 220)
+    assert 0x2000 < cheek < 0xE000
 
 
-def test_surprised_opens_round_eyes(face_tool: pathlib.Path) -> None:
-    buffer, _ = _render(face_tool, "surprised")
-    blobs = _blobs(buffer, SCREEN)
-    for blob in blobs:
-        assert abs(blob["width"] - blob["height"]) <= 4, "surprised eyes must be round"
-    neutral, _ = _render(face_tool, "neutral")
-    neutral_area = sum(blob["count"] for blob in _blobs(neutral, SCREEN))
-    assert sum(blob["count"] for blob in blobs) > neutral_area * 1.5
+def test_surprised_has_pupils_not_solid_discs(face_tool: pathlib.Path) -> None:
+    buffer, meta = _render(face_tool, "surprised")
+    assert meta["left_almond"] == 1
+    assert meta["blinks"] == 1
+    # Eye centres are the punched-out pupils.
+    left_cx = int(RADIUS + meta["left_cx"] * RADIUS + meta["left_gaze_x"] * RADIUS)
+    left_cy = int(RADIUS + meta["left_cy"] * RADIUS + meta["left_gaze_y"] * RADIUS)
+    assert _px(buffer, left_cx, left_cy) < 0x2000
+    assert _region_max(buffer, left_cx - 24, left_cy - 8, left_cx - 12, left_cy + 8) > 0x8000
+    # Small round mouth in the lower half.
+    assert _region_max(buffer, 165, 210, 195, 245) > 0x8000
+    assert _region_min(buffer, 176, 226, 184, 234) < 0x4000
 
 
 def test_thinking_looks_up_and_to_the_side(face_tool: pathlib.Path) -> None:
-    buffer, _ = _render(face_tool, "thinking")
-    blobs = _blobs(buffer, SCREEN)
-    neutral, _ = _render(face_tool, "neutral")
-    neutral_blobs = _blobs(neutral, SCREEN)
-    # Both eyes shift right ...
-    assert blobs[0]["cx"] > neutral_blobs[0]["cx"] + 4
-    assert blobs[1]["cx"] > neutral_blobs[1]["cx"] + 4
-    # ... and up: the open discs are centred 0.10 R above the screen centre.
-    for blob in blobs:
-        assert (blob["min_y"] + blob["max_y"]) / 2 == pytest.approx(
-            RADIUS - 0.10 * RADIUS, abs=3
-        )
+    buffer, meta = _render(face_tool, "thinking")
+    assert meta["left_gaze_x"] == pytest.approx(0.055, abs=0.001)
+    assert meta["left_gaze_y"] == pytest.approx(-0.045, abs=0.001)
+    assert meta["left_cx"] > -0.30
+    surprised, _ = _render(face_tool, "surprised")
+    # Thought dots sit above the surprised almond, not in the eye itself.
+    assert _region_max(buffer, 280, 55, 320, 95) > 0x8000
+    assert _region_max(surprised, 280, 55, 320, 95) < 0x4000
+
+
+def test_embarrassed_is_not_happy(face_tool: pathlib.Path) -> None:
+    embarrassed, meta_e = _render(face_tool, "embarrassed")
+    happy, meta_h = _render(face_tool, "happy")
+    assert embarrassed != happy
+    assert meta_e["kind"] != meta_h["kind"]
+    # Sweat drop at the left temple.
+    assert _region_max(embarrassed, 55, 70, 95, 120) > 0x8000
+
+
+def test_wink_is_asymmetric(face_tool: pathlib.Path) -> None:
+    buffer, meta = _render(face_tool, "wink")
+    assert meta["left_openness"] == pytest.approx(0.0)
+    assert meta["right_openness"] == pytest.approx(1.0)
+    assert meta["left_almond"] == 0
+    assert meta["right_almond"] == 1
+    assert meta["blinks"] == 0
+    left = _left_eye_blob(buffer)
+    right_cx = int(RADIUS + meta["right_cx"] * RADIUS)
+    right_cy = int(RADIUS + meta["right_cy"] * RADIUS)
+    # Closed left crescent is solid; open right eye has a pupil hole.
+    assert _bright(buffer, int(round(left["cx"])), int(round(left["cy"])))
+    assert _px(buffer, right_cx, right_cy) < 0x2000
+
+
+def test_speaking_is_an_open_viseme(face_tool: pathlib.Path) -> None:
+    buffer, meta = _render(face_tool, "speaking")
+    assert meta["left_almond"] == 1
+    assert meta["blinks"] == 1
+    # Flattened open mouth, hollow in the middle.
+    assert _region_max(buffer, 155, 215, 205, 245) > 0x8000
+    assert _region_min(buffer, 172, 222, 188, 232) < 0x4000
 
 
 def test_blink_closes_open_eyes(face_tool: pathlib.Path) -> None:
     buffer, meta = _render(face_tool, "surprised", blink=1.0)
     assert meta["left_openness"] == pytest.approx(0.0)
     assert meta["right_openness"] == pytest.approx(0.0)
-    blobs = _blobs(buffer, SCREEN)
-    assert len(blobs) == 2
-    assert blobs[0]["height"] == pytest.approx(47, abs=3)
-    # Closed eyes keep the reference crescent even mid-blink.
+    left = _left_eye_blob(buffer)
+    assert left["height"] <= 42
     _, meta = _render(face_tool, "surprised", blink=0.5)
     assert 0.0 < meta["left_openness"] < 1.0
 
@@ -313,6 +393,8 @@ def test_aliases_map_onto_the_canonical_faces(face_tool: pathlib.Path) -> None:
         ("caring", "loving"),
         ("curious", "thinking"),
         ("confused", "thinking"),
+        ("winking", "wink"),
+        ("talking", "speaking"),
     ):
         alias_pixels, _ = _render(face_tool, alias)
         canonical_pixels, _ = _render(face_tool, canonical)
@@ -321,10 +403,9 @@ def test_aliases_map_onto_the_canonical_faces(face_tool: pathlib.Path) -> None:
 
 def test_geometry_scales_with_the_panel(face_tool: pathlib.Path) -> None:
     buffer, _ = _render(face_tool, "neutral", size=180)
-    blobs = _blobs(buffer, 180)
-    assert len(blobs) == 2
-    assert blobs[0]["width"] == pytest.approx(47, abs=2)
-    assert blobs[0]["cx"] == pytest.approx(58.5, abs=2)
+    left = _left_eye_blob(buffer, 180)
+    assert left["width"] == pytest.approx(37, abs=5)
+    assert left["cx"] == pytest.approx(63, abs=4)
 
 
 def test_board_wires_the_face_display() -> None:
@@ -334,7 +415,7 @@ def test_board_wires_the_face_display() -> None:
     assert "new SpiLcdDisplay(" not in board
 
     display = DISPLAY_SOURCE.read_text(encoding="utf-8")
-    # White eyes need the dark theme; the light theme draws black text on black.
+    # White face needs the dark theme; the light theme draws black text on black.
     assert 'GetTheme("dark")' in display
     assert "bg_image_src" in display
     # The colour emoji must never come back on this board.
@@ -409,4 +490,5 @@ def test_preview_script_runs(face_tool: pathlib.Path) -> None:
         produced = sorted(path.name for path in pathlib.Path(tmp).glob("*.png"))
     assert "neutral.png" in produced
     assert "sheet.png" in produced
-    assert len(produced) >= 9
+    assert "speaking.png" in produced
+    assert len(produced) >= 12

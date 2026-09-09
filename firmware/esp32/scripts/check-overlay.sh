@@ -39,13 +39,13 @@ board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat"
 [[ -f "$board_dir/memoria_esp_vocat.cc" ]] || die "board source missing"
 [[ -f "$board_dir/config.h" ]] || die "board config missing"
 [[ -f "$board_dir/config.json" ]] || die "board manifest missing"
-[[ -f "$board_dir/memoria_face.h" ]] || die "eyes-only face header missing"
-[[ -f "$board_dir/memoria_face.cc" ]] || die "eyes-only face renderer missing"
-[[ -f "$board_dir/memoria_face_display.h" ]] || die "eyes-only face display header missing"
-[[ -f "$board_dir/memoria_face_display.cc" ]] || die "eyes-only face display missing"
+[[ -f "$board_dir/memoria_face.h" ]] || die "conversation face header missing"
+[[ -f "$board_dir/memoria_face.cc" ]] || die "conversation face renderer missing"
+[[ -f "$board_dir/memoria_face_display.h" ]] || die "conversation face display header missing"
+[[ -f "$board_dir/memoria_face_display.cc" ]] || die "conversation face display missing"
 [[ -f "$board_dir/memoria_pat.h" ]] || die "body-pat detector header missing"
 rg -q 'new MemoriaFaceDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
-    die "board does not use the eyes-only face display"
+    die "board does not use the conversation face display"
 rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the host-testable pat detector"
 rg -Fq 'idle screen tap ignored; wake word or BOOT starts chat' \
@@ -62,9 +62,16 @@ rg -Fq 'MuteImuForTouch' "$board_dir/memoria_esp_vocat.cc" || \
 rg -Fq 'Device pat ignored (touch rumble' "$board_dir/memoria_esp_vocat.cc" || \
     die "screen-tap rumble must cancel a pending body pat"
 rg -q 'GetTheme\("dark"\)' "$board_dir/memoria_face_display.cc" || \
-    die "eyes-only face must pin the dark theme"
+    die "conversation face must pin the dark theme"
 rg -q 'bg_image_src' "$board_dir/memoria_face_display.cc" || \
-    die "eyes-only face is not attached to the display background"
+    die "conversation face is not attached to the display background"
+rg -q 'kMouthY' "$board_dir/memoria_face.cc" || \
+    die "conversation face renderer must draw a mouth"
+if rg -Fq '{"embarrassed", "happy"}' "$board_dir/memoria_face.cc"; then
+    die "embarrassed must not alias to happy"
+fi
+rg -q '"speaking"' "$board_dir/memoria_face.cc" || \
+    die "conversation face must include a speaking viseme"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.h" ]] || die "device identity header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.cc" ]] || die "device identity source missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h" ]] || die "audio frame header missing"

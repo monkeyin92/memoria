@@ -32,8 +32,8 @@ MemoriaFaceDisplay::MemoriaFaceDisplay(esp_lcd_panel_io_handle_t panel_io,
         ESP_LOGE(TAG, "face buffer allocation failed (%u bytes)", static_cast<unsigned>(bytes));
         return;
     }
-    // Render the idle face before the buffer becomes visible so no garbage is
-    // ever shown.
+    // Render the idle conversation face before the buffer becomes visible so no
+    // garbage is ever shown.
     memoria::RenderFaceRgb565(face_buffer_, width_, height_,
                               memoria::FaceForEmotion("neutral", 0.0f));
     face_image_ = std::make_unique<LvglAllocatedImage>(face_buffer_, bytes, width_, height_,

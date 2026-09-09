@@ -3,8 +3,8 @@
 
 The script compiles ``memoria_face.cc`` with the host compiler (the renderer has
 no ESP-IDF or LVGL dependency on purpose), runs it, and writes PNG previews plus
-the measured eye geometry.  This is the design/verification path for the
-eyes-only face that replaced the small colour emoji on the 360x360 round LCD.
+the measured face geometry.  This is the design/verification path for the
+conversation face that replaced the small colour emoji on the 360x360 round LCD.
 
 Usage:
     uv run python firmware/esp32/scripts/preview_memoria_face.py --out .tmp-face/out
@@ -96,10 +96,11 @@ int main(int argc, char** argv) {
         const char* name = memoria::kFaceEmotions[i];
         const memoria::Face face = memoria::FaceForEmotion(name, 0.0f);
         printf("emotion %s left=(%.4f,%.4f) right=(%.4f,%.4f) half_width=%.4f "
-               "openness=%.3f rotation=%.2f scale=%.3f squint=%.3f\n",
+               "openness=%.3f almond=%d gaze=(%.3f,%.3f) rotation=%.2f scale=%.3f\n",
                name, face.left.center_x, face.left.center_y, face.right.center_x,
                face.right.center_y, face.left.half_width, face.left.openness,
-               face.left.rotation_deg, face.left.scale, face.left.squint);
+               face.left.almond ? 1 : 0, face.left.gaze_x, face.left.gaze_y,
+               face.left.rotation_deg, face.left.scale);
     }
     return 0;
 }
@@ -228,6 +229,9 @@ def main() -> int:
             "surprised",
             "loving",
             "thinking",
+            "embarrassed",
+            "wink",
+            "speaking",
             "blink-0",
             "blink-2",
             "blink-4",
@@ -238,20 +242,18 @@ def main() -> int:
                 images.append((name, pixels))
 
         sheet = _contact_sheet(images, SCREEN)
-        _write_png(args.out / "sheet.png", sheet, 3 * SCREEN, 2 * SCREEN)
+        rows = (len(images) + 2) // 3
+        _write_png(args.out / "sheet.png", sheet, 3 * SCREEN, rows * SCREEN)
 
-        print("\nmeasured eye boxes (px on the 360x360 panel):")
+        print("\nmeasured bright-blob boxes (px on the 360x360 panel):")
         for name, pixels in images:
             boxes = _eye_boxes(pixels, SCREEN, SCREEN)
-            if len(boxes) != 2:
-                print(f"  {name}: expected 2 eyes, found {len(boxes)}")
-                continue
-            left, right = boxes
-            print(
-                f"  {name}: left x[{left[0]},{left[2]}] y[{left[1]},{left[3]}] "
-                f"w={left[2] - left[0] + 1} h={left[3] - left[1] + 1}; "
-                f"right cx={(right[0] + right[2]) / 2:.1f}"
-            )
+            print(f"  {name}: {len(boxes)} blob(s)")
+            for index, box in enumerate(boxes[:6]):
+                print(
+                    f"    [{index}] x[{box[0]},{box[2]}] y[{box[1]},{box[3]}] "
+                    f"w={box[2] - box[0] + 1} h={box[3] - box[1] + 1}"
+                )
     if args.keep:
         print(f"\npreviews written to {args.out}")
     else:

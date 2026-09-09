@@ -70,7 +70,7 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 - 称呼只在注册 UI 设置，文案“怎么称呼你？”；H5“我的”和小程序个人信息不再暴露称呼或陪伴方式编辑。
 - 供应商 `voice_id` 只能由 Agent 批准 registry 解析；客户端只传稳定目录键，试听文件路径包含供应商和版本。
 - 微信小程序是控制面：不申请 `scope.record`，不创建 RecorderManager，不播放实时 TTS，不建立媒体 WSS，不加入 LiveKit。
-- 设备屏幕表情是「眼睛-only 白描脸」：黑底白眼睛，几何以固件渲染源 `firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 为准，预览脚本与宿主测试编译同一份源码；未知情绪回落 `neutral`，不得回退到彩色 emoji。
+- 设备屏幕表情是「对话脸」：360 圆屏黑底白描，签名是嘴（待命短平线），鼻子是米粒点，闭眼仍是月牙、睁眼是杏仁白眼加挖空瞳孔。几何以固件渲染源 `firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 为准，预览脚本与宿主测试编译同一份源码；未知情绪回落 `neutral`，不得回退到彩色 emoji，面部不绑定唤醒名。
 
 ## 固件与硬件安全
 

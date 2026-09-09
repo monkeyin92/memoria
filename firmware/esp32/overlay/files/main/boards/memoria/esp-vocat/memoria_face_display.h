@@ -8,9 +8,9 @@
 #include <memory>
 
 // LCD display for the Memoria ESP-VoCat: the 360x360 round panel shows the
-// eyes-only face from memoria_face.h (white eyes on black) instead of the small
-// colour emoji glyphs, and the board is pinned to the dark theme so the white
-// face and the white status text stay legible.
+// conversation face from memoria_face.h (white-on-black mouth/eyes, not the
+// small colour emoji glyphs), and the board is pinned to the dark theme so the
+// white face and the white status text stay legible.
 class MemoriaFaceDisplay : public SpiLcdDisplay {
 public:
     MemoriaFaceDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,

@@ -386,11 +386,11 @@ cd firmware/esp32
 
 默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 
-### 屏幕表情（眼睛白描脸）
+### 屏幕表情（对话脸）
 
-360x360 圆屏不再显示 64px 黄色 Noto emoji，改为白眼睛黑底的眼睛-only 表情。`overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 按参考照片的几何解析绘制：眼半宽 `0.26R`、眼心 `±0.35R`、圆拱中心落在屏幕水平中线；闭眼是圆拱被一条浅弧裁出的月牙，裁弧下移即睁成整圆，边缘做 1px 抗锯齿。`memoria_face_display.cc` 把渲染结果作为 LVGL 容器的 `bg_image_src`（360x360 RGB565，PSRAM），`content_`/`top_bar_` 背景透明，字幕与状态文字仍画在脸之上；同时把板卡钉到 **dark** 主题（浅色主题会把黑字画到黑屏上）。缓冲分配失败时回退上游彩色 emoji 路径。
+360x360 圆屏不再显示 64px 黄色 Noto emoji，改为黑底白描对话脸：签名是嘴，鼻子是两眼与嘴之间的米粒点，闭眼仍是月牙，睁眼是杏仁白眼加挖空瞳孔（不是实心白圆）。几何以 `overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 为准：眼心 `±0.30R, y=-0.20R`，眼半宽 `0.205R`，鼻 `y=0.07R`，嘴 `y=0.27R`。点缀按需出现：开心四角星、心疼灰调红晕、难过泪、尴尬汗珠。`memoria_face_display.cc` 把渲染结果作为 LVGL 容器的 `bg_image_src`（360x360 RGB565，PSRAM），`content_`/`top_bar_` 背景透明，字幕与状态文字仍画在脸之上；同时把板卡钉到 **dark** 主题（浅色主题会把黑字画到黑屏上）。缓冲分配失败时回退上游彩色 emoji 路径。面部不绑定唤醒名。
 
-服务端 `screen.expression` 的六种情绪映射为 `neutral`（参考图：平放月牙）、`happy`（外眼角上挑的眯眼）、`sad`（外眼角下垂的细月牙）、`surprised`（圆睁）、`loving`（内倾柔和月牙）、`thinking`（上移偏右）；别名 `idle/sleepy→neutral`、`laughing/funny/…→happy`、`crying/angry→sad`、`shocked→surprised`、`caring→loving`、`curious/confused→thinking`，未知名字回落 `neutral`，不会再出现黄色 emoji。`surprised`/`thinking` 睁眼，每 4–7 秒眨一次。
+服务端 `screen.expression` 六种情绪映射为 `neutral`（待命月牙+平嘴+鼻点）、`happy`（外眼角上挑的眯眼+四角星+笑嘴）、`sad`（外眼角下垂+泪+撇嘴）、`surprised`（杏仁白眼+瞳孔+小 O）、`loving`（内倾月牙+灰调红晕）、`thinking`（杏仁上移偏右+思考点）。固件另有 `embarrassed`（汗珠，不再 alias 到 happy）、`wink`（左右不对称）、`speaking`（扁圆开口 viseme）。别名 `idle/sleepy→neutral`、`laughing/funny/…→happy`、`crying/angry→sad`、`shocked→surprised`、`caring→loving`、`curious/confused→thinking`、`winking→wink`、`talking→speaking`，未知名字回落 `neutral`，不会再出现黄色 emoji。`surprised`/`thinking`/`speaking` 睁眼，每 4–7 秒眨一次。
 
 离线预览与回归（不需要硬件）：
 
@@ -399,9 +399,9 @@ uv run python firmware/esp32/scripts/preview_memoria_face.py --out .tmp-face/out
 uv run pytest firmware/esp32/tests/test_memoria_face.py -q
 ```
 
-预览脚本编译的是固件同一份 `memoria_face.cc`，因此设计稿与固件输出不会漂移。生成好的对照图在 `outputs/firmware-face-20260908/`（`device-view.png` 是套圆屏边框的观感图）。
+预览脚本编译的是固件同一份 `memoria_face.cc`，因此设计稿与固件输出不会漂移。对照图在 `outputs/firmware-face-v3-20260909/`。
 
-真机验收（刷机命令、四种表情怎么问、串口收据、证据目录和回填字段）见 `HANDOFF.md` 的「屏幕表情：眼睛白描脸」runbook；`hardware_verified` 在亲眼确认前保持 false。
+真机验收（刷机命令、五种表情怎么问、串口收据、证据目录和回填字段）见 `HANDOFF.md` 的「屏幕表情：对话脸」runbook；`hardware_verified` 在亲眼确认前保持 false。
 
 Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 BOOT，然后重试。monitor 使用 `Ctrl+]` 退出。
 

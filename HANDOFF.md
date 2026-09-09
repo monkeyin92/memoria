@@ -7,8 +7,8 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-09
-resume_checkpoint: vocat_interrupt_assist_confirm_pat_operator_pass_awaiting_expression_photos
-firmware_face_acceptance: confirm_pat_operator_pass_awaiting_idle_and_five_expression_photos
+resume_checkpoint: vocat_conversation_face_v3_flashed_awaiting_expression_photos
+firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -48,12 +48,12 @@ idle_tap_pat_operator_verified: true
 
 ## 下一验收
 
-按顺序。点屏 / 摇晃 / 短拍已于 2026-09-09 16:08 CST 操作员 PASS，板上不用再刷。半双工双轮（星期几 + 天气 + 短告别）曾在 epoch 1379 PASS，不代替下列项。
+按顺序。点屏 / 摇晃 / 短拍逻辑已于 2026-09-09 16:08 CST 操作员 PASS；本轮只换 v3 对话脸画面，不改点屏拍击接线。半双工双轮（星期几 + 天气 + 短告别）曾在 epoch 1379 PASS，不代替下列项。
 
 | 项 | 标准 | 状态 |
 | --- | --- | --- |
-| 待机脸照片 | 拍 `idle.jpg`，黑底两个白色平放月牙，对照 `outputs/firmware-face-20260908/device-view.png` 左上角 | 待拍 |
-| 五表情照片 | 唤醒「茉莉」按「屏幕表情」表各拍一张，说完回月牙 | 待拍 |
+| 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
+| 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
 | barge-in | 助手说话时插一句短打断，应停旧 generation 并形成新 turn；BOOT 仍能硬停 | 未验 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -61,47 +61,47 @@ idle_tap_pat_operator_verified: true
 
 **勿做**：宣传全双工；把 `hardware_verified` / `direct_real_device_verified` / `full_duplex_verified` 从刷机、欢迎语或点屏拍击外推为 true；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用；伪造 owner；把未 active 的声纹当主人认证宣传。
 
-## 屏幕表情：眼睛白描脸
+## 屏幕表情：对话脸
 
 ```yaml
-change: replace_64px_noto_colour_emoji_with_drawn_eyes_only_face
+change: vocat_conversation_face_v3
 code: complete
 wired: overlay_board_layer_memoria_face_display
-verified: host_renderer_tests_preview_esp32s3_clean_build_overlay_gate_and_idle_tap_pat
+verified: host_renderer_tests_preview_esp32s3_build_overlay_gate
 hardware_verified: false
-next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）
-on_device_flash: app_only_0x20000_20260909-1559-confirm-pat-bootfix
-evidence_dir: outputs/acceptance/run-20260909-1531-confirm-pat
-backup_app: firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin
-backup_app_sha256: fc9134af604f8a383306b8b48cb526902eae44de8fb4a9eed75960200bacb774
+next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）；短拍应为杏仁瞳孔+小O
+on_device_flash: app_only_0x20000_20260909-1845-conversation-face-v3
+evidence_dir: outputs/acceptance/run-20260909-face-v3
+backup_app: firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin
+backup_app_sha256: df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
 operator_pulse_pat_result: tap_pass_shake_pass_pat_pass
 operator_verified_at: 2026-09-09 16:08 CST
 pending_flash: none
 ```
 
-360x360 圆屏是黑底白眼睛，不再显示黄色 Noto emoji。协议 `screen.expression` 未改：`neutral/happy/sad/surprised/loving/thinking`。未知名字回落 `neutral`。`Application` 在 idle / connecting / listening 下发 `neutral`，说完回到待机月牙。固件摘要与身份区 SHA 见「板卡与固件」。
+360x360 圆屏是黑底白描对话脸，不再显示黄色 Noto emoji。签名是嘴，鼻子是米粒点，闭眼仍是月牙，睁眼是杏仁白眼加挖空瞳孔。协议 `screen.expression` 未改：`neutral/happy/sad/surprised/loving/thinking`；固件另能画 `embarrassed`/`wink`/`speaking`，本轮服务端不必接线。未知名字回落 `neutral`。`Application` 在 idle / connecting / listening 下发 `neutral`，说完回到待命月牙+平嘴。面部不绑定唤醒名。固件摘要与身份区 SHA 见「板卡与固件」。
 
-**本地待机交互（已可用）**
+**本地待机交互（逻辑已可用；本轮换画面后需重看）**
 
-- 点屏：保持月牙，串口 `idle screen tap ignored`，不开麦。
-- 摇晃：保持月牙，不开麦。
-- 短拍身体：闪圆眼（`surprised`）约 1.5s，再回月牙；不开麦、不 `ToggleChatState`。
+- 点屏：保持待命月牙+平嘴，串口 `idle screen tap ignored`，不开麦。
+- 摇晃：保持待命月牙+平嘴，不开麦。
+- 短拍身体：闪 `surprised`（杏仁白眼+瞳孔+小 O）约 1.5s，再回待命；不开麦、不 `ToggleChatState`。
 
-证据：`outputs/acceptance/run-20260909-1531-confirm-pat/serial-follow.log`。这不等于五表情视觉验收，`hardware_verified` 保持 false。
+点屏/摇晃/短拍接线证据：`outputs/acceptance/run-20260909-1531-confirm-pat/serial-follow.log`。这不等于 v3 视觉验收，`hardware_verified` 保持 false。
 
 **对话表情（待拍照）**
 
-对照 `outputs/firmware-face-20260908/device-view.png`。触发源是助手回复语气（`mascot_expression_for_reply`），不是用户原话。照片存 `outputs/acceptance/run-20260909-1531-confirm-pat/`。caring 词会先判 `loving`；要 `sad` 就换一句带「遗憾 / 抱歉」且不含 caring 词的话。
+对照 `outputs/firmware-face-v3-20260909/sheet.png`。触发源是助手回复语气（`mascot_expression_for_reply`），不是用户原话。照片存 `outputs/acceptance/run-20260909-face-v3/`。caring 词会先判 `loving`；要 `sad` 就换一句带「遗憾 / 抱歉」且不含 caring 词的话。
 
 | 你说 | 期望助手语气 | 屏幕脸 | 串口收据 | 存图 |
 | --- | --- | --- | --- | --- |
-| 「我拿到心仪的 offer 了」 | 太好了 / 恭喜 | `happy`：外眼角上挑的眯眼 | `emotion=happy open_eyes=0` | `happy.jpg` |
-| 「我今天有点难过」 | 辛苦 / 心疼 / 听起来… | `loving`：内倾柔和月牙 | `emotion=loving open_eyes=0` | `loving.jpg` |
-| 「我的同事今天离职了」 | 遗憾 / 抱歉 | `sad`：外眼角下垂的细月牙 | `emotion=sad open_eyes=0` | `sad.jpg` |
-| 「没想到今天下雪了」 | 没想到 / 真的吗 | `surprised`：两个圆睁白圆 | `emotion=surprised open_eyes=1` | `surprised.jpg` |
-| 「有什么建议吗」 | 反问（回复带「？」） | `thinking`：圆睁且上移偏右 | `emotion=thinking open_eyes=1` | `thinking.jpg` |
+| 「我拿到心仪的 offer 了」 | 太好了 / 恭喜 | `happy`：外眼角上挑的眯眼+四角星+笑嘴 | `emotion=happy open_eyes=0` | `happy.jpg` |
+| 「我今天有点难过」 | 辛苦 / 心疼 / 听起来… | `loving`：内倾月牙+灰调红晕 | `emotion=loving open_eyes=0` | `loving.jpg` |
+| 「我的同事今天离职了」 | 遗憾 / 抱歉 | `sad`：外眼角下垂+泪+撇嘴 | `emotion=sad open_eyes=0` | `sad.jpg` |
+| 「没想到今天下雪了」 | 没想到 / 真的吗 | `surprised`：杏仁白眼+瞳孔+小 O | `emotion=surprised open_eyes=1` | `surprised.jpg` |
+| 「有什么建议吗」 | 反问（回复带「？」） | `thinking`：杏仁上移偏右+思考点 | `emotion=thinking open_eyes=1` | `thinking.jpg` |
 
-每轮说完应自动回到待机闭眼（串口再出现 `emotion=neutral`）。字幕仍是白字黑底；长按 BOOT 配网二维码盖在脸之上。`surprised` / `thinking` 每 4–7 秒眨一次约 150 ms。
+每轮说完应自动回到待命月牙+平嘴（串口再出现 `emotion=neutral`）。字幕仍是白字黑底；长按 BOOT 配网二维码盖在脸之上。`surprised` / `thinking` / `speaking` 每 4–7 秒眨一次约 150 ms。
 
 只有待机脸 + 五张表情 + 不回归项都亲眼确认后，才把本节 `hardware_verified` 改为 true。编译、刷机、点屏拍击都不算。
 
@@ -110,10 +110,10 @@ pending_flash: none
 ```bash
 python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --after hard-reset \
   write-flash --flash-mode dio --flash-size 32MB --flash-freq 80m \
-  0x20000 firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin
+  0x20000 firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin
 ```
 
-表情固件会把 `display/theme` 写成 dark 并留在 NVS；回滚后仍是深色主题，不是故障。不要写入 `0x10000..0x1ffff`。若需重刷当前 app：先 `firmware/esp32/scripts/check-overlay.sh`，确认 app SHA 仍是 `df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384`，再 `firmware/esp32/scripts/flash.sh --port PORT`。
+回滚目标是刷之前的 confirm-pat app（SHA `df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384`）。不要写入 `0x10000..0x1ffff`，也不要用会写 bootloader / 分区表 / assets 的 `flash.sh`。表情固件会把 `display/theme` 写成 dark 并留在 NVS；回滚后仍是深色主题，不是故障。若需重刷当前 v3 app：确认 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin` SHA 仍是 `352438d06c28c24d7104cd9c85f94234c381510d3933a8207dbfafb68467a3f5`，再 app-only 写 `0x20000`。
 
 ## 当前生产
 
@@ -153,13 +153,14 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-09 16:00 CST app-only 已刷 confirm-pat bootfix；未写 bootloader / 分区表 / 身份区 / NVS / assets。
-  - app `df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384`
-  - merged `f40327479ce6caec029a79b680827960bdacd78a32b05a3a5f5f8ffe79574a35`
-  - bootloader `95de33ee71d062ff439aa10bd154eb6ae7a2d0a7137f613d781df698baa938af`（本轮未写）
+- 2026-09-09 18:45 CST app-only 已刷 conversation-face-v3；未写 bootloader / 分区表 / 身份区 / NVS / assets。身份区刷后逐字节与刷前相同。
+  - app `352438d06c28c24d7104cd9c85f94234c381510d3933a8207dbfafb68467a3f5`
+  - merged `9e1154bce599213f6a8121a41636a81c20117d9a31ef6054e8ef2592a4e49887`
+  - bootloader `69707e47f7a8eb7c6eb5ffb63326526c359078d4393d477e340833c2ff1f0e65`（本轮未写）
   - partition-table `da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（本轮未写）
-  - overlay `5a797f91a6289fc86d5bab189fb305ac779a6e3092757fcd4ffd0d8eb7475318`
-- 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。刷写：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`。
+  - overlay `f70dde28213e516164564910babd4bf23bb19df020cbfeca923834046894c6f1`
+  - 回滚 app `firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin`（confirm-pat `df98d347…`）
+- 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
 
 ## 设备启用、唤醒与 shadow
 
