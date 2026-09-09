@@ -39,6 +39,16 @@ board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/esp-vocat"
 [[ -f "$board_dir/memoria_esp_vocat.cc" ]] || die "board source missing"
 [[ -f "$board_dir/config.h" ]] || die "board config missing"
 [[ -f "$board_dir/config.json" ]] || die "board manifest missing"
+[[ -f "$board_dir/memoria_face.h" ]] || die "eyes-only face header missing"
+[[ -f "$board_dir/memoria_face.cc" ]] || die "eyes-only face renderer missing"
+[[ -f "$board_dir/memoria_face_display.h" ]] || die "eyes-only face display header missing"
+[[ -f "$board_dir/memoria_face_display.cc" ]] || die "eyes-only face display missing"
+rg -q 'new MemoriaFaceDisplay\(' "$board_dir/memoria_esp_vocat.cc" || \
+    die "board does not use the eyes-only face display"
+rg -q 'GetTheme\("dark"\)' "$board_dir/memoria_face_display.cc" || \
+    die "eyes-only face must pin the dark theme"
+rg -q 'bg_image_src' "$board_dir/memoria_face_display.cc" || \
+    die "eyes-only face is not attached to the display background"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.h" ]] || die "device identity header missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/device_identity.cc" ]] || die "device identity source missing"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h" ]] || die "audio frame header missing"
@@ -132,15 +142,17 @@ frame_header="$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h"
 [[ -f "$protocol_source" ]] || die "protocol v2 source missing"
 [[ -f "$protocol_header" ]] || die "protocol v2 header missing"
 
-# Device protocol v2 must declare only honest simplex capabilities: no AEC
-# reference, no simultaneous capture/playback and no local stop keyword/duck.
-# Playback precision is independently backed by the GDMA completion barrier.
-rg -q 'cJSON_AddBoolToObject\(capabilities, "simultaneous_capture_playback", false\)' \
-    "$protocol_source" || die "hello v2 must declare no simultaneous capture/playback"
-rg -q 'cJSON_AddStringToObject\(capabilities, "aec_mode", "none"\)' \
-    "$protocol_source" || die "hello v2 must declare aec_mode none"
-rg -q 'cJSON_AddStringToObject\(capabilities, "aec_reference", "none"\)' \
-    "$protocol_source" || die "hello v2 must declare no AEC reference"
+# Device protocol v2 must declare the honest interrupt_assist capabilities the
+# ESP-VoCat board actually has: capture stays open during playback, AEC is
+# present but unverified, and there is no local stop keyword or duck. The
+# server must not derive full duplex from this hello alone; playback precision
+# is independently backed by the GDMA completion barrier.
+rg -q 'cJSON_AddBoolToObject\(capabilities, "simultaneous_capture_playback", true\)' \
+    "$protocol_source" || die "hello v2 must declare simultaneous capture/playback"
+rg -q 'cJSON_AddStringToObject\(capabilities, "aec_mode", "fd_low_cost"\)' \
+    "$protocol_source" || die "hello v2 must declare aec_mode fd_low_cost"
+rg -q 'cJSON_AddStringToObject\(capabilities, "aec_reference", "software_post_gain_pre_i2s"\)' \
+    "$protocol_source" || die "hello v2 must declare the software AEC reference"
 rg -q 'cJSON_AddBoolToObject\(capabilities, "aec_reference_verified", false\)' \
     "$protocol_source" || die "hello v2 must declare AEC reference unverified"
 rg -q 'cJSON_AddBoolToObject\(capabilities, "local_stop_keyword", false\)' \
@@ -149,8 +161,8 @@ rg -q 'cJSON_AddBoolToObject\(capabilities, "local_duck", false\)' \
     "$protocol_source" || die "hello v2 must declare no local duck"
 rg -q 'cJSON_AddStringToObject\(capabilities, "playback_watermark", "exact"\)' \
     "$protocol_source" || die "hello v2 must declare the exact digital playback watermark"
-rg -q 'cJSON_AddNumberToObject\(capabilities, "barge_in_level", 0\)' \
-    "$protocol_source" || die "hello v2 must declare barge_in_level 0"
+rg -q 'cJSON_AddNumberToObject\(capabilities, "barge_in_level", 1\)' \
+    "$protocol_source" || die "hello v2 must declare barge_in_level 1"
 rg -q '"downlink_sample_rates"' "$protocol_source" || die "hello v2 must negotiate downlink rates"
 rg -q 'kDownlinkSampleRate16k' "$protocol_source" || die "hello v2 must declare the playable 16 kHz rate"
 rg -q 'kDownlinkSampleRate24k' "$protocol_source" || die "hello v2 must declare the playable 24 kHz rate"

@@ -2633,6 +2633,85 @@ async def test_interrupt_assist_commit_keeps_provider_asr_open() -> None:
 
 
 @pytest.mark.asyncio
+async def test_direct_device_reply_forwards_assistant_expression() -> None:
+    identity = SessionIdentity(
+        "direct-expression",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="owner",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+        audio_mode="interrupt_assist",
+    )
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        async def emit_event(
+            self,
+            _session_id: str,
+            event_type: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.events.append((event_type, payload))
+            return True
+
+    class HappyProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=0,
+                    text="太好了，这真值得庆祝！",
+                    first=True,
+                    final=True,
+                )
+
+            return chunks()
+
+    provider = HappyProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    context = await _seed_pending_media_turn(registry, identity, text="今天有个好消息")
+
+    async def classify_owner(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _verified_owner_decision()
+
+    context.runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+    context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+    context.runtime.set_target_speaker_focus(True)
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=600,
+        retire_sample=640,
+    )
+    assert fence is not None, f"turn did not commit: {reason}"
+    await registry.generate_reply(identity.session_id, "今天有个好消息", fence)
+    await asyncio.sleep(0)
+    expressions = [
+        payload for event_type, payload in bridge.events if event_type == "assistant_expression"
+    ]
+    assert expressions
+    assert expressions[0]["expression"] == "happy"
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_asr_final_rejection_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

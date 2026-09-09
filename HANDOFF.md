@@ -6,8 +6,9 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-08
+as_of_date: 2026-09-09
 resume_checkpoint: vocat_interrupt_assist_hello_audio_mode_identity_cutover_awaiting_barge_in_and_expression_test
+firmware_face_acceptance: flashed_awaiting_visual_idle_and_five_expressions
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
@@ -97,6 +98,161 @@ direct_real_device_verified: false
 4. 仍勿把 `direct_real_device_verified` 改为 true。
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
+
+## 屏幕表情：眼睛白描脸（2026-09-08）
+
+```yaml
+change: replace_64px_noto_colour_emoji_with_drawn_eyes_only_face
+code: complete
+wired: overlay_board_layer_memoria_face_display
+verified: host_renderer_tests_preview_esp32s3_clean_build_and_overlay_gate
+hardware_verified: false
+next_owner_action: 拍待机 idle.jpg，再唤醒「茉莉」测五表情（runbook 第 3–7 步）
+operator_reference: 圆屏白闭眼黑底照片
+candidate_app: firmware/esp32/artifacts/memoria-esp-vocat-app.bin
+candidate_app_sha256: ebc7462db0165e471ad0440140884383e445747098ce03a3099744c3ed55b20f
+candidate_merged: firmware/esp32/artifacts/memoria-esp-vocat-merged.bin
+candidate_merged_sha256: c9aac8b9dad46f77714b06af916dd07b2471eecbefb119c187dbec81c734da7f
+candidate_built_at: 2026-09-08 21:28 CST
+overlay_hash: d9003c80d16841b1f30f463d67ce14383b1943be424e8cddeb428e359322f5ee
+upstream_ref: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
+esp_idf: v6.0.2
+evidence_dir: outputs/acceptance/run-20260909-0943-face
+flash: app_only_0x20000
+flashed_at: 2026-09-09 09:52 CST
+port: /dev/cu.usbmodem101
+backup_app: firmware/esp32/artifacts/backups/pre-face-20260909-0943/app-before.bin
+backup_app_sha256: 1db35780e7db6188ec5a744de126b7f5bf925d5ff90b11c86403f71e35eb75e1
+identity_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+identity_unchanged: true
+device_ip: 192.168.8.142
+device_uuid: 1ac87deb-0fa3-4300-a304-ad6c472ab8c7
+on_device_compile_time: "Sep 8 2026 21:26:34"
+visual_idle: pending_operator_photo
+```
+
+操作员要求：屏幕不要再显示 64px 黄色 Noto emoji，改成参考照片里「黑底白眼睛」的表情，并且六种情绪都用这套眼睛-only 风格。已按此实现。
+
+**实现**
+
+1. `overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc|h`：纯 C++ 渲染器，**无 ESP-IDF/LVGL 依赖**（可在宿主编译校验）。几何按参考照片归一化到屏幕半径 R：眼半宽 **0.26R**、眼心 **±0.35R**、圆拱中心落在屏幕水平中线；闭眼 = 圆拱（半圆）被一条浅弧裁出的月牙（裁弧半径 2.7hw、圆心在基线下方 2.5hw），把裁弧下移即睁成整圆；边缘按 1px 覆盖抗锯齿。照片本身有约 2.4° 倾斜与透视，设计取对称。
+2. `memoria_face_display.cc|h`：`MemoriaFaceDisplay : SpiLcdDisplay`。360x360 RGB565 帧缓冲放 PSRAM（259 KB），作为 `container_` 的 `bg_image_src`；`content_`/`top_bar_` 背景透明，字幕与状态文字仍画在脸之上；隐藏上游 `emoji_image_`/`emoji_label_`；把板卡钉到 **dark** 主题（浅色主题会把黑字画到黑屏上）。PSRAM 与内部 RAM 都分配失败时回退上游彩色 emoji 路径。
+3. 六种脸：`neutral`（参考图：平放月牙）、`happy`（外眼角上挑的眯眼）、`sad`（外眼角下垂的细月牙）、`surprised`（圆睁）、`loving`（内倾柔和圆月牙）、`thinking`（眼睛上移偏右）。别名 `idle/sleepy→neutral`、`laughing/funny/delicious/confident/embarrassed/silly/relaxed/kissy/winking→happy`、`crying/angry→sad`、`shocked→surprised`、`caring→loving`、`curious/confused→thinking`；未知名字（含 `robot_2`、`cancel`）回落 `neutral`，不再出现黄色 emoji。名字大小写不敏感。
+4. `surprised`/`thinking` 睁眼时每 4–7 秒眨一次（esp_timer 30 ms 帧、持 LVGL 锁重绘，闭眼脸不参与）。`Application` 在 idle/connecting/listening 都会 `SetEmotion("neutral")`，所以说完自动回到待机闭眼。
+5. 未改协议、未改 `screen.expression` 语义，服务端映射仍是 `happy/sad/surprised/loving/thinking/neutral`。
+
+**已做验证（无硬件）**
+
+1. `firmware/esp32/tests/test_memoria_face.py` 用宿主 clang++ 直接编译固件渲染源并断言几何契约：眼宽 94 px、眼心 117/243、月牙高 47 px、眼尖落在中线、六种情绪各两只眼、happy/sad/loving 眼角方向、surprised 圆度、thinking 上移偏右、眨眼收敛、别名/大小写/未知回落、分辨率缩放。24 项全过。
+2. `firmware/esp32/scripts/preview_memoria_face.py` 用同一份源码生成 PNG 预览；与参考照片比对月牙轮廓 IoU 0.86（差异来自照片倾斜与透视）。产物已存 `outputs/firmware-face-20260908/`，其中 `device-view.png` 是套圆屏边框的对照图。
+3. 全量 clean build（锁定 commit 重克隆 + 重放 overlay）通过；`./scripts/check-overlay.sh` 输出 `overlay check passed: memoria-esp-vocat`。候选见上方 yaml，app 分区余量 21%。
+
+**已做真机刷写（2026-09-09 09:52 CST；本机 `/dev/cu.usbmodem101`）**
+
+1. app-only `write-flash 0x20000` 候选 `ebc7462d…b20f`。身份区 `0x10000` 刷前刷后 SHA 均为 `b7a717fa…`。回滚 bin：`firmware/esp32/artifacts/backups/pre-face-20260909-0943/app-before.bin`（`1db35780…`）。
+2. 硬复位后串口：Compile time `Sep  8 2026 21:26:34`，ST77916 创建成功，LcdDisplay 2MB PSRAM 图像缓存，无 `face buffer allocation failed`，`activating -> idle`，SSID `915`，STA `90:e5:b1:d7:83:2c`，IP `192.168.8.142`。
+3. 候选 bin 含 `MemoriaFaceDisplay` 与 `emotion=%s open_eyes=%d`。开机无 `emotion=neutral`：`emotion_` 默认已是 `neutral`，`SetEmotion` 只在变化时打日志；这不是回退彩色 emoji。
+4. 尚未拍 `idle.jpg`，五表情未测。`hardware_verified` 保持 false。
+
+**下一步：真机视觉验收（步骤 0–2 已完成，从第 3 步继续）**
+
+前置：一台已绑定可对话的 ESP-VoCat（`memoria-esp-vocat`，本仓 `firmware/esp32` 工作树）+ USB 数据线。对照基准 `outputs/firmware-face-20260908/device-view.png`（左上角是待机脸）。本轮只改 app 侧显示，**不动协议、分区表、身份区和 NVS**，刷完不用重新配网或重新绑定。本板已刷，不要重复刷机。
+
+**0. 先确认候选没被改过（约 3 分钟，红在表情以外先停下报告）**
+
+```bash
+cd <repo>/firmware/esp32
+./scripts/check-overlay.sh          # 期望最后一行：overlay check passed: memoria-esp-vocat
+shasum -a 256 artifacts/memoria-esp-vocat-app.bin
+# 期望 ebc7462db0165e471ad0440140884383e445747098ce03a3099744c3ed55b20f
+cd <repo> && uv run pytest firmware/esp32/tests/test_memoria_face.py -q   # 期望 24 passed
+```
+
+**1. 接线、进入下载模式、备份当前 app**
+
+```bash
+cd <repo>/firmware/esp32
+./scripts/flash.sh --list                       # 找 /dev/cu.usbmodem*，下称 PORT
+```
+
+按住 BOOT → 轻按 RESET → 松开 RESET → 松开 BOOT，进入下载模式。然后先备份当前在跑的 app（回滚用；ota_0 = `0x20000` 起 `0x3f0000`）：
+
+```bash
+stamp=$(date +%Y%m%d-%H%M)
+mkdir -p artifacts/backups/pre-face-$stamp
+python -m esptool --chip esp32s3 -p PORT -b 460800 read-flash 0x20000 0x3f0000 \
+  artifacts/backups/pre-face-$stamp/app-before.bin
+```
+
+**2. 刷机并抓串口日志**
+
+```bash
+stamp=$(date +%Y%m%d-%H%M)
+mkdir -p outputs/acceptance/run-$stamp-face
+script -q outputs/acceptance/run-$stamp-face/serial.log ./scripts/monitor.sh --port PORT
+```
+
+只想快速刷一遍：`./scripts/flash.sh --port PORT --monitor`（刷完直接进 monitor，`Ctrl+]` 退出）。
+刷写计划只含 bootloader / 分区表 / ota_data / app / assets，不含 `0x10000` 身份区（门禁会校验）。
+
+**3. 待机脸验收（最关键的一条）**
+
+上电待机时屏幕应是**纯黑底 + 两个白色平放月牙**，没有黄色 emoji、没有白底。拍照存 `outputs/acceptance/run-20260909-0943-face/idle.jpg`，与 `device-view.png` 左上角比对：眼距约占屏宽 35%，眼睛在屏幕中线以上，形状为「上圆拱 + 下浅弧」。
+开机串口**不会**出现 `emotion=neutral`（ctor 默认已是 `neutral`，相同名字跳过）。应确认没有 `face buffer allocation failed`。第一次非 idle 表情变化才会打 `MemoriaFaceDisplay: emotion=...`。
+
+**4. 表情验收（唤醒「茉莉」后逐条说，一条一拍照）**
+
+触发源是**助手回复的文本/语气**（`services/agent/src/orchestration/prosody.py::mascot_expression_for_reply`），不是用户原话；所以要用能引出对应语气的话去问。判定标准：脸要和待机闭眼明显不同，且形状对得上 `device-view.png` 对应格。
+
+| 你说 | 期望助手语气 | 屏幕脸 | 串口收据 | 存图 |
+| --- | --- | --- | --- | --- |
+| 「我拿到心仪的 offer 了」 | 太好了 / 恭喜 | `happy`：外眼角上挑的眯眼 | `emotion=happy open_eyes=0` | `happy.jpg` |
+| 「我今天有点难过」 | 辛苦 / 心疼 / 听起来… | `loving`：内倾柔和月牙 | `emotion=loving open_eyes=0` | `loving.jpg` |
+| 「我的同事今天离职了」 | 遗憾 / 抱歉 | `sad`：外眼角下垂的细月牙 | `emotion=sad open_eyes=0` | `sad.jpg` |
+| 「没想到今天下雪了」 | 没想到 / 真的吗 | `surprised`：两个圆睁白圆 | `emotion=surprised open_eyes=1` | `surprised.jpg` |
+| 「有什么建议吗」 | 反问（回复带「？」） | `thinking`：圆睁且上移偏右 | `emotion=thinking open_eyes=1` | `thinking.jpg` |
+
+注意 caring 优先级高于 sad：如果助手回复里带「听起来 / 不容易 / 辛苦 / 担心」等词，会先判成 `loving`，这属于服务端口径，不算固件缺陷；想拿 `sad` 就换一句能引出「遗憾 / 抱歉」且不带 caring 词的话。
+
+每轮说完后应自动回到待机闭眼（`Application` 在 idle 下发 `neutral`，串口会再出现 `emotion=neutral`）。
+若屏幕没变：先看串口有没有对应的 `emotion=` 行。没有 = 服务端没发（查 Agent/Edge `assistant_expression` → `screen.expression`）；有但脸不对 = 固件映射问题，回来改 `memoria_face.cc` 的别名表。
+
+**5. 不回归项（同一轮里顺手确认）**
+
+- 字幕/状态文字（「连接中」「聆听中」）仍是白字黑底、可读；
+- 长按 BOOT 进配网：二维码是白底黑码、盖在脸之上，关闭后回到脸；
+- 亮度调节、低电量弹窗、触摸/BOOT 打断仍正常。
+
+**6. 眨眼**：`surprised`/`thinking` 时每 4–7 秒一次约 150 ms 的闭合；`neutral` 等闭眼脸不眨。会话延迟不应变差（只在表情变化和眨眼帧重绘）。
+
+**7. 证据归档与回填**
+
+- 证据目录：`outputs/acceptance/run-20260909-0943-face/`（已有 `serial.log` / `serial-follow.log`；还缺 `idle.jpg` + 五张表情照片）。
+- 回填本节 yaml：`hardware_verified: false → true`，并补 `hardware_verified_at`、`evidence_dir`、`verified_by`。
+- **只有**待机脸 + 五张表情 + 不回归项都亲眼确认后才能改；编译通过、刷机成功、启动成功都不算。
+- 若只验到部分，把实际通过的项写进本节，`hardware_verified` 保持 false。
+
+**回滚**
+
+1. 刷回刚备份的 app（不动身份区、NVS、分区表）：
+
+```bash
+python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --after hard-reset \
+  write-flash --flash-mode dio --flash-size 32MB --flash-freq 80m \
+  0x20000 artifacts/backups/pre-face-20260909-0943/app-before.bin
+```
+
+2. 或改源码回滚：删除 `memoria_face*.cc|h` 四个 overlay 文件，把 `memoria_esp_vocat.cc` 的 `new MemoriaFaceDisplay(...)` 改回 `new SpiLcdDisplay(...)`，`./scripts/build.sh --clean` 重刷。
+3. 注意：表情固件首次启动会把 `display/theme` 写成 `dark` 并留在 NVS，回滚到旧固件后界面仍是深色主题；这是观感差异，不是故障，需要浅色时用 `self.screen.set_theme` 切回。
+
+**勿做**
+
+- 不要把 `hardware_verified` 或 `direct_real_device_verified` 从构建/刷机结果推断为 true。
+- 不要为了让门禁变绿去放宽 hello 能力断言（`aec_reference_verified=false` 等）；本节只更新过 4 条早已过时的 simplex 断言（见下）。
+- 不要改 `screen.expression` 语义，也不要让客户端从字幕猜表情。
+- 不要在刷机时写入 `0x10000..0x1ffff` 身份区。
+
+**附：本轮顺带修的门禁漂移**：`check-overlay.sh` 里 4 条 hello 断言还停在半双工口径（`simultaneous_capture_playback=false`、`aec_mode=none`、`aec_reference=none`、`barge_in_level=0`），与 2026-09-08 16:06 的 `Enable VoCat interrupt_assist and device screen expressions` 提交（`0674dee`）之后的固件不符，导致门禁恒红。已按 `HANDOFF` 记录的现状改成 `true` / `fd_low_cost` / `software_post_gain_pre_i2s` / `1`；`aec_reference_verified=false`、`local_stop_keyword=false`、`local_duck=false`、`playback_watermark=exact` 等安全断言未放宽。
 
 ## 设备唤醒欢迎语（2026-09-09）
 
@@ -355,7 +511,7 @@ ATK ES8388 半双工投资人 Demo 已退役。当前板是 ESP-VoCat（ES7210+E
 **下一步（按顺序）**
 
 1. 确认屏幕已离开「连接中」。旧会话 `d4f2277e` 已在 epoch 1881 关闭；需要时重新唤醒。
-2. 真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。
+2. 真机测表情：待机可闭眼；助手说「太好了」应变笑（`happy`），抱歉/难过变苦（`sad`/`loving`），「没想到」变惊讶（`surprised`）。说完回到待机闭眼。**详细操作、命令、判定标准与证据回填见「屏幕表情：眼睛白描脸（2026-09-08）」一节的 runbook。**
 3. 助手说话时插一句短打断，应形成新 turn 并停旧 generation；BOOT 仍能硬停。
 4. 播 TTS 时采近端残差。未过证不得改 `aec_reference_verified`。
 5. 长天气完整播报与主人匹配仍待复测，不要放宽 `reject_non_owner_voice`。
