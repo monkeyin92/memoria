@@ -98,6 +98,28 @@ direct_real_device_verified: false
 
 **勿做**：放宽 `reject_non_owner_voice`；伪造 owner；把未 active 的声纹当主人认证宣传。
 
+## 设备唤醒欢迎语（2026-09-09）
+
+```yaml
+change: ignore_empty_connect_vad_and_contextual_allowlisted_wake_greeting
+code: complete
+wired: false
+enabled: false
+verified: false
+direct_real_device_verified: false
+```
+
+真机 10:03 唤醒后进聆听，立刻出现 `Device VAD start sample=0 rms=0` 且从未 speaking。空 VAD 在欢迎语 `require_idle_input` 之前把 session 打成 `USER_SPEAKING`，allowlisted 欢迎语被掐掉。
+
+代码层（仅 Agent，未发布、未切流）：
+
+1. `grpc_bridge` 把 `VadEvent.rms` 映到 `SpeechSegment.near_end_rms`。
+2. 连接期空 VAD（start：`rms=0`，或 pending 且 `sample=0` 且 rms 缺失）在 ingest 前丢弃；已开口的真实 VAD end 即使低 RMS 也保留。
+3. `_speak_device_wake_ack` 用 `try/finally` 清 `device_wake_ack_pending`，并按本地时段 / 周末 / 设备级 ≥12h 缺席 / 可选陪伴风格，从封闭集合选一句 allowlisted 短句。不猜城市、不在热路径查天气、不用主人私密记忆。
+4. 真机听感未做，`direct_real_device_verified` 保持 false。
+
+**勿做**：把单元测试通过当成板端欢迎语已恢复；给动态欢迎语走非 allowlist 生成。
+
 ## 小程序体验与跨端设备同步（2026-09-06）
 
 - 交付：`RESEARCH.md` 的 R-20260906-01 与原型 `apps/miniprogram/design-preview/memoria-mobile-redesign.html` 已落到正式四 Tab 控制面（首页 / 设备 / 回顾 / 我的），另增非 Tab「角色与声音」。小程序仍只做控制面，不承担实时麦克风、TTS、WSS 或 LiveKit。

@@ -26,7 +26,11 @@ from services.agent.src.orchestration.state_machine import (
     ConversationState,
     InteractionPhase,
 )
-from services.agent.src.prompts import BRIDGE_PHRASES, DEVICE_WAKE_PHRASES, device_wake_phrase
+from services.agent.src.prompts import (
+    BRIDGE_PHRASES,
+    device_wake_phrase,
+    is_allowlisted_device_phrase,
+)
 from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
@@ -5296,6 +5300,26 @@ async def _ack_owned_filler_then_wait(
     return context, ack_fence
 
 
+def _connect_vad_segment(
+    identity: SessionIdentity,
+    *,
+    sample: int = 0,
+    rms: float | None = None,
+    segment_id: str = "connect-vad",
+) -> SpeechSegment:
+    return SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=0,
+        segment_id=segment_id,
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=sample,
+        capture_end_sample=sample + 1,
+        near_end_rms=rms,
+    )
+
+
 def _device_identity(session_id: str) -> SessionIdentity:
     return SessionIdentity(
         session_id,
@@ -5324,13 +5348,83 @@ async def test_device_session_speaks_wake_ack_without_user_speech() -> None:
         context = await registry._get_or_create(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
-        assert provider.texts[0] in DEVICE_WAKE_PHRASES
+        assert is_allowlisted_device_phrase(provider.texts[0])
+        assert context.device_wake_ack_pending is False
         assert context.runtime.fence.turn_id >= 1
         assert context.runtime.fence.generation_id >= 1
         assert bridge.generation_starts
         wake_fence = bridge.generation_starts[0]
         assert wake_fence.turn_id >= 1
         assert wake_fence.generation_id >= 1
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_empty_connect_vad_does_not_cancel_device_wake_ack() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-empty-connect-vad-wake")
+    session = bridge.bridge.open(identity)
+    original = registry._speak_device_wake_ack
+
+    async def _inject_then_speak(context: Any) -> None:
+        await registry.on_speech_segment(
+            session,
+            _connect_vad_segment(identity, rms=0.0, segment_id="empty-connect-start"),
+        )
+        await original(context)
+
+    registry._speak_device_wake_ack = _inject_then_speak  # type: ignore[method-assign]
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert provider.texts == [device_wake_phrase(identity.session_id)]
+        assert is_allowlisted_device_phrase(provider.texts[0])
+        assert context.turn_start_sample is None
+        assert context.device_wake_ack_pending is False
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_energy_connect_vad_skips_device_wake_ack() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-energy-connect-vad-wake")
+    session = bridge.bridge.open(identity)
+    original = registry._speak_device_wake_ack
+
+    async def _inject_then_speak(context: Any) -> None:
+        await registry.on_speech_segment(
+            session,
+            _connect_vad_segment(
+                identity,
+                sample=0,
+                rms=400.0,
+                segment_id="energy-connect-start",
+            ),
+        )
+        await original(context)
+
+    registry._speak_device_wake_ack = _inject_then_speak  # type: ignore[method-assign]
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.sleep(0.05)
+        assert provider.texts == []
+        assert not provider.started.is_set()
+        assert context.turn_start_sample == 0
+        assert context.device_wake_ack_pending is False
     finally:
         await registry._finalize_session(identity.session_id)
 
@@ -7071,10 +7165,11 @@ async def test_h5_session_does_not_speak_device_wake_ack() -> None:
     registry.install()
     identity = SessionIdentity("h5-no-wake")
     try:
-        await registry._get_or_create(identity)
+        context = await registry._get_or_create(identity)
         await asyncio.sleep(0.05)
         assert provider.texts == []
         assert not provider.started.is_set()
+        assert context.device_wake_ack_pending is False
     finally:
         await registry._finalize_session(identity.session_id)
 

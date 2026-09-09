@@ -26,7 +26,13 @@ from services.agent.src.orchestration.delegation_coordinator import (
     SideEffectPolicy,
 )
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
-from services.agent.src.prompts import BRIDGE_PHRASES, LIVE_LOOKUP_FILLER, device_wake_phrase
+from services.agent.src.prompts import (
+    BRIDGE_PHRASES,
+    LIVE_LOOKUP_FILLER,
+    device_wake_phrase,
+    hours_since_device_wake,
+    remember_device_wake,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
@@ -43,6 +49,7 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
+from services.common.realtime_information import current_local_time
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -135,10 +142,12 @@ class MediaSessionProjectionMixin:
         ) -> None: ...
 
     async def _speak_device_wake_ack(self, context: _MediaVoiceSession) -> None:
-        if context.identity.client_type != "device":
+        if context.identity.client_type != "device" or not callable(
+            getattr(context.provider, "generate_output", None)
+        ):
+            context.device_wake_ack_pending = False
             return
-        if not callable(getattr(context.provider, "generate_output", None)):
-            return
+        now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         try:
             if context.closed or context.standby_requested:
                 return
@@ -153,13 +162,27 @@ class MediaSessionProjectionMixin:
                     InteractionPhase.LISTENING,
                     cause="device_wake_ack",
                 )
-            if context.closed or context.runtime.fence.turn_id != 0:
+            if (
+                context.closed
+                or context.runtime.fence.turn_id != 0
+                or context.turn_start_sample is not None
+            ):
                 return
             generation_tts_voice_can_bind(runtime)
             context.device_wake_ack_fence = runtime.fence
+            policy = runtime.mode_policy
+            companion_style_id = policy.companion_style_id if policy.available else None
             await self._speak_allowlisted_bridge_phrase(
                 context,
-                device_wake_phrase(context.identity.session_id),
+                device_wake_phrase(
+                    context.identity.session_id,
+                    now=now,
+                    weather_label=None,
+                    companion_style_id=companion_style_id,
+                    hours_since_last_wake=hours_since_device_wake(
+                        context.identity.device_id, now
+                    ),
+                ),
                 require_idle_input=True,
             )
         except asyncio.CancelledError:
@@ -169,6 +192,9 @@ class MediaSessionProjectionMixin:
                 "device wake ack failed session=%s",
                 context.identity.session_id,
             )
+        finally:
+            context.device_wake_ack_pending = False
+            remember_device_wake(context.identity.device_id, now)
 
     def _spawn_device_speaker_enrollment(self, context: _MediaVoiceSession) -> None:
         if context.identity.client_type != "device":

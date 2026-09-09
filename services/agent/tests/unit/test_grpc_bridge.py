@@ -1322,3 +1322,41 @@ def test_require_identity_ignores_hello_audio_mode() -> None:
     proto.session_id = "other-session"
     with pytest.raises(ValueError, match="media event identity does not match the session"):
         MediaBridgeGrpcServer._require_identity(connection, proto)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_vad_event_forwards_rms_as_near_end_rms() -> None:
+    seen: list[SpeechSegment] = []
+
+    async def on_speech(_session, segment, _detected_monotonic_ms: int = 0) -> None:
+        seen.append(segment)
+
+    bridge = MediaBridgeGrpcServer(on_speech_segment=on_speech)
+    identity = SessionIdentity("vad-rms", account_id="account", device_id="device")
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    proto_identity = media_pb2.SessionIdentity(
+        session_id=identity.session_id,
+        account_id=identity.account_id,
+        device_id=identity.device_id,
+        client_type=identity.client_type,
+        stream_epoch=identity.stream_epoch,
+    )
+    try:
+        await bridge._handle_request(  # noqa: SLF001 - transport seam under test
+            connection,
+            media_pb2.MediaToCore(
+                vad=media_pb2.VadEvent(
+                    identity=proto_identity,
+                    type=media_pb2.VAD_EVENT_SPEECH_START,
+                    sample_position=0,
+                    probability=1.0,
+                    rms=12.5,
+                )
+            ),
+        )
+        assert len(seen) == 1
+        assert seen[0].kind is SegmentKind.VAD
+        assert seen[0].near_end_rms == pytest.approx(12.5)
+    finally:
+        bridge._close_connection(connection)  # noqa: SLF001 - deterministic cleanup
+        bridge.bridge.close(identity.session_id)

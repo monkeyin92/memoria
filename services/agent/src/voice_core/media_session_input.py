@@ -38,6 +38,27 @@ if TYPE_CHECKING:
 media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
+_EMPTY_VAD_RMS = 1e-4
+
+
+def _is_spurious_connect_vad(segment: SpeechSegment, context: _MediaVoiceSession) -> bool:
+    """True for connect-time empty VAD that must not steal the wake-ack idle latch."""
+
+    if segment.kind is not SegmentKind.VAD:
+        return False
+    rms = segment.near_end_rms
+    empty = rms is not None and rms <= _EMPTY_VAD_RMS
+    connect_unknown = (
+        context.device_wake_ack_pending
+        and segment.capture_start_sample == 0
+        and rms is None
+    )
+    if not segment.final:
+        return empty or connect_unknown
+    if context.turn_start_sample is not None:
+        return False
+    return empty or connect_unknown
+
 
 class MediaSessionInputMixin:
     """Translate transport input into the existing turn/interaction fences."""
@@ -138,6 +159,17 @@ class MediaSessionInputMixin:
             or context.standby_requested
             or not session.accepts_input()
         ):
+            return
+        if _is_spurious_connect_vad(segment, context):
+            logger.info(
+                "media empty vad ignored session=%s sample=%s rms=%s final=%s "
+                "pending_wake_ack=%s",
+                context.identity.session_id,
+                segment.capture_start_sample,
+                segment.near_end_rms,
+                segment.final,
+                context.device_wake_ack_pending,
+            )
             return
         if not context.runtime.ingest_media_speech_segment(segment):
             return

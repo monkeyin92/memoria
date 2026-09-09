@@ -829,6 +829,7 @@ class MediaBridgeGrpcServer:
                 confidence=float(event.probability),
                 final=speech_end,
                 voiced_end_sample=voiced_end_sample,
+                near_end_rms=float(event.rms),
             )
             if not connection.session.accepts_input():
                 return

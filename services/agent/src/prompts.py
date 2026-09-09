@@ -1,5 +1,8 @@
 """Composable system prompts for companion and tutor voice paths."""
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from services.tutor.prompts import TUTOR_STYLE
 
 COMPANION_STYLE = """
@@ -92,6 +95,127 @@ DEVICE_WAKE_PHRASES = (
     "哎呀，好困呀。",
 )
 
+_WAKE_PERIOD_PHRASES: dict[str, tuple[str, ...]] = {
+    "dawn": (
+        "这么早，我在。",
+        "清晨好，我来了。",
+    ),
+    "morning": (
+        "早上好，我在。",
+        "早呀，我来了。",
+        "我在，今天也加油。",
+    ),
+    "noon": (
+        "中午好，我在。",
+        "我在，先歇一会儿也行。",
+    ),
+    "afternoon": (
+        "下午好，我在。",
+        "哎，我来了。",
+    ),
+    "evening": (
+        "晚上好，我在。",
+        "我在，晚上想聊点什么。",
+    ),
+    "night": (
+        "这么晚还醒着，我在。",
+        "夜深了，我在。",
+        "哎呀，好困呀。",
+    ),
+}
+_WAKE_WEEKEND_PHRASES = (
+    "周末好，我在。",
+    "今天可以歇一歇，我在。",
+)
+_WAKE_LONG_ABSENCE_PHRASES = (
+    "回来啦，我在。",
+    "好久不见，我在。",
+)
+_WAKE_WEATHER_PHRASES: dict[str, tuple[str, ...]] = {
+    "rain": (
+        "外面在下雨，我在。",
+        "下雨了，我在这儿。",
+    ),
+    "snow": ("外面下雪了，我在。",),
+    "clear": ("天气不错，我在。",),
+    "cloudy": ("今天阴着，我在。",),
+    "hot": ("今天有点热，我在。",),
+    "cold": ("今天有点冷，我在。",),
+}
+_WAKE_STYLE_PHRASES: dict[str, tuple[str, ...]] = {
+    "starlight": ("我在，慢慢说就好。",),
+    "taoxi": ("嘿，我来了。",),
+    "mianmian": ("我在，你说。",),
+    "axu": ("我在，直接说。",),
+    "xuanmo": ("我在。",),
+    "zhiyao": ("我在，想练什么？",),
+    "yanxi": ("我在，从哪一步开始？",),
+}
+_DEVICE_WAKE_SEEN_AT: dict[str, object] = {}
+
+
+def _wake_period(hour: int) -> str:
+    if 5 <= hour < 7:
+        return "dawn"
+    if 7 <= hour < 11:
+        return "morning"
+    if 11 <= hour < 13:
+        return "noon"
+    if 13 <= hour < 18:
+        return "afternoon"
+    if 18 <= hour < 22:
+        return "evening"
+    return "night"
+
+
+def _normalized_weather_label(weather_label: str | None) -> str | None:
+    if weather_label is None:
+        return None
+    label = weather_label.strip().lower()
+    return label if label in _WAKE_WEATHER_PHRASES else None
+
+
+def _wake_greeting_candidates(
+    *,
+    now_hour: int,
+    weekday: int,
+    weather_label: str | None,
+    companion_style_id: str | None,
+    hours_since_last_wake: float | None,
+) -> tuple[str, ...]:
+    period = _wake_period(now_hour)
+    phrases: list[str] = []
+    seen: set[str] = set()
+
+    def _extend(items: tuple[str, ...]) -> None:
+        for phrase in items:
+            if phrase not in seen:
+                seen.add(phrase)
+                phrases.append(phrase)
+
+    _extend(DEVICE_WAKE_PHRASES)
+    _extend(_WAKE_PERIOD_PHRASES[period])
+    if weekday >= 5:
+        _extend(_WAKE_WEEKEND_PHRASES)
+    if hours_since_last_wake is not None and hours_since_last_wake >= 12:
+        _extend(_WAKE_LONG_ABSENCE_PHRASES)
+    weather = _normalized_weather_label(weather_label)
+    if weather is not None:
+        _extend(_WAKE_WEATHER_PHRASES[weather])
+    if companion_style_id in _WAKE_STYLE_PHRASES:
+        _extend(_WAKE_STYLE_PHRASES[companion_style_id])
+    return tuple(phrases)
+
+
+DEVICE_WAKE_GREETING_PHRASES: frozenset[str] = frozenset(
+    DEVICE_WAKE_PHRASES
+    + _WAKE_WEEKEND_PHRASES
+    + _WAKE_LONG_ABSENCE_PHRASES
+    + tuple(phrase for group in _WAKE_PERIOD_PHRASES.values() for phrase in group)
+    + tuple(phrase for group in _WAKE_WEATHER_PHRASES.values() for phrase in group)
+    + tuple(phrase for group in _WAKE_STYLE_PHRASES.values() for phrase in group)
+)
+
 SPEAKER_ENROLLMENT_SAMPLE_PROMPTS = (
     "请说第一段，使用自然语气介绍一下自己。",
     "请说第二段，换成柔和一点的语气。",
@@ -108,10 +232,53 @@ SPEAKER_ENROLLMENT_PHRASES = SPEAKER_ENROLLMENT_SAMPLE_PROMPTS + (
 )
 
 
-def device_wake_phrase(session_id: str) -> str:
-    """Pick a stable allowlisted wake reply for one device session."""
+def hours_since_device_wake(device_id: str, now: datetime) -> float | None:
+    """Return hours since this device last attempted a wake greeting."""
 
-    return DEVICE_WAKE_PHRASES[sum(session_id.encode()) % len(DEVICE_WAKE_PHRASES)]
+    if not device_id:
+        return None
+    last = _DEVICE_WAKE_SEEN_AT.get(device_id)
+    if not isinstance(last, datetime):
+        return None
+    return max(0.0, (now - last).total_seconds() / 3600.0)
+
+
+def remember_device_wake(device_id: str, now: datetime) -> None:
+    """Record a device wake so later greetings can vary by recency."""
+
+    if device_id:
+        _DEVICE_WAKE_SEEN_AT[device_id] = now
+
+
+def device_wake_phrase(
+    session_id: str,
+    *,
+    now: datetime | None = None,
+    weather_label: str | None = None,
+    companion_style_id: str | None = None,
+    hours_since_last_wake: float | None = None,
+) -> str:
+    """Pick a short allowlisted wake reply from current local context."""
+
+    moment = now
+    if moment is None:
+        moment = datetime.now(ZoneInfo("Asia/Shanghai"))
+    elif moment.tzinfo is None:
+        raise ValueError("wake greeting now must be timezone-aware")
+    candidates = _wake_greeting_candidates(
+        now_hour=moment.hour,
+        weekday=moment.weekday(),
+        weather_label=weather_label,
+        companion_style_id=companion_style_id,
+        hours_since_last_wake=hours_since_last_wake,
+    )
+    seed = (
+        f"{session_id}:{moment:%Y%m%d%H}:{_wake_period(moment.hour)}:"
+        f"{_normalized_weather_label(weather_label) or ''}:"
+        f"{companion_style_id or ''}:"
+        f"{'long' if hours_since_last_wake is not None and hours_since_last_wake >= 12 else 'recent'}"
+    )
+    return candidates[sum(seed.encode()) % len(candidates)]
 
 
 def is_allowlisted_device_phrase(phrase: str) -> bool:
@@ -119,7 +286,7 @@ def is_allowlisted_device_phrase(phrase: str) -> bool:
 
     return (
         phrase in BRIDGE_PHRASES
-        or phrase in DEVICE_WAKE_PHRASES
+        or phrase in DEVICE_WAKE_GREETING_PHRASES
         or phrase in SPEAKER_ENROLLMENT_PHRASES
     )
 
@@ -131,6 +298,7 @@ __all__ = [
     "LIVE_LOOKUP_FILLER",
     "THINKING_FILLER",
     "DEVICE_WAKE_PHRASES",
+    "DEVICE_WAKE_GREETING_PHRASES",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",
     "SPEAKER_ENROLLMENT_DONE_PHRASE",
@@ -141,5 +309,7 @@ __all__ = [
     "TUTOR_STYLE",
     "VOICE_SYSTEM_PROMPT",
     "device_wake_phrase",
+    "hours_since_device_wake",
     "is_allowlisted_device_phrase",
+    "remember_device_wake",
 ]

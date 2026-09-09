@@ -414,6 +414,7 @@ class MediaSessionLifecycleMixin:
                 ),
                 stream_epoch=identity.stream_epoch,
                 ingress=MediaAudioIngressState.create(self.audio_ingress_max_frames),
+                device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
 

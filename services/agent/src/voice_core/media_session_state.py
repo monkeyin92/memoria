@@ -108,6 +108,7 @@ class MediaVoiceSessionState:
     conversation_initiation_provisional_id: str | None = None
     conversation_yield_candidate_fence: GenerationFence | None = None
     device_wake_ack_fence: GenerationFence | None = None
+    device_wake_ack_pending: bool = False
     speaker_enrollment_task: asyncio.Task[None] | None = None
     pending_missed_hearing_nudge: bool = False
     missed_hearing_nudge_count: int = 0
