@@ -44,6 +44,8 @@ idle_tap_pat_operator_verified: true
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。
+
 ## 下一验收
 
 按顺序。点屏 / 摇晃 / 短拍已于 2026-09-09 16:08 CST 操作员 PASS，板上不用再刷。半双工双轮（星期几 + 天气 + 短告别）曾在 epoch 1379 PASS，不代替下列项。
@@ -68,15 +70,7 @@ wired: overlay_board_layer_memoria_face_display
 verified: host_renderer_tests_preview_esp32s3_clean_build_overlay_gate_and_idle_tap_pat
 hardware_verified: false
 next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）
-on_device_app_sha256: df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
-on_device_merged_sha256: f40327479ce6caec029a79b680827960bdacd78a32b05a3a5f5f8ffe79574a35
 on_device_flash: app_only_0x20000_20260909-1559-confirm-pat-bootfix
-overlay_hash: 5a797f91a6289fc86d5bab189fb305ac779a6e3092757fcd4ffd0d8eb7475318
-on_device_compile_time: "Sep  9 2026 15:59:27"
-identity_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
-identity_unchanged: true
-device_ip: 192.168.8.142
-device_uuid: 1ac87deb-0fa3-4300-a304-ad6c472ab8c7
 evidence_dir: outputs/acceptance/run-20260909-1531-confirm-pat
 backup_app: firmware/esp32/artifacts/backups/pre-pulse-20260909-1510/app-before.bin
 backup_app_sha256: fc9134af604f8a383306b8b48cb526902eae44de8fb4a9eed75960200bacb774
@@ -85,7 +79,7 @@ operator_verified_at: 2026-09-09 16:08 CST
 pending_flash: none
 ```
 
-360x360 圆屏是黑底白眼睛，不再显示黄色 Noto emoji。协议 `screen.expression` 未改：`neutral/happy/sad/surprised/loving/thinking`。未知名字回落 `neutral`。`Application` 在 idle / connecting / listening 下发 `neutral`，说完回到待机月牙。
+360x360 圆屏是黑底白眼睛，不再显示黄色 Noto emoji。协议 `screen.expression` 未改：`neutral/happy/sad/surprised/loving/thinking`。未知名字回落 `neutral`。`Application` 在 idle / connecting / listening 下发 `neutral`，说完回到待机月牙。固件摘要与身份区 SHA 见「板卡与固件」。
 
 **本地待机交互（已可用）**
 
@@ -154,7 +148,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 ## 板卡与固件
 
-- 硬件：乐鑫 ESP-VoCat N32R16（ESP32-S3，32MB Flash / 16MB Octal PSRAM）。board `memoria-esp-vocat`，app 2.4.2。
+- 硬件：乐鑫 ESP-VoCat N32R16（ESP32-S3，32MB Flash / 16MB Octal PSRAM）。board `memoria-esp-vocat`，app 2.4.2。现场 `192.168.8.142`，uuid `1ac87deb-0fa3-4300-a304-ad6c472ab8c7`。
 - 音频：ES8311 输出 + ES7210 双麦，输入增益 **36.0 dB**。hello 报 `simultaneous_capture_playback=true`、`aec_mode=fd_low_cost`、`aec_reference=software_post_gain_pre_i2s`、`barge_in_level=1`；`aec_reference_verified=false`。
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
@@ -167,35 +161,11 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
   - overlay `5a797f91a6289fc86d5bab189fb305ac779a6e3092757fcd4ffd0d8eb7475318`
 - 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。刷写：`bash firmware/esp32/scripts/flash.sh --port /dev/cu.usbmodemXXXX`。
 
-## 工单 vocat_interrupt_assist
-
-```yaml
-candidate: vocat_interrupt_assist
-as_of_date: 2026-09-08
-hardware: memoria_esp_vocat_es7210_es8311
-audio_mode: interrupt_assist
-advertised_duplex_level: none
-barge_in: negotiated_interrupt_assist
-turn_phase_side_effects: forbidden
-direct_real_device_verified: false
-full_duplex_verified: false
-hardware_aec: pending
-code: complete
-wired: agent_bridge_edge_cutover_firmware_flashed
-enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
-verified: false
-retired_work_order: half_duplex_investor_demo
-```
-
-ATK ES8388 半双工投资人 Demo 已退役。默认协商 `interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。对客口径 `advertised_duplex_level: none`；`full_duplex_verified` 仍要 T1–T14。
-
-已验证：唤醒欢迎语 epoch 1892；点屏 / 摇晃 / 短拍 16:08。未验证：表情照片、barge-in、近端 AEC 残差、长天气、主人匹配。Control 默认镜像可后切，只影响新设备。
-
 ## 设备启用、唤醒与 shadow
 
-配网闭环已于 2026-08-27 验证：二维码 introspect → BLE Protocomm Security 1 → claim/binding → Activation Manifest → ACK → `ready_for_conversation`。设备 `dev_atk_a4cb8fd6095c`（BLE `MEM-095C`）`activation_version=3`，`acknowledged_at=2026-08-27 14:34:45 CST`。这不等于语音对话或屏幕验收。小程序不采集声纹或实时语音。
+配网闭环已于 2026-08-27 验证：二维码 introspect → BLE Protocomm Security 1 → claim/binding → Activation Manifest → ACK → `ready_for_conversation`。设备 `dev_atk_a4cb8fd6095c`（BLE `MEM-095C`）`activation_version=3`。这不等于语音对话或屏幕验收。小程序不采集声纹或实时语音。
 
-唤醒词默认「茉莉」（`mo li`），白名单 `mo_li` / `mei_mo_li_ya`，自定义拼音 v1。主人静默 10 秒由 Python Voice Core 计时，裸 VAD 不能重置；「没听清」提示不再把窗口刷满。epoch **1892** 已听到 allowlisted 欢迎语（Actual Heard + `playback.ended`），随后 `conversation_end_explicit` 关闭。两音节误唤醒的安静 / 电视人声 / 家庭噪声阈值仍未定量。不要给动态欢迎语走非 allowlist 生成。
+唤醒词默认「茉莉」（`mo li`），白名单 `mo_li` / `mei_mo_li_ya`，自定义拼音 v1。主人静默 10 秒由 Python Voice Core 计时，裸 VAD 不能重置；「没听清」提示不再把窗口刷满。epoch **1892** 已听到 allowlisted 欢迎语（Actual Heard + `playback.ended`），随后 `conversation_end_explicit` 关闭。两音节误唤醒的电视 / 家庭噪声仍未定量。不要给动态欢迎语走非 allowlist 生成。
 
 `TurnPhase` 只作 `ConversationProjection` 内部证据和低基数 telemetry，`enabled: false`，不改变 endpoint / interrupt / commit。FCDR 影子指标未发布，不得据此调策略。
 
