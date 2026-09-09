@@ -150,10 +150,13 @@ class MediaSessionProjectionMixin:
         now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
         try:
             if context.closed or context.standby_requested:
+                context.device_wake_ack_pending = False
                 return
             if context.runtime.fence.turn_id != 0 or context.turn_start_sample is not None:
+                context.device_wake_ack_pending = False
                 return
             if context.output_owner is not None:
+                context.device_wake_ack_pending = False
                 return
             runtime = context.runtime
             if runtime.orchestrator.state is ConversationState.CONNECTING:
@@ -167,12 +170,12 @@ class MediaSessionProjectionMixin:
                 or context.runtime.fence.turn_id != 0
                 or context.turn_start_sample is not None
             ):
+                context.device_wake_ack_pending = False
                 return
             generation_tts_voice_can_bind(runtime)
-            context.device_wake_ack_fence = runtime.fence
             policy = runtime.mode_policy
             companion_style_id = policy.companion_style_id if policy.available else None
-            await self._speak_allowlisted_bridge_phrase(
+            spoken = await self._speak_allowlisted_bridge_phrase(
                 context,
                 device_wake_phrase(
                     context.identity.session_id,
@@ -185,15 +188,21 @@ class MediaSessionProjectionMixin:
                 ),
                 require_idle_input=True,
             )
+            if spoken:
+                context.device_wake_ack_fence = runtime.fence
+            else:
+                context.device_wake_ack_fence = None
+                context.device_wake_ack_pending = False
         except asyncio.CancelledError:
+            context.device_wake_ack_pending = False
             raise
         except Exception:
+            context.device_wake_ack_pending = False
             logger.exception(
                 "device wake ack failed session=%s",
                 context.identity.session_id,
             )
         finally:
-            context.device_wake_ack_pending = False
             remember_device_wake(context.identity.device_id, now)
 
     def _spawn_device_speaker_enrollment(self, context: _MediaVoiceSession) -> None:
@@ -472,6 +481,7 @@ class MediaSessionProjectionMixin:
         wake_fence = context.device_wake_ack_fence
         if wake_fence is not None and wake_fence.matches(fence):
             context.device_wake_ack_fence = None
+            context.device_wake_ack_pending = False
 
     async def _speak_missed_hearing_ack(self, context: _MediaVoiceSession) -> None:
         try:

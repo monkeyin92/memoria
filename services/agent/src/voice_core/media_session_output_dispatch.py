@@ -254,6 +254,16 @@ class MediaOutputDispatchMixin:
         snapshot, changed = context.reply_delivery.record(fence, event, reason=reason)
         if not changed:
             return
+        wake_fence = context.device_wake_ack_fence
+        if wake_fence is not None and wake_fence.matches(fence) and event in {
+            ReplyDeliveryEvent.FIRST_FRAME_SENT,
+            ReplyDeliveryEvent.SKIPPED,
+            ReplyDeliveryEvent.PREEMPTED,
+            ReplyDeliveryEvent.ERROR,
+            ReplyDeliveryEvent.NO_AUDIO,
+            ReplyDeliveryEvent.TRANSPORT_REJECTED,
+        }:
+            context.device_wake_ack_pending = False
         self._observe_conversation_yield_delivery(context, fence, event)
         labels = {"status": event.value}
         if reason:

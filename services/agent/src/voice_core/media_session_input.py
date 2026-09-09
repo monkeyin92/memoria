@@ -42,22 +42,24 @@ _EMPTY_VAD_RMS = 1e-4
 
 
 def _is_spurious_connect_vad(segment: SpeechSegment, context: _MediaVoiceSession) -> bool:
-    """True for connect-time empty VAD that must not steal the wake-ack idle latch."""
+    """True for connect-time VAD that must not steal the wake-ack idle latch.
+
+    Wake-word tail and the local listening cue can open a sample-0 VAD with
+    leftover uplink RMS.  Until the allowlisted greeting has a first frame,
+    that epoch must not take the floor.  Real speech after sample 0 still
+    skips the greeting so we do not talk over the user.
+    """
 
     if segment.kind is not SegmentKind.VAD:
         return False
     rms = segment.near_end_rms
     empty = rms is not None and rms <= _EMPTY_VAD_RMS
-    connect_unknown = (
-        context.device_wake_ack_pending
-        and segment.capture_start_sample == 0
-        and rms is None
-    )
+    pending_connect = context.device_wake_ack_pending and segment.capture_start_sample == 0
     if not segment.final:
-        return empty or connect_unknown
+        return empty or pending_connect
     if context.turn_start_sample is not None:
         return False
-    return empty or connect_unknown
+    return empty or pending_connect
 
 
 class MediaSessionInputMixin:
