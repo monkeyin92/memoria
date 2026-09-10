@@ -212,6 +212,7 @@ class MediaSessionInputMixin:
                         == "minor"
                         else "adult"
                     ),
+                    device_conversation=context.identity.client_type == "device",
                 )
             else:
                 interruption = None
@@ -453,6 +454,7 @@ class MediaSessionInputMixin:
                 ),
                 asr_text=segment.text,
                 local_hard_stop=segment.hard_stop,
+                device_conversation=context.identity.client_type == "device",
             )
             if interruption.cancel_generation:
                 # Never subtract an Edge wall-clock timestamp from Core's

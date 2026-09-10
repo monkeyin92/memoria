@@ -44,7 +44,7 @@ idle_tap_pat_operator_verified: true
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。epoch 1895 天气播报中途「好的，再见」被固件 0006 半双工门吞掉 vad.start，随后 `owner_silence_timeout`，屏停在聆听中。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT），尚未真机告别。
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT）。真机打断已停播，但播放中「好的，再见」被影子声纹挡掉 `conversation_end_explicit`，屏先停在聆听中，约 10s `owner_silence_timeout` 才待命。本地已修（影子/未确认告别走显式控制，正式客人仍不能关），未切流。
 
 ## 下一验收
 
@@ -54,7 +54,7 @@ idle_tap_pat_operator_verified: true
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，Agent `20260910-1011` 已切。BOOT 仍能硬停 | 已切流，未真机验 |
+| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷。真机已停播，屏仍先聆听后待命。本地已修，未切流。BOOT 仍能硬停 | 真机复现聆听残留；本地已修，未切流 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |

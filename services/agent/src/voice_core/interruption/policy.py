@@ -95,11 +95,16 @@ class InterruptionPolicy:
         local_hard_stop: bool = False,
         speaker_profile: SpeakerProfile = "adult",
         safety_reply: bool = False,
+        device_conversation: bool = False,
     ) -> InterruptionPolicyDecision:
         """Evaluate one interruption candidate. First matching rule wins."""
 
         text = (asr_text or "").strip()
-        semantic = route_playback_utterance(text, duration_ms=evidence.duration_ms)
+        semantic = route_playback_utterance(
+            text,
+            duration_ms=evidence.duration_ms,
+            device_conversation=device_conversation,
+        )
         # 1) A physical button is a hard stop for every profile and every
         #    reply kind: the device already muted locally and the core must
         #    follow, even while a crisis fixed reply is playing.
@@ -122,6 +127,8 @@ class InterruptionPolicy:
         #    and interrupt-plus-content are all user intent.
         if semantic.utterance.intent is UtteranceIntent.INTERRUPT_COMMAND:
             return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "explicit_stop_phrase")
+        if semantic.utterance.intent is UtteranceIntent.END_SESSION:
+            return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "conversation_end_explicit")
         if semantic.utterance.intent is UtteranceIntent.INTERRUPT_THEN_CHAT:
             return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "explicit_interrupt_phrase")
         # 4) Acoustic false-positive guards: verified AEC residual echo and

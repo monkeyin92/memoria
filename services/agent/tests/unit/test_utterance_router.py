@@ -706,6 +706,40 @@ def test_strict_explicit_wait_allows_shadow_control_but_blocks_formal_guest() ->
     assert shadow_ambiguous_command.reason == "target_explicit_control"
 
 
+def test_strict_explicit_device_farewell_allows_shadow_but_blocks_formal_guest() -> None:
+    shadow_close = route_target_speaker(
+        classification="uncertain",
+        reason_code="shadow_guest_candidate",
+        profile_id="shadow-1",
+        pcm_duration_ms=320,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+    uncertain_close = route_target_speaker(
+        classification="uncertain",
+        reason_code="classification_pending",
+        profile_id=None,
+        pcm_duration_ms=200,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+    formal_guest_close = route_target_speaker(
+        classification="guest",
+        reason_code="owner_mismatch",
+        profile_id="formal-guest-1",
+        pcm_duration_ms=1200,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+
+    assert shadow_close.allow_input is True
+    assert shadow_close.reason == "target_explicit_control"
+    assert uncertain_close.allow_input is True
+    assert uncertain_close.reason == "target_explicit_control"
+    assert formal_guest_close.allow_input is False
+    assert formal_guest_close.reason == "target_non_owner"
+
+
 @pytest.mark.parametrize(
     ("classification", "reason_code", "context", "explicit_interrupt", "reason"),
     [

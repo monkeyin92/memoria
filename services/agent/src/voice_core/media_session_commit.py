@@ -767,6 +767,7 @@ class MediaSessionCommitMixin:
                         == "minor"
                         else "adult"
                     ),
+                    device_conversation=context.identity.client_type == "device",
                 )
                 interaction = replace(
                     interaction,

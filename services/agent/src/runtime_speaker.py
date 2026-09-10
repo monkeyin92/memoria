@@ -628,7 +628,8 @@ class DuplexSpeakerMixin:
         barge_route = self._route_candidate()
         route = self._target_speaker_route(
             context="interrupt",
-            explicit_interrupt=barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND,
+            explicit_interrupt=barge_route.intent
+            in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
         )
         if not route.allow_input:
             self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE

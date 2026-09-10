@@ -1640,6 +1640,31 @@ async def test_plain_chat_interrupt_does_not_play_a_control_ack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_farewell_interrupt_does_not_restore_listen_before_close() -> None:
+    """Playback farewell must not publish listening before the committed close."""
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="device-farewell-no-listen")
+    runtime.set_device_conversation_controls(True)
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("今天天气怎么样")
+    await runtime.on_assistant_speaking("南宁今天多云。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "好的，再见"
+
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+
+    assert said == []
+    assert runtime.interaction_phase.value == "interrupted"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_clear_user_turn_failure_does_not_block_yield_or_restore_listening() -> None:
     """A LiveKit clear failure must not strand the conversation before the ack."""
 

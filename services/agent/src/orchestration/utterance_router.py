@@ -152,11 +152,12 @@ def route_target_speaker(
     if (
         context == "interrupt"
         and explicit_interrupt
-        and shadow_non_owner
         and not formal_non_owner
+        and (shadow_non_owner or classification == "uncertain")
     ):
-        # A shadow score from short, playback-contaminated audio is not formal
-        # identity evidence. Pure stop remains control-only and reversible.
+        # A shadow/uncertain score from short, playback-contaminated audio is
+        # not formal identity evidence. Pure stop and device farewell remain
+        # control-only; a formal guest still cannot take the floor.
         return TargetSpeakerRoute(allow_input=True, reason="target_explicit_control")
     non_owner = formal_non_owner or shadow_non_owner
     if non_owner:

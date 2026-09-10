@@ -85,6 +85,18 @@ def test_hard_stop_and_router_text_semantics(
     assert decision.cancel_generation is cancel
 
 
+def test_device_farewell_during_playback_is_a_true_interrupt() -> None:
+    decision = InterruptionPolicy().evaluate(
+        evidence(InterruptionSource.CLOUD_ASR, duration_ms=400),
+        asr_text="好的，再见",
+        device_conversation=True,
+    )
+
+    assert decision.verdict is InterruptionVerdict.TRUE_INTERRUPT
+    assert decision.reason == "conversation_end_explicit"
+    assert decision.cancel_generation
+
+
 def test_short_backchannel_continues_playback() -> None:
     decision = InterruptionPolicy().evaluate(
         evidence(InterruptionSource.CLOUD_ASR, duration_ms=300),

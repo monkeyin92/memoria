@@ -1381,7 +1381,10 @@ class DuplexRuntime(
             return True
         # Explicit stop phrases from the mic: always treat as real interrupt.
         # Short「停一下」often scores too_short and used to wrongly trigger「我继续」.
-        if context in {"interrupt", "barge_in_start"} and self._is_explicit_owner_interrupt_cmd():
+        if context in {"interrupt", "barge_in_start"} and (
+            self._is_explicit_owner_interrupt_cmd()
+            or self._route_candidate().intent is UtteranceIntent.END_SESSION
+        ):
             return True
         utt = self.speaker_verifier.score_latest_utterance()
         roll = self.speaker_verifier.score_pcm()  # rolling ~4s window
@@ -2641,11 +2644,15 @@ class DuplexRuntime(
                 self.session_id,
             )
             return False, route.reason
-        target_route = self._target_speaker_route(context="conversation")
+        close_turn = route.intent is UtteranceIntent.END_SESSION
+        target_route = self._target_speaker_route(
+            context="interrupt" if close_turn else "conversation",
+            explicit_interrupt=close_turn,
+        )
         if not target_route.allow_input:
             self._reject_target_speaker(context="turn_commit", route=target_route)
             return False, target_route.reason
-        if route.intent is UtteranceIntent.END_SESSION:
+        if close_turn:
             # The Media Voice registry owns the terminal session projection.
             # Runtime only suppresses chat/control side effects after the
             # target-speaker gate has authorized this exact close phrase.
@@ -3581,7 +3588,12 @@ class DuplexRuntime(
                 InteractionPhase.INTERRUPTED,
                 cause=f"interrupt:{cause}",
             )
-            if (
+            if barge_route.intent is UtteranceIntent.END_SESSION:
+                # Farewell already stopped playback. Keep the floor until the
+                # committed close projects CLOSED; restoring listen here is
+                # the screen that then waits for owner-silence timeout.
+                pass
+            elif (
                 create_user_turn
                 and mid_reply
                 and control_only
@@ -3702,7 +3714,8 @@ class DuplexRuntime(
                 # still waits for endpointed audio below.
                 target_route = self._target_speaker_route(
                     context="interrupt",
-                    explicit_interrupt=(barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND),
+                    explicit_interrupt=barge_route.intent
+                    in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
                 )
             else:
                 # LiveKit may request an interrupt on VAD start. Do not classify
@@ -3721,7 +3734,8 @@ class DuplexRuntime(
                     return self.fence
                 target_route = self._target_speaker_route(
                     context="interrupt",
-                    explicit_interrupt=False,
+                    explicit_interrupt=barge_route.intent
+                    in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
                 )
             if self._target_focus_pending_epoch == self._speaker_epoch:
                 self._target_focus_pending_epoch = None
