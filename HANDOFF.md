@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-10
-resume_checkpoint: vocat_playback_barge_in_flashed_awaiting_agent_cutover_and_weather_goodbye_retest
+resume_checkpoint: vocat_playback_barge_in_awaiting_weather_goodbye_retest
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -25,7 +25,7 @@ realtime_media_wss_allowed: false
 livekit_room_allowed: false
 current_work_order: vocat_interrupt_assist
 code: complete
-wired: firmware_0024_app_only_agent_barge_in_wait_pending_cutover
+wired: firmware_0024_and_agent_barge_in_wait_cutover
 enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
 verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard
 production_runtime_verified: true
@@ -44,7 +44,7 @@ idle_tap_pat_operator_verified: true
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。epoch 1895 天气播报中途「好的，再见」被固件 0006 半双工门吞掉 vad.start，随后 `owner_silence_timeout`，屏停在聆听中；0024 已刷，现网 Agent 仍会把空缓冲 barge-in 判 IGNORE，须切 Agent 后再真机告别。
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。epoch 1895 天气播报中途「好的，再见」被固件 0006 半双工门吞掉 vad.start，随后 `owner_silence_timeout`，屏停在聆听中。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT），尚未真机告别。
 
 ## 下一验收
 
@@ -54,7 +54,7 @@ idle_tap_pat_operator_verified: true
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已 app-only 刷入；现网 Agent 未切，空缓冲 barge-in 仍会 IGNORE。BOOT 仍能硬停 | 固件已刷，Agent 未切，未验 |
+| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，Agent `20260910-1011` 已切。BOOT 仍能硬停 | 已切流，未真机验 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -122,9 +122,9 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260909-1256-wake-tail-connect-vad-agent-component`，源 `68ddba106d7cae7c00556a6393b94e72a5d0f553`，image `sha256:74ed3cc7bd59f5bed792c3f6a97d14140cc1251e4fd4d838f9990bb0e5fed2ac`。healthy、restart=0。收据 `/opt/memoria/component-releases/20260909-1256-wake-tail-connect-vad-agent-component/`。
-- 回滚：`rollback-20260909-1256-wake-tail-connect-vad-agent-component-pre-agent/-pre-bridge`（镜像 `20260909-1124-device-wake-greeting-agent-component` / `sha256:3dde10934e7e1c9ab0f436b387d2200b08c3d4188aafb33cffa49cdd092032ec`）。
-- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤。这些是已切流能力，不等于对应真机项已验收。
+- 当前：`memoria-agent:20260910-1011-playback-barge-in-wait-agent-component`，源 `46cf848bd365ccba9ad73c0a46ee5f37a47bbca2`，image `sha256:d17673e5b982d6949763cf4209a179f809a458b7a314205cd1365024f4df92ec`。healthy、restart=0。收据 `/opt/memoria/component-releases/20260910-1011-playback-barge-in-wait-agent-component/`。
+- 回滚：`rollback-20260910-1011-playback-barge-in-wait-agent-component-pre-agent/-pre-bridge`（镜像 `20260909-1256-wake-tail-connect-vad-agent-component` / `sha256:74ed3cc7bd59f5bed792c3f6a97d14140cc1251e4fd4d838f9990bb0e5fed2ac`）。
+- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT。这些是已切流能力，不等于天气告别已验收。
 
 **Media Edge**
 
@@ -154,7 +154,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。这不等于告别验收；现网 Agent 未切。
+- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 CST Agent 已切 `20260910-1011`。这不等于告别验收。
   - app `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`
   - merged `33851b8ffd2547078a78a4b77d9f4bf542cbefd09fa0a894ec175cb9df8bcbde`
   - bootloader `434b1a190c9607a289b1b0e14df3329864c24bc9443787814e0db0cc94e8b098`（本轮未写；与上一版构建哈希不同，勿整包补刷）
