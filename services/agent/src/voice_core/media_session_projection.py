@@ -140,6 +140,18 @@ def _live_lookup_filler_already_audible(
     return _live_lookup_filler_was_heard(context, remembered)
 
 
+def _forget_live_lookup_filler(context: _MediaVoiceSession) -> None:
+    """Release the burst memory once a lookup delivered its answer.
+
+    The memory only exists to coalesce sibling delegations opened by duplicate
+    finals of one question, so a delivered answer ends the burst and the next
+    lookup is allowed to announce itself again.
+    """
+
+    context.live_lookup_filler_fence = None
+    context.live_lookup_filler_admitted_at = None
+
+
 class MediaSessionProjectionMixin:
     """Keep Runtime/Projection emission behind the Registry interface."""
 
@@ -679,7 +691,11 @@ class MediaSessionProjectionMixin:
                 {handle.record.task},
                 timeout=0.02,
             )
-            if not task_done and runtime.fence.matches(fence):
+            if (
+                not task_done
+                and runtime.fence.matches(fence)
+                and not _live_lookup_filler_already_audible(context, fence)
+            ):
                 now_ms = int(time.time() * 1_000)
                 acknowledgement = coordinator.bridge_acknowledgement(
                     LIVE_LOOKUP_FILLER,
@@ -784,6 +800,7 @@ class MediaSessionProjectionMixin:
                 )
                 return
             claim.complete()
+            _forget_live_lookup_filler(context)
         except asyncio.CancelledError:
             claim.release()
             with contextlib.suppress(Exception):
