@@ -37,7 +37,7 @@
 
 ## 当前约束
 
-- 扫描：2026-09-10。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨，不混入固件/打断。
+- 扫描：2026-09-10。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。
 - SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。
 - 唤醒词「茉莉」。播放期 KWS 关；说话中 BOOT / 触摸硬停。DTLN makeup 冻结 `8.0×`。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
 - 钉档：云端 FunASR 评估升至 ≥1.4.15（R-20260910-01；PyPI 2026-09-09，已测 NumPy 2，旧 `numpy<2` 不再是硬约束）。sidecar ≥1.3.29。livekit-agents PyPI 仍 1.8.0（无 1.8.1/1.9.0），仓内仍 1.6.10。#7064 已随 1.8.0 合并（NC 时默认关 AGC）；stale「open」索引作废。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。
@@ -151,13 +151,13 @@
 ### R-20260909-03 VoiceMem：借鉴召回手法，不换档案栈
 
 - 类别：产品技术
-- 状态：适合做
+- 状态：进行中
 - 首次写入：2026-09-09
 - 最近更新：2026-09-10
 - 为何现在相关：VoiceMem（v0.0.2）是实时语音智能体的记忆检索层：左脑事实、右脑人格/情绪笔记，ingest 抽事实、search 把 Top-K 注入回复。宣传 LoCoMo ~91%、PersonaMem ~69%、检索 ~134ms、每轮约 300–430 memory token。它不能替代 Memoria 的对话档案。与已落地的 Dense-Mem confirm/trace（原 R-20260831-07）同族：增强现有 catalog / persona / recall，不换栈。当前工单仍是 VoCat interrupt_assist，本条另轨。第三方 `livekit-plugins-voicemem` 0.2.2（PyPI 2026-09-01）是 pgvector 记忆插件，要求 `preemptive_generation` 关，且声明 `livekit-agents<1.8`，与仓内要评估的 1.8.0 不兼容。
-- 建议下一步：不 pip install voicemem / livekit-plugins-voicemem、不克隆、不接音频。现工单完成后再开工；只喂已 commit 且 `history_eligible=true` 的主人文本；输出只能当候选 Memory Claim。硬约束见 R-20260909-04。
+- 建议下一步：不 pip install voicemem / livekit-plugins-voicemem、不克隆、不接音频。只喂已 commit 且 `history_eligible=true` 的主人文本；输出只能当候选 Memory Claim。硬约束见 R-20260909-04。长程三项已过，但整体 `recall@5` 仍 0.8125（其余无共享词转述，如「避开」≠「香菜」）；不要开工预取、双通道注入或平行记忆库。新零重叠句式先加评测再扩封闭词表。
 - 来源：https://github.com/xzf-thu/VoiceMem ；https://xzf-thu.github.io/VoiceMem/ ；https://arxiv.org/pdf/2608.26005 ；https://pypi.org/project/livekit-plugins-voicemem/0.2.2/
-- 开发备注：2026-09-09 只读评估。LICENSE Apache 2.0；捆绑模型另有许可。左脑底层 Mem0 + 本地 Qdrant，默认不是多进程安全的生产 catalog。2026-09-10：插件版不能当升级路径，也不用来换 PG/MinIO 档案栈。
+- 开发备注：2026-09-09 只读评估。LICENSE Apache 2.0；捆绑模型另有许可。左脑底层 Mem0 + 本地 Qdrant，默认不是多进程安全的生产 catalog。2026-09-10：插件版不能当升级路径，也不用来换 PG/MinIO 档案栈。同日扩 `memory_eval_zh_v1` 并让评测查询走生产 RecallPlanner。同日在 `RecallPlanner` 加封闭 rewrite（不改 archive、不设 entity 过滤）：「小朋友/小孩子/孩子」扩 `儿子/女儿` 及已确认子女别名；「难受/不开心/伤心/委屈」扩 `难过`；「小朋友」不误匹配「朋友」。`memory_eval_zh_v1`：跨会话 / 转述追问 / 安慰 `recall@5` 均为 1.0；隔离/候选泄漏仍 0；整体 `recall_at_5=0.8125`、`ndcg_at_10≈0.734`。抽取器仍抽不出「我儿子小周对猫毛过敏」的人物，所以转述靠词表而非实体。不引入 Mem0。
 
 产品拆两层，默认只做第一条：
 
@@ -166,13 +166,13 @@
 
 「像正常人对话」不是第三块记忆库：日期是运行时上下文，查询是工具，关联旧事才要证据档案 + recall。安慰分三层——当轮 `emotion_observation`、persona 表达习惯、「上次你很难过」才是记忆 claim。合成一块右脑图会把当天心情写成性格。
 
-现有权威链不得拆：EvidenceEvent / ArchiveSink / PG + MinIO；主人历史只消费 `history_eligible=true`；事实走 extractor + write policy + catalog；召回走 RecallPlanner + `catalog.context(confirmed_only=true)`（超时 0.3s，最多 8 条）；说话方式走 persona；当轮情绪走 `emotion_observation`；guest / uncertain 不进主人历史、私人记忆和工具。已有 `memory_eval_zh_v1`，缺更长跨会话与「安慰是否用对记忆」。
+现有权威链不得拆：EvidenceEvent / ArchiveSink / PG + MinIO；主人历史只消费 `history_eligible=true`；事实走 extractor + write policy + catalog；召回走 RecallPlanner + `catalog.context(confirmed_only=true)`（超时 0.3s，最多 8 条）；说话方式走 persona；当轮情绪走 `emotion_observation`；guest / uncertain 不进主人历史、私人记忆和工具。`memory_eval_zh_v1` 已覆盖跨会话 / 转述追问 / 安慰召回；日历窗与封闭 rewrite 已过这三项，其余无共享词转述仍可能漏。
 
 后续四步（均在现有栈上）：
 
 1. 说话过程中 query-conditioned 预取。在主人 partial / 即将 final 的转写上调用 RecallPlanner + `catalog.context()`，写入 MemoryContextClient 缓存。失败沿用旧缓存或空；不准改 archive、不准挡热路径、不准用 guest/uncertain 文本查询。
 2. 双通道注入 + 硬 token 预算。事实走记忆块；人格/情绪走独立块，只塑造语气，禁止念给用户听。把「最多 8 条、snippet 上限 4000 字」收成可观测的 memory-token 上限。
-3. 长程评测，不换引擎。在 `memory_eval_zh_v1` 上加跨会话 / 转述追问 / 「该安慰时是否召回对的事件」。用分数决定要不要做第 1、2 步。
+3. 长程评测，不换引擎。跨会话 / 转述追问 / 安慰召回已进 `memory_eval_zh_v1`，三项 `recall@5=1`。整体 `recall@5` 仍 0.8125，因此第 1、2 步暂不开工。
 4. 可选：若第 3 步显示「问人问时间仍搜成语义大杂烩」，再加强 slot/entity 路由，仍落在 `catalog.search` 的 filter，不引入 Mem0。
 
 验收：相关 memory_eval / catalog 单测；prompt 注入有 token 或条数上限的回归；实时路径超时失败可降级。真机「记得上周那件事」另开设备验收。

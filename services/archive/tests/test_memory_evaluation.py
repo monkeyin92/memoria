@@ -13,6 +13,7 @@ from services.archive.memory_evaluation import (
     EvaluationQueryResult,
     MemoryEvaluationAdapter,
     MemoryEvaluationCase,
+    MemoryEvaluationDataset,
     _source_account_for_item,
     calculate_memory_metrics,
     covered_scenarios,
@@ -22,9 +23,7 @@ from services.archive.memory_evaluation import (
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 
-DATASET = (
-    Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
-)
+DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
 
 
 class PerfectAdapter:
@@ -52,10 +51,7 @@ class PerfectAdapter:
                 mode=query.mode,
                 latency_ms=float(index + 1),
                 items=tuple(
-                    item
-                    for key in query.relevance
-                    for item in extracted
-                    if item.item_id == key
+                    item for key in query.relevance for item in extracted if item.item_id == key
                 ),
             )
             for index, query in enumerate(case.queries)
@@ -119,7 +115,7 @@ def test_versioned_dataset_covers_every_required_memory_scenario() -> None:
     dataset = load_memory_evaluation_dataset(DATASET)
 
     assert dataset.version == "memory-eval-zh-v1"
-    assert len(dataset.cases) == 13
+    assert len(dataset.cases) == 16
     assert covered_scenarios(dataset) == expected_scenarios()
 
 
@@ -129,7 +125,7 @@ async def test_perfect_adapter_produces_stable_golden_metrics() -> None:
 
     report = await run_memory_evaluation(dataset, PerfectAdapter())
 
-    assert report.case_count == 13
+    assert report.case_count == 16
     assert report.metrics.extraction_precision == 1
     assert report.metrics.extraction_recall == 1
     assert report.metrics.recall_at_5 == 1
@@ -140,6 +136,9 @@ async def test_perfect_adapter_produces_stable_golden_metrics() -> None:
     assert report.metrics.contradiction_rate == 0
     assert report.metrics.cross_account_leakage == 0
     assert report.metrics.candidate_leakage == 0
+    assert report.metrics.cross_session_recall_at_5 == 1
+    assert report.metrics.paraphrase_followup_recall_at_5 == 1
+    assert report.metrics.comfort_recall_at_5 == 1
     assert report.metrics.token_cost == 15 * len(dataset.cases)
 
 
@@ -162,9 +161,7 @@ async def test_safety_metrics_detect_conflict_candidate_and_cross_account_leakag
 @pytest.mark.asyncio
 async def test_current_catalog_adapter_runs_offline_and_preserves_account_isolation() -> None:
     dataset = load_memory_evaluation_dataset(DATASET)
-    isolation = next(
-        case for case in dataset.cases if case.scenario == "cross_account_isolation"
-    )
+    isolation = next(case for case in dataset.cases if case.scenario == "cross_account_isolation")
 
     observation = await CatalogMemoryEvaluationAdapter().observe(isolation)
 
@@ -181,6 +178,37 @@ async def test_catalog_adapter_reports_extractor_token_usage() -> None:
     observation = await CatalogMemoryEvaluationAdapter(UsageExtractor()).observe(case)
 
     assert (observation.input_tokens, observation.output_tokens) == (7, 2)
+
+
+@pytest.mark.asyncio
+async def test_catalog_adapter_reports_long_horizon_scenario_scores() -> None:
+    dataset = load_memory_evaluation_dataset(DATASET)
+    long_horizon = tuple(
+        case
+        for case in dataset.cases
+        if case.scenario
+        in {
+            "cross_session_followup",
+            "paraphrase_followup",
+            "comfort_recall",
+        }
+    )
+    adapter = CatalogMemoryEvaluationAdapter()
+    observations = tuple([await adapter.observe(case) for case in long_horizon])
+    subset = MemoryEvaluationDataset(version=dataset.version, cases=long_horizon)
+
+    metrics = calculate_memory_metrics(subset, observations)
+
+    assert {case.scenario for case in long_horizon} == {
+        "cross_session_followup",
+        "paraphrase_followup",
+        "comfort_recall",
+    }
+    assert metrics.cross_account_leakage == 0
+    assert metrics.candidate_leakage == 0
+    assert metrics.cross_session_recall_at_5 == 1
+    assert metrics.paraphrase_followup_recall_at_5 == 1
+    assert metrics.comfort_recall_at_5 == 1
 
 
 def test_source_account_attribution_exposes_cross_account_and_mixed_results() -> None:

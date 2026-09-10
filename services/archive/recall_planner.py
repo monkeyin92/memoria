@@ -30,6 +30,13 @@ _RECALL_SCAFFOLDING = (
     "之前",
     "当时",
 )
+_ALIAS_MASKS = ("小朋友",)
+_CHILD_QUERY_MARKERS = ("小朋友", "小孩子", "孩子")
+_CHILD_RELATIONS = frozenset({"son", "daughter"})
+_CHILD_LEXEMES = ("儿子", "女儿")
+_DISTRESS_QUERY_MARKERS = ("难受", "不开心", "伤心", "委屈")
+_DISTRESS_LEXEMES = ("难过",)
+_MAX_QUERY_EXPANSIONS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,13 +119,22 @@ def _time_window(
     return start, end, tuple(item for _, _, item in candidates)
 
 
+def _alias_haystack(query: str, alias: str) -> str:
+    masked = query
+    for compound in _ALIAS_MASKS:
+        if alias != compound and alias in compound:
+            masked = masked.replace(compound, "\u3000" * len(compound))
+    return masked
+
+
 def _alias_matches(query: str, alias: str) -> bool:
+    haystack = _alias_haystack(query, alias)
     if alias.isascii() and alias.replace(" ", "").isalnum():
         return (
-            re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", query, re.I)
+            re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", haystack, re.I)
             is not None
         )
-    return alias in query
+    return alias in haystack
 
 
 def _entities(query: str, people: Sequence[PersonItem]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -138,6 +154,32 @@ def _entities(query: str, people: Sequence[PersonItem]) -> tuple[tuple[str, ...]
             entity_ids.update(ids)
             matched_aliases.append(alias)
     return tuple(sorted(entity_ids)), tuple(matched_aliases)
+
+
+def _query_expansions(query: str, people: Sequence[PersonItem]) -> tuple[str, ...]:
+    extra: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        token = value.strip()
+        if len(token) < 2 or token in seen or token in query:
+            return
+        seen.add(token)
+        extra.append(token)
+
+    if any(marker in query for marker in _CHILD_QUERY_MARKERS):
+        for lexeme in _CHILD_LEXEMES:
+            add(lexeme)
+        for person in people:
+            if person.status != "confirmed" or person.relationship_to_owner not in _CHILD_RELATIONS:
+                continue
+            add(person.display_name)
+            for alias in person.aliases:
+                add(alias)
+    if any(marker in query for marker in _DISTRESS_QUERY_MARKERS):
+        for lexeme in _DISTRESS_LEXEMES:
+            add(lexeme)
+    return tuple(extra[:_MAX_QUERY_EXPANSIONS])
 
 
 def _clean_query(query: str, controls: Sequence[str]) -> str:
@@ -160,6 +202,9 @@ class RecallPlanner:
         entity_ids, entity_controls = _entities(text, people)
         controls = (*time_controls, *entity_controls)
         planned_text = _clean_query(text, controls) if controls else text
+        expansions = _query_expansions(text, people)
+        if expansions:
+            planned_text = " ".join(part for part in (planned_text, *expansions) if part).strip()
         return RecallPlan(
             text=planned_text,
             entity_ids=entity_ids,

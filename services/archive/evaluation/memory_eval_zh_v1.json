@@ -488,6 +488,146 @@
           "relevance": {"owner-a-dali": 3}
         }
       ]
+    },
+    {
+      "case_id": "cross-session-nanjing-trip",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "eval-cross-session-trip",
+          "account_id": "eval-owner-a",
+          "text": "下次旅行想去南京。",
+          "occurred_at": "2026-07-30T20:00:00+08:00",
+          "session_id": "eval-cross-session-a"
+        },
+        {
+          "event_id": "eval-cross-session-overtime",
+          "account_id": "eval-owner-a",
+          "text": "今天加班到很晚。",
+          "occurred_at": "2026-08-06T21:00:00+08:00",
+          "session_id": "eval-cross-session-b"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-cross-session-trip", "action": "confirm"},
+        {"source_event_id": "eval-cross-session-overtime", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "nanjing-trip-plan",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["南京", "旅行"],
+          "source_event_ids": ["eval-cross-session-trip"]
+        },
+        {
+          "key": "same-week-overtime",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["加班"],
+          "source_event_ids": ["eval-cross-session-overtime"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "last-week-chat-query",
+          "account_id": "eval-owner-a",
+          "text": "上周我们聊了什么？",
+          "mode": "context",
+          "now": "2026-08-07T15:30:00+08:00",
+          "relevance": {"nanjing-trip-plan": 3, "same-week-overtime": 0}
+        }
+      ]
+    },
+    {
+      "case_id": "paraphrase-followup-cat-allergy",
+      "scenario": "paraphrase_followup",
+      "evidence": [
+        {
+          "event_id": "eval-paraphrase-followup-001",
+          "account_id": "eval-owner-a",
+          "text": "我儿子小周对猫毛过敏。",
+          "occurred_at": "2026-07-08T19:00:00+08:00",
+          "session_id": "eval-paraphrase-followup-a"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-paraphrase-followup-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "zhou-cat-allergy",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["小周", "猫毛", "过敏"],
+          "source_event_ids": ["eval-paraphrase-followup-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "paraphrase-followup-query",
+          "account_id": "eval-owner-a",
+          "text": "带小朋友去别人家之前要注意什么？",
+          "mode": "context",
+          "now": "2026-08-07T15:30:00+08:00",
+          "relevance": {"zhou-cat-allergy": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "comfort-recall-project-rejection",
+      "scenario": "comfort_recall",
+      "evidence": [
+        {
+          "event_id": "eval-comfort-hard-day",
+          "account_id": "eval-owner-a",
+          "text": "上周五项目验收被否了，我当时很难过。",
+          "occurred_at": "2026-07-17T21:00:00+08:00",
+          "session_id": "eval-comfort-session-a"
+        },
+        {
+          "event_id": "eval-comfort-city",
+          "account_id": "eval-owner-a",
+          "text": "我现在住在杭州。",
+          "occurred_at": "2026-07-11T09:00:00+08:00",
+          "session_id": "eval-comfort-session-b"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-comfort-hard-day", "action": "confirm"},
+        {"source_event_id": "eval-comfort-city", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "project-rejected",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["验收", "难过"],
+          "source_event_ids": ["eval-comfort-hard-day"]
+        },
+        {
+          "key": "comfort-distractor-hangzhou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["现在", "杭州"],
+          "source_event_ids": ["eval-comfort-city"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "comfort-query",
+          "account_id": "eval-owner-a",
+          "text": "我有点难受，安慰我一下。",
+          "mode": "context",
+          "now": "2026-08-07T15:30:00+08:00",
+          "relevance": {"project-rejected": 3, "comfort-distractor-hangzhou": 0}
+        }
+      ]
     }
   ]
 }

@@ -106,11 +106,18 @@ def test_only_unambiguous_confirmed_person_aliases_become_entity_filters() -> No
     mother = RecallPlanner.plan(query="前天妈妈提到的旅行", now=_NOW, people=people)
     ambiguous_friend = RecallPlanner.plan(query="朋友最近怎么样", now=_NOW, people=people)
     candidate = RecallPlanner.plan(query="爸爸前天说了什么", now=_NOW, people=people)
+    child_compound = RecallPlanner.plan(
+        query="带小朋友去别人家之前要注意什么？",
+        now=_NOW,
+        people=people,
+    )
 
     assert mother.entity_ids == ("15c1ea15-8465-4cdf-92a8-90ac860c6aac",)
     assert mother.text == "提到的旅行"
     assert ambiguous_friend.entity_ids == ()
     assert candidate.entity_ids == ()
+    assert child_compound.entity_ids == ()
+    assert "小周" not in child_compound.text
 
 
 def test_ambiguous_or_invalid_time_language_does_not_guess_a_window() -> None:
@@ -120,3 +127,65 @@ def test_ambiguous_or_invalid_time_language_does_not_guess_a_window() -> None:
 
     with pytest.raises(ValueError, match="timezone-aware"):
         RecallPlanner.plan(query="昨天", now=datetime(2026, 8, 7, 15, 30))
+
+
+def test_child_paraphrase_expands_confirmed_children_without_entity_filter() -> None:
+    people = (
+        PersonItem(
+            person_id="15c1ea15-8465-4cdf-92a8-90ac860c6aac",
+            display_name="小周",
+            relationship_to_owner="son",
+            aliases=("儿子", "小周"),
+            status="confirmed",
+            source_event_id="owner-son",
+        ),
+        PersonItem(
+            person_id="7af3f21e-85c8-4a8f-bc90-34363435310f",
+            display_name="王强",
+            relationship_to_owner="friend",
+            aliases=("朋友", "王强"),
+            status="confirmed",
+            source_event_id="owner-friend",
+        ),
+        PersonItem(
+            person_id="860d5c64-8981-4703-8bca-2356cabbbbd1",
+            display_name="小张",
+            relationship_to_owner="daughter",
+            aliases=("女儿", "小张"),
+            status="candidate",
+            source_event_id="candidate-daughter",
+        ),
+    )
+
+    plan = RecallPlanner.plan(
+        query="带小朋友去别人家之前要注意什么？",
+        now=_NOW,
+        people=people,
+    )
+
+    assert plan.entity_ids == ()
+    assert "小周" in plan.text
+    assert "儿子" in plan.text
+    assert "女儿" in plan.text
+    assert "王强" not in plan.text
+    assert "小张" not in plan.text
+    assert plan.occurred_after is None
+
+
+def test_child_paraphrase_falls_back_to_closed_child_lexemes() -> None:
+    plan = RecallPlanner.plan(query="带小朋友去别人家之前要注意什么？", now=_NOW)
+
+    assert plan.entity_ids == ()
+    assert "儿子" in plan.text
+    assert "女儿" in plan.text
+    assert "小周" not in plan.text
+    assert "猫毛" not in plan.text
+
+
+def test_distress_query_adds_a_closed_emotion_synonym() -> None:
+    plan = RecallPlanner.plan(query="我有点难受，安慰我一下。", now=_NOW)
+
+    assert plan.entity_ids == ()
+    assert "难过" in plan.text
+    assert "验收" not in plan.text
+    assert plan.text.startswith("我有点难受")

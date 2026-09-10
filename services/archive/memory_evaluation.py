@@ -26,6 +26,7 @@ from services.archive.memory_domain import (
     MemoryStatus,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.recall_planner import RecallPlanner
 
 EvaluationScenario = Literal[
     "exact_fact",
@@ -41,6 +42,9 @@ EvaluationScenario = Literal[
     "procedural_knowledge",
     "relationship_boundary",
     "cross_account_isolation",
+    "cross_session_followup",
+    "paraphrase_followup",
+    "comfort_recall",
 ]
 EvaluationQueryMode = Literal["search", "context"]
 EvaluationReviewAction = Literal["confirm", "dispute", "retract", "correct"]
@@ -58,6 +62,9 @@ _EVALUATION_SCENARIOS: tuple[EvaluationScenario, ...] = (
     "procedural_knowledge",
     "relationship_boundary",
     "cross_account_isolation",
+    "cross_session_followup",
+    "paraphrase_followup",
+    "comfort_recall",
 )
 _EVALUATION_QUERY_MODES: tuple[EvaluationQueryMode, ...] = ("search", "context")
 _EVALUATION_REVIEW_ACTIONS: tuple[EvaluationReviewAction, ...] = (
@@ -120,6 +127,7 @@ class EvaluationQuery:
     relevance: Mapping[str, int]
     limit: int = 10
     valid_at: datetime | None = None
+    now: datetime | None = None
     entity_ids: tuple[str, ...] = ()
 
 
@@ -196,6 +204,9 @@ class MemoryEvaluationMetrics:
     input_tokens: int
     output_tokens: int
     token_cost: int
+    cross_session_recall_at_5: float = 0.0
+    paraphrase_followup_recall_at_5: float = 0.0
+    comfort_recall_at_5: float = 0.0
 
     def as_dict(self) -> dict[str, float | int]:
         return {
@@ -214,6 +225,9 @@ class MemoryEvaluationMetrics:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "token_cost": self.token_cost,
+            "cross_session_recall_at_5": self.cross_session_recall_at_5,
+            "paraphrase_followup_recall_at_5": self.paraphrase_followup_recall_at_5,
+            "comfort_recall_at_5": self.comfort_recall_at_5,
         }
 
 
@@ -281,6 +295,9 @@ def calculate_memory_metrics(
     latencies: list[float] = []
     input_tokens = 0
     output_tokens = 0
+    cross_session_recall: list[float] = []
+    paraphrase_followup_recall: list[float] = []
+    comfort_recall: list[float] = []
 
     for case in dataset.cases:
         observation = observed_by_case[case.case_id]
@@ -314,8 +331,15 @@ def calculate_memory_metrics(
             latencies.append(max(0.0, result.latency_ms))
             ranked_keys = _ranked_expected_keys(case.expected_memories, result.items)
             relevant = {key for key, grade in query.relevance.items() if grade > 0}
-            recall_5.append(_recall_at(ranked_keys, relevant, 5))
+            recall_5_value = _recall_at(ranked_keys, relevant, 5)
+            recall_5.append(recall_5_value)
             recall_10.append(_recall_at(ranked_keys, relevant, 10))
+            if case.scenario == "cross_session_followup":
+                cross_session_recall.append(recall_5_value)
+            elif case.scenario == "paraphrase_followup":
+                paraphrase_followup_recall.append(recall_5_value)
+            elif case.scenario == "comfort_recall":
+                comfort_recall.append(recall_5_value)
             grades = [query.relevance.get(key, 0) for key in ranked_keys[:10]]
             ideal = sorted(query.relevance.values(), reverse=True)[:10]
             ndcg_10.append(_ndcg(grades, ideal))
@@ -350,6 +374,9 @@ def calculate_memory_metrics(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         token_cost=input_tokens + output_tokens,
+        cross_session_recall_at_5=_mean(cross_session_recall),
+        paraphrase_followup_recall_at_5=_mean(paraphrase_followup_recall),
+        comfort_recall_at_5=_mean(comfort_recall),
     )
 
 
@@ -466,14 +493,7 @@ class CatalogMemoryEvaluationAdapter:
             results: list[EvaluationQueryResult] = []
             for query in case.queries:
                 started = perf_counter()
-                request = MemorySearchQuery(
-                    account_id=query.account_id,
-                    speaker_class="owner",
-                    text=query.text,
-                    valid_at=query.valid_at,
-                    entity_ids=query.entity_ids,
-                    limit=query.limit,
-                )
+                request = await self._search_query(catalog, query)
                 response = (
                     await catalog.context(request)
                     if query.mode == "context"
@@ -515,6 +535,37 @@ class CatalogMemoryEvaluationAdapter:
                 input_tokens=extractor.input_tokens,
                 output_tokens=extractor.output_tokens,
             )
+
+    @staticmethod
+    async def _search_query(
+        catalog: MemoryCatalog,
+        query: EvaluationQuery,
+    ) -> MemorySearchQuery:
+        text = query.text
+        entity_ids = query.entity_ids
+        occurred_after = None
+        occurred_before = None
+        if query.now is not None:
+            recall = RecallPlanner.plan(
+                query=query.text,
+                now=query.now,
+                people=await catalog.people(account_id=query.account_id),
+            )
+            text = recall.text
+            if not entity_ids:
+                entity_ids = recall.entity_ids
+            occurred_after = recall.occurred_after
+            occurred_before = recall.occurred_before
+        return MemorySearchQuery(
+            account_id=query.account_id,
+            speaker_class="owner",
+            text=text,
+            valid_at=query.valid_at,
+            entity_ids=entity_ids,
+            occurred_after=occurred_after,
+            occurred_before=occurred_before,
+            limit=query.limit,
+        )
 
     @staticmethod
     async def _apply_reviews(
@@ -657,6 +708,7 @@ def _parse_query(value: object) -> EvaluationQuery:
         relevance=relevance,
         limit=int(str(raw.get("limit", 10))),
         valid_at=_optional_timestamp(raw.get("valid_at")),
+        now=_optional_timestamp(raw.get("now")),
         entity_ids=tuple(_text_list(raw, "entity_ids", required=False)),
     )
 
