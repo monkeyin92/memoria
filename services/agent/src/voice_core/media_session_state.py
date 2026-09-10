@@ -93,6 +93,14 @@ class MediaVoiceSessionState:
     # CROSS_SENTENCE_OVERLAP rejection: in-range timeline text then belongs
     # to the blocking interval and the forced text must win unconditionally.
     live_query_forced_authoritative: bool = False
+    # A live-lookup filler is a user-facing cue, so the device may hear it at
+    # most once per lookup burst.  One question can be transcribed into several
+    # finals, and each final commits its own turn and its own delegation, so a
+    # sibling delegation cannot see the acknowledgement its predecessor already
+    # played.  Remember that acknowledgement's fence (and when it was admitted)
+    # so the deep result is not prefixed with the same phrase again.
+    live_lookup_filler_fence: GenerationFence | None = None
+    live_lookup_filler_admitted_at: float | None = None
     owner_silence_task: asyncio.Task[None] | None = None
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None

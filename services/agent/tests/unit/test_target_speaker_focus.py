@@ -337,6 +337,39 @@ async def test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout(
 
 
 @pytest.mark.asyncio
+async def test_playback_unconfirmed_farewell_still_takes_the_floor() -> None:
+    """A device farewell closes an unconfirmed turn; a bare stop must not.
+
+    epoch 1895: a shadow score blocked「好的，再见」while playback was running, so
+    the screen stayed in 聆听中 until owner_silence_timeout.  The barge-in gate
+    has not classified this utterance yet, so only END_SESSION may pass it; a
+    bare「停一下」must keep waiting for the endpointed transcript.
+    """
+
+    runtime = DuplexRuntime.create()
+    try:
+        runtime.set_device_conversation_controls(True)
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        await runtime.on_assistant_speaking("机器人正在播放回复")
+        await _classify_turn(
+            runtime,
+            _decision("uncertain", reason_code="shadow_guest_candidate"),
+        )
+        runtime.input_guard.candidate_text = "好的，再见"
+        before = runtime.fence
+
+        returned = await runtime.on_real_interrupt(
+            cause="livekit_playback_interrupted",
+        )
+
+        assert returned != before
+        assert runtime.fence == returned
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("candidate", "expected_ack"),
     [

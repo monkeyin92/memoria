@@ -8441,6 +8441,93 @@ async def test_started_live_lookup_ack_is_not_preempted_by_deep_result() -> None
 
 
 @pytest.mark.asyncio
+async def test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler() -> None:
+    """epoch 1897: 同一句被重复 final 后，已听到的 filler 被再补一遍。
+
+    The device transcribed 「今天南京天气怎么样」 twice and committed the same
+    question again while the live-lookup ACK was already audible.  The ACK was
+    heard, yet the deep result still carried the filler prefix, so the user
+    heard 「稍等，我查询一下。」 twice before the weather answer.
+    """
+
+    class HeardAckProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    provider = HeardAckProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("heard-ack-duplicate-turn")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        ack_fence = ack_owner.fence
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        # The board re-transcribes the same question and commits it again.
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        assert media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT in provider.output_kinds
+        assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()
     deep_gate = asyncio.Event()

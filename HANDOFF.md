@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-10
-resume_checkpoint: vocat_playback_barge_in_awaiting_weather_goodbye_retest
+resume_checkpoint: epoch1897_filler_dedup_and_farewell_shadow_regression_fixed_awaiting_cutover
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -38,13 +38,22 @@ T1_T14: 0_pass_14_blocked_0_failed
 device_id: dev_atk_a4cb8fd6095c
 speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
 speaker_profile_status: active
-last_wake_epoch: 1892
+last_wake_epoch: 1897
 idle_tap_pat_operator_verified: true
 ```
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT）。真机打断已停播，但播放中「好的，再见」被影子声纹挡掉 `conversation_end_explicit`，屏先停在聆听中，约 10s `owner_silence_timeout` 才待命。本地已修（影子/未确认告别走显式控制，正式客人仍不能关），未切流。
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT）。
+
+epoch **1897** 真机（13:56 CST，session `b910a0ee`，session 由 bridge/edge 日志取证）复现两处缺陷，本地已修完、**未切流**：
+
+1. **filler 连播两遍**：边车把同一句 11 字提问识别两次（`audio_ms=4000` 与 `7320` 都是 `text_len=11`），turn 2/3/4/5 提交四次；可听序列是两段约 2s 输出（`provider_stream_complete` 与 `media_auxiliary_output`）之后才是 8.3s 正文。根因是 `live_lookup` 的「filler 是否已听到」只在单次委派内判定：重复提交会开第二次委派，看不到前一次已播的 ACK，于是又把 filler 补进 deep result 前缀。修复＝在会话态记 ACK 的 fence 并做会话级去重（`_live_lookup_filler_already_audible`，30s 窗口）。复现测试 `test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler`（先红后绿）。
+2. **聆听中残留 15.3s**：屏停在聆听中，靠 `owner_silence_timeout` 关闭而不是 `conversation_end_explicit`。成因与 epoch 1895 **不同**：该轮 ASR 只给 1 字、`asr_empty_class=empty+vendor_silent`，声纹 `uncertain`（0.2367），**没有可路由文本**，所以 `a43668c` 的告别路由覆盖不到。声纹未确认时不发「没听清」提示属设计内的 fail-closed（`_owner_speech_is_established`），不改；要根治得查设备侧那段 3.76s 音频为何既判非主人又转不出文本，需带串口复测。
+
+另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
+
+模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
 ## 下一验收
 
@@ -54,7 +63,9 @@ idle_tap_pat_operator_verified: true
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷。真机已停播，屏仍先聆听后待命。本地已修，未切流。BOOT 仍能硬停 | 真机复现聆听残留；本地已修，未切流 |
+| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷。本地已修（含 `a43668c` 影子声纹回归），未切流。BOOT 仍能硬停 | 已修，未切流 |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 已修，未切流 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 待复测；epoch 1897 该轮无可用 ASR 文本，未达成 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -207,6 +218,8 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
 
 `deploy_agent_component.sh` 在确认 worktree 干净之后、SSH 之前跑 ruff、`check_module_budget.py check`、`mypy services/agent --strict`、Agent 单测与部署契约；用 `env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S` 剥掉本地 `.env`。`--skip-gates` 必须在收据写明理由。`main` 的 agent + python CI 必须绿。Agent-only 切片只允许 `services/agent/**`；overlay 无关漂移可用 `--allow-scope-drift`。Cutover 用 Control 的 `MEMORIA_RELEASE_TAG` 做 compose 插值，不要用 Control 镜像 label 当栈 tag。
+
+两条容易踩的快速通道硬约束：① `.dockerignore`、`pyproject.toml`、`uv.lock`、`infra/Dockerfile.agent` 是依赖输入，`base_commit..expected_commit` 里任一被改动就直接 REJECT，与 `--allow-scope-drift` 无关——所以 agent-only 切片**不能**改 `[tool.memoria.module-budgets]`，要么原地压缩，要么走完整镜像路径。② `check_module_budget.py check` 要求行数与配置**精确相等**，多一行少一行都判失败；`update` 只会收紧、永不放宽，`--allow-scope-drift` 不覆盖这一条。
 
 ```bash
 scripts/deploy_agent_component.sh \

@@ -1383,8 +1383,7 @@ class DuplexRuntime(
         # Short「停一下」often scores too_short and used to wrongly trigger「我继续」.
         if context in {"interrupt", "barge_in_start"} and (
             self._is_explicit_owner_interrupt_cmd()
-            or self._route_candidate().intent is UtteranceIntent.END_SESSION
-        ):
+            or self._route_candidate().intent is UtteranceIntent.END_SESSION):
             return True
         utt = self.speaker_verifier.score_latest_utterance()
         roll = self.speaker_verifier.score_pcm()  # rolling ~4s window
@@ -2646,16 +2645,13 @@ class DuplexRuntime(
             return False, route.reason
         close_turn = route.intent is UtteranceIntent.END_SESSION
         target_route = self._target_speaker_route(
-            context="interrupt" if close_turn else "conversation",
-            explicit_interrupt=close_turn,
-        )
+            context="interrupt" if close_turn else "conversation", explicit_interrupt=close_turn)
         if not target_route.allow_input:
             self._reject_target_speaker(context="turn_commit", route=target_route)
             return False, target_route.reason
         if close_turn:
-            # The Media Voice registry owns the terminal session projection.
-            # Runtime only suppresses chat/control side effects after the
-            # target-speaker gate has authorized this exact close phrase.
+            # The Media Voice registry owns the terminal session projection;
+            # runtime only suppresses side effects after the gate authorizes it.
             formal_guest = (
                 self.current_speaker_class == "guest"
                 or self.current_speaker_reason_code == "owner_mismatch"
@@ -3589,21 +3585,13 @@ class DuplexRuntime(
                 cause=f"interrupt:{cause}",
             )
             if barge_route.intent is UtteranceIntent.END_SESSION:
-                # Farewell already stopped playback. Keep the floor until the
-                # committed close projects CLOSED; restoring listen here is
-                # the screen that then waits for owner-silence timeout.
+                # A committed close owns the projection; keep the floor for it.
                 pass
-            elif (
-                create_user_turn
-                and mid_reply
-                and control_only
-                and cause
-                not in {
-                    "user_button",
-                    "stop_response",
-                    "rtc_recovered",
-                }
-            ):
+            elif create_user_turn and mid_reply and control_only and cause not in {
+                "user_button",
+                "stop_response",
+                "rtc_recovered",
+            }:
                 self._spawn(
                     self._maybe_say_interrupt_yield(
                         cause=cause,
@@ -3715,8 +3703,7 @@ class DuplexRuntime(
                 target_route = self._target_speaker_route(
                     context="interrupt",
                     explicit_interrupt=barge_route.intent
-                    in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
-                )
+                    in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION})
             else:
                 # LiveKit may request an interrupt on VAD start. Do not classify
                 # the first few PCM frames: the final transcript handler will
@@ -3732,11 +3719,10 @@ class DuplexRuntime(
                     await self.await_speaker_classification()
                 except asyncio.CancelledError:
                     return self.fence
+                # Unclassified utterance: only a device farewell may pass.
                 target_route = self._target_speaker_route(
                     context="interrupt",
-                    explicit_interrupt=barge_route.intent
-                    in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
-                )
+                    explicit_interrupt=barge_route.intent is UtteranceIntent.END_SESSION)
             if self._target_focus_pending_epoch == self._speaker_epoch:
                 self._target_focus_pending_epoch = None
             if not target_route.allow_input:

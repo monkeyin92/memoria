@@ -59,6 +59,10 @@ logger = logging.getLogger(__name__)
 _MISSED_HEARING_NUDGE_COOLDOWN_S = 12.0
 _MAX_MISSED_HEARING_NUDGES = 2
 _OUTPUT_IDLE_TIMEOUT_S = 30.0
+# Duplicate ASR finals for one question arrive within a few seconds, so a
+# filler heard inside this window belongs to the same lookup burst.  Beyond it
+# a later question may legitimately prefix its own absent acknowledgement.
+_LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
 media_pb2: Any = _media_pb2
 
 
@@ -103,6 +107,37 @@ def _live_lookup_filler_was_heard(context: _MediaVoiceSession, fence: Generation
             return True
     delivery = context.reply_delivery.get(fence)
     return bool(delivery is not None and (delivery.first_frame_sent or delivery.actual_heard))
+
+
+def _remember_live_lookup_filler(context: _MediaVoiceSession, fence: GenerationFence) -> None:
+    """Record the fence of the lookup acknowledgement this session admitted."""
+
+    context.live_lookup_filler_fence = fence
+    context.live_lookup_filler_admitted_at = time.monotonic()
+
+
+def _live_lookup_filler_already_audible(
+    context: _MediaVoiceSession,
+    fence: GenerationFence,
+) -> bool:
+    """True when this session already made the lookup filler audible.
+
+    A sibling delegation cannot see the acknowledgement its predecessor played,
+    so without this session-scoped check a re-committed question prefixes the
+    deep result with a filler the user just heard (epoch 1897).
+    """
+
+    remembered = context.live_lookup_filler_fence
+    admitted_at = context.live_lookup_filler_admitted_at
+    if remembered is None or admitted_at is None:
+        return False
+    if time.monotonic() - admitted_at > _LIVE_LOOKUP_FILLER_MEMORY_S:
+        return False
+    if remembered.session_id != fence.session_id:
+        return False
+    if remembered.session_epoch != fence.session_epoch:
+        return False
+    return _live_lookup_filler_was_heard(context, remembered)
 
 
 class MediaSessionProjectionMixin:
@@ -667,6 +702,7 @@ class MediaSessionProjectionMixin:
                     floor_allows_output=runtime.output_floor_allows_assistant,
                     now_ms=now_ms,
                 ):
+                    _remember_live_lookup_filler(context, fence)
                     played_lookup_filler = await self._enqueue_output_work(
                         context,
                         _OutputWork(acknowledgement, fence),
@@ -702,7 +738,9 @@ class MediaSessionProjectionMixin:
                 )
                 return
             spoken = str(getattr(intent, "tts_source", "") or "")
-            filler_started = played_lookup_filler and _live_lookup_filler_was_heard(context, fence)
+            filler_started = (
+                played_lookup_filler and _live_lookup_filler_was_heard(context, fence)
+            ) or _live_lookup_filler_already_audible(context, fence)
             if filler_started:
                 intent.tts_source = _strip_leading_live_lookup_filler(spoken)
             elif spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
