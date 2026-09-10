@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-10
-resume_checkpoint: epoch1897_filler_dedup_and_farewell_shadow_regression_fixed_awaiting_cutover
+resume_checkpoint: epoch1897_filler_dedup_cut_over_awaiting_device_retest_with_serial
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -44,9 +44,9 @@ idle_tap_pat_operator_verified: true
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷、Agent `20260910-1011` 已切（空缓冲 barge-in 改 WAIT）。
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷；Agent 已从 `20260910-1011` 切到 `20260910-1526`（含 filler 单次化与 `a43668c` 影子声纹回归修复）。
 
-epoch **1897** 真机（13:56 CST，session `b910a0ee`，session 由 bridge/edge 日志取证）复现两处缺陷，本地已修完、**未切流**：
+epoch **1897** 真机（13:56 CST，session `b910a0ee`，session 由 bridge/edge 日志取证）复现两处缺陷。修复已在 2026-09-10 15:46 CST 切流（Agent组件 `20260910-1526`，源 `b83e9b7`）：
 
 1. **filler 连播两遍**：边车把同一句 11 字提问识别两次（`audio_ms=4000` 与 `7320` 都是 `text_len=11`），turn 2/3/4/5 提交四次；可听序列是两段约 2s 输出（`provider_stream_complete` 与 `media_auxiliary_output`）之后才是 8.3s 正文。根因是 `live_lookup` 的「filler 是否已听到」只在单次委派内判定：重复提交会开第二次委派，看不到前一次已播的 ACK，于是又把 filler 补进 deep result 前缀。修复＝在会话态记 ACK 的 fence 并做会话级去重（`_live_lookup_filler_already_audible`，30s 窗口）。复现测试 `test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler`（先红后绿）。
 2. **聆听中残留 15.3s**：屏停在聆听中，靠 `owner_silence_timeout` 关闭而不是 `conversation_end_explicit`。成因与 epoch 1895 **不同**：该轮 ASR 只给 1 字、`asr_empty_class=empty+vendor_silent`，声纹 `uncertain`（0.2367），**没有可路由文本**，所以 `a43668c` 的告别路由覆盖不到。声纹未确认时不发「没听清」提示属设计内的 fail-closed（`_owner_speech_is_established`），不改；要根治得查设备侧那段 3.76s 音频为何既判非主人又转不出文本，需带串口复测。
@@ -63,9 +63,9 @@ epoch **1897** 真机（13:56 CST，session `b910a0ee`，session 由 bridge/edge
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷。本地已修（含 `a43668c` 影子声纹回归），未切流。BOOT 仍能硬停 | 已修，未切流 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 已修，未切流 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 待复测；epoch 1897 该轮无可用 ASR 文本，未达成 |
+| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1526` 已切（含 `a43668c` 影子声纹回归修复）。BOOT 仍能硬停 | 已切流，待真机复测 |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 已切流，待真机复测 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 待复测；epoch 1897 该轮无可用 ASR 文本，需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -133,9 +133,9 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260910-1011-playback-barge-in-wait-agent-component`，源 `46cf848bd365ccba9ad73c0a46ee5f37a47bbca2`，image `sha256:d17673e5b982d6949763cf4209a179f809a458b7a314205cd1365024f4df92ec`。healthy、restart=0。收据 `/opt/memoria/component-releases/20260910-1011-playback-barge-in-wait-agent-component/`。
-- 回滚：`rollback-20260910-1011-playback-barge-in-wait-agent-component-pre-agent/-pre-bridge`（镜像 `20260909-1256-wake-tail-connect-vad-agent-component` / `sha256:74ed3cc7bd59f5bed792c3f6a97d14140cc1251e4fd4d838f9990bb0e5fed2ac`）。
-- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT。这些是已切流能力，不等于天气告别已验收。
+- 当前：`memoria-agent:20260910-1526-single-lookup-filler-agent-component`，源 `b83e9b75c7c3089be1db63ef827f8a6f604de855`，image `sha256:bddced4ec9a144bdf981a6500159a5fd121b32cc770f5c89991ac7568ae617b7`。healthy、restart=0、OCI revision 已核对。切流 `2026-09-10T07:46:06Z`。收据 `/opt/memoria/component-releases/20260910-1526-single-lookup-filler-agent-component/`。前一次 `20260910-1011` 的首次 `--cutover` 曾因本机 PATH 解析到 macOS 自带 openrsync 2.6.9 而在上传段失败（`rsync: unrecognized option '--protect-args'`），生产未受影响；改用 Homebrew rsync 3.5.0 后重跑成功。
+- 回滚：`rollback-20260910-1526-single-lookup-filler-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1011-playback-barge-in-wait-agent-component` / `sha256:d17673e5b982d6949763cf4209a179f809a458b7a314205cd1365024f4df92ec`）。
+- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重、`a43668c` 影子声纹回归修复。这些是已切流能力，不等于天气告别已验收。
 
 **Media Edge**
 
@@ -165,7 +165,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 CST Agent 已切 `20260910-1011`。这不等于告别验收。
+- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 CST Agent 切 `20260910-1011`，15:46 CST 再切 `20260910-1526`。这不等于告别验收。
   - app `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`
   - merged `33851b8ffd2547078a78a4b77d9f4bf542cbefd09fa0a894ec175cb9df8bcbde`
   - bootloader `434b1a190c9607a289b1b0e14df3329864c24bc9443787814e0db0cc94e8b098`（本轮未写；与上一版构建哈希不同，勿整包补刷）
@@ -220,6 +220,8 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 `deploy_agent_component.sh` 在确认 worktree 干净之后、SSH 之前跑 ruff、`check_module_budget.py check`、`mypy services/agent --strict`、Agent 单测与部署契约；用 `env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S` 剥掉本地 `.env`。`--skip-gates` 必须在收据写明理由。`main` 的 agent + python CI 必须绿。Agent-only 切片只允许 `services/agent/**`；overlay 无关漂移可用 `--allow-scope-drift`。Cutover 用 Control 的 `MEMORIA_RELEASE_TAG` 做 compose 插值，不要用 Control 镜像 label 当栈 tag。
 
 两条容易踩的快速通道硬约束：① `.dockerignore`、`pyproject.toml`、`uv.lock`、`infra/Dockerfile.agent` 是依赖输入，`base_commit..expected_commit` 里任一被改动就直接 REJECT，与 `--allow-scope-drift` 无关——所以 agent-only 切片**不能**改 `[tool.memoria.module-budgets]`，要么原地压缩，要么走完整镜像路径。② `check_module_budget.py check` 要求行数与配置**精确相等**，多一行少一行都判失败；`update` 只会收紧、永不放宽，`--allow-scope-drift` 不覆盖这一条。
+
+③ 上传段用 `rsync --protect-args`，**PATH 里的 `rsync` 必须是 ≥3.0**。macOS 自带 `/usr/bin/rsync` 是 openrsync 2.6.9，会以 `rsync: unrecognized option '--protect-args'` 在 `install -d` 之后、远端构建之前失败（生产不受影响，但服务端会留下一个空的 `component-releases/<tag>/` 目录，重跑会复用它）。脚本非交互 shell 若没有 `/opt/homebrew/bin`，先精确注入：`mkdir -p outputs/.tools && ln -sf /opt/homebrew/bin/rsync outputs/.tools/rsync`，再以 `PATH="$PWD/outputs/.tools:$PATH"` 运行。同一类问题：WorkBuddy 沙箱跑门禁要 `env -u PYTHONPATH`（宿主 shim 拦 `mkdir`，pytest 收集期报 EEXIST），`uv` 也不在默认 PATH。
 
 ```bash
 scripts/deploy_agent_component.sh \
