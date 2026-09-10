@@ -26,6 +26,7 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
+from services.agent.src.orchestration.interruption_guard import normalize_short
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -175,6 +176,8 @@ class MediaSessionCommitMixin:
 
         @staticmethod
         def _reply_in_flight(context: _MediaVoiceSession) -> bool: ...
+
+        def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
 
         def _maybe_early_commit_clock_fact(
             self, context: _MediaVoiceSession, result: ASRResult
@@ -666,6 +669,36 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, "empty_media_turn")
             self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
+        normalized_text = normalize_short(text)
+        if (
+            context.last_committed_turn_text
+            and normalized_text == context.last_committed_turn_text
+            and self._reply_in_flight(context)
+        ):
+            logger.info(
+                "media duplicate media turn skipped session=%s stream_epoch=%s "
+                "text_len=%s samples=%s-%s",
+                session_id,
+                stream_epoch,
+                len(text),
+                start_sample,
+                end_sample,
+            )
+            await self._commit_media_input_range(
+                context,
+                session_id=session_id,
+                stream_epoch=stream_epoch,
+                start_sample=start_sample,
+                end_sample=end_sample,
+                retire_end=end_sample,
+            )
+            await self._discard_projection(context, "duplicate_media_turn")
+            # A reply is in flight, so the floor is still held and the
+            # assistant-state projection reopens the timer once playback
+            # returns it.  Arming it here would close the session early.
+            self._pause_owner_silence_timer(context)
+            return None, "duplicate_media_turn"
+        context.last_committed_turn_text = normalized_text
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:
             logger.info(

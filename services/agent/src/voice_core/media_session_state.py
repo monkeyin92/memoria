@@ -93,6 +93,13 @@ class MediaVoiceSessionState:
     # CROSS_SENTENCE_OVERLAP rejection: in-range timeline text then belongs
     # to the blocking interval and the forced text must win unconditionally.
     live_query_forced_authoritative: bool = False
+    # Normalised text of the last media turn that actually committed.  A
+    # duplicate ASR final of one question commits a contiguous extension of the
+    # same range while its reply is still synthesizing; opening a second turn
+    # there releases the first delegation and cancels its audible cue, leaving a
+    # truncated cue plus silence (epoch 1900).  Identical text carries no new
+    # information, so that repeat is skipped while the reply is in flight.
+    last_committed_turn_text: str = ""
     # A live-lookup filler is a user-facing cue, so the device may hear it at
     # most once per lookup burst.  One question can be transcribed into several
     # finals, and each final commits its own turn and its own delegation, so a

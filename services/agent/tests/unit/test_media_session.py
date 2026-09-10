@@ -8713,6 +8713,114 @@ async def test_later_live_lookup_still_announces_itself() -> None:
 
 
 @pytest.mark.asyncio
+async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() -> None:
+    """epoch 1900: 同一句的重复 final 又开一轮，把正在播的提示音掐断。
+
+    The second commit covered a contiguous extension of the same question while
+    its acknowledgement was still audible.  Opening that turn released the first
+    delegation and cancelled the cue, so the user heard a truncated cue then
+    2.26s of silence.  Identical text while the reply is in flight is a repeat.
+    """
+
+    class CueProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    question = "今天南京天气怎么样"
+    provider = CueProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("duplicate-media-turn-skipped")
+    try:
+        context = await _seed_pending_media_turn(
+            registry,
+            identity,
+            text=question,
+            endpoint_sample=600,
+            retire_sample=640,
+        )
+        fence, reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=600,
+            retire_sample=640,
+        )
+        assert fence is not None, reason
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        assert registry._reply_in_flight(context)
+        # The board re-transcribes the same question over the contiguous range.
+        # Behind an accepted final the real pipeline rejects this preview as
+        # straddles_committed_without_timing and still commits the extension, so
+        # pin the timeline directly instead of going through accept_asr_result.
+        duplicate_segment = SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=2,
+            segment_id="duplicate-final",
+            revision=1,
+            kind=SegmentKind.ASR_FINAL,
+            capture_start_sample=600,
+            capture_end_sample=1200,
+            text=question,
+            final=True,
+        )
+        assert context.runtime.ingest_media_speech_segment(duplicate_segment)
+        await registry._apply_projection_segment(context, duplicate_segment)
+        context.turn_start_sample = 600
+        context.turn_end_sample = 1200
+        context.turn_endpoint_sample = 1200
+        context.turn_retire_sample = 1240
+        repeat_fence, repeat_reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert repeat_fence is None
+        assert repeat_reason == "duplicate_media_turn"
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()
     deep_gate = asyncio.Event()
