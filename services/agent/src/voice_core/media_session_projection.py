@@ -29,6 +29,7 @@ from services.agent.src.orchestration.state_machine import ConversationState, In
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
     LIVE_LOOKUP_FILLER,
+    THINKING_FILLER,
     device_wake_phrase,
     hours_since_device_wake,
     remember_device_wake,
@@ -69,6 +70,10 @@ _LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
 # predecessor's answer has been spoken.  Reusing the 30s burst window here
 # swallowed the next question's acknowledgement (epoch 1900).
 _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
+# One short cue at admission cannot cover a slow search: epoch 1900 measured
+# 6.4s between the question and the answer with no cue at all.  Cover the wait
+# with the thinking phrase once the lookup is still pending after this long.
+_LOOKUP_SECOND_CUE_AFTER_S = 2.5
 media_pb2: Any = _media_pb2
 
 
@@ -609,6 +614,51 @@ class MediaSessionProjectionMixin:
             _OutputWork(acknowledgement, fence),
         )
 
+    async def _cover_slow_lookup(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        fence: GenerationFence,
+    ) -> None:
+        """Speak a second cue while a slow lookup is still running.
+
+        The admission acknowledgement is a single short phrase.  When the search
+        itself takes seconds the device then sits in silence until the result
+        arrives (epoch 1900 measured 6.4s).  This emits the thinking phrase on
+        the same fenced acknowledgement path, so the dispatch queues it behind
+        an acknowledgement that is still playing.
+        """
+
+        runtime = context.runtime
+        coordinator = runtime.orchestrator.delegation
+        now_ms = int(time.time() * 1_000)
+        acknowledgement = coordinator.bridge_acknowledgement(
+            THINKING_FILLER,
+            fence=fence,
+            context_version=coordinator.current_context_version(fence.session_id),
+            expires_at_ms=now_ms + 5_000,
+            now_ms=now_ms,
+        )
+        coordinator.admit_output_intent(
+            acknowledgement,
+            current_fence=runtime.fence,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            floor_allows_output=runtime.output_floor_allows_assistant,
+            now_ms=now_ms,
+        )
+        if not coordinator.output_intent_is_active(
+            acknowledgement,
+            current_fence=runtime.fence,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            floor_allows_output=runtime.output_floor_allows_assistant,
+            now_ms=now_ms,
+        ):
+            return
+        await self._enqueue_output_work(
+            context,
+            _OutputWork(acknowledgement, fence),
+        )
+
     async def _release_media_delegation_claim(
         self,
         context: _MediaVoiceSession,
@@ -735,6 +785,17 @@ class MediaSessionProjectionMixin:
                         context,
                         _OutputWork(acknowledgement, fence),
                     )
+            # Cover a slow lookup with a second cue.  A finished delegation skips
+            # the wait entirely, so fast lookups keep their existing scheduling
+            # and this only decides whether the search is slow.  Waiting here
+            # never extends the total wait beyond the lookup's own duration.
+            if not handle.record.task.done():
+                finished, _pending = await asyncio.wait(
+                    {handle.record.task},
+                    timeout=_LOOKUP_SECOND_CUE_AFTER_S,
+                )
+                if not finished and runtime.fence.matches(fence):
+                    await self._cover_slow_lookup(context, fence=fence)
             terminal_kind: DelegationEventKind | None = None
             async for event in coordinator.events(handle):
                 terminal_kind = event.kind

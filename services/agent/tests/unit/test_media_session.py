@@ -28,6 +28,7 @@ from services.agent.src.orchestration.state_machine import (
 )
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
+    LIVE_LOOKUP_FILLER,
     device_wake_phrase,
     is_allowlisted_device_phrase,
 )
@@ -8815,6 +8816,102 @@ async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() ->
         )
         assert repeat_fence is None
         assert repeat_reason == "duplicate_media_turn"
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_slow_lookup_is_covered_by_a_second_cue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """epoch 1900: 慢查询期间完全没有第二句提示，用户听到 6.4s 静音。
+
+    The slow-think cover was dropped in 97978e9 to stay inside the agent.py line
+    budget, so a multi-second search was left with only the admission cue.
+    """
+
+    from services.agent.src.voice_core import media_session_projection
+
+    monkeypatch.setattr(
+        media_session_projection,
+        "_LOOKUP_SECOND_CUE_AFTER_S",
+        0.4,
+        raising=False,
+    )
+
+    class CueProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    provider = CueProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("slow-lookup-second-cue")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        ack_fence = ack_owner.fence
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        await _wait_until(
+            lambda: BRIDGE_PHRASES[4] in provider.output_texts,
+            timeout=3.0,
+        )
+        assert BRIDGE_PHRASES[4] in provider.output_texts
+        assert LIVE_LOOKUP_FILLER in provider.output_texts
     finally:
         provider.release.set()
         await registry._finalize_session(identity.session_id)
