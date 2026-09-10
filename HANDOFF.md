@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-10
-resume_checkpoint: epoch1899_single_lookup_ack_cut_over_still_awaiting_post_playback_farewell_serial
+resume_checkpoint: epoch1900_lookup_cue_window_cut_over_ask_gap_root_cause_open
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -54,6 +54,13 @@ epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（1
    - 遗留取舍：重复提交若在 ACK 播完前抢占它，用户会听到**一句被截短的**提示且不重播（例如 1899 的 1.19s）。要「完整播一遍」，得让重复提交不抢占正在播的 ACK，属 turn-commit 层改动，本轮未做。
 2. **聆听中残留**。1897 靠 `owner_silence_timeout`（15.3s）关闭；1899 已改为 `conversation_end_explicit` 关闭——告别路由这轮生效了，但**屏上仍停留 15~18s**：18:30:42.42 进入 `user_speaking` 后，两次 `media turn discarded after ASR tail timeout`（endpoint 153920 / 248000，均 `empty+vendor_silent`）耗掉约 14s，直到 59.51 才拿出 `text_len=2`（「再见」）并关闭。1899 那几段音频 rms 292~1231、无削波（1897 是 rms 2226~6098 且削波），即**不是回声污染，是没转出文本**。根因仍需设备侧串口证据（`/dev/cu.usbmodem101` 目前可打开但长时间零输出，已确认 USB 已枚举为 `USB JTAG/serial debug unit`，是芯片侧没往控制台写）。
 
+epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化生效（`generation-2` 是唯一 ACK），但量出「问完到开口」的间隔问题，两处：
+
+1. **提示音被跨 turn 的重复提交掐断**：`gen-2` 首帧 17.680、18.483 被 turn 3 提交取消，只播 0.80s，正文 `gen-3` 直到 20.741 —— 用户听到残句 + **2.26s 纯静音** + 正文。取消点是 `media_session_turns.py` `_commit_pending_turn`：既有的「不切断已播出声音」守卫要求 `owner.fence.turn_id == fence.turn_id`，重复提交是跨 turn 所以不生效。**本轮未修**：把该守卫扩到跨 turn 会让新话轮的回复因 reply lock 未释放被静默丢弃（`_cancel_reply_task` 同时排空 reply lock，该函数注释明确警告这条），因此不能只跳过取消。durable fix 应在「不提交重复话轮」本身，需要自己的复现。
+2. **第二次提问完全没有提示音**：turn 4/5（35.715 / 35.905，相隔 190ms）都没播 ACK，正文 `gen-5` 到 42.098 才起，**6.38s 无提示**。已用单测夹具定位：ACK 的三个前置条件（`task_done` 未完成、fence 匹配、未听过）都通过，是被更后面的 `coordinator.output_intent_is_active` 判为非活动（前一个 output 仍占话轮）。与「30s 突发窗口」无关。本轮只把**发不发提示音**的判据从 30s 突发窗口改成独立的 5s 窗口（`_LIVE_LOOKUP_FILLER_ACK_REPEAT_S`，复现测试 `test_later_live_lookup_still_announces_itself` 先红后绿），这是防下一次提问被吞掉，**不解决**本次 6.38s 的成因。
+3. 附带发现：`services/agent/src/prompts.py:90` 的 `THINKING_FILLER` 全仓库无消费点（只在 `__all__`），即 commit `83687b7` 的「覆盖慢查询间隙的第二个提示」机制实际已失效。
+
+
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
@@ -67,7 +74,8 @@ epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（1
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 1899 已达成 `conversation_end_explicit`；屏上停留仍在，见「播后短告别」 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | `20260910-1820` 已切，待真机复测（1899 在 `20260910-1526` 上仍两遍） |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 1899/1900 真机已确认单次化；`20260910-1844` 已切 |
+| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 未达成；1900 量到 0.80s 残句 + 2.26s 静音（跨 turn 重复提交掐断提示音），另一次 6.38s 无提示（`output_intent_is_active` 判非活动）|
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s 且音频未削波），需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
@@ -136,9 +144,9 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260910-1820-single-lookup-ack-agent-component`，源 `df415964e602e3c97156caf3f65da924ec231cc7`，image `sha256:329e70ad8924def5ff65d19cba40d2851787ec9100bcbeb146abb50d4c1a42be`。healthy、restart=0、OCI revision 已核对。切流 `2026-09-10T10:21:43Z`。收据 `/opt/memoria/component-releases/20260910-1820-single-lookup-ack-agent-component/`。同一轮曾切过 `20260910-1526`（`b83e9b7`，只修 result 前缀、未门控 ACK，1899 复测无效）。更早 `20260910-1011` 的首次 `--cutover` 曾因本机 PATH 解析到 macOS 自带 openrsync 2.6.9 而在上传段失败（`rsync: unrecognized option '--protect-args'`），生产未受影响；改用 Homebrew rsync 3.5.0 后重跑成功。
-- 回滚：`rollback-20260910-1820-single-lookup-ack-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1526-single-lookup-filler-agent-component` / `sha256:bddced4ec9a144bdf981a6500159a5fd121b32cc770f5c89991ac7568ae617b7`）。
-- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门）、`a43668c` 影子声纹回归修复。这些是已切流能力，不等于天气告别与播后短告别已验收。
+- 当前：`memoria-agent:20260910-1844-lookup-ack-window-agent-component`，源 `746bfd67dca075e6047095c33f9d5a9668578bbd`，image `sha256:bb45c2321102a2cc115902096a5f7f168b35bf829ead9d8631046ab6abd3eef4`。healthy、restart=0、OCI revision 已核对。切流 `2026-09-10T10:45:34Z`。收据 `/opt/memoria/component-releases/20260910-1844-lookup-ack-window-agent-component/`。同一轮还切过 `20260910-1820`（`df41596`，ACK 发出闸门）与 `20260910-1526`（`b83e9b7`，只修 result 前缀、未门控 ACK，1899 复测无效）。更早 `20260910-1011` 的首次 `--cutover` 曾因本机 PATH 解析到 macOS 自带 openrsync 2.6.9 而在上传段失败（`rsync: unrecognized option '--protect-args'`），生产未受影响；改用 Homebrew rsync 3.5.0 后重跑成功。
+- 回滚：`rollback-20260910-1844-lookup-ack-window-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1820-single-lookup-ack-agent-component` / `sha256:329e70ad8924def5ff65d19cba40d2851787ec9100bcbeb146abb50d4c1a42be`）。
+- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，且 ACK 发出用 5s 短窗口）、`a43668c` 影子声纹回归修复。这些是已切流能力，不等于天气告别与播后短告别已验收。
 
 **Media Edge**
 
@@ -168,7 +176,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 / 15:46 / 18:21 CST Agent 依次切 `20260910-1011` / `20260910-1526` / `20260910-1820`。这不等于告别与播后短告别验收。
+- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 / 15:46 / 18:21 / 18:45 CST Agent 依次切 `20260910-1011` / `20260910-1526` / `20260910-1820` / `20260910-1844`。这不等于告别与播后短告别验收。
   - app `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`
   - merged `33851b8ffd2547078a78a4b77d9f4bf542cbefd09fa0a894ec175cb9df8bcbde`
   - bootloader `434b1a190c9607a289b1b0e14df3329864c24bc9443787814e0db0cc94e8b098`（本轮未写；与上一版构建哈希不同，勿整包补刷）
