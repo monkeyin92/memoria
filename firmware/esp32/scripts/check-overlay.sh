@@ -358,6 +358,41 @@ afe_engine="$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc"
 rg -q 'ns_init = kUseAfeNoiseSuppression' "$afe_engine" || \
     die "AFE noise suppression must be wired for the Memoria build"
 
+# Queue overflow is backpressure, not a terminal playback.error. Playback and
+# Opus live on core 1 so AFE capture on core 0 cannot stall a long reply.
+overlay_patch_0023="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0023-do-not-terminal-decode-queue-overflow.patch"
+[[ -f "$overlay_patch_0023" ]] || die "overlay patch 0023 is missing"
+rg -q 'kServerPacketQueueFull' "$overlay_patch_0023" || \
+    die "patch 0023 must distinguish decode-queue overflow from decode failure"
+rg -Fq 'Dropping server packet; decode queue full' "$overlay_patch_0023" || \
+    die "patch 0023 must drop overflow frames instead of ending the reply"
+rg -q 'xTaskCreatePinnedToCore' "$overlay_patch_0023" || \
+    die "patch 0023 must pin VoCat playback off the AFE core"
+application_source="$MEMORIA_UPSTREAM_DIR/main/application.cc"
+audio_service_source="$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"
+rg -q 'kServerPacketQueueFull' "$application_source" || \
+    die "applied application.cc must not terminal-fail on decode queue overflow"
+rg -Fq 'Dropping server packet; decode queue full' "$audio_service_source" || \
+    die "applied audio_service.cc must log and drop decode queue overflow"
+
+# interrupt_assist keeps capture open during playback. 0006's simplex VAD fence
+# would swallow vad.start while Speaking, so an owner barge-in never reaches
+# the Agent. 0024 reopens vad.start only for negotiated interrupt_assist /
+# full_duplex_verified; vad.end stays unconditional. This is not a full-duplex
+# product claim.
+overlay_patch_0024="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0024-send-vad-start-during-interrupt-assist-playback.patch"
+[[ -f "$overlay_patch_0024" ]] || die "overlay patch 0024 is missing"
+rg -q 'AllowsPlaybackBargeIn' "$overlay_patch_0024" || \
+    die "patch 0024 must consult AllowsPlaybackBargeIn before playback vad.start"
+rg -q 'speaking_barge_in' "$overlay_patch_0024" || \
+    die "patch 0024 must name the playback barge-in VAD exception"
+rg -Fq '(!speaking || listening || speaking_barge_in)' "$overlay_patch_0024" || \
+    die "patch 0024 must keep vad.end unconditional while allowing playback vad.start"
+rg -q 'bool MemoriaProtocol::AllowsPlaybackBargeIn' "$protocol_source" || \
+    die "protocol must expose AllowsPlaybackBargeIn for the playback VAD exception"
+rg -q 'AllowsPlaybackBargeIn' "$application_source" || \
+    die "applied application.cc must send vad.start during interrupt_assist playback"
+
 # The 20 s device VAD hard fence is the tuned field value; a silent drift
 # back to the older 10 s bound would change conversation closure behavior.
 rg -Fq 'kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20' \

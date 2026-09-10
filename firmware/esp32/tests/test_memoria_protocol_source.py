@@ -100,6 +100,18 @@ PATCH_0016 = (
     / "patches"
     / "0016-order-device-playback-barrier.patch"
 ).read_text(encoding="utf-8")
+PATCH_0023 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0023-do-not-terminal-decode-queue-overflow.patch"
+).read_text(encoding="utf-8")
+PATCH_0024 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0024-send-vad-start-during-interrupt-assist-playback.patch"
+).read_text(encoding="utf-8")
 PATCH_0017 = (
     Path(__file__).parents[1]
     / "overlay"
@@ -293,6 +305,27 @@ def test_simplex_playback_and_state_changes_cannot_leave_a_vad_epoch_open() -> N
     assert "pending_listening_start_ = true" in HALF_DUPLEX_PATCH[start:send_start]
     assert "playback-drained event" in HALF_DUPLEX_PATCH
     assert "resumes this same seam" in HALF_DUPLEX_PATCH
+
+
+def test_interrupt_assist_emits_vad_start_during_playback() -> None:
+    # 0006 still fences simplex: vad.start only in Listening.
+    assert "(!speaking || GetDeviceState() == kDeviceStateListening)" in HALF_DUPLEX_PATCH
+    # 0024 reopens vad.start while Speaking only when the negotiated mode
+    # keeps capture open. vad.end stays unconditional via !speaking.
+    assert "AllowsPlaybackBargeIn()" in PATCH_0024
+    assert "speaking_barge_in" in PATCH_0024
+    assert "(!speaking || listening || speaking_barge_in)" in PATCH_0024
+    assert "kDeviceStateSpeaking" in PATCH_0024
+    assert 'audio_mode_ == "interrupt_assist"' in SOURCE
+    assert 'audio_mode_ == "full_duplex_verified"' in SOURCE
+    helper = SOURCE[SOURCE.index("bool MemoriaProtocol::AllowsPlaybackBargeIn") :]
+    helper = helper[: helper.index("bool MemoriaProtocol::SendAudio")]
+    assert 'audio_mode_ == "interrupt_assist"' in helper
+    assert 'audio_mode_ == "full_duplex_verified"' in helper
+    assert 'audio_mode_ == "half_duplex_safe"' not in helper
+    assert "bool AllowsPlaybackBargeIn() const;" in PROTOCOL_HEADER
+    # Do not advertise full duplex from this helper; it only reads the wire mode.
+    assert "not a product claim from this helper" in PROTOCOL_HEADER
 
 
 def test_esp_component_versions_are_pinned_for_clean_rebuilds() -> None:
@@ -699,6 +732,22 @@ def test_device_playback_barrier_cannot_overtake_audio_admission() -> None:
     assert "std::max(vad_started_sample_, hangover_start)" in vad
     assert "static_cast<double>(voiced_end_sample)" in vad
     assert "afe_config->vad_min_noise_ms = 900" in AFE_PATCH
+
+
+def test_decode_queue_overflow_is_not_a_terminal_playback_error() -> None:
+    assert "kServerPacketQueueFull" in PATCH_0023
+    assert "kServerPacketGenerationMismatch" in PATCH_0023
+    assert "Dropping server packet; decode queue full" in PATCH_0023
+    assert "xTaskCreatePinnedToCore" in PATCH_0023
+    assert '"opus_codec"' in PATCH_0023
+    assert "Exact output completion timed out" in PATCH_0023
+    assert "Retrying audio decoder open" in PATCH_0023
+    additions = "\n".join(line[1:] for line in PATCH_0023.splitlines() if line.startswith("+"))
+    assert "admit == AudioService::kServerPacketQueueFull" in additions
+    assert "NotifyPlaybackDecodeError()" in additions
+    queue_drop = additions[additions.index("kServerPacketQueueFull"):]
+    queue_drop = queue_drop[: queue_drop.index("NotifyPlaybackDecodeError()")]
+    assert "return;" in queue_drop
 
 
 def test_generation_zero_has_no_valid_playback() -> None:

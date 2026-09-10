@@ -34,6 +34,11 @@ public:
     bool IsAudioChannelOpened() const override;
     bool CanResumeSession();
     bool HasActivePlaybackGeneration();
+    // True when the negotiated audio_mode keeps capture open during playback
+    // so Application may emit vad.start while the device is Speaking.
+    // interrupt_assist is the current ceiling; full_duplex_verified is a
+    // contracted wire value, not a product claim from this helper.
+    bool AllowsPlaybackBargeIn() const;
     // Called from Application's one-second clock tick. A quiet server is
     // healthy when it answers WebSocket Ping with Pong; only a missed active
     // probe retires the fenced transport and enters normal media recovery.

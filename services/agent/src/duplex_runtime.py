@@ -1391,9 +1391,9 @@ class DuplexRuntime(
             # cancelling TTS while owner was enrolled.
             score = roll
             if score.reason == "too_short":
-                # barge-in / interrupt: never cancel on micro-blips.
+                # barge_in_start too_short: WAIT for ASR. interrupt: never cancel.
                 # turn_commit: fail-closed so tablet/TV fragments cannot enter chat.
-                if context in {"barge_in_start", "interrupt"}:
+                if context == "interrupt":
                     return False
                 return True
 

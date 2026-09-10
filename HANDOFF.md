@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-09
-resume_checkpoint: vocat_conversation_face_v3_flashed_awaiting_expression_photos
+as_of_date: 2026-09-10
+resume_checkpoint: vocat_playback_barge_in_flashed_awaiting_agent_cutover_and_weather_goodbye_retest
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -25,7 +25,7 @@ realtime_media_wss_allowed: false
 livekit_room_allowed: false
 current_work_order: vocat_interrupt_assist
 code: complete
-wired: agent_bridge_edge_cutover_firmware_flashed
+wired: firmware_0024_app_only_agent_barge_in_wait_pending_cutover
 enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
 verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard
 production_runtime_verified: true
@@ -44,7 +44,7 @@ idle_tap_pat_operator_verified: true
 
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。
+当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。epoch 1895 天气播报中途「好的，再见」被固件 0006 半双工门吞掉 vad.start，随后 `owner_silence_timeout`，屏停在聆听中；0024 已刷，现网 Agent 仍会把空缓冲 barge-in 判 IGNORE，须切 Agent 后再真机告别。
 
 ## 下一验收
 
@@ -54,8 +54,9 @@ idle_tap_pat_operator_verified: true
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in | 助手说话时插一句短打断，应停旧 generation 并形成新 turn；BOOT 仍能硬停 | 未验 |
+| barge-in | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已 app-only 刷入；现网 Agent 未切，空缓冲 barge-in 仍会 IGNORE。BOOT 仍能硬停 | 固件已刷，Agent 未切，未验 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
+| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
 
@@ -72,8 +73,8 @@ hardware_verified: false
 next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）；短拍应为杏仁瞳孔+小O
 on_device_flash: app_only_0x20000_20260909-1845-conversation-face-v3
 evidence_dir: outputs/acceptance/run-20260909-face-v3
-backup_app: firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin
-backup_app_sha256: df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384
+backup_app: firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin
+backup_app_sha256: d7efa9859e12df3f9b54981b05d2f7ba84fd58951c242f2e3d9e1d79e9d6aaaa
 operator_pulse_pat_result: tap_pass_shake_pass_pat_pass
 operator_verified_at: 2026-09-09 16:08 CST
 pending_flash: none
@@ -110,10 +111,10 @@ pending_flash: none
 ```bash
 python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --after hard-reset \
   write-flash --flash-mode dio --flash-size 32MB --flash-freq 80m \
-  0x20000 firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin
+  0x20000 firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin
 ```
 
-回滚目标是刷之前的 confirm-pat app（SHA `df98d347ea6b2fb987c8c308fde7bff32e3e2104bdb489ade81c79732cf72384`）。不要写入 `0x10000..0x1ffff`，也不要用会写 bootloader / 分区表 / assets 的 `flash.sh`。表情固件会把 `display/theme` 写成 dark 并留在 NVS；回滚后仍是深色主题，不是故障。若需重刷当前 v3 app：确认 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin` SHA 仍是 `352438d06c28c24d7104cd9c85f94234c381510d3933a8207dbfafb68467a3f5`，再 app-only 写 `0x20000`。
+回滚目标是刷之前的 overlay 0023 app（SHA `d7efa9859e12df3f9b54981b05d2f7ba84fd58951c242f2e3d9e1d79e9d6aaaa`）。不要写入 `0x10000..0x1ffff`，也不要用会写 bootloader / 分区表 / assets 的 `flash.sh`。表情固件会把 `display/theme` 写成 dark 并留在 NVS；回滚后仍是深色主题，不是故障。若需重刷当前 0024 app：确认 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin` SHA 仍是 `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`，再 app-only 写 `0x20000`。
 
 ## 当前生产
 
@@ -153,13 +154,13 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-09 18:45 CST app-only 已刷 conversation-face-v3；未写 bootloader / 分区表 / 身份区 / NVS / assets。身份区刷后逐字节与刷前相同。
-  - app `352438d06c28c24d7104cd9c85f94234c381510d3933a8207dbfafb68467a3f5`
-  - merged `9e1154bce599213f6a8121a41636a81c20117d9a31ef6054e8ef2592a4e49887`
-  - bootloader `69707e47f7a8eb7c6eb5ffb63326526c359078d4393d477e340833c2ff1f0e65`（本轮未写）
+- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。这不等于告别验收；现网 Agent 未切。
+  - app `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`
+  - merged `33851b8ffd2547078a78a4b77d9f4bf542cbefd09fa0a894ec175cb9df8bcbde`
+  - bootloader `434b1a190c9607a289b1b0e14df3329864c24bc9443787814e0db0cc94e8b098`（本轮未写；与上一版构建哈希不同，勿整包补刷）
   - partition-table `da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（本轮未写）
-  - overlay `f70dde28213e516164564910babd4bf23bb19df020cbfeca923834046894c6f1`
-  - 回滚 app `firmware/esp32/artifacts/backups/pre-face-v3-20260909-1842/app-before.bin`（confirm-pat `df98d347…`）
+  - overlay `581a801a273d6c323581ac4dbd57e7ba74628e843e838902a50746e6ca75db9f`
+  - 回滚 app `firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin`（0023 `d7efa985…`）
 - 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
 
 ## 设备启用、唤醒与 shadow

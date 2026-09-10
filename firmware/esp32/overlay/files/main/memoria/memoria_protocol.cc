@@ -866,6 +866,11 @@ bool MemoriaProtocol::HasActivePlaybackGeneration() {
            fence_.valid() && playback_active_ && playback_audio_ready_ && !playback_paused_;
 }
 
+bool MemoriaProtocol::AllowsPlaybackBargeIn() const {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    return audio_mode_ == "interrupt_assist" || audio_mode_ == "full_duplex_verified";
+}
+
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     if (!IsAudioChannelOpened() || packet == nullptr || packet->payload.empty() ||
         packet->sample_rate != static_cast<int>(kUplinkSampleRate) ||

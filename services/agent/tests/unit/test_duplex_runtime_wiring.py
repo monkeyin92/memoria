@@ -2135,6 +2135,46 @@ async def test_enrolled_barge_in_allows_a_real_guest_to_take_the_floor() -> None
 
 
 @pytest.mark.asyncio
+async def test_enrolled_playback_vad_start_waits_when_utterance_is_empty() -> None:
+    """Owner barge-in at VAD start has a cleared buffer; too_short must WAIT."""
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
+
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.70,
+        min_verify_speech_ms=400,
+    )
+    verifier.begin_enrollment()
+    verifier.feed_pcm(_signal_pcm(kind="owner", seconds=2.0, seed=41))
+    assert verifier.try_finalize_enrollment() is not None
+    runtime = DuplexRuntime.create(
+        session_id="barge-empty",
+        speaker_verifier=verifier,
+        input_guard_enabled=True,
+    )
+    runtime.set_device_conversation_controls(True)
+    await runtime.orchestrator.ready()
+    runtime._was_speaking = True
+    # Enrollment PCM would otherwise remain in the 4s rolling window and look
+    # like an immediate owner match. Playback barge-in starts with a cleared
+    # utterance and, after a long reply, no scorable uplink yet.
+    runtime.speaker_verifier._rolling.clear()
+    runtime.speaker_verifier._utterance.clear()
+    decision = runtime.on_user_voice_started()
+    assert decision is PlaybackInputDecision.WAIT
+    # Empty buffer is pending evidence: barge-in start WAITs, interrupt still
+    # withholds cancel so a micro-blip cannot bump the generation fence.
+    assert runtime._speaker_allows_user_input(context="barge_in_start") is True
+    assert runtime._speaker_allows_user_input(context="interrupt") is False
+    accepted, reason = runtime.accept_user_turn("好的，再见", speech_anchored=None)
+    assert accepted is False
+    assert reason == "conversation_end_explicit"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_turn_commit_rejects_far_field_tablet_audio() -> None:
     """Quiet far-field media must not become a chat turn even if mel score is mid-band."""
     import numpy as np

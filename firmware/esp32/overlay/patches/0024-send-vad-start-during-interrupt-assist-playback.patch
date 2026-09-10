@@ -1,0 +1,22 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -97,10 +97,16 @@ void Application::Initialize() {
+     callbacks.on_vad_change = [this](bool speaking) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+         Schedule([this, speaking]() {
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-            if (memoria_protocol != nullptr &&
+-                (!speaking || GetDeviceState() == kDeviceStateListening)) {
++            const auto device_state = GetDeviceState();
++            const bool listening = device_state == kDeviceStateListening;
++            const bool speaking_barge_in =
++                device_state == kDeviceStateSpeaking &&
++                memoria_protocol != nullptr &&
++                memoria_protocol->AllowsPlaybackBargeIn();
++            if (memoria_protocol != nullptr &&
++                (!speaking || listening || speaking_barge_in)) {
+                 memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms());
+             }
+         });
+ #endif
