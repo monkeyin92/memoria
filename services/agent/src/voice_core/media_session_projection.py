@@ -63,6 +63,12 @@ _OUTPUT_IDLE_TIMEOUT_S = 30.0
 # filler heard inside this window belongs to the same lookup burst.  Beyond it
 # a later question may legitimately prefix its own absent acknowledgement.
 _LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
+# Deciding whether to *play* another acknowledgement needs a much tighter
+# window than stripping a result prefix: within one burst the sibling delegations
+# decide within a second or two, while a later question only arrives after its
+# predecessor's answer has been spoken.  Reusing the 30s burst window here
+# swallowed the next question's acknowledgement (epoch 1900).
+_LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
 media_pb2: Any = _media_pb2
 
 
@@ -119,6 +125,8 @@ def _remember_live_lookup_filler(context: _MediaVoiceSession, fence: GenerationF
 def _live_lookup_filler_already_audible(
     context: _MediaVoiceSession,
     fence: GenerationFence,
+    *,
+    window_s: float = _LIVE_LOOKUP_FILLER_MEMORY_S,
 ) -> bool:
     """True when this session already made the lookup filler audible.
 
@@ -131,7 +139,7 @@ def _live_lookup_filler_already_audible(
     admitted_at = context.live_lookup_filler_admitted_at
     if remembered is None or admitted_at is None:
         return False
-    if time.monotonic() - admitted_at > _LIVE_LOOKUP_FILLER_MEMORY_S:
+    if time.monotonic() - admitted_at > window_s:
         return False
     if remembered.session_id != fence.session_id:
         return False
@@ -694,7 +702,11 @@ class MediaSessionProjectionMixin:
             if (
                 not task_done
                 and runtime.fence.matches(fence)
-                and not _live_lookup_filler_already_audible(context, fence)
+                and not _live_lookup_filler_already_audible(
+                    context,
+                    fence,
+                    window_s=_LIVE_LOOKUP_FILLER_ACK_REPEAT_S,
+                )
             ):
                 now_ms = int(time.time() * 1_000)
                 acknowledgement = coordinator.bridge_acknowledgement(

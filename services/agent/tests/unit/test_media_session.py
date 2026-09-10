@@ -8619,6 +8619,100 @@ async def test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack() -> None
 
 
 @pytest.mark.asyncio
+async def test_later_live_lookup_still_announces_itself() -> None:
+    """epoch 1900: 突发记忆窗口过长，会吞掉下一次提问的提示音。
+
+    The acknowledgement gate reused the 30s burst window that exists for
+    stripping a result prefix.  A question asked well after the previous burst
+    must still announce itself, so the gate needs its own short window.
+    """
+
+    class TwoQuestionProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    provider = TwoQuestionProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("later-lookup-announces-itself")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        ack_fence = ack_owner.fence
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        # The next question arrives long after that burst, so its own
+        # acknowledgement must play even though the session remembers the cue.
+        context.live_lookup_filler_admitted_at = time.monotonic() - 10.0
+        await context.runtime.on_turn_committed("上海明天天气怎么样")
+        await _wait_until(
+            lambda: provider.output_kinds.count(
+                media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+            )
+            == 2,
+            timeout=2.0,
+        )
+        assert (
+            provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT) == 2
+        )
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()
     deep_gate = asyncio.Event()
