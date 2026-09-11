@@ -37,7 +37,7 @@
 
 ## 当前约束
 
-- 扫描：2026-09-11。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。
+- 扫描：2026-09-11。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。按使用人切换人格与音色是 2026-09-11 明确的新产品方向，见 R-20260911-05。
 - SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。
 - 唤醒词「茉莉」。播放期 KWS 关；说话中 BOOT / 触摸硬停。DTLN makeup 冻结 `8.0×`。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
 - 钉档：云端 FunASR 仍 1.4.15（无 1.4.16/1.5.0；钉档评估仍 R-20260910-01；已测 NumPy 2，旧 `numpy<2` 不再是硬约束）。sidecar ≥1.3.29。livekit-agents PyPI latest=1.8.1（2026-09-10；含 DuplexModel）；仓内仍 1.6.10。升级评估见 R-20260907-01 + R-20260911-01。#7064 已随 1.8.0 合并（NC 时默认关 AGC）；stale「open」索引作废。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。
@@ -74,7 +74,7 @@
 - 首次写入：2026-08-31
 - 最近更新：2026-09-10
 - 吸收：R-20260901-02、R-20260902-01、R-20260903-01、R-20260904-01、R-20260901-11
-- 为何现在相关：空转写仍在真机路径上出现。云端钉仍写 `funasr>=1.4.14`（含 1.4.12 长段 partial、1.4.13 #3591 VAD overrun、1.4.14 默认 8s partial 窗）。PyPI 已有 1.4.15（2026-09-09），升钉评估见 R-20260910-01。sidecar SenseVoice 钉 ≥1.3.29。llama.cpp GGUF 空白是另一条路径。
+- 为何现在相关：空转写仍在真机路径上出现。云端钉写 `funasr>=1.4.14`（含 1.4.12 长段 partial、1.4.13 #3591 VAD overrun、1.4.14 默认 8s partial 窗），升钉评估见 R-20260910-01。sidecar SenseVoice 钉 ≥1.3.29。llama.cpp GGUF 空白是另一条路径。**注意钉不在本仓**：`funasr_stt.py` 经 `websockets` 直连 DashScope `fun-asr-realtime`（`services/agent/src/providers/funasr_stt.py:78,116`），`pyproject.toml`/`uv.lock` 都没有 `funasr` 包；sidecar 是服务器上的独立镜像（`SENSEVOICE_URL` 指向，见 `infra/memoria.env.production.example:304`）。
 - 建议下一步：真机按 empty+vendor_error / empty+silent / empty+gating / low_rms 补 receipt。sidecar 空时间轴先核版本。不要为对齐 ASR 终点去拧设备 VAD。Fun-ASR-Nano / GGUF 只可作离线档案回放，不上 ESP32、不替代实时路径。升钉 1.4.15 先看空转写分账与流式 VAD 边界。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/v1.4.14 ；https://github.com/modelscope/FunASR/pull/3591 ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29 ；https://pypi.org/project/funasr/1.4.15/ ；https://github.com/modelscope/FunASR/releases/tag/v1.4.15
 - 开发备注：Agent 已有 `funasr_empty_accounting`。2026-09-10 PyPI latest=1.4.15，无 1.5.0；1.4.15 已测 NumPy 2，旧 `numpy<2` 不再是硬约束。新 id 不并入关闭表，待开发评估。
@@ -86,9 +86,9 @@
 - 首次写入：2026-09-10
 - 最近更新：2026-09-10
 - 为何现在相关：PyPI funasr 1.4.15 于 2026-09-09T04:03:45Z 上传（1.4.14 为 2026-09-03）。What's new：已测 NumPy 2 兼容；修流式 KWS/VAD 边界与 checkpoint ranking。Voice Core/Agent 用 FunASR；旧钉 ≥1.4.13/1.4.14 已吸收进 R-20260831-02。1.4.14 时代的 `numpy<2` 护栏不再是硬约束。
-- 建议下一步：评估把云端钉从 `funasr>=1.4.14` 升到 `>=1.4.15`（`python -m pip install -U "funasr==1.4.15"`）。先看空转写分账与流式 VAD 边界，再改仓内约束。不因此改设备 VAD，不上 Fun-ASR-Nano 替实时路径。
+- 建议下一步：评估把云端钉从 `funasr>=1.4.14` 升到 `>=1.4.15`（`python -m pip install -U "funasr==1.4.15"`）。先看空转写分账与流式 VAD 边界，再改约束。不因此改设备 VAD，不上 Fun-ASR-Nano 替实时路径。
 - 来源：https://pypi.org/project/funasr/1.4.15/ ；https://github.com/modelscope/FunASR/releases/tag/v1.4.15
-- 开发备注：2026-09-10 现场核 PyPI latest=1.4.15，无 1.5.0。活工单仍是 R-20260831-02。
+- 开发备注：2026-09-10 现场核 PyPI latest=1.4.15，无 1.5.0。活工单仍是 R-20260831-02。2026-09-11 更正：本仓不是消费方——实时路径是 DashScope 云 `fun-asr-realtime` websocket（`funasr_stt.py:78,116`），`funasr` 包只可能存在于服务器侧 sidecar 镜像；升钉要改的是服务器 sidecar，不是 `pyproject.toml`，因此**不走** agent-only 快速通道门禁。落地前需先确认 sidecar 镜像的构建来源（HANDOFF 记「Dockerfile 只在服务器该目录，重建不可复现」）。
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
 
@@ -284,12 +284,23 @@
 - 类别：产品技术
 - 状态：进行中
 - 首次写入：2026-09-06
-- 最近更新：2026-09-06
+- 最近更新：2026-09-11
 - 吸收：R-20260902-03
-- 为何现在相关：小程序是控制面，不承诺微信实时语音（原 R-20260831-14 已完成）。账号级设备发现已上传开发版；家庭邀请、偏好保存和若干静态风险仍待做。设备侧已有 idle / listening / speaking，小程序会话态未对齐。
-- 建议下一步：P1 先做——同微信手机/电脑/开发工具三端验收（现场状态见 `HANDOFF.md`）；家庭邀请真实闭环；`bind` 无效必填（`familyName`/`familyDrafts` 未进请求）删除或补齐；偏好开关即时保存并反馈失败。P2 再做——下拉刷新接线、页面信息层级、正向文案、Wi-Fi 列表可滚动。`app.json` 的 `scope.record` / RecorderManager 与控制面规则冲突，需单独产品确认后再删，不在本条擅自重定边界。HTML 原型 `apps/miniprogram/design-preview/memoria-mobile-redesign.html` 不是生产小程序。
+- 为何现在相关：小程序是控制面，不承诺微信实时语音（原 R-20260831-14 已完成）。账号级设备发现已上传开发版；偏好保存、下拉刷新与 Wi-Fi 列表滚动已完成。设备侧已有 idle / listening / speaking，小程序会话态未对齐。
+- 建议下一步：只剩一项——同微信手机/电脑/开发工具三端验收（现场状态见 `HANDOFF.md`）。`app.json` 的 `scope.record` / RecorderManager 与服务端允许的自定义音色样本范围一致（`apps/miniprogram/tests/no-realtime-media-gate.test.js` 已钉住「仅 profile 页可用」），不再是冲突项，无需删除。
 - 来源：
-- 开发备注：竞品对照、10 页逐项审查和 HTML 几何记录已交付；不把原型演示当成后端能力。
+- 开发备注：2026-09-11 逐项对代码核销——`bind` 的 `familyName`/`familyDrafts` 确实不进请求体（`apps/miniprogram/tests/bind-flow.test.js:355` 断言，理由是「家庭名称与其他成员可以稍后添加」）；`_savePreference` 已有成功/失败双向 toast（`apps/miniprogram/pages/profile/index.js:731`）；下拉刷新 5 个页面各自 `enablePullDownRefresh: true` 且都有 `onPullDownRefresh` handler；Wi-Fi 列表已可滚动（`apps/miniprogram/pages/device-onboarding/index.wxss:58-59` 的 `max-height: 360rpx; overflow-y: scroll`）。所谓「家庭邀请」是另一个概念，已移到 R-20260911-05。HTML 原型 `apps/miniprogram/design-preview/memoria-mobile-redesign.html` 仍不是生产小程序。
+
+### R-20260911-05 按使用人切换人格与音色（同一设备给本人/父母/子女用）
+
+- 类别：产品技术
+- 状态：待评估
+- 首次写入：2026-09-11
+- 最近更新：2026-09-11
+- 为何现在相关：2026-09-11 用户明确产品方向——主人初始化后把设备给指定的人用（自己 / 父母 / 子女），机器人随使用人切换人格与音色（孩子用：温柔亲切、关心陪伴；老人用：沉稳、多问候身体、聊过去；自己用：知心朋友），使用者不需要再看小程序。这不是「邀请家人共享设备」，是**同一设备的按人切换**。骨架已在，但三条成熟管线互相没有连线。
+- 建议下一步：先在 Control 侧建最小闭环，不碰固件（音色是服务端下发 Opus、人格是 prompt 段，两者都不需要设备改动）：(1) 新增 `(binding, subject_id) → persona` 分配实体，替换 `ProfileAuthority.persona()` 里 `del subject_id` 的行为；(2) 音色归属从 account 级改为 subject 级（需放开 `voice_profiles` 的一账号一 active 唯一索引）；(3) 让 `switch_active_subject` 触发 runtime profile ledger 推进与 Edge `runtime_profile.invalidated`，使在线设备在安全点重协商；(4) 小程序补「设备与成员」页（`bind/index.wxml` 已承诺但页面不存在），邀请关系走后端**已有**的 `/v1/relationships/invites`。**不要**现在做「自动认人切换」——那需要多家庭成员声纹，当前架构不支持。
+- 来源：仓库内证据为主，见开发备注
+- 开发备注：2026-09-11 只读探查（未改代码）。**已有的地基**：多主体绑定模型（`services/identity/domain.py:732` 的复数 `primary_subject_ids`、roles、`family_space_id`）；事后改绑端点 `POST /v1/devices/{device_id}/binding/supersede`（`services/control_api/app/routes/identity_lifecycle.py:449`，请求体支持 `primary_subject_ids`）；会话内切主体端点 `POST /v1/sessions/{session_id}/active-subject` + 权限矩阵（`multi_subject.py:635`、`multi_subject_runtime.py:510`）；RuntimeProfile 已携带 `active_subject_id`/`subject_category` 且有签名与 fence 校验（`services/agent/src/runtime_profile.py:99`）；人格→system prompt 的单一接缝已能渲染 `【人格】`（`services/agent/src/prompt_composition.py:369,424`）；音色解析/下发全链路（`services/agent/src/agent_voice_profile.py:63`）；配置变更→版本推进→Edge 通知设备→安全点重协商的完整握手（`services/control_api/app/device_control.py:133`、`services/media_edge/device_ws_server.go:261`、`firmware/.../memoria_protocol.cc:1526`）；固件激活清单已定义 `persona_assignment_id`/`primary_subject_display_name`/`robot_name`（只校验不消费）。**完全没有的四块**：① person→persona 映射为零（`services/session_runtime/profile_service.py:293` 的 `persona()` 直接 `del subject_id`；persona 钉在 binding，`supersede` 还强制继承）；② person→voice 映射为零且架构不允许（`services/voice_profile/postgres_schema.sql:87` 的 `idx_voice_one_active` 限制一账号一 active，全表无 person/subject 列；RuntimeProfile 无 voice 字段）；③ 多家庭成员声纹为零（`services/speaker/authority.py:350` 的 identity 由 account 派生 uuid5，注册语句 `:372` 写死 `owner`，无 guest enrollment 路径，因此无法辨别「是谁」）；④ 设备端选人交互与协议为零（`memoria_protocol.cc:1526` 明写设备不持有 persona 数据；四个物理输入 BOOT 短按/长按、点屏、拍打没有一个与选人相关；无语音指令；协议无 persona/subject 消息）。**两个半成品**：小程序无「改用途/换主体/加成员」入口（`supersede` 端点存在但无人调用，`getDeviceBinding` 已定义但无页面调用，`familyDrafts` 收集了不进请求体）；`voice_question` 确认方式在 `allowed_confirmation_methods` 里返回给客户端却**被服务端拒绝**（`multi_subject.py:158` 只允许 `app_confirm`），即「使用者在设备上语音确认自己是谁」这条路是空的。**约束**：人格与设计音色在 companion 目录里强耦合（`services/common/companions.py:31,154`），换 persona 天然换音色，这是目前唯一「人格+音色成对切换」的机制，但它绑 binding 而非 subject。合规上仍走 R-20260901-08：家庭邀请只给控制面权限，写档案仍要设备端 owner 声纹；`reject_non_owner_voice` 不得放宽。
 
 ### R-20260907-03 SiphonAI 可借鉴协议工程，不换栈
 
@@ -318,6 +329,7 @@
 | R-20260831-19 | 生产拉入 X2-Turn 4B 权重。 |
 | R-20260831-20 | 宣称全双工、持续聆听、情感灵魂、替代亲情、家庭入口、唤醒 99%。不要开 `expressive=True`。 |
 | R-20260908-01 | 在退役 ES8388 / ATK 上深改 ALC/AEC，或把停产写成全双工借口。 |
+| R-20260911-06 | 在当前架构上开工「自动认人切换人格/音色」：单账号只有一条 owner 声纹（`services/speaker/authority.py:350` 写死 `owner`），无 guest enrollment 与 person 映射，必须先把多家庭成员声纹作为独立工单做完。不得把 `profile_id` 当作 `person_id`。 |
 
 ---
 
