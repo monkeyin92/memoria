@@ -47,9 +47,9 @@
 
 公开故事：家庭桌面记忆终端 / 声纹档案音箱。Pitch：声纹门禁 + 按需档案 + 带标识导出 + 可证明删除。五个吉祥物是 IP / 轻订阅 / 壳，不是五个人格大模型。主用户是家里的桌子，小孩是被门禁的说话人。订阅卖档案容量 / 家庭席位 / 导出，不是情感月费。价格带对照钉钉 A1 / 安克×飞书的录音+转写（约 ¥499–1299），不对照萤石 RK3 适老看护或万元级人形。
 
-不是：7 寸数字人、跌倒看护、智家中枢、全屋 OS、常在情感、领养/生命模块、运动玩具、耳机 Agent、微信实时语音。Bubbo / 二白Mini / JUOS / Microduck / Plaud One / 优必选 U1 / 涂鸦 Doova / 青心意创 Amoo / Lingverse iKairos 只作反定位日历。iKairos 见 R-20260911-02；Doova / Amoo 仍昨日条目（R-20260910-03 / R-20260910-04）；其余不新开 id。童声 500–800 ms 停顿写成「不截断」，不写成「更懂情绪」。
+不是：7 寸数字人、跌倒看护、智家中枢、全屋 OS、常在情感、领养/生命模块、运动玩具、耳机 Agent、微信实时语音。Bubbo / 二白Mini / JUOS / Microduck / Plaud One / 优必选 U1 / 涂鸦 Doova / 青心意创 Amoo / Lingverse iKairos / 镭萌 bibo / 华拟 HUA-H 只作反定位日历。iKairos 见 R-20260911-02；bibo / HUA-H 见 R-20260911-03 / R-20260911-04；Doova / Amoo 仍昨日条目（R-20260910-03 / R-20260910-04）；其余不新开 id。童声 500–800 ms 停顿写成「不截断」，不写成「更懂情绪」。
 
-2026-09-11 反定位日历：优必选 U1 声称 2026-09-16 起交付（T-5），仍无「已开始交付」实锤；全年可交付仅 1,500–2,000 台（对比预售约 13,361），柳州工厂延期，京东仍约 60 天 / 9/15 后有货（https://leaderobot.com/news/9425 ；https://www.163.com/dy/article/L5U2PKT60511U82T.html）。海信 JUOS 约 8/31–9/3 起对首批电视/投影推 Sep OTA；小聚识人非默认，声纹/人脸需登记（https://www.3elife.net/Art/ie/202609/04/109709.html）；仍是 TV/AIOS 全家中枢 ≠ 桌面档案终端。Plaud One 仍 explorer $249.99，未见大陆零售 SKU。Microduck 灰色市场国内约至 ¥5567（https://www.yicai.com/news/103350821.html）。华泰 ¥2000–4000 价带本月无修订。iKairos 见 R-20260911-02。
+2026-09-11 反定位日历：优必选 U1 声称 2026-09-16 起交付（T-5），仍无「已开始交付」实锤；全年可交付仍 1,500–2,000 台（对比预售约 1.34 万 / 13,361），柳州工厂延期，京东仍约 60 天 / 9/15 后有货（https://leaderobot.com/news/9425 ；https://www.163.com/dy/article/L5U2PKT60511U82T.html）。海信 JUOS 约 8/31–9/3 起对首批电视/投影推 Sep OTA；小聚识人非默认，声纹/人脸需登记（https://www.3elife.net/Art/ie/202609/04/109709.html）；仍是 TV/AIOS 全家中枢 ≠ 桌面档案终端。Plaud One 仍 explorer $249.99，未见大陆零售 SKU。Microduck 灰色市场国内约至 ¥5567（https://www.yicai.com/news/103350821.html）。华泰 ¥2000–4000 价带本月无修订。iKairos 见 R-20260911-02；bibo / HUA-H 见 R-20260911-03 / R-20260911-04。
 
 ---
 
@@ -151,11 +151,11 @@
 - 类别：硬件
 - 状态：待评估
 - 首次写入：2026-09-09
-- 最近更新：2026-09-09
+- 最近更新：2026-09-11
 - 为何现在相关：Seeed reSpeaker XVF3800 / XMOS 4-mic 提供芯片侧 AEC，高于当前 VoCat 软件 / `fd_low_cost` AEC。不是退役 ATK 的升级路径，也不是把现 SKU 改口成全双工的理由。
 - 建议下一步：只作 VoCat T1–T14 之后的备选。不要把采购混入当前工单。
-- 来源：https://wiki.seeedstudio.com/cn/respeaker_xvf_3800_xiaozhi/ ；https://wiki.seeedstudio.com/cn/respeaker_xvf3800_introduction/
-- 开发备注：
+- 来源：https://wiki.seeedstudio.com/cn/respeaker_xvf_3800_xiaozhi/ ；https://wiki.seeedstudio.com/cn/respeaker_xvf3800_introduction/ ；https://www.seeedstudio.com/ReSpeaker-XVF3800-4-Mic-Array-With-XIAO-ESP32S3-p-6489.html ；https://www.iceasy.com/product/101991441
+- 开发备注：2026-09-11：Seeed XIAO 套件约 $66.99 in stock；国内 iCEasy 裸板约 ¥422 但现货库存 0 / 订货约 7 工作日。仍是 VoCat 之后备选，不混入当前工单。
 
 ## 记忆
 
@@ -221,30 +221,30 @@
 - 最近更新：2026-09-11
 - 为何现在相关：2026-09-07 公布《最高人民法院关于依法审理涉人工智能纠纷案件的意见》，全国法院首份涉 AI 纠纷规则，5 部分 / 24 条。这是司法意见，不是 CAC 新法规。直接相关：规范 AI 换脸/拟声；「未经同意使用自然人声音作为训练语料，模仿其音色、语调和发音风格生成可识别的合成人声的，构成对声音权益的侵害」；另有生成式 AI 服务提供者责任、AI 幻觉等。陪伴 TTS / 可选声音克隆 / 声纹档案要把第三方声音训练与拟声当民事风险。
 - 建议下一步：产品同意书与导出标识对齐拟声/训练语料单独同意；不要把大型处理者征求意见稿写成已生效。合规落地仍走 R-20260901-08。
-- 来源：https://www.chinanews.com.cn/gn/2026/09-07/10691909.shtml ；https://legal.gmw.cn/2026-09/07/content_38989161.htm ；http://paper.people.com.cn/rmrb/pc/content/202609/08/content_30179776.html ；https://www.ncsti.gov.cn/kjdt/xwjj/202609/t20260910_255808.html
-- 开发备注：2026-09-11 追加次级来源（国家科技管理信息系统 2026-09-10 转载）。法规/CAC 的 NEW_LAW_IDS 仍空，不新开法规 id。本条因声音/拟声对 TTS/声纹路径实质相关而单开。清朗转载不新开 id。
+- 来源：https://www.chinanews.com.cn/gn/2026/09-07/10691909.shtml ；https://legal.gmw.cn/2026-09/07/content_38989161.htm ；http://paper.people.com.cn/rmrb/pc/content/202609/08/content_30179776.html ；https://www.ncsti.gov.cn/kjdt/xwjj/202609/t20260910_255808.html ；https://paper.people.com.cn/rmrbhwb/pc/content/202609/08/content_30179682.html ；https://finance.sina.com.cn/jjxw/2026-09-10/doc-inirihnw5380235.shtml
+- 开发备注：2026-09-11 追加次级来源（国家科技管理信息系统 2026-09-10 转载；人民日报海外版 2026-09-08）。米哈游 AI 变声民事案（媒体 9/9–10，判决约 6/30）仅作拟声风险旁证，不新开法规 id。法规/CAC 的 NEW_LAW_IDS 仍空。本条因声音/拟声对 TTS/声纹路径实质相关而单开。清朗转载不新开 id。
 
 ### R-20260910-03 涂鸦 Doova（IFA 2026）反定位
 
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-10
-- 最近更新：2026-09-10
+- 最近更新：2026-09-11
 - 为何现在相关：界面新闻 2026-09-04 报道涂鸦 IFA 推出 Doova：适老独居陪伴机器人，LDS 雷达、4 麦声源定位、跌倒/姿态检测、移动巡航、IoT 中枢、聊天陪伴。这是移动看护 + 全屋 IoT 陪伴，不是桌面档案语音终端。
 - 建议下一步：公开叙事继续写家庭桌面记忆终端 / 声纹档案音箱。不要把跌倒响应、室内巡逻或智家中枢写进当前 SKU。不新开适老看护工单。
-- 来源：https://www.jiemian.com/article/15059778.html
-- 开发备注：与 Bubbo / 萤石 RK3 / JUOS 同属反定位日历；本条只钉 Doova。
+- 来源：https://www.jiemian.com/article/15059778.html ；https://www.itheat.com/view/63447.html
+- 开发备注：2026-09-11 追加次级对比稿（ITHeat 2026-09-09）。与 Bubbo / 萤石 RK3 / JUOS 同属反定位日历；本条只钉 Doova。不复制新 id。
 
 ### R-20260910-04 青心意创 Amoo（IFA 2026）反定位
 
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-10
-- 最近更新：2026-09-10
+- 最近更新：2026-09-11
 - 为何现在相关：ITBear 2026-09-09 报道青心意创 Amoo 在 IFA 2026 以软毛角色/萌宠情感陪伴出场。这是情感领养/萌宠路线，不是家庭桌面记忆终端或声纹档案音箱。
 - 建议下一步：五个吉祥物继续当 IP / 轻订阅 / 壳，不要写成常在情感或生命模块。不对照 Amoo 的萌宠叙事改 SKU。
-- 来源：https://www.itbear.com.cn/html/2026-09/1548976.html
-- 开发备注：与 Bubbo / 二白Mini 同属反定位日历；本条只钉 Amoo。
+- 来源：https://www.itbear.com.cn/html/2026-09/1548976.html ；https://www.itheat.com/view/63447.html ；https://finance.sina.com.cn/jjxw/2026-09-08/doc-inirauhy6075402.shtml
+- 开发备注：2026-09-11 追加次级对比稿（ITHeat 2026-09-09；新浪财经 2026-09-08）。与 Bubbo / 二白Mini 同属反定位日历；本条只钉 Amoo。不复制新 id。
 
 ### R-20260911-02 Lingverse iKairos（IFA 2026）反定位
 
@@ -256,6 +256,28 @@
 - 建议下一步：公开叙事继续写家庭桌面记忆终端 / 声纹门禁 + 按需档案 + 显式导出 + 可证明删除。不要跟项链随身、常在环境采集或主动替用户发消息的 Agent 叙事。不新开可穿戴工单。
 - 来源：https://leaderobot.com/news/9497
 - 开发备注：与 Plaud One / Doova / Amoo / Bubbo 同属反定位日历；本条只钉 iKairos。
+
+### R-20260911-03 镭萌 bibo ¥1499 潮玩非语言情感（反定位）
+
+- 类别：市场定位
+- 状态：待评估
+- 首次写入：2026-09-11
+- 最近更新：2026-09-11
+- 为何现在相关：36氪 2026-09-09：杭州镭萌科技千万级天使轮；潮玩非语言情感机器人 bibo 定价 ¥1499（报道称 6 月已上市）。东方财富/每经 2026-09-10 转载：大厂创业者涌入「非语言交互」消费级具身（bibo / Ropet / BubblePal）。这是情绪潮玩 / 反语音对话红海，不是声纹门禁 + 按需证据档案终端。
+- 建议下一步：公开叙事继续桌面记忆终端 / 可导出档案，不要跟非语言萌宠或「不靠说话」情感玩具比拼。不新开潮玩工单。
+- 来源：https://eu.36kr.com/zh/p/3975777320284422 ；https://finance.eastmoney.com/a/202609103870922661.html
+- 开发备注：与 Amoo / Bubbo 同属情感反定位日历；本条只钉 bibo 价带与融资信号。
+
+### R-20260911-04 华拟智能 HUA-H 仿生人头养老陪护（反定位）
+
+- 类别：市场定位
+- 状态：待评估
+- 首次写入：2026-09-11
+- 最近更新：2026-09-11
+- 为何现在相关：动脉网/VBData 2026-09-10：东莞华拟智能完成数千万元天使轮，仿生人头养老陪护产品 HUA-H。资本继续涌入仿生人形头 / 养老情感，不是固定桌面声纹档案音箱。
+- 建议下一步：不要把人形头/养老陪护写进当前 VoCat SKU 或公开 pitch。不新开养老看护工单。
+- 来源：https://www.vbdata.cn/1519092689.html
+- 开发备注：与 U1 / Doova 同属人形/看护反定位；本条只钉华拟融资。
 
 ### R-20260906-01 小程序控制面待验 P1/P2
 
