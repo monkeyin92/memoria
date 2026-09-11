@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import sqlite3
 import threading
@@ -43,8 +44,14 @@ from services.voice_profile.domain import (
     VoiceQualityMeasurement,
     VoiceQualityMeasurementRequest,
     VoiceResolution,
+    VoiceSampleRejectedError,
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
+    voice_profile_delivery_admitted,
+)
+from services.voice_profile.sample_validation import (
+    VoiceSampleValidation,
+    validate_voice_sample,
 )
 
 _SCHEMA = """
@@ -117,6 +124,8 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
         CHECK (evaluation_status IN ('pending', 'passed', 'failed')),
     quality_status TEXT NOT NULL DEFAULT 'pending'
         CHECK (quality_status IN ('pending', 'passed', 'failed')),
+    sample_validation_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (sample_validation_status IN ('pending', 'passed', 'failed')),
     deletion_status TEXT NOT NULL DEFAULT 'not_requested'
         CHECK (deletion_status IN ('not_requested', 'pending', 'completed', 'failed')),
     provider_expires_at TEXT,
@@ -181,6 +190,29 @@ CREATE TABLE IF NOT EXISTS voice_quality_measurements (
     UNIQUE (account_id, source_run_id),
     FOREIGN KEY (profile_id) REFERENCES voice_profiles(profile_id) ON DELETE CASCADE
 );
+
+-- What the submitted recording actually contained, measured locally before
+-- any provider work. One row per profile: the sample is validated once.
+CREATE TABLE IF NOT EXISTS voice_sample_validations (
+    validation_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    sample_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'failed')),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
+    channels INTEGER NOT NULL CHECK (channels > 0),
+    rms_dbfs REAL NOT NULL,
+    peak_dbfs REAL NOT NULL,
+    clipped_ratio REAL NOT NULL CHECK (clipped_ratio BETWEEN 0 AND 1),
+    silence_ratio REAL NOT NULL CHECK (silence_ratio BETWEEN 0 AND 1),
+    speech_ms INTEGER NOT NULL CHECK (speech_ms >= 0),
+    dc_offset REAL NOT NULL,
+    reasons_json TEXT NOT NULL CHECK (json_valid(reasons_json)),
+    created_at TEXT NOT NULL,
+    UNIQUE (account_id, profile_id),
+    FOREIGN KEY (profile_id) REFERENCES voice_profiles(profile_id) ON DELETE CASCADE
+);
 """
 
 
@@ -234,6 +266,11 @@ class VoiceProfileManager:
                 if "quality_status" not in columns:
                     connection.execute(
                         "ALTER TABLE voice_profiles ADD COLUMN quality_status TEXT NOT NULL DEFAULT 'pending'"
+                    )
+                if "sample_validation_status" not in columns:
+                    connection.execute(
+                        "ALTER TABLE voice_profiles ADD COLUMN sample_validation_status "
+                        "TEXT NOT NULL DEFAULT 'pending'"
                     )
                 evaluation_columns = {
                     str(row[1])
@@ -421,6 +458,37 @@ class VoiceProfileManager:
         )
 
     async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Accept and complete an enrollment in one call.
+
+        Lab clients and tests use this. The consumer path calls
+        ``accept_enrollment`` and ``complete_enrollment`` separately so the
+        upload request can return while the provider is still cloning.
+        """
+        profile = await self.accept_enrollment(request)
+        if profile.status != "enrolling":
+            return profile
+        return await self.complete_enrollment(
+            account_id=request.account_id, profile_id=profile.profile_id
+        )
+
+    async def accept_enrollment(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Measure, store and register one enrollment; no provider call.
+
+        Returns the profile in ``enrolling``. Raises
+        ``VoiceSampleRejectedError`` when the recording cannot be cloned --
+        before anything is written, so a refused sample leaves no trace.
+        """
+        # Measure first: a sample that cannot be cloned must not create an
+        # operation row, a stored object or a profile. Nothing can be cloned
+        # from audio that does not decode, so this refusal is unconditional;
+        # ``require_sample_validation`` only decides whether a *passing*
+        # measurement is what admits the profile for delivery.
+        validation = validate_voice_sample(
+            request.audio, admit_on_pass=request.require_sample_validation
+        )
+        if not validation.passed:
+            raise VoiceSampleRejectedError(validation)
+
         operation = self._ensure_enrollment_operation(request)
         state = str(operation["state"])
         if state == "completed":
@@ -456,7 +524,7 @@ class VoiceProfileManager:
                 )
                 raise
             try:
-                self._persist_uploaded_sample(operation, request, reference)
+                self._persist_uploaded_sample(operation, request, reference, validation)
             except Exception:
                 try:
                     await self._object_store.delete(reference)
@@ -477,6 +545,34 @@ class VoiceProfileManager:
                 enrollment_key=str(operation["enrollment_key"]),
             )
             state = str(operation["state"])
+
+        if state == "revoked":
+            raise VoiceConsentRequiredError("voice enrollment was revoked")
+
+        if state == "completed":
+            return self._profile_for_operation(operation)
+        if state in {"sample_uploaded", "provider_created"}:
+            # Already accepted: the provider half is ``complete_enrollment``'s
+            # job, and it is safely retryable from any of these states.
+            row = self._profile_row(str(operation["profile_id"]))
+            if row is not None:
+                return self._profile(row)
+        raise VoiceEnrollmentReconciliationRequiredError(
+            "voice enrollment is not safely retryable"
+        )
+
+    async def complete_enrollment(
+        self, *, account_id: str, profile_id: str
+    ) -> VoiceProfile:
+        """Drive an accepted enrollment through the provider and finalize it."""
+        operation = self._operation_for_profile(profile_id)
+        if operation is None or str(operation["account_id"]) != account_id:
+            raise EvidenceNotFoundError(profile_id)
+        state = str(operation["state"])
+        if state == "completed":
+            return self._profile_for_operation(operation)
+        if state == "revoked":
+            raise VoiceConsentRequiredError("voice enrollment was revoked")
 
         if state == "provider_created":
             return await self._finalize_enrollment(operation)
@@ -505,10 +601,8 @@ class VoiceProfileManager:
             )
             raise
         self._persist_provider_voice(str(operation["operation_id"]), provider_voice)
-        operation = self._operation(
-            account_id=request.account_id,
-            enrollment_key=str(operation["enrollment_key"]),
-        )
+        operation = self._operation_for_profile(profile_id)
+        assert operation is not None, "a submitted enrollment always has an operation"
         return await self._finalize_enrollment(operation)
 
     def _ensure_enrollment_operation(self, request: VoiceEnrollmentRequest) -> sqlite3.Row:
@@ -582,6 +676,7 @@ class VoiceProfileManager:
         operation: sqlite3.Row,
         request: VoiceEnrollmentRequest,
         reference: ObjectRef,
+        validation: VoiceSampleValidation,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         with self._connect() as connection:
@@ -613,8 +708,8 @@ class VoiceProfileManager:
                 INSERT INTO voice_profiles (
                     profile_id, account_id, sample_id, version_number,
                     provider, provider_region, target_model, status,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'enrolling', ?, ?)
+                    sample_validation_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'enrolling', ?, ?, ?)
                 """,
                 (
                     str(operation["profile_id"]),
@@ -624,9 +719,13 @@ class VoiceProfileManager:
                     self._provider_name,
                     self._provider_region,
                     self._target_model,
+                    "passed" if validation.admitted else "pending",
                     now,
                     now,
                 ),
+            )
+            self._insert_sample_validation(
+                connection, operation, request, validation, now
             )
             connection.execute(
                 """
@@ -636,6 +735,50 @@ class VoiceProfileManager:
                 """,
                 (now, str(operation["operation_id"])),
             )
+
+    def _insert_sample_validation(
+        self,
+        connection: sqlite3.Connection,
+        operation: sqlite3.Row,
+        request: VoiceEnrollmentRequest,
+        validation: VoiceSampleValidation,
+        now: str,
+    ) -> None:
+        """Store the measurement next to the profile it admitted or refused."""
+        metrics = validation.metrics
+        assert metrics is not None, "a sample without metrics never reaches storage"
+        connection.execute(
+            """
+            INSERT INTO voice_sample_validations (
+                validation_id, account_id, profile_id, sample_id, status,
+                duration_ms, sample_rate, channels, rms_dbfs, peak_dbfs,
+                clipped_ratio, silence_ratio, speech_ms, dc_offset,
+                reasons_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(
+                    uuid.uuid5(
+                        uuid.UUID(str(operation["operation_id"])), "sample-validation"
+                    )
+                ),
+                request.account_id,
+                str(operation["profile_id"]),
+                str(operation["sample_id"]),
+                "passed" if validation.passed else "failed",
+                metrics.duration_ms,
+                metrics.sample_rate,
+                metrics.channels,
+                metrics.rms_dbfs,
+                metrics.peak_dbfs,
+                metrics.clipped_ratio,
+                metrics.silence_ratio,
+                metrics.speech_ms,
+                metrics.dc_offset,
+                json.dumps(list(validation.reasons)),
+                now,
+            ),
+        )
 
     def _persist_provider_voice(self, operation_id: str, voice: ProviderVoice) -> None:
         with self._connect() as connection:
@@ -745,6 +888,21 @@ class VoiceProfileManager:
         if row is None:
             raise EvidenceNotFoundError(enrollment_key)
         return cast(sqlite3.Row, row)
+
+    def _operation_for_profile(self, profile_id: str) -> sqlite3.Row | None:
+        """The enrollment operation that produced one profile, if any."""
+        with self._connect() as connection:
+            return cast(
+                sqlite3.Row | None,
+                connection.execute(
+                    """
+                    SELECT * FROM voice_enrollment_operations
+                    WHERE profile_id = ?
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (profile_id,),
+                ).fetchone(),
+            )
 
     def _set_operation_state(
         self,
@@ -1058,10 +1216,21 @@ class VoiceProfileManager:
             ).fetchone()
             if row is None:
                 raise EvidenceNotFoundError(profile_id)
-            if row["status"] not in {"candidate", "active"} or row["evaluation_status"] != "passed":
-                raise EvaluationRequiredError("a passed candidate evaluation is required")
-            if row["quality_status"] != "passed":
-                raise EvaluationRequiredError("a passed provider quality measurement is required")
+            if row["status"] not in {"candidate", "active"}:
+                raise EvaluationRequiredError("only a usable candidate can be activated")
+            if not voice_profile_delivery_admitted(
+                evaluation_status=str(row["evaluation_status"]),
+                quality_status=str(row["quality_status"]),
+                sample_validation_status=str(
+                    row["sample_validation_status"]
+                    if "sample_validation_status" in row.keys()
+                    else "pending"
+                ),
+            ):
+                raise EvaluationRequiredError(
+                    "a passed candidate evaluation, a passed provider quality "
+                    "measurement, or a passed sample validation is required"
+                )
             if row["provider"] == "volcengine_doubao":
                 expires_at = (
                     datetime.fromisoformat(str(row["provider_expires_at"]))
@@ -1110,8 +1279,13 @@ class VoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = ? AND status = 'active'
-                  AND evaluation_status = 'passed'
-                  AND quality_status = 'passed'
+                  AND evaluation_status <> 'failed'
+                  AND quality_status <> 'failed'
+                  AND sample_validation_status <> 'failed'
+                  AND (
+                      sample_validation_status = 'passed'
+                      OR (evaluation_status = 'passed' AND quality_status = 'passed')
+                  )
                 """,
                 (account_id,),
             ).fetchone()
@@ -1590,6 +1764,12 @@ class VoiceProfileManager:
             ),
             quality_status=cast(Literal["pending", "passed", "failed"], row["quality_status"]),
             deletion_status=cast(VoiceDeletionStatus, row["deletion_status"]),
+            sample_validation_status=cast(
+                Literal["pending", "passed", "failed"],
+                row["sample_validation_status"]
+                if "sample_validation_status" in row.keys()
+                else "pending",
+            ),
             provider_expires_at=(
                 datetime.fromisoformat(str(row["provider_expires_at"]))
                 if row["provider_expires_at"] is not None

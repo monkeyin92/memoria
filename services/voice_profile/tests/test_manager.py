@@ -23,6 +23,17 @@ from services.voice_profile.domain import (
     subjective_voice_evaluation_passes,
 )
 from services.voice_profile.manager import VoiceProfileManager
+from services.voice_profile.testing_audio import voice_sample_wav
+
+
+def _sample(duration_ms: int = 12_000) -> bytes:
+    """A recording that really decodes.
+
+    Enrollment now measures the submitted audio before it stores or submits
+    anything, so a placeholder byte string can no longer stand in for a
+    sample: it would be rejected as ``audio_decode_failed``.
+    """
+    return voice_sample_wav(duration_ms)
 
 
 def test_voice_profile_gates_cover_subjective_identity_and_long_sentence_stability() -> None:
@@ -197,7 +208,7 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
         await manager.enroll(
             VoiceEnrollmentRequest(
                 account_id="voice-account",
-                audio=b"RIFF" + b"\x01\x02" * 16_000,
+                audio=_sample(),
                 media_type="audio/wav",
                 duration_ms=12_000,
                 sample_rate=24_000,
@@ -211,7 +222,7 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -233,7 +244,7 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
     assert sample.data.startswith(b"RIFF")
     ciphertexts = [path.read_bytes() for path in object_root.rglob("*.fernet")]
     assert len(ciphertexts) == 1
-    assert ciphertexts[0] != b"RIFF" + b"\x01\x02" * 16_000
+    assert ciphertexts[0] != _sample()
 
     archive = LifeArchive.sqlite(tmp_path / "memoria.sqlite3")
     evidence = await archive.context(
@@ -257,7 +268,7 @@ async def test_blind_trial_keeps_mapping_server_side_and_requires_both_previews(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -326,7 +337,7 @@ async def test_activation_requires_passed_ab_evaluation_and_is_versioned(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -462,7 +473,7 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -553,7 +564,7 @@ async def test_doubao_activation_requires_a_known_future_provider_expiry(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-expiry-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -599,7 +610,7 @@ async def test_consent_revocation_reports_incomplete_deletion_and_retries(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -640,7 +651,7 @@ async def test_revoke_falls_back_before_provider_delete_and_keeps_retry_state(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id="voice-account",
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,
@@ -706,7 +717,7 @@ async def test_revocation_during_enrollment_deletes_the_late_provider_asset(
         manager.enroll(
             VoiceEnrollmentRequest(
                 account_id="voice-account",
-                audio=b"RIFF" + b"\x01\x02" * 16_000,
+                audio=_sample(),
                 media_type="audio/wav",
                 duration_ms=12_000,
                 sample_rate=24_000,
@@ -740,7 +751,7 @@ async def test_retry_after_candidate_persistence_failure_reuses_provider_result(
     )
     request = VoiceEnrollmentRequest(
         account_id="voice-account",
-        audio=b"RIFF" + b"\x05\x06" * 16_000,
+        audio=voice_sample_wav(12_400),
         media_type="audio/wav",
         duration_ms=12_000,
         sample_rate=24_000,
@@ -781,7 +792,7 @@ async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
     )
     request = VoiceEnrollmentRequest(
         account_id="voice-account",
-        audio=b"RIFF" + b"\x07\x08" * 16_000,
+        audio=voice_sample_wav(12_800),
         media_type="audio/wav",
         duration_ms=12_000,
         sample_rate=24_000,
@@ -859,7 +870,7 @@ async def test_ambiguous_sample_upload_is_enumerable_and_blocks_false_deletion(
     )
     request = VoiceEnrollmentRequest(
         account_id="voice-account",
-        audio=b"RIFF" + b"\x0d\x0e" * 16_000,
+        audio=voice_sample_wav(13_200),
         media_type="audio/wav",
         duration_ms=12_000,
         sample_rate=24_000,
@@ -920,7 +931,7 @@ async def test_consent_revocation_waits_for_orphan_sample_reconciliation(
     )
     request = VoiceEnrollmentRequest(
         account_id="voice-account",
-        audio=b"RIFF" + b"\x0f\x10" * 16_000,
+        audio=voice_sample_wav(13_600),
         media_type="audio/wav",
         duration_ms=12_000,
         sample_rate=24_000,

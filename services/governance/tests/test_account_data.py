@@ -63,6 +63,7 @@ from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult, EnrollmentRequest, EnrollmentSample
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest
 from services.voice_profile.manager import VoiceProfileManager
+from services.voice_profile.testing_audio import voice_sample_wav
 
 _LEGACY_NOW = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
 
@@ -674,7 +675,7 @@ async def _fixture(
     await voice.enroll(
         VoiceEnrollmentRequest(
             account_id=account_id,
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=voice_sample_wav(),
             media_type="audio/wav",
             duration_ms=12_000,
             sample_rate=24_000,

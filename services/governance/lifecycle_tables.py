@@ -47,6 +47,7 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
     "voice_blind_trials",
     "voice_evaluations",
     "voice_quality_measurements",
+    "voice_sample_validations",
 )
 
 POSTGRES_PROJECTION_ACCOUNT_TABLES = (

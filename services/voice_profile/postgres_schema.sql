@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
         CHECK (evaluation_status IN ('pending', 'passed', 'failed')),
     quality_status TEXT NOT NULL DEFAULT 'pending'
         CHECK (quality_status IN ('pending', 'passed', 'failed')),
+    sample_validation_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (sample_validation_status IN ('pending', 'passed', 'failed')),
     deletion_status TEXT NOT NULL DEFAULT 'not_requested'
         CHECK (deletion_status IN ('not_requested', 'pending', 'completed', 'failed')),
     provider_expires_at TIMESTAMPTZ,
@@ -83,6 +85,9 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
 
 ALTER TABLE voice_profiles
 ADD COLUMN IF NOT EXISTS quality_status TEXT NOT NULL DEFAULT 'pending';
+
+ALTER TABLE voice_profiles
+ADD COLUMN IF NOT EXISTS sample_validation_status TEXT NOT NULL DEFAULT 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active
 ON voice_profiles(account_id) WHERE status = 'active';
@@ -162,9 +167,34 @@ ADD COLUMN IF NOT EXISTS long_sentence_completion_ratio DOUBLE PRECISION NOT NUL
 ALTER TABLE voice_quality_measurements ALTER COLUMN long_sentence_chars DROP DEFAULT;
 ALTER TABLE voice_quality_measurements ALTER COLUMN long_sentence_completion_ratio DROP DEFAULT;
 
+-- What the submitted recording actually contained, measured locally before any
+-- provider work. One row per profile: a sample is validated once.
+CREATE TABLE IF NOT EXISTS voice_sample_validations (
+    validation_id UUID PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    profile_id UUID NOT NULL,
+    sample_id UUID NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'failed')),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
+    channels INTEGER NOT NULL CHECK (channels > 0),
+    rms_dbfs DOUBLE PRECISION NOT NULL,
+    peak_dbfs DOUBLE PRECISION NOT NULL,
+    clipped_ratio DOUBLE PRECISION NOT NULL CHECK (clipped_ratio BETWEEN 0 AND 1),
+    silence_ratio DOUBLE PRECISION NOT NULL CHECK (silence_ratio BETWEEN 0 AND 1),
+    speech_ms INTEGER NOT NULL CHECK (speech_ms >= 0),
+    dc_offset DOUBLE PRECISION NOT NULL,
+    reasons_json JSONB NOT NULL CHECK (jsonb_typeof(reasons_json) = 'array'),
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (account_id, profile_id),
+    FOREIGN KEY (profile_id, account_id)
+        REFERENCES voice_profiles(profile_id, account_id) ON DELETE CASCADE
+);
+
 ALTER TABLE voice_profiles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_evaluations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_quality_measurements DISABLE ROW LEVEL SECURITY;
+ALTER TABLE voice_sample_validations DISABLE ROW LEVEL SECURITY;
 
 UPDATE voice_profiles AS profile
 SET evaluation_status = 'pending',
@@ -204,6 +234,7 @@ ALTER TABLE voice_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_blind_trials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_evaluations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_quality_measurements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE voice_sample_validations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_clone_consents FORCE ROW LEVEL SECURITY;
 ALTER TABLE voice_samples FORCE ROW LEVEL SECURITY;
 ALTER TABLE voice_enrollment_operations FORCE ROW LEVEL SECURITY;
@@ -211,6 +242,7 @@ ALTER TABLE voice_profiles FORCE ROW LEVEL SECURITY;
 ALTER TABLE voice_blind_trials FORCE ROW LEVEL SECURITY;
 ALTER TABLE voice_evaluations FORCE ROW LEVEL SECURITY;
 ALTER TABLE voice_quality_measurements FORCE ROW LEVEL SECURITY;
+ALTER TABLE voice_sample_validations FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS voice_consent_account_policy ON voice_clone_consents;
 CREATE POLICY voice_consent_account_policy ON voice_clone_consents
@@ -256,5 +288,12 @@ DROP POLICY IF EXISTS voice_quality_measurement_account_policy
 ON voice_quality_measurements;
 CREATE POLICY voice_quality_measurement_account_policy
 ON voice_quality_measurements
+USING (account_id = current_setting('app.account_id', true))
+WITH CHECK (account_id = current_setting('app.account_id', true));
+
+DROP POLICY IF EXISTS voice_sample_validation_account_policy
+ON voice_sample_validations;
+CREATE POLICY voice_sample_validation_account_policy
+ON voice_sample_validations
 USING (account_id = current_setting('app.account_id', true))
 WITH CHECK (account_id = current_setting('app.account_id', true));

@@ -5,6 +5,7 @@ import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
@@ -18,10 +19,33 @@ from services.digital_self.domain import (
     VoiceProfileManifestRef,
 )
 from services.legacy.domain import LegacyAccessDeniedError, LegacyAccessSnapshot
-from services.voice_profile.domain import ProviderVoice, VoiceProfile, VoiceResolution
+from services.voice_profile.domain import (
+    EvaluationRequiredError,
+    ProviderVoice,
+    VoiceEnrollmentRequest,
+    VoiceEvaluationRequest,
+    VoiceProfile,
+    VoiceResolution,
+)
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
+from services.voice_profile.testing_audio import (
+    silent as silent_audio,
+)
+from services.voice_profile.testing_audio import (
+    voice_sample_wav,
+    wav_bytes,
+)
+
+
+def _voice_sample(duration_ms: int = 12_000) -> bytes:
+    """A recording that really decodes.
+
+    Enrollment measures the submitted audio before it stores or submits
+    anything, so a placeholder byte string is refused as undecodable.
+    """
+    return voice_sample_wav(duration_ms)
 
 
 class ProviderStub:
@@ -837,7 +861,7 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
             headers=headers,
             json={"accepted": True, "policy_version": "voice-clone-v1"},
         )
-        sample_audio = b"RIFF" + b"\x01\x02" * 16_000
+        sample_audio = _voice_sample()
         enrolled = await client.post(
             "/v1/voices/enrollments",
             headers=headers,
@@ -1036,7 +1060,7 @@ async def test_voice_profile_revocation_returns_503_until_provider_cleanup_compl
             "/v1/voices/enrollments",
             headers=headers,
             json={
-                "audio_base64": base64.b64encode(b"RIFF" + b"\x01\x02" * 16_000).decode("ascii"),
+                "audio_base64": base64.b64encode(_voice_sample()).decode("ascii"),
                 "media_type": "audio/wav",
                 "duration_ms": 12_000,
                 "sample_rate": 24_000,
@@ -1104,7 +1128,7 @@ async def test_voice_consent_revocation_returns_503_until_provider_cleanup_compl
             "/v1/voices/enrollments",
             headers=headers,
             json={
-                "audio_base64": base64.b64encode(b"RIFF" + b"\x01\x02" * 16_000).decode("ascii"),
+                "audio_base64": base64.b64encode(_voice_sample()).decode("ascii"),
                 "media_type": "audio/wav",
                 "duration_ms": 12_000,
                 "sample_rate": 24_000,
@@ -1198,7 +1222,7 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
             "/v1/voices/enrollments",
             headers=headers,
             json={
-                "audio_base64": base64.b64encode(b"RIFF" + b"\x01\x02" * 16_000).decode(),
+                "audio_base64": base64.b64encode(_voice_sample()).decode(),
                 "media_type": "audio/wav",
                 "duration_ms": 12_000,
                 "sample_rate": 24_000,
@@ -1365,7 +1389,7 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
             "/v1/voices/enrollments",
             headers=headers,
             json={
-                "audio_base64": base64.b64encode(b"RIFF" + b"\x01\x02" * 16_000).decode(),
+                "audio_base64": base64.b64encode(_voice_sample()).decode(),
                 "media_type": "audio/wav",
                 "duration_ms": 12_000,
                 "sample_rate": 24_000,
@@ -1380,12 +1404,156 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
         )
 
     assert enrolled.status_code == 201
-    assert profile["status"] == "active"
-    assert profile["evaluation_status"] == "passed"
-    assert profile["quality_status"] == "passed"
-    assert profile["activated_at"]
+    # The upload request returns as soon as the sample is accepted; the
+    # provider clone finishes in the background and the page polls for it.
+    assert profile["status"] == "enrolling"
+    assert profile["sample_validation_status"] == "passed"
+    assert profile["enrollment"]["stage"] == "queued"
+    assert profile["enrollment"]["expected_total_ms"] == 60_000
+    assert profile["enrollment"]["over_budget"] is False
+    # The same profile is admitted on measured evidence -- no A/B evaluation
+    # and no invented quality measurement were recorded to get here.
+    assert profile["evaluation_status"] == "pending"
+    assert profile["quality_status"] == "pending"
     assert listing.status_code == 200
-    assert listing.json()["items"][0]["status"] == "active"
+    assert listing.json()["items"][0]["sample_validation_status"] == "passed"
     assert ready_again.status_code == 200
     assert ready_again.json()["status"] == "active"
+    assert ready_again.json()["activated_at"]
 
+
+
+async def test_a_recording_that_cannot_be_cloned_is_refused_with_actionable_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The sample is measured in the upload request, before any provider work."""
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signer = VoiceSampleURLSigner(
+        secret="voice-sample-signing-secret-long-enough",
+        public_base_url="https://control.test",
+        ttl_s=300,
+    )
+    app.state.voice_sample_signer = signer
+    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
+        tmp_path / "memoria.sqlite3",
+        object_store=EncryptedLocalObjectStore(
+            root=tmp_path / "voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-key-v1",
+        ),
+        provider=ProviderStub(),
+        sample_url_factory=signer.url,
+        provider_region="cn-beijing",
+        target_model="cosyvoice-v3.5-flash",
+    )
+    silent = wav_bytes(silent_audio(duration_ms=15_000))
+    undecodable = b"RIFF" + b"\x01\x02" * 16_000
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "silent-sample-owner", "password": "safe-password"},
+            )
+        ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="silent-sample-owner",
+        )
+        await client.post(
+            "/v1/voices/consent",
+            headers=headers,
+            json={"accepted": True, "policy_version": "voice-clone-v1"},
+        )
+
+        async def enroll(audio: bytes) -> Any:
+            return await client.post(
+                "/v1/voices/enrollments",
+                headers=headers,
+                json={
+                    "audio_base64": base64.b64encode(audio).decode(),
+                    "media_type": "audio/wav",
+                    "duration_ms": 15_000,
+                    "sample_rate": 16_000,
+                    "ready_for_device": True,
+                },
+            )
+
+        quiet = await enroll(silent)
+        junk = await enroll(undecodable)
+        listing = await client.get("/v1/voices/profiles", headers=headers)
+
+    assert quiet.status_code == 422
+    assert "安静" in quiet.json()["detail"]
+    assert quiet.headers["X-Memoria-Voice-Rejection"] == "audio_silent"
+    assert junk.status_code == 422
+    assert junk.headers["X-Memoria-Voice-Rejection"] == "audio_decode_failed"
+    # Nothing was stored and no provider voice was created for a refusal.
+    assert listing.json()["items"] == []
+    assert app.state.voice_profile_manager._provider.deleted == []
+
+
+async def test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed verdict is terminal: a later read must not flip it to passed.
+
+    The mini-program calls ready-for-device on every visit to the page, so a
+    profile that was explicitly judged unusable must stay unusable.
+    """
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    manager = VoiceProfileManager.sqlite(
+        tmp_path / "memoria.sqlite3",
+        object_store=EncryptedLocalObjectStore(
+            root=tmp_path / "voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-key-v1",
+        ),
+        provider=ProviderStub(),
+        sample_url_factory=lambda sample_id: (
+            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
+        ),
+        provider_region="cn-beijing",
+        target_model="cosyvoice-v3.5-flash",
+    )
+    app.state.voice_profile_manager = manager
+
+    await manager.grant_consent(account_id="voice-account", policy_version="voice-clone-v1")
+    candidate = await manager.enroll(
+        VoiceEnrollmentRequest(
+            account_id="voice-account",
+            audio=_voice_sample(),
+            media_type="audio/wav",
+            duration_ms=12_000,
+            sample_rate=24_000,
+        )
+    )
+    failed = await manager.evaluate(
+        VoiceEvaluationRequest(
+            account_id="voice-account",
+            profile_id=candidate.profile_id,
+            similarity=1.5,
+            naturalness=1.5,
+            accent_similarity=1.5,
+            emotion_adherence=1.5,
+            instruction_adherence=1.5,
+            uncanny=4.0,
+            candidate_preferred=False,
+            notes="not usable",
+        )
+    )
+    assert failed.status == "failed"
+
+    with pytest.raises(EvaluationRequiredError):
+        await manager.activate(
+            account_id="voice-account", profile_id=candidate.profile_id
+        )
+    reloaded = (await manager.profiles(account_id="voice-account"))[0]
+    assert reloaded.evaluation_status == "failed"
+    assert reloaded.status != "active"

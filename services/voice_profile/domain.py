@@ -71,8 +71,43 @@ def objective_voice_quality_passes(
     )
 
 
+def voice_profile_delivery_admitted(
+    *,
+    evaluation_status: str,
+    quality_status: str,
+    sample_validation_status: str,
+) -> bool:
+    """The one rule deciding whether a cloned voice may reach a device.
+
+    Two honest admissions exist and a profile needs one of them:
+
+    * ``sample_validation_status == "passed"`` -- the consumer path, where
+      the submitted recording itself was decoded and measured
+      (``services/voice_profile/sample_validation.py``);
+    * ``evaluation_status == "passed"`` **and**
+      ``quality_status == "passed"`` -- the lab path, where a human A/B
+      evaluation and a TTS-output quality probe both ran.
+
+    An explicit ``failed`` on any of the three vetoes, so a measured
+    rejection can never be overwritten into delivery by a later read.
+    """
+    if "failed" in (evaluation_status, quality_status, sample_validation_status):
+        return False
+    if sample_validation_status == "passed":
+        return True
+    return evaluation_status == "passed" and quality_status == "passed"
+
+
 class VoiceConsentRequiredError(PermissionError):
     pass
+
+
+class VoiceSampleRejectedError(ValueError):
+    """The submitted recording cannot be cloned; the client must re-record."""
+
+    def __init__(self, validation: object) -> None:
+        super().__init__("the voice sample did not pass validation")
+        self.validation = validation
 
 
 class EvaluationRequiredError(RuntimeError):
@@ -107,6 +142,12 @@ class VoiceEnrollmentRequest:
     duration_ms: int
     sample_rate: int
     enrollment_key: str | None = None
+    #: Consumer enrollments (the mini-program) cannot run an A/B comparison or
+    #: a TTS-output quality probe, so the submitted recording is measured and
+    #: admitted instead -- and a recording that cannot be cloned is refused in
+    #: the same request. Lab enrollments leave this off and keep their own
+    #: gates: a human evaluation plus an objective quality measurement.
+    require_sample_validation: bool = False
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.audio:
@@ -171,6 +212,10 @@ class VoiceProfile:
     created_at: datetime
     activated_at: datetime | None = None
     revoked_at: datetime | None = None
+    #: Consumer-path admission: the submitted recording was measured. Lab
+    #: enrollments leave this ``pending`` and rely on the A/B evaluation plus
+    #: the TTS-output quality probe instead.
+    sample_validation_status: Literal["pending", "passed", "failed"] = "pending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +374,16 @@ class VoiceProfilePort(Protocol):
     async def consent(self, *, account_id: str) -> VoiceConsent | None: ...
 
     async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile: ...
+
+    async def accept_enrollment(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Measure, store and register one enrollment; no provider call."""
+        ...
+
+    async def complete_enrollment(
+        self, *, account_id: str, profile_id: str
+    ) -> VoiceProfile:
+        """Drive an accepted enrollment through the provider and finalize it."""
+        ...
 
     async def provider_sample(self, *, sample_id: str) -> ProviderSample: ...
 

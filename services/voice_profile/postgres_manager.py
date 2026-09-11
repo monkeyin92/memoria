@@ -39,8 +39,14 @@ from services.voice_profile.domain import (
     VoiceQualityMeasurement,
     VoiceQualityMeasurementRequest,
     VoiceResolution,
+    VoiceSampleRejectedError,
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
+    voice_profile_delivery_admitted,
+)
+from services.voice_profile.sample_validation import (
+    VoiceSampleValidation,
+    validate_voice_sample,
 )
 
 
@@ -223,6 +229,37 @@ class PostgresVoiceProfileManager:
         )
 
     async def enroll(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Accept and complete an enrollment in one call.
+
+        Lab clients and tests use this. The consumer path calls
+        ``accept_enrollment`` and ``complete_enrollment`` separately so the
+        upload request can return while the provider is still cloning.
+        """
+        profile = await self.accept_enrollment(request)
+        if profile.status != "enrolling":
+            return profile
+        return await self.complete_enrollment(
+            account_id=request.account_id, profile_id=profile.profile_id
+        )
+
+    async def accept_enrollment(self, request: VoiceEnrollmentRequest) -> VoiceProfile:
+        """Measure, store and register one enrollment; no provider call.
+
+        Returns the profile in ``enrolling``. Raises
+        ``VoiceSampleRejectedError`` when the recording cannot be cloned --
+        before anything is written, so a refused sample leaves no trace.
+        """
+        # Measure first: a sample that cannot be cloned must not create an
+        # operation row, a stored object or a profile. Nothing can be cloned
+        # from audio that does not decode, so this refusal is unconditional;
+        # ``require_sample_validation`` only decides whether a *passing*
+        # measurement is what admits the profile for delivery.
+        validation = validate_voice_sample(
+            request.audio, admit_on_pass=request.require_sample_validation
+        )
+        if not validation.passed:
+            raise VoiceSampleRejectedError(validation)
+
         operation = await self._ensure_enrollment_operation(request)
         state = str(operation["state"])
         if state == "completed":
@@ -260,7 +297,7 @@ class PostgresVoiceProfileManager:
                 )
                 raise
             try:
-                await self._persist_uploaded_sample(operation, request, reference)
+                await self._persist_uploaded_sample(operation, request, reference, validation)
             except Exception:
                 try:
                     await self._object_store.delete(reference)
@@ -284,6 +321,28 @@ class PostgresVoiceProfileManager:
             )
             state = str(operation["state"])
 
+        if state in {"sample_uploaded", "provider_created"}:
+            # Already accepted: the provider half is ``complete_enrollment``'s
+            # job, and it is safely retryable from either state.
+            profile = await self._profile_for_operation(operation)
+            if profile.status == "enrolling":
+                return profile
+        raise VoiceEnrollmentReconciliationRequiredError(
+            "voice enrollment is not safely retryable"
+        )
+
+    async def complete_enrollment(
+        self, *, account_id: str, profile_id: str
+    ) -> VoiceProfile:
+        """Drive an accepted enrollment through the provider and finalize it."""
+        operation = await self._operation_for_profile(profile_id)
+        if operation is None or str(operation["account_id"]) != account_id:
+            raise EvidenceNotFoundError(profile_id)
+        state = str(operation["state"])
+        if state == "completed":
+            return await self._profile_for_operation(operation)
+        if state == "revoked":
+            raise VoiceConsentRequiredError("voice enrollment was revoked")
         if state == "provider_created":
             return await self._finalize_enrollment(operation)
         if state != "sample_uploaded":
@@ -292,7 +351,7 @@ class PostgresVoiceProfileManager:
             )
 
         await self._set_operation_state(
-            request.account_id,
+            account_id,
             operation["operation_id"],
             state="provider_submitted",
         )
@@ -306,21 +365,19 @@ class PostgresVoiceProfileManager:
                 raise RuntimeError("provider returned an unexpected voice model")
         except Exception as exc:
             await self._set_operation_state(
-                request.account_id,
+                account_id,
                 operation["operation_id"],
                 state="reconciliation_required",
                 last_error=type(exc).__name__,
             )
             raise
         await self._persist_provider_voice(
-            account_id=request.account_id,
+            account_id=account_id,
             operation_id=operation["operation_id"],
             voice=provider_voice,
         )
-        operation = await self._operation(
-            account_id=request.account_id,
-            enrollment_key=str(operation["enrollment_key"]),
-        )
+        operation = await self._operation_for_profile(profile_id)
+        assert operation is not None, "a submitted enrollment always has an operation"
         return await self._finalize_enrollment(operation)
 
     async def _ensure_enrollment_operation(
@@ -394,6 +451,7 @@ class PostgresVoiceProfileManager:
         operation: asyncpg.Record,
         request: VoiceEnrollmentRequest,
         reference: ObjectRef,
+        validation: VoiceSampleValidation,
     ) -> None:
         now = datetime.now(UTC)
         pool = await self._ready_pool()
@@ -425,10 +483,10 @@ class PostgresVoiceProfileManager:
                 INSERT INTO voice_profiles (
                     profile_id, account_id, sample_id, version_number,
                     provider, provider_region, target_model, status,
-                    created_at, updated_at
+                    sample_validation_status, created_at, updated_at
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    'enrolling', $8, $8
+                    'enrolling', $8, $9, $9
                 )
                 """,
                 operation["profile_id"],
@@ -438,7 +496,11 @@ class PostgresVoiceProfileManager:
                 self._provider_name,
                 self._provider_region,
                 self._target_model,
+                "passed" if validation.admitted else "pending",
                 now,
+            )
+            await self._insert_sample_validation(
+                connection, operation, request, validation, now
             )
             await connection.execute(
                 """
@@ -451,6 +513,49 @@ class PostgresVoiceProfileManager:
                 operation["operation_id"],
                 request.account_id,
             )
+
+    async def _insert_sample_validation(
+        self,
+        connection: asyncpg.Connection,
+        operation: asyncpg.Record,
+        request: VoiceEnrollmentRequest,
+        validation: VoiceSampleValidation,
+        now: datetime,
+    ) -> None:
+        """Store the measurement next to the profile it admitted or refused."""
+        metrics = validation.metrics
+        assert metrics is not None, "a sample without metrics never reaches storage"
+        await connection.execute(
+            """
+            INSERT INTO voice_sample_validations (
+                validation_id, account_id, profile_id, sample_id, status,
+                duration_ms, sample_rate, channels, rms_dbfs, peak_dbfs,
+                clipped_ratio, silence_ratio, speech_ms, dc_offset,
+                reasons_json, created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15::jsonb, $16
+            )
+            """,
+            uuid.uuid5(
+                cast(uuid.UUID, operation["operation_id"]), "sample-validation"
+            ),
+            request.account_id,
+            operation["profile_id"],
+            operation["sample_id"],
+            "passed" if validation.passed else "failed",
+            metrics.duration_ms,
+            metrics.sample_rate,
+            metrics.channels,
+            metrics.rms_dbfs,
+            metrics.peak_dbfs,
+            metrics.clipped_ratio,
+            metrics.silence_ratio,
+            metrics.speech_ms,
+            metrics.dc_offset,
+            json.dumps(list(validation.reasons)),
+            now,
+        )
 
     async def _persist_provider_voice(
         self,
@@ -550,6 +655,20 @@ class PostgresVoiceProfileManager:
             f"{request.sample_rate}:{digest}"
         )
         return f"auto-{hashlib.sha256(material.encode()).hexdigest()}"
+
+    async def _operation_for_profile(self, profile_id: str) -> asyncpg.Record | None:
+        """The enrollment operation that produced one profile, if any."""
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """
+                SELECT * FROM voice_enrollment_operations
+                WHERE profile_id = $1::uuid
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                profile_id,
+            )
+        return row
 
     async def _operation(
         self,
@@ -962,10 +1081,17 @@ class PostgresVoiceProfileManager:
             )
             if row is None:
                 raise EvidenceNotFoundError(profile_id)
-            if row["status"] not in {"candidate", "active"} or row["evaluation_status"] != "passed":
-                raise EvaluationRequiredError("a passed candidate evaluation is required")
-            if row["quality_status"] != "passed":
-                raise EvaluationRequiredError("a passed provider quality measurement is required")
+            if row["status"] not in {"candidate", "active"}:
+                raise EvaluationRequiredError("only a usable candidate can be activated")
+            if not voice_profile_delivery_admitted(
+                evaluation_status=str(row["evaluation_status"]),
+                quality_status=str(row["quality_status"]),
+                sample_validation_status=str(row["sample_validation_status"]),
+            ):
+                raise EvaluationRequiredError(
+                    "a passed candidate evaluation, a passed provider quality "
+                    "measurement, or a passed sample validation is required"
+                )
             if row["provider"] == "volcengine_doubao":
                 expires_at = cast(datetime | None, row["provider_expires_at"])
                 if not row["provider_voice_id"] or expires_at is None or expires_at <= now:
@@ -1015,8 +1141,13 @@ class PostgresVoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = $1 AND status = 'active'
-                  AND evaluation_status = 'passed'
-                  AND quality_status = 'passed'
+                  AND evaluation_status <> 'failed'
+                  AND quality_status <> 'failed'
+                  AND sample_validation_status <> 'failed'
+                  AND (
+                      sample_validation_status = 'passed'
+                      OR (evaluation_status = 'passed' AND quality_status = 'passed')
+                  )
                 """,
                 account_id,
             )
@@ -1537,6 +1668,12 @@ class PostgresVoiceProfileManager:
                 row["quality_status"],
             ),
             deletion_status=cast(VoiceDeletionStatus, row["deletion_status"]),
+            sample_validation_status=cast(
+                Literal["pending", "passed", "failed"],
+                row["sample_validation_status"]
+                if "sample_validation_status" in row.keys()
+                else "pending",
+            ),
             provider_expires_at=cast(datetime | None, row["provider_expires_at"]),
             created_at=cast(datetime, row["created_at"]),
             activated_at=cast(datetime | None, row["activated_at"]),

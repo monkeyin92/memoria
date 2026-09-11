@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
 import hmac
+import logging
+import time
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,10 +63,21 @@ from services.voice_profile.domain import (
     VoiceProfile,
     VoiceProfilePort,
     VoiceQualityMeasurementRequest,
+    VoiceSampleRejectedError,
 )
+from services.voice_profile.enrollment_progress import enrollment_progress
+from services.voice_profile.sample_copy import sample_rejection_message
 from services.voice_profile.sample_url import VoiceSampleURLSigner
+from services.voice_profile.sample_validation import VoiceSampleValidation
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/voices", tags=["voices"])
+
+#: How long "ready for device" waits on the provider before handing back the
+#: truthful in-flight state. The client polls from there.
+_COMPLETION_WAIT_S = 45.0
+_COMPLETION_POLL_S = 0.5
 
 
 def _manager(request: Request) -> VoiceProfilePort:
@@ -148,6 +171,7 @@ def _profile_payload(profile: VoiceProfile) -> dict[str, Any]:
         "status": profile.status,
         "evaluation_status": profile.evaluation_status,
         "quality_status": profile.quality_status,
+        "sample_validation_status": profile.sample_validation_status,
         "deletion_status": profile.deletion_status,
         "provider_expires_at": (
             profile.provider_expires_at.isoformat() if profile.provider_expires_at else None
@@ -155,6 +179,9 @@ def _profile_payload(profile: VoiceProfile) -> dict[str, Any]:
         "created_at": profile.created_at.isoformat(),
         "activated_at": profile.activated_at.isoformat() if profile.activated_at else None,
         "revoked_at": profile.revoked_at.isoformat() if profile.revoked_at else None,
+        # Durable progress: the client can render (and resume) an in-flight
+        # clone from this alone, without a request-scoped tracker.
+        "enrollment": enrollment_progress(profile).to_dict(),
     }
 
 
@@ -233,43 +260,86 @@ class EnrollmentCreate(BaseModel):
 async def enroll_voice(
     body: EnrollmentCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    """Measure and store the sample now; clone the voice after the response.
+
+    The provider clone is the slow half of an enrollment. Returning as soon
+    as the sample is accepted is what lets the page show real progress and
+    lets the user leave it: the profile row is already durable, so a later
+    read resumes exactly here.
+    """
     require_capability_for_subject(user, "voice_clone", store=_store(request))
     _require_registered(request, user)
     try:
         audio = base64.b64decode(body.audio_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(status_code=422, detail="invalid base64 voice sample") from exc
+    manager = _manager(request)
+    enrollment = VoiceEnrollmentRequest(
+        account_id=user.user_id,
+        audio=audio,
+        media_type=body.media_type,
+        duration_ms=body.duration_ms,
+        sample_rate=body.sample_rate,
+        enrollment_key=body.enrollment_key,
+        # The mini-program cannot run an A/B comparison or a TTS-output probe,
+        # so the recording itself is the admission evidence and is measured
+        # before anything is stored.
+        require_sample_validation=body.ready_for_device,
+    )
     try:
-        profile = await _manager(request).enroll(
-            VoiceEnrollmentRequest(
-                account_id=user.user_id,
-                audio=audio,
-                media_type=body.media_type,
-                duration_ms=body.duration_ms,
-                sample_rate=body.sample_rate,
-                enrollment_key=body.enrollment_key,
-            )
-        )
+        if body.ready_for_device:
+            # Consumer path: return as soon as the sample is accepted and let
+            # the provider clone finish in the background, so the page can
+            # show real progress and the user may leave it.
+            profile = await manager.accept_enrollment(enrollment)
+        else:
+            # Lab path: one atomic call with the caller's own gates.
+            profile = await manager.enroll(enrollment)
     except VoiceConsentRequiredError as exc:
         raise HTTPException(status_code=403, detail="voice-clone consent is required") from exc
+    except VoiceSampleRejectedError as exc:
+        raise _sample_rejected(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except VoiceEnrollmentReconciliationRequiredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="voice provider enrollment failed") from exc
-    if body.ready_for_device:
-        try:
-            profile = await _ready_profile_for_device(
-                _manager(request),
-                account_id=user.user_id,
-                profile=profile,
-            )
-        except EvaluationRequiredError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if profile.status == "enrolling" and body.ready_for_device:
+        background_tasks.add_task(
+            _finish_enrollment,
+            manager,
+            account_id=user.user_id,
+            profile_id=profile.profile_id,
+        )
     return _profile_payload(profile)
+
+
+def _sample_rejected(exc: VoiceSampleRejectedError) -> HTTPException:
+    """Turn a measured refusal into the copy the user acts on."""
+    validation = exc.validation
+    reasons = validation.reasons if isinstance(validation, VoiceSampleValidation) else ()
+    return HTTPException(
+        status_code=422,
+        detail=sample_rejection_message(reasons),
+        headers={"X-Memoria-Voice-Rejection": ",".join(reasons) or "unknown"},
+    )
+
+
+async def _finish_enrollment(
+    manager: VoiceProfilePort, *, account_id: str, profile_id: str
+) -> None:
+    """Run the provider half after the response has been sent.
+
+    A failure here is not this request's news: the operation row keeps its
+    state and the profile stays ``enrolling``, so the next read reports it and
+    a retry can finish it.
+    """
+    try:
+        await manager.complete_enrollment(account_id=account_id, profile_id=profile_id)
+    except Exception:  # noqa: BLE001 - surfaced through the profile state
+        logger.exception("voice enrollment completion failed profile_id=%s", profile_id)
 
 
 @router.post("/profiles/{profile_id}/ready-for-device")
@@ -295,6 +365,8 @@ async def ready_profile_for_device(
         )
     except EvaluationRequiredError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except VoiceEnrollmentReconciliationRequiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _profile_payload(ready)
 
 
@@ -304,47 +376,34 @@ async def _ready_profile_for_device(
     account_id: str,
     profile: VoiceProfile,
 ) -> VoiceProfile:
-    """Finish a consumer enrollment in the same request as the provider clone.
+    """Finish a consumer enrollment and admit it on measured evidence.
 
-    Mini-program cannot play A/B previews. The user hears the result on the
-    robot and can record again. Lab clients omit ready_for_device and still
-    go through blind evaluation plus quality probes.
+    The mini-program cannot play A/B previews, so this path never records an
+    evaluation: what admits the profile is the local measurement of the
+    submitted recording (``sample_validation_status``). The lab path keeps the
+    human A/B evaluation plus the objective quality probe instead.
+
+    Waits at most ``_COMPLETION_WAIT_S`` for the provider. Longer than that is
+    not a failure -- the caller gets the truthful in-flight state and the
+    page keeps polling.
     """
-    if (
-        profile.status == "active"
-        and profile.evaluation_status == "passed"
-        and profile.quality_status == "passed"
-    ):
-        return profile
-    if profile.status != "candidate" or not profile.provider_voice_id:
-        return profile
-    await manager.evaluate(
-        VoiceEvaluationRequest(
-            account_id=account_id,
-            profile_id=profile.profile_id,
-            similarity=4.0,
-            naturalness=4.0,
-            accent_similarity=4.0,
-            emotion_adherence=4.0,
-            instruction_adherence=4.0,
-            uncanny=1.5,
-            candidate_preferred=True,
-            notes="consumer_ready_for_device",
+    current = profile
+    if current.status in {"enrolling", "candidate"} and current.provider_voice_id is None:
+        current = await manager.complete_enrollment(
+            account_id=account_id, profile_id=profile.profile_id
         )
-    )
-    await manager.record_quality_measurement(
-        VoiceQualityMeasurementRequest(
-            account_id=account_id,
-            profile_id=profile.profile_id,
-            source_run_id=f"consumer-enroll-{profile.profile_id}"[:128],
-            first_audio_ms=800,
-            cancel_tail_ms=100,
-            timestamp_error_ms=80,
-            long_sentence_chars=220,
-            long_sentence_completion_ratio=0.99,
-        )
-    )
-    return await manager.activate(account_id=account_id, profile_id=profile.profile_id)
+    deadline = time.monotonic() + _COMPLETION_WAIT_S
+    while current.status == "candidate" and current.provider_voice_id is not None:
+        try:
+            current = await manager.activate(
+                account_id=account_id, profile_id=profile.profile_id
+            )
+        except EvaluationRequiredError:
+            return current
+        if current.status == "active" or time.monotonic() >= deadline:
+            return current
+        await asyncio.sleep(_COMPLETION_POLL_S)
+    return current
 
 
 @router.get("/profiles")

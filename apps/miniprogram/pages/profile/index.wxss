@@ -55,3 +55,56 @@
   border-radius: 36rpx 36rpx 0 0;
   background: #fff;
 }
+
+.enrollment-progress {
+  margin-top: 16rpx;
+  padding: 24rpx 26rpx;
+  border-radius: 28rpx;
+  background: #eaf0f3;
+}
+
+.enrollment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.enrollment-stage {
+  min-width: 0;
+  color: #192f41;
+  font-size: 26rpx;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.enrollment-percent {
+  flex-shrink: 0;
+  color: #326e70;
+  font-size: 24rpx;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.enrollment-bar {
+  height: 8rpx;
+  margin-top: 14rpx;
+  overflow: hidden;
+  border-radius: 999rpx;
+  background: #dfe6ea;
+}
+
+.enrollment-bar-fill {
+  height: 100%;
+  border-radius: 999rpx;
+  background: #326e70;
+  transition: width 240ms ease;
+}
+
+.enrollment-hint {
+  display: block;
+  margin-top: 14rpx;
+  color: #596a78;
+  font-size: 24rpx;
+  line-height: 1.65;
+}

@@ -114,9 +114,11 @@ _ARCHIVE_EXPORT_TABLES = (
     TableSpec("voice_blind_trials", excluded_columns=frozenset({"candidate_slot"})),
     TableSpec("voice_evaluations"),
     TableSpec("voice_quality_measurements"),
+    TableSpec("voice_sample_validations"),
 )
 
 _ARCHIVE_DELETE_ORDER = (
+    "voice_sample_validations",
     "voice_quality_measurements",
     "voice_evaluations",
     "voice_blind_trials",
@@ -259,6 +261,7 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("voice_blind_trials", excluded_columns=frozenset({"candidate_slot"})),
     TableSpec("voice_evaluations"),
     TableSpec("voice_quality_measurements"),
+    TableSpec("voice_sample_validations"),
 )
 
 _POSTGRES_ARCHIVE_DELETE_ORDER = (

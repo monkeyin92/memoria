@@ -17,6 +17,9 @@ const defaultProfile = {
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
 
+// 声音复刻进度轮询节奏：服务端接管后每 2 秒读一次档案状态。
+const VOICE_CLONE_POLL_INTERVAL_MS = 2000;
+
 function mediaTypeForPath(filePath) {
   const lower = String(filePath || "").toLowerCase();
   if (lower.endsWith(".wav")) return "audio/wav";
@@ -62,6 +65,84 @@ function voiceCloneStatusLabel(payload) {
     return "还没有声音样本。录一段或上传音频后，大约一分钟就能用。";
   }
   return "还没有自定义声音样本。";
+}
+
+function voiceCloneProfiles(payload) {
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+// 进度条只在服务端给了 progress 时出现，绝不自己编造百分比。
+function voiceCloneProgressPercent(progress) {
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(Math.max(0, Math.min(1, value)) * 100);
+}
+
+// 同一账号可能有多条档案，按服务端状态取最贴近当前进度的那一条。
+const VOICE_CLONE_STATUS_RANK = {
+  enrolling: 0,
+  candidate: 1,
+  active: 2,
+  failed: 3,
+  revoked: 4,
+};
+
+function voiceCloneEnrollmentItem(payload) {
+  const items = voiceCloneProfiles(payload).filter((item) => item?.enrollment);
+  let best = null;
+  let bestRank = Infinity;
+  for (const item of items) {
+    const rank = VOICE_CLONE_STATUS_RANK[item.status] ?? Object.keys(VOICE_CLONE_STATUS_RANK).length;
+    if (rank < bestRank) {
+      best = item;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+// 只有还在跑的阶段才画进度条；done / failed 已结束，交给 voiceCloneStatusLabel 收尾。
+const VOICE_CLONE_TERMINAL_STAGES = new Set(["done", "failed"]);
+
+function voiceCloneEnrollmentView(payload) {
+  const enrollment = voiceCloneEnrollmentItem(payload)?.enrollment || null;
+  if (!enrollment || VOICE_CLONE_TERMINAL_STAGES.has(enrollment.stage)) return null;
+
+  const percent = voiceCloneProgressPercent(enrollment.progress);
+  const overBudget = enrollment.over_budget === true;
+  const elapsedSeconds = Math.max(0, Math.round((Number(enrollment.elapsed_ms) || 0) / 1000));
+  // over_budget：服务端已确认超过约定的一分钟，此时不再承诺时长，只说可以离开。
+  const hint = overBudget
+    ? "已经比预计久了一点。可以先去忙别的，回来这一页再看就行。"
+    : enrollment.expected_total_ms
+      ? `预计 1 分钟左右，已等待 ${elapsedSeconds} 秒。`
+      : "正在处理，可以留在这页看进度。";
+  // stage_label 由服务端下发，已经是中文原句，直接渲染，不自行改写。
+  const label = enrollment.stage_label || voiceCloneStatusLabel(payload);
+  return {
+    voiceCloneEnrollment: {
+      label,
+      // hasProgress 为 false 时模板不渲染进度条，也不显示百分比。
+      hasProgress: percent !== null,
+      progressPercent: percent === null ? 0 : percent,
+      progressLabel: percent === null ? "" : `${percent}%`,
+      hint,
+    },
+    voiceCloneStatusLabel: label,
+    voiceCloneEnrollmentOverBudget: overBudget,
+  };
+}
+
+function voiceCloneEmptyView() {
+  return {
+    voiceCloneEnrollment: null,
+    voiceCloneStatusLabel: "还没有自定义声音样本。",
+    voiceCloneEnrollmentOverBudget: false,
+  };
+}
+
+function voiceCloneStatusData(label) {
+  return { ...voiceCloneEmptyView(), voiceCloneStatusLabel: label };
 }
 
 function profileInitialFor(displayName) {
@@ -257,6 +338,8 @@ Page({
     customPersonaText: "",
     voiceCloneAllowed: false,
     voiceCloneStatusLabel: "还没有自定义声音样本。",
+    voiceCloneEnrollment: null,
+    voiceCloneEnrollmentOverBudget: false,
     voiceSampleBusy: false,
     recording: false,
     recordSeconds: 0,
@@ -306,6 +389,11 @@ Page({
     this._deviceBindingBusyKey = "";
     this._deviceBindingRequest = null;
     this._stopRecordingTimer();
+    this._stopVoiceClonePoll();
+    // 起一次表就会 +1 代数，使在途轮询的迟到结果失效，也放掉忙位，
+    // 免得同一实例再次 onShow 时被旧请求挡住。
+    this._voiceClonePollSeq = (this._voiceClonePollSeq || 0) + 1;
+    this._voiceClonePollBusy = false;
     if (this.data.recording && this._recorder) {
       try {
         this._recorder.stop();
@@ -329,6 +417,10 @@ Page({
     this._deviceBindingBusyKey = "";
     this._deviceBindingRequest = null;
     this._lastCapabilityState = null;
+    // 退出登录后不再轮询声音复刻进度，避免用旧身份继续请求。
+    this._stopVoiceClonePoll();
+    this._voiceCloneEnrolling = false;
+    this._voiceCloneView = null;
     this.setData({
       authenticated: false,
       identity: null,
@@ -360,6 +452,8 @@ Page({
       customPersonaText: "",
       voiceCloneAllowed: false,
       voiceCloneStatusLabel: "还没有自定义声音样本。",
+      voiceCloneEnrollment: null,
+      voiceCloneEnrollmentOverBudget: false,
       voiceSampleBusy: false,
       recording: false,
       recordSeconds: 0,
@@ -548,8 +642,11 @@ Page({
         speakerEnrollmentHint: speakerHint,
         ...capabilityState,
         ...speakerState,
-        ...voiceCloneState,
       });
+      // 声音复刻进度单独写回：轮询与进入页面共用同一套变更判断。
+      this._applyVoiceCloneState(voiceCloneState);
+      // 回到这一页（onShow 会重新加载）时，若服务端仍在生成就把进度接上。
+      this._ensureVoiceClonePoll();
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "个人资料无法加载。" });
@@ -827,6 +924,24 @@ Page({
     }
   },
 
+  // 轮询会反复取回同一份快照：只有视图真的变了才写回，避免无谓渲染。
+  _applyVoiceCloneState(state) {
+    const previous = this._voiceCloneView;
+    const next = {
+      voiceCloneStatusLabel: state.voiceCloneStatusLabel,
+      voiceCloneEnrollment: state.voiceCloneEnrollment,
+      voiceCloneEnrollmentOverBudget: state.voiceCloneEnrollmentOverBudget,
+    };
+    const changed =
+      !previous ||
+      previous.voiceCloneStatusLabel !== next.voiceCloneStatusLabel ||
+      previous.voiceCloneEnrollmentOverBudget !== next.voiceCloneEnrollmentOverBudget ||
+      JSON.stringify(previous.voiceCloneEnrollment) !== JSON.stringify(next.voiceCloneEnrollment);
+    this._voiceCloneView = next;
+    if (changed) this.setData(next);
+    return changed;
+  },
+
   async loadVoiceCloneStatus() {
     try {
       let payload = await api.listVoiceProfiles();
@@ -839,12 +954,66 @@ Page({
           // Keep the listing we already have; the page still explains the current state.
         }
       }
-      return { voiceCloneStatusLabel: voiceCloneStatusLabel(payload) };
+      this._voiceCloneEnrolling = (payload.items || []).some(
+        (item) => item.status === "enrolling",
+      );
+      return voiceCloneEnrollmentView(payload) ||
+        voiceCloneStatusData(voiceCloneStatusLabel(payload));
     } catch (error) {
       if (error?.status === 403) {
-        return { voiceCloneStatusLabel: "当前未开启声音复刻，或尚未完成授权。" };
+        this._voiceCloneEnrolling = false;
+        return voiceCloneStatusData("当前未开启声音复刻，或尚未完成授权。");
       }
-      return { voiceCloneStatusLabel: error?.message || "暂时读不到自定义声音状态。" };
+      // 读取失败不代表复刻结束：保留上一次的 enrolling 判断，下一拍继续试。
+      return voiceCloneStatusData(error?.message || "暂时读不到自定义声音状态。");
+    }
+  },
+
+  _stopVoiceClonePoll() {
+    if (this._voiceClonePollTimer) {
+      clearInterval(this._voiceClonePollTimer);
+      this._voiceClonePollTimer = null;
+    }
+  },
+
+  // 只有服务端确实报告还在 enrolling 才继续轮询；其余情况一律停表。
+  _ensureVoiceClonePoll() {
+    if (!this._voiceCloneEnrolling || !api.hasAuthenticatedSession()) {
+      this._stopVoiceClonePoll();
+      return;
+    }
+    if (this._voiceClonePollTimer) return;
+    this._voiceClonePollSeq = (this._voiceClonePollSeq || 0) + 1;
+    this._voiceClonePollAuthEpoch = api.currentAuthEpoch();
+    this._voiceClonePollTimer = setInterval(() => {
+      this._pollVoiceCloneStatus();
+    }, VOICE_CLONE_POLL_INTERVAL_MS);
+  },
+
+  // 页面已卸载（或换账号）后，任何在途轮询结果都必须丢弃。
+  _voiceClonePollStale(seq, authEpoch) {
+    return seq !== this._voiceClonePollSeq || !api.isAuthEpochCurrent(authEpoch);
+  },
+
+  async _pollVoiceCloneStatus() {
+    if (this._voiceClonePollBusy) return;
+    if (!api.hasAuthenticatedSession()) {
+      this._stopVoiceClonePoll();
+      this._voiceCloneEnrolling = false;
+      return;
+    }
+    // 记下本次轮询所属的计时器代数：卸载或停表后这个代数会变，迟到的结果必须丢弃，
+    // 否则一个在途请求会在页面卸载后重新把 setInterval 起回来（泄漏）。
+    const seq = this._voiceClonePollSeq;
+    const authEpoch = this._voiceClonePollAuthEpoch;
+    this._voiceClonePollBusy = true;
+    try {
+      const state = await this.loadVoiceCloneStatus();
+      if (this._voiceClonePollStale(seq, authEpoch)) return;
+      this._applyVoiceCloneState(state);
+      this._ensureVoiceClonePoll();
+    } finally {
+      this._voiceClonePollBusy = false;
     }
   },
 
@@ -1015,17 +1184,18 @@ Page({
         readyForDevice: true,
       });
       const voiceCloneState = await this.loadVoiceCloneStatus();
-      this.setData(voiceCloneState);
+      this._applyVoiceCloneState(voiceCloneState);
+      // 服务端已受理，进度以后由轮询接管；提交过程中保持轮询也是允许的。
+      this._ensureVoiceClonePoll();
       wx.showToast({
         title: enrolled?.status === "active" ? "声音已就绪" : "声音处理中",
         icon: "success",
       });
     } catch (error) {
+      // 422 表示这段音频不可用：服务端 detail 已经是给用户看的中文句子，直接展示。
       const message = error?.message || "这次没生成成功，请再试一次。";
-      this.setData({
-        error: message,
-        voiceCloneStatusLabel: message,
-      });
+      this._applyVoiceCloneState(voiceCloneStatusData(message));
+      this.setData({ error: message });
     } finally {
       this.setData({ voiceSampleBusy: false });
     }
