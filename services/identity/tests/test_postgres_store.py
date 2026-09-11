@@ -312,6 +312,7 @@ async def test_schema_roles_rls_and_version_chain() -> None:
                     "identity_transfer_intents",
                     "identity_idempotency_records",
                     "identity_persona_assignments",
+                    "identity_custom_personas",
                 }
                 for row in rls:
                     assert bool(row["relrowsecurity"])
