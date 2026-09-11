@@ -18,7 +18,6 @@ from packages.contracts.generated.python.multi_subject_contracts import Capabili
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.agent.src.voice_core.device_security import SignedChallenge
-from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
 from services.common.miniprogram_gateway_ticket import issue_device_gateway_ticket
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
@@ -53,6 +52,7 @@ from services.control_api.app.security import (
     create_session_id,
     optional_authenticated_user,
 )
+from services.control_api.app.session_companion import session_companion
 from services.control_api.app.session_directory import (
     SessionDirectory,
     SessionDirectoryUnavailable,
@@ -675,26 +675,12 @@ async def _create_direct_device_media_session(
     created_at = now.isoformat().replace("+00:00", "Z")
     room_name = f"voice-{session_id}"
     owner = store.get_profile(user_id=account_id, now=created_at)
-    companion = companion_definition(owner.get("companion_id") or DEFAULT_COMPANION_ID)
-    if companion is None:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "companion_profile_unavailable"},
-        )
     device_settings = DeviceSettingsAuthority(store).current(device_id, now=now)
     if device_settings.learning_mode != "off":
         require_capability_for_account_id(account_id, "tutor", store=store)
     session_focus = cast(
         Literal["chat", "tutor_english", "tutor_homework"],
         device_settings.learning_mode if device_settings.learning_mode != "off" else "chat",
-    )
-    frozen = await freeze_companion_delivery(
-        companion=companion,
-        session_focus=session_focus,
-        bio=owner.get("bio"),
-        account_id=account_id,
-        store=store,
-        voice_manager=getattr(request.app.state, "voice_profile_manager", None),
     )
     requested_capabilities: list[CapabilityValue] = ["chat"]
     if device_settings.learning_mode == "tutor_english":
@@ -777,6 +763,30 @@ async def _create_direct_device_media_session(
             status_code=503,
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
+
+    # The conversation speaks as the active subject's persona, which the signed
+    # Runtime Profile names; the account's own companion stays the default.
+    # Resolved only after the profile exists, so a subject switch reaches the
+    # voice and not only the prompt.
+    companion = await session_companion(
+        identity=getattr(request.app.state, "identity_service", None),
+        account_id=account_id,
+        profile_row=owner,
+        runtime_profile=runtime_profile,
+    )
+    if companion is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "companion_profile_unavailable"},
+        )
+    frozen = await freeze_companion_delivery(
+        companion=companion,
+        session_focus=session_focus,
+        bio=owner.get("bio"),
+        account_id=account_id,
+        store=store,
+        voice_manager=getattr(request.app.state, "voice_profile_manager", None),
+    )
 
     # The ticket must carry exactly the authoritative session and binding
     # facts. The active subject comes from that same Runtime Profile and may
@@ -1089,7 +1099,12 @@ async def _resume_direct_device_media_session(
             user_id=account_id,
             now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
-        companion = companion_definition(owner.get("companion_id") or DEFAULT_COMPANION_ID)
+        companion = await session_companion(
+            identity=getattr(request.app.state, "identity_service", None),
+            account_id=account_id,
+            profile_row=owner,
+            runtime_profile=runtime_profile,
+        )
         if companion is not None:
             session_focus = cast(
                 Literal["chat", "tutor_english", "tutor_homework"],

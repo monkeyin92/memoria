@@ -47,6 +47,7 @@ from services.control_api.app.security import (
     require_authenticated_user,
     require_matching_user,
 )
+from services.control_api.app.session_companion import session_companion
 from services.control_api.app.session_directory import (
     SessionDirectory,
     SessionDirectoryUnavailable,
@@ -820,10 +821,24 @@ async def create_session(
     elif legacy_frozen is not None:
         frozen = legacy_frozen
     else:
+        # A device conversation follows the active subject's persona, which the
+        # signed Runtime Profile names.  The account's own companion stays the
+        # default for sessions that carry no profile at all.
+        session_owner = store.get_profile(user_id=user_id, now=created_at)
+        resolved = await session_companion(
+            identity=getattr(request.app.state, "identity_service", None),
+            account_id=user_id,
+            profile_row=session_owner,
+            runtime_profile=runtime_profile,
+        )
+        if resolved is None:
+            raise HTTPException(
+                status_code=409, detail="companion profile is unavailable"
+            )
         frozen = await freeze_companion_delivery(
-            companion=companion,
+            companion=resolved,
             session_focus=body.session_focus,
-            bio=store.get_profile(user_id=user_id, now=created_at).get("bio"),
+            bio=session_owner.get("bio"),
             account_id=user_id,
             store=store,
             voice_manager=getattr(request.app.state, "voice_profile_manager", None),

@@ -1137,10 +1137,32 @@ async def test_direct_reconnect_refreshes_frozen_companion_from_current_profile(
         first_session = memory.get_voice_session_by_id(session_id=str(first.json()["session_id"]))
         assert first_session is not None
         assert first_session["companion_style_id"] == "starlight"
+        # A device conversation speaks as the subject's assigned persona, so
+        # re-pointing that assignment must reach the reconnect.  The account's
+        # own companion is deliberately changed at the same time and must not
+        # drive the device at all.
         memory.update_profile(
             user_id="person_a",
             values={"companion_id": "xuanmo"},
             now=datetime.now(UTC).isoformat(),
+        )
+        reassigned = _signed_runtime_profile(
+            session_id=str(first.json()["session_id"]),
+            actor_id="person_a",
+            device_id=str(manifest["device_id"]),
+            binding_id=str(manifest["binding_id"]),
+            binding_version=int(manifest["binding_version"]),
+            subject_id="person_a",
+            persona_assignment_id="taoxi:v1",
+            persona={
+                "persona_id": "taoxi",
+                "version": 1,
+                "relationship_stage": "new",
+            },
+        )
+        authority.profile = reassigned
+        authority.context = SessionRuntimeContext.from_profile(
+            reassigned, profile_revision=1
         )
         resumed = await _post_direct_media_session(
             client,
@@ -1152,7 +1174,7 @@ async def test_direct_reconnect_refreshes_frozen_companion_from_current_profile(
     assert resumed.json()["session_id"] == first.json()["session_id"]
     refreshed = memory.get_voice_session_by_id(session_id=str(first.json()["session_id"]))
     assert refreshed is not None
-    assert refreshed["companion_style_id"] == "xuanmo"
+    assert refreshed["companion_style_id"] == "taoxi"
 
 
 @pytest.mark.asyncio
