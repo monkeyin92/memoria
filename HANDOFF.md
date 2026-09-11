@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-11
-resume_checkpoint: epoch1900_duplicate_turn_skip_and_second_cue_cut_over_awaiting_device_retest_serial_probe_confirmed_alive
+resume_checkpoint: epoch1900_duplicate_turn_skip_and_second_cue_cut_over_awaiting_device_retest_serial_probe_confirmed_alive_subject_switch_device_notify_control_cut_over
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -84,6 +84,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
+| 切主体触发设备重协商 | 在线设备上从小程序切换使用者后，bridge 出现 `runtime_profile.invalidated`（`apply_at=next_safe_point`），设备安全点重连并加载新 profile；日志出现 `device profile change projected … delivered=true` | 代码已切流（`20260911-subject-switch-device-notify-control-api`），切流时设备离线，待真机 |
 
 **勿做**：宣传全双工；把 `hardware_verified` / `direct_real_device_verified` / `full_duplex_verified` 从刷机、欢迎语或点屏拍击外推为 true；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用；伪造 owner；把未 active 的声纹当主人认证宣传。
 
@@ -222,8 +223,9 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Control API**
 
-- 当前：`memoria-control-api:20260906-1458-account-device-discovery-control-api`，overlay `4a3b91bfa156f946f67b92e0b0ced17fab108a67`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。SQLite `/data/memoria.sqlite3`。收据 `/opt/memoria/component-releases/20260906-1458-account-device-discovery-control-api/`。
-- 回滚：`memoria-control-api:rollback-20260906-1458-account-device-discovery-control-api-pre-control`（原 `20260906-0048-companion-custom-voice-control-api`，image `sha256:6ef47dee3cb779b55a766ea6f392ae8f556315bd5a4322f48caf5fe6624c5b41`）。
+- 当前：`memoria-control-api:20260911-subject-switch-device-notify-control-api`，overlay 源 `b2644124e002d1aac60b1b5a32c336c327af57bc`，image `sha256:2af29dde2e8c6f1f1781bef322fe3b8d7f3b5ea13d3017b191aa443aa58bcebd`。healthy、restart=0、OCI revision 已核对；仅覆盖 `services/control_api/app/routes/device_control.py` 与 `multi_subject.py` 2 个文件，依赖层与有效环境不变。切流 `2026-09-11T04:55:06Z`。收据 `/opt/memoria/component-releases/20260911-subject-switch-device-notify-control-api/`。
+- 回滚：`memoria-control-api:rollback-20260911-subject-switch-device-notify-control-api-pre-control`（原 `20260906-1458-account-device-discovery-control-api`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`）。
+- 切主体现在会推进设备可见的 profile 版本并通知 Edge：`POST /v1/sessions/{session_id}/active-subject` 提交后调用 `project_device_profile_change`，在 `device_runtime_profile_ledger` 上按稳定指纹推进版本，只有真正变化时才向 Edge 发 `runtime_profile.invalidated`（`apply_at=next_safe_point`）。重复确认同一主体仍只提升 session_epoch，不推进设备版本、不重复通知；Edge 不可达只记日志并延后，不影响已提交的切换。真机端到端未验（切流时设备 `connected=false`）。
 - 现网设备 `dev_atk_a4cb8fd6095c` 已改为 `audio_mode=interrupt_assist`（settings_version 12）。Control 镜像未切新设备默认值，旧票据不会自行升档。
 
 **其它运行事实**
