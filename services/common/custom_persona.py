@@ -37,3 +37,26 @@ def parse_custom_persona(bio: object) -> CustomPersona:
     if not name or not text:
         return CustomPersona(active=False)
     return CustomPersona(active=True, name=name, text=text)
+
+
+def clear_custom_persona_marker(bio: object) -> str:
+    """Return ``bio`` with the encoded custom-persona block removed.
+
+    Deterministic and idempotent, with no LLM involved: a bio without the
+    marker is returned byte-for-byte, and the migration never fabricates a
+    persona.  ``parse_custom_persona`` reads the encoded body trimmed and
+    capped at ``MAX_TEXT``, so the block ends at that boundary; anything the
+    writer placed after it is preserved (there is none today -- the Mini
+    Program overwrites the whole bio with the encoded block).
+    """
+
+    raw = str(bio or "")
+    if not raw.startswith(MARKER):
+        return raw
+    after_marker = raw[len(MARKER) :].removeprefix("\n")
+    _header, separator, body = after_marker.partition("\n---\n")
+    if not separator:
+        return ""
+    encoded = body.strip()[:MAX_TEXT]
+    block_end = (len(raw) - len(body)) + len(encoded)
+    return raw[block_end:]

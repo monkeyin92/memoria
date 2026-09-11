@@ -11,6 +11,7 @@ import pytest
 from packages.contracts.generated.python.multi_subject_contracts import ServiceMode
 from services.agent.src.persona_renderer import (
     IdentityObligation,
+    PersonaDefinition,
     parse_obligation_event,
     parse_persona_definition,
 )
@@ -30,7 +31,28 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     UNKNOWN_SAFE_OBLIGATIONS,
     canonical_wire_payload,
 )
-from services.common.companions import COMPANIONS
+from services.common.companions import COMPANIONS, CompanionDefinition
+
+CUSTOM_PERSONA_ID = "cu_" + "a" * 26
+
+
+def _custom_companion() -> CompanionDefinition:
+    return CompanionDefinition(
+        companion_id=CUSTOM_PERSONA_ID,
+        display_name="小北",
+        style_description="像朋友一样说话",
+        warmth="warm",
+        directness="gentle",
+        response_length="brief",
+        question_frequency="rare",
+        interview_depth="light",
+        designed_voice_profile="warm_companion",
+        welcome_text="嗨，我是小北。",
+        conversation_instruction="说话短一点，像朋友。",
+        voice_instruction="轻松自然",
+        default_voice_emotion="neutral",
+        default_voice_rate=1.0,
+    )
 
 SECTION_HEADERS = (
     "【不可变安全底线】",
@@ -400,3 +422,46 @@ def test_blank_task_is_omitted() -> None:
     prompt = _full_prompt(task="   ")
     assert prompt.task is None
     assert "【本轮任务】" not in prompt.system
+
+
+def _custom_profile() -> VerifiedRuntimeProfile:
+    return _profile(
+        persona_assignment_id=f"{CUSTOM_PERSONA_ID}:v1",
+        persona={
+            "persona_id": CUSTOM_PERSONA_ID,
+            "version": 1,
+            "relationship_stage": "familiar",
+        },
+    )
+
+
+def test_custom_persona_renders_through_the_same_companion_path() -> None:
+    """T-B⑤: built-in and custom personas hit ONE render function."""
+
+    builtin = persona_definition_from_companion(COMPANIONS["starlight"])
+    custom = persona_definition_from_companion(_custom_companion())
+    assert isinstance(builtin, PersonaDefinition)
+    assert isinstance(custom, PersonaDefinition)
+    assert custom.persona_id == CUSTOM_PERSONA_ID
+    assert custom.display_name == "小北"
+
+    composed = compose_production_prompt(
+        profile=_custom_profile(), custom_persona=_custom_companion()
+    )
+    assert composed.persona_id == CUSTOM_PERSONA_ID
+    persona_block = composed.system.split("【人格】")[1].split("【服务模式】")[0]
+    assert "小北" in persona_block
+    assert "星澜" not in persona_block
+
+
+def test_custom_persona_requires_the_signed_persona_id_to_match() -> None:
+    """A mismatched envelope must degrade, never override the signed persona."""
+
+    composed = compose_production_prompt(
+        profile=_profile(), custom_persona=_custom_companion()
+    )
+    assert composed.persona_id == "starlight"
+
+    unknown = compose_production_prompt(profile=_custom_profile())
+    assert unknown.persona_id == "default"
+    assert "伙伴" in unknown.system

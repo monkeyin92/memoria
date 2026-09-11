@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 from services.agent.src.prompts import AI_IDENTITY_RULE_TRANSPARENT
 from services.control_api.app.routes.interaction import _instruction_text
+from services.identity.domain import CustomPersonaRecord
+from services.persona.custom_persona_fields import custom_persona_definition
 
 
 def _frozen() -> SimpleNamespace:
@@ -53,18 +55,42 @@ def test_response_plan_instruction_uses_agent_identity_transparency_rule() -> No
     assert "星澜" in joined
 
 
-def test_response_plan_instruction_uses_custom_persona_name() -> None:
-    from services.common.custom_persona import CustomPersona
+def _custom_definition():
+    record = CustomPersonaRecord(
+        persona_id="cu_" + "a" * 26,
+        owner_person_id="owner-1",
+        display_name="小北",
+        style_description="像朋友一样说话",
+        warmth="warm",
+        directness="gentle",
+        response_length="brief",
+        question_frequency="rare",
+        interview_depth="light",
+        welcome_text="嗨，我是小北。",
+        conversation_instruction="说话短一点，像朋友。",
+        voice_instruction="轻松自然",
+        default_voice_emotion="neutral",
+        default_voice_rate=1.0,
+        fallback_designed_voice="starlight",
+        persona_version=1,
+        source="user_created",
+        created_at=datetime(2026, 9, 11, tzinfo=UTC),
+    )
+    return custom_persona_definition(record)
 
+
+def test_response_plan_instruction_uses_custom_persona_name() -> None:
     rules, _ = _instruction_text(
         frozen=_frozen(),  # type: ignore[arg-type]
         plan=_plan(),  # type: ignore[arg-type]
         query="你是谁？",
         now=datetime(2026, 8, 9, tzinfo=UTC),
-        custom_persona=CustomPersona(active=True, name="小北", text="说话短一点，像朋友。"),
+        custom_persona=_custom_definition(),
     )
     joined = rules if isinstance(rules, str) else "\n".join(rules)
     assert "小北" in joined
+    # The controlled conversation_instruction renders through the SAME path as
+    # a built-in companion -- never the old free-text bio injection.
     assert "说话短一点，像朋友。" in joined
     assert "星澜" not in joined
     assert "桃喜" not in joined

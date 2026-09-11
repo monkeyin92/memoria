@@ -54,6 +54,7 @@ def production_system_prompt(runtime: DuplexRuntime) -> str:
         focus=runtime.mode_policy.session_focus,
         memory_block=None,
         metrics=runtime.orchestrator.metrics,
+        custom_persona=runtime.mode_policy.custom_persona,
     )
     return composed.system
 

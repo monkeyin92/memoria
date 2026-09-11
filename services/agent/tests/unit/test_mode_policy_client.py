@@ -704,3 +704,104 @@ async def test_bad_or_missing_policy_fails_closed(payload: dict[str, object], st
     assert policy.allows_private_context("owner") is False
     assert policy.allows_tools("owner") is False
     assert policy.owner_projection_eligible("owner") is False
+
+
+CUSTOM_PERSONA_ID = "cu_" + "a" * 26
+
+
+def _custom_envelope() -> dict[str, object]:
+    from datetime import UTC, datetime
+
+    from services.identity.domain import CustomPersonaRecord
+    from services.persona.custom_persona_fields import custom_persona_envelope
+
+    record = CustomPersonaRecord(
+        persona_id=CUSTOM_PERSONA_ID,
+        owner_person_id="account-1",
+        display_name="小北",
+        style_description="像朋友一样说话",
+        warmth="warm",
+        directness="gentle",
+        response_length="brief",
+        question_frequency="rare",
+        interview_depth="light",
+        welcome_text="嗨，我是小北。",
+        conversation_instruction="说话短一点，像朋友。",
+        voice_instruction="轻松自然",
+        default_voice_emotion="neutral",
+        default_voice_rate=1.0,
+        fallback_designed_voice="starlight",
+        persona_version=1,
+        source="user_created",
+        created_at=datetime(2026, 9, 11, tzinfo=UTC),
+    )
+    return custom_persona_envelope(record)
+
+
+def _signed_custom_payload(**overrides: object) -> dict[str, object]:
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        canonical_wire_payload,
+    )
+
+    payload = {
+        **_payload(companion_style_id=None, companion_style_version=None),
+        "runtime_profile": canonical_wire_payload(
+            session_id="ses_custom_persona",
+            service_mode="adult_companion",
+            subject_category="adult",
+            age_band="adult",
+            active_subject_id="person-owner",
+            speaker_state="confirmed",
+            session_epoch=1,
+            capabilities=["chat"],
+            persona={
+                "persona_id": CUSTOM_PERSONA_ID,
+                "version": 1,
+                "relationship_stage": "familiar",
+            },
+        ),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_signed_custom_persona_uses_the_internal_envelope() -> None:
+    from services.agent.tests.unit.runtime_profile_test_helpers import TEST_VERIFY_KEY
+
+    policy = ModePolicyClient._parse(
+        _signed_custom_payload(custom_persona=_custom_envelope()),
+        TEST_VERIFY_KEY,
+    )
+
+    assert policy.available is True
+    assert policy.mode == "companion"
+    assert policy.companion_style_id == CUSTOM_PERSONA_ID
+    assert policy.custom_persona is not None
+    assert policy.custom_persona.display_name == "小北"
+    assert policy.custom_persona.designed_voice_profile == "warm_companion"
+    assert policy.companion_style_prompt is not None
+    assert "说话短一点，像朋友。" in policy.companion_style_prompt
+
+
+def test_signed_custom_persona_without_a_matching_envelope_fails_closed() -> None:
+    from services.agent.tests.unit.runtime_profile_test_helpers import TEST_VERIFY_KEY
+
+    missing = ModePolicyClient._parse(_signed_custom_payload(), TEST_VERIFY_KEY)
+    assert missing.available is False
+    assert missing.unavailable_reason == "companion_style_invalid"
+
+    mismatched = ModePolicyClient._parse(
+        _signed_custom_payload(custom_persona=_custom_envelope() | {"persona_id": "cu_" + "b" * 26}),
+        TEST_VERIFY_KEY,
+    )
+    assert mismatched.available is False
+    assert mismatched.unavailable_reason == "companion_style_invalid"
+
+
+def test_unknown_internal_envelope_key_does_not_trip_the_legacy_parser() -> None:
+    """mode_policy_client tolerates the new key: the legacy branch is a SUBSET check."""
+
+    policy = ModePolicyClient._parse(_payload(custom_persona=_custom_envelope()))
+
+    assert policy.available is True
+    assert policy.mode == "companion"

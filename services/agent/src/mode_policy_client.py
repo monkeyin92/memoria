@@ -19,7 +19,13 @@ from services.agent.src.runtime_profile import (
     VerifiedRuntimeProfile,
     parse_runtime_profile,
 )
-from services.common.companions import COMPANION_STYLE_VERSION, companion_definition
+from services.common.companions import (
+    COMPANION_STYLE_VERSION,
+    CompanionDefinition,
+    companion_definition,
+)
+from services.identity.domain import is_custom_persona_id
+from services.persona.custom_persona_fields import companion_definition_from_envelope
 from services.tutor.domain import SESSION_FOCUSES, SessionFocus
 
 InteractionMode = Literal[
@@ -95,6 +101,10 @@ class ModePolicy:
     session_focus: SessionFocus | None = "chat"
     runtime_profile: VerifiedRuntimeProfile | None = None
     runtime_profile_version: int = 0
+    # The internal control->agent bypass for a custom persona's structured
+    # body: it never enters the signed RuntimeProfile (design §1.2).  It is
+    # accepted only when its ``companion_id`` matches the signed persona id.
+    custom_persona: CompanionDefinition | None = None
 
     @property
     def available(self) -> bool:
@@ -104,7 +114,7 @@ class ModePolicy:
     def companion_style_prompt(self) -> str | None:
         if self.available and self.mode == "companion" and self.companion_style is not None:
             prompt = self.companion_style.prompt_fragment()
-            definition = companion_definition(self.companion_style_id)
+            definition = self.custom_persona or companion_definition(self.companion_style_id)
             if definition is not None:
                 prompt += f"\n- 具体表达规则：{definition.conversation_instruction}"
             return prompt
@@ -339,7 +349,18 @@ def mode_policy_after_identity_rotation(
         style_version = COMPANION_STYLE_VERSION
     if not isinstance(style_id, str) or not isinstance(style_version, str):
         return derived
-    style = _style_for(style_id, style_version)
+    custom_persona: CompanionDefinition | None = None
+    style: CompanionStyle | None
+    if is_custom_persona_id(style_id):
+        # A custom persona's structured body is carried by the internal
+        # envelope, never the signed profile -- reuse the frozen definition
+        # across an identity rotation instead of dropping it.
+        custom_persona = previous.custom_persona
+        if custom_persona is None or custom_persona.companion_id != style_id:
+            return derived
+        style = _style_from_definition(custom_persona)
+    else:
+        style = _style_for(style_id, style_version)
     if style is None:
         return derived
     references = dict(derived.references)
@@ -351,6 +372,7 @@ def mode_policy_after_identity_rotation(
         companion_style_id=style_id,
         style_version=style_version,
         companion_style=style,
+        custom_persona=custom_persona,
         references=tuple(sorted(references.items())),
     )
 
@@ -730,12 +752,32 @@ class ModePolicyClient:
 
         style_id = payload.get("companion_style_id")
         style_version = payload.get("companion_style_version")
+        custom_persona: CompanionDefinition | None = None
+        style: CompanionStyle | None
         if expected_mode == "companion":
+            signed_persona_id = runtime_profile.profile.persona_id
             if style_id is None:
-                style_id = runtime_profile.profile.persona_id
+                style_id = signed_persona_id
             if style_version is None:
                 style_version = COMPANION_STYLE_VERSION
-            style = _style_for(style_id, style_version)
+            if is_custom_persona_id(signed_persona_id):
+                # The signed profile froze a custom persona id; its structured
+                # body is an UNSIGNED internal envelope keyed exactly to that
+                # id.  Absent or mismatched -> fail closed, so a stale/forged
+                # envelope can never render a persona the profile did not pick,
+                # and a built-in is never silently substituted.
+                custom_persona = companion_definition_from_envelope(
+                    payload.get("custom_persona")
+                )
+                if (
+                    custom_persona is None
+                    or custom_persona.companion_id != signed_persona_id
+                ):
+                    return ModePolicy.unavailable("companion_style_invalid")
+                style_id = signed_persona_id
+                style = _style_from_definition(custom_persona)
+            else:
+                style = _style_for(style_id, style_version)
             if style is None:
                 return ModePolicy.unavailable("companion_style_invalid")
         else:
@@ -797,6 +839,7 @@ class ModePolicyClient:
             companion_style_id=cast(str | None, style_id),
             style_version=cast(str | None, style_version),
             companion_style=style,
+            custom_persona=custom_persona,
             references=references,
             session_focus=cast(SessionFocus, session_focus),
             runtime_profile_version=runtime_profile_version,
@@ -891,12 +934,13 @@ def _valid_sha256(value: Any) -> bool:
     )
 
 
-def _style_for(style_id: object, style_version: object) -> CompanionStyle | None:
-    if not _bounded_string(style_id) or style_version != COMPANION_STYLE_VERSION:
-        return None
-    definition = companion_definition(style_id)
-    if definition is None:
-        return None
+def _style_from_definition(definition: CompanionDefinition) -> CompanionStyle:
+    """Project any approved companion surface (built-in OR custom) to a style.
+
+    This is the single adapter that lets a custom persona bind TTS exactly like
+    a built-in one.
+    """
+
     return CompanionStyle(
         display_name=definition.display_name,
         style_description=definition.style_description,
@@ -906,3 +950,12 @@ def _style_for(style_id: object, style_version: object) -> CompanionStyle | None
         question_frequency=definition.question_frequency,
         interview_depth=definition.interview_depth,
     )
+
+
+def _style_for(style_id: object, style_version: object) -> CompanionStyle | None:
+    if not _bounded_string(style_id) or style_version != COMPANION_STYLE_VERSION:
+        return None
+    definition = companion_definition(style_id)
+    if definition is None:
+        return None
+    return _style_from_definition(definition)

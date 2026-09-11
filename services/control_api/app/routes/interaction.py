@@ -30,10 +30,10 @@ from services.common.companion_response_safety import fixed_companion_reply
 from services.common.companions import (
     COMPANION_STYLE_VERSION,
     DESIGNED_VOICE_MODEL,
+    CompanionDefinition,
     companion_definition,
 )
 from services.common.crisis_policy import CrisisRoute, crisis_semantic_candidate, route_crisis
-from services.common.custom_persona import CustomPersona, parse_custom_persona
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
@@ -86,6 +86,12 @@ from services.guardian.retention import (
     apply_memory_retention_ceiling,
     memory_retention_allowed,
 )
+from services.identity.domain import (
+    CustomPersonaRecord,
+    IdentityNotFoundError,
+    is_custom_persona_id,
+)
+from services.identity.service import IdentityService
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -95,6 +101,10 @@ from services.legacy.domain import (
     LegacyManifestItemRef,
     LegacyNotFoundError,
     LegacyRegistryPort,
+)
+from services.persona.custom_persona_fields import (
+    custom_persona_definition,
+    custom_persona_envelope,
 )
 from services.persona.domain import PersonaCapsule, PersonaEnginePort, PersonaRequest
 from services.self_model.domain import (
@@ -294,6 +304,42 @@ def _response_plan_fingerprint(body: ResponsePlanRequest) -> str:
 
 def _store(request: Request) -> MemoryStore:
     return cast(MemoryStore, request.app.state.memory_store)
+
+
+def _identity(request: Request) -> IdentityService:
+    return cast(IdentityService, request.app.state.identity_service)
+
+
+async def _owner_custom_persona_record(
+    request: Request,
+    *,
+    persona_id: object,
+    owner_person_id: str,
+) -> CustomPersonaRecord | None:
+    """Resolve one owner-scoped custom persona, or ``None`` (never cross-account)."""
+    if not is_custom_persona_id(persona_id):
+        return None
+    try:
+        return await _identity(request).get_custom_persona(
+            str(persona_id),
+            owner_person_id=owner_person_id,
+            actor_person_id=owner_person_id,
+        )
+    except IdentityNotFoundError:
+        return None
+
+
+async def _custom_persona_definition(
+    request: Request,
+    *,
+    persona_id: object,
+    owner_person_id: str,
+) -> CompanionDefinition | None:
+    """Adapt a custom persona for the SAME render path as a built-in companion."""
+    record = await _owner_custom_persona_record(
+        request, persona_id=persona_id, owner_person_id=owner_person_id
+    )
+    return custom_persona_definition(record) if record is not None else None
 
 
 async def _account_memory_retention_allowed(
@@ -605,6 +651,22 @@ async def session_policy(
             # This stays on the internal Agent policy path. The Agent adds it
             # only after the current speaker is confirmed as the account owner.
             policy["owner_display_name"] = display_name.strip()
+        persona_snapshot = runtime_profile.get("persona")
+        persona_id = (
+            persona_snapshot.get("persona_id")
+            if isinstance(persona_snapshot, dict)
+            else None
+        )
+        # The custom persona's structured body is an internal control->agent
+        # bypass keyed to the SIGNED persona id: it never enters the signed
+        # RuntimeProfile (design increment-02 §1.2).  A guest/unconfirmed
+        # subject resolves to the built-in binding default, so it never lands
+        # here; a mismatched envelope fails closed on the agent side.
+        custom_persona_record = await _owner_custom_persona_record(
+            request, persona_id=persona_id, owner_person_id=account_id
+        )
+        if custom_persona_record is not None:
+            policy["custom_persona"] = custom_persona_envelope(custom_persona_record)
     profile_capabilities = {
         str(value)
         for value in runtime_profile.get("capabilities", ())
@@ -1537,22 +1599,18 @@ def _instruction_text(
     now: datetime,
     evolution_artifacts: tuple[ResolvedEvolutionArtifact, ...] = (),
     tutor_directive: str | None = None,
-    custom_persona: CustomPersona | None = None,
+    custom_persona: CompanionDefinition | None = None,
 ) -> tuple[str, tuple[ResolvedEvolutionArtifact, ...]]:
     rules = [*plan.instructions.safety_rules, *plan.instructions.style_rules]
-    companion = companion_definition(frozen.companion_style_id)
-    if frozen.interaction_mode == "companion" and custom_persona is not None and custom_persona.active:
-        rules.append(
-            f"你当前就是用户自定义的陪伴机器人“{custom_persona.name}”。对外只使用这个名字，"
-            f"不要自称目录里的其他伙伴。"
-        )
-        rules.append(AI_IDENTITY_RULE_TRANSPARENT)
-        rules.append(
-            "用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”"
-            "但自伤、轻生或正在发生的紧迫危险属于危机支持，绝不能用“我不知道”拒答。"
-        )
-        rules.append(f"具体表达规则：{custom_persona.text}")
-    elif frozen.interaction_mode == "companion" and companion is not None:
+    # Built-in and custom personas share ONE render path: resolve whichever
+    # approved CompanionDefinition applies, then render it identically.  A
+    # custom persona only contributes its controlled fields -- never free text.
+    companion = (
+        custom_persona
+        if custom_persona is not None
+        else companion_definition(frozen.companion_style_id)
+    )
+    if frozen.interaction_mode == "companion" and companion is not None:
         rules.append(
             f"你当前就是用户选定的陪伴机器人“{companion.display_name}”。对外只使用这个名字，"
             f"角色说明：{companion.style_description}。"
@@ -1629,7 +1687,7 @@ def _response_plan_payload(
     evolution_receipt_secret: str | None = None,
     evolution_protocol: str = "",
     tutor_directive: str | None = None,
-    custom_persona: CustomPersona | None = None,
+    custom_persona: CompanionDefinition | None = None,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -2045,6 +2103,13 @@ async def response_plan(
             companion_items=companion_items,
         )
         plan = _with_fixed_reply(plan, fixed_reply)
+        # A custom persona (cu_*) contributes the SAME CompanionDefinition the
+        # built-in catalogue would; the old bio free-text form is gone.
+        custom_persona = await _custom_persona_definition(
+            request,
+            persona_id=frozen.companion_style_id,
+            owner_person_id=account_id,
+        )
         try:
             with account_gate.sync_read(account_id):
                 deleting = await asyncio.to_thread(evolution_store.is_account_deleting, account_id)
@@ -2063,14 +2128,7 @@ async def response_plan(
                     evolution_receipt_secret=settings.evolution_internal_token(),
                     evolution_protocol=evolution_protocol,
                     tutor_directive=tutor_directive,
-                    custom_persona=parse_custom_persona(
-                        _store(request)
-                        .get_profile(
-                            user_id=account_id,
-                            now=now.isoformat().replace("+00:00", "Z"),
-                        )
-                        .get("bio")
-                    ),
+                    custom_persona=custom_persona,
                 )
                 cached_payload = await cache.put(key, fingerprint, payload)
         except AccountDeletingError as exc:

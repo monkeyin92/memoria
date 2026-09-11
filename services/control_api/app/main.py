@@ -63,6 +63,7 @@ from services.control_api.app.multi_subject_runtime import (
 from services.control_api.app.routes import account_insights as account_insights_routes
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
+from services.control_api.app.routes import custom_personas as custom_personas_routes
 from services.control_api.app.routes import device_control as device_control_routes
 from services.control_api.app.routes import device_onboarding as device_onboarding_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
@@ -166,6 +167,7 @@ from services.memory_scope.wiring import (
     build_memory_router,
     install_memory_production,
 )
+from services.persona.custom_persona_structurer import QwenCustomPersonaStructurer
 from services.persona.domain import PersonaEnginePort
 from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
@@ -405,6 +407,28 @@ def _persona_extractor(settings: ControlSettings) -> PersonaExtractor:
             workspace_id=settings.dashscope_workspace_id,
         ),
         fallback,
+    )
+
+
+def _persona_structurer(
+    settings: ControlSettings,
+) -> QwenCustomPersonaStructurer | None:
+    """Build the custom-persona structurer, or ``None`` when unmocked/offline.
+
+    Without authority the endpoint returns ``503 persona_structuring_
+    unavailable`` and the client hand-fills the same controlled fields
+    (PRD P1-2), so no free-text ever reaches a prompt.
+    """
+
+    api_key = settings.dashscope_api_key.get_secret_value()
+    if settings.offline_mock or not api_key:
+        return None
+    return QwenCustomPersonaStructurer(
+        api_key=api_key,
+        base_url=settings.dashscope_base_url,
+        model=settings.persona_structuring_model,
+        timeout_s=settings.persona_structuring_timeout_s,
+        workspace_id=settings.dashscope_workspace_id,
     )
 
 
@@ -998,6 +1022,7 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_catalog = memory_catalog
     app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
+    app.state.persona_structurer = _persona_structurer(settings)
     configured_evolution_url = settings.evolution_database_url.get_secret_value().strip()
     if settings.environment == "production" and not configured_evolution_url:
         # ``validate_production`` normally catches this first; keep the
@@ -1430,6 +1455,7 @@ def create_app() -> FastAPI:
     app.include_router(device_control_routes.internal_router)
     app.include_router(identity_lifecycle_routes.router)
     app.include_router(persona_routes.router)
+    app.include_router(custom_personas_routes.router)
     app.include_router(digital_self_routes.router)
     app.include_router(evolution_routes.router)
     app.include_router(self_preview_routes.router)

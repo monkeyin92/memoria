@@ -421,7 +421,10 @@ def compose_system_prompt(
     )
 
 
-def _persona_for_profile(profile: VerifiedRuntimeProfile | None) -> PersonaDefinition:
+def _persona_for_profile(
+    profile: VerifiedRuntimeProfile | None,
+    custom_persona: CompanionDefinition | None = None,
+) -> PersonaDefinition:
     """Resolve the style-only persona from the signed profile (P0-4).
 
     The RuntimeProfile's frozen ``persona_id``/``persona_assignment_id`` is
@@ -429,9 +432,19 @@ def _persona_for_profile(profile: VerifiedRuntimeProfile | None) -> PersonaDefin
     unknown/retired persona id degrades to the default safe persona.  Version
     pinning is deferred to a versioned persona catalog; today the approved
     companion catalog resolution is the approval check.
+
+    A custom persona (``cu_*``) is not in the built-in catalogue, so its
+    structured ``CompanionDefinition`` arrives as a side-channel that MUST be
+    keyed to the signed ``persona_id``; it is then rendered by the SAME
+    ``persona_definition_from_companion`` path as any built-in companion.
     """
 
     if profile is not None:
+        if (
+            custom_persona is not None
+            and profile.profile.persona_id == custom_persona.companion_id
+        ):
+            return persona_definition_from_companion(custom_persona)
         definition = companion_definition(profile.profile.persona_id)
         if definition is not None:
             return persona_definition_from_companion(definition)
@@ -515,6 +528,7 @@ def compose_production_prompt(
     memory_block: str | None = None,
     task: str | None = None,
     metrics: MetricsRegistry | None = None,
+    custom_persona: CompanionDefinition | None = None,
 ) -> ComposedPrompt:
     """Compose the production system prompt for one fenced generation.
 
@@ -542,7 +556,7 @@ def compose_production_prompt(
     profile_obligations = render_profile_obligations(profile)
     combined_obligations = (*profile_obligations, *obligations)
     return compose_system_prompt(
-        persona=_persona_for_profile(profile),
+        persona=_persona_for_profile(profile, custom_persona),
         service_mode=service_mode,
         obligations=combined_obligations,
         subject=subject,

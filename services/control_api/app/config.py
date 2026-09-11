@@ -719,6 +719,17 @@ class ControlSettings(BaseSettings):
         le=120.0,
         alias="MEMORIA_MEMORY_EXTRACTION_TIMEOUT_S",
     )
+    persona_structuring_model: str = Field(
+        default="qwen-flash",
+        min_length=1,
+        alias="MEMORIA_PERSONA_STRUCTURING_MODEL",
+    )
+    persona_structuring_timeout_s: float = Field(
+        default=8.0,
+        gt=0.0,
+        le=120.0,
+        alias="MEMORIA_PERSONA_STRUCTURING_TIMEOUT_S",
+    )
 
     deepseek_api_key: SecretStr = Field(default=SecretStr(""), alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
