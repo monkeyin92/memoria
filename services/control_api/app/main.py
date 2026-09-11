@@ -77,6 +77,9 @@ from services.control_api.app.routes import media as media_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import multi_subject as multi_subject_routes
 from services.control_api.app.routes import persona as persona_routes
+from services.control_api.app.routes import (
+    persona_assignment as persona_assignment_routes,
+)
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import self_model as self_model_routes
 from services.control_api.app.routes import self_preview as self_preview_routes
@@ -1450,6 +1453,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(build_memory_router())
     app.include_router(multi_subject_routes.router)
+    app.include_router(persona_assignment_routes.router)
     app.include_router(device_onboarding_routes.router)
     app.include_router(device_control_routes.router)
     app.include_router(device_control_routes.internal_router)
