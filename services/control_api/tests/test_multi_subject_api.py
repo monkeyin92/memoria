@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.device_binding_token import mint_device_binding_token
+from services.control_api.app.device_control import RuntimeProfileLedger
 from services.control_api.app.main import create_app
 from services.control_api.app.multi_subject_runtime import (
     PolicyActorMismatchError,
@@ -935,6 +936,125 @@ async def test_claimed_person_cannot_change_existing_confirmed_subject(
             headers=headers,
         )
         assert no_new_switch.json()["session_epoch"] == 3
+
+
+@pytest.mark.asyncio
+async def test_switch_active_subject_advances_device_profile_and_notifies_edge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _env(monkeypatch, tmp_path, "subject-device-notify")
+    delivered: list[dict[str, object]] = []
+
+    async def invalidate(**payload: object) -> dict[str, object]:
+        delivered.append(dict(payload))
+        return {"delivered": True}
+
+    app.state.device_runtime_invalidator = invalidate
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "subject-device-notify-owner")
+        child_id = await _bind_family(
+            client,
+            app,
+            owner=owner,
+            device_id="device-subject-notify",
+            nonce="claim-subject-notify",
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        unresolved = await client.get(
+            "/v1/devices/device-subject-notify/runtime-profile",
+            headers=headers,
+        )
+        assert unresolved.status_code == 200
+        session_id = unresolved.json()["session_id"]
+        store = app.state.memory_store
+        before = RuntimeProfileLedger(store).current("device-subject-notify")
+        assert before is not None
+
+        switched = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": child_id, "confirmation_method": "app_confirm"},
+        )
+        assert switched.status_code == 200
+        profile = switched.json()
+        assert profile["active_subject_id"] == child_id
+
+        after = RuntimeProfileLedger(store).current("device-subject-notify")
+        assert after is not None
+        assert after.profile_version == before.profile_version + 1
+        assert after.runtime_profile_id == profile["runtime_profile_id"]
+        assert delivered == [
+            {
+                "device_id": "device-subject-notify",
+                "profile_version": after.profile_version,
+                "apply_at": "next_safe_point",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_switch_to_same_subject_does_not_renotify_edge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _env(monkeypatch, tmp_path, "subject-idempotent")
+    delivered: list[dict[str, object]] = []
+
+    async def invalidate(**payload: object) -> dict[str, object]:
+        delivered.append(dict(payload))
+        return {"delivered": True}
+
+    app.state.device_runtime_invalidator = invalidate
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "subject-idempotent-owner")
+        child_id = await _bind_family(
+            client,
+            app,
+            owner=owner,
+            device_id="device-subject-idempotent",
+            nonce="claim-subject-idempotent",
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        unresolved = await client.get(
+            "/v1/devices/device-subject-idempotent/runtime-profile",
+            headers=headers,
+        )
+        session_id = unresolved.json()["session_id"]
+
+        first = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": child_id, "confirmation_method": "app_confirm"},
+        )
+        assert first.status_code == 200
+        assert len(delivered) == 1
+
+        # Re-confirming the already active subject rotates the epoch but leaves
+        # the stable profile identity unchanged, so the device version must not
+        # advance and Edge must not be woken again.
+        store = app.state.memory_store
+        version_after_first = RuntimeProfileLedger(store).current(
+            "device-subject-idempotent"
+        )
+        assert version_after_first is not None
+        second = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": child_id, "confirmation_method": "app_confirm"},
+        )
+        assert second.status_code == 200
+        assert second.json()["session_epoch"] > first.json()["session_epoch"]
+        version_after_second = RuntimeProfileLedger(store).current(
+            "device-subject-idempotent"
+        )
+        assert version_after_second is not None
+        assert version_after_second.profile_version == version_after_first.profile_version
+        assert len(delivered) == 1
 
 
 @pytest.mark.asyncio

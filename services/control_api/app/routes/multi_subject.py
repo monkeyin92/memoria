@@ -32,6 +32,7 @@ from services.control_api.app.multi_subject_runtime import (
     SubjectNotBindingMemberError,
     SubjectSwitchForbiddenError,
 )
+from services.control_api.app.routes.device_control import project_device_profile_change
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.subject_verification import ensure_account_person
 from services.device_fleet.bootstrap_domain import (
@@ -683,8 +684,16 @@ async def switch_active_subject(
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
     if isinstance(control, PostgresMultiSubjectRuntimeControl):
-        return control.serialize_profile(profile)
-    return control.serialize_profile(cast(RuntimeProfile, profile))
+        payload = control.serialize_profile(profile)
+    else:
+        payload = control.serialize_profile(cast(RuntimeProfile, profile))
+    # The switch has committed in the Session authority. Project the new
+    # profile onto the device-visible ledger and ask Edge to rotate an online
+    # device at its next safe point, so "who is using it" reaches the running
+    # conversation instead of waiting for the next natural negotiate. Failure
+    # is deferred, never re-raised: the switch itself already succeeded.
+    await project_device_profile_change(request, payload=payload, now=now)
+    return payload
 
 
 @router.post("/v1/policy/decisions")

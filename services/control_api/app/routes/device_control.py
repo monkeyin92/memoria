@@ -13,6 +13,7 @@ from __future__ import annotations
 import hmac
 import logging
 import ssl
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 
@@ -35,6 +36,7 @@ from services.control_api.app.device_control import (
     ProfileAckConflictError,
     RuntimeProfileLedger,
     allowed_audio_modes,
+    stable_profile_fingerprint,
 )
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.security import (
@@ -239,6 +241,67 @@ async def _invalidate_active_device_session(
         )
         return False
     return bool(result["delivered"])
+
+
+async def project_device_profile_change(
+    request: Request,
+    *,
+    payload: Mapping[str, object],
+    now: datetime,
+    apply_at: Literal[
+        "next_safe_point", "next_session", "immediate_fail_closed"
+    ] = "next_safe_point",
+) -> bool:
+    """Project one committed Runtime Profile onto its device and wake it.
+
+    The device-visible version advances only when the profile's stable
+    fingerprint changes, so replaying an identical change stays silent. A real
+    advance asks the Edge to rotate an online device at the selected safe
+    point; an unreachable Edge is logged and reported as not delivered but never
+    raised, because the Session authority has already committed and the device
+    still observes the new version at its next natural negotiation.
+    """
+
+    store = getattr(request.app.state, "memory_store", None)
+    if not isinstance(store, MemoryStore):
+        return False
+    device_id = str(payload.get("device_id") or "")
+    runtime_profile_id = str(payload.get("runtime_profile_id") or "")
+    issued_at = payload.get("issued_at")
+    expires_at = payload.get("expires_at")
+    if not device_id or not runtime_profile_id or not issued_at or not expires_at:
+        logger.warning("device profile projection skipped: incomplete profile payload")
+        return False
+    ledger = RuntimeProfileLedger(store)
+    previous = ledger.current(device_id)
+    try:
+        entry = ledger.observe(
+            device_id=device_id,
+            runtime_profile_id=runtime_profile_id,
+            content_fingerprint=stable_profile_fingerprint(payload),
+            issued_at=datetime.fromisoformat(str(issued_at).replace("Z", "+00:00")),
+            expires_at=datetime.fromisoformat(str(expires_at).replace("Z", "+00:00")),
+            now=now,
+        )
+    except Exception:
+        logger.exception("device profile projection failed device_id=%s", device_id)
+        return False
+    if previous is not None and entry.profile_version == previous.profile_version:
+        return False
+    delivered = await _invalidate_active_device_session(
+        request,
+        device_id=device_id,
+        profile_version=entry.profile_version,
+        apply_at=apply_at,
+    )
+    logger.info(
+        "device profile change projected device_id=%s version=%s delivered=%s apply_at=%s",
+        device_id,
+        entry.profile_version,
+        delivered,
+        apply_at,
+    )
+    return delivered
 
 
 def _edge_internal_client_config(
