@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-10
-resume_checkpoint: epoch1900_duplicate_turn_skip_and_second_cue_cut_over_awaiting_device_retest
+as_of_date: 2026-09-11
+resume_checkpoint: epoch1900_duplicate_turn_skip_and_second_cue_cut_over_awaiting_device_retest_serial_probe_confirmed_alive
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -52,7 +52,9 @@ epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（1
    - 第一轮（`b83e9b7` / 组件 `20260910-1526`）：只给 **deep result 前缀** 加了会话级去重 `_live_lookup_filler_already_audible`，没门控 ACK 本身的发出，所以 1899 仍听到两遍。该轮修复本身有效（1899 的 `generation-4` 前缀已被剥掉）。
    - 第二轮（`df41596` / 组件 `20260910-1820`）：把 `_live_lookup_filler_already_audible` 也用作 **ACK 发出**的闸门，并新增 `_forget_live_lookup_filler` 在委派交付答案时释放「本次查询突发」记忆，保证之后的新提问仍会播自己的提示。复现测试 `test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack`（断言 ACK 只发一次，修前 2 == 1 红、修后绿）。
    - 遗留取舍：重复提交若在 ACK 播完前抢占它，用户会听到**一句被截短的**提示且不重播（例如 1899 的 1.19s）。要「完整播一遍」，得让重复提交不抢占正在播的 ACK，属 turn-commit 层改动，本轮未做。
-2. **聆听中残留**。1897 靠 `owner_silence_timeout`（15.3s）关闭；1899 已改为 `conversation_end_explicit` 关闭——告别路由这轮生效了，但**屏上仍停留 15~18s**：18:30:42.42 进入 `user_speaking` 后，两次 `media turn discarded after ASR tail timeout`（endpoint 153920 / 248000，均 `empty+vendor_silent`）耗掉约 14s，直到 59.51 才拿出 `text_len=2`（「再见」）并关闭。1899 那几段音频 rms 292~1231、无削波（1897 是 rms 2226~6098 且削波），即**不是回声污染，是没转出文本**。根因仍需设备侧串口证据（`/dev/cu.usbmodem101` 目前可打开但长时间零输出，已确认 USB 已枚举为 `USB JTAG/serial debug unit`，是芯片侧没往控制台写）。
+2. **聆听中残留**。1897 靠 `owner_silence_timeout`（15.3s）关闭；1899 已改为 `conversation_end_explicit` 关闭——告别路由这轮生效了，但**屏上仍停留 15~18s**：18:30:42.42 进入 `user_speaking` 后，两次 `media turn discarded after ASR tail timeout`（endpoint 153920 / 248000，均 `empty+vendor_silent`）耗掉约 14s，直到 59.51 才拿出 `text_len=2`（「再见」）并关闭。被判空的两段并不相同：endpoint 153920 那段 `rms 1231 / peak_abs 32768 / provider_pcm_clipping_detected=true`，endpoint 248000 那段才是 `rms 292 / 无削波`。所以「1899 无削波、不是回声污染」不能作为整体结论，第一段确实削波。是否真的落在播放窗口内无法从现有材料判定（epoch 1899 的 tap WAV 当时未下载，服务器 `/tmp/media-pcm-tap` 已随容器重建清空），复测时按「媒体与音频」一节记 `provider_pcm_rms` + `provider_pcm_clipping_detected`。
+
+串口结论也要改：`/dev/cu.usbmodem101` 实测正常，固件每 10s 输出一条 `SystemInfo`（probe 证据 `outputs/acceptance/run-20260911-serial-probe/serial-probe.log`，40s 收到 4 条），且 `MemoriaProtocol: Device VAD start/end` 在 2026-09-09 的串口抓取里有先例（`outputs/acceptance/run-20260909-0943-face/serial-follow.log`）。1899/1900 两次复测**根本没挂串口抓取**——`run-20260910-weather-goodbye/serial-follow.log` 停在上午 10:19，`retest-*` 只有 bridge 日志。所谓「芯片侧没往控制台写」是没抓，不是没写。
 
 epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化生效（`generation-2` 是唯一 ACK），但量出「问完到开口」的间隔问题，两处：
 
@@ -77,13 +79,77 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 1899/1900 真机已确认单次化；`20260910-1844` 已切 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | `20260910-1855` + `20260910-1905` 已切：重复话轮不再掐断提示音、慢查询补第二句。**真机确认「答案一定到达」**——跳过重复话轮改变了交付话轮，若出现问完无答案立即回滚 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | `20260910-1905` 已切（`THINKING_FILLER` 接回 `media_session_projection`，不再受 agent.py 行预算限制），待真机复测 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s 且音频未削波），需带串口取证 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
 
 **勿做**：宣传全双工；把 `hardware_verified` / `direct_real_device_verified` / `full_duplex_verified` 从刷机、欢迎语或点屏拍击外推为 true；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用；伪造 owner；把未 active 的声纹当主人认证宣传。
+
+### 20260910-1905 复测清单
+
+先决条件（1899/1900 就是漏了第 1 步，串口全程没挂）：
+
+1. **会前一分钟**挂串口采集，确认 15s 内至少出现一条 `SystemInfo` 心跳；没有心跳就别开始，先查 USB 与波特率。用系统 `python3`（有 pyserial；`uv run` 的 venv 没有）。把下面存成 `$RUN/capture_serial.py` 后后台起：
+
+```python
+import sys, time, serial
+dest = open(sys.argv[1], "ab", buffering=0)
+with serial.Serial("/dev/cu.usbmodem101", 460800, timeout=0.5) as ser:
+    while True:
+        chunk = ser.readline()
+        if chunk:
+            dest.write(b"[" + time.strftime("%H:%M:%S").encode() + b"] " + chunk)
+```
+
+```bash
+RUN=outputs/acceptance/run-$(date +%Y%m%d-%H%M)-1905-retest
+mkdir -p "$RUN"
+nohup python3 "$RUN/capture_serial.py" "$RUN/serial.raw" >"$RUN/capture.out" 2>&1 &
+echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
+```
+
+先决条件 1 已本机实测：40s 收到 4 条心跳，原始输出 `outputs/acceptance/run-20260911-serial-probe/serial-probe.log`。
+
+2. 挂 bridge 日志：`ssh memoria-prod "docker logs -f memoria-voice-core-media-bridge-1 --since $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$RUN/bridge.log"`。
+3. 记录 `--since` 那个 UTC 时刻；收尾用同一时刻 `docker logs <container> --since` 落盘，不靠模糊时间窗。
+
+场景（按序；每句等回复**完全播完**再问下一句，判据都对 1905 已切但未真机验的两处修复）：
+
+| # | 说什么 | 判据 |
+| --- | --- | --- |
+| 1 | 唤醒后问「今天南京天气怎么样。」 | 只听到**一遍**「稍等，我查询一下。」；不得 >1.5s 纯静音；答案必须到达 |
+| 2 | 隔几秒再问一句天气类 | 新提问仍播自己的提示音（5s 窗口只挡同一突发的兄弟提交） |
+| 3 | 问「今天星期几。」 | 快查询直接出正文，**不**多等 2.5s、不补第二句提示 |
+| 4 | 天气播报中途说「好的，再见」 | 串口 `MemoriaProtocol: Device VAD start`；bridge `conversation_end_explicit`；屏回待命月牙；BOOT 仍可硬停 |
+| 5 | **正文播完、彻底安静后**再说「好的，再见」 | 应立刻关闭回待命，不靠 `owner_silence_timeout`（10s）。**主目标**，1899 未达成 |
+| 6 | 唤醒问候后说一句较长的话 | 整句听完；允许串口 `Dropping server packet`，不得 `playback.error` 一字卡断 |
+| 7 | 主人与非主人各说一句 | 主人轮通过；非主人不放行；不得放宽 `reject_non_owner_voice` |
+
+日志判据（bridge 侧）：
+
+- 每个 turn 恰有一次 `media reply delivery … event=first_frame_sent`；同一问题出现两次提交/两次 ACK 即失败。
+- 说完到首个 `first_frame_sent` 间隔 ≤1.5s；出现 `event=preempted … first_frame_sent=False`（提示音被掐）即失败。
+- 场景 5 应出现 `media final did not start reply … reason=conversation_end_explicit`，且**不**应再出现 `media turn discarded after ASR tail timeout`。
+- `media_asr_boundary` 里同时记 `provider_pcm_clipping_detected` 与 `provider_pcm_rms`；播放窗口内仍削波就记下该 `endpoint`，这是回声而不是 vendor 空转写。
+
+回滚判据与命令：
+
+对话轮次出现以下任一就回滚到 1855（重复话轮跳过改变了交付话轮，风险最高）：问完没有答案（无 `emitted_audio=True`）；同一问题被跳过两次以上导致回复丢失；提示音反复被掐或连播两遍重现。命令已在本机用 `--config --images` 验证可解析到回滚镜像：
+
+```bash
+cd /opt/memoria/releases/20260827-architecture-split-v1
+sudo env MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist \
+  MEMORIA_RELEASE_COMMIT=7ca3d4ec531305d968d67ef1bb13b944e566e4cf \
+  docker compose --project-name memoria \
+  --file docker-compose.production.yml \
+  --file /opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/pre-cutover-live.override.yml \
+  --file /opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/agent-component.rollback.override.yml \
+  --profile media-runtime up -d --no-deps --no-build agent voice-core-media-bridge
+```
+
+回滚梯每级镜像都已确认在位（以镜像 ID 为准，标签顺序会骗人）：`1905`（`ec0a813b`）→`1855`（`60882217`）→`1844`（`bb45c232`）→`1820`（`329e70ad`）→`1526`（`bddced4e`）→`1011`（`d17673e5`）。每级的 `rollback-<tag>-agent-component-pre-agent/-pre-bridge` 正好指向前一级，链条自洽。
 
 ## 屏幕表情：对话脸
 
