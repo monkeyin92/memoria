@@ -14,9 +14,10 @@ import hmac
 import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import cast
 
 import asyncpg
@@ -271,6 +272,11 @@ class _LockedBindingEvidence:
         return self.status == "active" and self.valid_from <= now < self.valid_until
 
 
+#: Bindings without subject overrides share one immutable empty mapping, so a
+#: frozen ``_LockedBinding`` never needs a mutable default.
+_NO_PERSONA_ASSIGNMENTS: Mapping[str, str] = MappingProxyType({})
+
+
 @dataclass(frozen=True, slots=True)
 class _LockedBinding:
     evidence: _LockedBindingEvidence
@@ -280,6 +286,19 @@ class _LockedBinding:
     account_owner_person_id: str
     policy_bundle_version: str
     persona_assignment_id: str
+    persona_assignments: Mapping[str, str] = _NO_PERSONA_ASSIGNMENTS
+
+    def persona_for(self, subject_id: str | None) -> str:
+        """Subject override first, binding default second (never fail-open).
+
+        The order is fixed here and nowhere else: every reader of a locked
+        binding resolves a persona through this one method.
+        """
+        if subject_id is not None:
+            override = self.persona_assignments.get(subject_id)
+            if override is not None:
+                return override
+        return self.persona_assignment_id
 
     @property
     def snapshot(self) -> BindingSnapshot:
@@ -495,7 +514,29 @@ def _parse_locked_binding(value: object) -> _LockedBinding:
         persona_assignment_id=_required_string(
             raw.get("persona_assignment_id"), name="persona assignment"
         ),
+        persona_assignments=_parse_persona_assignments(raw),
     )
+
+
+def _parse_persona_assignments(raw: Mapping[str, object]) -> dict[str, str]:
+    """Subject overrides from the lock port; absent/legacy payloads are empty.
+
+    A binding built before the subject-level table existed has no
+    ``persona_assignments`` key at all, which is exactly "no overrides": the
+    binding default still applies, so rolling the schema forward cannot
+    change an existing device's persona.
+    """
+    value = raw.get("persona_assignments")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise PersistentSessionUnavailable("persona assignments are unavailable")
+    parsed: dict[str, str] = {}
+    for subject_id, assignment_id in value.items():
+        parsed[str(subject_id)] = _required_string(
+            assignment_id, name="persona assignment"
+        )
+    return parsed
 
 
 class _PostgresIdentityAuthority:
@@ -1214,7 +1255,8 @@ class PostgresSessionRuntimeService:
             if receipt.effect.value not in {"allow", "allow_with_obligations"}
         )
         allowed_receipts = tuple(item[1] for item in allowed)
-        persona_id, persona_version = _persona_snapshot(binding.persona_assignment_id)
+        persona_assignment_id = binding.persona_for(resolution.active_subject_id)
+        persona_id, persona_version = _persona_snapshot(persona_assignment_id)
         unsigned = RuntimeProfileV2.model_validate(
             {
                 "signature_schema": "runtime-profile-v2",
@@ -1231,7 +1273,7 @@ class PostgresSessionRuntimeService:
                 "speaker_state": resolution.speaker_state,
                 "speaker_confidence": resolution.speaker_confidence,
                 "service_mode": service_mode,
-                "persona_assignment_id": binding.persona_assignment_id,
+                "persona_assignment_id": persona_assignment_id,
                 "persona": {
                     "persona_id": persona_id,
                     "version": persona_version,

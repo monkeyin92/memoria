@@ -274,7 +274,12 @@ class InMemoryRuntimeAuthority:
     ) -> None:
         self._bindings = {item.device_id: item for item in bindings}
         self._subjects = {item.subject_id: item for item in subjects}
+        # ``personas`` stays the binding-agnostic fallback used by tests and
+        # development composition; per-binding defaults and subject overrides
+        # are the production shape and always win.
         self._personas = personas
+        self._persona_defaults: dict[str, PersonaAssignment] = {}
+        self._persona_overrides: dict[tuple[str, str], PersonaAssignment] = {}
         self._profiles: dict[str, RuntimeProfile] = {}
         self._profile_history: dict[str, RuntimeProfile] = {}
 
@@ -290,12 +295,57 @@ class InMemoryRuntimeAuthority:
     def upsert_subject(self, subject: SubjectFacts) -> None:
         self._subjects[subject.subject_id] = subject
 
-    def persona(self, *, subject_id: str | None) -> PersonaAssignment | None:
-        del subject_id
+    def persona(
+        self, *, binding_id: str, subject_id: str | None
+    ) -> PersonaAssignment | None:
+        """Subject override, then the binding default, then the global one.
+
+        This order is the single resolution rule; a subject that has no
+        override never inherits another subject's persona.
+        """
+        if subject_id is not None:
+            override = self._persona_overrides.get((binding_id, subject_id))
+            if override is not None:
+                return override
+        default = self._persona_defaults.get(binding_id)
+        if default is not None:
+            return default
         return self._personas[0] if self._personas else None
 
-    def upsert_persona(self, persona: PersonaAssignment) -> None:
-        self._personas = (persona,)
+    def upsert_persona(
+        self,
+        persona: PersonaAssignment,
+        *,
+        binding_id: str | None = None,
+        subject_id: str | None = None,
+    ) -> None:
+        """Write a subject override, a binding default, or the global fallback.
+
+        Omitting both keys keeps the legacy single-persona behaviour used by
+        tests; ``binding_id`` alone writes that binding's default, and both
+        together write the one override for that subject.
+        """
+        if binding_id is None:
+            self._personas = (persona,)
+            return
+        if subject_id is None:
+            self._persona_defaults[binding_id] = persona
+            return
+        self._persona_overrides[(binding_id, subject_id)] = persona
+
+    def clear_persona(self, *, binding_id: str, subject_id: str) -> None:
+        """Drop one override so the binding default applies again."""
+        self._persona_overrides.pop((binding_id, subject_id), None)
+
+    def reset_binding_personas(self, *, binding_id: str) -> None:
+        """Forget every persona fact for one binding before a re-read.
+
+        A refresh must not leave an override that the identity authority has
+        since dropped, so the default and all overrides are cleared together.
+        """
+        self._persona_defaults.pop(binding_id, None)
+        for key in [key for key in self._persona_overrides if key[0] == binding_id]:
+            del self._persona_overrides[key]
 
     def save_profile(self, profile: RuntimeProfile) -> None:
         self._profiles[profile.session_id] = profile
@@ -424,7 +474,9 @@ class RuntimeProfileService:
             subject_category=category,
             age_band=age_band,
         )
-        persona = self.authority.persona(subject_id=resolution.active_subject_id)
+        persona = self.authority.persona(
+            binding_id=binding.binding_id, subject_id=resolution.active_subject_id
+        )
         if persona is None:
             raise LookupError("persona assignment is unavailable")
         profile_id = self._profile_id_factory()

@@ -48,6 +48,21 @@ _REQUESTED_CAPABILITIES: tuple[Capability, ...] = tuple(
     value.value for value in ALL_CAPABILITY_VALUES
 )
 
+_DEFAULT_PERSONA_ASSIGNMENT_ID = "starlight:v1"
+
+
+def _persona_assignment(assignment_id: str) -> PersonaAssignment:
+    """Parse the canonical ``"{persona_id}:v{n}"`` assignment snapshot."""
+    persona_id, _, version_text = assignment_id.partition(":v")
+    if not persona_id:
+        return _persona_assignment(_DEFAULT_PERSONA_ASSIGNMENT_ID)
+    return PersonaAssignment(
+        assignment_id=assignment_id,
+        persona_id=persona_id,
+        persona_version=int(version_text) if version_text.isdigit() else 1,
+        relationship_stage="new",
+    )
+
 
 def _canonical_runtime_profile_id() -> str:
     return f"rp_{uuid.uuid4()}"
@@ -470,17 +485,19 @@ class MultiSubjectRuntimeControl:
         for person_id in member_ids:
             person = await self.identity.get_person(person_id)
             self.authority.upsert_subject(self._subject_facts(person))
-        assignment_id = manifest.persona_assignment_id or "starlight:v1"
-        persona_id, _, version_text = assignment_id.partition(":v")
-        persona_version = int(version_text) if version_text.isdigit() else 1
+        assignment_id = manifest.persona_assignment_id or _DEFAULT_PERSONA_ASSIGNMENT_ID
+        self.authority.reset_binding_personas(binding_id=manifest.binding_id)
         self.authority.upsert_persona(
-            PersonaAssignment(
-                assignment_id=assignment_id,
-                persona_id=persona_id or "starlight",
-                persona_version=persona_version,
-                relationship_stage="new",
-            )
+            _persona_assignment(assignment_id), binding_id=manifest.binding_id
         )
+        for record in await self.identity.list_persona_assignments(
+            binding_id=manifest.binding_id
+        ):
+            self.authority.upsert_persona(
+                _persona_assignment(record.assignment_id),
+                binding_id=manifest.binding_id,
+                subject_id=record.subject_id,
+            )
 
     @staticmethod
     def _subject_facts(person: PersonSubject) -> SubjectFacts:

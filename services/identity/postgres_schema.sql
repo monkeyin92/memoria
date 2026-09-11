@@ -305,6 +305,28 @@ CREATE TABLE IF NOT EXISTS identity_idempotency_records (
     PRIMARY KEY (scope_key, idempotency_key)
 );
 
+-- Subject-level persona override.  ``(binding_id, subject_id)`` is the key:
+-- a subject holds at most one persona on a binding, and a missing row means
+-- "no override" (the binding default ``persona_assignment_id`` applies).
+-- ``assignment_id`` is the canonical ``"{persona_id}:v{n}"`` snapshot the
+-- signed Runtime Profile carries, so a persona never has two spellings.
+CREATE TABLE IF NOT EXISTS identity_persona_assignments (
+    binding_id TEXT NOT NULL
+        REFERENCES identity_device_bindings(binding_id) ON DELETE RESTRICT,
+    subject_id TEXT NOT NULL CHECK (char_length(subject_id) BETWEEN 1 AND 128),
+    assignment_id TEXT NOT NULL CHECK (
+        char_length(assignment_id) BETWEEN 1 AND 64
+    ),
+    persona_id TEXT NOT NULL CHECK (char_length(persona_id) BETWEEN 1 AND 32),
+    persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (binding_id, subject_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_subject
+ON identity_persona_assignments(subject_id);
+
 -- Current function signatures are upgraded in place.  RLS policies and
 -- triggers retain dependencies on these objects after the first install, so
 -- dropping them would make this forward-only schema impossible to replay.
@@ -437,6 +459,28 @@ CREATE TRIGGER identity_transfer_core_immutable
 BEFORE UPDATE ON identity_transfer_intents
 FOR EACH ROW EXECUTE FUNCTION identity_transfer_core_immutable_guard();
 
+-- A persona override may be re-pointed at another persona, but its identity
+-- (which binding, which subject, when it was first assigned) never changes.
+CREATE OR REPLACE FUNCTION identity_persona_assignment_core_immutable_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $identity_persona_immutable$
+BEGIN
+    IF (to_jsonb(NEW) - ARRAY[
+        'assignment_id', 'persona_id', 'persona_version', 'updated_at'
+    ]) IS DISTINCT FROM (to_jsonb(OLD) - ARRAY[
+        'assignment_id', 'persona_id', 'persona_version', 'updated_at'
+    ]) THEN
+        RAISE EXCEPTION 'identity persona assignment identity is immutable';
+    END IF;
+    RETURN NEW;
+END
+$identity_persona_immutable$;
+
+DROP TRIGGER IF EXISTS identity_persona_assignment_core_immutable
+ON identity_persona_assignments;
+CREATE TRIGGER identity_persona_assignment_core_immutable
+BEFORE UPDATE ON identity_persona_assignments
+FOR EACH ROW EXECUTE FUNCTION identity_persona_assignment_core_immutable_guard();
+
 CREATE OR REPLACE FUNCTION identity_delete_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $identity_delete$
 BEGIN
@@ -474,6 +518,12 @@ CREATE TRIGGER identity_transfers_delete_guard
 BEFORE DELETE ON identity_transfer_intents
 FOR EACH ROW EXECUTE FUNCTION identity_delete_guard();
 
+-- ``identity_persona_assignments`` deliberately has no delete guard: dropping
+-- an override is the ordinary "this person no longer has a persona of their
+-- own" operation (the binding default takes over), not record erasure.  The
+-- row still carries a FOREIGN KEY to its binding, so the account deletion
+-- pipeline remains the only way to remove the binding itself.
+
 ALTER TABLE identity_persons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_persons FORCE ROW LEVEL SECURITY;
 ALTER TABLE identity_relationships ENABLE ROW LEVEL SECURITY;
@@ -490,6 +540,8 @@ ALTER TABLE identity_transfer_intents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_transfer_intents FORCE ROW LEVEL SECURITY;
 ALTER TABLE identity_idempotency_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_idempotency_records FORCE ROW LEVEL SECURITY;
+ALTER TABLE identity_persona_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity_persona_assignments FORCE ROW LEVEL SECURITY;
 
 -- FORCE RLS also applies to the dedicated table owner.  SECURITY DEFINER
 -- authority ports therefore use an explicit owner-only policy while still
@@ -508,7 +560,8 @@ BEGIN
         'identity_audit_events',
         'identity_outbox',
         'identity_transfer_intents',
-        'identity_idempotency_records'
+        'identity_idempotency_records',
+        'identity_persona_assignments'
     ] LOOP
         EXECUTE format(
             'DROP POLICY IF EXISTS identity_owner_full ON %I', v_table
@@ -1565,12 +1618,56 @@ CREATE TRIGGER identity_persons_update_audit_trigger
 AFTER UPDATE ON identity_persons
 FOR EACH ROW EXECUTE FUNCTION identity_audit_person_update_event();
 
+CREATE OR REPLACE FUNCTION identity_audit_persona_assignment_event()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE
+    v_actor text;
+    v_row jsonb;
+    v_action text;
+BEGIN
+    v_actor := NULLIF(current_setting('app.identity_actor', true), '');
+    v_row := to_jsonb(COALESCE(NEW, OLD));
+    v_action := CASE TG_OP
+        WHEN 'INSERT' THEN 'binding.persona_assignment.set'
+        WHEN 'UPDATE' THEN 'binding.persona_assignment.set'
+        ELSE 'binding.persona_assignment.delete'
+    END;
+    INSERT INTO identity_audit_events (
+        event_id, action, actor_person_id, subject_person_id,
+        person_id, device_id, binding_id, relationship_id,
+        payload_json, created_at
+    ) VALUES (
+        'evt:persona:' || gen_random_uuid()::text, v_action, v_actor,
+        v_row ->> 'subject_id', v_row ->> 'subject_id',
+        (
+            SELECT b.device_id FROM identity_device_bindings b
+            WHERE b.binding_id = v_row ->> 'binding_id'
+        ),
+        v_row ->> 'binding_id', NULL, v_row,
+        COALESCE(
+            NULLIF(v_row ->> 'updated_at', '')::timestamptz,
+            NULLIF(v_row ->> 'created_at', '')::timestamptz,
+            now()
+        )
+    );
+    RETURN COALESCE(NEW, OLD);
+END
+$$;
+
+DROP TRIGGER IF EXISTS identity_persona_assignments_audit_trigger
+    ON identity_persona_assignments;
+CREATE TRIGGER identity_persona_assignments_audit_trigger
+AFTER INSERT OR UPDATE OR DELETE ON identity_persona_assignments
+FOR EACH ROW EXECUTE FUNCTION identity_audit_persona_assignment_event();
+
 -- Trigger functions are only callable by their triggers, but they are still
 -- SECURITY DEFINER and are revoked from PUBLIC for defense in depth.
 REVOKE ALL ON FUNCTION identity_audit_relationship_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_binding_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_transfer_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_person_update_event() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_audit_persona_assignment_event() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION identity_person_exists(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_next_binding_version(text) FROM PUBLIC;
@@ -1638,6 +1735,11 @@ BEGIN
         GRANT EXECUTE ON FUNCTION identity_next_binding_version(text)
             TO memoria_identity;
         GRANT SELECT, INSERT, UPDATE ON identity_transfer_intents TO memoria_identity;
+        -- Persona overrides are ordinary subject preferences: the API role
+        -- may write and drop them, and an audit row is synthesized by the
+        -- trigger.  DELETE is granted only for this table.
+        GRANT SELECT, INSERT, UPDATE, DELETE ON identity_persona_assignments
+            TO memoria_identity;
         -- Audit, outbox and idempotency writes go through the SECURITY
         -- DEFINER write ports only; a forged GUC must never unlock raw DML.
         REVOKE INSERT, UPDATE ON identity_idempotency_records FROM memoria_identity;
@@ -1766,6 +1868,20 @@ BEGIN
                 )
             );
 
+        DROP POLICY IF EXISTS identity_api_persona_assignments
+            ON identity_persona_assignments;
+        CREATE POLICY identity_api_persona_assignments
+            ON identity_persona_assignments
+            TO memoria_identity
+            USING (
+                identity_actor() IS NOT NULL
+                AND identity_binding_visible(identity_actor(), binding_id)
+            )
+            WITH CHECK (
+                identity_actor() IS NOT NULL
+                AND identity_binding_manage_allowed(identity_actor(), binding_id)
+            );
+
         DROP POLICY IF EXISTS identity_api_audit ON identity_audit_events;
         CREATE POLICY identity_api_audit ON identity_audit_events
             TO memoria_identity
@@ -1879,6 +1995,8 @@ BEGIN
             TO memoria_identity_migration;
         GRANT SELECT, INSERT, UPDATE ON identity_transfer_intents
             TO memoria_identity_migration;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON identity_persona_assignments
+            TO memoria_identity_migration;
         GRANT SELECT, INSERT ON identity_idempotency_records
             TO memoria_identity_migration;
         GRANT SELECT, INSERT ON identity_audit_events TO memoria_identity_migration;
@@ -1919,6 +2037,14 @@ BEGIN
             ON identity_idempotency_records;
         CREATE POLICY identity_migration_idempotency
             ON identity_idempotency_records
+            TO memoria_identity_migration
+            USING (identity_scope() = 'migration')
+            WITH CHECK (identity_scope() = 'migration');
+
+        DROP POLICY IF EXISTS identity_migration_persona_assignments
+            ON identity_persona_assignments;
+        CREATE POLICY identity_migration_persona_assignments
+            ON identity_persona_assignments
             TO memoria_identity_migration
             USING (identity_scope() = 'migration')
             WITH CHECK (identity_scope() = 'migration');

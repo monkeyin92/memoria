@@ -147,6 +147,7 @@ _ACTION_EXECUTOR_TABLES = frozenset(
         "identity_persons",
         "identity_device_bindings",
         "identity_device_binding_roles",
+        "identity_persona_assignments",
         "device_fleet_devices",
         "device_fleet_certificates",
         "device_fleet_attestations",

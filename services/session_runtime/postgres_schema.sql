@@ -2145,6 +2145,13 @@ BEGIN
         'policy_bundle_version', binding_row.policy_bundle_version,
         'consent_snapshot_id', binding_row.consent_snapshot_id,
         'persona_assignment_id', binding_row.persona_assignment_id,
+        'persona_assignments', COALESCE((
+            SELECT jsonb_object_agg(
+                a.subject_id, a.assignment_id
+            )
+            FROM identity_persona_assignments a
+            WHERE a.binding_id = binding_row.binding_id
+        ), '{}'::jsonb),
         'roles', COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
                 'person_id', r.person_id,

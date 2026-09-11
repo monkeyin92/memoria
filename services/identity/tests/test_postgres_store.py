@@ -309,6 +309,7 @@ async def test_schema_roles_rls_and_version_chain() -> None:
                     "identity_outbox",
                     "identity_transfer_intents",
                     "identity_idempotency_records",
+                    "identity_persona_assignments",
                 }
                 for row in rls:
                     assert bool(row["relrowsecurity"])
@@ -1705,4 +1706,280 @@ async def test_age_authority_raw_update_blocked_and_verification_action_level() 
             )
     finally:
         await store.close()
+        await _drop_database(database)
+
+
+@pytest.mark.asyncio
+async def test_persona_assignments_are_subject_scoped_persistent_and_rls_bounded() -> None:
+    database = f"memoria_persona_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 8, 12, 9, 0, tzinfo=UTC)
+        owner = (
+            await service.register_person(
+                display_name="主人",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-persona-owner",
+                now=now,
+            )
+        ).person_id
+        child = (
+            await service.register_person(
+                display_name="孩子",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-persona-child",
+                now=now,
+            )
+        ).person_id
+        plain_member = (
+            await service.register_person(
+                display_name="成员",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-persona-member",
+                now=now,
+            )
+        ).person_id
+        binding = await service.create_binding(
+            device_id=f"persona-device-{uuid.uuid4().hex[:8]}",
+            declared_mode="family_shared",
+            account_owner_person_id=owner,
+            primary_subject_ids=(owner, child, plain_member),
+            family_space_id=f"family-{uuid.uuid4().hex[:8]}",
+            service_profile_version="self-v1",
+            policy_bundle_version="policy-self-v1",
+            persona_assignment_id="starlight:v1",
+            now=now,
+        )
+
+        # Two subjects on one binding resolve to two different personas.
+        child_row = await service.set_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=child,
+            persona_selection="taoxi",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=1),
+        )
+        owner_row = await service.set_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=owner,
+            persona_selection="mianmian:v1",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=1),
+        )
+        assert (child_row.persona_id, child_row.assignment_id) == ("taoxi", "taoxi:v1")
+        assert (owner_row.persona_id, owner_row.assignment_id) == (
+            "mianmian",
+            "mianmian:v1",
+        )
+        assert child_row.persona_id != owner_row.persona_id
+
+        # An exact replay is idempotent: the persisted row is returned unchanged.
+        replay = await service.set_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=child,
+            persona_selection="taoxi",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=2),
+        )
+        assert replay == child_row
+
+        # Re-pointing at another persona keeps created_at and moves updated_at.
+        repointed = await service.set_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=child,
+            persona_selection="axu",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=3),
+        )
+        assert repointed.assignment_id == "axu:v1"
+        assert repointed.created_at == child_row.created_at
+        assert repointed.updated_at > child_row.updated_at
+
+        listed = await service.list_persona_assignments(
+            binding_id=binding.binding_id, actor_person_id=owner
+        )
+        assert [item.subject_id for item in listed] == sorted([owner, child])
+        assert {
+            item.subject_id: item.persona_id for item in listed
+        } == {owner: "mianmian", child: "axu"}
+
+        # The row survives a fresh store/pool (it is persisted, not cached).
+        reopened = PostgresIdentityStore(dsns["api"], registration_dsn=dsns["registration"])
+        await reopened.initialize(expected_role="memoria_identity")
+        try:
+            reloaded = await reopened.get_persona_assignment(
+                binding_id=binding.binding_id,
+                subject_id=child,
+                actor_person_id=owner,
+            )
+            assert reloaded == repointed
+        finally:
+            await reopened.close()
+
+        admin = await asyncpg.connect(dsns["admin"])
+        api = await asyncpg.connect(dsns["api"])
+        try:
+            # The audit trigger synthesized one row per mutation; the API role
+            # never writes audit rows itself.
+            actions = [
+                str(row["action"])
+                for row in await admin.fetch(
+                    """
+                    SELECT action FROM identity_audit_events
+                    WHERE binding_id = $1
+                      AND action LIKE 'binding.persona_assignment.%'
+                    ORDER BY created_at
+                    """,
+                    binding.binding_id,
+                )
+            ]
+            assert actions == [
+                "binding.persona_assignment.set",
+                "binding.persona_assignment.set",
+                "binding.persona_assignment.set",
+            ]
+            assert await admin.fetchval(
+                "SELECT has_table_privilege('memoria_identity', "
+                "'identity_audit_events', 'INSERT')"
+            ) is False
+            assert await admin.fetchval(
+                "SELECT has_table_privilege('memoria_identity', "
+                "'identity_persona_assignments', 'DELETE')"
+            ) is True
+
+            # A foreign actor is invisible to RLS even with the row id in hand.
+            foreign = (
+                await service.register_person(
+                    display_name="外部用户",
+                    timezone="Asia/Shanghai",
+                    subject_category="adult",
+                    age_band="adult",
+                    age_evidence_status="verified",
+                    age_evidence_id="evidence-persona-foreign",
+                    now=now,
+                )
+            ).person_id
+            await api.fetchval(
+                "SELECT set_config('app.identity_actor', $1, false)", foreign
+            )
+            assert await api.fetch(
+                """
+                SELECT * FROM identity_persona_assignments
+                WHERE binding_id = $1
+                """,
+                binding.binding_id,
+            ) == []
+            with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+                await api.execute(
+                    """
+                    INSERT INTO identity_persona_assignments (
+                        binding_id, subject_id, assignment_id, persona_id,
+                        persona_version, created_at, updated_at
+                    ) VALUES ($1, $2, 'axu:v1', 'axu', 1, $3, $3)
+                    """,
+                    binding.binding_id,
+                    foreign,
+                    now,
+                )
+
+            # A binding member without binding.manage may read, never write.
+            await api.fetchval(
+                "SELECT set_config('app.identity_actor', $1, false)", plain_member
+            )
+            visible = await api.fetch(
+                """
+                SELECT subject_id FROM identity_persona_assignments
+                WHERE binding_id = $1
+                """,
+                binding.binding_id,
+            )
+            assert {str(row["subject_id"]) for row in visible} == {owner, child}
+            with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+                await api.execute(
+                    """
+                    UPDATE identity_persona_assignments
+                    SET persona_id = 'zhiyao', assignment_id = 'zhiyao:v1'
+                    WHERE binding_id = $1 AND subject_id = $2
+                    """,
+                    binding.binding_id,
+                    child,
+                )
+
+            # The identity of an assignment row is immutable even for the
+            # managing owner: only the persona snapshot may move.
+            await api.fetchval(
+                "SELECT set_config('app.identity_actor', $1, false)", owner
+            )
+            with pytest.raises(asyncpg.PostgresError, match="immutable"):
+                await api.execute(
+                    """
+                    UPDATE identity_persona_assignments
+                    SET created_at = $3
+                    WHERE binding_id = $1 AND subject_id = $2
+                    """,
+                    binding.binding_id,
+                    child,
+                    now,
+                )
+            with pytest.raises(asyncpg.PostgresError, match="immutable"):
+                await api.execute(
+                    """
+                    UPDATE identity_persona_assignments
+                    SET subject_id = 'someone-else'
+                    WHERE binding_id = $1 AND subject_id = $2
+                    """,
+                    binding.binding_id,
+                    child,
+                )
+        finally:
+            await admin.close()
+            await api.close()
+
+        # Dropping one override restores only that subject's binding default.
+        assert (
+            await service.delete_persona_assignment(
+                binding_id=binding.binding_id,
+                subject_id=child,
+                actor_person_id=owner,
+                now=now + timedelta(minutes=4),
+            )
+            is True
+        )
+        assert (
+            await service.get_persona_assignment(
+                binding_id=binding.binding_id,
+                subject_id=child,
+                actor_person_id=owner,
+            )
+            is None
+        )
+        assert (
+            await service.delete_persona_assignment(
+                binding_id=binding.binding_id,
+                subject_id=child,
+                actor_person_id=owner,
+                now=now + timedelta(minutes=5),
+            )
+            is False
+        )
+        remaining = await service.list_persona_assignments(
+            binding_id=binding.binding_id, actor_person_id=owner
+        )
+        assert [(item.subject_id, item.persona_id) for item in remaining] == [
+            (owner, "mianmian")
+        ]
+    finally:
+        if store is not None:
+            await store.close()
         await _drop_database(database)

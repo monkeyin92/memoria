@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+from services.common.companions import COMPANION_IDS
 from services.consent.binding_snapshot import (
     BindingConsentCommand,
     BindingConsentRole,
@@ -51,6 +52,7 @@ from services.identity.domain import (
     IdentityNotFoundError,
     ModeConstraintError,
     Permission,
+    PersonaAssignmentRecord,
     PersonSubject,
     Relationship,
     RelationshipLifecycleError,
@@ -60,6 +62,7 @@ from services.identity.domain import (
     SubjectCategory,
     TransferIntent,
     TransferLifecycleError,
+    canonical_persona_assignment_id,
     derive_subject_category,
     has_permission,
     manifest_from_binding,
@@ -77,6 +80,35 @@ def _now(value: datetime | None) -> datetime:
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+# The built-in companion catalogue is the only persona source today.  The
+# frozen per-account custom personas of increment two widen this set; the
+# decision record lives in
+# ``outputs/design/persona-switch-20260911/decision-01-persona-catalogue-freeze.md``.
+_KNOWN_PERSONA_IDS: frozenset[str] = COMPANION_IDS
+_PERSONA_VERSION_PREFIX = ":v"
+
+
+def _resolve_persona_selection(persona_selection: str) -> tuple[str, int]:
+    """Split ``"{persona_id}"`` / ``"{persona_id}:v{n}"`` into its two parts.
+
+    A bare persona id is the first version (``v1``); the canonical assignment
+    id is validated here so no caller can persist a second spelling.
+    """
+    persona_id, separator, raw_version = persona_selection.strip().partition(
+        _PERSONA_VERSION_PREFIX
+    )
+    if persona_id not in _KNOWN_PERSONA_IDS:
+        raise ValueError(f"unknown persona_selection {persona_id!r}")
+    if separator:
+        if not raw_version.isdigit():
+            raise ValueError("persona_selection version must be a positive integer")
+        persona_version = int(raw_version)
+    else:
+        persona_version = 1
+    canonical_persona_assignment_id(persona_id, persona_version)
+    return persona_id, persona_version
 
 
 def _request_hash(**fields: object) -> str:
@@ -1741,6 +1773,136 @@ class IdentityService:
             device_id, actor_person_id=actor_person_id
         )
         return tuple(manifest_from_binding(binding) for binding in bindings)
+
+    # ------------------------------------------------------------------
+    # Persona assignments (binding + subject scoped)
+    # ------------------------------------------------------------------
+
+    async def set_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        persona_selection: str,
+        actor_person_id: str | None = None,
+        now: datetime | None = None,
+    ) -> PersonaAssignmentRecord:
+        """Pin one persona to one subject on one binding.
+
+        ``(binding_id, subject_id)`` is the key: a subject holds at most one
+        persona on a binding.  Replaying the same persona is idempotent and
+        returns the persisted row untouched; a different persona replaces the
+        override while keeping the original ``created_at``.
+
+        Authorization stays in Control API (``_can_switch_subject`` plus
+        ``_is_binding_member``); this facade only enforces that the binding
+        exists and the persona is a known one.
+        """
+        timestamp = _now(now)
+        binding = await self.get_binding(
+            binding_id, actor_person_id=actor_person_id
+        )
+        persona_id, persona_version = _resolve_persona_selection(persona_selection)
+        existing = await self._store.get_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=subject_id,
+            actor_person_id=actor_person_id,
+        )
+        record = PersonaAssignmentRecord(
+            binding_id=binding.binding_id,
+            subject_id=subject_id,
+            assignment_id=canonical_persona_assignment_id(
+                persona_id, persona_version
+            ),
+            persona_id=persona_id,
+            persona_version=persona_version,
+            created_at=existing.created_at if existing is not None else timestamp,
+            updated_at=timestamp,
+        )
+        payload: dict[str, object] = record.to_dict()
+        if existing is not None:
+            payload["previous_persona_id"] = existing.persona_id
+        return await self._store.upsert_persona_assignment(
+            record,
+            audit_event=AuditEvent(
+                event_id=_new_id(),
+                action="binding.persona_assignment.set",
+                actor_person_id=actor_person_id,
+                subject_person_id=subject_id,
+                person_id=subject_id,
+                device_id=binding.device_id,
+                binding_id=binding.binding_id,
+                relationship_id=None,
+                payload=payload,
+                created_at=timestamp,
+            ),
+            actor_person_id=actor_person_id,
+            scope="api",
+        )
+
+    async def get_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+    ) -> PersonaAssignmentRecord | None:
+        """Return the subject override, or ``None`` for the binding default."""
+        return await self._store.get_persona_assignment(
+            binding_id=binding_id,
+            subject_id=subject_id,
+            actor_person_id=actor_person_id,
+        )
+
+    async def list_persona_assignments(
+        self,
+        *,
+        binding_id: str,
+        actor_person_id: str | None = None,
+    ) -> tuple[PersonaAssignmentRecord, ...]:
+        """Every subject override on one binding, ordered by subject id."""
+        return await self._store.list_persona_assignments(
+            binding_id=binding_id, actor_person_id=actor_person_id
+        )
+
+    async def delete_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Drop a subject override; ``False`` when there was none to drop."""
+        timestamp = _now(now)
+        binding = await self.get_binding(
+            binding_id, actor_person_id=actor_person_id
+        )
+        existing = await self._store.get_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=subject_id,
+            actor_person_id=actor_person_id,
+        )
+        if existing is None:
+            return False
+        return await self._store.delete_persona_assignment(
+            binding_id=binding.binding_id,
+            subject_id=subject_id,
+            audit_event=AuditEvent(
+                event_id=_new_id(),
+                action="binding.persona_assignment.delete",
+                actor_person_id=actor_person_id,
+                subject_person_id=subject_id,
+                person_id=subject_id,
+                device_id=binding.device_id,
+                binding_id=binding.binding_id,
+                relationship_id=None,
+                payload=existing.to_dict(),
+                created_at=timestamp,
+            ),
+            actor_person_id=actor_person_id,
+            scope="api",
+        )
 
     # ------------------------------------------------------------------
     # Internals

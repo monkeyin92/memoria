@@ -855,3 +855,79 @@ def test_runtime_profile_rejects_legacy_or_unknown_obligation_values() -> None:
                 ),
             ),
         )
+
+
+def _assignment(assignment_id: str) -> PersonaAssignment:
+    persona_id, _, version = assignment_id.partition(":v")
+    return PersonaAssignment(
+        assignment_id=assignment_id,
+        persona_id=persona_id,
+        persona_version=int(version) if version.isdigit() else 1,
+        relationship_stage="new",
+    )
+
+
+def test_persona_resolution_is_subject_then_binding_then_global() -> None:
+    """The one resolution order: override, binding default, global fallback."""
+    authority = InMemoryRuntimeAuthority(
+        personas=(_assignment("global:v1"),),
+    )
+    assert authority.persona(binding_id="binding-1", subject_id="person-a") is not None
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-a").assignment_id
+        == "global:v1"
+    )
+
+    authority.upsert_persona(_assignment("starlight:v1"), binding_id="binding-1")
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-a").assignment_id
+        == "starlight:v1"
+    )
+    # Another binding never inherits this one's default.
+    assert (
+        authority.persona(binding_id="binding-2", subject_id="person-a").assignment_id
+        == "global:v1"
+    )
+
+    authority.upsert_persona(
+        _assignment("taoxi:v1"), binding_id="binding-1", subject_id="person-a"
+    )
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-a").assignment_id
+        == "taoxi:v1"
+    )
+    # A second subject on the same binding keeps the binding default.
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-b").assignment_id
+        == "starlight:v1"
+    )
+    # No subject at all (unresolved speaker) is the binding default.
+    assert (
+        authority.persona(binding_id="binding-1", subject_id=None).assignment_id
+        == "starlight:v1"
+    )
+
+    authority.clear_persona(binding_id="binding-1", subject_id="person-a")
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-a").assignment_id
+        == "starlight:v1"
+    )
+
+    # A refresh that drops every subject override must not leave a stale one.
+    authority.reset_binding_personas(binding_id="binding-1")
+    assert (
+        authority.persona(binding_id="binding-1", subject_id="person-a").assignment_id
+        == "global:v1"
+    )
+
+
+def test_locked_binding_persona_for_prefers_the_subject_override() -> None:
+    from services.session_runtime.service import _parse_persona_assignments
+
+    # A legacy lock payload has no key at all: no overrides, default applies.
+    assert _parse_persona_assignments({"persona_assignment_id": "starlight:v1"}) == {}
+    assert _parse_persona_assignments(
+        {"persona_assignments": {"person-b": "taoxi:v1"}}
+    ) == {"person-b": "taoxi:v1"}
+    with pytest.raises(Exception, match="persona assignments are unavailable"):
+        _parse_persona_assignments({"persona_assignments": ["taoxi:v1"]})

@@ -19,6 +19,7 @@ _TABLE_NAMES = {
     "identity_outbox",
     "identity_transfer_intents",
     "identity_idempotency_records",
+    "identity_persona_assignments",
 }
 
 _AUTHORITATIVE_TABLES = frozenset(_TABLE_NAMES)

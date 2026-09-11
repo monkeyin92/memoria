@@ -2699,6 +2699,19 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
                 subject_category="adult",
                 age_band="adult",
             )
+            # The only subject on this binding carries a persona of their own;
+            # the binding default stays starlight:v1.
+            await admin.execute(
+                """
+                INSERT INTO identity_persona_assignments (
+                    binding_id, subject_id, assignment_id, persona_id,
+                    persona_version, created_at, updated_at
+                ) VALUES ($1, $2, 'taoxi:v1', 'taoxi', 1, $3, $3)
+                """,
+                manifest.binding_id,
+                parent_id,
+                now,
+            )
         finally:
             await admin.close()
 
@@ -2729,6 +2742,8 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
         )
         assert current.status_code == 200, current.text
         assert current.json()["runtime_profile_id"] == initial.runtime_profile_id
+        # No active subject yet: the binding default applies.
+        assert initial.persona_assignment_id == "starlight:v1"
 
         resolution = await client.post(
             "/v1/sessions/resolve-subject",
@@ -2755,6 +2770,9 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
         assert switched_profile.actor_id == actor_id
         assert switched_profile.active_subject_id == parent_id
         assert switched_profile.session_epoch == initial.session_epoch + 1
+        # The subject carries their own persona; switching to them switches it.
+        assert switched_profile.persona_assignment_id == "taoxi:v1"
+        assert switched_profile.persona.persona_id == "taoxi"
 
         stale = await client.post(
             "/v1/policy/decisions",

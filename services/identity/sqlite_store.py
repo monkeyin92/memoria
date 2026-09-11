@@ -29,6 +29,7 @@ from services.identity.domain import (
     IdempotencyRecord,
     IdentityConflictError,
     IdentityNotFoundError,
+    PersonaAssignmentRecord,
     PersonStatus,
     PersonSubject,
     Relationship,
@@ -285,6 +286,22 @@ CREATE TABLE IF NOT EXISTS identity_idempotency_records (
 );
 
 
+CREATE TABLE IF NOT EXISTS identity_persona_assignments (
+    binding_id TEXT NOT NULL
+        REFERENCES identity_device_bindings(binding_id) ON DELETE RESTRICT,
+    subject_id TEXT NOT NULL CHECK (length(subject_id) BETWEEN 1 AND 128),
+    assignment_id TEXT NOT NULL CHECK (length(assignment_id) BETWEEN 1 AND 64),
+    persona_id TEXT NOT NULL CHECK (length(persona_id) BETWEEN 1 AND 32),
+    persona_version INTEGER NOT NULL CHECK (persona_version >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (binding_id, subject_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_subject
+ON identity_persona_assignments(subject_id);
+
+
 CREATE TRIGGER IF NOT EXISTS identity_person_core_immutable
 BEFORE UPDATE OF person_id, created_at ON identity_persons
 BEGIN
@@ -339,6 +356,13 @@ CREATE TRIGGER IF NOT EXISTS identity_role_delete_guard
 BEFORE DELETE ON identity_device_binding_roles
 BEGIN
     SELECT RAISE(ABORT, 'identity records require the account deletion pipeline');
+END;
+
+CREATE TRIGGER IF NOT EXISTS identity_persona_assignment_core_immutable
+BEFORE UPDATE OF binding_id, subject_id, created_at
+                 ON identity_persona_assignments
+BEGIN
+    SELECT RAISE(ABORT, 'identity persona assignment identity is immutable');
 END;
 """
 
@@ -1347,6 +1371,121 @@ class SqliteIdentityStore:
         with self._connect() as connection:
             _insert_audit(connection, event)
 
+    async def upsert_persona_assignment(
+        self,
+        record: PersonaAssignmentRecord,
+        *,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord:
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM identity_persona_assignments
+                WHERE binding_id = ? AND subject_id = ?
+                """,
+                (record.binding_id, record.subject_id),
+            ).fetchone()
+            if row is not None and str(row["assignment_id"]) == record.assignment_id:
+                # Idempotent replay: the persisted row wins verbatim.
+                return _persona_assignment(row)
+            persisted = (
+                replace(record, created_at=cast(datetime, _from_iso(row["created_at"])))
+                if row is not None
+                else record
+            )
+            connection.execute(
+                """
+                INSERT INTO identity_persona_assignments (
+                    binding_id, subject_id, assignment_id, persona_id,
+                    persona_version, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(binding_id, subject_id) DO UPDATE SET
+                    assignment_id = excluded.assignment_id,
+                    persona_id = excluded.persona_id,
+                    persona_version = excluded.persona_version,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    persisted.binding_id,
+                    persisted.subject_id,
+                    persisted.assignment_id,
+                    persisted.persona_id,
+                    persisted.persona_version,
+                    _ts(persisted.created_at, field="created_at"),
+                    _ts(persisted.updated_at, field="updated_at"),
+                ),
+            )
+            if audit_event is not None:
+                _insert_audit(connection, audit_event)
+            return persisted
+
+    async def get_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord | None:
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM identity_persona_assignments
+                WHERE binding_id = ? AND subject_id = ?
+                """,
+                (binding_id, subject_id),
+            ).fetchone()
+            return _persona_assignment(row) if row is not None else None
+
+    async def list_persona_assignments(
+        self,
+        *,
+        binding_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[PersonaAssignmentRecord, ...]:
+        self._ready()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM identity_persona_assignments
+                WHERE binding_id = ?
+                ORDER BY subject_id
+                """,
+                (binding_id,),
+            ).fetchall()
+            return tuple(_persona_assignment(row) for row in rows)
+
+    async def delete_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> bool:
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                DELETE FROM identity_persona_assignments
+                WHERE binding_id = ? AND subject_id = ?
+                """,
+                (binding_id, subject_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            if audit_event is not None:
+                _insert_audit(connection, audit_event)
+            return True
+
     async def enqueue_outbox(self, event: OutboxEvent) -> None:
         self._ready()
         with self._connect() as connection:
@@ -1369,6 +1508,18 @@ def _person(row: sqlite3.Row) -> PersonSubject:
         locale=str(row["locale"]),
         timezone=str(row["timezone"]),
         status=cast(PersonStatus, str(row["status"])),
+        created_at=cast(datetime, _from_iso(row["created_at"])),
+        updated_at=cast(datetime, _from_iso(row["updated_at"])),
+    )
+
+
+def _persona_assignment(row: sqlite3.Row) -> PersonaAssignmentRecord:
+    return PersonaAssignmentRecord(
+        binding_id=str(row["binding_id"]),
+        subject_id=str(row["subject_id"]),
+        assignment_id=str(row["assignment_id"]),
+        persona_id=str(row["persona_id"]),
+        persona_version=int(row["persona_version"]),
         created_at=cast(datetime, _from_iso(row["created_at"])),
         updated_at=cast(datetime, _from_iso(row["updated_at"])),
     )

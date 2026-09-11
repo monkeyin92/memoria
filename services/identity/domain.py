@@ -18,10 +18,10 @@ are reusable by the in-memory, SQLite and PostgreSQL adapters.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from packages.contracts.generated.python.multi_subject_contracts import (
     AgeBandValue,
@@ -974,6 +974,97 @@ def manifest_from_dict(value: dict[str, object]) -> BindingManifest:
         )
     except KeyError as exc:
         raise ValueError(f"manifest payload is missing {exc.args[0]}") from exc
+
+
+_MAX_ASSIGNMENT_ID = 64
+_MAX_PERSONA_ID = 32
+
+
+def canonical_persona_assignment_id(persona_id: str, persona_version: int) -> str:
+    """Return the one canonical assignment id form ``"{persona_id}:v{n}"``.
+
+    The same shape is used by the in-memory authority, the signed Runtime
+    Profile payload, and the persisted binding default, so a persona never
+    has two spellings.
+    """
+    normalized = persona_id.strip()
+    if not normalized or len(normalized) > _MAX_PERSONA_ID:
+        raise ValueError("persona_id must be a bounded non-empty string")
+    if persona_version < 1:
+        raise ValueError("persona_version must be >= 1")
+    return f"{normalized}:v{persona_version}"
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaAssignmentRecord:
+    """One subject-level persona override on a device binding.
+
+    ``(binding_id, subject_id)`` is the primary key: a person holds at most
+    one persona on a binding.  ``assignment_id`` is the canonical
+    ``"{persona_id}:v{version}"`` snapshot consumed by the Runtime Profile.
+    A missing row means "no override": the binding default applies.
+    """
+
+    binding_id: str
+    subject_id: str
+    assignment_id: str
+    persona_id: str
+    persona_version: int
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "binding_id", _bounded(self.binding_id, field="binding_id"))
+        object.__setattr__(self, "subject_id", _bounded(self.subject_id, field="subject_id"))
+        object.__setattr__(
+            self,
+            "assignment_id",
+            _bounded(self.assignment_id, field="assignment_id", maximum=_MAX_ASSIGNMENT_ID),
+        )
+        object.__setattr__(
+            self, "persona_id", _bounded(self.persona_id, field="persona_id", maximum=_MAX_PERSONA_ID)
+        )
+        if self.persona_version < 1:
+            raise ValueError("persona_version must be >= 1")
+        if self.assignment_id != canonical_persona_assignment_id(
+            self.persona_id, self.persona_version
+        ):
+            raise ValueError(
+                "assignment_id must equal '{persona_id}:v{persona_version}'"
+            )
+        object.__setattr__(self, "created_at", _utc(self.created_at, field="created_at"))
+        object.__setattr__(self, "updated_at", _utc(self.updated_at, field="updated_at"))
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> PersonaAssignmentRecord:
+        """Build a validated record from a persisted row/mapping."""
+        try:
+            return cls(
+                binding_id=str(value["binding_id"]),
+                subject_id=str(value["subject_id"]),
+                assignment_id=str(value["assignment_id"]),
+                persona_id=str(value["persona_id"]),
+                persona_version=int(str(value["persona_version"])),
+                created_at=cast(
+                    datetime, _optional_datetime(value["created_at"], field="created_at")
+                ),
+                updated_at=cast(
+                    datetime, _optional_datetime(value["updated_at"], field="updated_at")
+                ),
+            )
+        except KeyError as exc:
+            raise ValueError(f"persona assignment payload is missing {exc.args[0]}") from exc
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "binding_id": self.binding_id,
+            "subject_id": self.subject_id,
+            "assignment_id": self.assignment_id,
+            "persona_id": self.persona_id,
+            "persona_version": self.persona_version,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 
 
 def effective_permissions(manifest: BindingManifest, person_id: str) -> frozenset[str]:

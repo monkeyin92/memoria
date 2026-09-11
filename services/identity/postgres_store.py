@@ -31,6 +31,7 @@ from services.identity.domain import (
     IdentityConflictError,
     IdentityNotFoundError,
     Permission,
+    PersonaAssignmentRecord,
     PersonStatus,
     PersonSubject,
     Relationship,
@@ -57,6 +58,7 @@ _REQUIRED_TABLES = frozenset(
         "identity_outbox",
         "identity_transfer_intents",
         "identity_idempotency_records",
+        "identity_persona_assignments",
     }
 )
 
@@ -1687,6 +1689,146 @@ class PostgresIdentityStore:
             "events are synthesized by the business mutation triggers"
         )
 
+    async def upsert_persona_assignment(
+        self,
+        record: PersonaAssignmentRecord,
+        *,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord:
+        """Insert-or-repoint one subject override.
+
+        ``audit_event`` is accepted for protocol parity but never written
+        directly: the API role holds no INSERT on ``identity_audit_events``,
+        so the row is synthesized by ``identity_persona_assignments_audit_trigger``.
+        """
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                existing = await connection.fetchrow(
+                    """
+                    SELECT * FROM identity_persona_assignments
+                    WHERE binding_id = $1 AND subject_id = $2
+                    FOR UPDATE
+                    """,
+                    record.binding_id,
+                    record.subject_id,
+                )
+                if (
+                    existing is not None
+                    and str(existing["assignment_id"]) == record.assignment_id
+                ):
+                    # Idempotent replay: the persisted row wins verbatim.
+                    return _persona_assignment(existing)
+                persisted = (
+                    replace(
+                        record,
+                        created_at=cast(datetime, existing["created_at"]),
+                    )
+                    if existing is not None
+                    else record
+                )
+                row = await connection.fetchrow(
+                    """
+                    INSERT INTO identity_persona_assignments (
+                        binding_id, subject_id, assignment_id, persona_id,
+                        persona_version, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (binding_id, subject_id) DO UPDATE SET
+                        assignment_id = excluded.assignment_id,
+                        persona_id = excluded.persona_id,
+                        persona_version = excluded.persona_version,
+                        updated_at = excluded.updated_at
+                    RETURNING *
+                    """,
+                    persisted.binding_id,
+                    persisted.subject_id,
+                    persisted.assignment_id,
+                    persisted.persona_id,
+                    persisted.persona_version,
+                    _timestamp(persisted.created_at, field="created_at"),
+                    _timestamp(persisted.updated_at, field="updated_at"),
+                )
+                assert row is not None
+                return _persona_assignment(row)
+
+    async def get_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord | None:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                row = await connection.fetchrow(
+                    """
+                    SELECT * FROM identity_persona_assignments
+                    WHERE binding_id = $1 AND subject_id = $2
+                    """,
+                    binding_id,
+                    subject_id,
+                )
+                return _persona_assignment(row) if row is not None else None
+
+    async def list_persona_assignments(
+        self,
+        *,
+        binding_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[PersonaAssignmentRecord, ...]:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                rows = await connection.fetch(
+                    """
+                    SELECT * FROM identity_persona_assignments
+                    WHERE binding_id = $1
+                    ORDER BY subject_id
+                    """,
+                    binding_id,
+                )
+                return tuple(_persona_assignment(row) for row in rows)
+
+    async def delete_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> bool:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                deleted = await connection.fetchval(
+                    """
+                    DELETE FROM identity_persona_assignments
+                    WHERE binding_id = $1 AND subject_id = $2
+                    RETURNING 1
+                    """,
+                    binding_id,
+                    subject_id,
+                )
+                return deleted is not None
+
 
 def _person(row: asyncpg.Record) -> PersonSubject:
     return PersonSubject(
@@ -1744,6 +1886,18 @@ def _relationship(row: asyncpg.Record) -> Relationship:
         ),
         created_at=_from_db(row["created_at"]) or datetime.now(UTC),
         updated_at=_from_db(row["updated_at"]) or datetime.now(UTC),
+    )
+
+
+def _persona_assignment(row: asyncpg.Record) -> PersonaAssignmentRecord:
+    return PersonaAssignmentRecord(
+        binding_id=str(row["binding_id"]),
+        subject_id=str(row["subject_id"]),
+        assignment_id=str(row["assignment_id"]),
+        persona_id=str(row["persona_id"]),
+        persona_version=int(row["persona_version"]),
+        created_at=cast(datetime, _from_db(row["created_at"])),
+        updated_at=cast(datetime, _from_db(row["updated_at"])),
     )
 
 

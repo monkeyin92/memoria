@@ -20,6 +20,7 @@ from services.identity.domain import (
     IdempotencyRecord,
     IdentityConflictError,
     IdentityNotFoundError,
+    PersonaAssignmentRecord,
     PersonSubject,
     Relationship,
     RelationshipStatus,
@@ -37,6 +38,7 @@ class InMemoryIdentityStore:
         self._relationships: dict[str, Relationship] = {}
         self._bindings: dict[str, DeviceBinding] = {}
         self._transfers: dict[str, TransferIntent] = {}
+        self._persona_assignments: dict[tuple[str, str], PersonaAssignmentRecord] = {}
         self._idempotency: dict[tuple[str, str], IdempotencyRecord] = {}
         self._audit: list[AuditEvent] = []
         self._outbox: dict[str, OutboxEvent] = {}
@@ -602,6 +604,76 @@ class InMemoryIdentityStore:
                     idempotency_record, result_payload=result_payload
                 )
             return persisted
+
+    async def upsert_persona_assignment(
+        self,
+        record: PersonaAssignmentRecord,
+        *,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord:
+        key = (record.binding_id, record.subject_id)
+        with self._lock:
+            existing = self._persona_assignments.get(key)
+            if existing is not None and existing.assignment_id == record.assignment_id:
+                # Idempotent replay: the persisted row wins unchanged.
+                return existing
+            if existing is not None:
+                persisted = replace(record, created_at=existing.created_at)
+            else:
+                persisted = record
+            self._persona_assignments[key] = persisted
+            if audit_event is not None:
+                self._audit.append(audit_event)
+            return persisted
+
+    async def get_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord | None:
+        with self._lock:
+            return self._persona_assignments.get((binding_id, subject_id))
+
+    async def list_persona_assignments(
+        self,
+        *,
+        binding_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[PersonaAssignmentRecord, ...]:
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        record
+                        for (item_binding, _), record in self._persona_assignments.items()
+                        if item_binding == binding_id
+                    ),
+                    key=lambda item: item.subject_id,
+                )
+            )
+
+    async def delete_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> bool:
+        with self._lock:
+            removed = self._persona_assignments.pop((binding_id, subject_id), None)
+            if removed is None:
+                return False
+            if audit_event is not None:
+                self._audit.append(audit_event)
+            return True
 
     def _enqueue_outbox_locked(self, event: OutboxEvent) -> None:
         if event.event_id in self._outbox:

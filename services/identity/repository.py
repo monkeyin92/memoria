@@ -16,6 +16,7 @@ from services.identity.domain import (
     BindingStatus,
     DeviceBinding,
     IdempotencyRecord,
+    PersonaAssignmentRecord,
     PersonSubject,
     Relationship,
     RelationshipStatus,
@@ -336,6 +337,51 @@ class IdentityStore(Protocol):
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> bool: ...
+
+    async def upsert_persona_assignment(
+        self,
+        record: PersonaAssignmentRecord,
+        *,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord:
+        """Idempotent upsert keyed by ``(binding_id, subject_id)``.
+
+        A replay whose persona is unchanged returns the persisted row
+        verbatim (immutable ``created_at``/``updated_at``); a different
+        persona overwrites the override while preserving ``created_at``.
+        """
+        ...
+
+    async def get_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> PersonaAssignmentRecord | None: ...
+
+    async def list_persona_assignments(
+        self,
+        *,
+        binding_id: str,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[PersonaAssignmentRecord, ...]: ...
+
+    async def delete_persona_assignment(
+        self,
+        *,
+        binding_id: str,
+        subject_id: str,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> bool:
+        """Delete a subject override; ``False`` when no row existed."""
+        ...
 
     async def append_audit(self, event: AuditEvent) -> None: ...
 

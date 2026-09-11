@@ -1673,3 +1673,133 @@ async def test_sqlite_store_persists_across_instances(tmp_path: Path) -> None:
     assert manifest.account_owner_id == owner
     person = await service.get_person(owner)
     assert person.subject_category == "adult"
+
+
+# ---------------------------------------------------------------------------
+# Persona assignments (person -> persona, subject 级)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persona_assignment_crud_is_idempotent_and_subject_scoped(
+    service: IdentityService,
+    store: InMemoryIdentityStore | SqliteIdentityStore,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    child = await _adult(service, "孩子", now)
+    manifest = await service.create_binding(
+        device_id="dev-persona",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        persona_assignment_id="starlight:v1",
+        now=now,
+    )
+    binding_id = manifest.binding_id
+
+    # No explicit assignment yet: the lazy fallback is the binding default.
+    assert (
+        await service.get_persona_assignment(
+            binding_id=binding_id, subject_id=child
+        )
+        is None
+    )
+    assert await service.list_persona_assignments(binding_id=binding_id) == ()
+
+    record = await service.set_persona_assignment(
+        binding_id=binding_id,
+        subject_id=child,
+        persona_selection="taoxi",
+        actor_person_id=owner,
+        now=now,
+    )
+    assert record.binding_id == binding_id
+    assert record.subject_id == child
+    assert record.assignment_id == "taoxi:v1"
+    assert record.persona_id == "taoxi"
+    assert record.persona_version == 1
+
+    # An exact replay is idempotent: the persisted row is returned unchanged.
+    replay = await service.set_persona_assignment(
+        binding_id=binding_id,
+        subject_id=child,
+        persona_selection="taoxi",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=1),
+    )
+    assert replay.created_at == record.created_at
+    assert replay.updated_at == record.updated_at
+
+    # A different persona overwrites the override but keeps created_at.
+    replaced = await service.set_persona_assignment(
+        binding_id=binding_id,
+        subject_id=child,
+        persona_selection="mianmian",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=2),
+    )
+    assert replaced.persona_id == "mianmian"
+    assert replaced.assignment_id == "mianmian:v1"
+    assert replaced.created_at == record.created_at
+    assert replaced.updated_at > record.updated_at
+
+    listed = await service.list_persona_assignments(binding_id=binding_id)
+    assert len(listed) == 1
+    assert listed[0].subject_id == child
+    assert listed[0].persona_id == "mianmian"
+
+    # Deleting the override restores the lazy binding-default fallback.
+    assert (
+        await service.delete_persona_assignment(
+            binding_id=binding_id, subject_id=child, now=now + timedelta(minutes=3)
+        )
+        is True
+    )
+    assert (
+        await service.get_persona_assignment(
+            binding_id=binding_id, subject_id=child
+        )
+        is None
+    )
+    assert (
+        await service.delete_persona_assignment(
+            binding_id=binding_id, subject_id=child, now=now + timedelta(minutes=4)
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_persona_assignment_rejects_non_canonical_selection(
+    service: IdentityService,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    manifest = await service.create_binding(
+        device_id="dev-persona-invalid",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    with pytest.raises(ValueError):
+        await service.set_persona_assignment(
+            binding_id=manifest.binding_id,
+            subject_id=owner,
+            persona_selection="",
+            actor_person_id=owner,
+            now=now,
+        )
+    with pytest.raises(ValueError):
+        await service.set_persona_assignment(
+            binding_id=manifest.binding_id,
+            subject_id=owner,
+            persona_selection="x" * 40,
+            actor_person_id=owner,
+            now=now,
+        )
