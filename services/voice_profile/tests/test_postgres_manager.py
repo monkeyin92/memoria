@@ -19,6 +19,21 @@ from services.voice_profile.domain import (
     VoiceQualityMeasurementRequest,
 )
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
+from services.voice_profile.testing_audio import (
+    DEFAULT_SAMPLE_RATE,
+    voice_sample_wav,
+)
+
+
+def _sample(duration_ms: int = 12_000) -> bytes:
+    """A recording that really decodes, unlike the old placeholder bytes.
+
+    The enrollment path now measures the submitted audio before it stores or
+    submits anything, so a byte string that cannot be decoded is rejected as
+    ``audio_decode_failed``. Distinct durations yield distinct enrollment keys
+    (the key is the audio digest when no explicit one is supplied).
+    """
+    return voice_sample_wav(duration_ms)
 
 
 class ProviderStub:
@@ -135,10 +150,10 @@ async def test_postgres_persists_doubao_provider_and_keeps_unconfirmed_delete_pe
         candidate = await manager.enroll(
             VoiceEnrollmentRequest(
                 account_id=account_id,
-                audio=b"RIFF" + b"\x01\x02" * 16_000,
+                audio=_sample(12_000),
                 media_type="audio/wav",
                 duration_ms=12_000,
-                sample_rate=24_000,
+                sample_rate=DEFAULT_SAMPLE_RATE,
             )
         )
         connection = await asyncpg.connect(dsn)
@@ -235,14 +250,18 @@ async def test_postgres_voice_profile_matches_lifecycle_contract_and_forces_rls(
         policy_version="voice-clone-v1",
     )
     candidates = []
-    for suffix in (b"one", b"two"):
+    # Two enrollments must yield two distinct profiles (versions 1 and 2). With
+    # no explicit enrollment_key the key is derived from the audio digest, so
+    # the samples must differ; distinct durations keep them apart while both
+    # stay inside the accepted 10-60 s window.
+    for duration_ms in (12_000, 12_400):
         candidate = await manager.enroll(
             VoiceEnrollmentRequest(
                 account_id=account_id,
-                audio=b"RIFF" + suffix * 12_000,
+                audio=_sample(duration_ms),
                 media_type="audio/wav",
-                duration_ms=12_000,
-                sample_rate=24_000,
+                duration_ms=duration_ms,
+                sample_rate=DEFAULT_SAMPLE_RATE,
             )
         )
         sample = await manager.provider_sample(sample_id=candidate.sample_id)
@@ -398,10 +417,10 @@ async def test_postgres_consent_revocation_retries_incomplete_provider_deletion(
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
             account_id=account_id,
-            audio=b"RIFF" + b"\x01\x02" * 16_000,
+            audio=_sample(12_000),
             media_type="audio/wav",
             duration_ms=12_000,
-            sample_rate=24_000,
+            sample_rate=DEFAULT_SAMPLE_RATE,
         )
     )
     provider.delete_fails = True
@@ -462,10 +481,10 @@ async def test_postgres_consent_revocation_waits_for_orphan_sample_reconciliatio
     )
     request = VoiceEnrollmentRequest(
         account_id=account_id,
-        audio=b"RIFF" + b"\x0f\x10" * 16_000,
+        audio=_sample(12_000),
         media_type="audio/wav",
         duration_ms=12_000,
-        sample_rate=24_000,
+        sample_rate=DEFAULT_SAMPLE_RATE,
         enrollment_key="postgres-orphan-upload-revoke",
     )
     with pytest.raises(RuntimeError, match="acknowledgement lost"):
@@ -532,10 +551,10 @@ async def test_postgres_enrollment_retry_reuses_persisted_provider_result(
     )
     request = VoiceEnrollmentRequest(
         account_id=account_id,
-        audio=b"RIFF" + b"\x09\x0a" * 16_000,
+        audio=_sample(12_000),
         media_type="audio/wav",
         duration_ms=12_000,
-        sample_rate=24_000,
+        sample_rate=DEFAULT_SAMPLE_RATE,
         enrollment_key="postgres-stable-enrollment-001",
     )
     connection = await asyncpg.connect(dsn)
@@ -576,10 +595,10 @@ async def test_postgres_enrollment_retry_reuses_persisted_provider_result(
 
     ambiguous_request = VoiceEnrollmentRequest(
         account_id=account_id,
-        audio=b"RIFF" + b"\x0b\x0c" * 16_000,
+        audio=_sample(12_400),
         media_type="audio/wav",
-        duration_ms=12_000,
-        sample_rate=24_000,
+        duration_ms=12_400,
+        sample_rate=DEFAULT_SAMPLE_RATE,
         enrollment_key="postgres-stable-enrollment-ambiguous",
     )
     connection = await asyncpg.connect(dsn)
@@ -675,10 +694,10 @@ async def test_postgres_revocation_during_enrollment_tracks_failed_late_deletion
         manager.enroll(
             VoiceEnrollmentRequest(
                 account_id=account_id,
-                audio=b"RIFF" + b"\x01\x02" * 16_000,
+                audio=_sample(12_000),
                 media_type="audio/wav",
                 duration_ms=12_000,
-                sample_rate=24_000,
+                sample_rate=DEFAULT_SAMPLE_RATE,
             )
         )
     )
