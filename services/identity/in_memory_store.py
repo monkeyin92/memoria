@@ -15,6 +15,8 @@ from typing import TypeVar
 from services.identity.domain import (
     BindingStatus,
     BindingVersionConflictError,
+    CustomPersonaLimitError,
+    CustomPersonaRecord,
     DeviceBinding,
     DeviceBindingRole,
     IdempotencyRecord,
@@ -39,6 +41,7 @@ class InMemoryIdentityStore:
         self._bindings: dict[str, DeviceBinding] = {}
         self._transfers: dict[str, TransferIntent] = {}
         self._persona_assignments: dict[tuple[str, str], PersonaAssignmentRecord] = {}
+        self._custom_personas: dict[str, CustomPersonaRecord] = {}
         self._idempotency: dict[tuple[str, str], IdempotencyRecord] = {}
         self._audit: list[AuditEvent] = []
         self._outbox: dict[str, OutboxEvent] = {}
@@ -674,6 +677,117 @@ class InMemoryIdentityStore:
             if audit_event is not None:
                 self._audit.append(audit_event)
             return True
+
+    async def save_custom_persona(
+        self,
+        record: CustomPersonaRecord,
+        *,
+        max_per_owner: int | None = None,
+        idempotency_record: IdempotencyRecord | None = None,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord:
+        with self._lock:
+            if max_per_owner is not None:
+                owned = sum(
+                    1
+                    for item in self._custom_personas.values()
+                    if item.owner_person_id == record.owner_person_id
+                )
+                if owned >= max_per_owner:
+                    raise CustomPersonaLimitError(max_per_owner)
+            if record.persona_id in self._custom_personas:
+                raise IdentityConflictError(
+                    f"custom persona {record.persona_id} already exists"
+                )
+            if idempotency_record is not None:
+                self._write_idempotency_locked(idempotency_record)
+            self._custom_personas[record.persona_id] = record
+            if audit_event is not None:
+                self._audit.append(audit_event)
+            return record
+
+    async def get_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord | None:
+        with self._lock:
+            return self._custom_personas.get(persona_id)
+
+    async def list_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[CustomPersonaRecord, ...]:
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        record
+                        for record in self._custom_personas.values()
+                        if record.owner_person_id == owner_person_id
+                    ),
+                    key=lambda item: (item.created_at, item.persona_id),
+                )
+            )
+
+    async def count_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        with self._lock:
+            return sum(
+                1
+                for record in self._custom_personas.values()
+                if record.owner_person_id == owner_person_id
+            )
+
+    async def count_persona_assignment_references(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        with self._lock:
+            return sum(
+                1
+                for record in self._persona_assignments.values()
+                if record.persona_id == persona_id
+            )
+
+    async def delete_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        owner_person_id: str,
+        audit_events: tuple[AuditEvent, ...] = (),
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        with self._lock:
+            persona = self._custom_personas.get(persona_id)
+            if persona is None or persona.owner_person_id != owner_person_id:
+                return 0
+            drifted = tuple(
+                key
+                for key, record in self._persona_assignments.items()
+                if record.persona_id == persona_id
+            )
+            for key in drifted:
+                del self._persona_assignments[key]
+            del self._custom_personas[persona_id]
+            self._audit.extend(audit_events)
+            return len(drifted)
 
     def _enqueue_outbox_locked(self, event: OutboxEvent) -> None:
         if event.event_id in self._outbox:

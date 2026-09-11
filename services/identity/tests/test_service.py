@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from services.identity.domain import (
     ROLE_DEFAULT_PERMISSIONS,
     AgeEvidenceError,
     BindingManifest,
+    CustomPersonaLimitError,
     DeviceBinding,
     DeviceBindingRole,
     IdentityAccessDeniedError,
@@ -21,6 +23,7 @@ from services.identity.domain import (
     ModeConstraintError,
     RelationshipLifecycleError,
     RoleConstraintError,
+    StructuredPersonaFields,
     TransferLifecycleError,
     effective_permissions,
     manifest_from_dict,
@@ -1802,4 +1805,325 @@ async def test_persona_assignment_rejects_non_canonical_selection(
             persona_selection="x" * 40,
             actor_person_id=owner,
             now=now,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Custom personas (account-level, create-once)
+# ---------------------------------------------------------------------------
+
+
+def _structured(**overrides: object) -> StructuredPersonaFields:
+    base: dict[str, object] = {
+        "style_description": "爱追问，偶尔说点冷幽默",
+        "warmth": "bright",
+        "directness": "direct",
+        "response_length": "brief",
+        "question_frequency": "frequent",
+        "interview_depth": "structured",
+        "welcome_text": "嗨，我是小岸。",
+        "conversation_instruction": "保持轻快、多追问，不装可爱。",
+        "voice_instruction": "声音清亮、语速稍快。",
+        "default_voice_emotion": "happy",
+        "default_voice_rate": 1.02,
+    }
+    base.update(overrides)
+    return StructuredPersonaFields(**base)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_create_list_get_delete_is_account_scoped(
+    service: IdentityService,
+    store: InMemoryIdentityStore | SqliteIdentityStore,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    record = await service.create_custom_persona(
+        owner_person_id=owner,
+        display_name="小岸",
+        structured=_structured(),
+        actor_person_id=owner,
+        now=now,
+    )
+    # ``cu_`` + uuid4 hex, canonical id namespace, always v1.
+    assert record.persona_id.startswith("cu_")
+    assert len(record.persona_id) <= 32
+    assert record.persona_version == 1
+    assert record.fallback_designed_voice == "starlight"
+    assert record.source == "user_created"
+
+    listed = await service.list_custom_personas(
+        owner_person_id=owner, actor_person_id=owner
+    )
+    assert [item.persona_id for item in listed] == [record.persona_id]
+
+    fetched = await service.get_custom_persona(
+        record.persona_id, owner_person_id=owner, actor_person_id=owner
+    )
+    assert fetched == record
+
+    # Another account can neither see nor delete it.
+    other = await _adult(service, "别人", now)
+    assert (
+        await service.list_custom_personas(
+            owner_person_id=other, actor_person_id=other
+        )
+        == ()
+    )
+    with pytest.raises(IdentityNotFoundError):
+        await service.get_custom_persona(
+            record.persona_id, owner_person_id=other, actor_person_id=other
+        )
+    foreign = await service.delete_custom_persona(
+        persona_id=record.persona_id, owner_person_id=other, actor_person_id=other
+    )
+    assert foreign.deleted is False
+    assert (
+        await service.get_custom_persona(
+            record.persona_id, owner_person_id=owner, actor_person_id=owner
+        )
+        == record
+    )
+
+    outcome = await service.delete_custom_persona(
+        persona_id=record.persona_id, owner_person_id=owner, actor_person_id=owner,
+        now=now + timedelta(minutes=1),
+    )
+    assert outcome.deleted is True
+    assert outcome.drifted_subjects == 0
+    assert (
+        await service.list_custom_personas(
+            owner_person_id=owner, actor_person_id=owner
+        )
+        == ()
+    )
+    # Deleting again is an explicit not-found (idempotent-ish, no error).
+    assert (
+        await service.delete_custom_persona(
+            persona_id=record.persona_id, owner_person_id=owner, actor_person_id=owner
+        )
+    ).deleted is False
+    # The audit trail recorded create + delete.
+    if isinstance(store, InMemoryIdentityStore):
+        actions = [event.action for event in store._audit]
+        assert "persona.custom.create" in actions
+        assert "persona.custom.delete" in actions
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_delete_drops_referencing_assignments(
+    service: IdentityService,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    child = await _adult(service, "孩子", now)
+    record = await service.create_custom_persona(
+        owner_person_id=owner, display_name="小岸", structured=_structured(),
+        actor_person_id=owner, now=now,
+    )
+    manifest = await service.create_binding(
+        device_id="dev-custom-persona",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    await service.set_persona_assignment(
+        binding_id=manifest.binding_id,
+        subject_id=child,
+        persona_selection=record.persona_id,
+        actor_person_id=owner,
+        now=now,
+    )
+    assert (
+        await service.count_custom_persona_references(
+            record.persona_id, actor_person_id=owner
+        )
+        == 1
+    )
+    outcome = await service.delete_custom_persona(
+        persona_id=record.persona_id, owner_person_id=owner, actor_person_id=owner,
+        now=now + timedelta(minutes=1),
+    )
+    assert outcome.deleted is True
+    assert outcome.drifted_subjects == 1
+    # No dangling override: the subject falls back to the binding default.
+    assert (
+        await service.get_persona_assignment(
+            binding_id=manifest.binding_id, subject_id=child
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_limit_is_enforced(service: IdentityService) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    for index in range(5):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name=f"人格{index}", structured=_structured(),
+            actor_person_id=owner, now=now + timedelta(seconds=index),
+        )
+    assert await service.count_custom_personas(
+        owner_person_id=owner, actor_person_id=owner
+    ) == 5
+    with pytest.raises(CustomPersonaLimitError) as excinfo:
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="第六个", structured=_structured(),
+            actor_person_id=owner, now=now + timedelta(minutes=1),
+        )
+    assert excinfo.value.limit == 5
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_only_owner_may_create(service: IdentityService) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    member = await _adult(service, "成员", now)
+    with pytest.raises(IdentityAccessDeniedError):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="越权", structured=_structured(),
+            actor_person_id=member, now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_idempotent_replay_returns_same_record(
+    service: IdentityService,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    first = await service.create_custom_persona(
+        owner_person_id=owner, display_name="小岸", structured=_structured(),
+        idempotency_key="create-1", actor_person_id=owner, now=now,
+    )
+    replay = await service.create_custom_persona(
+        owner_person_id=owner, display_name="小岸", structured=_structured(),
+        idempotency_key="create-1", actor_person_id=owner,
+        now=now + timedelta(minutes=5),
+    )
+    assert replay.persona_id == first.persona_id
+    assert await service.count_custom_personas(
+        owner_person_id=owner, actor_person_id=owner
+    ) == 1
+    # Same key, different content is a conflict (never a silent second row).
+    with pytest.raises(IdentityConflictError):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="改名", structured=_structured(),
+            idempotency_key="create-1", actor_person_id=owner, now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_rejects_out_of_domain_fields(
+    service: IdentityService,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    # Out-of-domain enum values are refused (fail closed, never clamped).
+    with pytest.raises(ValueError):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="坏值",
+            structured=_structured(warmth="甜"), actor_person_id=owner, now=now,
+        )
+    # Names and rate bounds mirror the database CHECK constraints.
+    with pytest.raises(ValueError):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="名字" * 9,
+            structured=_structured(), actor_person_id=owner, now=now,
+        )
+    with pytest.raises(ValueError):
+        await service.create_custom_persona(
+            owner_person_id=owner, display_name="语速",
+            structured=_structured(default_voice_rate=1.5),
+            actor_person_id=owner, now=now,
+        )
+    assert await service.list_custom_personas(
+        owner_person_id=owner, actor_person_id=owner
+    ) == ()
+
+
+@pytest.mark.asyncio
+async def test_persona_assignment_accepts_own_custom_and_rejects_foreign(
+    service: IdentityService,
+) -> None:
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    other_owner = await _adult(service, "别人", now)
+    mine = await service.create_custom_persona(
+        owner_person_id=owner, display_name="小岸", structured=_structured(),
+        actor_person_id=owner, now=now,
+    )
+    theirs = await service.create_custom_persona(
+        owner_person_id=other_owner, display_name="他人人格", structured=_structured(),
+        actor_person_id=other_owner, now=now,
+    )
+    manifest = await service.create_binding(
+        device_id="dev-custom-assignment",
+        declared_mode="self_use",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        service_profile_version="self-v1",
+        policy_bundle_version="policy-self-v1",
+        now=now,
+    )
+    record = await service.set_persona_assignment(
+        binding_id=manifest.binding_id,
+        subject_id=owner,
+        persona_selection=mine.persona_id,
+        actor_person_id=owner,
+        now=now,
+    )
+    assert record.persona_id == mine.persona_id
+    assert record.assignment_id == f"{mine.persona_id}:v1"
+    # A custom persona owned by another account is refused (cross-account).
+    with pytest.raises(ValueError):
+        await service.set_persona_assignment(
+            binding_id=manifest.binding_id,
+            subject_id=owner,
+            persona_selection=theirs.persona_id,
+            actor_person_id=owner,
+            now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_sqlite_custom_persona_update_is_rejected_by_trigger(
+    tmp_path: Path,
+) -> None:
+    """The storage layer refuses any update: create-once, not app-level only."""
+    store = SqliteIdentityStore(tmp_path / "identity.sqlite3")
+    from services.identity.authority import DeterministicConsentSnapshotResolver
+
+    service = IdentityService(
+        store,
+        transfer_verifier=_TEST_AUTHORITY,
+        consent_resolver=DeterministicConsentSnapshotResolver(),
+    )
+    now = _now()
+    owner = await _adult(service, "主人", now)
+    record = await service.create_custom_persona(
+        owner_person_id=owner, display_name="小岸", structured=_structured(),
+        actor_person_id=owner, now=now,
+    )
+    with store._connect() as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE identity_custom_personas SET display_name = '改名' "
+                "WHERE persona_id = ?",
+                (record.persona_id,),
+            )
+        # DELETE is allowed (the ordinary delete path drops the row).
+        connection.execute(
+            "DELETE FROM identity_custom_personas WHERE persona_id = ?",
+            (record.persona_id,),
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM identity_custom_personas"
+            ).fetchone()[0]
+            == 0
         )

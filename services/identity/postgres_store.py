@@ -23,6 +23,8 @@ from services.identity.domain import (
     BindingRole,
     BindingStatus,
     BindingVersionConflictError,
+    CustomPersonaLimitError,
+    CustomPersonaRecord,
     DeviceBinding,
     DeviceBindingRole,
     DeviceDeclaredMode,
@@ -59,6 +61,7 @@ _REQUIRED_TABLES = frozenset(
         "identity_transfer_intents",
         "identity_idempotency_records",
         "identity_persona_assignments",
+        "identity_custom_personas",
     }
 )
 
@@ -81,6 +84,11 @@ _API_NO_DIRECT_WRITE_TABLES = (
     "identity_outbox",
     "identity_idempotency_records",
 )
+
+# Create-once tables the API role may INSERT/DELETE but must never UPDATE:
+# the immutability trigger is the database-layer guard, this is the grant-level
+# double lock.
+_API_NO_UPDATE_TABLES = ("identity_custom_personas",)
 
 
 def _timestamp(value: datetime, *, field: str) -> datetime:
@@ -275,6 +283,23 @@ class PostgresIdentityStore:
                             f"{table} (registration/audit/outbox/idempotency "
                             "writes go through SECURITY DEFINER ports only)"
                         )
+            # Create-once tables: the API role must never hold UPDATE; the
+            # immutability trigger is the primary guard, this is the grant
+            # double lock.
+            for table in _API_NO_UPDATE_TABLES:
+                granted = await connection.fetchval(
+                    """
+                    SELECT has_table_privilege(
+                        current_user, $1::regclass, 'UPDATE'
+                    )
+                    """,
+                    table,
+                )
+                if granted:
+                    raise RuntimeError(
+                        f"identity API role must not hold UPDATE on {table} "
+                        "(create-once entity guarded by an immutability trigger)"
+                    )
             # Generic audit/outbox/update ports must not exist for the API
             # role: business mutation events are synthesized by the triggers
             # with fixed actions, and person updates are RLS/action-level.
@@ -1829,6 +1854,228 @@ class PostgresIdentityStore:
                 )
                 return deleted is not None
 
+    async def save_custom_persona(
+        self,
+        record: CustomPersonaRecord,
+        *,
+        max_per_owner: int | None = None,
+        idempotency_record: IdempotencyRecord | None = None,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord:
+        """Insert one immutable v1 row under an owner-level advisory lock.
+
+        The advisory lock serialises the per-owner count check with the
+        insert, and the audit row is synthesized by
+        ``identity_custom_personas_audit_trigger`` (the API role holds no
+        INSERT on ``identity_audit_events``).
+        """
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    record.owner_person_id,
+                )
+                if idempotency_record is not None:
+                    await _insert_idempotency_record(connection, idempotency_record)
+                if max_per_owner is not None:
+                    owned = int(
+                        await connection.fetchval(
+                            """
+                            SELECT count(*) FROM identity_custom_personas
+                            WHERE owner_person_id = $1
+                            """,
+                            record.owner_person_id,
+                        )
+                        or 0
+                    )
+                    if owned >= max_per_owner:
+                        raise CustomPersonaLimitError(max_per_owner)
+                try:
+                    row = await connection.fetchrow(
+                        """
+                        INSERT INTO identity_custom_personas (
+                            persona_id, owner_person_id, display_name,
+                            style_description, warmth, directness,
+                            response_length, question_frequency,
+                            interview_depth, welcome_text,
+                            conversation_instruction, voice_instruction,
+                            default_voice_emotion, default_voice_rate,
+                            fallback_designed_voice, persona_version, source,
+                            created_at
+                        ) VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                            $13, $14, $15, $16, $17, $18
+                        )
+                        RETURNING *
+                        """,
+                        record.persona_id,
+                        record.owner_person_id,
+                        record.display_name,
+                        record.style_description,
+                        record.warmth,
+                        record.directness,
+                        record.response_length,
+                        record.question_frequency,
+                        record.interview_depth,
+                        record.welcome_text,
+                        record.conversation_instruction,
+                        record.voice_instruction,
+                        record.default_voice_emotion,
+                        record.default_voice_rate,
+                        record.fallback_designed_voice,
+                        record.persona_version,
+                        record.source,
+                        _timestamp(record.created_at, field="created_at"),
+                    )
+                except asyncpg.UniqueViolationError as exc:
+                    raise IdentityConflictError(
+                        f"custom persona {record.persona_id} already exists"
+                    ) from exc
+                assert row is not None
+                return _custom_persona(row)
+
+    async def get_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord | None:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                row = await connection.fetchrow(
+                    "SELECT * FROM identity_custom_personas WHERE persona_id = $1",
+                    persona_id,
+                )
+                return _custom_persona(row) if row is not None else None
+
+    async def list_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[CustomPersonaRecord, ...]:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                rows = await connection.fetch(
+                    """
+                    SELECT * FROM identity_custom_personas
+                    WHERE owner_person_id = $1
+                    ORDER BY created_at, persona_id
+                    """,
+                    owner_person_id,
+                )
+                return tuple(_custom_persona(row) for row in rows)
+
+    async def count_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                count = await connection.fetchval(
+                    """
+                    SELECT count(*) FROM identity_custom_personas
+                    WHERE owner_person_id = $1
+                    """,
+                    owner_person_id,
+                )
+                return int(count or 0)
+
+    async def count_persona_assignment_references(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                count = await connection.fetchval(
+                    """
+                    SELECT count(*) FROM identity_persona_assignments
+                    WHERE persona_id = $1
+                    """,
+                    persona_id,
+                )
+                return int(count or 0)
+
+    async def delete_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        owner_person_id: str,
+        audit_events: tuple[AuditEvent, ...] = (),
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        """Drop references then the persona in ONE transaction.
+
+        The order is fixed (count -> delete referencing assignments -> delete
+        persona) so no dangling assignment can survive the deletion.  A
+        persona absent or owned by another account returns ``0`` untouched.
+        """
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope=scope
+                )
+                owner = await connection.fetchval(
+                    """
+                    SELECT owner_person_id FROM identity_custom_personas
+                    WHERE persona_id = $1
+                    """,
+                    persona_id,
+                )
+                if owner is None or str(owner) != owner_person_id:
+                    return 0
+                drifted = int(
+                    await connection.fetchval(
+                        """
+                        SELECT count(*) FROM identity_persona_assignments
+                        WHERE persona_id = $1
+                        """,
+                        persona_id,
+                    )
+                    or 0
+                )
+                await connection.execute(
+                    "DELETE FROM identity_persona_assignments WHERE persona_id = $1",
+                    persona_id,
+                )
+                await connection.execute(
+                    "DELETE FROM identity_custom_personas WHERE persona_id = $1",
+                    persona_id,
+                )
+                return drifted
+
 
 def _person(row: asyncpg.Record) -> PersonSubject:
     return PersonSubject(
@@ -1898,6 +2145,29 @@ def _persona_assignment(row: asyncpg.Record) -> PersonaAssignmentRecord:
         persona_version=int(row["persona_version"]),
         created_at=cast(datetime, _from_db(row["created_at"])),
         updated_at=cast(datetime, _from_db(row["updated_at"])),
+    )
+
+
+def _custom_persona(row: asyncpg.Record) -> CustomPersonaRecord:
+    return CustomPersonaRecord(
+        persona_id=str(row["persona_id"]),
+        owner_person_id=str(row["owner_person_id"]),
+        display_name=str(row["display_name"]),
+        style_description=str(row["style_description"]),
+        warmth=str(row["warmth"]),
+        directness=str(row["directness"]),
+        response_length=str(row["response_length"]),
+        question_frequency=str(row["question_frequency"]),
+        interview_depth=str(row["interview_depth"]),
+        welcome_text=str(row["welcome_text"]),
+        conversation_instruction=str(row["conversation_instruction"]),
+        voice_instruction=str(row["voice_instruction"]),
+        default_voice_emotion=str(row["default_voice_emotion"]),
+        default_voice_rate=float(row["default_voice_rate"]),
+        fallback_designed_voice=str(row["fallback_designed_voice"]),
+        persona_version=int(row["persona_version"]),
+        source=str(row["source"]),
+        created_at=cast(datetime, _from_db(row["created_at"])),
     )
 
 

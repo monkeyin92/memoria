@@ -21,8 +21,10 @@ from services.identity.authority import (
 )
 from services.identity.domain import (
     AgeEvidenceError,
+    CustomPersonaLimitError,
     IdentityConflictError,
     IdentityNotFoundError,
+    StructuredPersonaFields,
 )
 from services.identity.postgres_store import PostgresIdentityStore
 from services.identity.service import IdentityService
@@ -1983,3 +1985,136 @@ async def test_persona_assignments_are_subject_scoped_persistent_and_rls_bounded
         if store is not None:
             await store.close()
         await _drop_database(database)
+
+
+@pytest.mark.asyncio
+async def test_custom_persona_immutability_is_enforced_in_the_database() -> None:
+    """The real PostgreSQL trigger refuses any UPDATE, not the application."""
+    database = f"memoria_custom_persona_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _authority = await _service(dsns)
+        now = datetime(2026, 8, 13, 9, 0, tzinfo=UTC)
+        owner = (
+            await service.register_person(
+                display_name="主人",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-custom-owner",
+                now=now,
+            )
+        ).person_id
+        record = await service.create_custom_persona(
+            owner_person_id=owner,
+            display_name="小岸",
+            structured=StructuredPersonaFields(warmth="bright", directness="direct"),
+            idempotency_key="pg-create-1",
+            actor_person_id=owner,
+            now=now,
+        )
+        assert record.persona_id.startswith("cu_")
+        assert record.persona_version == 1
+        assert record.fallback_designed_voice == "starlight"
+
+        # Idempotent replay returns the same row without a second one.
+        replay = await service.create_custom_persona(
+            owner_person_id=owner,
+            display_name="小岸",
+            structured=StructuredPersonaFields(warmth="bright", directness="direct"),
+            idempotency_key="pg-create-1",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=1),
+        )
+        assert replay.persona_id == record.persona_id
+        assert await service.count_custom_personas(
+            owner_person_id=owner, actor_person_id=owner
+        ) == 1
+
+        # The limit is enforced (5 per account).
+        for index in range(4):
+            await service.create_custom_persona(
+                owner_person_id=owner,
+                display_name=f"人格{index}",
+                structured=StructuredPersonaFields(),
+                actor_person_id=owner,
+                now=now + timedelta(seconds=index + 1),
+            )
+        with pytest.raises(CustomPersonaLimitError):
+            await service.create_custom_persona(
+                owner_person_id=owner,
+                display_name="第六个",
+                structured=StructuredPersonaFields(),
+                actor_person_id=owner,
+                now=now + timedelta(minutes=2),
+            )
+
+        # A raw UPDATE is refused by the trigger.  The table owner / superuser
+        # bypasses RLS and holds no grants restriction, so this proves the
+        # immutability is enforced in the DATABASE, not merely by the app.
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            with pytest.raises(asyncpg.PostgresError, match="immutable"):
+                await admin.execute(
+                    "UPDATE identity_custom_personas SET display_name = '改名' "
+                    "WHERE persona_id = $1",
+                    record.persona_id,
+                )
+            # DELETE stays allowed (the ordinary delete path).
+            await admin.execute(
+                "DELETE FROM identity_custom_personas WHERE persona_id = $1",
+                record.persona_id,
+            )
+            assert (
+                await admin.fetchval(
+                    "SELECT count(*) FROM identity_custom_personas "
+                    "WHERE persona_id = $1",
+                    record.persona_id,
+                )
+                == 0
+            )
+        finally:
+            await admin.close()
+
+        # Grant boundary: SELECT/INSERT/DELETE yes, UPDATE never.
+        for privilege, expected in (
+            ("SELECT", True),
+            ("INSERT", True),
+            ("DELETE", True),
+            ("UPDATE", False),
+        ):
+            granted = await api_privilege(
+                dsns["api"], "identity_custom_personas", privilege
+            )
+            assert granted is expected, f"{privilege} grant mismatch"
+
+        # The audit trigger recorded the creates.
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            count = await admin.fetchval(
+                "SELECT count(*) FROM identity_audit_events "
+                "WHERE action = 'persona.custom.create'"
+            )
+            assert int(count) == 5
+        finally:
+            await admin.close()
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def api_privilege(dsn: str, table: str, privilege: str) -> bool:
+    connection = await asyncpg.connect(dsn)
+    try:
+        return bool(
+            await connection.fetchval(
+                "SELECT has_table_privilege(current_user, $1::regclass, $2)",
+                table,
+                privilege,
+            )
+        )
+    finally:
+        await connection.close()

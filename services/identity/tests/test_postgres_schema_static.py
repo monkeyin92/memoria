@@ -20,6 +20,7 @@ _TABLE_NAMES = {
     "identity_transfer_intents",
     "identity_idempotency_records",
     "identity_persona_assignments",
+    "identity_custom_personas",
 }
 
 _AUTHORITATIVE_TABLES = frozenset(_TABLE_NAMES)
@@ -184,3 +185,74 @@ def test_relationship_policy_writes_require_endpoint_or_parent() -> None:
         flags=re.S,
     )
     assert "identity_relationship_parent_managed(" in sql
+
+
+def test_custom_persona_has_database_level_immutability_trigger() -> None:
+    sql = _schema()
+    # A BEFORE UPDATE trigger must refuse every update on the table.
+    guard = re.search(
+        r"CREATE OR REPLACE FUNCTION identity_custom_persona_immutable_guard\(\)"
+        r".*?\$\$;",
+        sql,
+        flags=re.S,
+    )
+    assert guard is not None, "custom persona immutability guard function missing"
+    assert "RAISE EXCEPTION 'identity custom persona is immutable'" in guard.group(0)
+    assert re.search(
+        r"CREATE TRIGGER identity_custom_persona_immutable\s+"
+        r"BEFORE UPDATE ON identity_custom_personas",
+        sql,
+    ), "custom persona immutability trigger must fire BEFORE UPDATE"
+    # DELETE is deliberately allowed: no delete guard on this table.
+    assert not re.search(
+        r"BEFORE DELETE ON identity_custom_personas", sql
+    ), "custom personas must remain deletable"
+
+
+def test_custom_persona_api_role_has_no_update_grant() -> None:
+    sql = _schema()
+    assert re.search(
+        r"GRANT SELECT, INSERT, DELETE ON identity_custom_personas\s+TO memoria_identity",
+        sql,
+    ), "memoria_identity must hold SELECT/INSERT/DELETE on custom personas"
+    assert not re.search(
+        r"GRANT[^;]*UPDATE[^;]*ON identity_custom_personas", sql
+    ), "memoria_identity must never be granted UPDATE on custom personas"
+
+
+def test_persona_assignments_persona_column_is_indexed_not_foreign_keyed() -> None:
+    sql = _schema()
+    # Built-in ids are not custom rows: an FK would reject built-in
+    # assignments, so the column is indexed and the delete path drops rows.
+    assert re.search(
+        r"CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_persona\s+"
+        r"ON identity_persona_assignments\(persona_id\)",
+        sql,
+    )
+    assignments_table = re.search(
+        r"CREATE TABLE IF NOT EXISTS identity_persona_assignments\s*\(.*?\);",
+        sql,
+        flags=re.S,
+    )
+    assert assignments_table is not None
+    assert "REFERENCES identity_custom_personas" not in assignments_table.group(0)
+
+
+def test_custom_persona_audit_trigger_is_security_definer_and_revoked() -> None:
+    sql = _schema()
+    audit = re.search(
+        r"CREATE OR REPLACE FUNCTION identity_audit_custom_persona_event\(\)"
+        r".*?\$\$;",
+        sql,
+        flags=re.S,
+    )
+    assert audit is not None
+    assert "SECURITY DEFINER" in audit.group(0)
+    assert "INSERT INTO identity_audit_events" in audit.group(0)
+    assert re.search(
+        r"AFTER INSERT OR DELETE ON identity_custom_personas", sql
+    ), "custom persona audit trigger must fire on INSERT/DELETE only"
+    assert (
+        "REVOKE ALL ON FUNCTION identity_audit_custom_persona_event() FROM PUBLIC"
+        in sql
+    )

@@ -23,6 +23,8 @@ from services.identity.domain import (
     BindingRole,
     BindingStatus,
     BindingVersionConflictError,
+    CustomPersonaLimitError,
+    CustomPersonaRecord,
     DeviceBinding,
     DeviceBindingRole,
     DeviceDeclaredMode,
@@ -277,7 +279,8 @@ CREATE TABLE IF NOT EXISTS identity_idempotency_records (
     scope_key TEXT NOT NULL CHECK (length(scope_key) BETWEEN 1 AND 256),
     idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 64),
     operation TEXT NOT NULL CHECK (operation IN (
-        'transfer.create', 'transfer.accept', 'transfer.cancel'
+        'transfer.create', 'transfer.accept', 'transfer.cancel',
+        'persona.create'
     )),
     content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
     result_payload_json TEXT NOT NULL CHECK (json_valid(result_payload_json)),
@@ -300,6 +303,45 @@ CREATE TABLE IF NOT EXISTS identity_persona_assignments (
 
 CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_subject
 ON identity_persona_assignments(subject_id);
+
+CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_persona
+ON identity_persona_assignments(persona_id);
+
+
+CREATE TABLE IF NOT EXISTS identity_custom_personas (
+    persona_id TEXT PRIMARY KEY CHECK (
+        persona_id LIKE 'cu_%' AND length(persona_id) <= 32
+    ),
+    owner_person_id TEXT NOT NULL CHECK (length(owner_person_id) BETWEEN 1 AND 128),
+    display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 16),
+    style_description TEXT NOT NULL CHECK (length(style_description) <= 60),
+    warmth TEXT NOT NULL CHECK (warmth IN ('warm','bright','soft','calm','reserved')),
+    directness TEXT NOT NULL CHECK (directness IN ('gentle','direct')),
+    response_length TEXT NOT NULL CHECK (response_length IN ('brief','balanced')),
+    question_frequency TEXT NOT NULL CHECK (question_frequency IN ('rare','occasional','frequent')),
+    interview_depth TEXT NOT NULL CHECK (interview_depth IN ('light','structured','on_explicit_invitation')),
+    welcome_text TEXT NOT NULL CHECK (length(welcome_text) <= 60),
+    conversation_instruction TEXT NOT NULL CHECK (length(conversation_instruction) <= 200),
+    voice_instruction TEXT NOT NULL CHECK (length(voice_instruction) <= 120),
+    default_voice_emotion TEXT NOT NULL CHECK (default_voice_emotion IN ('neutral','happy')),
+    default_voice_rate REAL NOT NULL CHECK (default_voice_rate BETWEEN 0.90 AND 1.10),
+    fallback_designed_voice TEXT NOT NULL CHECK (length(fallback_designed_voice) BETWEEN 1 AND 32),
+    persona_version INTEGER NOT NULL CHECK (persona_version = 1),
+    source TEXT NOT NULL CHECK (source IN ('user_created','bio_migration')),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_custom_personas_owner
+ON identity_custom_personas(owner_person_id, created_at DESC);
+
+-- A custom persona is create-once: ANY update is refused at the storage layer.
+-- DELETE is deliberately allowed (dropping a persona is the ordinary delete,
+-- guarded by the owner-only service transaction that also drops references).
+CREATE TRIGGER IF NOT EXISTS identity_custom_persona_immutable
+BEFORE UPDATE ON identity_custom_personas
+BEGIN
+    SELECT RAISE(ABORT, 'identity custom persona is immutable');
+END;
 
 
 CREATE TRIGGER IF NOT EXISTS identity_person_core_immutable
@@ -1486,6 +1528,189 @@ class SqliteIdentityStore:
                 _insert_audit(connection, audit_event)
             return True
 
+    async def save_custom_persona(
+        self,
+        record: CustomPersonaRecord,
+        *,
+        max_per_owner: int | None = None,
+        idempotency_record: IdempotencyRecord | None = None,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord:
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if idempotency_record is not None:
+                _insert_idempotency_record(connection, idempotency_record)
+            if max_per_owner is not None:
+                owned = int(
+                    connection.execute(
+                        """
+                        SELECT count(*) FROM identity_custom_personas
+                        WHERE owner_person_id = ?
+                        """,
+                        (record.owner_person_id,),
+                    ).fetchone()[0]
+                )
+                if owned >= max_per_owner:
+                    raise CustomPersonaLimitError(max_per_owner)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO identity_custom_personas (
+                        persona_id, owner_person_id, display_name,
+                        style_description, warmth, directness, response_length,
+                        question_frequency, interview_depth, welcome_text,
+                        conversation_instruction, voice_instruction,
+                        default_voice_emotion, default_voice_rate,
+                        fallback_designed_voice, persona_version, source,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.persona_id,
+                        record.owner_person_id,
+                        record.display_name,
+                        record.style_description,
+                        record.warmth,
+                        record.directness,
+                        record.response_length,
+                        record.question_frequency,
+                        record.interview_depth,
+                        record.welcome_text,
+                        record.conversation_instruction,
+                        record.voice_instruction,
+                        record.default_voice_emotion,
+                        record.default_voice_rate,
+                        record.fallback_designed_voice,
+                        record.persona_version,
+                        record.source,
+                        _ts(record.created_at, field="created_at"),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise IdentityConflictError(
+                    f"custom persona {record.persona_id} already exists"
+                ) from exc
+            if audit_event is not None:
+                _insert_audit(connection, audit_event)
+            return record
+
+    async def get_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord | None:
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM identity_custom_personas WHERE persona_id = ?",
+                (persona_id,),
+            ).fetchone()
+            return _custom_persona(row) if row is not None else None
+
+    async def list_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[CustomPersonaRecord, ...]:
+        self._ready()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM identity_custom_personas
+                WHERE owner_person_id = ?
+                ORDER BY created_at, persona_id
+                """,
+                (owner_person_id,),
+            ).fetchall()
+            return tuple(_custom_persona(row) for row in rows)
+
+    async def count_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        self._ready()
+        with self._connect() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM identity_custom_personas
+                    WHERE owner_person_id = ?
+                    """,
+                    (owner_person_id,),
+                ).fetchone()[0]
+            )
+
+    async def count_persona_assignment_references(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        self._ready()
+        with self._connect() as connection:
+            return int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM identity_persona_assignments
+                    WHERE persona_id = ?
+                    """,
+                    (persona_id,),
+                ).fetchone()[0]
+            )
+
+    async def delete_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        owner_person_id: str,
+        audit_events: tuple[AuditEvent, ...] = (),
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT owner_person_id FROM identity_custom_personas
+                WHERE persona_id = ?
+                """,
+                (persona_id,),
+            ).fetchone()
+            if row is None or str(row["owner_person_id"]) != owner_person_id:
+                return 0
+            drifted = int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM identity_persona_assignments
+                    WHERE persona_id = ?
+                    """,
+                    (persona_id,),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "DELETE FROM identity_persona_assignments WHERE persona_id = ?",
+                (persona_id,),
+            )
+            connection.execute(
+                "DELETE FROM identity_custom_personas WHERE persona_id = ?",
+                (persona_id,),
+            )
+            for event in audit_events:
+                _insert_audit(connection, event)
+            return drifted
+
     async def enqueue_outbox(self, event: OutboxEvent) -> None:
         self._ready()
         with self._connect() as connection:
@@ -1522,6 +1747,29 @@ def _persona_assignment(row: sqlite3.Row) -> PersonaAssignmentRecord:
         persona_version=int(row["persona_version"]),
         created_at=cast(datetime, _from_iso(row["created_at"])),
         updated_at=cast(datetime, _from_iso(row["updated_at"])),
+    )
+
+
+def _custom_persona(row: sqlite3.Row) -> CustomPersonaRecord:
+    return CustomPersonaRecord(
+        persona_id=str(row["persona_id"]),
+        owner_person_id=str(row["owner_person_id"]),
+        display_name=str(row["display_name"]),
+        style_description=str(row["style_description"]),
+        warmth=str(row["warmth"]),
+        directness=str(row["directness"]),
+        response_length=str(row["response_length"]),
+        question_frequency=str(row["question_frequency"]),
+        interview_depth=str(row["interview_depth"]),
+        welcome_text=str(row["welcome_text"]),
+        conversation_instruction=str(row["conversation_instruction"]),
+        voice_instruction=str(row["voice_instruction"]),
+        default_voice_emotion=str(row["default_voice_emotion"]),
+        default_voice_rate=float(row["default_voice_rate"]),
+        fallback_designed_voice=str(row["fallback_designed_voice"]),
+        persona_version=int(row["persona_version"]),
+        source=str(row["source"]),
+        created_at=cast(datetime, _from_iso(row["created_at"])),
     )
 
 

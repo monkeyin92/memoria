@@ -18,6 +18,8 @@ are reusable by the in-memory, SQLite and PostgreSQL adapters.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -90,7 +92,7 @@ RelationType = Literal[
 type RelationshipStatus = RelationshipStatusValue
 TransferIntentStatus = Literal["pending", "accepted", "cancelled", "expired", "conflicted"]
 IdempotencyOperation = Literal[
-    "transfer.create", "transfer.accept", "transfer.cancel"
+    "transfer.create", "transfer.accept", "transfer.cancel", "persona.create"
 ]
 
 AGE_BAND_ADULT = "adult"
@@ -710,6 +712,7 @@ class IdempotencyRecord:
             "transfer.create",
             "transfer.accept",
             "transfer.cancel",
+            "persona.create",
         }:
             raise ValueError(f"unknown idempotency operation {self.operation!r}")
         if not self.content_hash or len(self.content_hash) != 64:
@@ -1092,3 +1095,297 @@ def validate_manifest_wire(manifest: BindingManifest) -> None:
     blocker (section 9.6), so every API boundary re-checks before emitting.
     """
     CanonicalBindingManifest.model_validate(manifest.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Custom personas (increment two): immutable per-account persona entities
+# ---------------------------------------------------------------------------
+#
+# A custom persona is an account-level, create-once entity: it owns a
+# ``cu_``-prefixed id inside the SAME persona-id namespace as the built-in
+# catalogue (``starlight`` ...).  Its structured fields mirror the controlled
+# allowlist in ``services/persona/custom_persona_fields.py`` and the CHECK
+# constraints of ``identity_custom_personas``; this module is the last line of
+# fail-closed defence before an adapter persists a row.
+
+CUSTOM_PERSONA_ID_PREFIX = "cu_"
+MAX_CUSTOM_PERSONAS_PER_OWNER = 5
+MAX_CUSTOM_PERSONA_DISPLAY_NAME = 16
+MAX_STYLE_DESCRIPTION = 60
+MAX_WELCOME_TEXT = 60
+MAX_CONVERSATION_INSTRUCTION = 200
+MAX_VOICE_INSTRUCTION = 120
+MIN_DEFAULT_VOICE_RATE = 0.90
+MAX_DEFAULT_VOICE_RATE = 1.10
+
+CUSTOM_PERSONA_WARMTH: frozenset[str] = frozenset(
+    {"warm", "bright", "soft", "calm", "reserved"}
+)
+CUSTOM_PERSONA_DIRECTNESS: frozenset[str] = frozenset({"gentle", "direct"})
+CUSTOM_PERSONA_RESPONSE_LENGTH: frozenset[str] = frozenset({"brief", "balanced"})
+CUSTOM_PERSONA_QUESTION_FREQUENCY: frozenset[str] = frozenset(
+    {"rare", "occasional", "frequent"}
+)
+CUSTOM_PERSONA_INTERVIEW_DEPTH: frozenset[str] = frozenset(
+    {"light", "structured", "on_explicit_invitation"}
+)
+CUSTOM_PERSONA_VOICE_EMOTION: frozenset[str] = frozenset({"neutral", "happy"})
+CUSTOM_PERSONA_SOURCES: frozenset[str] = frozenset({"user_created", "bio_migration"})
+
+_CUSTOM_PERSONA_ID_PATTERN = re.compile(r"^cu_[0-9a-f]{16,29}$")
+
+
+def new_custom_persona_id() -> str:
+    """``cu_`` + 26 hex uuid4 chars: opaque, globally unique, at most 32 chars.
+
+    The 3-char ``cu_`` prefix plus 26 opaque hex chars (104 bits of entropy)
+    stays within the 32-char persona-id ceiling shared with the built-ins and
+    matches the ``^cu_[0-9a-f]{16,29}$`` database check.
+    """
+    return f"{CUSTOM_PERSONA_ID_PREFIX}{uuid.uuid4().hex[:26]}"
+
+
+def is_custom_persona_id(persona_id: object) -> bool:
+    """Whether ``persona_id`` lives in the ``cu_`` custom namespace."""
+    return isinstance(persona_id, str) and persona_id.startswith(
+        CUSTOM_PERSONA_ID_PREFIX
+    )
+
+
+def _custom_text(value: str, *, field: str, maximum: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    if len(value) > maximum:
+        raise ValueError(f"{field} must be at most {maximum} characters")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class CustomPersonaRecord:
+    """One immutable account-level custom persona (``v1`` forever).
+
+    The structured field allowlist is fixed: the eleven controlled style
+    fields plus ``fallback_designed_voice`` (an approved built-in companion id
+    used when the persona has no bound clone).  ``owner_person_id`` is the
+    account owner; a persona may be referenced by several bindings/subjects of
+    that account.  Renaming is impossible -- to change anything, create anew.
+    """
+
+    persona_id: str
+    owner_person_id: str
+    display_name: str
+    style_description: str
+    warmth: str
+    directness: str
+    response_length: str
+    question_frequency: str
+    interview_depth: str
+    welcome_text: str
+    conversation_instruction: str
+    voice_instruction: str
+    default_voice_emotion: str
+    default_voice_rate: float
+    fallback_designed_voice: str
+    persona_version: int
+    source: str
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        if not _CUSTOM_PERSONA_ID_PATTERN.match(self.persona_id) or len(
+            self.persona_id
+        ) > _MAX_PERSONA_ID:
+            raise ValueError(
+                "persona_id must be 'cu_' + 16..29 lower-case hex (<= 32 chars)"
+            )
+        object.__setattr__(
+            self,
+            "owner_person_id",
+            _bounded(self.owner_person_id, field="owner_person_id"),
+        )
+        if not (1 <= len(self.display_name) <= MAX_CUSTOM_PERSONA_DISPLAY_NAME):
+            raise ValueError(
+                "display_name must be 1..16 characters"
+            )
+        object.__setattr__(
+            self,
+            "style_description",
+            _custom_text(
+                self.style_description,
+                field="style_description",
+                maximum=MAX_STYLE_DESCRIPTION,
+            ),
+        )
+        if self.warmth not in CUSTOM_PERSONA_WARMTH:
+            raise ValueError(f"warmth must be one of {sorted(CUSTOM_PERSONA_WARMTH)}")
+        if self.directness not in CUSTOM_PERSONA_DIRECTNESS:
+            raise ValueError(
+                f"directness must be one of {sorted(CUSTOM_PERSONA_DIRECTNESS)}"
+            )
+        if self.response_length not in CUSTOM_PERSONA_RESPONSE_LENGTH:
+            raise ValueError(
+                "response_length must be one of "
+                f"{sorted(CUSTOM_PERSONA_RESPONSE_LENGTH)}"
+            )
+        if self.question_frequency not in CUSTOM_PERSONA_QUESTION_FREQUENCY:
+            raise ValueError(
+                "question_frequency must be one of "
+                f"{sorted(CUSTOM_PERSONA_QUESTION_FREQUENCY)}"
+            )
+        if self.interview_depth not in CUSTOM_PERSONA_INTERVIEW_DEPTH:
+            raise ValueError(
+                "interview_depth must be one of "
+                f"{sorted(CUSTOM_PERSONA_INTERVIEW_DEPTH)}"
+            )
+        object.__setattr__(
+            self,
+            "welcome_text",
+            _custom_text(
+                self.welcome_text, field="welcome_text", maximum=MAX_WELCOME_TEXT
+            ),
+        )
+        object.__setattr__(
+            self,
+            "conversation_instruction",
+            _custom_text(
+                self.conversation_instruction,
+                field="conversation_instruction",
+                maximum=MAX_CONVERSATION_INSTRUCTION,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "voice_instruction",
+            _custom_text(
+                self.voice_instruction,
+                field="voice_instruction",
+                maximum=MAX_VOICE_INSTRUCTION,
+            ),
+        )
+        if self.default_voice_emotion not in CUSTOM_PERSONA_VOICE_EMOTION:
+            raise ValueError(
+                "default_voice_emotion must be one of "
+                f"{sorted(CUSTOM_PERSONA_VOICE_EMOTION)}"
+            )
+        if not isinstance(self.default_voice_rate, (int, float)) or isinstance(
+            self.default_voice_rate, bool
+        ):
+            raise ValueError("default_voice_rate must be a number")
+        rate = float(self.default_voice_rate)
+        if not (MIN_DEFAULT_VOICE_RATE <= rate <= MAX_DEFAULT_VOICE_RATE):
+            raise ValueError(
+                "default_voice_rate must be within "
+                f"[{MIN_DEFAULT_VOICE_RATE}, {MAX_DEFAULT_VOICE_RATE}]"
+            )
+        object.__setattr__(self, "default_voice_rate", rate)
+        object.__setattr__(
+            self,
+            "fallback_designed_voice",
+            _bounded(
+                self.fallback_designed_voice,
+                field="fallback_designed_voice",
+                maximum=_MAX_PERSONA_ID,
+            ),
+        )
+        if self.persona_version != 1:
+            raise ValueError("custom personas are immutable and always version 1")
+        if self.source not in CUSTOM_PERSONA_SOURCES:
+            raise ValueError(f"source must be one of {sorted(CUSTOM_PERSONA_SOURCES)}")
+        object.__setattr__(self, "created_at", _utc(self.created_at, field="created_at"))
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> CustomPersonaRecord:
+        """Build a validated record from a persisted row/mapping."""
+        try:
+            return cls(
+                persona_id=str(value["persona_id"]),
+                owner_person_id=str(value["owner_person_id"]),
+                display_name=str(value["display_name"]),
+                style_description=str(value["style_description"]),
+                warmth=str(value["warmth"]),
+                directness=str(value["directness"]),
+                response_length=str(value["response_length"]),
+                question_frequency=str(value["question_frequency"]),
+                interview_depth=str(value["interview_depth"]),
+                welcome_text=str(value["welcome_text"]),
+                conversation_instruction=str(value["conversation_instruction"]),
+                voice_instruction=str(value["voice_instruction"]),
+                default_voice_emotion=str(value["default_voice_emotion"]),
+                default_voice_rate=float(str(value["default_voice_rate"])),
+                fallback_designed_voice=str(value["fallback_designed_voice"]),
+                persona_version=int(str(value["persona_version"])),
+                source=str(value["source"]),
+                created_at=cast(
+                    datetime,
+                    _optional_datetime(value["created_at"], field="created_at"),
+                ),
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"custom persona payload is missing {exc.args[0]}"
+            ) from exc
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "persona_id": self.persona_id,
+            "owner_person_id": self.owner_person_id,
+            "display_name": self.display_name,
+            "style_description": self.style_description,
+            "warmth": self.warmth,
+            "directness": self.directness,
+            "response_length": self.response_length,
+            "question_frequency": self.question_frequency,
+            "interview_depth": self.interview_depth,
+            "welcome_text": self.welcome_text,
+            "conversation_instruction": self.conversation_instruction,
+            "voice_instruction": self.voice_instruction,
+            "default_voice_emotion": self.default_voice_emotion,
+            "default_voice_rate": self.default_voice_rate,
+            "fallback_designed_voice": self.fallback_designed_voice,
+            "persona_version": self.persona_version,
+            "source": self.source,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CustomPersonaDeleteOutcome:
+    """Result of deleting one custom persona in a single transaction.
+
+    ``drifted_subjects`` counts the ``identity_persona_assignments`` rows that
+    referenced the persona and were dropped by the same transaction; those
+    subjects deterministically fall back to the binding default.
+    """
+
+    persona_id: str
+    deleted: bool
+    drifted_subjects: int
+
+
+class CustomPersonaLimitError(IdentityConflictError):
+    """Raised when an account already owns ``limit`` custom personas."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"custom persona limit reached (limit={limit})")
+        self.limit = limit
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredPersonaFields:
+    """The eleven controlled style fields accepted by ``create_custom_persona``.
+
+    This is a plain transport container: the authoritative validation lives in
+    ``CustomPersonaRecord.__post_init__`` (which mirrors the DB CHECKs), so a
+    malformed field fails closed before any adapter writes a row.
+    """
+
+    style_description: str = ""
+    warmth: str = "warm"
+    directness: str = "gentle"
+    response_length: str = "balanced"
+    question_frequency: str = "occasional"
+    interview_depth: str = "light"
+    welcome_text: str = ""
+    conversation_instruction: str = ""
+    voice_instruction: str = ""
+    default_voice_emotion: str = "neutral"
+    default_voice_rate: float = 1.0

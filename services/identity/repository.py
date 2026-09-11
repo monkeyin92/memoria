@@ -14,6 +14,7 @@ from typing import Protocol
 
 from services.identity.domain import (
     BindingStatus,
+    CustomPersonaRecord,
     DeviceBinding,
     IdempotencyRecord,
     PersonaAssignmentRecord,
@@ -381,6 +382,79 @@ class IdentityStore(Protocol):
         scope: str = "api",
     ) -> bool:
         """Delete a subject override; ``False`` when no row existed."""
+        ...
+
+    async def save_custom_persona(
+        self,
+        record: CustomPersonaRecord,
+        *,
+        max_per_owner: int | None = None,
+        idempotency_record: IdempotencyRecord | None = None,
+        audit_event: AuditEvent | None = None,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord:
+        """Create the immutable v1 row (create-once, never updated).
+
+        ``idempotency_record`` (when given) commits in the SAME transaction; a
+        replayed key raises ``IdentityConflictError`` whose message contains
+        ``already used`` so the service can replay the stored result instead.
+        When ``max_per_owner`` is set the per-owner count is checked inside the
+        same owner-level lock as the insert (no concurrent overrun); an account
+        already at the limit raises ``CustomPersonaLimitError``.
+        """
+        ...
+
+    async def get_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> CustomPersonaRecord | None: ...
+
+    async def list_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> tuple[CustomPersonaRecord, ...]: ...
+
+    async def count_custom_personas(
+        self,
+        owner_person_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        """Count an owner's custom personas under the owner-level lock."""
+        ...
+
+    async def count_persona_assignment_references(
+        self,
+        persona_id: str,
+        *,
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int: ...
+
+    async def delete_custom_persona(
+        self,
+        persona_id: str,
+        *,
+        owner_person_id: str,
+        audit_events: tuple[AuditEvent, ...] = (),
+        actor_person_id: str | None = None,
+        scope: str = "api",
+    ) -> int:
+        """Delete one persona and every assignment that references it.
+
+        Runs in ONE transaction in the fixed order count -> drop references ->
+        drop persona; returns the number of dropped assignment rows.  A
+        persona absent (or owned by another account) yields ``0`` without
+        touching any assignment.
+        """
         ...
 
     async def append_audit(self, event: AuditEvent) -> None: ...

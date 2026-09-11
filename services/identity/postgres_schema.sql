@@ -305,6 +305,17 @@ CREATE TABLE IF NOT EXISTS identity_idempotency_records (
     PRIMARY KEY (scope_key, idempotency_key)
 );
 
+-- Forward-only widening of the idempotency operation whitelist so the
+-- create-once custom persona write can reuse the same Idempotency-Key store.
+ALTER TABLE identity_idempotency_records
+    DROP CONSTRAINT IF EXISTS identity_idempotency_records_operation_check;
+ALTER TABLE identity_idempotency_records
+    ADD CONSTRAINT identity_idempotency_records_operation_check
+    CHECK (operation IN (
+        'transfer.create', 'transfer.accept', 'transfer.cancel',
+        'persona.create'
+    ));
+
 -- Subject-level persona override.  ``(binding_id, subject_id)`` is the key:
 -- a subject holds at most one persona on a binding, and a missing row means
 -- "no override" (the binding default ``persona_assignment_id`` applies).
@@ -326,6 +337,79 @@ CREATE TABLE IF NOT EXISTS identity_persona_assignments (
 
 CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_subject
 ON identity_persona_assignments(subject_id);
+
+-- ``persona_id`` is deliberately NOT a foreign key onto
+-- ``identity_custom_personas``: a built-in persona id (``starlight`` ...) is
+-- not a custom row, so an FK would wrongly reject every built-in assignment.
+-- Instead the column is indexed and the delete path drops referencing rows
+-- explicitly inside one transaction.
+CREATE INDEX IF NOT EXISTS idx_identity_persona_assignments_persona
+ON identity_persona_assignments(persona_id);
+
+-- Account-level custom persona (increment two).  Create-once and immutable:
+-- ``persona_id`` lives in the SAME namespace as the built-in catalogue, only
+-- prefixed ``cu_``.  ``owner_person_id`` is the account owner; one persona may
+-- be referenced by several bindings/subjects of that account.  ``persona_version``
+-- is always 1 (change anything -> create anew).
+CREATE TABLE IF NOT EXISTS identity_custom_personas (
+    persona_id TEXT PRIMARY KEY CHECK (
+        persona_id ~ '^cu_[0-9a-f]{16,29}$' AND char_length(persona_id) <= 32
+    ),
+    owner_person_id TEXT NOT NULL CHECK (
+        char_length(owner_person_id) BETWEEN 1 AND 128
+    ),
+    display_name TEXT NOT NULL CHECK (char_length(display_name) BETWEEN 1 AND 16),
+    style_description TEXT NOT NULL CHECK (char_length(style_description) <= 60),
+    warmth TEXT NOT NULL CHECK (
+        warmth IN ('warm', 'bright', 'soft', 'calm', 'reserved')
+    ),
+    directness TEXT NOT NULL CHECK (directness IN ('gentle', 'direct')),
+    response_length TEXT NOT NULL CHECK (response_length IN ('brief', 'balanced')),
+    question_frequency TEXT NOT NULL CHECK (
+        question_frequency IN ('rare', 'occasional', 'frequent')
+    ),
+    interview_depth TEXT NOT NULL CHECK (
+        interview_depth IN ('light', 'structured', 'on_explicit_invitation')
+    ),
+    welcome_text TEXT NOT NULL CHECK (char_length(welcome_text) <= 60),
+    conversation_instruction TEXT NOT NULL CHECK (
+        char_length(conversation_instruction) <= 200
+    ),
+    voice_instruction TEXT NOT NULL CHECK (char_length(voice_instruction) <= 120),
+    default_voice_emotion TEXT NOT NULL CHECK (
+        default_voice_emotion IN ('neutral', 'happy')
+    ),
+    default_voice_rate NUMERIC(4,2) NOT NULL CHECK (
+        default_voice_rate BETWEEN 0.90 AND 1.10
+    ),
+    fallback_designed_voice TEXT NOT NULL CHECK (
+        char_length(fallback_designed_voice) BETWEEN 1 AND 32
+    ),
+    persona_version INTEGER NOT NULL CHECK (persona_version = 1),
+    source TEXT NOT NULL CHECK (source IN ('user_created', 'bio_migration')),
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_custom_personas_owner
+ON identity_custom_personas(owner_person_id, created_at DESC);
+
+-- Database-layer immutability (PRD acceptance: not merely application level).
+-- ANY update is refused; DELETE is deliberately allowed (dropping a persona is
+-- the ordinary delete, orchestrated by the owner-only service transaction).
+-- Isomorphic to ``identity_persona_assignment_core_immutable_guard`` with an
+-- empty "columns that may change" set.
+CREATE OR REPLACE FUNCTION identity_custom_persona_immutable_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $identity_custom_persona_immutable$
+BEGIN
+    RAISE EXCEPTION 'identity custom persona is immutable';
+END
+$identity_custom_persona_immutable$;
+
+DROP TRIGGER IF EXISTS identity_custom_persona_immutable
+ON identity_custom_personas;
+CREATE TRIGGER identity_custom_persona_immutable
+BEFORE UPDATE ON identity_custom_personas
+FOR EACH ROW EXECUTE FUNCTION identity_custom_persona_immutable_guard();
 
 -- Current function signatures are upgraded in place.  RLS policies and
 -- triggers retain dependencies on these objects after the first install, so
@@ -542,6 +626,8 @@ ALTER TABLE identity_idempotency_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_idempotency_records FORCE ROW LEVEL SECURITY;
 ALTER TABLE identity_persona_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_persona_assignments FORCE ROW LEVEL SECURITY;
+ALTER TABLE identity_custom_personas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity_custom_personas FORCE ROW LEVEL SECURITY;
 
 -- FORCE RLS also applies to the dedicated table owner.  SECURITY DEFINER
 -- authority ports therefore use an explicit owner-only policy while still
@@ -561,7 +647,8 @@ BEGIN
         'identity_outbox',
         'identity_transfer_intents',
         'identity_idempotency_records',
-        'identity_persona_assignments'
+        'identity_persona_assignments',
+        'identity_custom_personas'
     ] LOOP
         EXECUTE format(
             'DROP POLICY IF EXISTS identity_owner_full ON %I', v_table
@@ -1104,7 +1191,10 @@ BEGIN
        OR p_idempotency_key IS NULL OR char_length(p_idempotency_key) NOT BETWEEN 1 AND 64 THEN
         RAISE EXCEPTION 'identity_write_idempotency: invalid key';
     END IF;
-    IF p_operation NOT IN ('transfer.create', 'transfer.accept', 'transfer.cancel') THEN
+    IF p_operation NOT IN (
+        'transfer.create', 'transfer.accept', 'transfer.cancel',
+        'persona.create'
+    ) THEN
         RAISE EXCEPTION 'identity_write_idempotency: invalid operation';
     END IF;
     IF p_content_hash IS NULL OR p_content_hash !~ '^[a-f0-9]{64}$' THEN
@@ -1661,6 +1751,45 @@ CREATE TRIGGER identity_persona_assignments_audit_trigger
 AFTER INSERT OR UPDATE OR DELETE ON identity_persona_assignments
 FOR EACH ROW EXECUTE FUNCTION identity_audit_persona_assignment_event();
 
+-- Account-level custom personas are guarded by an INSERT/DELETE audit trigger
+-- (no UPDATE branch: the immutable guard rejects updates before this runs).
+CREATE OR REPLACE FUNCTION identity_audit_custom_persona_event()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE
+    v_actor text;
+    v_row jsonb;
+    v_action text;
+BEGIN
+    v_actor := NULLIF(current_setting('app.identity_actor', true), '');
+    v_row := to_jsonb(COALESCE(NEW, OLD));
+    v_action := CASE TG_OP
+        WHEN 'INSERT' THEN 'persona.custom.create'
+        ELSE 'persona.custom.delete'
+    END;
+    INSERT INTO identity_audit_events (
+        event_id, action, actor_person_id, subject_person_id,
+        person_id, device_id, binding_id, relationship_id,
+        payload_json, created_at
+    ) VALUES (
+        'evt:custom_persona:' || gen_random_uuid()::text, v_action, v_actor,
+        v_row ->> 'owner_person_id', v_row ->> 'owner_person_id',
+        NULL, NULL, NULL, v_row,
+        COALESCE(
+            NULLIF(v_row ->> 'created_at', '')::timestamptz,
+            now()
+        )
+    );
+    RETURN COALESCE(NEW, OLD);
+END
+$$;
+
+DROP TRIGGER IF EXISTS identity_custom_personas_audit_trigger
+    ON identity_custom_personas;
+CREATE TRIGGER identity_custom_personas_audit_trigger
+AFTER INSERT OR DELETE ON identity_custom_personas
+FOR EACH ROW EXECUTE FUNCTION identity_audit_custom_persona_event();
+
 -- Trigger functions are only callable by their triggers, but they are still
 -- SECURITY DEFINER and are revoked from PUBLIC for defense in depth.
 REVOKE ALL ON FUNCTION identity_audit_relationship_event() FROM PUBLIC;
@@ -1668,6 +1797,7 @@ REVOKE ALL ON FUNCTION identity_audit_binding_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_transfer_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_person_update_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_audit_persona_assignment_event() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_audit_custom_persona_event() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION identity_person_exists(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_next_binding_version(text) FROM PUBLIC;
@@ -1739,6 +1869,11 @@ BEGIN
         -- may write and drop them, and an audit row is synthesized by the
         -- trigger.  DELETE is granted only for this table.
         GRANT SELECT, INSERT, UPDATE, DELETE ON identity_persona_assignments
+            TO memoria_identity;
+        -- Custom personas are create-once: the API role may read, insert and
+        -- delete them, but is NEVER granted UPDATE -- the immutability trigger
+        -- is the primary guard and this is the grant-level double lock.
+        GRANT SELECT, INSERT, DELETE ON identity_custom_personas
             TO memoria_identity;
         -- Audit, outbox and idempotency writes go through the SECURITY
         -- DEFINER write ports only; a forged GUC must never unlock raw DML.
@@ -1882,6 +2017,20 @@ BEGIN
                 AND identity_binding_manage_allowed(identity_actor(), binding_id)
             );
 
+        DROP POLICY IF EXISTS identity_api_custom_personas
+            ON identity_custom_personas;
+        CREATE POLICY identity_api_custom_personas
+            ON identity_custom_personas
+            TO memoria_identity
+            USING (
+                identity_actor() IS NOT NULL
+                AND owner_person_id = identity_actor()
+            )
+            WITH CHECK (
+                identity_actor() IS NOT NULL
+                AND owner_person_id = identity_actor()
+            );
+
         DROP POLICY IF EXISTS identity_api_audit ON identity_audit_events;
         CREATE POLICY identity_api_audit ON identity_audit_events
             TO memoria_identity
@@ -1997,6 +2146,8 @@ BEGIN
             TO memoria_identity_migration;
         GRANT SELECT, INSERT, UPDATE, DELETE ON identity_persona_assignments
             TO memoria_identity_migration;
+        GRANT SELECT, INSERT, DELETE ON identity_custom_personas
+            TO memoria_identity_migration;
         GRANT SELECT, INSERT ON identity_idempotency_records
             TO memoria_identity_migration;
         GRANT SELECT, INSERT ON identity_audit_events TO memoria_identity_migration;
@@ -2045,6 +2196,14 @@ BEGIN
             ON identity_persona_assignments;
         CREATE POLICY identity_migration_persona_assignments
             ON identity_persona_assignments
+            TO memoria_identity_migration
+            USING (identity_scope() = 'migration')
+            WITH CHECK (identity_scope() = 'migration');
+
+        DROP POLICY IF EXISTS identity_migration_custom_personas
+            ON identity_custom_personas;
+        CREATE POLICY identity_migration_custom_personas
+            ON identity_custom_personas
             TO memoria_identity_migration
             USING (identity_scope() = 'migration')
             WITH CHECK (identity_scope() = 'migration');
