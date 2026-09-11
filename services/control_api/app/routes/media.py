@@ -782,7 +782,6 @@ async def _create_direct_device_media_session(
     frozen = await freeze_companion_delivery(
         companion=companion,
         session_focus=session_focus,
-        bio=owner.get("bio"),
         account_id=account_id,
         store=store,
         voice_manager=getattr(request.app.state, "voice_profile_manager", None),
@@ -1115,7 +1114,6 @@ async def _resume_direct_device_media_session(
             frozen = await freeze_companion_delivery(
                 companion=companion,
                 session_focus=session_focus,
-                bio=owner.get("bio"),
                 account_id=account_id,
                 store=store,
                 voice_manager=getattr(request.app.state, "voice_profile_manager", None),

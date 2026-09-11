@@ -465,7 +465,7 @@ async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
 
 
 @pytest.mark.asyncio
-async def test_custom_persona_companion_session_resolves_the_frozen_clone(
+async def test_legacy_bio_marker_no_longer_binds_a_personal_clone(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -523,14 +523,14 @@ async def test_custom_persona_companion_session_resolves_the_frozen_clone(
     frozen = app.state.memory_store.get_voice_session_by_id(session_id=session["session_id"])
     assert frozen is not None
     assert frozen["companion_style_id"] == "taoxi"
-    assert frozen["voice_provider"] == "alibaba_model_studio"
+    # A personal clone now belongs to a custom persona rather than to the legacy
+    # bio marker; this account has created no persona, so nothing is bound.
+    assert frozen["voice_provider"] is None
     assert resolved.status_code == 200, resolved.text
     body = resolved.json()
-    assert body["mode"] == "active"
-    assert body["voice_kind"] == "personal"
-    assert body["provider"] == "alibaba_model_studio"
-    assert body["voice_id"] == voice_id
-    assert body["speaker_sha256"] == hashlib.sha256(voice_id.encode()).hexdigest()
+    assert body["mode"] == "designed"
+    assert body["voice_id"] is None
+    assert body["speaker_sha256"] is None
 
 
 @pytest.mark.asyncio

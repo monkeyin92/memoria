@@ -18,6 +18,7 @@ from services.voice_profile.domain import (
     VoiceEnrollmentReconciliationRequiredError,
     VoiceEnrollmentRequest,
     VoiceEvaluationRequest,
+    VoiceProfile,
     VoiceQualityMeasurementRequest,
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
@@ -963,3 +964,96 @@ async def test_consent_revocation_waits_for_orphan_sample_reconciliation(
     assert retried.revoked_at == revoked_consent.revoked_at
     assert await manager.pending_enrollments(account_id="voice-account") == ()
     assert await manager.profiles(account_id="voice-account") == ()
+
+
+async def _activated_clone(
+    manager: VoiceProfileManager,
+    *,
+    account_id: str,
+    custom_persona_id: str,
+) -> VoiceProfile:
+    """Take one enrollment all the way to an active clone for that persona."""
+    candidate = await manager.enroll(
+        VoiceEnrollmentRequest(
+            account_id=account_id,
+            audio=_sample(),
+            media_type="audio/wav",
+            duration_ms=12_000,
+            sample_rate=24_000,
+            # Without an explicit key the enrollment key is derived from the
+            # audio, so identical samples in one account would collapse into a
+            # single profile and this test would silently pass with one row.
+            enrollment_key=f"persona-clone-{custom_persona_id}",
+            custom_persona_id=custom_persona_id,
+        )
+    )
+    await manager.evaluate(
+        VoiceEvaluationRequest(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+            similarity=4.0,
+            naturalness=4.0,
+            accent_similarity=4.0,
+            emotion_adherence=4.0,
+            instruction_adherence=4.0,
+            uncanny=2.0,
+            candidate_preferred=True,
+        )
+    )
+    await manager.record_quality_measurement(
+        VoiceQualityMeasurementRequest(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+            source_run_id=f"probe-run-{custom_persona_id}",
+            first_audio_ms=700,
+            cancel_tail_ms=100,
+            timestamp_error_ms=100,
+            long_sentence_chars=240,
+            long_sentence_completion_ratio=0.99,
+        )
+    )
+    return await manager.activate(
+        account_id=account_id, profile_id=candidate.profile_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_each_custom_persona_keeps_its_own_active_clone(tmp_path: Path) -> None:
+    """Two personas hold one active clone each and neither evicts the other.
+
+    The "one active" rule is per persona: activating a second persona's clone
+    used to demote the whole account's active row to a candidate.
+    """
+    manager, _provider, _root = _manager(tmp_path)
+    account_id = "voice-account"
+    persona_a = "cu_aaaaaaaaaaaaaaaa"
+    persona_b = "cu_bbbbbbbbbbbbbbbb"
+    await manager.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
+
+    first = await _activated_clone(
+        manager, account_id=account_id, custom_persona_id=persona_a
+    )
+    second = await _activated_clone(
+        manager, account_id=account_id, custom_persona_id=persona_b
+    )
+
+    active = {
+        profile.profile_id: profile
+        for profile in await manager.profiles(account_id=account_id)
+        if profile.status == "active"
+    }
+    assert set(active) == {first.profile_id, second.profile_id}
+    assert active[first.profile_id].custom_persona_id == persona_a
+    assert active[second.profile_id].custom_persona_id == persona_b
+
+    # Each dimension resolves to its own clone; the unbound one resolves to none.
+    resolution_a = await manager.resolve(
+        account_id=account_id, custom_persona_id=persona_a
+    )
+    resolution_b = await manager.resolve(
+        account_id=account_id, custom_persona_id=persona_b
+    )
+    assert resolution_a.voice_kind == "personal"
+    assert resolution_b.voice_kind == "personal"
+    assert resolution_a.profile_id != resolution_b.profile_id
+    assert (await manager.resolve(account_id=account_id)).mode == "fallback"

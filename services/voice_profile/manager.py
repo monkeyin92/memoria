@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
         CHECK (quality_status IN ('pending', 'passed', 'failed')),
     sample_validation_status TEXT NOT NULL DEFAULT 'pending'
         CHECK (sample_validation_status IN ('pending', 'passed', 'failed')),
+    custom_persona_id TEXT,
     deletion_status TEXT NOT NULL DEFAULT 'not_requested'
         CHECK (deletion_status IN ('not_requested', 'pending', 'completed', 'failed')),
     provider_expires_at TEXT,
@@ -138,8 +139,14 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
     FOREIGN KEY (sample_id) REFERENCES voice_samples(sample_id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active
-ON voice_profiles(account_id) WHERE status = 'active';
+DROP INDEX IF EXISTS idx_voice_one_active;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active_owner
+ON voice_profiles(account_id) WHERE status = 'active' AND custom_persona_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active_persona
+ON voice_profiles(custom_persona_id)
+WHERE status = 'active' AND custom_persona_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS voice_blind_trials (
     trial_id TEXT PRIMARY KEY,
@@ -271,6 +278,10 @@ class VoiceProfileManager:
                     connection.execute(
                         "ALTER TABLE voice_profiles ADD COLUMN sample_validation_status "
                         "TEXT NOT NULL DEFAULT 'pending'"
+                    )
+                if "custom_persona_id" not in columns:
+                    connection.execute(
+                        "ALTER TABLE voice_profiles ADD COLUMN custom_persona_id TEXT"
                     )
                 evaluation_columns = {
                     str(row[1])
@@ -708,8 +719,9 @@ class VoiceProfileManager:
                 INSERT INTO voice_profiles (
                     profile_id, account_id, sample_id, version_number,
                     provider, provider_region, target_model, status,
-                    sample_validation_status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'enrolling', ?, ?, ?)
+                    sample_validation_status, custom_persona_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'enrolling', ?, ?, ?, ?)
                 """,
                 (
                     str(operation["profile_id"]),
@@ -720,6 +732,7 @@ class VoiceProfileManager:
                     self._provider_region,
                     self._target_model,
                     "passed" if validation.admitted else "pending",
+                    request.custom_persona_id,
                     now,
                     now,
                 ),
@@ -1251,8 +1264,18 @@ class VoiceProfileManager:
             )
             self._insert_evidence(connection, event)
             connection.execute(
-                "UPDATE voice_profiles SET status = 'candidate', activated_at = NULL WHERE account_id = ? AND status = 'active'",
-                (account_id,),
+                """
+                UPDATE voice_profiles
+                SET status = 'candidate', activated_at = NULL
+                WHERE account_id = ? AND status = 'active'
+                  AND custom_persona_id IS ?
+                """,
+                (
+                    account_id,
+                    row["custom_persona_id"]
+                    if "custom_persona_id" in row.keys()
+                    else None,
+                ),
             )
             connection.execute(
                 """
@@ -1269,7 +1292,9 @@ class VoiceProfileManager:
         assert updated is not None
         return self._profile(updated)
 
-    async def resolve(self, *, account_id: str) -> VoiceResolution:
+    async def resolve(
+        self, *, account_id: str, custom_persona_id: str | None = None
+    ) -> VoiceResolution:
         with self._connect() as connection:
             consent = connection.execute(
                 "SELECT 1 FROM voice_clone_consents WHERE account_id = ? AND revoked_at IS NULL",
@@ -1279,6 +1304,7 @@ class VoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = ? AND status = 'active'
+                  AND custom_persona_id IS ?
                   AND evaluation_status <> 'failed'
                   AND quality_status <> 'failed'
                   AND sample_validation_status <> 'failed'
@@ -1287,7 +1313,7 @@ class VoiceProfileManager:
                       OR (evaluation_status = 'passed' AND quality_status = 'passed')
                   )
                 """,
-                (account_id,),
+                (account_id, custom_persona_id),
             ).fetchone()
         if consent is None or row is None or row["provider_voice_id"] is None:
             return VoiceResolution(mode="fallback")
@@ -1769,6 +1795,12 @@ class VoiceProfileManager:
                 row["sample_validation_status"]
                 if "sample_validation_status" in row.keys()
                 else "pending",
+            ),
+            custom_persona_id=(
+                str(row["custom_persona_id"])
+                if "custom_persona_id" in row.keys()
+                and row["custom_persona_id"] is not None
+                else None
             ),
             provider_expires_at=(
                 datetime.fromisoformat(str(row["provider_expires_at"]))

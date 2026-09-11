@@ -10,9 +10,9 @@ from typing import Any
 from fastapi import HTTPException
 
 from services.common.companions import DESIGNED_VOICE_MODEL, CompanionDefinition
-from services.common.custom_persona import parse_custom_persona
 from services.control_api.app.account_gate import require_capability_for_account_id
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
+from services.control_api.app.session_companion import custom_persona_id_or_none
 from services.tutor.domain import SessionFocus
 from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
 
@@ -37,26 +37,39 @@ def voice_session_delivery_fields(frozen: FrozenMode) -> dict[str, Any]:
     }
 
 
+def custom_persona_id_for(companion: CompanionDefinition) -> str | None:
+    """The persona id when this companion is a custom persona, else ``None``.
+
+    A built-in companion carries its own designed voice and never binds a
+    personal clone; only a custom persona owns one.
+    """
+    return custom_persona_id_or_none(companion.companion_id)
+
+
 async def freeze_companion_delivery(
     *,
     companion: CompanionDefinition,
     session_focus: SessionFocus,
-    bio: object,
     account_id: str,
     store: Any,
     voice_manager: VoiceProfilePort | None,
 ) -> FrozenMode:
-    """Catalog companion, plus a personal clone when custom persona is active."""
+    """Catalog companion, plus the clone its custom persona binds."""
 
     frozen = ModePolicy.freeze_companion(companion, session_focus=session_focus)
-    if voice_manager is None or not parse_custom_persona(bio).active:
+    if voice_manager is None:
+        return frozen
+    custom_persona_id = custom_persona_id_for(companion)
+    if custom_persona_id is None:
         return frozen
     try:
         require_capability_for_account_id(account_id, "voice_clone", store=store)
     except HTTPException:
         return frozen
     try:
-        resolution = await voice_manager.resolve(account_id=account_id)
+        resolution = await voice_manager.resolve(
+            account_id=account_id, custom_persona_id=custom_persona_id
+        )
     except Exception:
         logger.exception("companion clone resolve failed account_id=%s", account_id)
         return frozen

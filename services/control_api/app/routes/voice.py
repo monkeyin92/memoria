@@ -44,7 +44,9 @@ from services.control_api.app.security import (
     require_active_voice_session,
     require_authenticated_user,
 )
+from services.control_api.app.session_companion import custom_persona_id_or_none
 from services.digital_self.domain import RegistryPort, VersionNotFoundError
+from services.identity.domain import IdentityNotFoundError
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessPurpose,
@@ -253,7 +255,40 @@ class EnrollmentCreate(BaseModel):
     duration_ms: int = Field(ge=10_000, le=60_000)
     sample_rate: int = Field(ge=16_000, le=192_000)
     enrollment_key: str | None = Field(default=None, min_length=1, max_length=128)
+    #: The custom persona this clone belongs to; omitted for the account's own
+    #: personal voice.  Checked against the account's personas before the sample
+    #: is stored, so a clone cannot be filed under someone else's persona id.
+    custom_persona_id: str | None = Field(default=None, min_length=1, max_length=32)
     ready_for_device: bool = False
+
+
+async def _require_own_custom_persona(
+    request: Request,
+    user: AuthenticatedUser,
+    custom_persona_id: str | None,
+) -> None:
+    """A clone may only be filed under a persona this account owns."""
+    if custom_persona_id is None:
+        return
+    identity = getattr(request.app.state, "identity_service", None)
+    if identity is None:
+        raise HTTPException(
+            status_code=503, detail={"code": "identity_authority_unavailable"}
+        )
+    try:
+        await identity.get_custom_persona(
+            custom_persona_id,
+            owner_person_id=user.user_id,
+            actor_person_id=user.user_id,
+        )
+    except IdentityNotFoundError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "custom_persona_not_found",
+                "persona_id": custom_persona_id,
+            },
+        ) from exc
 
 
 @router.post("/enrollments", status_code=status.HTTP_201_CREATED)
@@ -272,6 +307,7 @@ async def enroll_voice(
     """
     require_capability_for_subject(user, "voice_clone", store=_store(request))
     _require_registered(request, user)
+    await _require_own_custom_persona(request, user, body.custom_persona_id)
     try:
         audio = base64.b64decode(body.audio_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -284,6 +320,7 @@ async def enroll_voice(
         duration_ms=body.duration_ms,
         sample_rate=body.sample_rate,
         enrollment_key=body.enrollment_key,
+        custom_persona_id=body.custom_persona_id,
         # The mini-program cannot run an A/B comparison or a TTS-output probe,
         # so the recording itself is the admission evidence and is measured
         # before anything is stored.
@@ -725,7 +762,12 @@ async def session_resolution(
                     "voice_clone",
                     store=_store(request),
                 )
-                resolution = await _manager(request).resolve(account_id=account_id)
+                resolution = await _manager(request).resolve(
+                    account_id=account_id,
+                    custom_persona_id=custom_persona_id_or_none(
+                        frozen.companion_style_id
+                    ),
+                )
             except HTTPException:
                 resolution = None
             speaker_sha256 = (

@@ -92,8 +92,16 @@ async def session_companion(
     return companion_definition(name or DEFAULT_COMPANION_ID)
 
 
+def custom_persona_id_or_none(companion_id: object) -> str | None:
+    """The id itself when it names a custom persona, else ``None``."""
+    if isinstance(companion_id, str) and companion_id.startswith(CUSTOM_PERSONA_PREFIX):
+        return companion_id
+    return None
+
+
 __all__ = [
     "CUSTOM_PERSONA_PREFIX",
+    "custom_persona_id_or_none",
     "persona_id_from_runtime_profile",
     "session_companion",
 ]

@@ -16,6 +16,7 @@ from services.voice_profile.domain import (
     VoiceEnrollmentReconciliationRequiredError,
     VoiceEnrollmentRequest,
     VoiceEvaluationRequest,
+    VoiceProfile,
     VoiceQualityMeasurementRequest,
 )
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
@@ -721,3 +722,137 @@ async def test_postgres_revocation_during_enrollment_tracks_failed_late_deletion
 
     await _cleanup(dsn, account_id)
     await manager.close()
+
+
+async def _activated_persona_clone(
+    manager: PostgresVoiceProfileManager,
+    *,
+    account_id: str,
+    custom_persona_id: str,
+) -> VoiceProfile:
+    """Take one enrollment to an active clone filed under that persona."""
+    candidate = await manager.enroll(
+        VoiceEnrollmentRequest(
+            account_id=account_id,
+            audio=_sample(12_000),
+            media_type="audio/wav",
+            duration_ms=12_000,
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            # The enrollment key falls back to the audio digest, so identical
+            # samples in one account would collapse into a single profile.
+            enrollment_key=f"persona-clone-{custom_persona_id}",
+            custom_persona_id=custom_persona_id,
+        )
+    )
+    await manager.evaluate(
+        VoiceEvaluationRequest(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+            similarity=4.0,
+            naturalness=4.0,
+            accent_similarity=4.0,
+            emotion_adherence=4.0,
+            instruction_adherence=4.0,
+            uncanny=2.0,
+            candidate_preferred=True,
+        )
+    )
+    await manager.record_quality_measurement(
+        VoiceQualityMeasurementRequest(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+            source_run_id=f"probe-run-{custom_persona_id}",
+            first_audio_ms=700,
+            cancel_tail_ms=100,
+            timestamp_error_ms=100,
+            long_sentence_chars=240,
+            long_sentence_completion_ratio=0.99,
+        )
+    )
+    return await manager.activate(
+        account_id=account_id, profile_id=candidate.profile_id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL voice contract test",
+)
+async def test_postgres_keeps_one_active_clone_per_custom_persona(
+    tmp_path: Path,
+) -> None:
+    """Postgres holds one active clone per persona, and the account index is gone.
+
+    The rule used to be per account, which made "one clone per persona"
+    impossible: activating the second persona's clone demoted the first.
+    """
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = "postgres-persona-clone-account"
+    persona_a = "cu_aaaaaaaaaaaaaaaa"
+    persona_b = "cu_bbbbbbbbbbbbbbbb"
+    manager = PostgresVoiceProfileManager(
+        dsn,
+        object_store=EncryptedLocalObjectStore(
+            root=tmp_path / "persona-voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-postgres-test-v1",
+        ),
+        provider=ProviderStub(),
+        sample_url_factory=lambda sample_id: (
+            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
+        ),
+        provider_region="cn-beijing",
+        target_model="cosyvoice-v3.5-flash",
+    )
+    try:
+        await manager.initialize()
+        await _cleanup(dsn, account_id)
+        await manager.grant_consent(
+            account_id=account_id, policy_version="voice-clone-v1"
+        )
+
+        first = await _activated_persona_clone(
+            manager, account_id=account_id, custom_persona_id=persona_a
+        )
+        second = await _activated_persona_clone(
+            manager, account_id=account_id, custom_persona_id=persona_b
+        )
+
+        active = {
+            profile.profile_id: profile
+            for profile in await manager.profiles(account_id=account_id)
+            if profile.status == "active"
+        }
+        assert set(active) == {first.profile_id, second.profile_id}
+        assert active[first.profile_id].custom_persona_id == persona_a
+        assert active[second.profile_id].custom_persona_id == persona_b
+
+        resolution_a = await manager.resolve(
+            account_id=account_id, custom_persona_id=persona_a
+        )
+        resolution_b = await manager.resolve(
+            account_id=account_id, custom_persona_id=persona_b
+        )
+        assert resolution_a.profile_id == first.profile_id
+        assert resolution_b.profile_id == second.profile_id
+        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
+
+        connection = await asyncpg.connect(dsn)
+        try:
+            indexes = {
+                str(row["indexname"])
+                for row in await connection.fetch(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE tablename = 'voice_profiles'"
+                )
+            }
+        finally:
+            await connection.close()
+        # The account-wide rule is gone, replaced by the two partial ones.
+        assert "idx_voice_one_active" not in indexes
+        assert "idx_voice_one_active_owner" in indexes
+        assert "idx_voice_one_active_persona" in indexes
+    finally:
+        await _cleanup(dsn, account_id)
+        await manager.close()

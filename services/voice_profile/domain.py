@@ -142,6 +142,10 @@ class VoiceEnrollmentRequest:
     duration_ms: int
     sample_rate: int
     enrollment_key: str | None = None
+    #: The custom persona this clone belongs to.  ``None`` is the account's own
+    #: personal voice, which is what an unbound enrollment produces and what
+    #: every pre-existing profile means.
+    custom_persona_id: str | None = None
     #: Consumer enrollments (the mini-program) cannot run an A/B comparison or
     #: a TTS-output quality probe, so the submitted recording is measured and
     #: admitted instead -- and a recording that cannot be cloned is refused in
@@ -216,6 +220,8 @@ class VoiceProfile:
     #: enrollments leave this ``pending`` and rely on the A/B evaluation plus
     #: the TTS-output quality probe instead.
     sample_validation_status: Literal["pending", "passed", "failed"] = "pending"
+    #: ``None`` is the account's own personal voice, unbound to a persona.
+    custom_persona_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,7 +429,9 @@ class VoiceProfilePort(Protocol):
 
     async def activate(self, *, account_id: str, profile_id: str) -> VoiceProfile: ...
 
-    async def resolve(self, *, account_id: str) -> VoiceResolution: ...
+    async def resolve(
+        self, *, account_id: str, custom_persona_id: str | None = None
+    ) -> VoiceResolution: ...
 
     async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]: ...
 

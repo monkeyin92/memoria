@@ -89,8 +89,23 @@ ADD COLUMN IF NOT EXISTS quality_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE voice_profiles
 ADD COLUMN IF NOT EXISTS sample_validation_status TEXT NOT NULL DEFAULT 'pending';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active
-ON voice_profiles(account_id) WHERE status = 'active';
+-- NULL means the account's own personal voice, unbound to any custom persona.
+-- A custom persona owns its own active clone, so "one active" has to hold per
+-- persona rather than per account.
+ALTER TABLE voice_profiles
+ADD COLUMN IF NOT EXISTS custom_persona_id TEXT;
+
+DROP INDEX IF EXISTS idx_voice_one_active;
+
+-- Two partial indexes, not one: in a unique index NULLs are distinct from each
+-- other, so a non-null-only rule would leave an account free to hold any number
+-- of unbound active clones.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active_owner
+ON voice_profiles(account_id) WHERE status = 'active' AND custom_persona_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_one_active_persona
+ON voice_profiles(custom_persona_id)
+WHERE status = 'active' AND custom_persona_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS voice_blind_trials (
     trial_id UUID PRIMARY KEY,

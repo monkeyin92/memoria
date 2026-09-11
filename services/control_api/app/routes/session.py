@@ -838,7 +838,6 @@ async def create_session(
         frozen = await freeze_companion_delivery(
             companion=resolved,
             session_focus=body.session_focus,
-            bio=session_owner.get("bio"),
             account_id=user_id,
             store=store,
             voice_manager=getattr(request.app.state, "voice_profile_manager", None),

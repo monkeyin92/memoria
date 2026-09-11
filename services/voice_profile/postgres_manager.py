@@ -483,10 +483,11 @@ class PostgresVoiceProfileManager:
                 INSERT INTO voice_profiles (
                     profile_id, account_id, sample_id, version_number,
                     provider, provider_region, target_model, status,
-                    sample_validation_status, created_at, updated_at
+                    sample_validation_status, custom_persona_id,
+                    created_at, updated_at
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7,
-                    'enrolling', $8, $9, $9
+                    'enrolling', $8, $9, $10, $10
                 )
                 """,
                 operation["profile_id"],
@@ -497,6 +498,7 @@ class PostgresVoiceProfileManager:
                 self._provider_region,
                 self._target_model,
                 "passed" if validation.admitted else "pending",
+                request.custom_persona_id,
                 now,
             )
             await self._insert_sample_validation(
@@ -1109,8 +1111,10 @@ class PostgresVoiceProfileManager:
                 """
                 UPDATE voice_profiles SET status = 'candidate', activated_at = NULL
                 WHERE account_id = $1 AND status = 'active'
+                  AND custom_persona_id IS NOT DISTINCT FROM $2
                 """,
                 account_id,
+                row["custom_persona_id"],
             )
             updated = await connection.fetchrow(
                 """
@@ -1126,7 +1130,9 @@ class PostgresVoiceProfileManager:
         assert updated is not None
         return self._profile(updated)
 
-    async def resolve(self, *, account_id: str) -> VoiceResolution:
+    async def resolve(
+        self, *, account_id: str, custom_persona_id: str | None = None
+    ) -> VoiceResolution:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
@@ -1141,6 +1147,7 @@ class PostgresVoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = $1 AND status = 'active'
+                  AND custom_persona_id IS NOT DISTINCT FROM $2
                   AND evaluation_status <> 'failed'
                   AND quality_status <> 'failed'
                   AND sample_validation_status <> 'failed'
@@ -1150,6 +1157,7 @@ class PostgresVoiceProfileManager:
                   )
                 """,
                 account_id,
+                custom_persona_id,
             )
         if consent is None or row is None or row["provider_voice_id"] is None:
             return VoiceResolution(mode="fallback")
@@ -1673,6 +1681,12 @@ class PostgresVoiceProfileManager:
                 row["sample_validation_status"]
                 if "sample_validation_status" in row.keys()
                 else "pending",
+            ),
+            custom_persona_id=(
+                str(row["custom_persona_id"])
+                if "custom_persona_id" in row.keys()
+                and row["custom_persona_id"] is not None
+                else None
             ),
             provider_expires_at=cast(datetime | None, row["provider_expires_at"]),
             created_at=cast(datetime, row["created_at"]),
