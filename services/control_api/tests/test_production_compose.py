@@ -490,8 +490,14 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
 
     assert "FROM ${BASE_IMAGE}" in overlay
-    assert "RUN rm -rf /app/services/agent" in overlay
-    assert "COPY --chown=65532:65532 memoria/services/agent /app/services/agent" in overlay
+    # The overlay replaces the whole application tree, not just services/agent:
+    # the Agent imports shared runtime packages (services/persona,
+    # services/common, services/identity, ...) that the dependency base image
+    # pins to its own build-time revision, so a thinner overlay would ship new
+    # call sites against stale modules and die at import.
+    assert "RUN rm -rf /app/services /app/packages" in overlay
+    assert "COPY --chown=65532:65532 memoria/services /app/services" in overlay
+    assert "COPY --chown=65532:65532 memoria/packages /app/packages" in overlay
     assert (
         "COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py "
         "/app/scripts/run_media_bridge.py"
@@ -501,7 +507,7 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
 
     assert "scripts/verify_release_source.py" in deploy
     assert "git get-tar-commit-id" in deploy
-    assert "services/agent/__init__.py services/agent/src services/agent/models" in deploy
+    assert "services packages \\\n  scripts/run_media_bridge.py" in deploy
     assert "scripts/run_media_bridge.py" in deploy
     assert "--network=none" in deploy
     assert "docker save" not in deploy
@@ -509,7 +515,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "--no-deps --no-build" in deploy
     assert "trap rollback ERR" in deploy
     assert "runtime changes escape the Agent component" in deploy
-    assert "packages/*|services/common/*|infra/voices/*|infra/kws/*|infra/Dockerfile.agent" in deploy
+    assert "packages/*|services/common/*)" in deploy
+    assert "infra/voices/*|infra/kws/*|infra/Dockerfile.agent)" in deploy
     assert "scripts/verify_env.py|scripts/livekit_smoke_test.py" in deploy
     assert "compose_sha256=$compose_sha" in deploy
     assert "Compose base snapshot was pruned" in deploy
@@ -533,7 +540,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "component overrides do not describe one current authority" in deploy
     assert '"${#previous_files[@]}" -eq "${#bridge_previous_files[@]}"' in deploy
     assert 'com.memoria.release.kind="agent-running-source-recovery"' in deploy
-    assert 'docker cp "$container:/app/services/agent"' in deploy
+    assert 'docker cp "$container:/app/services/."' in deploy
+    assert 'docker cp "$container:/app/packages/."' in deploy
     assert '"$live_source_digest" == "$rollback_source_digest"' in deploy
     assert "docker commit --pause=true" not in deploy
     assert 'agent-component.rollback.override.yml' in deploy

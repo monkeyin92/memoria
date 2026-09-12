@@ -614,7 +614,7 @@ freeze_container_image() {
   else
     # A running container can outlive a pruned parent image. Docker cannot
     # commit that container because its content digest is gone, so rebuild its
-    # exact Agent source tree over the surviving peer image from the same
+    # exact application source tree over the surviving peer image from the same
     # release authority and verify the result byte-for-byte before cutover.
     recovery_commit="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
     recovery_release="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
@@ -626,8 +626,9 @@ freeze_container_image() {
       exit 1
     }
     recovery_dir="$(mktemp -d "$remote_dir/rollback-source.XXXXXX")"
-    mkdir -p "$recovery_dir/memoria/services"
-    docker cp "$container:/app/services/agent" "$recovery_dir/memoria/services/agent"
+    mkdir -p "$recovery_dir/memoria/services" "$recovery_dir/memoria/packages"
+    docker cp "$container:/app/services/." "$recovery_dir/memoria/services/"
+    docker cp "$container:/app/packages/." "$recovery_dir/memoria/packages/"
     cat >"$recovery_dir/Dockerfile" <<'ROLLBACK_DOCKERFILE'
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
@@ -639,8 +640,9 @@ LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
       com.memoria.release.kind="agent-running-source-recovery"
 USER root
 WORKDIR /app
-RUN rm -rf /app/services/agent
-COPY --chown=65532:65532 memoria/services/agent /app/services/agent
+RUN rm -rf /app/services /app/packages
+COPY --chown=65532:65532 memoria/services /app/services
+COPY --chown=65532:65532 memoria/packages /app/packages
 USER 65532:65532
 ROLLBACK_DOCKERFILE
     docker build --pull=false --network=none \
@@ -652,11 +654,11 @@ ROLLBACK_DOCKERFILE
       "$recovery_dir"
     live_source_digest="$(
       docker exec --user 0 "$container" sh -c \
-        'cd /app && find services/agent -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
+        'cd /app && find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
     )"
     rollback_source_digest="$(
       docker run --rm --user 0 --entrypoint sh "$rollback_tag" -c \
-        'cd /app && find services/agent -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
+        'cd /app && find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
     )"
     [[ "$live_source_digest" == "$rollback_source_digest" ]] || {
       echo "recovered rollback image does not match the running Agent source" >&2
