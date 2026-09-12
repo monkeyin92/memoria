@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-12
-resume_checkpoint: farewell_loop_verified_20260912_release_tooling_single_rollback_tag_pending_deploy
+resume_checkpoint: farewell_loop_verified_20260912_release_tooling_single_rollback_tag_deployed
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -85,7 +85,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 **遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
 
-**发布工具工单（2026-09-12 已修，待本次工具版本部署）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；契约测试同时锁定单 tag 与双服务一致，避免回滚后下一次发布被标签状态永久卡死。历史版本的 `-pre-agent/-pre-bridge` 文件名仍只作为旧服务器记录保留，不再由新脚本生成。
+**发布工具工单（2026-09-12 已修并部署）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；契约测试同时锁定单 tag 与双服务一致，避免回滚后下一次发布被标签状态永久卡死。已随组件 `20260912-p0-rollback-single-tag-agent-component` 切流，Agent/Bridge image ID 均为 `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`，均 healthy、restarts=0，Bridge gRPC 通过。线上回滚点为 `memoria-agent:rollback-20260912-p0-rollback-single-tag-agent-component-pre`，回滚 override 两服务已核实共享该 tag。历史版本的 `-pre-agent/-pre-bridge` 文件名仍只作为旧服务器记录保留，不再由新脚本生成。尚未故意执行破坏性“回滚后再前进发布”演练。
 
 **真实设备告别复测（2026-09-12）**：新会话 `53c86566-6fec-48fa-9ddd-43da81674ce3`、epoch `1925`，不是旧日志。设备成功唤醒并进入 `listening`，收到“好的，再见”后线上记录 `conversation_end_explicit`，后续输入以 `reason=terminal` 拒绝，设备回到 `idle`；告别即时停止闭环已通过。天气会话 `eae63bac-d0d2-4f63-ad37-00f7b0a9a457` 是另一条独立的新会话。
 
