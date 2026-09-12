@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-12
-resume_checkpoint: commit_gate_fix_landed_in_workspace_uncommitted_awaiting_device_retest_root_cause_2_cross_turn_supersede_open
+resume_checkpoint: gate_fix_released_20260912_1150_awaiting_device_retest_root_cause_2_cross_turn_supersede_open_release_tooling_rollback_deadlock_open
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -60,22 +60,30 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 1. **提示音被跨 turn 的重复提交掐断**：`gen-2` 首帧 17.680、18.483 被 turn 3 提交取消，只播 0.80s，正文 `gen-3` 直到 20.741 —— 用户听到残句 + **2.26s 纯静音** + 正文。取消点是 `media_session_turns.py` `_commit_pending_turn`：既有的「不切断已播出声音」守卫要求 `owner.fence.turn_id == fence.turn_id`，重复提交是跨 turn 所以不生效。**已修（组件 `20260910-1855`）**：不动该守卫（扩到跨 turn 会让新话轮的回复因 reply lock 未释放被静默丢弃），改为在 `media_session_commit.py` 的 `_commit_user_turn_locked` 里跳过**重复话轮本身**——待提交文本与上一轮已提交文本（`normalize_short`）相同**且** `_reply_in_flight` 为真时才跳过，同文本 + 回复在飞意味着信息量为零，不会丢内容；答案由仍在飞的那一轮交付。回复已结束后的真重复提问、以及尾部带新文本的 straddle（epoch 1361）都不受影响。复现测试 `test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight`（无闸门时第二次提交仍建出 turn 2 → 红；加闸门 → 绿）。
 2. **第二次提问完全没有提示音**：turn 4/5（35.715 / 35.905，相隔 190ms）都没播 ACK，正文 `gen-5` 到 42.098 才起，**6.38s 无提示**。两点结论：① turn 4 的 ACK 在 35.903 被 turn 5 抢占，`first_frame_sent=False`，即**又是重复提交**——已由 `20260910-1855` 的重复话轮闸门消除；② 即便有 ACK，一次 2s 提示也盖不住 6.4s 的检索，缺的是**第二句提示**。单测夹具另发现 ACK 可能被 `coordinator.output_intent_is_active` 判为非活动（前一个 output 仍占话轮），此时不发提示音且**不报错**，是隐性的（该观察未单独复现成真机故障）。**已修（组件 `20260910-1905`）**：`97978e9` 当年为守住 `agent.py` 行预算摘掉了 slow-think cover，本轮把它接回**到 `media_session_projection` 而不是 agent.py**——`_cover_slow_lookup` 在入队 ACK 之后、仅当委派仍在跑时等 `_LOOKUP_SECOND_CUE_AFTER_S = 2.5s` 并播 `THINKING_FILLER`（「稍等，我想一下。」），走同一条 fenced acknowledgement 路径；委派已完成则完全跳过等待，快查询的调度不变。复现测试 `test_slow_lookup_is_covered_by_a_second_cue`（先红后绿）。同轮还把「发不发提示音」的判据从 30s 突发窗口改成独立的 5s 窗口（`_LIVE_LOOKUP_FILLER_ACK_REPEAT_S`，组件 `20260910-1844`，复现测试 `test_later_live_lookup_still_announces_itself`）。
-3. 附带发现：`services/agent/src/prompts.py:90` 的 `THINKING_FILLER` 全仓库无消费点（只在 `__all__`），即 commit `83687b7` 的「覆盖慢查询间隙的第二个提示」机制实际已失效。
+3. 附带发现（**已被 1905 与本次 20260912-1150 发布取代**）：当时 `services/agent/src/prompts.py:90` 的 `THINKING_FILLER` 全仓库无消费点（只在 `__all__`），即 commit `83687b7` 的「覆盖慢查询间隙的第二个提示」机制实际已失效。1905 把它接回 `media_session_projection`，本次整树 overlay 让它重新生效（1855 源码 0 处、HEAD 有并在 `media_session_projection.py` 调用，容器内已核实）。
 
 
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-12 闸门修复（已落 main，待发布、未经真机）
+## 2026-09-12 闸门修复（已切流 20260912-1150，未经真机）
 
 问「今天南京天气怎么样」听到两遍 filler 且答案丢失（epoch 1911/1912）的代码修复：
+
+**发布记录（2026-09-12 12:39:40 CST 切流 PASS）**：`memoria-agent:20260912-1150-companion-persona-and-lookup-gate`，image `sha256:7fce8545aa20e49b51f772b22b14f51e2020e39d207cb44c2eef2f5589822228`，commit `43b28f181764126fa7d0e688cf797a58e8c3b176`。agent/bridge 双双 healthy、restarts=0；**容器内已逐条核实**闸门新调用（`media_session_commit.py` 第 679 行 `_reply_or_delegation_pending`）与 `media_session_turns.py` 的两个 staticmethod 真实存在，不是只凭脚本自报。回滚基线 `rollback-20260912-1150-companion-persona-and-lookup-gate-pre-agent/-pre-bridge`（= 切流前的 1855，`sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`）。**回滚即回到带同一 bug 的 1855（epoch 1912 已实锤），本轮没有干净可退版本——复测再失败时没有好兜底，这是当前最大风险。**
+
+**本次发布形态变更**：组件通道自本次起改用**整树 overlay**——`infra/Dockerfile.agent-source-overlay` 由「`rm -rf /app/services/agent` + 只覆盖 agent」改为「`rm -rf /app/services /app/packages` + 整树 COPY」，因为新 agent 依赖 `services/persona/custom_persona_fields`（1855 底座无此包）。仍然复用 1855 依赖层构建、`uv.lock` 未动。契约测试 `services/control_api/tests/test_production_compose.py` 已同步，`deploy_agent_component.sh` 的归档范围与回滚恢复路径一并改为整树。**副作用（正向）**：1905 的慢查询第二句提示随整树恢复（1855 源码 0 处 `THINKING_FILLER`，HEAD 有并在 `media_session_projection.py` 生效）。
+
+**数据层**：`services/identity/postgres_schema.sql` 已前向迁移到 `memoria` 库——新增 `identity_custom_personas`、`identity_persona_assignments`，并把 `identity_idempotency_records_operation_check` 加宽至含 `persona.create`。幂等 IF-NOT-EXISTS、向后兼容；已在库内核实两表与约束。切流前的库备份在服务器 `/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/`（注意：自动备份当时并未在跑，这次是手工 `pg_dump`）。
 
 - **A 已修**：`media_session_commit.py` 的 `_commit_user_turn_locked` 重复话轮闸门由 `_reply_in_flight` 改为 `_reply_or_delegation_pending` = `_reply_in_flight or _delegation_output_pending`。后者在 `context.delegation_output_claims` 存在 `PENDING/OWNED` claim 时为真，即把「输出已 `delegation_output_owned` 移交、深查结果未交付」的空窗计入 in-flight（两个 staticmethod 加在 `media_session_turns.py`）。**刻意不改 `_reply_in_flight` 本身**——它仍被 6 处 early-commit 路径复用，混入委派语义会饿死新话轮的端点锚定。
 - **B 部分**：`media_session_projection.py` / `media_session_output_dispatch.py` 两处 `output_intent_inactive` 接缝加 WARNING，把「已完成深查答案被静默释放」变为可观测。**行为未变，不保底**。
 - **C 未修（判为已被 A 消解）**：跨 turn supersede 未出首帧答案的触发者就是重复提交本身，A 修好后不再进入。对真正的新话轮（换话题/打断）抢占仍是正确行为。
 
 **遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
+
+**遗留工单（发布工具：回滚 ↔ 前进自相矛盾，未修）**：`scripts/deploy_agent_component.sh` 的回滚 override 故意把 agent/bridge 冻结成**两个不同 tag**（`memoria-agent:rollback-<tag>-pre-agent` / `-pre-bridge`，见脚本 604-605、685-693 行），而前进式切流的 pre-flight 又要求 `agent_image == bridge_image`（**tag 字符串相等**，418-422 行）。两者自相矛盾 → **任何一次回滚都会把下一次组件发布永久卡死**。本次首跑即以 `Agent and bridge do not share one current runnable image` 被拒；实测两容器同 image id、同 revision、同 version，**仅 tag 名不同**，属纯标签状态而非环境异常。注意快照路径 `pre-cutover-live.override.yml` 写的是单 tag（合规），**唯独 rollback 路径写双 tag**，所以缺陷面很窄。建议改法二选一：(a) 回滚冻结改为**单 tag**——Gate B 已保证 agent/bridge 同 image id，双 tag 本就无意义；(b) 放宽 Gate B 为「同 image id + 同 release authority」。两者都要补契约测试。临时绕行已留痕：`/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/agent-component.rollback.override.yml.bak-20260912-tagalign`。
 
 **待拍板**：`media_session_output_dispatch.py` 新加的那条 WARNING 在用户抢话（floor 不允许）时**必然触发**（QA 实证：floor 允许 0 条、抢话 1 条）；建议按原因细分、抢话降 INFO，否则真机排障会被噪声淹没。
 
@@ -92,9 +100,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 1899 已达成 `conversation_end_explicit`；屏上停留仍在，见「播后短告别」 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **代码已修（已落 main，待发布）**：闸门改判 `_reply_or_delegation_pending`，把「已 `delegation_output_owned`、深查未交付」空窗计入 in-flight。单测 172 passed + 红→绿独立重现，**待真机复测** |
-| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已落 main，待发布）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
-| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | `20260910-1905` 已随回滚移除；待主链修复后随新组件恢复 |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **已切流 20260912-1150**：闸门改判 `_reply_or_delegation_pending`，把「已 `delegation_output_owned`、深查未交付」空窗计入 in-flight。单测 172 passed + 红→绿独立重现，**待真机复测** |
+| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已切流 20260912-1150）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
+| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
@@ -231,9 +239,10 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260910-1855-duplicate-turn-skip-agent-component`，image `sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`。healthy、restart=0。2026-09-12 10:36 CST 因 1905 复测触发「问完无答案」红线（epoch 1911），按 runbook 用 `/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/` 的 rollback override 回滚。**1855 上同红线复现**（epoch 1912，两遍 filler + 答案双路丢失），回滚梯队到此为止，待代码修复。
-- 回滚：`rollback-20260910-1855-duplicate-turn-skip-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1844-lookup-ack-window-agent-component` / `sha256:bb45c232…`）。再往前依次可退 `20260910-1820` / `sha256:329e70ad…`。
-- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，ACK 用 5s 短窗口）、重复话轮跳过（同文本 + 回复在飞）、`a43668c` 影子声纹回归修复；**不含** 1905 的慢查询第二句提示（`THINKING_FILLER` 已随回滚移除）。已知缺陷（epoch 1911/1912 实锤）：重复话轮闸门在「上轮输出已 `delegation_output_owned`、深查结果未交付」的空窗放行重复提交；跨 turn 提交 supersede 未出首帧的待交付答案；`output_intent_inactive` 静默丢弃已完成的深查答案。
+- 当前：`memoria-agent:20260912-1150-companion-persona-and-lookup-gate`，image `sha256:7fce8545aa20e49b51f772b22b14f51e2020e39d207cb44c2eef2f5589822228`，OCI revision `43b28f181764126fa7d0e688cf797a58e8c3b176`。healthy、restart=0，2026-09-12 12:39:40 CST 切流；收据 `/opt/memoria/component-releases/20260912-1150-companion-persona-and-lookup-gate/`。
+- 回滚：`memoria-agent:rollback-20260912-1150-companion-persona-and-lookup-gate-pre-agent/-pre-bridge`（= 切流前的 1855，image `sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`，version `20260910-1855-duplicate-turn-skip-agent-component`）。**该镜像带同一 bug（epoch 1912 实锤），本轮回滚没有干净兜底。** 再往前可退 `20260910-1844-lookup-ack-window-agent-component` / `sha256:bb45c232…`，更早 `20260910-1820` / `sha256:329e70ad…`。
+- 历史：2026-09-12 10:36 CST 曾因 1905 复测触发「问完无答案」红线（epoch 1911），按 runbook 用 `/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/` 的 rollback override 回滚到 1855；1855 上同红线复现（epoch 1912，两遍 filler + 答案双路丢失），遂有本次修复切流。**该次回滚留下的 `-pre-agent`/`-pre-bridge` 双 tag 一度卡死本次切流**，见上文「遗留工单（发布工具…）」。
+- 当前镜像含：欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，ACK 用 5s 短窗口）、重复话轮跳过（同文本 + 回复在飞）、`a43668c` 影子声纹回归修复、**本轮委派待交付闸门（`_reply_or_delegation_pending`）**，以及经整树 overlay 恢复的慢查询第二句提示（`THINKING_FILLER`）。**已修**：重复话轮闸门在「上轮输出已 `delegation_output_owned`、深查结果未交付」空窗放行重复提交；`output_intent_inactive` 静默丢弃已完成的深查答案（改为 WARNING，可观测但不保底）。**仍未修**：不同文本抢跑时首答被 supersede 丢弃（根因 2）；跨 turn 抢占语义未动（判为已被本次修复消解）。
 
 **Media Edge**
 
