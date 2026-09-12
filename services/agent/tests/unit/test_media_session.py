@@ -4968,7 +4968,7 @@ async def test_media_provider_installs_prewarm_and_delegation_callbacks() -> Non
     assert provider.prewarm_calls == 1
     assert provider.delegations == [("今天南京天气怎么样", fence)]
     assert len(provider.output_intents) == 1
-    assert str(provider.output_intents[0].tts_source).startswith("稍等，我查询一下。")
+    assert str(provider.output_intents[0].tts_source).startswith(LIVE_LOOKUP_FILLER)
     assert context.runtime.orchestrator.task_manager.accepted_broadcast_count == 1
     assert context.runtime.orchestrator.task_manager.tasks == {}
     await context.runtime.close()
@@ -8095,7 +8095,7 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     claim = context.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.COMPLETED
     assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT not in provider.output_kinds
-    assert provider.output_texts == ["稍等，我查询一下。南京今天多云。"]
+    assert provider.output_texts == [f"{LIVE_LOOKUP_FILLER}南京今天多云。"]
     assert provider.reply_calls == 0
     assert await registry.generate_reply(identity.session_id, query, fence)
     assert provider.reply_calls == 0
@@ -9337,23 +9337,12 @@ async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
 
 
 @pytest.mark.asyncio
-async def test_slow_lookup_is_covered_by_a_second_cue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """epoch 1900: 慢查询期间完全没有第二句提示，用户听到 6.4s 静音。
+async def test_slow_lookup_uses_a_single_cue() -> None:
+    """慢查询只播一句稍长提示，不再追加同质第二句稍等。
 
-    The slow-think cover was dropped in 97978e9 to stay inside the agent.py line
-    budget, so a multi-second search was left with only the admission cue.
+    epoch 1900 用 THINKING_FILLER 盖静音；真机反馈两句同质稍等体验差，
+    改为更长的 LIVE_LOOKUP_FILLER 单句，并关掉第二句 cue。
     """
-
-    from services.agent.src.voice_core import media_session_projection
-
-    monkeypatch.setattr(
-        media_session_projection,
-        "_LOOKUP_SECOND_CUE_AFTER_S",
-        0.4,
-        raising=False,
-    )
 
     class CueProvider(_LateOwnedDelegationProvider):
         def __init__(self) -> None:
@@ -9397,61 +9386,35 @@ async def test_slow_lookup_is_covered_by_a_second_cue(
         provider_factory=lambda _identity: provider,
     )
     registry.install()
-    identity = SessionIdentity("slow-lookup-second-cue")
+    identity = SessionIdentity("slow-lookup-single-cue")
     session = bridge.bridge.open(identity)
     try:
         context = await registry._get_or_create(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
-        assert ack_owner is not None
-        ack_fence = ack_owner.fence
-        ack_frame = bridge.frames[-1]
-        await registry.on_playback_progress(
-            session,
-            PlaybackProgress(
-                identity=identity,
-                generation_id=ack_fence.generation_id,
-                received_sequence=ack_frame.sequence,
-                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
-                client_monotonic_ms=1,
-                turn_id=ack_fence.turn_id,
-                tool_epoch=ack_fence.tool_epoch,
-                event_type=PlaybackEventType.ENDED,
-            ),
-        )
-        await _wait_until(
-            lambda: BRIDGE_PHRASES[4] in provider.output_texts,
-            timeout=3.0,
-        )
-        assert BRIDGE_PHRASES[4] in provider.output_texts
-        assert LIVE_LOOKUP_FILLER in provider.output_texts
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        # Slow lookup remains pending; the old second cue fired after ~2.5s.
+        await asyncio.sleep(0.6)
+        assert provider.output_texts == [LIVE_LOOKUP_FILLER]
+        assert BRIDGE_PHRASES[4] not in provider.output_texts
+        assert provider.output_kinds == [
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+        ]
     finally:
         provider.release.set()
         await registry._finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
-async def test_answer_still_delivered_after_second_cue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """第二句提示 bump 运行代际后，答案不得被判过期丢掉。
+async def test_answer_still_delivered_after_same_turn_generation_bump() -> None:
+    """同 turn 辅助输出 bump 代际后，答案不得被判过期丢掉。
 
-    Regression for the 2026-09-12 weather stall: two cues were heard and then
-    silence, because the deep result fenced to generation N was dropped once
-    the second cue had advanced the runtime to generation N+1 through the
-    auxiliary path. The answer must be re-fenced to the current generation.
+    Regression for the 2026-09-12 weather stall (formerly triggered by the
+    second cue). The second cue is gone, but same-turn generation tolerance
+    must still re-fence the deep result when an auxiliary bump advances the
+    runtime without a new user turn.
     """
-
-    from services.agent.src.voice_core import media_session_projection
-
-    monkeypatch.setattr(
-        media_session_projection,
-        "_LOOKUP_SECOND_CUE_AFTER_S",
-        0.4,
-        raising=False,
-    )
 
     class AnswerProvider(_LateOwnedDelegationProvider):
         def __init__(self) -> None:
@@ -9495,7 +9458,7 @@ async def test_answer_still_delivered_after_second_cue(
         provider_factory=lambda _identity: provider,
     )
     registry.install()
-    identity = SessionIdentity("second-cue-answer-delivery")
+    identity = SessionIdentity("same-turn-generation-bump-answer")
     session = bridge.bridge.open(identity)
     try:
         context = await registry._get_or_create(identity)
@@ -9503,12 +9466,10 @@ async def test_answer_still_delivered_after_second_cue(
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
         await _finish_output_owner_playback(registry, identity, bridge, session)
-        await _wait_until(
-            lambda: BRIDGE_PHRASES[4] in provider.output_texts,
-            timeout=5.0,
-        )
-        assert BRIDGE_PHRASES[4] in provider.output_texts
-        assert LIVE_LOOKUP_FILLER in provider.output_texts
+        bumped = await context.runtime.begin_media_auxiliary_output(fence)
+        assert bumped is not None
+        assert bumped.generation_id == fence.generation_id + 1
+        assert bumped.turn_id == fence.turn_id
         provider.release.set()
         await asyncio.sleep(0.3)
         if context.output_owner is not None and not provider.deep_started.is_set():
@@ -9516,9 +9477,10 @@ async def test_answer_still_delivered_after_second_cue(
         await asyncio.wait_for(provider.deep_started.wait(), timeout=4)
         assert provider.output_kinds == [
             media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
-            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
             media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
         ]
+        assert LIVE_LOOKUP_FILLER in provider.output_texts
+        assert BRIDGE_PHRASES[4] not in provider.output_texts
         claim = context.delegation_output_claims.get(fence)
         assert claim is not None
         assert claim.state is DelegationOutputState.COMPLETED
