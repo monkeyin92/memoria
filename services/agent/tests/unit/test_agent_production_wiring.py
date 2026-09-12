@@ -1059,7 +1059,7 @@ async def test_realtime_lookup_overrides_static_planner_fallback() -> None:
 
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
-    assert "".join(output) == "稍等，我查询一下。南京今天多云，最高气温三十二度。"
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}南京今天多云，最高气温三十二度。"
     await runtime.close()
 
 
@@ -1090,7 +1090,7 @@ async def test_realtime_lookup_overrides_a_natural_unknown_weather_fallback() ->
 
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
-    assert "".join(output) == "稍等，我查询一下。上海明天小雨，26到31度，降水概率65%。"
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}上海明天小雨，26到31度，降水概率65%。"
     assert runtime.pending_realtime_request is None
     await runtime.close()
 
@@ -1329,7 +1329,7 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
     output = agent.llm_node(chat_ctx, [], None)
-    assert await asyncio.wait_for(anext(output), timeout=1) == "稍等，我查询一下。"
+    assert await asyncio.wait_for(anext(output), timeout=1) == BRIDGE_PHRASES[1]
     release.set()
     assert [item async for item in output if isinstance(item, str)] == ["南京今天多云。"]
     await runtime.close()
