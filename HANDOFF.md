@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-12
-resume_checkpoint: gate_fix_released_20260912_1150_awaiting_device_retest_root_cause_2_cross_turn_supersede_open_release_tooling_rollback_deadlock_open
+resume_checkpoint: farewell_loop_verified_20260912_release_tooling_single_rollback_tag_pending_deploy
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -85,7 +85,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 **遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
 
-**遗留工单（发布工具：回滚 ↔ 前进自相矛盾，未修）**：`scripts/deploy_agent_component.sh` 的回滚 override 故意把 agent/bridge 冻结成**两个不同 tag**（`memoria-agent:rollback-<tag>-pre-agent` / `-pre-bridge`，见脚本 604-605、685-693 行），而前进式切流的 pre-flight 又要求 `agent_image == bridge_image`（**tag 字符串相等**，418-422 行）。两者自相矛盾 → **任何一次回滚都会把下一次组件发布永久卡死**。本次首跑即以 `Agent and bridge do not share one current runnable image` 被拒；实测两容器同 image id、同 revision、同 version，**仅 tag 名不同**，属纯标签状态而非环境异常。注意快照路径 `pre-cutover-live.override.yml` 写的是单 tag（合规），**唯独 rollback 路径写双 tag**，所以缺陷面很窄。建议改法二选一：(a) 回滚冻结改为**单 tag**——Gate B 已保证 agent/bridge 同 image id，双 tag 本就无意义；(b) 放宽 Gate B 为「同 image id + 同 release authority」。两者都要补契约测试。临时绕行已留痕：`/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/agent-component.rollback.override.yml.bak-20260912-tagalign`。
+**发布工具工单（2026-09-12 已修，待本次工具版本部署）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；契约测试同时锁定单 tag 与双服务一致，避免回滚后下一次发布被标签状态永久卡死。历史版本的 `-pre-agent/-pre-bridge` 文件名仍只作为旧服务器记录保留，不再由新脚本生成。
+
+**真实设备告别复测（2026-09-12）**：新会话 `53c86566-6fec-48fa-9ddd-43da81674ce3`、epoch `1925`，不是旧日志。设备成功唤醒并进入 `listening`，收到“好的，再见”后线上记录 `conversation_end_explicit`，后续输入以 `reason=terminal` 拒绝，设备回到 `idle`；告别即时停止闭环已通过。天气会话 `eae63bac-d0d2-4f63-ad37-00f7b0a9a457` 是另一条独立的新会话。
 
 **待拍板**：`media_session_output_dispatch.py` 新加的那条 WARNING 在用户抢话（floor 不允许）时**必然触发**（QA 实证：floor 允许 0 条、抢话 1 条）；建议按原因细分、抢话降 INFO，否则真机排障会被噪声淹没。
 
@@ -101,7 +103,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 1899 已达成 `conversation_end_explicit`；屏上停留仍在，见「播后短告别」 |
+| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 独立新会话 epoch 1925 已达成 `conversation_end_explicit`，terminal 后续输入并回到 `idle`；本次未重新播天气，严格的播报中 barge-in 画面/串口专项仍需后续补测 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **12:45 复测未过（epoch 1915）**：上轮闸门生效（有 `duplicate media turn skipped`），但委派交付后的空窗仍放行了 turn-3（D1），回声 vad_start 又杀掉就绪答案（D2）。修复设计 F1-F3 见 `outputs/acceptance/run-20260912-1245-epoch1915/findings-epoch1915.md`，**待修后复测** |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已切流 20260912-1150）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |

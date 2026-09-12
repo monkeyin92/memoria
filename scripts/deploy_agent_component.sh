@@ -601,8 +601,9 @@ for file in "${previous_files[@]}"; do
   previous_args+=(--file "$file")
 done
 
-rollback_agent="memoria-agent:rollback-${release_tag}-pre-agent"
-rollback_bridge="memoria-agent:rollback-${release_tag}-pre-bridge"
+# Agent and Bridge are cut over as one runnable image. Keep one rollback tag so
+# a rollback preserves the same image authority required by the next release.
+rollback_image="memoria-agent:rollback-${release_tag}-pre"
 
 freeze_container_image() {
   local container="$1"
@@ -669,8 +670,8 @@ ROLLBACK_DOCKERFILE
   docker image inspect "$rollback_tag" >/dev/null
 }
 
-freeze_container_image "$agent_container" "$agent_image_id" "$rollback_agent" "$bridge_image_id"
-freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_bridge" "$agent_image_id"
+freeze_container_image "$agent_container" "$agent_image_id" "$rollback_image" "$bridge_image_id"
+freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_image" "$agent_image_id"
 
 override="$remote_dir/agent-component.override.yml"
 cat >"$override" <<EOF
@@ -686,9 +687,9 @@ rollback_override="$remote_dir/agent-component.rollback.override.yml"
 cat >"$rollback_override" <<EOF
 services:
   agent:
-    image: "$rollback_agent"
+    image: "$rollback_image"
   voice-core-media-bridge:
-    image: "$rollback_bridge"
+    image: "$rollback_image"
 EOF
 chmod 0600 "$rollback_override"
 
@@ -700,8 +701,7 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
   printf 'release_tag=%s\n' "$agent_release_tag"
   printf 'stack_release_commit=%s\n' "$stack_release_commit"
   printf 'stack_release_tag=%s\n' "$stack_release_tag"
-  printf 'rollback_agent=%s\n' "$rollback_agent"
-  printf 'rollback_bridge=%s\n' "$rollback_bridge"
+  printf 'rollback_image=%s\n' "$rollback_image"
 } >"$remote_dir/ROLLBACK_POINT.txt"
 
 rollback() {
@@ -756,7 +756,7 @@ trap - ERR
   docker inspect "$agent_container" --format 'agent_image={{.Config.Image}} agent_image_id={{.Image}} agent_health={{.State.Health.Status}}'
   docker inspect "$bridge_container" --format 'bridge_image={{.Config.Image}} bridge_image_id={{.Image}} bridge_health={{.State.Health.Status}}'
   printf 'runtime_stack_release_tag=%s\n' "$stack_release_tag"
-  printf 'rollback_agent=%s\nrollback_bridge=%s\n' "$rollback_agent" "$rollback_bridge"
+  printf 'rollback_image=%s\n' "$rollback_image"
 } | tee "$remote_dir/CUTOVER_RESULT.txt"
 (cd "$remote_dir" && sha256sum CUTOVER_RESULT.txt >CUTOVER_RESULT.txt.sha256)
 REMOTE_CUTOVER
