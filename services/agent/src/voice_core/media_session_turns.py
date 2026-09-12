@@ -613,6 +613,25 @@ class MediaTurnEndpointMixin:
             context.conversation_close_partial_stable_since = None
             self._cancel_conversation_close_semantic_task(context)
             return
+        # A deterministic farewell is a terminal device command. Commit it at
+        # the first accepted partial instead of waiting for another partial
+        # revision and the 600 ms stability window. Real devices can lose the
+        # following VAD end (or the provider final) while returning to idle;
+        # the partial itself is enough to enter the existing terminal close
+        # and playback-interruption path.
+        if (
+            context.identity.client_type == "device"
+            and context.turn_endpoint_sample is None
+            and context.runtime.conversation_close_needed(text)
+        ):
+            self._pin_conversation_close_endpoint(
+                context,
+                partial.capture_end_sample,
+                text_len=len(text),
+                source="partial_immediate",
+            )
+            self._schedule_turn_commit(context)
+            return
         now = time.monotonic()
         if context.conversation_close_partial_text == text:
             if context.conversation_close_partial_stable_since is None:

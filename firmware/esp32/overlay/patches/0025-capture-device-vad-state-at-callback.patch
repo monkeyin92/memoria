@@ -1,0 +1,12 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -99,6 +99,6 @@ void Application::Initialize() {
+-        Schedule([this, speaking]() {
++        Schedule([this, speaking, callback_state = GetDeviceState()]() {
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-            const auto device_state = GetDeviceState();
++            const auto device_state = callback_state;
+             const bool listening = device_state == kDeviceStateListening;
+             const bool speaking_barge_in =
+                 device_state == kDeviceStateSpeaking &&

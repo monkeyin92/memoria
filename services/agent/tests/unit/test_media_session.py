@@ -6056,6 +6056,57 @@ async def test_device_conversation_close_final_commits_before_vad_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_conversation_close_immediate_partial_commits_without_vad_end() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-immediate-partial-conversation-close")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="farewell-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        partial = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="farewell-partial",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=16_000,
+            text="好的，再见",
+            is_final=False,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, partial)
+        assert context.conversation_close_endpoint_pinned == 16_000
+        assert context.turn_endpoint_sample == 16_000
+        assert context.turn_endpoint_task is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_conversation_close_pin_blocks_late_vad_end_extension() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()

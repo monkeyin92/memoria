@@ -112,6 +112,12 @@ PATCH_0024 = (
     / "patches"
     / "0024-send-vad-start-during-interrupt-assist-playback.patch"
 ).read_text(encoding="utf-8")
+PATCH_0025 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0025-capture-device-vad-state-at-callback.patch"
+).read_text(encoding="utf-8")
 PATCH_0017 = (
     Path(__file__).parents[1]
     / "overlay"
@@ -316,6 +322,14 @@ def test_interrupt_assist_emits_vad_start_during_playback() -> None:
     assert "speaking_barge_in" in PATCH_0024
     assert "(!speaking || listening || speaking_barge_in)" in PATCH_0024
     assert "kDeviceStateSpeaking" in PATCH_0024
+    # Capture the producer-side state before scheduling so a quick return to
+    # idle cannot erase the VAD event before the task runs.
+    assert "Schedule([this, speaking, callback_state = GetDeviceState()]()" in PATCH_0025
+    assert "const auto device_state = callback_state;" in PATCH_0025
+    patch_additions = "\n".join(
+        line[1:] for line in PATCH_0025.splitlines() if line.startswith("+")
+    )
+    assert "const auto device_state = GetDeviceState();" not in patch_additions
     assert 'audio_mode_ == "interrupt_assist"' in SOURCE
     assert 'audio_mode_ == "full_duplex_verified"' in SOURCE
     helper = SOURCE[SOURCE.index("bool MemoriaProtocol::AllowsPlaybackBargeIn") :]
