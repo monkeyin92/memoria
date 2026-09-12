@@ -177,6 +177,9 @@ class MediaSessionCommitMixin:
         @staticmethod
         def _reply_in_flight(context: _MediaVoiceSession) -> bool: ...
 
+        @staticmethod
+        def _reply_or_delegation_pending(context: _MediaVoiceSession) -> bool: ...
+
         def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
 
         def _maybe_early_commit_clock_fact(
@@ -673,7 +676,7 @@ class MediaSessionCommitMixin:
         if (
             context.last_committed_turn_text
             and normalized_text == context.last_committed_turn_text
-            and self._reply_in_flight(context)
+            and self._reply_or_delegation_pending(context)
         ):
             logger.info(
                 "media duplicate media turn skipped session=%s stream_epoch=%s "

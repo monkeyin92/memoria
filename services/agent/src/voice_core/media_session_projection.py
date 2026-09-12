@@ -852,6 +852,19 @@ class MediaSessionProjectionMixin:
                 current_context_version=coordinator.current_context_version(fence.session_id),
                 floor_allows_output=runtime.output_floor_allows_assistant,
             ):
+                # A finished deep answer must never vanish without a trace.  The
+                # intent is inactive because the fence/floor no longer admits it
+                # (epoch 1912), so the result is still released for a bounded
+                # local fallback, but the drop is now observable instead of a
+                # silent reason=output_intent_inactive release.
+                logger.warning(
+                    "media deep result dropped: output intent inactive "
+                    "session=%s generation=%s turn_id=%s text_len=%s",
+                    fence.session_id,
+                    fence.generation_id,
+                    fence.turn_id,
+                    len(spoken),
+                )
                 await self._release_media_delegation_claim(
                     context,
                     text=text,

@@ -8822,6 +8822,521 @@ async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() ->
 
 
 @pytest.mark.asyncio
+async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -> None:
+    """epoch 1912: ACK 播完后重复 final 从闸门空窗进入并抢占待交付答案。
+
+    The live-lookup acknowledgement finished playing, but the deep answer was
+    still running inside an OWNED delegation claim.  ``_reply_in_flight`` only
+    saw the (now finished) reply task, so the re-transcribed same question
+    opened a fresh turn, superseded the pending answer, and its own cue/answer
+    were then dropped as ``output_intent_inactive``.  A duplicate of the
+    committed text must be skipped whenever the delegated answer has not yet
+    been delivered.
+    """
+
+    question = "今天南京天气怎么样"
+
+    class RecordingProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            return super().generate_output(
+                _identity,
+                intent,
+                _fence,
+                work_id="",
+                source_start_sample=source_start_sample,
+            )
+
+    provider = RecordingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("duplicate-after-ack-completed")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await _seed_pending_media_turn(
+            registry,
+            identity,
+            text=question,
+            endpoint_sample=600,
+            retire_sample=640,
+        )
+        fence, reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=600,
+            retire_sample=640,
+        )
+        assert fence is not None, reason
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        ack_owner = context.output_owner
+        assert ack_owner is not None
+        ack_fence = ack_owner.fence
+        ack_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=ack_fence.generation_id,
+                received_sequence=ack_frame.sequence,
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+                client_monotonic_ms=1,
+                turn_id=ack_fence.turn_id,
+                tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        # The cue has already been heard, and the delegated lookup is still
+        # running, so no answer has been delivered yet.
+        assert not registry._reply_in_flight(context)
+        assert any(
+            claim.state is DelegationOutputState.OWNED
+            for claim in context.delegation_output_claims.values()
+        )
+        # The board re-transcribes the same question over the contiguous range.
+        duplicate_segment = SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=2,
+            segment_id="duplicate-final",
+            revision=1,
+            kind=SegmentKind.ASR_FINAL,
+            capture_start_sample=600,
+            capture_end_sample=1200,
+            text=question,
+            final=True,
+        )
+        assert context.runtime.ingest_media_speech_segment(duplicate_segment)
+        await registry._apply_projection_segment(context, duplicate_segment)
+        context.turn_start_sample = 600
+        context.turn_end_sample = 1200
+        context.turn_endpoint_sample = 1200
+        context.turn_retire_sample = 1240
+        repeat_fence, repeat_reason = await registry.commit_user_turn(
+            identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert repeat_fence is None
+        assert repeat_reason == "duplicate_media_turn"
+        # The single surviving delegation then delivers the answer once.
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        assert (
+            provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT) == 1
+        )
+        assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_inactive_output_intent_drops_deep_result_with_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """epoch 1912: 已完成的深查答案不得因输出意图非活动而零错误静默丢弃。
+
+    The finished deep answer was released with ``reason=output_intent_inactive``
+    and only an INFO line, so losing a completed answer left no trace.  The drop
+    must now surface an explicit warning on the delegation seam.
+    """
+
+    question = "今天南京天气怎么样"
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("deep-result-dropped-observable")
+    try:
+        context = await registry._get_or_create(identity)
+        delegation = context.runtime.orchestrator.delegation
+        # Force the exact seam that dropped the epoch-1912 answer: the admitted
+        # output intent is judged inactive even though the deep result finished.
+        monkeypatch.setattr(
+            type(delegation),
+            "output_intent_is_active",
+            lambda *_args, **_kwargs: False,
+        )
+        provider.release.set()
+        with caplog.at_level(logging.WARNING):
+            await context.runtime.on_turn_committed(question)
+            await _wait_until(
+                lambda: any(
+                    claim.state is DelegationOutputState.RELEASED
+                    for claim in context.delegation_output_claims.values()
+                ),
+                timeout=2.0,
+            )
+        assert any(
+            "deep result dropped" in record.getMessage() for record in caplog.records
+        )
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+async def _qa_commit_question_then_finish_ack_playback(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    bridge: _CapturingGenerationBridge,
+    provider: _LateOwnedDelegationProvider,
+    session: Any,
+    question: str,
+    *,
+    start_sample: int = 0,
+    end_sample: int = 600,
+    retire_sample: int = 640,
+) -> tuple[Any, GenerationFence]:
+    """Commit one media turn through the real gate, then play its ACK out.
+
+    Lands the session inside the gate's blind window: the live-lookup
+    acknowledgement has finished playing, so ``_reply_in_flight`` is false,
+    yet the delegated answer is still OWNED and undelivered.
+    """
+
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text=question,
+        endpoint_sample=end_sample,
+        retire_sample=retire_sample,
+    )
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=start_sample,
+        end_sample=end_sample,
+        retire_sample=retire_sample,
+    )
+    assert fence is not None, reason
+    await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+    await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+    ack_owner = context.output_owner
+    assert ack_owner is not None
+    ack_fence = ack_owner.fence
+    ack_frame = bridge.frames[-1]
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=ack_fence.generation_id,
+            received_sequence=ack_frame.sequence,
+            rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
+            client_monotonic_ms=1,
+            turn_id=ack_fence.turn_id,
+            tool_epoch=ack_fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+    return context, fence
+
+
+async def _qa_commit_repeat_question(
+    registry: MediaVoiceCoreRegistry,
+    context: Any,
+    identity: SessionIdentity,
+    *,
+    text: str,
+    start_sample: int,
+    end_sample: int,
+    retire_sample: int,
+) -> tuple[GenerationFence | None, str | None]:
+    """Re-transcribe ``text`` over the contiguous range and commit it."""
+
+    segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=2,
+        segment_id=f"qa-repeat-{start_sample}",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=start_sample,
+        capture_end_sample=end_sample,
+        text=text,
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(segment)
+    await registry._apply_projection_segment(context, segment)
+    context.turn_start_sample = start_sample
+    context.turn_end_sample = end_sample
+    context.turn_endpoint_sample = end_sample
+    context.turn_retire_sample = retire_sample
+    return await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=start_sample,
+        end_sample=end_sample,
+        retire_sample=retire_sample,
+    )
+
+
+@pytest.mark.asyncio
+async def test_qa_blocked_duplicate_still_delivers_the_first_answer() -> None:
+    """QA item 2(b): a skipped duplicate must not evaporate the live answer.
+
+    The gate now blocks a same-text re-commit while the delegation is OWNED.
+    Red line 1 still demands the surviving turn deliver its answer audibly and
+    that the filler is not replayed.
+    """
+
+    question = "今天南京天气怎么样"
+
+    class RecordingProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            return super().generate_output(
+                _identity,
+                intent,
+                _fence,
+                work_id="",
+                source_start_sample=source_start_sample,
+            )
+
+    provider = RecordingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-blocked-duplicate-delivers")
+    session = bridge.bridge.open(identity)
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry,
+            identity,
+            bridge,
+            provider,
+            session,
+            question,
+        )
+        claim = context.delegation_output_claims[fence]
+        assert claim.state is DelegationOutputState.OWNED
+        assert not registry._reply_in_flight(context)
+        frames_before = len(bridge.frames)
+        ack_count_before = provider.output_kinds.count(
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+        )
+        repeat_fence, repeat_reason = await _qa_commit_repeat_question(
+            registry,
+            context,
+            identity,
+            text=question,
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert repeat_fence is None
+        assert repeat_reason == "duplicate_media_turn"
+        # Red line 1: the single surviving delegation still emits its answer,
+        # under its own generation (not a leftover ACK frame).
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        await _wait_until(
+            lambda: context.output_owner is not None
+            and context.output_owner.fence.generation_id != fence.generation_id,
+            timeout=2.0,
+        )
+        deep_owner = context.output_owner
+        assert deep_owner is not None
+        deep_generation = deep_owner.fence.generation_id
+        assert deep_generation != fence.generation_id
+        await _wait_until(
+            lambda: any(frame.generation_id == deep_generation for frame in bridge.frames),
+            timeout=2.0,
+        )
+        assert len(bridge.frames) > frames_before
+        assert claim.state is DelegationOutputState.COMPLETED
+        assert provider.output_texts[-1] == "南京今天多云，气温二十二度。"
+        # Red line 3: the skipped duplicate did not replay the filler.
+        assert (
+            provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT)
+            == ack_count_before
+        )
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_qa_same_question_after_delivered_answer_is_not_blocked() -> None:
+    """QA item 2(a): once the answer is delivered, re-asking must be answered.
+
+    The COMPLETED claim has resolved and playback is over, so the widened gate
+    must not treat the finished delegation as still in flight.
+    """
+
+    question = "今天南京天气怎么样"
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-same-question-after-delivered")
+    session = bridge.bridge.open(identity)
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry,
+            identity,
+            bridge,
+            provider,
+            session,
+            question,
+        )
+        claim = context.delegation_output_claims[fence]
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED, timeout=2.0)
+        deep_owner = context.output_owner
+        assert deep_owner is not None
+        deep_fence = deep_owner.fence
+        await _wait_until(lambda: len(bridge.frames) >= 2, timeout=2.0)
+        deep_frame = bridge.frames[-1]
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=deep_fence.generation_id,
+                received_sequence=deep_frame.sequence,
+                rendered_sample_end=(deep_frame.source_start_sample + deep_frame.frame_samples),
+                client_monotonic_ms=2,
+                turn_id=deep_fence.turn_id,
+                tool_epoch=deep_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        await _wait_until(lambda: context.output_owner is None, timeout=2.0)
+        assert not registry._reply_or_delegation_pending(context)
+        repeat_fence, repeat_reason = await _qa_commit_repeat_question(
+            registry,
+            context,
+            identity,
+            text=question,
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert repeat_reason != "duplicate_media_turn"
+        assert repeat_fence is not None
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_qa_different_question_in_delegation_window_is_not_blocked() -> None:
+    """QA item 2(d): the gate is text-scoped; a new question must go through."""
+
+    question = "今天南京天气怎么样"
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-different-question")
+    session = bridge.bridge.open(identity)
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry,
+            identity,
+            bridge,
+            provider,
+            session,
+            question,
+        )
+        assert context.delegation_output_claims[fence].state is DelegationOutputState.OWNED
+        repeat_fence, repeat_reason = await _qa_commit_repeat_question(
+            registry,
+            context,
+            identity,
+            text="北京明天天气怎么样",
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert repeat_reason != "duplicate_media_turn"
+        assert repeat_fence is not None
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
+    """QA item 2(c): the RELEASED local fallback is not a dead end."""
+
+    class FailingProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            raise RuntimeError("deep provider exploded")
+
+    provider = FailingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-released-fallback-audio")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        query = "今天南京天气怎么样"
+        fence = await context.runtime.on_turn_committed(query)
+        context.playback.start(fence)
+        assert await registry.generate_reply(identity.session_id, query, fence)
+        await _wait_until(lambda: provider.reply_calls == 1, timeout=2.0)
+        claim = context.delegation_output_claims[fence]
+        assert claim.state is DelegationOutputState.RELEASED
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        assert bridge.frames, "local fallback emitted no audio frame"
+        assert context.output_owner is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_slow_lookup_is_covered_by_a_second_cue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -11799,3 +12314,4 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     assert len({payload["provisional_id"] for payload in provisional_started}) == 3
     assert [payload["text"] for payload in committed] == ["你好", "世界", "下一轮"]
     assert all(payload["history_eligible"] is False for payload in committed)
+

@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-11
-resume_checkpoint: epoch1900_duplicate_turn_skip_and_second_cue_cut_over_awaiting_device_retest_serial_probe_confirmed_alive_subject_switch_device_notify_control_cut_over
+as_of_date: 2026-09-12
+resume_checkpoint: commit_gate_fix_landed_in_workspace_uncommitted_awaiting_device_retest_root_cause_2_cross_turn_supersede_open
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -67,6 +67,22 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
+## 2026-09-12 闸门修复（已落 main，待发布、未经真机）
+
+问「今天南京天气怎么样」听到两遍 filler 且答案丢失（epoch 1911/1912）的代码修复：
+
+- **A 已修**：`media_session_commit.py` 的 `_commit_user_turn_locked` 重复话轮闸门由 `_reply_in_flight` 改为 `_reply_or_delegation_pending` = `_reply_in_flight or _delegation_output_pending`。后者在 `context.delegation_output_claims` 存在 `PENDING/OWNED` claim 时为真，即把「输出已 `delegation_output_owned` 移交、深查结果未交付」的空窗计入 in-flight（两个 staticmethod 加在 `media_session_turns.py`）。**刻意不改 `_reply_in_flight` 本身**——它仍被 6 处 early-commit 路径复用，混入委派语义会饿死新话轮的端点锚定。
+- **B 部分**：`media_session_projection.py` / `media_session_output_dispatch.py` 两处 `output_intent_inactive` 接缝加 WARNING，把「已完成深查答案被静默释放」变为可观测。**行为未变，不保底**。
+- **C 未修（判为已被 A 消解）**：跨 turn supersede 未出首帧答案的触发者就是重复提交本身，A 修好后不再进入。对真正的新话轮（换话题/打断）抢占仍是正确行为。
+
+**遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
+
+**待拍板**：`media_session_output_dispatch.py` 新加的那条 WARNING 在用户抢话（floor 不允许）时**必然触发**（QA 实证：floor 允许 0 条、抢话 1 条）；建议按原因细分、抢话降 INFO，否则真机排障会被噪声淹没。
+
+**测试面（本地，全部剥 `PYTHONPATH`）**：`test_media_session.py` 172 passed（含新增 6 条：工程师 2 + QA 4）、`test_agent_production_wiring.py` + `test_realtime_information_markers.py` 98 passed、相关回归面（delegation_coordinator / conversation_projection / duplex_runtime_wiring / media_runtime_hardening / media_agent_factory / interaction_mode_runtime）192 passed；`mypy services --strict` 433 文件无问题；`ruff check` 干净；`check_module_budget.py check` PASS，预算未放宽。
+
+**文档失效提醒**：`outputs/repro-red.txt` 记的是 epoch-1897 之前的旧病，在当前 HEAD 上**不可复现**；`test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler` 在干净 HEAD 上是通过的，且走 `runtime.on_turn_committed` **绕过闸门**，不是该 bug 的回归守卫（QA 用 `git stash` 退回 HEAD 源码实测确认）。后续以本次新增的 6 条测试为准。
+
 ## 下一验收
 
 按顺序。点屏 / 摇晃 / 短拍逻辑已于 2026-09-09 16:08 CST 操作员 PASS；本轮只换 v3 对话脸画面，不改点屏拍击接线。半双工双轮（星期几 + 天气 + 短告别）曾在 epoch 1379 PASS，不代替下列项。
@@ -76,9 +92,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 1899 已达成 `conversation_end_explicit`；屏上停留仍在，见「播后短告别」 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 1899/1900 真机已确认单次化；`20260910-1844` 已切 |
-| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | `20260910-1855` + `20260910-1905` 已切：重复话轮不再掐断提示音、慢查询补第二句。**真机确认「答案一定到达」**——跳过重复话轮改变了交付话轮，若出现问完无答案立即回滚 |
-| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | `20260910-1905` 已切（`THINKING_FILLER` 接回 `media_session_projection`，不再受 agent.py 行预算限制），待真机复测 |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **代码已修（已落 main，待发布）**：闸门改判 `_reply_or_delegation_pending`，把「已 `delegation_output_owned`、深查未交付」空窗计入 in-flight。单测 172 passed + 红→绿独立重现，**待真机复测** |
+| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已落 main，待发布）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
+| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | `20260910-1905` 已随回滚移除；待主链修复后随新组件恢复 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
@@ -127,6 +143,8 @@ echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
 | 5 | **正文播完、彻底安静后**再说「好的，再见」 | 应立刻关闭回待命，不靠 `owner_silence_timeout`（10s）。**主目标**，1899 未达成 |
 | 6 | 唤醒问候后说一句较长的话 | 整句听完；允许串口 `Dropping server packet`，不得 `playback.error` 一字卡断 |
 | 7 | 主人与非主人各说一句 | 主人轮通过；非主人不放行；不得放宽 `reject_non_owner_voice` |
+| 8 | **同一句连问两遍**：先问「今天南京天气怎么样。」等它**答完**，再问完全同一句 | 第二遍**必须**正常作答。闸门只挡「同突发内的重复提交」，不得吞掉用户的真重复提问 |
+| 9 | 问「今天南京天气怎么样。」后**答案未出前**立刻改问「北京明天天气怎么样。」 | **已知未修（根因 2）**：若首答被丢弃，记下 `output_texts` 与 `terminal_reason=superseded`，作为根因 2 的真机证据，不回滚（新话轮答案仍应到达） |
 
 日志判据（bridge 侧）：
 
@@ -134,6 +152,7 @@ echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
 - 说完到首个 `first_frame_sent` 间隔 ≤1.5s；出现 `event=preempted … first_frame_sent=False`（提示音被掐）即失败。
 - 场景 5 应出现 `media final did not start reply … reason=conversation_end_explicit`，且**不**应再出现 `media turn discarded after ASR tail timeout`。
 - `media_asr_boundary` 里同时记 `provider_pcm_clipping_detected` 与 `provider_pcm_rms`；播放窗口内仍削波就记下该 `endpoint`，这是回声而不是 vendor 空转写。
+- 本次修复新增两条 WARNING：`media deep result dropped: output intent inactive`（深查答案被释放）与 `media reply intent inactive`（回复被丢弃）。在**非抢话**场景下出现即属根因 2 类真故障，按回滚判据处理；用户抢话时出现属预期（见「2026-09-12 闸门修复」节）。
 
 回滚判据与命令：
 
@@ -212,9 +231,9 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260910-1905-lookup-second-cue-agent-component`，源 `2492175bcf593bdfdadb647abfd3db9f5e95f9e6`，image `sha256:ec0a813bbe3c32778e940e1e1e905828f0db084b0b0818862cd96edaaf90ab0c`。healthy、restart=0、OCI revision 已核对。切流 `2026-09-10T11:05:03Z`。收据 `/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/`。同一轮还切过 `20260910-1855`（`0511010`，重复话轮跳过）、`20260910-1844`（`746bfd6`，ACK 短窗口）、`20260910-1820`（`df41596`，ACK 发出闸门）与 `20260910-1526`（`b83e9b7`，只修 result 前缀、未门控 ACK，1899 复测无效）。更早 `20260910-1011` 的首次 `--cutover` 曾因本机 PATH 解析到 macOS 自带 openrsync 2.6.9 而在上传段失败（`rsync: unrecognized option '--protect-args'`），生产未受影响；改用 Homebrew rsync 3.5.0 后重跑成功。
-- 回滚：`rollback-20260910-1905-lookup-second-cue-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1855-duplicate-turn-skip-agent-component` / `sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`）。再往前依次可退 `20260910-1844` / `sha256:bb45c2321102a2cc115902096a5f7f168b35bf829ead9d8631046ab6abd3eef4`、`20260910-1820` / `sha256:329e70ad8924def5ff65d19cba40d2851787ec9100bcbeb146abb50d4c1a42be`。
-- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，ACK 用 5s 短窗口）、重复话轮跳过（同文本 + 回复在飞）、慢查询第二句提示（`THINKING_FILLER`，2.5s）、`a43668c` 影子声纹回归修复。这些是已切流能力，不等于天气告别与播后短告别已验收。
+- 当前：`memoria-agent:20260910-1855-duplicate-turn-skip-agent-component`，image `sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`。healthy、restart=0。2026-09-12 10:36 CST 因 1905 复测触发「问完无答案」红线（epoch 1911），按 runbook 用 `/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/` 的 rollback override 回滚。**1855 上同红线复现**（epoch 1912，两遍 filler + 答案双路丢失），回滚梯队到此为止，待代码修复。
+- 回滚：`rollback-20260910-1855-duplicate-turn-skip-agent-component-pre-agent/-pre-bridge`（镜像 `20260910-1844-lookup-ack-window-agent-component` / `sha256:bb45c232…`）。再往前依次可退 `20260910-1820` / `sha256:329e70ad…`。
+- 当前镜像已含欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，ACK 用 5s 短窗口）、重复话轮跳过（同文本 + 回复在飞）、`a43668c` 影子声纹回归修复；**不含** 1905 的慢查询第二句提示（`THINKING_FILLER` 已随回滚移除）。已知缺陷（epoch 1911/1912 实锤）：重复话轮闸门在「上轮输出已 `delegation_output_owned`、深查结果未交付」的空窗放行重复提交；跨 turn 提交 supersede 未出首帧的待交付答案；`output_intent_inactive` 静默丢弃已完成的深查答案。
 
 **Media Edge**
 

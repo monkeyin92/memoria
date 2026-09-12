@@ -450,6 +450,16 @@ class MediaOutputDispatchMixin:
             floor_allows_output=context.runtime.output_floor_allows_assistant,
             now_ms=now_ms,
         ):
+            # Same silent seam that also released the delegated deep result: an
+            # admitted reply whose intent is already inactive is dropped here.
+            # Log it so a lost acknowledgement/answer is never zero-error
+            # silent (epoch 1900/1912).
+            logger.warning(
+                "media reply intent inactive session=%s generation=%s text_len=%s",
+                fence.session_id,
+                fence.generation_id,
+                len(user_text),
+            )
             return OutputDispatchResult(
                 fence,
                 OutputDispatchStatus.SKIPPED,

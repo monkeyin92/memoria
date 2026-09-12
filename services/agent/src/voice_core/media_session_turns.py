@@ -17,6 +17,7 @@ from services.agent.src.providers.funasr_empty_accounting import classify_funasr
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputState,
     OutputDispatchResult,
     OutputDispatchStatus,
 )
@@ -220,6 +221,34 @@ class MediaTurnEndpointMixin:
             or context.output_owner is not None
             or context.reply_lock.locked()
             or (task is not None and not task.done())
+        )
+
+    @staticmethod
+    def _delegation_output_pending(context: _MediaVoiceSession) -> bool:
+        """True while a delegated answer owns output but is not yet delivered.
+
+        Once a live-lookup turn hands its playback to a delegation the cue's
+        reply task has already finished, so ``_reply_in_flight`` goes false while
+        the deep answer is still being produced.  Re-committing the same text in
+        that window supersedes the pending answer (epoch 1912).  A ``PENDING`` or
+        ``OWNED`` claim means ownership has not yet resolved into a delivered
+        result (``COMPLETED``) or a local fallback (``RELEASED``), so that window
+        must count as still in flight.  This is deliberately narrower than
+        ``_reply_in_flight`` so the early-commit paths keep their existing
+        semantics.
+        """
+
+        return any(
+            claim.state in {DelegationOutputState.PENDING, DelegationOutputState.OWNED}
+            for claim in context.delegation_output_claims.values()
+        )
+
+    @staticmethod
+    def _reply_or_delegation_pending(context: _MediaVoiceSession) -> bool:
+        """True while a reply is audible or a delegated answer is undelivered."""
+
+        return MediaTurnEndpointMixin._reply_in_flight(context) or (
+            MediaTurnEndpointMixin._delegation_output_pending(context)
         )
 
     def _arm_live_query_forced_endpoint(
