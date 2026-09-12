@@ -11,12 +11,19 @@ LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
 USER root
 WORKDIR /app
 
-# Replace the complete Agent package so deleted or renamed Python files cannot
-# survive from the dependency base image. The Voice Core bridge launcher is
-# part of the same runtime boundary: it wires Agent settings into that package
-# and must move atomically with it.
-RUN rm -rf /app/services/agent
-COPY --chown=65532:65532 memoria/services/agent /app/services/agent
+# Replace the whole application tree, not just services/agent. The Agent now
+# imports shared runtime packages (services/persona, services/common,
+# services/identity, ...) whose in-image copies are pinned by the dependency
+# base image to its own build-time revision. An Agent-only overlay would ship
+# new call sites against stale modules and die at import, so the component
+# overlay must carry one consistent source revision. Replacing /app/services
+# and /app/packages wholesale also keeps deleted or renamed files from
+# surviving the base image. The Voice Core bridge launcher is part of the same
+# runtime boundary: it wires Agent settings into that package and must move
+# atomically with it.
+RUN rm -rf /app/services /app/packages
+COPY --chown=65532:65532 memoria/services /app/services
+COPY --chown=65532:65532 memoria/packages /app/packages
 COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py /app/scripts/run_media_bridge.py
 
 USER 65532:65532

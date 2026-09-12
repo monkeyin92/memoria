@@ -171,9 +171,9 @@ if [[ -n "$dependency_changes" ]]; then
   exit 1
 fi
 
-# Overlay replaces only services/agent and run_media_bridge. Reject changes
-# that would leave the running Agent process on stale in-image code the overlay
-# does not replace (packages, services.common, agent-image scripts/voices).
+# Overlay replaces the whole services/ and packages/ tree plus run_media_bridge.
+# Reject changes that would still leave the running Agent process on stale
+# in-image code the overlay does not replace (agent-image scripts/voices/kws).
 # Other services, sidecar scripts, and env examples already live in other
 # images; they must not block an Agent-only cutover after merging to main.
 scope_changes="$(
@@ -186,7 +186,10 @@ while IFS= read -r changed; do
   case "$changed" in
     services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh|scripts/run_media_bridge.py)
       ;;
-    packages/*|services/common/*|infra/voices/*|infra/kws/*|infra/Dockerfile.agent)
+    packages/*|services/common/*)
+      # Covered by the whole-tree component overlay; nothing goes stale.
+      ;;
+    infra/voices/*|infra/kws/*|infra/Dockerfile.agent)
       scope_rejections+=("$changed")
       ;;
     scripts/verify_env.py|scripts/livekit_smoke_test.py|scripts/provider_smoke_test.py|scripts/run_media_slo_reporter.py|scripts/media_runtime_smoke.py)
@@ -210,11 +213,15 @@ artifact="$tmp/agent-source.tar"
 dockerfile="$tmp/Dockerfile.agent-source-overlay"
 manifest="$tmp/component-manifest.txt"
 
+# The component overlay carries the whole application tree (see
+# infra/Dockerfile.agent-source-overlay): the Agent imports shared runtime
+# packages whose in-image copies are pinned by the dependency base image, so
+# the archive must ship one consistent source revision.
 git -C "$ROOT" archive \
   --format=tar \
   --prefix=memoria/ \
   "$expected_commit" \
-  services/agent/__init__.py services/agent/src services/agent/models \
+  services packages \
   scripts/run_media_bridge.py \
   >"$artifact"
 git -C "$ROOT" show \
