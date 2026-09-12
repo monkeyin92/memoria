@@ -67,9 +67,11 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-12 闸门修复（已切流 20260912-1150，未经真机）
+## 2026-09-12 闸门修复（已切流 20260912-1150，12:45 真机复测未过）
 
 问「今天南京天气怎么样」听到两遍 filler 且答案丢失（epoch 1911/1912）的代码修复：
+
+**12:45 真机复测未过（epoch 1915，会话 `5188ae2c`）**：症状与 1911/1912 一致（两遍稍等 + 无答案）。**上轮闸门确认生效**（29.998 有 `media duplicate media turn skipped`），但整轮定位出三个新缺陷：**D1** 重复闸门在「委派结果已交付（claim=COMPLETED）、答案尚未播出」的空窗失守，延迟提交重试把同文本放行为 turn-3 并掐断第一遍 filler；**D2** filler 播完 129ms 后的回声假触发 vad_start 翻转话轮权，把就绪答案在 `first_frame_sent=False` 时以 `superseded` 杀掉（无 AEC 下此时序确定性复现）；**D3** 已被 `cross_sentence_overlap` 拒绝的静音幻觉文本（rms=308 → text_len=3）仍驱动会话关闭。SenseVoice 整段转写证实用户只问了一句「今天南宁天气怎么样？」（926ms），之后 1.3s 近静音。证据与修复设计 F1-F3：`outputs/acceptance/run-20260912-1245-epoch1915/findings-epoch1915.md`（含全量 bridge 日志与上行 PCM tap）。
 
 **发布记录（2026-09-12 12:39:40 CST 切流 PASS）**：`memoria-agent:20260912-1150-companion-persona-and-lookup-gate`，image `sha256:7fce8545aa20e49b51f772b22b14f51e2020e39d207cb44c2eef2f5589822228`，commit `43b28f181764126fa7d0e688cf797a58e8c3b176`。agent/bridge 双双 healthy、restarts=0；**容器内已逐条核实**闸门新调用（`media_session_commit.py` 第 679 行 `_reply_or_delegation_pending`）与 `media_session_turns.py` 的两个 staticmethod 真实存在，不是只凭脚本自报。回滚基线 `rollback-20260912-1150-companion-persona-and-lookup-gate-pre-agent/-pre-bridge`（= 切流前的 1855，`sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`）。**回滚即回到带同一 bug 的 1855（epoch 1912 已实锤），本轮没有干净可退版本——复测再失败时没有好兜底，这是当前最大风险。**
 
@@ -100,7 +102,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 1899 已达成 `conversation_end_explicit`；屏上停留仍在，见「播后短告别」 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **已切流 20260912-1150**：闸门改判 `_reply_or_delegation_pending`，把「已 `delegation_output_owned`、深查未交付」空窗计入 in-flight。单测 172 passed + 红→绿独立重现，**待真机复测** |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **12:45 复测未过（epoch 1915）**：上轮闸门生效（有 `duplicate media turn skipped`），但委派交付后的空窗仍放行了 turn-3（D1），回声 vad_start 又杀掉就绪答案（D2）。修复设计 F1-F3 见 `outputs/acceptance/run-20260912-1245-epoch1915/findings-epoch1915.md`，**待修后复测** |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已切流 20260912-1150）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
