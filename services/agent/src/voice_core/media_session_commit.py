@@ -180,6 +180,12 @@ class MediaSessionCommitMixin:
         @staticmethod
         def _reply_or_delegation_pending(context: _MediaVoiceSession) -> bool: ...
 
+        @staticmethod
+        def _same_text_turn_output_pending(
+            context: _MediaVoiceSession,
+            normalized_text: str,
+        ) -> bool: ...
+
         def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
 
         def _maybe_early_commit_clock_fact(
@@ -404,6 +410,19 @@ class MediaSessionCommitMixin:
         live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
         if not (close_needed or live_lookup_needed):
             return
+        if (
+            close_needed
+            and not live_lookup_needed
+            and self._rejected_rescue_is_low_energy(context, result, reason)
+        ):
+            logger.warning(
+                "media close recovery rejected: low-energy rescue final "
+                "session=%s text_len=%s reason=%s",
+                session_id,
+                len(text),
+                reason.value,
+            )
+            return
         committed = context.asr.last_committed_sample
         if result.capture_end_sample <= committed:
             # Silent early-return here starved a weather turn with zero ERROR
@@ -484,6 +503,38 @@ class MediaSessionCommitMixin:
                 )
             else:
                 self._arm_live_query_forced_endpoint(context, adjusted)
+
+    @staticmethod
+    def _rejected_rescue_is_low_energy(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+    ) -> bool:
+        """Reject only overlap rescue finals proven to come from near-silence."""
+
+        if (
+            reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+            or not result.rescue_synthesized
+        ):
+            return False
+        snapshot_getter = getattr(context.provider, "current_asr_audio_task_snapshot", None)
+        snapshot = snapshot_getter() if callable(snapshot_getter) else None
+        if snapshot is None or snapshot.task_epoch != result.task_epoch:
+            return False
+        rms = snapshot.rms
+        peak_abs = snapshot.peak_abs
+        if rms is None or peak_abs is None:
+            return False
+        rescue = getattr(getattr(context.provider, "config", None), "rescue_config", None)
+        if rescue is None:
+            rescue = getattr(
+                getattr(getattr(context.provider, "_asr", None), "config", None),
+                "rescue_config",
+                None,
+            )
+        min_rms = int(getattr(rescue, "min_rms", 100))
+        min_peak_abs = int(getattr(rescue, "min_peak_abs", 350))
+        return bool(rms < min_rms and peak_abs < min_peak_abs)
 
     def _log_asr_rejection(
         self,
@@ -673,11 +724,7 @@ class MediaSessionCommitMixin:
             self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
         normalized_text = normalize_short(text)
-        if (
-            context.last_committed_turn_text
-            and normalized_text == context.last_committed_turn_text
-            and self._reply_or_delegation_pending(context)
-        ):
+        if self._same_text_turn_output_pending(context, normalized_text):
             logger.info(
                 "media duplicate media turn skipped session=%s stream_epoch=%s "
                 "text_len=%s samples=%s-%s",
@@ -701,7 +748,6 @@ class MediaSessionCommitMixin:
             # returns it.  Arming it here would close the session early.
             self._pause_owner_silence_timer(context)
             return None, "duplicate_media_turn"
-        context.last_committed_turn_text = normalized_text
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:
             logger.info(
@@ -900,6 +946,9 @@ class MediaSessionCommitMixin:
                         )
                     )
                     if isinstance(recovered, CommittedTurn):
+                        context.last_committed_turn_text = normalize_short(recovered.text)
+                        context.last_committed_turn_fence = prepared_fence
+                        context.last_committed_turn_at = time.monotonic()
                         self._observe_committed_conversation_turn(
                             context,
                             recovered,
@@ -1002,6 +1051,9 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, projection_result.value)
             return None, projection_result.value
         committed: CommittedTurn = projection_result
+        context.last_committed_turn_text = normalize_short(committed.text)
+        context.last_committed_turn_fence = fence
+        context.last_committed_turn_at = time.monotonic()
         self._observe_committed_conversation_turn(
             context,
             committed,

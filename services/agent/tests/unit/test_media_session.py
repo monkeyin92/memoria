@@ -3470,6 +3470,99 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient floor loss must not kill an output before its first PCM."""
+
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    registry.install()
+    identity = SessionIdentity("unheard-floor-replay")
+    context = await registry._get_or_create(identity)
+    context.runtime.barge_in_enabled = False
+    fence = await context.runtime.on_turn_committed("你好")
+    coordinator = context.runtime.orchestrator.delegation
+    now_ms = int(time.time() * 1_000)
+    intent = coordinator.conversation_reply(
+        fence=fence,
+        context_version=coordinator.current_context_version(identity.session_id),
+        expires_at_ms=now_ms + 5_000,
+        now_ms=now_ms,
+    )
+    assert (
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=coordinator.current_context_version(identity.session_id),
+            floor_allows_output=True,
+            now_ms=now_ms,
+        )
+        == ""
+    )
+
+    selected = True
+    original_is_selected = coordinator.output_intent_is_selected
+
+    def is_selected(
+        _self: Any,
+        candidate: Any,
+        *,
+        current_fence: GenerationFence,
+        current_context_version: int,
+        floor_allows_output: bool,
+        now_ms: int | None = None,
+    ) -> bool:
+        if not selected:
+            return False
+        return original_is_selected(
+            candidate,
+            current_fence=current_fence,
+            current_context_version=current_context_version,
+            floor_allows_output=floor_allows_output,
+            now_ms=now_ms,
+        )
+
+    monkeypatch.setattr(type(coordinator), "output_intent_is_selected", is_selected)
+    ready = asyncio.Event()
+    lease_holder: list[Any] = []
+
+    async def wait_for_first_frame() -> bool:
+        nonlocal selected
+        lease = SimpleNamespace(
+            intent=intent,
+            fence=fence,
+            task=asyncio.current_task(),
+        )
+        context.output_owner = lease  # type: ignore[assignment]
+        lease_holder.append(lease)
+        context.runtime._fresh_user_speech = True  # noqa: SLF001 - simulate floor flip
+        selected = False
+        ready.set()
+        return await registry._wait_for_unheard_output_floor(
+            context,
+            lease,
+            emitted_audio=False,
+        )
+
+    wait_task = asyncio.create_task(wait_for_first_frame())
+    await asyncio.wait_for(ready.wait(), timeout=1)
+    await asyncio.sleep(0.05)
+    assert not wait_task.done()
+    assert context.output_owner is lease_holder[0]
+
+    selected = True
+    assert await asyncio.wait_for(wait_task, timeout=1)
+    assert context.output_owner is lease_holder[0]
+    context.runtime._fresh_user_speech = False  # noqa: SLF001
+    registry._release_output_owner(context, fence, reason="test_complete")
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> None:
     class ProbeProvider(FakeMediaProvider):
         def __init__(self) -> None:
@@ -7086,6 +7179,86 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
         assert context.live_query_forced_text is None
         assert context.conversation_close_endpoint_pinned == 336_960
         assert context.turn_endpoint_sample == 336_960
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_device_low_energy_rescue_close_rejection_does_not_request_standby() -> None:
+    """A near-silent rescue final must not turn overlap rejection into close."""
+
+    class LowEnergyRescueProvider(_AckCapturingProvider):
+        def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot:
+            return ProviderAudioTaskSnapshot(
+                task_epoch=1,
+                task_sample_origin=0,
+                audio_start_sample=0,
+                audio_end_sample=336_960,
+                send_count=1,
+                observed_sample_count=336_960,
+                peak_abs=0,
+                rms=0.0,
+                all_zero=True,
+            )
+
+    provider = LowEnergyRescueProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-low-energy-close-rescue")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+        echo = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="echo-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=64_000,
+            text="你好我是茉莉今天想聊点什么呀",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert (
+            await registry._accept_asr_result_decision(identity.session_id, echo)
+        ).accepted is not None
+
+        farewell = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="low-energy-farewell-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=336_960,
+            text="你说的好多呀，好的，我知道了，再见！",
+            is_final=True,
+            confidence=0.9,
+            rescue_synthesized=True,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            farewell,
+        )
+
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+        assert context.conversation_close_endpoint_pinned is None
+        assert context.turn_endpoint_sample is None
+        assert context.standby_requested is False
     finally:
         await registry._finalize_session(identity.session_id)
 
@@ -12371,4 +12544,3 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     assert len({payload["provisional_id"] for payload in provisional_started}) == 3
     assert [payload["text"] for payload in committed] == ["你好", "世界", "下一轮"]
     assert all(payload["history_eligible"] is False for payload in committed)
-

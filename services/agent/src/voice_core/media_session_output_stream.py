@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 media_pb2: Any = _media_pb2
 _DOWNLINK_PCM_SAMPLE_RATE = 24_000
+_UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
+_UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
 
 
 def _playback_terminal(event_type: PlaybackEventType) -> bool | None:
@@ -228,6 +230,62 @@ class MediaOutputStreamMixin:
             return
         await context.runtime.restore_listen_after_unheard_output(fence, cause=reason)
 
+    def _output_owner_can_start_first_frame(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+    ) -> bool:
+        """Allow a selected half-duplex owner to survive a transient floor flip."""
+
+        if context.runtime.barge_in_enabled:
+            return self._output_owner_is_current(context, lease)
+        if (
+            context.output_owner is not lease
+            or lease.task is not asyncio.current_task()
+            or not context.runtime.fence.matches(lease.fence)
+        ):
+            return False
+        coordinator = context.runtime.orchestrator.delegation
+        # The ordinary currentness check queries with the live floor.  When
+        # that floor is temporarily false, the coordinator deliberately
+        # evicts shadow candidates; querying it first would make recovery
+        # impossible.  Preserve the selected lease by checking the same
+        # intent against the restored floor before consulting the live one.
+        if coordinator.output_intent_is_selected(
+            lease.intent,
+            current_fence=context.runtime.fence,
+            current_context_version=coordinator.current_context_version(lease.fence.session_id),
+            floor_allows_output=True,
+        ):
+            return True
+        return self._output_owner_is_current(context, lease)
+
+    async def _wait_for_unheard_output_floor(
+        self,
+        context: _MediaVoiceSession,
+        lease: _OutputOwnerLease,
+        *,
+        emitted_audio: bool,
+    ) -> bool:
+        """Wait briefly for half-duplex floor recovery before the first PCM."""
+
+        if emitted_audio or context.runtime.barge_in_enabled:
+            return self._output_owner_is_current(context, lease)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _UNHEARD_OUTPUT_FLOOR_WAIT_S
+        while True:
+            if self._output_owner_can_start_first_frame(context, lease):
+                return True
+            if (
+                context.output_owner is not lease
+                or lease.task is not asyncio.current_task()
+                or not context.runtime.fence.matches(lease.fence)
+            ):
+                return False
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(_UNHEARD_OUTPUT_FLOOR_POLL_S)
+
     async def on_playback_progress(
         self,
         session: MediaBridgeSession,
@@ -388,7 +446,11 @@ class MediaOutputStreamMixin:
         try:
             async for chunk in chunks:
                 _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
-                if not self._output_owner_is_current(context, lease):
+                if not await self._wait_for_unheard_output_floor(
+                    context,
+                    lease,
+                    emitted_audio=emitted_audio,
+                ):
                     self.metrics.inc_media_stale_generation()
                     await self._abort_unheard_stream(
                         context,
@@ -419,7 +481,11 @@ class MediaOutputStreamMixin:
                         extra_s=delay_s,
                     )
                     await asyncio.sleep(delay_s)
-                    if not self._output_owner_is_current(context, lease):
+                    if not await self._wait_for_unheard_output_floor(
+                        context,
+                        lease,
+                        emitted_audio=emitted_audio,
+                    ):
                         self.metrics.inc_media_stale_generation()
                         await self._abort_unheard_stream(
                             context,
@@ -450,9 +516,15 @@ class MediaOutputStreamMixin:
                     speaking_started = await context.runtime.on_assistant_speaking(
                         context.assistant_text,
                         expected_fence=fence,
-                        precondition=lambda: self._output_owner_is_current(context, lease),
+                        precondition=lambda: self._output_owner_can_start_first_frame(
+                            context,
+                            lease,
+                        ),
                     )
-                    if not speaking_started or not self._output_owner_is_current(context, lease):
+                    if not speaking_started or not self._output_owner_can_start_first_frame(
+                        context,
+                        lease,
+                    ):
                         self.metrics.inc_media_stale_generation()
                         await self._abort_unheard_stream(
                             context,

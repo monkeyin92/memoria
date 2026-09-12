@@ -44,6 +44,7 @@ _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
+_DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
 
 
 class MediaTurnEndpointMixin:
@@ -249,6 +250,39 @@ class MediaTurnEndpointMixin:
 
         return MediaTurnEndpointMixin._reply_in_flight(context) or (
             MediaTurnEndpointMixin._delegation_output_pending(context)
+        )
+
+    @staticmethod
+    def _same_text_turn_output_pending(
+        context: _MediaVoiceSession,
+        normalized_text: str,
+    ) -> bool:
+        """Keep a completed delegation from reopening its undelivered turn."""
+
+        if (
+            not context.last_committed_turn_text
+            or normalized_text != context.last_committed_turn_text
+        ):
+            return False
+        if MediaTurnEndpointMixin._reply_or_delegation_pending(context):
+            return True
+        committed_fence = context.last_committed_turn_fence
+        committed_at = context.last_committed_turn_at
+        if committed_fence is None or committed_at is None:
+            return False
+        if time.monotonic() - committed_at >= _DUPLICATE_COMMIT_DELIVERY_GUARD_S:
+            return False
+        delivery = context.reply_delivery.get(committed_fence)
+        if delivery is not None:
+            if delivery.actual_heard or delivery.terminal:
+                return False
+            return True
+        owner = context.output_owner
+        if owner is not None and owner.fence.turn_id == committed_fence.turn_id:
+            return True
+        return any(
+            work.fence.turn_id == committed_fence.turn_id
+            for work in context.output_work.values()
         )
 
     def _arm_live_query_forced_endpoint(

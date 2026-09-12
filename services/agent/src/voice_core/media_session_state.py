@@ -100,6 +100,8 @@ class MediaVoiceSessionState:
     # truncated cue plus silence (epoch 1900).  Identical text carries no new
     # information, so that repeat is skipped while the reply is in flight.
     last_committed_turn_text: str = ""
+    last_committed_turn_fence: GenerationFence | None = None
+    last_committed_turn_at: float | None = None
     # A live-lookup filler is a user-facing cue, so the device may hear it at
     # most once per lookup burst.  One question can be transcribed into several
     # finals, and each final commits its own turn and its own delegation, so a
