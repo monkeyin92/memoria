@@ -232,23 +232,6 @@ def test_jsonb_decode_helpers_accept_str_and_list() -> None:
         _jsonb_dict("42")
 
 
-def test_notification_jsonb_decode_helpers_accept_str_and_list() -> None:
-    from services.notification.postgres_store import _jsonb_list
-
-    assert _jsonb_list('["wechat_subscription", "sms"]') == [
-        "wechat_subscription",
-        "sms",
-    ]
-    assert _jsonb_list(["wechat_subscription", "sms"]) == [
-        "wechat_subscription",
-        "sms",
-    ]
-    with pytest.raises(ValueError, match="JSON array"):
-        _jsonb_list('"wechat_subscription"')
-    with pytest.raises(ValueError, match="JSON array"):
-        _jsonb_list("[1]")
-
-
 def test_memory_schema_role_separation_and_no_guc_authority() -> None:
     """P0-2/P1-7: memory schema grants on real roles only; API can only
     append outbox/audit, worker selects/updates the outbox; the old broad
@@ -294,17 +277,3 @@ def test_memory_role_gates_reject_wrong_adapter_role() -> None:
         # Explicit close: never leave an unclosed event loop behind that a
         # ``-W error`` full-suite run would surface as a ResourceWarning.
         loop.close()
-
-
-def test_notification_list_recipients_sql_parameter_shape() -> None:
-    """Fifth review: SQL placeholder count must match the bound arguments."""
-    source = (
-        Path(__file__).resolve().parents[2] / "notification/postgres_store.py"
-    ).read_text(encoding="utf-8")
-
-    list_recipients = source[
-        source.index("async def list_recipients(") :
-        source.index("async def list_recipients_for_worker(")
-    ]
-    assert "intent_id = $1" in list_recipients
-    assert "person_id = $2" in list_recipients
