@@ -8918,6 +8918,101 @@ async def test_slow_lookup_is_covered_by_a_second_cue(
 
 
 @pytest.mark.asyncio
+async def test_answer_still_delivered_after_second_cue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """第二句提示 bump 运行代际后，答案不得被判过期丢掉。
+
+    Regression for the 2026-09-12 weather stall: two cues were heard and then
+    silence, because the deep result fenced to generation N was dropped once
+    the second cue had advanced the runtime to generation N+1 through the
+    auxiliary path. The answer must be re-fenced to the current generation.
+    """
+
+    from services.agent.src.voice_core import media_session_projection
+
+    monkeypatch.setattr(
+        media_session_projection,
+        "_LOOKUP_SECOND_CUE_AFTER_S",
+        0.4,
+        raising=False,
+    )
+
+    class AnswerProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.output_texts: list[str] = []
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_kinds.append(int(intent.kind))
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                self.ack_started.set()
+            elif intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+                self.deep_started.set()
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
+                    first=True,
+                    final=True,
+                )
+                if intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT:
+                    self.ack_completed.set()
+
+            return chunks()
+
+    provider = AnswerProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("second-cue-answer-delivery")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
+        await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        await _wait_until(
+            lambda: BRIDGE_PHRASES[4] in provider.output_texts,
+            timeout=5.0,
+        )
+        assert BRIDGE_PHRASES[4] in provider.output_texts
+        assert LIVE_LOOKUP_FILLER in provider.output_texts
+        provider.release.set()
+        await asyncio.sleep(0.3)
+        if context.output_owner is not None and not provider.deep_started.is_set():
+            await _finish_output_owner_playback(registry, identity, bridge, session)
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=4)
+        assert provider.output_kinds == [
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
+            media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
+        ]
+        claim = context.delegation_output_claims.get(fence)
+        assert claim is not None
+        assert claim.state is DelegationOutputState.COMPLETED
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_media_delegation_produces_no_output() -> None:
     started = asyncio.Event()
     deep_gate = asyncio.Event()

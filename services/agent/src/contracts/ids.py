@@ -71,6 +71,24 @@ class GenerationFence:
         )
 
 
+def same_turn_generation_allows(current: GenerationFence, original: GenerationFence) -> bool:
+    """True when current is original or its same-turn auxiliary successor.
+
+    A queued follow-up (e.g. the slow-lookup second cue) advances the runtime
+    through begin_media_auxiliary_output without a new user turn. A deep
+    result fenced to the original generation is still authoritative then;
+    only a new turn, tool epoch, session epoch or session invalidates it.
+    """
+
+    return (
+        current.session_id == original.session_id
+        and current.turn_id == original.turn_id
+        and current.tool_epoch == original.tool_epoch
+        and current.session_epoch == original.session_epoch
+        and current.generation_id >= original.generation_id
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CancellationContext:
     """Immutable provider context backed by the existing generation fence."""

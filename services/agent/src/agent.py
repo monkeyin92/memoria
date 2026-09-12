@@ -25,7 +25,7 @@ from services.agent.src.agent_voice_profile import (
 )
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.contracts.events import TimedWord
-from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.contracts.ids import GenerationFence, same_turn_generation_allows
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     GenerationVoiceSnapshot,
@@ -250,7 +250,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 exc_info=True,
             )
             result = None
-        if not self._runtime.fence.matches(fence):
+        if not same_turn_generation_allows(self._runtime.fence, fence):
             return None
         return (
             result.strip()

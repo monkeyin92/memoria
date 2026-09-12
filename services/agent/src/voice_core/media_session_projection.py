@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.agent_voice_profile import generation_tts_voice_can_bind
-from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.contracts.ids import GenerationFence, same_turn_generation_allows
 from services.agent.src.orchestration.conversation_projection import (
     CommittedTurn,
     FloorState,
@@ -183,6 +183,14 @@ class MediaSessionProjectionMixin:
         async def _enqueue_output_work(
             self, context: _MediaVoiceSession, work: _OutputWork
         ) -> bool: ...
+
+        @staticmethod
+        def _rebind_output_work(
+            work: _OutputWork,
+            fence: GenerationFence,
+            *,
+            context_version: int,
+        ) -> _OutputWork | None: ...
 
         async def generate_reply(
             self,
@@ -722,7 +730,7 @@ class MediaSessionProjectionMixin:
                     expires_at_ms=int(time.time() * 1_000) + 20_000,
                     side_effect_policy=SideEffectPolicy.READ_ONLY,
                     committed=True,
-                    relevance=lambda: runtime.fence.matches(fence),
+                    relevance=lambda: same_turn_generation_allows(runtime.fence, fence),
                     output_kind=media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
                 )
             )
@@ -810,12 +818,22 @@ class MediaSessionProjectionMixin:
                     reason=(terminal_kind.value if terminal_kind is not None else "no_event"),
                 )
                 return
+            current_fence = runtime.fence
+            if current_fence.matches(fence):
+                accept_fence, accept_relevant = current_fence, True
+            elif same_turn_generation_allows(current_fence, fence):
+                # The slow-lookup second cue advanced the runtime through the
+                # auxiliary path without a new user turn. Accept the answer
+                # against its delegation fence, then rebind it below.
+                accept_fence, accept_relevant = fence, True
+            else:
+                accept_fence, accept_relevant = current_fence, False
             intent = coordinator.output_intent(
                 handle,
-                current_fence=runtime.fence,
+                current_fence=accept_fence,
                 current_task_epoch=handle.request.task_epoch,
                 current_context_version=coordinator.current_context_version(fence.session_id),
-                relevant=runtime.fence.matches(fence),
+                relevant=accept_relevant,
             )
             if intent is None:
                 await self._release_media_delegation_claim(
@@ -826,6 +844,22 @@ class MediaSessionProjectionMixin:
                     reason="no_result",
                 )
                 return
+            if not current_fence.matches(fence):
+                rebound = self._rebind_output_work(
+                    _OutputWork(intent, fence),
+                    current_fence,
+                    context_version=coordinator.current_context_version(fence.session_id),
+                )
+                if rebound is None:
+                    await self._release_media_delegation_claim(
+                        context,
+                        text=text,
+                        fence=fence,
+                        claim=claim,
+                        reason="answer_rebind_rejected",
+                    )
+                    return
+                intent, fence = rebound.intent, rebound.fence
             spoken = str(getattr(intent, "tts_source", "") or "")
             filler_started = (
                 played_lookup_filler and _live_lookup_filler_was_heard(context, fence)
