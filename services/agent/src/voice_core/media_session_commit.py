@@ -476,7 +476,10 @@ class MediaSessionCommitMixin:
                 adjusted.capture_start_sample,
                 adjusted.capture_end_sample,
             )
-        if close_needed and not live_lookup_needed:
+        # A farewell is terminal even when overlap/echo makes the same ASR
+        # final also resemble a live lookup.  Device shutdown must win over
+        # any tool intent so a trailing "再见" cannot trigger another reply.
+        if close_needed:
             self._observe_final_asr_result(context, adjusted)
             self._maybe_early_commit_conversation_close(context, adjusted)
             if context.turn_endpoint_sample is not None:
