@@ -116,16 +116,16 @@ else
   gate_env=(env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION
     -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S)
   run_release_gate ruff \
-    "${gate_env[@]}" uv run --project "$ROOT" ruff check \
+    "${gate_env[@]}" uv run --project "$ROOT" --extra dev ruff check \
     "$ROOT/services/agent" \
     "$ROOT/services/control_api/tests/test_production_compose.py"
   run_release_gate module-budget \
-    "${gate_env[@]}" uv run --project "$ROOT" python \
+    "${gate_env[@]}" uv run --project "$ROOT" --extra dev python \
     "$ROOT/scripts/check_module_budget.py" check
   run_release_gate mypy \
-    "${gate_env[@]}" uv run --project "$ROOT" mypy "$ROOT/services/agent" --strict
+    "${gate_env[@]}" uv run --project "$ROOT" --extra dev mypy "$ROOT/services/agent" --strict
   run_release_gate pytest \
-    "${gate_env[@]}" uv run --project "$ROOT" pytest \
+    "${gate_env[@]}" uv run --project "$ROOT" --extra dev pytest \
     --import-mode=importlib --no-cov -q \
     "$ROOT/services/agent/tests/unit" \
     "$ROOT/services/control_api/tests/test_production_compose.py"
