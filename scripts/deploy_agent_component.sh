@@ -307,7 +307,7 @@ base_image_id="$6"
 base_commit="$7"
 runtime_base="$8"
 target_image="$9"
-release_tag="$10"
+release_tag="${10}"
 
 cd "$remote_dir"
 printf '%s  %s\n' "$source_sha" agent-source.tar | sha256sum -c -

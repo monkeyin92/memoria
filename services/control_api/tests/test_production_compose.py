@@ -565,7 +565,7 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'base_commit="$7"' in deploy
     assert 'runtime_base="$8"' in deploy
     assert 'target_image="$9"' in deploy
-    assert 'release_tag="$10"' in deploy
+    assert 'release_tag="${10}"' in deploy
     assert 'manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent' in deploy
     assert 'runtime base image is missing, has invalid provenance, or is not independent' in deploy
     assert 'image_identity_matches' in deploy
