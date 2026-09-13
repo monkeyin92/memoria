@@ -636,7 +636,11 @@ class MediaSessionProjectionMixin:
             fence.generation_id,
             reason,
         )
-        if not owned_delegation_holds_turn(context.delegation_output_claims, fence):
+        current_fence = context.runtime.fence
+        if (
+            current_fence.matches(claim.fence)
+            or same_turn_generation_allows(current_fence, claim.fence)
+        ) and not owned_delegation_holds_turn(context.delegation_output_claims, claim.fence):
             await context.runtime.finish_owned_delegation_wait(cause=reason)
         if (
             not claim.normal_reply_observed
@@ -808,23 +812,25 @@ class MediaSessionProjectionMixin:
                 intent.tts_source = _strip_leading_live_lookup_filler(spoken)
             elif spoken and not spoken.startswith(LIVE_LOOKUP_FILLER):
                 intent.tts_source = LIVE_LOOKUP_FILLER + spoken
+            floor_allows_output = runtime.output_floor_allows_assistant
             if (
                 not runtime.barge_in_enabled
                 and claim.state is DelegationOutputState.OWNED
                 and runtime.fence.turn_id == fence.turn_id
+                and floor_allows_output
             ):
                 runtime.hold_floor_for_owned_delegation()
             coordinator.admit_output_intent(
                 intent,
                 current_fence=runtime.fence,
                 current_context_version=coordinator.current_context_version(fence.session_id),
-                floor_allows_output=runtime.output_floor_allows_assistant,
+                floor_allows_output=floor_allows_output,
             )
             if not coordinator.output_intent_is_active(
                 intent,
                 current_fence=runtime.fence,
                 current_context_version=coordinator.current_context_version(fence.session_id),
-                floor_allows_output=runtime.output_floor_allows_assistant,
+                floor_allows_output=floor_allows_output,
             ):
                 # A finished deep answer must never vanish without a trace.  The
                 # intent is inactive because the fence/floor no longer admits it

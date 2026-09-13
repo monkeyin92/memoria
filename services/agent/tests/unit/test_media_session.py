@@ -7882,6 +7882,56 @@ async def test_half_duplex_owned_wait_ignores_user_speech_and_keeps_weather() ->
 
 
 @pytest.mark.asyncio
+async def test_half_duplex_owned_result_respects_a_closed_output_floor(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A late result must not clear fresh speech and reopen the floor."""
+
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = SessionIdentity("half-duplex-closed-floor")
+    context = None
+    try:
+        context, fence = await _ack_owned_filler_then_wait(
+            registry,
+            identity,
+            provider,
+            bridge,
+        )
+        claim = context.delegation_output_claims[fence]
+        context.runtime._fresh_user_speech = True
+        context.runtime.set_interaction_phase(
+            InteractionPhase.USER_SPEAKING,
+            cause="test_fresh_user_speech",
+        )
+
+        provider.release.set()
+        with caplog.at_level(logging.WARNING):
+            await _wait_until(lambda: claim.state is DelegationOutputState.RELEASED, timeout=1)
+        await asyncio.sleep(0)
+
+        assert not provider.deep_started.is_set()
+        assert context.runtime._fresh_user_speech is True
+        assert any(
+            "media deep result dropped: output intent inactive" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        provider.release.set()
+        if context is not None:
+            await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_half_duplex_media_vad_does_not_preempt_owned_weather_successor() -> None:
     provider = _LateOwnedDelegationProvider()
     bridge = _CapturingGenerationBridge()
@@ -8268,10 +8318,8 @@ async def test_media_delegation_initial_decision_timeout_replies_locally_and_can
 
         start_gate.set()
         await _wait_until(
-            lambda: any(
-                rec.tool_name == "media_deep_response" and rec.cancelled
-                for rec in task_manager.tasks.values()
-            )
+            lambda: not task_manager.tasks,
+            timeout=2,
         )
         await asyncio.sleep(0.02)
         assert claim.state is DelegationOutputState.RELEASED
@@ -9539,6 +9587,122 @@ async def test_qa_different_question_in_delegation_window_is_not_blocked() -> No
         assert repeat_fence is not None
     finally:
         provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_qa_different_question_delivers_after_superseding_old_delegation() -> None:
+    """A real topic switch must cancel the old lookup and render the new one."""
+
+    class TopicSwitchProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delegation_started: dict[str, asyncio.Event] = {}
+            self.release_by_text: dict[str, asyncio.Event] = {}
+            self.output_texts: list[str] = []
+
+        async def start_delegation(self, text: str, _fence: GenerationFence) -> str:
+            started = self.delegation_started.setdefault(text, asyncio.Event())
+            release = self.release_by_text.setdefault(text, asyncio.Event())
+            started.set()
+            await release.wait()
+            return f"答案：{text}。"
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+            self.output_texts.append(str(getattr(intent, "tts_source", "") or ""))
+            return super().generate_output(
+                _identity,
+                intent,
+                _fence,
+                work_id=work_id,
+                source_start_sample=source_start_sample,
+            )
+
+    first_question = "今天南京天气怎么样"
+    second_question = "北京明天天气怎么样"
+    provider = TopicSwitchProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-topic-switch-delivers-new")
+    session = bridge.bridge.open(identity)
+    try:
+        context, first_fence = await _qa_commit_question_then_finish_ack_playback(
+            registry,
+            identity,
+            bridge,
+            provider,
+            session,
+            first_question,
+        )
+        await asyncio.wait_for(
+            provider.delegation_started[first_question].wait(),
+            timeout=2,
+        )
+        first_claim = context.delegation_output_claims[first_fence]
+        assert first_claim.state is DelegationOutputState.OWNED
+
+        second_fence, reason = await _qa_commit_repeat_question(
+            registry,
+            context,
+            identity,
+            text=second_question,
+            start_sample=600,
+            end_sample=1200,
+            retire_sample=1240,
+        )
+        assert second_fence is not None, reason
+        assert second_fence.turn_id > first_fence.turn_id
+        await _wait_until(
+            lambda: second_fence in context.delegation_output_claims,
+            timeout=2,
+        )
+        await _wait_until(
+            lambda: second_question in provider.delegation_started,
+            timeout=2,
+        )
+        assert set(provider.delegation_started) == {first_question, second_question}, provider.delegation_started
+
+        provider.release_by_text[second_question].set()
+        await _wait_until(
+            lambda: any(
+                text.startswith("答案：北京明天天气怎么样")
+                for text in provider.output_texts
+            ),
+            timeout=2,
+        )
+        assert any(
+            text.startswith("答案：北京明天天气怎么样")
+            for text in provider.output_texts
+        )
+        assert not any(
+            text.startswith("答案：今天南京天气怎么样")
+            for text in provider.output_texts
+        )
+        assert first_claim.state is DelegationOutputState.RELEASED
+        assert not any(
+            result.reason == "output_intent_inactive"
+            for result in context.output_results
+        )
+        await _wait_until(
+            lambda: not context.runtime.orchestrator.task_manager.tasks,
+            timeout=2,
+        )
+    finally:
+        provider.release_by_text.setdefault(first_question, asyncio.Event()).set()
+        provider.release_by_text.setdefault(second_question, asyncio.Event()).set()
         await registry._finalize_session(identity.session_id)
 
 

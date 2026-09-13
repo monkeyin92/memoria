@@ -634,24 +634,26 @@ class TaskManager:
 
     async def cancel_cancellable(self, fence: GenerationFence) -> None:
         for rec in list(self.tasks.values()):
-            if rec.finished:
+            if not rec.fence.matches(fence) or not rec.cancellable:
                 continue
-            if rec.fence.matches(fence):
-                if rec.cancellable and not rec.task.done():
-                    # Cooperative cancel first (set event so handlers can exit cleanly).
-                    rec.cancel_event.set()
-                    rec.cancelled = True
-                    try:
-                        await asyncio.wait_for(asyncio.shield(rec.task), timeout=0.15)
-                    except (TimeoutError, asyncio.CancelledError):
-                        if not rec.task.done():
-                            rec.task.cancel()
-                            # Bounded reap: a handler that swallows
-                            # CancelledError must not block the drain loop.
-                            try:
-                                await asyncio.wait_for(asyncio.shield(rec.task), timeout=0.15)
-                            except (TimeoutError, asyncio.CancelledError):
-                                pass
+            if not rec.finished and not rec.task.done():
+                # Cooperative cancel first (set event so handlers can exit cleanly).
+                rec.cancel_event.set()
+                rec.cancelled = True
+                try:
+                    await asyncio.wait_for(asyncio.shield(rec.task), timeout=0.15)
+                except (TimeoutError, asyncio.CancelledError):
+                    if not rec.task.done():
+                        rec.task.cancel()
+                        # Bounded reap: a handler that swallows
+                        # CancelledError must not block the drain loop.
+                        try:
+                            await asyncio.wait_for(asyncio.shield(rec.task), timeout=0.15)
+                        except (TimeoutError, asyncio.CancelledError):
+                            pass
+            self.stale_broadcast_count += 1
+            self.metrics.inc_stale_result_dropped("tool")
+            self.discard(rec.tool_task_id)
 
     def accept_result(
         self,
@@ -705,6 +707,11 @@ class TaskManager:
                 except (TimeoutError, asyncio.CancelledError):
                     pass
         return True
+
+    def discard(self, tool_task_id: str) -> bool:
+        """Remove a cancelled or consumed task record from the live registry."""
+
+        return self.tasks.pop(tool_task_id, None) is not None
 
     async def wait_result(
         self,

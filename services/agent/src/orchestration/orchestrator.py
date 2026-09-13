@@ -871,6 +871,11 @@ class Orchestrator:
         assert self.fence_gate is not None
         async with self._state_lock:
             old_fence = self.fence
+            # A new user turn changes the tool conditions.  Cancel the old
+            # turn's cancellable work before advancing the tool epoch so a
+            # late live lookup cannot remain in flight or become a registry
+            # leak across the turn boundary.
+            await self.task_manager.cancel_cancellable(old_fence)
             new_fence = old_fence.bump_tool_epoch()
             if not self._inherit_context_version(old_fence, new_fence):
                 raise RuntimeError("current generation has no frozen context version")

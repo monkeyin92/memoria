@@ -163,18 +163,7 @@ async def test_forced_cancel_and_full_fence_isolation() -> None:
 
     assert rec.cancelled
     assert rec.task.cancelled()
-    assert (
-        await tm.wait_result(
-            rec.tool_task_id,
-            fence,
-            current_task_epoch=1,
-            current_context_version=0,
-            now_ms=int(time.time() * 1_000),
-            relevant=True,
-            current_side_effect_policy="read_only",
-        )
-        is None
-    )
+    assert rec.tool_task_id not in tm.tasks
 
 
 @pytest.mark.asyncio

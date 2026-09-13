@@ -295,6 +295,7 @@ class DelegationCoordinator:
 
     async def cancel(self, handle: TaskHandle, reason: str) -> DelegationEvent:
         cancelled = await self.task_manager.cancel(handle.task_id)
+        self.task_manager.discard(handle.task_id)
         return self._event(
             handle,
             DelegationEventKind.CANCELLED,
