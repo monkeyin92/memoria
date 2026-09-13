@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-12
-resume_checkpoint: farewell_loop_verified_20260912_release_tooling_single_rollback_tag_deployed
+as_of_date: 2026-09-13
+resume_checkpoint: empty_input_resume_deployed_20260913
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -18,16 +18,23 @@ miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
 production_readiness: not_ready_smoke_evidence_expired
-production_readiness_observed_at: 2026-09-06T20:49:35+08:00
+production_readiness_observed_at: 2026-09-13T23:40:01+08:00
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
 livekit_room_allowed: false
 current_work_order: vocat_interrupt_assist
 code: complete
-wired: firmware_0024_and_agent_barge_in_wait_cutover
-enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist
+wired: firmware_0024_and_agent_empty_input_resume
+enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist_empty_input_resume
 verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard
+empty_input_resume_code: regression_and_full_release_gates_pass
+empty_input_resume_wired: python_media_coordinator_dispatch_and_empty_tail_retirement
+empty_input_resume_enabled: agent_bridge_20260913_p0_empty_input_resume_v1
+empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback_receipts_user_hearing_confirmed
+empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
+weather_user_acceptance_date: 2026-09-13
+farewell_immediate_standby_verified: false
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -67,7 +74,19 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-12 闸门修复（已切流 20260912-1150，12:45 真机复测未过）
+## 2026-09-13 天气提示后无声修复（23:35:36 CST 已切流，两次正文听感已确认，告别即时待命未通过）
+
+- 根因已由线上 epoch **1934**、session `cb90521f-2254-4e76-ba69-5f571b1af4e8` 确认：22:42:52.963 filler 已 `actual_heard=True/playback_ended=True`；随后 VAD 将 floor 切为 `user_speaking`，但后续 ASR 为无字短输入（RMS 87、160ms）。22:42:53.886 天气查询成功返回 187 字，却因 `output intent inactive` 被丢弃；22:42:56.058 空 tail 退休也没有恢复 floor。这次 VAD **没有推进 generation**，不是查询失败或 TTS 无声。
+- 修复：Media coordinator 在 floor 暂时关闭时保留仍有效的输出候选，但不授予播放权限；真空输入结束且原 fence/context 仍严格匹配时恢复 floor，事件驱动重试。普通回答和查询失败 fallback 同样覆盖；有效正文排队时不额外发“没听清”抢占它。内部 ACK/正文 handoff 的 generation bump 同时携带有效排队后继，避免只保留 ACK 而再次丢掉正文，已播放/取消 owner 不会重播。
+- 安全边界：新问题、stop/cancel、身份或 session/context 切换、过期、关闭、standby、声纹登记以及有文本输入不能被旧空 tail 复活；不延长 TTL、不放宽声纹门禁、不改 VAD/音量/固件。Go output-arbiter shadow 的 VAD 清队列口径与 Python 暂存候选存在诊断差异，仍无执行副作用，不能据 shadow 统计宣称 Go 已能接管。
+- 验证：故障时序“结果先到/空 tail 先到”与 ACK+deep 同时排队的 promote/preempt 路径均红→绿；完整 clean-worktree release gates（ruff、模块预算、strict mypy 157 files、全部 Agent 单测及 production compose tests）通过，`duplex_runtime.py` 仍为 **4246/4246**。提交 `6ca25f71da05ec1cf0c08d46ce4b92c643a8f466` 与 release tag 已推送。
+- 发布只重建 Agent/Bridge，运行源码 hash、镜像 revision、双 healthy/restarts=0、Bridge gRPC、有效 env 摘要与非目标容器不变均已核实，23:47:21 CST 延迟复核仍通过。当前镜像/回滚/收据见“当前生产”；`direct_real_device_verified/full_duplex_verified` 保持 false。
+- 上线后新设备会话 epoch **1935**、session `d0a30dbe-18e7-4dbd-9304-e8a75a6eae52`：Edge 确认绑定 `dev_atk_a4cb8fd6095c`。南京当天/次日天气查询分别 2527ms/4391ms 完成；turn 2/gen 3 正文在 23:45:51.005 发首帧、23:45:57.181 收到播放结束，turn 3/gen 5 正文在 23:46:05.446 发首帧、23:46:10.459 收到播放结束，均 `actual_heard=True/playback_ended=True`。每次查询一段 ACK 后一段正文，本轮没有 `output intent inactive`；提示结束到正文首帧分别约 **0.366s/1.766s**，第二轮仍超过 1.5s 时延标准。2026-09-13 用户已确认今天、明天天气均听到，并报告追问与“好的再见”时均能中断；**这只确认本轮两次正文交付，未重新触发 epoch 1934 的同一空输入恢复时序，不能把特定故障场景或全双工验收记为通过。**
+- 告别即时待命未通过：用户报告“好的再见”后屏幕继续聆听数秒才待命。本轮日志中 23:46:10.465 由 `media_playback_ack` 进入 listening；其后输入经 FunASR/SenseVoice 未产生文本（provider PCM RMS 49.943、peak 553），23:46:19.117 空 ASR tail 退休，23:46:19.237 Edge 才以 `owner_silence_timeout` 投递关闭，距进入聆听约 **8.77s**。未见这句告别被接受或 `conversation_end_explicit`；当前证据定位在告别输入/识别链，不能断言权限拒绝、告别规则漏词或界面延迟。用户报告的中断也不替代带 fence 的服务端抢话与设备串口证据；下一步需对齐原始上行 PCM 与设备 VAD，不调大增益或绕过声纹门禁。
+
+下节保留既有故障背景；其中旧镜像和旧回滚只作历史证据，不再作为当前操作入口。
+
+## 2026-09-12 闸门修复背景（旧版本真机复测未过）
 
 问「今天南京天气怎么样」听到两遍 filler 且答案丢失（epoch 1911/1912）的代码修复：
 
@@ -85,11 +104,11 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 **遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
 
-**发布工具工单（2026-09-12 已修并部署）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；契约测试同时锁定单 tag 与双服务一致，避免回滚后下一次发布被标签状态永久卡死。已随组件 `20260912-p0-rollback-single-tag-agent-component` 切流，Agent/Bridge image ID 均为 `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`，均 healthy、restarts=0，Bridge gRPC 通过。线上回滚点为 `memoria-agent:rollback-20260912-p0-rollback-single-tag-agent-component-pre`，回滚 override 两服务已核实共享该 tag。历史版本的 `-pre-agent/-pre-bridge` 文件名仍只作为旧服务器记录保留，不再由新脚本生成。尚未故意执行破坏性“回滚后再前进发布”演练。
+**发布工具工单（截至 2026-09-13：已用于本次真实发布）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；四个本地 release gates 显式使用 `uv run --extra dev`，保证 fresh worktree 安装开发依赖。`20260913-p0-empty-input-resume-v1` 已从 clean worktree 完整通过 ruff、module budget、strict mypy（157 source files）、Agent/production compose tests、artifact preflight，并完成真实远端构建与切流。共享 rollback tag 与线上健康证据见下方。
 
 **真实设备告别复测（2026-09-12）**：新会话 `53c86566-6fec-48fa-9ddd-43da81674ce3`、epoch `1925`，不是旧日志。设备成功唤醒并进入 `listening`，收到“好的，再见”后线上记录 `conversation_end_explicit`，后续输入以 `reason=terminal` 拒绝，设备回到 `idle`；告别即时停止闭环已通过。天气会话 `eae63bac-d0d2-4f63-ad37-00f7b0a9a457` 是另一条独立的新会话。
 
-**待拍板**：`media_session_output_dispatch.py` 新加的那条 WARNING 在用户抢话（floor 不允许）时**必然触发**（QA 实证：floor 允许 0 条、抢话 1 条）；建议按原因细分、抢话降 INFO，否则真机排障会被噪声淹没。
+**已由 2026-09-13 empty-input-resume 修复更新**：floor 暂时关闭改为排队，不再仅因用户抢话释放有效候选。`output intent inactive` WARNING 仍用于 fence/context/TTL 等真正失效；通过 `empty_input_retired`、`media output carried` 和 output retired 原因区分恢复、内部移交与淘汰。
 
 **测试面（本地，全部剥 `PYTHONPATH`）**：`test_media_session.py` 172 passed（含新增 6 条：工程师 2 + QA 4）、`test_agent_production_wiring.py` + `test_realtime_information_markers.py` 98 passed、相关回归面（delegation_coordinator / conversation_projection / duplex_runtime_wiring / media_runtime_hardening / media_agent_factory / interaction_mode_runtime）192 passed；`mypy services --strict` 433 文件无问题；`ruff check` 干净；`check_module_budget.py check` PASS，预算未放宽。
 
@@ -103,9 +122,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 独立新会话 epoch 1925 已达成 `conversation_end_explicit`，terminal 后续输入并回到 `idle`；本次未重新播天气，严格的播报中 barge-in 画面/串口专项仍需后续补测 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **12:45 复测未过（epoch 1915）**：上轮闸门生效（有 `duplicate media turn skipped`），但委派交付后的空窗仍放行了 turn-3（D1），回声 vad_start 又杀掉就绪答案（D2）。修复设计 F1-F3 见 `outputs/acceptance/run-20260912-1245-epoch1915/findings-epoch1915.md`，**待修后复测** |
-| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | 主因（闸门空窗）已修（已切流 20260912-1150）；`output_intent_inactive` 由静默释放升级为 WARNING（**可观测、不保底**）。**红线「不得 >1.5s 纯静音」只有真机可测**，待复测（证据 `outputs/acceptance/run-20260912-0945-1905-retest/findings-scenario1-failure.md`） |
+| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 当前 epoch 1935 用户报告告别能中断，但继续聆听数秒才待命；线上仅见空 ASR tail 后 `owner_silence_timeout`，即时待命未通过。epoch 1925 独立显式关闭的旧证据不代替本轮验收 |
+| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
+| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
@@ -116,7 +135,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 **勿做**：宣传全双工；把 `hardware_verified` / `direct_real_device_verified` / `full_duplex_verified` 从刷机、欢迎语或点屏拍击外推为 true；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用；伪造 owner；把未 active 的声纹当主人认证宣传。
 
-### 20260910-1905 复测清单
+### 20260913-empty-input-resume 复测清单
 
 先决条件（1899/1900 就是漏了第 1 步，串口全程没挂）：
 
@@ -133,7 +152,7 @@ with serial.Serial("/dev/cu.usbmodem101", 460800, timeout=0.5) as ser:
 ```
 
 ```bash
-RUN=outputs/acceptance/run-$(date +%Y%m%d-%H%M)-1905-retest
+RUN=outputs/acceptance/run-$(date +%Y%m%d-%H%M)-empty-input-resume-retest
 mkdir -p "$RUN"
 nohup python3 "$RUN/capture_serial.py" "$RUN/serial.raw" >"$RUN/capture.out" 2>&1 &
 echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
@@ -144,7 +163,7 @@ echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
 2. 挂 bridge 日志：`ssh memoria-prod "docker logs -f memoria-voice-core-media-bridge-1 --since $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$RUN/bridge.log"`。
 3. 记录 `--since` 那个 UTC 时刻；收尾用同一时刻 `docker logs <container> --since` 落盘，不靠模糊时间窗。
 
-场景（按序；每句等回复**完全播完**再问下一句，判据都对 1905 已切但未真机验的两处修复）：
+场景（按序；每句等回复**完全播完**再问下一句；当前版本为 `20260913-p0-empty-input-resume-v1`，不能借用旧版听感验收）：
 
 | # | 说什么 | 判据 |
 | --- | --- | --- |
@@ -160,15 +179,15 @@ echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
 
 日志判据（bridge 侧）：
 
-- 每个 turn 恰有一次 `media reply delivery … event=first_frame_sent`；同一问题出现两次提交/两次 ACK 即失败。
+- 每个 delivery/generation 恰有一次 `media reply delivery … event=first_frame_sent`；每次查询的 ACK 和正文分别交付一次，可属于同一 turn 的不同 generation。同一问题出现两次提交/两次 ACK 即失败。
 - 说完到首个 `first_frame_sent` 间隔 ≤1.5s；出现 `event=preempted … first_frame_sent=False`（提示音被掐）即失败。
 - 场景 5 应出现 `media final did not start reply … reason=conversation_end_explicit`，且**不**应再出现 `media turn discarded after ASR tail timeout`。
 - `media_asr_boundary` 里同时记 `provider_pcm_clipping_detected` 与 `provider_pcm_rms`；播放窗口内仍削波就记下该 `endpoint`，这是回声而不是 vendor 空转写。
-- 本次修复新增两条 WARNING：`media deep result dropped: output intent inactive`（深查答案被释放）与 `media reply intent inactive`（回复被丢弃）。在**非抢话**场景下出现即属根因 2 类真故障，按回滚判据处理；用户抢话时出现属预期（见「2026-09-12 闸门修复」节）。
+- 无字 VAD tail 结束且原 fence 不变时应出现 `cause=empty_input_retired`，随后正文应有首帧和设备终端回执；新问题/stop/身份切换后不得恢复旧答案。`media output carried` 只证明内部候选移交，不等于 Actual Heard。`output intent inactive` 要核对 fence/context/TTL 原因，不能再把仅 floor 关闭时丢正文解释为正常抢话。
 
 回滚判据与命令：
 
-对话轮次出现以下任一就回滚到 1855（重复话轮跳过改变了交付话轮，风险最高）：问完没有答案（无 `emitted_audio=True`）；同一问题被跳过两次以上导致回复丢失；提示音反复被掐或连播两遍重现。命令已在本机用 `--config --images` 验证可解析到回滚镜像：
+本次组件启动、健康或新话轮/stop 安全边界出现回归时，先冻结日志和 manifest，再按当前收据回滚 Agent/Bridge。紧邻回滚 `20260913-p0-interrupt-output-resume-v1` 已有切前健康证据，但**仍含本次天气静音缺陷**；天气复测再失败需据新会话取证，不能把退回旧版称为问题解决。下列当前 rollback override 已在服务器以 `config --format json` 验证两服务共用唯一回滚 tag，本轮没有执行破坏性的真实回滚演练：
 
 ```bash
 cd /opt/memoria/releases/20260827-architecture-split-v1
@@ -176,12 +195,12 @@ sudo env MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist \
   MEMORIA_RELEASE_COMMIT=7ca3d4ec531305d968d67ef1bb13b944e566e4cf \
   docker compose --project-name memoria \
   --file docker-compose.production.yml \
-  --file /opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/pre-cutover-live.override.yml \
-  --file /opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/agent-component.rollback.override.yml \
+  --file /opt/memoria/component-releases/20260913-p0-empty-input-resume-v1/pre-cutover-live.override.yml \
+  --file /opt/memoria/component-releases/20260913-p0-empty-input-resume-v1/agent-component.rollback.override.yml \
   --profile media-runtime up -d --no-deps --no-build agent voice-core-media-bridge
 ```
 
-回滚梯每级镜像都已确认在位（以镜像 ID 为准，标签顺序会骗人）：`1905`（`ec0a813b`）→`1855`（`60882217`）→`1844`（`bb45c232`）→`1820`（`329e70ad`）→`1526`（`bddced4e`）→`1011`（`d17673e5`）。每级的 `rollback-<tag>-agent-component-pre-agent/-pre-bridge` 正好指向前一级，链条自洽。
+旧多级 Agent 回滚链已退出保留范围，不能继续执行历史 tag/override；依赖底座或其他消费者保留的镜像不属于可任选的业务回滚点。
 
 ## 屏幕表情：对话脸
 
@@ -243,10 +262,12 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260912-1150-companion-persona-and-lookup-gate`，image `sha256:7fce8545aa20e49b51f772b22b14f51e2020e39d207cb44c2eef2f5589822228`，OCI revision `43b28f181764126fa7d0e688cf797a58e8c3b176`。healthy、restart=0，2026-09-12 12:39:40 CST 切流；收据 `/opt/memoria/component-releases/20260912-1150-companion-persona-and-lookup-gate/`。
-- 回滚：`memoria-agent:rollback-20260912-1150-companion-persona-and-lookup-gate-pre-agent/-pre-bridge`（= 切流前的 1855，image `sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`，version `20260910-1855-duplicate-turn-skip-agent-component`）。**该镜像带同一 bug（epoch 1912 实锤），本轮回滚没有干净兜底。** 再往前可退 `20260910-1844-lookup-ack-window-agent-component` / `sha256:bb45c232…`，更早 `20260910-1820` / `sha256:329e70ad…`。
-- 历史：2026-09-12 10:36 CST 曾因 1905 复测触发「问完无答案」红线（epoch 1911），按 runbook 用 `/opt/memoria/component-releases/20260910-1905-lookup-second-cue-agent-component/` 的 rollback override 回滚到 1855；1855 上同红线复现（epoch 1912，两遍 filler + 答案双路丢失），遂有本次修复切流。**该次回滚留下的 `-pre-agent`/`-pre-bridge` 双 tag 一度卡死本次切流**，见上文「遗留工单（发布工具…）」。
-- 当前镜像含：欢迎语 latch、hello `audio_mode` 身份比对、长天气 stall 重置、半双工 heard/lookup、播后声纹过滤、播放期空缓冲 barge-in WAIT、live-lookup filler 会话级去重（result 前缀 + ACK 发出双闸门，ACK 用 5s 短窗口）、重复话轮跳过（同文本 + 回复在飞）、`a43668c` 影子声纹回归修复、**本轮委派待交付闸门（`_reply_or_delegation_pending`）**，以及经整树 overlay 恢复的慢查询第二句提示（`THINKING_FILLER`）。**已修**：重复话轮闸门在「上轮输出已 `delegation_output_owned`、深查结果未交付」空窗放行重复提交；`output_intent_inactive` 静默丢弃已完成的深查答案（改为 WARNING，可观测但不保底）。**仍未修**：不同文本抢跑时首答被 supersede 丢弃（根因 2）；跨 turn 抢占语义未动（判为已被本次修复消解）。
+- 当前：`memoria-agent:20260913-p0-empty-input-resume-v1`，image `sha256:de42440fad5fddd7afcb5bc67472bd7eaf084a91b5f0f9fa8970bbee7d768072`，OCI revision `6ca25f71da05ec1cf0c08d46ce4b92c643a8f466`。Agent/Bridge 共用该 image，2026-09-13 **23:35:36 CST** 切流；23:47:21 CST 延迟复核双 healthy、restarts=0、Bridge gRPC 通过。收据 `/opt/memoria/component-releases/20260913-p0-empty-input-resume-v1/`，source SHA256 `5fccd22ac84b8c7f8ff3ffb5442aec3846c05fa82907e547ae4848bb7cda22b8`（22179840 bytes）。
+- 紧邻回滚：`memoria-agent:rollback-20260913-p0-empty-input-resume-v1-pre`，image `sha256:864928f738ab5150ba6915ae142ca80e4882e6bb66f0a0274728bbe8e85ed01c`，revision `1b76025c422c9622f9b3c2cae7099b7828f4406c`，原 version `20260913-p0-interrupt-output-resume-v1`。切前真实运行双 healthy/restarts=0；单一 rollback tag 与两个服务的 override 及镜像 ID 已核实。**回滚只证明可运行，旧版仍有 epoch 1934 天气静音缺陷。**
+- 独立依赖底座：`memoria-agent:20260912-p0-rollback-single-tag-agent-component` / `memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，共同 image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`；当前与回滚均依赖它，不按历史业务版本删除。
+- 有效 env SHA256 切前后相同：Agent `a17290c9f5d50994ebcb53263d13eb8ba8b499e468b67734196d3736e8883589`，Bridge `5162d117bce5b5e74de84a533a868390f49b0025c1e8dbdd47da647695a28738`；Edge、Control、device-media-gateway、Redis、miniprogram-gateway、speaker-model、既有 created 的 SLO reporter 容器 ID/image/StartedAt/env 摘要均未变。三处关键运行源码 SHA 与提交逐一相同，非仅凭标签验收。
+- 当前能力新增：保留 floor 暂时关闭时的有效排队输出，严格同 fence 的无字 tail 结束后恢复播放，以及 ACK/正文内部 handoff 保留有效后继。保留上一版 dispatch drain 后重试与 live lookup 新话轮取消逻辑，不改配置、DB、Control、Edge 或固件。
+- 2026-09-13 保留清理：按预审计划 SHA256 `bd29cb0977c653d80836d3d06320b484cd6c9c5acddde64963af022926ddd83d` 删除 **266 个过期 Agent source-overlay tag、95 个旧版本的 190 项 source tar/build payload**。组件目录 1.7GB→246MB；磁盘 68% 已用、约 38GB 可用。完整 payload 只保留当前、紧邻回滚与依赖底座；所有 manifest/发布收据、runtime-base tag、full-image 底座标签与非目标消费者均保留，未动数据库/WAL/MinIO。`memoria-agent` 仓库尚有 8 个 tag/5 个 image ID（含非本轮范围的 full-image 别名和 SLO 依赖），不能描述成全栈仅余两版本。
 
 **Media Edge**
 
@@ -268,7 +289,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - epoch **1892** 唤醒欢迎语听感 + Actual Heard PASS；随后 `conversation_end_explicit` 关闭。
 - 自定义克隆已用于唤醒；天气正文音色绑定尚未真机复测。
 - 小程序开发版 **0.8.84**（2026-09-06 23:58 CST，源 `7e5137a`，903,051 bytes）。未正式发布、未设体验版。
-- 公网 `/health/ready` smoke 过期 503、运行配置 GET 404 仍在；不据容器 healthy 宣称全链路通过。
+- 2026-09-13 23:40 CST 现场核验：loopback `/health/live` 200；loopback 与公网 `/memoria-api/health/ready` 均 503，`smokes=expired/missing=[]`，具名 core **12/12 ready**，agent `ready/worker_ready/livekit_ready=true`、新 boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`。这是切流前已有的 smoke 证据过期状态，本轮未改 Control 或重置证据以“修绿”；运行配置 GET 404 为旧记录，本轮未重测。不据容器 healthy 宣称全链路通过。
 
 ## 板卡与固件
 
