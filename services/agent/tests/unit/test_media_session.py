@@ -9707,6 +9707,166 @@ async def test_qa_different_question_delivers_after_superseding_old_delegation()
 
 
 @pytest.mark.asyncio
+async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() -> None:
+    """An admitted follow-up must survive the old audible iterator's cleanup."""
+
+    class DrainingProvider(_LateOwnedDelegationProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first_draining = asyncio.Event()
+            self.finish_first = asyncio.Event()
+            self.output_texts: list[str] = []
+
+        async def start_delegation(self, text: str, _fence: GenerationFence) -> str:
+            await self.release.wait()
+            return f"答案：{text}。"
+
+        def generate_output(
+            self,
+            identity: SessionIdentity,
+            intent: Any,
+            fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            text = str(intent.tts_source)
+            self.output_texts.append(text)
+            source = super().generate_output(
+                identity, intent, fence,
+                work_id=work_id, source_start_sample=source_start_sample,
+            )
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                async for chunk in source:
+                    yield chunk
+                if text == "答案：今天南京天气怎么样。":
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        self.first_draining.set()
+                        await self.finish_first.wait()
+
+            return chunks()
+
+    provider = DrainingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge, provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("qa-weather-interrupt-draining")
+    session = bridge.bridge.open(identity)
+    cancellation = None
+    try:
+        context, _ = await _qa_commit_question_then_finish_ack_playback(
+            registry, identity, bridge, provider, session, "今天南京天气怎么样",
+        )
+        provider.release.set()
+        await _wait_until(lambda: len(bridge.frames) == 2)
+        first_owner = context.output_owner
+        assert first_owner is not None
+        first_dispatch = context.output_dispatch_task
+        assert first_dispatch is not None and not first_dispatch.done()
+        assert context.reply_delivery.get(first_owner.fence).first_frame_sent
+
+        cancellation = asyncio.create_task(
+            registry._cancel_reply_task(context, first_owner.fence),
+        )
+        await asyncio.wait_for(provider.first_draining.wait(), timeout=2)
+        assert context.output_owner is None
+        _bind_verified_owner_classifier(context.runtime)
+        context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
+        second_fence, reason = await _qa_commit_repeat_question(
+            registry, context, identity, text="明天南京天气怎么样",
+            start_sample=600, end_sample=1200, retire_sample=1240,
+        )
+        assert second_fence is not None, reason
+        await _wait_until(
+            lambda: any(work.fence.matches(second_fence) for work in context.output_work.values()),
+        )
+        assert context.output_dispatch_task is first_dispatch
+        assert not first_dispatch.done()
+        assert not any(frame.turn_id == second_fence.turn_id for frame in bridge.frames)
+
+        provider.finish_first.set()
+        await asyncio.wait_for(cancellation, timeout=2)
+        await _wait_until(
+            lambda: any(
+                result.fence.turn_id == second_fence.turn_id and result.emitted_audio
+                for result in context.output_results
+            ),
+        )
+        second_owner = context.output_owner
+        assert second_owner is not None
+        assert second_owner.fence.turn_id == second_fence.turn_id
+        assert second_owner.fence in bridge.generation_starts
+        second_frames = [frame for frame in bridge.frames if frame.turn_id == second_fence.turn_id]
+        assert len(second_frames) == 1
+        assert second_frames[0].first
+        assert second_frames[0].sequence == second_frames[0].source_start_sample == 0
+        assert sum(text.endswith("答案：明天南京天气怎么样。") for text in provider.output_texts) == 1
+        assert context.reply_delivery.get(first_owner.fence).terminal_event is ReplyDeliveryEvent.PREEMPTED
+        assert not any(result.reason == "output_intent_inactive" for result in context.output_results)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        await _wait_until(lambda: context.output_dispatch_task is None)
+        assert context.output_retry_task is None
+        assert context.output_owner is None
+        assert not context.output_work
+    finally:
+        provider.release.set()
+        provider.finish_first.set()
+        if cancellation is not None:
+            await asyncio.gather(cancellation, return_exceptions=True)
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_empty_output_returns_to_listening() -> None:
+    """An output task must not mistake itself for a queued successor."""
+
+    class EmptyProvider(_AckCapturingProvider):
+        def generate_output(self, *args: Any, **kwargs: Any) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                for chunk in ():
+                    yield chunk
+
+            return chunks()
+
+    provider = EmptyProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge, provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("scheduled-empty-output")
+    bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    try:
+        fence = await context.runtime.on_turn_committed("你好")
+        context.playback.start(fence)
+        coordinator = context.runtime.orchestrator.delegation
+        now_ms = int(time.time() * 1_000)
+        intent = coordinator.bridge_acknowledgement(
+            BRIDGE_PHRASES[0], fence=fence,
+            context_version=coordinator.current_context_version(identity.session_id),
+            expires_at_ms=now_ms + 10_000, now_ms=now_ms,
+        )
+        coordinator.admit_output_intent(
+            intent, current_fence=fence,
+            current_context_version=coordinator.current_context_version(identity.session_id),
+            floor_allows_output=True, now_ms=now_ms,
+        )
+        assert await registry._enqueue_output_work(context, _OutputWork(intent, fence))
+        await _wait_until(lambda: bool(context.output_results))
+        assert context.output_results[-1].reason == "provider_completed_without_audio"
+        assert context.runtime.orchestrator.state is ConversationState.LISTENING
+        assert context.output_owner is None
+        assert context.output_dispatch_task is None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
     """QA item 2(c): the RELEASED local fallback is not a dead end."""
 

@@ -538,11 +538,12 @@ class MediaOutputDispatchMixin:
     async def _start_selected_output(self, context: _MediaVoiceSession) -> bool:
         """Start the admitted winner, or discard an unbound candidate safely."""
 
-        if context.closed or context.output_owner is not None:
+        if context.closed or context.standby_requested or context.output_owner is not None:
             return False
-        pending = context.output_dispatch_task
-        if pending is not None and not pending.done():
-            return True
+        current = asyncio.current_task()
+        for pending in (context.output_dispatch_task, context.output_retry_task):
+            if pending is not None and pending is not current and not pending.done():
+                return True
         coordinator = context.runtime.orchestrator.delegation
         session_id = context.identity.session_id
         while True:
@@ -596,6 +597,7 @@ class MediaOutputDispatchMixin:
             ) -> None:
                 if context.output_dispatch_task is done:
                     context.output_dispatch_task = None
+                self._schedule_output_retry(context)
                 if done.cancelled():
                     self._record_output_dispatch_result(
                         context,
@@ -627,6 +629,47 @@ class MediaOutputDispatchMixin:
 
             task.add_done_callback(clear_dispatch)
             return True
+
+    def _schedule_output_retry(self, context: _MediaVoiceSession) -> None:
+        """Resume work admitted while a revoked dispatch was still draining."""
+
+        if (
+            context.closed
+            or context.standby_requested
+            or self._sessions.get(context.identity.session_id) is not context
+            or context.output_owner is not None
+            or any(
+                task is not None and not task.done()
+                for task in (context.output_dispatch_task, context.output_retry_task)
+            )
+            or not any(
+                self._output_work_is_active(context, work)
+                for work in tuple(context.output_work.values())
+            )
+        ):
+            return
+        # The old task's done callback runs after reply_lock is released. Keep
+        # this handoff distinct from the dispatch it will eventually create.
+        task = asyncio.create_task(
+            self._start_selected_output(context),
+            name=f"media-output-retry-{context.identity.session_id}",
+        )
+        context.output_retry_task = task
+
+        def clear_retry(done: asyncio.Task[bool]) -> None:
+            if context.output_retry_task is done:
+                context.output_retry_task = None
+            if done.cancelled():
+                return
+            try:
+                done.result()
+            except Exception:
+                logger.exception(
+                    "media output retry failed session=%s",
+                    context.identity.session_id,
+                )
+
+        task.add_done_callback(clear_retry)
 
     async def _promote_auxiliary_output(
         self,

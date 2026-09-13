@@ -53,6 +53,7 @@ class MediaVoiceSessionState:
     output_owner: OutputOwnerLease | None = None
     output_work: dict[str, OutputWork] = field(default_factory=dict)
     output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
+    output_retry_task: asyncio.Task[bool] | None = None
     output_results: list[OutputDispatchResult] = field(default_factory=list)
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict

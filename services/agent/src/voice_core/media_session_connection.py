@@ -224,6 +224,10 @@ class MediaSessionConnectionMixin:
                 stream_epoch=context_stream_epoch,
             )
             context.closed = True
+            retry_task = context.output_retry_task
+            context.output_retry_task = None
+            if retry_task is not None and retry_task is not current_task:
+                retry_task.cancel()
             enrollment_task = context.speaker_enrollment_task
             context.speaker_enrollment_task = None
             if (
@@ -240,6 +244,8 @@ class MediaSessionConnectionMixin:
         finally:
             context.turn_commit_lock.release()
         self.metrics.set_media_active_sessions(len(self._sessions))
+        if retry_task is not None and retry_task is not current_task:
+            await asyncio.gather(retry_task, return_exceptions=True)
         output_fence = (
             context.output_owner.fence
             if context.output_owner is not None
