@@ -561,6 +561,11 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'target_image_id="$(docker image inspect "$target_image" --format' in deploy
     assert '[[ "$target_image_id" != "$runtime_base_image_id" && "$target_image_id" != "$base_image_id" ]]' in deploy
     assert 'manifest_runtime_base="$9"' in deploy
+    assert '"$base_image" "$base_image_id" "$base_commit" "$runtime_base" "$target_image"' in deploy
+    assert 'base_commit="$7"' in deploy
+    assert 'runtime_base="$8"' in deploy
+    assert 'target_image="$9"' in deploy
+    assert 'release_tag="$10"' in deploy
     assert 'manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent' in deploy
     assert 'runtime base image is missing, has invalid provenance, or is not independent' in deploy
     assert 'image_identity_matches' in deploy

@@ -295,7 +295,7 @@ rsync \
 
 ssh "$remote" sudo -n bash -s -- \
   "$remote_dir" "$source_sha" "$dockerfile_sha" "$expected_commit" \
-  "$base_image" "$base_image_id" "$runtime_base" "$target_image" \
+  "$base_image" "$base_image_id" "$base_commit" "$runtime_base" "$target_image" \
   "$release_tag" <<'REMOTE_BUILD'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -304,9 +304,10 @@ dockerfile_sha="$3"
 expected_commit="$4"
 base_image="$5"
 base_image_id="$6"
-runtime_base="$7"
-target_image="$8"
-release_tag="$9"
+base_commit="$7"
+runtime_base="$8"
+target_image="$9"
+release_tag="$10"
 
 cd "$remote_dir"
 printf '%s  %s\n' "$source_sha" agent-source.tar | sha256sum -c -
