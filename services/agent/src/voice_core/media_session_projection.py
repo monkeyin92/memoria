@@ -315,7 +315,7 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         phrase: str,
     ) -> bool:
-        context.runtime.open_assistant_floor_for_nudge()
+        context.runtime.open_assistant_floor()
         spoken = await self._speak_allowlisted_bridge_phrase(
             context,
             phrase,
@@ -548,7 +548,7 @@ class MediaSessionProjectionMixin:
 
     async def _speak_missed_hearing_ack(self, context: _MediaVoiceSession) -> None:
         try:
-            context.runtime.open_assistant_floor_for_nudge()
+            context.runtime.open_assistant_floor()
             echo_fence = context.runtime.fence
             context.device_wake_ack_fence = echo_fence
             await self._speak_allowlisted_bridge_phrase(
@@ -646,7 +646,6 @@ class MediaSessionProjectionMixin:
             not claim.normal_reply_observed
             or context.closed
             or not context.runtime.fence.matches(fence)
-            or not context.runtime.output_floor_allows_assistant
         ):
             return
         try:
@@ -833,8 +832,8 @@ class MediaSessionProjectionMixin:
                 floor_allows_output=floor_allows_output,
             ):
                 # A finished deep answer must never vanish without a trace.  The
-                # intent is inactive because the fence/floor no longer admits it
-                # (epoch 1912), so the result is still released for a bounded
+                # intent is inactive because its fence/context/TTL is no longer
+                # valid, so the result is still released for a bounded
                 # local fallback, but the drop is now observable instead of a
                 # silent reason=output_intent_inactive release.
                 logger.warning(

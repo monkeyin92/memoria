@@ -7915,14 +7915,19 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
         )
 
         provider.release.set()
-        with caplog.at_level(logging.WARNING):
-            await _wait_until(lambda: claim.state is DelegationOutputState.RELEASED, timeout=1)
+        with caplog.at_level(logging.INFO):
+            await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED, timeout=1)
         await asyncio.sleep(0)
 
         assert not provider.deep_started.is_set()
         assert context.runtime._fresh_user_speech is True
         assert any(
-            "media deep result dropped: output intent inactive" in record.getMessage()
+            work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
+            for work in context.output_work.values()
+        )
+        assert context.output_retry_task is None
+        assert any(
+            "media output deferred" in record.getMessage()
             for record in caplog.records
         )
     finally:
@@ -9480,6 +9485,327 @@ async def test_qa_blocked_duplicate_still_delivers_the_first_answer() -> None:
         )
     finally:
         provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+async def _qa_open_empty_vad_tail(
+    registry: MediaVoiceCoreRegistry, context: Any, session: Any, identity: SessionIdentity
+) -> int:
+    registry._clear_pending_turn_state(context)
+    for name, start, final in (("start", 640, False), ("end", 1280, True)):
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id=f"empty-lookup-{name}",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                final=final,
+                voiced_end_sample=1200 if final else None,
+            ),
+        )
+    task = context.turn_endpoint_task
+    assert task is not None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert context.turn_endpoint_sample == 1200
+    assert not context.runtime.output_floor_allows_assistant
+    return 1200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_before_tail", [True, False])
+async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: bool) -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=60,
+        turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"qa-weather-empty-vad-{result_before_tail}")
+    session = bridge.bridge.open(identity)
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry, identity, bridge, provider, session, "今天南京天气怎么样"
+        )
+        claim = context.delegation_output_claims[fence]
+        endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
+        assert context.runtime.fence.matches(fence)
+        assert await registry.generate_reply(identity.session_id, "今天南京天气怎么样", fence)
+        assert claim.normal_reply_observed
+        speaker_class = context.runtime._speaker_class
+        frame_count = len(bridge.frames)
+        if result_before_tail:
+            provider.release.set()
+            await _wait_until(lambda: claim.state is not DelegationOutputState.OWNED)
+            assert claim.state is DelegationOutputState.COMPLETED
+            assert any(
+                work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
+                for work in context.output_work.values()
+            )
+            assert not provider.deep_started.is_set()
+            assert len(bridge.frames) == frame_count
+            assert context.output_retry_task is None
+        await registry._expire_endpoint_tail(
+            identity.session_id, identity.stream_epoch, endpoint
+        )
+        assert context.runtime.output_floor_allows_assistant
+        assert context.runtime._speaker_class == speaker_class
+        provider.release.set()
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        await _wait_until(lambda: len(bridge.frames) > frame_count)
+        deep_fence = context.output_owner.fence
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        delivery = context.reply_delivery.get(deep_fence)
+        assert delivery.actual_heard and delivery.playback_ended
+        await _wait_until(lambda: context.output_dispatch_task is None)
+        assert not context.output_work
+        assert context.output_retry_task is None
+        assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
+        assert provider.output_kinds.count(
+            media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+        ) == 1
+        assert context.turn_start_sample is None
+        assert context.runtime.fence.turn_id == fence.turn_id
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalidator",
+    [
+        "new_vad", "stop", "new_turn", "identity", "close", "standby",
+        "expiry", "context", "partial", "stream", "enrollment",
+    ],
+)
+async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator: str) -> None:
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge, provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=60, turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"qa-weather-no-revive-{invalidator}")
+    session = bridge.bridge.open(identity)
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry, identity, bridge, provider, session, "今天南京天气怎么样"
+        )
+        endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
+        provider.release.set()
+        claim = context.delegation_output_claims[fence]
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
+        coordinator = context.runtime.orchestrator.delegation
+        if invalidator == "new_vad":
+            await registry.on_speech_segment(
+                session,
+                SpeechSegment(
+                    session_id=identity.session_id, stream_epoch=identity.stream_epoch,
+                    provider_task_epoch=0, segment_id="newer-vad", revision=1,
+                    kind=SegmentKind.VAD, capture_start_sample=1280, capture_end_sample=1281,
+                ),
+            )
+            assert context.turn_endpoint_sample is None
+        elif invalidator == "stop":
+            await context.runtime.accept_media_generation(fence.bump_generation(), cause="stop")
+        elif invalidator == "new_turn":
+            await context.runtime.on_turn_committed("给我讲个故事")
+        elif invalidator == "identity":
+            context.runtime.orchestrator.bump_session_epoch(fence.session_epoch + 1)
+        elif invalidator == "close":
+            await registry._finalize_session(identity.session_id)
+        elif invalidator == "standby":
+            context.standby_requested = True
+        elif invalidator == "stream":
+            context.stream_epoch += 1
+        elif invalidator == "enrollment":
+            context.runtime.begin_formal_speaker_enrollment()
+        elif invalidator == "expiry":
+            for intent in coordinator._shadow_output_by_session[identity.session_id].values():
+                intent.expires_at_ms = int(time.time() * 1_000) - 1
+        elif invalidator == "context":
+            coordinator.activate_context_version(
+                identity.session_id, coordinator.current_context_version(identity.session_id) + 1
+            )
+        elif invalidator == "partial":
+            context.pending_partial = ASRResult(
+                task_epoch=1, sentence_id="real-speech", revision=1,
+                capture_start_sample=640, capture_end_sample=650, text="等等",
+                is_final=False, stream_epoch=identity.stream_epoch,
+            )
+        await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)
+        assert not await registry._start_selected_output(context)
+        assert not provider.deep_started.is_set()
+        assert len(bridge.frames) == 1
+        assert context.output_retry_task is None
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_lookup", [True, False])
+async def test_qa_conversation_or_failed_lookup_queues_during_empty_vad(
+    failed_lookup: bool,
+) -> None:
+    class FailingProvider(_LateOwnedDelegationProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            await self.release.wait()
+            raise RuntimeError("lookup failed")
+
+    provider = FailingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge, provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=60, turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"qa-empty-vad-conversation-{failed_lookup}")
+    session = bridge.bridge.open(identity)
+    try:
+        if failed_lookup:
+            context, fence = await _qa_commit_question_then_finish_ack_playback(
+                registry, identity, bridge, provider, session, "今天南京天气怎么样"
+            )
+        else:
+            context = await registry._get_or_create(identity)
+            fence = await context.runtime.on_turn_committed("给我讲个故事")
+            context.playback.start(fence)
+        endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
+        frame_count = len(bridge.frames)
+        assert await registry.generate_reply(identity.session_id, "给我讲个故事", fence)
+        if failed_lookup:
+            provider.release.set()
+        await _wait_until(lambda: any(
+            work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_CONVERSATION_REPLY
+            for work in context.output_work.values()
+        ))
+        assert len(bridge.frames) == frame_count
+        assert context.output_retry_task is None
+        await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)
+        await _wait_until(lambda: len(bridge.frames) > frame_count)
+        assert len(bridge.frames) == frame_count + 1
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preempt_owner", [False, True])
+async def test_queued_ack_and_deep_result_survive_internal_output_handoffs(
+    preempt_owner: bool,
+) -> None:
+    class Bridge(_CapturingGenerationBridge):
+        async def emit_realtime_effect(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+    provider = FakeMediaProvider()
+    bridge = Bridge()
+    registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _: provider)
+    registry.install()
+    identity = SessionIdentity(f"queued-ack-deep-handoff-{preempt_owner}")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    try:
+        fence = await context.runtime.on_turn_committed("你好")
+        context.playback.start(fence)
+        assert await registry.generate_reply(identity.session_id, "你好", fence)
+        assert len(bridge.frames) == 1
+        if not preempt_owner:
+            await _finish_output_owner_playback(registry, identity, bridge, session)
+            assert context.output_owner is None
+        coordinator = context.runtime.orchestrator.delegation
+        context.runtime.on_user_voice_started()
+        now = int(time.time() * 1_000)
+        works = []
+        for name, kind, pcm in (
+            ("answer", media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT, b"\x04\x00\x05\x00"),
+            ("ack", media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT, b"\x06\x00\x07\x00"),
+        ):
+            intent = media_pb2.OutputIntent(
+                intent_id=name, session_id=identity.session_id, turn_id=fence.turn_id,
+                generation_id=fence.generation_id, tool_epoch=fence.tool_epoch,
+                kind=kind, priority=100, created_at_ms=now, expires_at_ms=now + 20_000,
+                context_version=coordinator.current_context_version(identity.session_id),
+                floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
+                pcm_s16le=pcm,
+            )
+            coordinator.admit_output_intent(
+                intent, current_fence=fence,
+                current_context_version=coordinator.current_context_version(identity.session_id),
+                floor_allows_output=False, now_ms=now,
+            )
+            work = _OutputWork(intent, fence)
+            works.append(work)
+            assert await registry._enqueue_output_work(context, work)
+        assert len(bridge.frames) == 1
+        context.runtime.open_assistant_floor(cause="empty_input_retired")
+        if preempt_owner:
+            assert await registry._enqueue_output_work(context, works[-1])
+        else:
+            registry._schedule_output_retry(context)
+        await _wait_until(lambda: len(bridge.frames) == 2)
+        assert len(context.output_work) == 2
+        assert all(work.fence.matches(context.runtime.fence) for work in context.output_work.values())
+        assert not {"answer", "ack"}.intersection(context.output_work)
+        assert context.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        await _wait_until(lambda: len(bridge.frames) == 3)
+        assert context.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
+        deep_fence = context.output_owner.fence
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        assert context.reply_delivery.get(deep_fence).playback_ended
+        assert not context.output_work
+        assert len(bridge.frames) == 3
+        assert context.runtime.fence.turn_id == fence.turn_id
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_blocked_output_work_is_bounded_with_its_admission_queue() -> None:
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _: FakeMediaProvider())
+    identity = SessionIdentity("bounded-blocked-output")
+    bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    try:
+        fence = await context.runtime.on_turn_committed("你好")
+        context.runtime.on_user_voice_started()
+        coordinator = context.runtime.orchestrator.delegation
+        now = int(time.time() * 1_000)
+        for index in range(12):
+            intent = coordinator.bridge_acknowledgement(
+                BRIDGE_PHRASES[0], fence=fence,
+                context_version=coordinator.current_context_version(identity.session_id),
+                expires_at_ms=now + 20_000, now_ms=now,
+            )
+            intent.intent_id = f"bounded-{index:02d}"
+            coordinator.admit_output_intent(
+                intent, current_fence=fence,
+                current_context_version=coordinator.current_context_version(identity.session_id),
+                floor_allows_output=False, now_ms=now,
+            )
+            assert await registry._enqueue_output_work(context, _OutputWork(intent, fence))
+            assert len(context.output_work) <= 4
+            assert context.output_retry_task is None
+        assert not bridge.frames
+        await context.runtime.accept_media_generation(fence.bump_turn(), cause="new_turn")
+        registry._schedule_output_retry(context)
+        assert not context.output_work
+        assert context.output_retry_task is None
+    finally:
         await registry._finalize_session(identity.session_id)
 
 

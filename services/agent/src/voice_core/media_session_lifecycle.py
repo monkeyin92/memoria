@@ -417,6 +417,7 @@ class MediaSessionLifecycleMixin:
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
+            runtime.orchestrator.delegation.queue_while_floor_blocked = True
 
             def observe_output_intent(admission: OutputIntentAdmission) -> None:
                 self.bridge.emit_output_intent_decision(identity.session_id, admission)

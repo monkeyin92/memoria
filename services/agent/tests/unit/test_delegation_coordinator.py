@@ -836,6 +836,51 @@ def test_output_intent_rejects_unspecified_kind() -> None:
     assert observations[-1].reason == "invalid_kind"
 
 
+@pytest.mark.parametrize("initial_floor", [True, False])
+@pytest.mark.parametrize("invalidator", [None, "expiry", "context", "turn", "generation", "tool"])
+def test_media_output_queue_retains_blocked_work_but_rechecks_validity(
+    initial_floor: bool, invalidator: str | None
+) -> None:
+    coordinator = DelegationCoordinator(TaskManager(), queue_while_floor_blocked=True)
+    observations: list[OutputIntentAdmission] = []
+    coordinator.set_output_intent_observer(observations.append)
+    fence = _fence()
+    intent = coordinator.bridge_acknowledgement(
+        BRIDGE_PHRASES[0], fence=fence, context_version=5,
+        expires_at_ms=2_000, now_ms=1_000,
+    )
+    result = coordinator.admit_output_intent(
+        intent, current_fence=fence, current_context_version=5,
+        floor_allows_output=initial_floor, now_ms=1_001,
+    )
+    assert result == (BRIDGE_PHRASES[0] if initial_floor else None)
+    admission = observations[-1]
+    assert admission.accepted
+    assert admission.selected is initial_floor
+    assert admission.reason == ("accepted" if initial_floor else "queued")
+    # Keep the complete shadow snapshot canonical for the existing Go parser.
+    assert admission.authoritative_candidate == admission.authoritative_candidates[0]
+    assert coordinator.output_intent_is_active(
+        intent, current_fence=fence, current_context_version=5,
+        floor_allows_output=False, now_ms=1_002,
+    )
+    assert coordinator.current_output_intent(
+        fence.session_id, current_fence=fence, current_context_version=5,
+        floor_allows_output=False, now_ms=1_002,
+    ) is None
+    current_fence = {
+        "turn": fence.bump_turn(),
+        "generation": fence.bump_generation(),
+        "tool": fence.bump_tool_epoch(),
+    }.get(invalidator, fence)
+    selected = coordinator.current_output_intent(
+        fence.session_id, current_fence=current_fence,
+        current_context_version=6 if invalidator == "context" else 5,
+        floor_allows_output=True, now_ms=2_000 if invalidator == "expiry" else 1_003,
+    )
+    assert (selected == intent) is (invalidator is None)
+
+
 def test_output_intent_floor_loss_clears_active_candidates() -> None:
     coordinator = DelegationCoordinator(TaskManager())
     observations: list[OutputIntentAdmission] = []

@@ -192,7 +192,11 @@ class MediaOutputStreamMixin:
             # current owner instead disappeared because its intent expired (or
             # because the transport failed), close the audible generation here
             # so the device cannot remain in SPEAKING without a terminal fence.
-            if reason != "superseded" or not owner_intent_active:
+            if (
+                reason != "superseded"
+                or not owner_intent_active
+                or not context.runtime.output_floor_allows_assistant
+            ):
                 flush_required = self._device_playback_flush_required(context, fence)
                 cancelled = await self._advance_failed_output_generation(
                     context,

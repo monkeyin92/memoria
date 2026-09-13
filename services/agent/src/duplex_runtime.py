@@ -3097,8 +3097,8 @@ class DuplexRuntime(
             self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         return True
 
-    def open_assistant_floor_for_nudge(self) -> None:
-        """Let a device ack speak after a missed hear, without opening a user turn."""
+    def open_assistant_floor(self, *, cause: str = "assistant_nudge") -> None:
+        """Retire a speech placeholder without opening or authorizing a user turn."""
 
         self._fresh_user_speech = False
         if self.interaction_phase in {
@@ -3107,7 +3107,7 @@ class DuplexRuntime(
         }:
             self.set_interaction_phase(
                 InteractionPhase.LISTENING,
-                cause="assistant_nudge",
+                cause=cause,
             )
 
     def hold_floor_for_owned_delegation(self) -> None:

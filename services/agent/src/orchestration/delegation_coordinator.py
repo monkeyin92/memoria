@@ -98,6 +98,8 @@ class TaskHandle:
 @dataclass(slots=True)
 class DelegationCoordinator:
     task_manager: TaskManager
+    # Only consumers with a queued-output resume path may retain blocked work.
+    queue_while_floor_blocked: bool = False
     _task_epoch_by_session: dict[str, int] = field(default_factory=dict)
     _context_version_by_session: dict[str, int] = field(default_factory=dict)
     _evaluated_intents: set[str] = field(default_factory=set)
@@ -172,7 +174,7 @@ class DelegationCoordinator:
                 or not candidate_fence.matches(current_fence)
             ):
                 candidates.pop(intent_id, None)
-        if not floor_allows_output:
+        if not floor_allows_output and not self.queue_while_floor_blocked:
             candidates.clear()
         if consumed:
             candidates.pop(str(getattr(intent, "intent_id", "")), None)
@@ -475,6 +477,7 @@ class DelegationCoordinator:
             )
             selected = bool(
                 text is not None
+                and floor_allows_output
                 and authoritative_candidate is not None
                 and str(authoritative_candidate.intent_id) == str(intent.intent_id)
             )
@@ -530,7 +533,7 @@ class DelegationCoordinator:
             reason = "invalid_created_at"
         elif now >= int(intent.expires_at_ms):
             reason = "expired"
-        elif not floor_allows_output:
+        elif not floor_allows_output and not self.queue_while_floor_blocked:
             reason = "floor_blocked"
         elif int(intent.floor_requirement) != media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK:
             reason = "floor_requirement"
@@ -624,7 +627,9 @@ class DelegationCoordinator:
             consumed=False,
             now_ms=now,
         )
-        return winner
+        # The shadow snapshot retains its canonical top candidate even while
+        # blocked; being a candidate is not permission to own playback.
+        return winner if floor_allows_output else None
 
     def complete_output_intent(
         self,

@@ -415,6 +415,7 @@ class MediaSessionInputMixin:
                         # Half-duplex OWNED/tool wait: do not open a user turn
                         # or preempt the successor generation.
                         return
+                    context.turn_input_fence = context.runtime.fence
                 interaction = context.runtime.decide_interaction(
                     InteractionSnapshot(
                         event=InteractionEvent.VAD_START,

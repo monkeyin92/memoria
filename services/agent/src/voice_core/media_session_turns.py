@@ -20,6 +20,8 @@ from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     OutputDispatchResult,
     OutputDispatchStatus,
+    OutputWork,
+    owned_delegation_holds_turn,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
@@ -84,6 +86,12 @@ class MediaTurnEndpointMixin:
         turn_endpoint_max_grace_s: float
         turn_endpoint_absolute_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
+
+        def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
+
+        def _output_work_is_active(
+            self, context: _MediaVoiceSession, work: OutputWork
+        ) -> bool: ...
 
         async def _accept_asr_result_decision(
             self,
@@ -822,6 +830,7 @@ class MediaTurnEndpointMixin:
             context.turn_endpoint_timeout_handle = None
         MediaTurnEndpointMixin._clear_turn_commit_retry_state(context)
         context.turn_start_sample = None
+        context.turn_input_fence = None
         context.turn_end_sample = None
         context.turn_endpoint_sample = None
         context.turn_retire_sample = None
@@ -939,6 +948,7 @@ class MediaTurnEndpointMixin:
                     return
 
         discarded: ProjectionPatch | None = None
+        resume_owned_output = False
         async with context.turn_commit_lock:
             current = self._sessions.get(session_id)
             if (
@@ -948,6 +958,18 @@ class MediaTurnEndpointMixin:
                 or context.turn_endpoint_sample != endpoint_sample
             ):
                 return
+            input_fence = context.turn_input_fence
+            partial = context.pending_partial
+            provisional = context.projection.provisional
+            empty_input = not any(
+                text and text.strip()
+                for text in (
+                    partial.text if partial is not None else None,
+                    provisional.text if provisional is not None else None,
+                    context.clock_fact_forced_text,
+                    context.live_query_forced_text,
+                )
+            )
             if not await self._retire_pending_turn_input_range(
                 context,
                 stream_epoch=stream_epoch,
@@ -959,6 +981,28 @@ class MediaTurnEndpointMixin:
                 "provider_final_missing",
             )
             self._clear_pending_turn_state(context)
+            # A control/identity/generation change retires this placeholder;
+            # only the exact originating fence may restore queued playback.
+            if (
+                empty_input
+                and input_fence is not None
+                and input_fence.matches(context.runtime.fence)
+                and not context.closed
+                and not context.standby_requested
+                and not context.runtime.formal_speaker_enrollment_active
+            ):
+                context.runtime.open_assistant_floor(cause="empty_input_retired")
+                resume_owned_output = owned_delegation_holds_turn(
+                    context.delegation_output_claims, input_fence
+                ) or any(
+                    self._output_work_is_active(context, work)
+                    for work in tuple(context.output_work.values())
+                )
+                self._schedule_output_retry(context)
+                logger.info(
+                    "media empty input retired session=%s fence=%s resume_output=%s",
+                    session_id, input_fence, resume_owned_output,
+                )
             if context.runtime.assistant_speaking:
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
         if discarded is not None:
@@ -974,7 +1018,7 @@ class MediaTurnEndpointMixin:
             partial.capture_end_sample if partial is not None else None,
             self._classify_provider_final_missing(context),
         )
-        if endpoint_sample > 0:
+        if endpoint_sample > 0 and not resume_owned_output:
             self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:

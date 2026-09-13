@@ -62,6 +62,7 @@ class MediaVoiceSessionState:
         default_factory=OrderedDict
     )
     turn_start_sample: int | None = None
+    turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
     turn_retire_sample: int | None = None
