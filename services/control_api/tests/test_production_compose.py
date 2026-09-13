@@ -554,6 +554,36 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'rollback-${release_tag}-pre-agent' not in deploy
     assert 'rollback-${release_tag}-pre-bridge' not in deploy
     assert r"printf 'rollback_image=%s\n'" in deploy
+    assert 'runtime_base_image_id="$(docker image inspect "$runtime_base" --format' in deploy
+    assert 'runtime_base_metadata="$(docker image inspect "$runtime_base" --format' in deploy
+    assert "base_version=\"$(printf '%s' \"$base_image\" | cut -d: -f2-)\"" in deploy
+    assert '[[ "$runtime_base_metadata" == "$base_image_id amd64 $base_commit $base_version agent" ]]' in deploy
+    assert 'target_image_id="$(docker image inspect "$target_image" --format' in deploy
+    assert '[[ "$target_image_id" != "$runtime_base_image_id" && "$target_image_id" != "$base_image_id" ]]' in deploy
+    assert 'manifest_runtime_base="$9"' in deploy
+    assert 'manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent' in deploy
+    assert 'runtime base image is missing, has invalid provenance, or is not independent' in deploy
+    assert 'image_identity_matches' in deploy
+    assert '[[ -n "$expected_repo_digests" && -n "$actual_repo_digests"' in deploy
+    assert 'docker cp "$container:/app/scripts/run_media_bridge.py"' in deploy
+    assert 'mkdir -p "$recovery_dir/memoria/services" "$recovery_dir/memoria/packages" "$recovery_dir/memoria/scripts"' in deploy
+    assert 'ARG MEMORIA_RUNTIME_BASE_ID' in deploy
+    assert 'com.memoria.release.runtime-base-id="${MEMORIA_RUNTIME_BASE_ID}"' in deploy
+    assert '--build-arg "MEMORIA_RUNTIME_BASE_ID=$manifest_base_image_id"' in deploy
+    assert 'agent-running-source-recovery $manifest_base_image_id' in deploy
+    assert 'rollback_recovered=true' in deploy
+    assert 'rollback_existing_arch' in deploy
+    assert 'rollback_existing_runtime_base_id' in deploy
+    assert 'rollback_kind="$(docker image inspect "$rollback_tag" --format' in deploy
+    assert 'agent_content_identity' in deploy
+    assert 'agent_repo_digests' in deploy
+    assert 'bridge_content_identity' in deploy
+    assert 'bridge_repo_digests' in deploy
+    assert 'rollback_content_identity' in deploy
+    assert 'rollback_repo_digests' in deploy
+    assert 'rollback_release_kind' in deploy
+    assert "printf 'rollback_recovered=%s\\n'" in deploy
+    assert 'sha256sum "$remote_dir/ROLLBACK_POINT.txt" >"$remote_dir/ROLLBACK_POINT.txt.sha256"' in deploy
     assert 'MEMORIA_RELEASE_TAG="$stack_release_tag"' in deploy
     assert 'env MEMORIA_RELEASE_TAG="$release_tag"' not in deploy
     assert 'MEMORIA_RELEASE_COMMIT="$agent_release_commit"' not in deploy

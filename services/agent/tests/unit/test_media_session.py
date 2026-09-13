@@ -145,6 +145,21 @@ def _verified_owner_decision() -> SpeakerDecision:
     )
 
 
+def _bind_verified_owner_classifier(runtime: DuplexRuntime) -> None:
+    """Wire the production speaker-authority seam to a verified owner.
+
+    Media Voice resolves authority for the current utterance, so a test that
+    expects an overlapping user turn to take the floor must prove the speaker
+    is the owner instead of leaving authority unresolved.
+    """
+
+    async def classify_owner(_pcm: bytes, sample_rate: int) -> SpeakerDecision:
+        assert sample_rate == 16_000
+        return _verified_owner_decision()
+
+    runtime.set_speaker_classifier(classify_owner, sample_rate=16_000)
+
+
 def test_pcm_output_pacer_spaces_frames_and_does_not_burst_after_a_stall() -> None:
     delay, next_send_at = _next_pcm_send_slot(
         now=10.0,
@@ -10846,6 +10861,7 @@ async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
     identity = SessionIdentity("tail-silence-session")
     session = bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
+    _bind_verified_owner_classifier(context.runtime)
     await registry.on_speech_segment(
         session,
         SpeechSegment(
@@ -10918,6 +10934,9 @@ async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
             capture_end_sample=24_001,
         ),
     )
+    # The reply to the first turn is still in flight, so this overlap turn is
+    # an ordinary barge-in and must carry verified owner authority.
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
     next_final = ASRResult(
         task_epoch=1,
         sentence_id="next-final",
@@ -11360,6 +11379,167 @@ async def test_media_sustained_barge_in_restores_gain_and_commits() -> None:
     )
     assert metrics.get("voice_conversation_yield_proxy_total", {"status": "candidate"}) == 1
     assert metrics.get("voice_conversation_participation_proxy_ms_total", {"kind": "owner"}) == 500
+
+
+@pytest.mark.asyncio
+async def test_media_known_bystander_speech_does_not_cancel_playback() -> None:
+    """A nearby voice during playback must not cut the reply or open a turn."""
+
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    registry.install()
+    effects: list[tuple[int, dict[str, object]]] = []
+
+    async def emit_realtime_effect(
+        _session_id: str,
+        effect_kind: int,
+        _fence: GenerationFence,
+        payload: dict[str, object],
+        **_kwargs: object,
+    ) -> bool:
+        effects.append((effect_kind, payload))
+        return True
+
+    bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[attr-defined,method-assign]
+    identity = SessionIdentity("bystander-session", stream_epoch=1)
+    bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await context.runtime.on_assistant_speaking("还在播放的回答")
+    bind_owner_policy(context.runtime)
+
+    async def classify_bystander(_pcm: bytes, sample_rate: int) -> SpeakerDecision:
+        assert sample_rate == 16_000
+        return SpeakerDecision(
+            classification="guest",
+            score=0.11,
+            quality_score=0.92,
+            reason_code="owner_mismatch",
+            model_version="test-guest-v1",
+            template_version=1,
+            profile_id="other-profile",
+            permissions=permissions_for_speaker("guest"),
+        )
+
+    context.runtime.set_speaker_classifier(classify_bystander, sample_rate=16_000)
+    context.runtime.on_user_voice_started()
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
+    assert context.runtime.ingest_media_speech_segment(
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="bystander-asr",
+            revision=1,
+            kind=SegmentKind.ASR_FINAL,
+            capture_start_sample=0,
+            capture_end_sample=8_000,
+            text="我们下午几点出发",
+            final=True,
+        )
+    )
+    before = context.runtime.fence
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=1,
+        start_sample=0,
+        end_sample=8_000,
+    )
+    await asyncio.sleep(0)
+
+    assert fence is None and reason == "known_non_owner_speech"
+    assert context.runtime.current_speaker_class == "guest"
+    assert context.runtime.fence.matches(before)
+    assert context.runtime.assistant_speaking
+    assert not [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"]
+    assert media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION not in [
+        effect_kind for effect_kind, _payload in effects
+    ]
+    assert any(
+        effect_kind == media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT
+        and payload["action"] == "restore"
+        for effect_kind, payload in effects
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_utterance_never_inherits_previous_owner_authority() -> None:
+    """Owner authority is scoped to one utterance, never to the whole session.
+
+    A verified owner in the previous turn must not authorize the next
+    utterance: the runtime clears the decision when the new turn opens, and
+    the VAD seam projects that cleared state instead of the stale authority.
+    """
+
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    registry.install()
+    identity = SessionIdentity("authority-freshness", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await context.runtime.on_assistant_speaking("还在播放的回答")
+    bind_owner_policy(context.runtime)
+
+    # The previous utterance closed as a verified owner.
+    context.runtime._speaker_decision = _verified_owner_decision()
+    context.runtime._speaker_class = "owner"
+    assert context.runtime.current_speaker_authority_verified is True
+
+    # The next utterance opens through the real VAD seam.
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="next-utterance-vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+            final=False,
+        ),
+    )
+
+    assert context.runtime.current_speaker_class == "uncertain"
+    assert context.runtime.current_speaker_authority_verified is False
+    assert context.runtime.current_speaker_reason_code == "classification_pending"
+
+    # No classifier is wired, so this utterance can only resolve to
+    # unclassified authority: its text must not cancel the reply.
+    assert context.runtime.ingest_media_speech_segment(
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="next-utterance-asr",
+            revision=1,
+            kind=SegmentKind.ASR_FINAL,
+            capture_start_sample=0,
+            capture_end_sample=8_000,
+            text="我们下午几点出发",
+            final=True,
+        )
+    )
+    before = context.runtime.fence
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=1,
+        start_sample=0,
+        end_sample=8_000,
+    )
+
+    assert fence is None and reason == "speaker_authority_unverified"
+    assert context.runtime.fence.matches(before)
+    assert context.runtime.assistant_speaking
+    assert not [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"]
 
 
 @pytest.mark.asyncio
@@ -12525,6 +12705,9 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     identity = SessionIdentity("registry-full-chain")
     session = bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
+    # Successive overlapping turns are ordinary barge-ins: they need verified
+    # owner authority for the utterance that produces them.
+    _bind_verified_owner_classifier(context.runtime)
 
     async def vad(segment_id: str, sample: int, *, final: bool) -> None:
         await registry.on_speech_segment(
@@ -12558,6 +12741,7 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
         await registry._commit_pending_turn(context)
 
     await vad("start-1", 0, final=False)
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
     await audio(0, 0)
     assert context.projection.provisional is not None
     assert not [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"]
@@ -12565,6 +12749,7 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     assert context.projection.provisional is None
 
     await vad("start-2", 320, final=False)
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
     await audio(1, 320)
     await commit("end-2", 640)
     assert [segment.text for segment in bridge.transcripts] == ["你好", "世界"]
@@ -12575,6 +12760,7 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
     assert context.turn_end_sample is None
 
     await vad("start-3", 960, final=False)
+    context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
     await audio(3, 960)
     await commit("end-3", 1280)
 

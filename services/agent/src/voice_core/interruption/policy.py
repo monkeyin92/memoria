@@ -149,16 +149,28 @@ class InterruptionPolicy:
         #    physical mute and local stop word remain available above.
         if safety_reply:
             return self._decide(InterruptionVerdict.FALSE_POSITIVE, "safety_reply_protected")
-        # 7) Unconfirmed bystander speech may stop the public answer, but
-        #    the turn still passes speaker authority before any private
-        #    context, history or memory access.
+        # 7) A classified non-owner voice (guest / bystander) is not the
+        #    account owner. Ordinary nearby speech must never cancel the
+        #    generation that is playing, and it must not reach the AEC
+        #    allowance below: AEC only removes the assistant's own echo and
+        #    never proves who is speaking. Explicit stop / farewell wording
+        #    was already resolved above and still yields irrespective of
+        #    speaker class.
         if evidence.speaker_class in {"guest", "bystander"}:
-            return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "bystander_speech")
-        # 8) A non-backchannel cloud transcript is semantic evidence of real
-        #    user content. The Router above already removed control phrases;
-        #    speaker authority still gates all private context after stopping.
+            return self._decide(InterruptionVerdict.FALSE_POSITIVE, "known_non_owner_speech")
+        # 8) A non-backchannel cloud transcript is only an interrupt when this
+        #    utterance carries verified owner authority or a controlled
+        #    acoustic path (AEC-verified, already past the residual guard).
+        #    ASR text alone can be a bystander's speech or playback leakage;
+        #    hold it without cancelling the active generation. Neither branch
+        #    grants private-context authority, which stays with permissions.
         if evidence.source is InterruptionSource.CLOUD_ASR and text:
-            return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "cloud_asr_user_content")
+            if evidence.owner_authority_verified or evidence.aec_verified:
+                return self._decide(InterruptionVerdict.TRUE_INTERRUPT, "cloud_asr_user_content")
+            return self._decide(
+                InterruptionVerdict.UNCERTAIN,
+                "speaker_authority_unverified",
+            )
         # 9) Sustained near-end speech is a true interrupt; otherwise the
         #    candidate stays open (duck, keep collecting).
         required_ms = self.sustained_speech_ms(speaker_profile)

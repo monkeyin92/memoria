@@ -843,6 +843,16 @@ class MediaSessionCommitMixin:
                             (context.playback.current_fence or context.runtime.fence).generation_id,
                         ),
                         duration_ms=elapsed_ms,
+                        speaker_class=context.runtime.current_speaker_class,
+                        # Ordinary barge-in needs this utterance's own owner
+                        # decision: ``await_speaker_classification`` above
+                        # resolved it for the current speech epoch, and a
+                        # formal guest never counts as owner authority.
+                        owner_authority_verified=(
+                            context.runtime.current_speaker_class == "owner"
+                            and context.runtime.current_speaker_authority_verified
+                        ),
+                        speaker_reason_code=context.runtime.current_speaker_reason_code,
                     ),
                     asr_text=text,
                     speaker_profile=(

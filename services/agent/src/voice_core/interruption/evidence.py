@@ -30,6 +30,12 @@ class InterruptionEvidence:
     evidence was captured (0 = none).  ``detected_sample`` and
     ``device_monotonic_ms`` are device-clock facts used for tracing and
     SLO anchoring; policy logic must only compare like clocks.
+
+    ``owner_authority_verified`` is true only when the utterance that produced
+    this candidate was itself verified as the account owner.  A formal guest,
+    a bystander and an unclassified speaker never carry it, and ``aec_verified``
+    never sets it: AEC removal only says the assistant's own echo was
+    cancelled, never who is talking.
     """
 
     session_id: str
@@ -44,6 +50,8 @@ class InterruptionEvidence:
     far_end_rms: float | None = None
     residual_echo_score: float | None = None
     speaker_class: str = "uncertain"
+    owner_authority_verified: bool = False
+    speaker_reason_code: str = "authority_unavailable"
     asr_prefix: str | None = None
     duration_ms: int = 0
     device_monotonic_ms: int | None = None
@@ -75,6 +83,10 @@ class InterruptionEvidence:
             raise ValueError("duration_ms must be non-negative")
         if self.device_monotonic_ms is not None and self.device_monotonic_ms < 0:
             raise ValueError("device_monotonic_ms must be non-negative")
+        if not self.speaker_reason_code:
+            raise ValueError("speaker_reason_code must not be empty")
+        if self.owner_authority_verified and self.speaker_class != "owner":
+            raise ValueError("owner authority requires an owner speaker_class")
 
     @property
     def has_acoustic_evidence(self) -> bool:
@@ -109,6 +121,9 @@ def evidence_from_speech_segment(
     active_generation_id: int,
     aec_mode: str = "unverified",
     aec_verified: bool = False,
+    speaker_class: str | None = None,
+    owner_authority_verified: bool = False,
+    speaker_reason_code: str | None = None,
     duration_ms: int | None = None,
     device_monotonic_ms: int | None = None,
 ) -> InterruptionEvidence:
@@ -147,7 +162,9 @@ def evidence_from_speech_segment(
         near_end_rms=segment.near_end_rms,
         far_end_rms=segment.far_end_rms,
         residual_echo_score=segment.residual_echo_score,
-        speaker_class=segment.speaker_class or "uncertain",
+        speaker_class=speaker_class or segment.speaker_class or "uncertain",
+        owner_authority_verified=owner_authority_verified,
+        speaker_reason_code=speaker_reason_code or "authority_unavailable",
         asr_prefix=text or None,
         duration_ms=duration_ms,
         device_monotonic_ms=device_monotonic_ms,

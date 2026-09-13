@@ -195,6 +195,12 @@ class MediaSessionInputMixin:
                         segment.residual_echo_score,
                     )
                 )
+                # A VAD edge that will open a new turn has no classification
+                # of its own yet: the runtime still holds the previous
+                # utterance's decision until ``on_user_voice_started`` resets
+                # it below. Never project that stale authority onto this
+                # candidate.
+                turn_open = context.turn_start_sample is not None
                 interruption = self.interruption_policy.evaluate(
                     evidence_from_speech_segment(
                         segment,
@@ -204,6 +210,19 @@ class MediaSessionInputMixin:
                         ),
                         aec_mode=("verified" if aec_verified else "unverified"),
                         aec_verified=aec_verified,
+                        speaker_class=(
+                            context.runtime.current_speaker_class if turn_open else "uncertain"
+                        ),
+                        owner_authority_verified=(
+                            turn_open
+                            and context.runtime.current_speaker_class == "owner"
+                            and context.runtime.current_speaker_authority_verified
+                        ),
+                        speaker_reason_code=(
+                            context.runtime.current_speaker_reason_code
+                            if turn_open
+                            else "classification_pending"
+                        ),
                     ),
                     speaker_profile=(
                         "child"

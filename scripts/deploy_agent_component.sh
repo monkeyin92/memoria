@@ -345,6 +345,10 @@ install -o root -g root -m 0600 Dockerfile.agent-source-overlay build/Dockerfile
 # Preserve one stable dependency base. Every source overlay derives directly
 # from this tag, so repeated releases do not accumulate prior source layers.
 docker tag "$base_image_id" "$runtime_base"
+runtime_base_image_id="$(docker image inspect "$runtime_base" --format '{{.Id}}')"
+runtime_base_metadata="$(docker image inspect "$runtime_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
+base_version="$(printf '%s' "$base_image" | cut -d: -f2-)"
+[[ "$runtime_base_metadata" == "$base_image_id amd64 $base_commit $base_version agent" ]]
 docker build \
   --pull=false \
   --network=none \
@@ -357,6 +361,8 @@ docker build \
 
 metadata="$(docker image inspect "$target_image" --format '{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}} {{index .Config.Labels "com.memoria.release.kind"}}')"
 [[ "$metadata" == "amd64 $expected_commit $release_tag agent agent-source-overlay" ]]
+target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
+[[ "$target_image_id" != "$runtime_base_image_id" && "$target_image_id" != "$base_image_id" ]]
 docker run --rm --network none \
   --entrypoint /app/.venv/bin/python \
   "$target_image" \
@@ -381,13 +387,114 @@ fi
 
 ssh "$remote" sudo -n bash -s -- \
   "$remote_dir" "$target_image" "$release_tag" "$compose_sha" \
-  "$expected_commit" <<'REMOTE_CUTOVER'
+  "$expected_commit" "$base_image" "$base_image_id" "$base_commit" \
+  "$runtime_base" "$source_sha" "$dockerfile_sha" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
 release_tag="$3"
 expected_compose_sha="$4"
 release_commit="$5"
+manifest_base_image="$6"
+manifest_base_image_id="$7"
+manifest_base_commit="$8"
+manifest_runtime_base="$9"
+manifest_source_sha="${10}"
+manifest_dockerfile_sha="${11}"
+
+manifest_path="$remote_dir/component-manifest.txt"
+python3 - "$manifest_path" "$target_image" "$release_tag" "$release_commit" \
+  "$manifest_base_image" "$manifest_base_image_id" "$manifest_base_commit" \
+  "$manifest_runtime_base" "$manifest_source_sha" "$manifest_dockerfile_sha" \
+  "$expected_compose_sha" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+(
+    manifest_path,
+    expected_target_image,
+    expected_release_tag,
+    expected_release_commit,
+    expected_base_image,
+    expected_base_image_id,
+    expected_base_commit,
+    expected_runtime_base,
+    expected_source_sha,
+    expected_dockerfile_sha,
+    expected_compose_sha,
+) = sys.argv[1:]
+expected_keys = (
+    "schema_version",
+    "component",
+    "release_tag",
+    "release_commit",
+    "base_image",
+    "base_image_id",
+    "base_commit",
+    "runtime_base",
+    "target_image",
+    "source_sha256",
+    "dockerfile_sha256",
+    "compose_sha256",
+)
+values: dict[str, str] = {}
+for line_number, line in enumerate(Path(manifest_path).read_text(encoding="utf-8").splitlines(), 1):
+    if not line or line.count("=") != 1:
+        raise SystemExit(f"invalid component manifest line: {line_number}")
+    key, value = line.split("=", 1)
+    if key not in expected_keys:
+        raise SystemExit(f"unknown component manifest key: {key}")
+    if key in values:
+        raise SystemExit(f"duplicate component manifest key: {key}")
+    if not value:
+        raise SystemExit(f"empty component manifest value: {key}")
+    values[key] = value
+
+if tuple(values) != expected_keys:
+    missing = sorted(set(expected_keys) - set(values))
+    unknown = sorted(set(values) - set(expected_keys))
+    raise SystemExit(f"component manifest key set mismatch; missing={missing}; unknown={unknown}")
+
+expected = {
+    "schema_version": "1",
+    "component": "agent",
+    "release_tag": expected_release_tag,
+    "release_commit": expected_release_commit,
+    "base_image": expected_base_image,
+    "base_image_id": expected_base_image_id,
+    "base_commit": expected_base_commit,
+    "runtime_base": expected_runtime_base,
+    "target_image": expected_target_image,
+    "source_sha256": expected_source_sha,
+    "dockerfile_sha256": expected_dockerfile_sha,
+    "compose_sha256": expected_compose_sha,
+}
+if values != expected:
+    mismatches = [key for key in expected if values[key] != expected[key]]
+    raise SystemExit(f"component manifest value mismatch: {mismatches}")
+
+if not re.fullmatch(r"[0-9a-f]{40}", values["release_commit"]):
+    raise SystemExit("component manifest release_commit is invalid")
+if not re.fullmatch(r"[0-9a-f]{40}", values["base_commit"]):
+    raise SystemExit("component manifest base_commit is invalid")
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", values["base_image_id"]):
+    raise SystemExit("component manifest base_image_id is invalid")
+for key in ("source_sha256", "dockerfile_sha256", "compose_sha256"):
+    if not re.fullmatch(r"[0-9a-f]{64}", values[key]):
+        raise SystemExit(f"component manifest {key} is invalid")
+if not re.fullmatch(r"memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*", values["base_image"]):
+    raise SystemExit("component manifest base_image is invalid")
+if not re.fullmatch(
+    r"memoria-agent-runtime-base:[A-Za-z0-9][A-Za-z0-9._-]*",
+    values["runtime_base"],
+):
+    raise SystemExit("component manifest runtime_base is invalid")
+if not re.fullmatch(r"memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*", values["target_image"]):
+    raise SystemExit("component manifest target_image is invalid")
+print("component_manifest=PASS")
+PY
+
 agent_container="memoria-agent-1"
 bridge_container="memoria-voice-core-media-bridge-1"
 control_container="memoria-control-api-1"
@@ -408,18 +515,100 @@ agent_release_commit="$(docker inspect "$agent_container" --format '{{index .Con
 bridge_release_commit="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 agent_release_tag="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+agent_release_role="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
+bridge_release_role="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
+agent_release_kind="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+bridge_release_kind="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
 [[ "$agent_release_commit" =~ ^[0-9a-f]{40}$ \
   && "$agent_release_commit" == "$bridge_release_commit" \
   && -n "$agent_release_tag" \
-  && "$agent_release_tag" == "$bridge_release_tag" ]] || {
+  && "$agent_release_tag" == "$bridge_release_tag" \
+  && "$agent_release_role" == agent \
+  && "$bridge_release_role" == agent \
+  && -n "$agent_release_kind" \
+  && "$agent_release_kind" == "$bridge_release_kind" ]] || {
   echo "Agent and bridge do not share one current release authority" >&2
   exit 1
 }
 [[ "$agent_image_id" == "$bridge_image_id" \
   && "$agent_image" == "$bridge_image" \
-  && "$agent_image" =~ ^memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*$ \
-  && "$(docker image inspect "$agent_image" --format '{{.Id}}')" == "$agent_image_id" ]] || {
+  && "$agent_image" =~ ^memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
   echo "Agent and bridge do not share one current runnable image" >&2
+  exit 1
+}
+if docker image inspect "$agent_image" >/dev/null 2>&1; then
+  [[ "$(docker image inspect "$agent_image" --format '{{.Id}}')" == "$agent_image_id" ]] || {
+    echo "running Agent image tag does not resolve to the container image" >&2
+    exit 1
+  }
+else
+  echo "current Agent image object is unavailable; checking the running-source recovery path" >&2
+fi
+
+image_repo_digests() {
+  local image="$1"
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+      | paste -sd, -
+  else
+    printf '%s' ""
+  fi
+}
+
+image_digest_or_id() {
+  local image="$1"
+  local repo_digests
+  repo_digests="$(image_repo_digests "$image")"
+  if [[ -n "$repo_digests" ]]; then
+    printf '%s' "$repo_digests"
+  else
+    # Locally built images do not have RepoDigests. The immutable image ID is
+    # the available content-addressed identity in that case.
+    docker image inspect "$image" --format '{{.Id}}' 2>/dev/null || printf '%s' "$image"
+  fi
+}
+
+image_identity_matches() {
+  local expected_id="$1"
+  local expected_repo_digests="$2"
+  local actual_id="$3"
+  local actual_repo_digests="$4"
+  [[ "$expected_id" == "$actual_id" ]] || return 1
+  if [[ -n "$expected_repo_digests" || -n "$actual_repo_digests" ]]; then
+    [[ -n "$expected_repo_digests" && -n "$actual_repo_digests" && "$expected_repo_digests" == "$actual_repo_digests" ]]
+  fi
+}
+
+agent_image_repo_digests="$(image_repo_digests "$agent_image_id")"
+bridge_image_repo_digests="$(image_repo_digests "$bridge_image_id")"
+agent_image_digest="$(image_digest_or_id "$agent_image_id")"
+bridge_image_digest="$(image_digest_or_id "$bridge_image_id")"
+image_identity_matches "$agent_image_id" "$agent_image_repo_digests" \
+  "$bridge_image_id" "$bridge_image_repo_digests" || {
+  echo "Agent and bridge image content identities differ" >&2
+  exit 1
+}
+
+target_metadata="$(docker image inspect "$target_image" --format '{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}} {{index .Config.Labels "com.memoria.release.kind"}}')"
+target_image_id="$(docker image inspect "$target_image" --format '{{.Id}}')"
+[[ "$target_metadata" == "amd64 $release_commit $release_tag agent agent-source-overlay" \
+  && "$target_image_id" != "$agent_image_id" \
+  && "$target_image_id" != "$bridge_image_id" ]] || {
+  echo "target image metadata or identity is invalid" >&2
+  exit 1
+}
+
+runtime_base_metadata="$(docker image inspect "$manifest_runtime_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
+runtime_base_image_id="$(docker image inspect "$manifest_runtime_base" --format '{{.Id}}')"
+runtime_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
+[[ "$runtime_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent" \
+  && "$manifest_runtime_base" != "$target_image" \
+  && "$manifest_runtime_base" != "$agent_image" \
+  && "$manifest_runtime_base" != "$bridge_image" \
+  && "$runtime_base_image_id" != "$target_image_id" \
+  && "$runtime_base_image_id" != "$agent_image_id" \
+  && "$runtime_base_image_id" != "$bridge_image_id" ]] || {
+  echo "runtime base image is missing, has invalid provenance, or is not independent" >&2
   exit 1
 }
 agent_stack_release_tag="$(container_env_value "$agent_container" MEMORIA_RELEASE_TAG)"
@@ -605,73 +794,161 @@ done
 # a rollback preserves the same image authority required by the next release.
 rollback_image="memoria-agent:rollback-${release_tag}-pre"
 
-freeze_container_image() {
+source_tree_digest_live() {
+  local container="$1"
+  docker exec --user 0 "$container" sh -c \
+    'cd /app && test -d services && test -d packages && test -f scripts/run_media_bridge.py && { find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum; sha256sum scripts/run_media_bridge.py; }' \
+    | sha256sum | cut -d ' ' -f1
+}
+
+source_tree_digest_image() {
+  local image="$1"
+  docker run --rm --user 0 --entrypoint sh "$image" -c \
+    'cd /app && test -d services && test -d packages && test -f scripts/run_media_bridge.py && { find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum; sha256sum scripts/run_media_bridge.py; }' \
+    | sha256sum | cut -d ' ' -f1
+}
+
+freeze_shared_rollback_image() {
   local container="$1"
   local image_id="$2"
   local rollback_tag="$3"
   local recovery_base="$4"
-  if docker image inspect "$image_id" >/dev/null 2>&1; then
+  rollback_recovered=false
+  if docker image inspect "$rollback_tag" >/dev/null 2>&1; then
+    rollback_existing_id="$(docker image inspect "$rollback_tag" --format '{{.Id}}')"
+    rollback_existing_repo_digests="$(docker image inspect "$rollback_tag" --format '{{range .RepoDigests}}{{println .}}{{end}}' | paste -sd, -)"
+    rollback_existing_commit="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+    rollback_existing_release="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+    rollback_existing_role="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
+    rollback_existing_kind="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+    case "$rollback_existing_kind" in
+      agent-source-overlay)
+        [[ "$rollback_existing_id" == "$image_id" \
+          && "$rollback_existing_repo_digests" == "$agent_image_repo_digests" \
+          && "$rollback_existing_commit" == "$agent_release_commit" \
+          && "$rollback_existing_release" == "$agent_release_tag" \
+          && "$rollback_existing_role" == agent ]] || {
+          echo "existing ordinary rollback tag identity or provenance does not match the current Agent/Bridge image" >&2
+          exit 1
+        }
+        ;;
+      agent-running-source-recovery)
+        recovery_base_metadata="$(docker image inspect "$recovery_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
+        recovery_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
+        rollback_existing_arch="$(docker image inspect "$rollback_tag" --format '{{.Architecture}}')"
+        rollback_existing_runtime_base_id="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
+        [[ "$recovery_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $recovery_base_version agent" \
+          && "$rollback_existing_arch" == amd64 \
+          && "$rollback_existing_runtime_base_id" == "$manifest_base_image_id" \
+          && "$rollback_existing_commit" == "$agent_release_commit" \
+          && "$rollback_existing_release" == "$agent_release_tag" \
+          && "$rollback_existing_role" == agent \
+          && "$(source_tree_digest_live "$container")" == "$(source_tree_digest_image "$rollback_tag")" ]] || {
+          echo "existing recovery rollback tag source or provenance does not match the current Agent" >&2
+          exit 1
+        }
+        rollback_recovered=true
+        ;;
+      *)
+        echo "existing rollback tag has an unsupported release kind" >&2
+        exit 1
+        ;;
+    esac
+  elif docker image inspect "$image_id" >/dev/null 2>&1; then
     docker tag "$image_id" "$rollback_tag"
   else
     # A running container can outlive a pruned parent image. Docker cannot
     # commit that container because its content digest is gone, so rebuild its
     # exact application source tree over the surviving peer image from the same
     # release authority and verify the result byte-for-byte before cutover.
-    recovery_commit="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-    recovery_release="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
-    recovery_role="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
-    [[ "$recovery_commit" == "$agent_release_commit" \
-      && "$recovery_release" == "$agent_release_tag" \
-      && "$recovery_role" == agent ]] || {
-      echo "surviving peer image cannot authorize rollback recovery" >&2
+    recovery_base_metadata="$(docker image inspect "$recovery_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
+    recovery_base_version="$(printf '%s' "$manifest_base_image" | cut -d: -f2-)"
+    [[ "$recovery_base_metadata" == "$manifest_base_image_id amd64 $manifest_base_commit $recovery_base_version agent" \
+      && "$recovery_base" != "$agent_image" \
+      && "$recovery_base" != "$bridge_image" ]] || {
+      echo "runtime base cannot authorize rollback recovery" >&2
       exit 1
     }
     recovery_dir="$(mktemp -d "$remote_dir/rollback-source.XXXXXX")"
-    mkdir -p "$recovery_dir/memoria/services" "$recovery_dir/memoria/packages"
+    mkdir -p "$recovery_dir/memoria/services" "$recovery_dir/memoria/packages" "$recovery_dir/memoria/scripts"
     docker cp "$container:/app/services/." "$recovery_dir/memoria/services/"
     docker cp "$container:/app/packages/." "$recovery_dir/memoria/packages/"
+    docker cp "$container:/app/scripts/run_media_bridge.py" "$recovery_dir/memoria/scripts/run_media_bridge.py"
     cat >"$recovery_dir/Dockerfile" <<'ROLLBACK_DOCKERFILE'
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG MEMORIA_RELEASE_COMMIT
 ARG MEMORIA_RELEASE_TAG
+ARG MEMORIA_RUNTIME_BASE_ID
 LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
       org.opencontainers.image.version="${MEMORIA_RELEASE_TAG}" \
       com.memoria.release.role="agent" \
-      com.memoria.release.kind="agent-running-source-recovery"
+      com.memoria.release.kind="agent-running-source-recovery" \
+      com.memoria.release.runtime-base-id="${MEMORIA_RUNTIME_BASE_ID}"
 USER root
 WORKDIR /app
 RUN rm -rf /app/services /app/packages
 COPY --chown=65532:65532 memoria/services /app/services
 COPY --chown=65532:65532 memoria/packages /app/packages
+COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py /app/scripts/run_media_bridge.py
 USER 65532:65532
 ROLLBACK_DOCKERFILE
     docker build --pull=false --network=none \
       --build-arg "BASE_IMAGE=$recovery_base" \
       --build-arg "MEMORIA_RELEASE_COMMIT=$agent_release_commit" \
       --build-arg "MEMORIA_RELEASE_TAG=$agent_release_tag" \
+      --build-arg "MEMORIA_RUNTIME_BASE_ID=$manifest_base_image_id" \
       --tag "$rollback_tag" \
       --file "$recovery_dir/Dockerfile" \
       "$recovery_dir"
-    live_source_digest="$(
-      docker exec --user 0 "$container" sh -c \
-        'cd /app && find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
-    )"
-    rollback_source_digest="$(
-      docker run --rm --user 0 --entrypoint sh "$rollback_tag" -c \
-        'cd /app && find services packages -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
-    )"
-    [[ "$live_source_digest" == "$rollback_source_digest" ]] || {
+    live_source_digest="$(source_tree_digest_live "$container")"
+    rollback_source_digest="$(source_tree_digest_image "$rollback_tag")"
+    rollback_recovery_metadata="$(docker image inspect "$rollback_tag" --format '{{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}} {{index .Config.Labels "com.memoria.release.kind"}} {{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
+    [[ "$live_source_digest" == "$rollback_source_digest" \
+      && "$rollback_recovery_metadata" == "amd64 $agent_release_commit $agent_release_tag agent agent-running-source-recovery $manifest_base_image_id" ]] || {
       echo "recovered rollback image does not match the running Agent source" >&2
       exit 1
     }
+    rollback_recovered=true
     rm -rf "$recovery_dir"
   fi
-  docker image inspect "$rollback_tag" >/dev/null
+  rollback_image_id="$(docker image inspect "$rollback_tag" --format '{{.Id}}')"
+  rollback_image_repo_digests="$(docker image inspect "$rollback_tag" --format '{{range .RepoDigests}}{{println .}}{{end}}' | paste -sd, -)"
+  rollback_image_digest="$rollback_image_repo_digests"
+  if [[ -z "$rollback_image_digest" ]]; then
+    rollback_image_digest="$rollback_image_id"
+  fi
+  rollback_release_commit="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+  rollback_release_tag="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+  rollback_role="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
+  rollback_kind="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.kind"}}')"
+  rollback_arch="$(docker image inspect "$rollback_tag" --format '{{.Architecture}}')"
+  rollback_runtime_base_id="$(docker image inspect "$rollback_tag" --format '{{index .Config.Labels "com.memoria.release.runtime-base-id"}}')"
+  [[ "$rollback_release_commit" == "$agent_release_commit" \
+    && "$rollback_release_tag" == "$agent_release_tag" \
+    && "$rollback_role" == agent \
+    && "$rollback_arch" == amd64 \
+    && ("$rollback_kind" == agent-source-overlay || "$rollback_kind" == agent-running-source-recovery) ]] || {
+    echo "rollback tag provenance does not match the current Agent/Bridge release" >&2
+    exit 1
+  }
+  if [[ "$rollback_kind" == agent-source-overlay ]]; then
+    [[ "$rollback_image_id" == "$image_id" \
+      && "$rollback_image_repo_digests" == "$agent_image_repo_digests" ]] || {
+      echo "rollback tag image identity or RepoDigest does not match the current Agent/Bridge image" >&2
+      exit 1
+    }
+  else
+    [[ "$rollback_kind" == agent-running-source-recovery \
+      && "$rollback_runtime_base_id" == "$manifest_base_image_id" \
+      && "$rollback_recovered" == true ]] || {
+      echo "recovery rollback tag was not source-verified" >&2
+      exit 1
+    }
+  fi
 }
 
-freeze_container_image "$agent_container" "$agent_image_id" "$rollback_image" "$bridge_image_id"
-freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_image" "$agent_image_id"
+freeze_shared_rollback_image "$agent_container" "$agent_image_id" "$rollback_image" "$manifest_runtime_base"
 
 override="$remote_dir/agent-component.override.yml"
 cat >"$override" <<EOF
@@ -695,14 +972,36 @@ chmod 0600 "$rollback_override"
 
 printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
 {
+  printf 'agent_image=%s\n' "$agent_image"
   printf 'agent_image_id=%s\n' "$agent_image_id"
+  printf 'agent_content_identity=%s\n' "$agent_image_digest"
+  printf 'agent_repo_digests=%s\n' "$agent_image_repo_digests"
+  printf 'agent_release_commit=%s\n' "$agent_release_commit"
+  printf 'agent_release_tag=%s\n' "$agent_release_tag"
+  printf 'agent_release_role=%s\n' "$agent_release_role"
+  printf 'agent_release_kind=%s\n' "$agent_release_kind"
+  printf 'bridge_image=%s\n' "$bridge_image"
   printf 'bridge_image_id=%s\n' "$bridge_image_id"
-  printf 'release_commit=%s\n' "$agent_release_commit"
-  printf 'release_tag=%s\n' "$agent_release_tag"
-  printf 'stack_release_commit=%s\n' "$stack_release_commit"
-  printf 'stack_release_tag=%s\n' "$stack_release_tag"
+  printf 'bridge_content_identity=%s\n' "$bridge_image_digest"
+  printf 'bridge_repo_digests=%s\n' "$bridge_image_repo_digests"
+  printf 'bridge_release_commit=%s\n' "$bridge_release_commit"
+  printf 'bridge_release_tag=%s\n' "$bridge_release_tag"
+  printf 'bridge_release_role=%s\n' "$bridge_release_role"
+  printf 'bridge_release_kind=%s\n' "$bridge_release_kind"
   printf 'rollback_image=%s\n' "$rollback_image"
-} >"$remote_dir/ROLLBACK_POINT.txt"
+  printf 'rollback_image_id=%s\n' "$rollback_image_id"
+  printf 'rollback_content_identity=%s\n' "$rollback_image_digest"
+  printf 'rollback_repo_digests=%s\n' "$rollback_image_repo_digests"
+  printf 'rollback_release_commit=%s\n' "$rollback_release_commit"
+  printf 'rollback_release_tag=%s\n' "$rollback_release_tag"
+  printf 'rollback_release_role=%s\n' "$rollback_role"
+  printf 'rollback_release_kind=%s\n' "$rollback_kind"
+  printf 'rollback_recovered=%s\n' "$rollback_recovered"
+  printf 'runtime_base=%s\n' "$manifest_runtime_base"
+  printf 'runtime_base_image_id=%s\n' "$runtime_base_image_id"
+  printf 'runtime_base_provenance_id=%s\n' "$manifest_base_image_id"
+  } >"$remote_dir/ROLLBACK_POINT.txt"
+sha256sum "$remote_dir/ROLLBACK_POINT.txt" >"$remote_dir/ROLLBACK_POINT.txt.sha256"
 
 rollback() {
   exit_code=$?
