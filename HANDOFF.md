@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-13
-resume_checkpoint: empty_input_resume_deployed_20260913
+as_of_date: 2026-09-14
+resume_checkpoint: vocat_aec_candidate_pushed_usb_reconnect_required_20260914
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -35,6 +35,11 @@ empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback
 empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
 weather_user_acceptance_date: 2026-09-13
 farewell_immediate_standby_verified: false
+firmware_playback_capture_code: clean_build_and_203_targeted_tests_pass
+firmware_playback_capture_wired: resolved_device_aec_and_board_compile_gate
+firmware_playback_capture_enabled: false_pending_usb_reconnect_and_app_only_flash
+firmware_playback_capture_verified: build_config_only_device_acceptance_pending
+firmware_playback_capture_evidence_at: 2026-09-14T10:08:20+08:00
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -52,6 +57,12 @@ idle_tap_pat_operator_verified: true
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
 当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷；Agent 依次切过 `20260910-1011` → `20260910-1526` → `20260910-1820`。
+
+2026-09-14 USB 对照（`outputs/acceptance/run-20260914-0925-usb-goodbye/`）：epoch **1936** / session `0615d48c-3bdf-4a6c-a7c6-7543f4ffd96b` 播完告别走 `conversation_end_explicit`，随后串口回 idle；epoch **1937** / session `f216e1e0-1bfa-41b8-a259-457d0f2df2eb` 播放中告别却无 Speaking 期设备 VAD，仍报 `playback_completed`，播后三段空 ASR 后靠 `owner_silence_timeout` 关闭。Edge 09:29:08.032 关闭、串口 09:29:08.037 idle，只说明日志对齐没有秒级 UI 残留，不能当作物理屏幕延迟 5 ms。
+
+根因已修于候选 **`76ba6ad3b68a042566f97dc42f6f8101c32b20af`**（已推送）：锁定 upstream 的 `USE_DEVICE_AEC` 依赖未包含 Memoria 板型，manifest 的 `=y` 被静默丢弃，导致默认 AutoStop 在 Speaking 关闭语音处理。0001 补板型依赖，板级编译保护和 `check-overlay.sh` 检查最终配置；新增 CI firmware job 执行全部固件宿主回归。干净重放/构建、依赖锁门禁与 **203 项**定向回归通过，生成的 `sdkconfig.h` 已有 device AEC/audio processor 宏，server AEC 关闭。未调静音超时、增益、DTLN、声纹权限或服务器，AEC 残余/双讲仍未验收。旁查 `CONFIG_FLASH_EXPRESSION_ASSETS=y` 也是当前无效配置，但实际 default assets 承载唤醒命令词，本轮不改该路径。
+
+**当前阻塞：候选尚未刷写。** 身份区、分区表和 otadata 已回读，身份 SHA 与既有值相同，OTA 选择 `ota_0`；整槽回读遇到数据流中断，分块仅首个 512 KiB 成功并与旧构建一致。之后串口与 ROM 连接均报 `No serial data received`，15 秒重置探测收到 0 字节。证据 `outputs/acceptance/run-20260914-aec-fix/`。需要操作员拔插 USB（必要时同时重新上电），重新确认连接后完成**完整回滚备份 → app-only 刷入 → app/身份逐字节回读 → 启动与双端日志 → 天气追问、播中/播后告别**。未执行任何 write-flash，未重启服务器；不得把候选构建通过写成真机已启用。
 
 epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（17:30 CST，session `7c465319`）复现同一组缺陷，分两轮修：
 
@@ -122,11 +133,11 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：串口 Device VAD start（Speaking 态）、`conversation_end_explicit` / `session.close`、屏回待命月牙，不是「聆听中」。0024 已刷，`20260910-1820` 已切。BOOT 仍能硬停 | 当前 epoch 1935 用户报告告别能中断，但继续聆听数秒才待命；线上仅见空 ASR tail 后 `owner_silence_timeout`，即时待命未通过。epoch 1925 独立显式关闭的旧证据不代替本轮验收 |
+| barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过：播放期无 VAD，播后空 ASR，最后静音超时。AEC 候选 `76ba6ad` 已推送但 USB 阻塞，尚未刷机复测 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 未达成；1899 逻辑上已走显式关闭，但屏上仍停 15~18s（两次 empty ASR 轮次耗掉 ~14s，其中第一段削波、第二段无削波），需带串口取证 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 2026-09-14 epoch 1936 已显式关闭并随即记录 idle；AEC 候选刷入后仍需与播中告别同场对照复测 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -298,13 +309,10 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-10 10:00 CST app-only 已刷 overlay 0024（interrupt_assist 播放期发 vad.start；含 0023 队列满不 terminal）；未写 bootloader / 分区表 / 身份区 / NVS / assets。开机 `2.4.2` / SystemInfo 心跳。2026-09-10 10:15 / 15:46 / 18:21 / 18:45 / 18:55 / 19:05 CST Agent 依次切 `20260910-1011` / `20260910-1526` / `20260910-1820` / `20260910-1844` / `20260910-1855` / `20260910-1905`。这不等于告别与播后短告别验收。
-  - app `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`
-  - merged `33851b8ffd2547078a78a4b77d9f4bf542cbefd09fa0a894ec175cb9df8bcbde`
-  - bootloader `434b1a190c9607a289b1b0e14df3329864c24bc9443787814e0db0cc94e8b098`（本轮未写；与上一版构建哈希不同，勿整包补刷）
-  - partition-table `da35229c3fe72536129e09663615c1ee9851a74f43493a154f5d40d359b1dc8b`（本轮未写）
-  - overlay `581a801a273d6c323581ac4dbd57e7ba74628e843e838902a50746e6ca75db9f`
-  - 回滚 app `firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin`（0023 `d7efa985…`）
+- 2026-09-14 现场运行基线仍是 **2026-09-13 01:56:16** 编译的 2.4.2，ELF `5e7b0150019709c62c9be30f2b525dd932f5f733b5ae0a999deeef1b9c81573b`；对应缓存 app SHA `ddcacfa79cdec0d329d3208692f789ae3544d07946958e4dbad8b0c9d9c8a0e0`。不是旧 9 月 10 日 0024 包。
+- 新 AEC 候选（**未刷**）：commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de21005e7c26a44b922e38483d4e9d2eca54b32c85ef6be296b9f498ae392`，overlay `6d17aa95d189c99334956e7f2c0d70ce25b68f45000163ab915ffb43f61f11e6`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
+- 紧邻回滚准备：旧构建保存在 `.cache/previous-20260914-014827/build/memoria.bin`；板上完整备份**未完成**，目前仅首个 512 KiB 已读回并匹配，不能把旧缓存代称已验证的板上完整备份。先恢复 USB、完成 `0x20000/0x3f0000` 回读与匹配再刷候选；不能使用旧 0023 包代替紧邻回滚。
+- 本轮预读身份区/分区表/otadata 位于 `outputs/acceptance/run-20260914-aec-fix/protected/`（0700/0600，禁止输出身份内容）。新旧构建 assets SHA 一致；本轮未写 bootloader、分区表、otadata、身份区、NVS 或 assets。
 - 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
 
 ## 设备启用、唤醒与 shadow
