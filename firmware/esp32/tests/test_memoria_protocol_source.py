@@ -1679,3 +1679,35 @@ def test_wake_word_whitelist_patch_bundles_catalog_commands_and_overrides_custom
     assert "WakeWordRegistry::GetInstance().ApplyActiveCommand" in PATCH_0021
     assert '"mei mo li ya"' in PATCH_0021
     assert "LoadFromNvs()" in PATCH_0021
+
+def test_playback_starvation_metering_patch_stays_observational() -> None:
+    """The device-side underrun meter must count gaps without changing playback.
+
+    The device plays at realtime while the bridge produces at ~1.0x, so a
+    listener hears stuttering that the delivery ledger records as a complete
+    playback (2026-09-14 epoch 1948 and the 18:47 retest).  Patch 0025 exists to
+    measure that starvation, and it is deliberately observation only: a pre-roll
+    built on these numbers must arrive as its own patch together with its own
+    first-audio measurement.
+    """
+
+    patch = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "patches"
+        / "0025-playback-underrun-metering.patch"
+    ).read_text(encoding="utf-8")
+
+    assert "--- a/main/audio/audio_service.cc" in patch
+    assert patch.count("--- a/") == 1
+    assert "#define MEMORIA_STARVE_LOG_MS 40" in patch
+    assert "media playback starved generation=%u gap_ms=%lld starved_count=%u" in patch
+    assert (
+        "media playback meter generation=%u starved_count=%u max_gap_ms=%lld total_gap_ms=%lld"
+        in patch
+    )
+    # Observation only: it may add lines, but must not remove or change any.
+    removed = [
+        line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")
+    ]
+    assert removed == []
