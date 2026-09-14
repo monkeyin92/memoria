@@ -1360,3 +1360,51 @@ async def test_vad_event_forwards_rms_as_near_end_rms() -> None:
     finally:
         bridge._close_connection(connection)  # noqa: SLF001 - deterministic cleanup
         bridge.bridge.close(identity.session_id)
+
+
+def test_downlink_pacing_reports_produced_audio_against_the_wall_clock(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The device plays in real time, so the informative number is produced
+    audio against the wall clock it arrived in.  Real epoch 1948: ~38.9s of
+    audio arrived over ~39.3s with no queue standing and the operator heard
+    stuttering that the delivery ledger recorded as a complete playback.
+    """
+
+    from services.agent.src.voice_core import media_bridge_server as mbs
+
+    clock = iter([100.0, 100.5, 104.0])
+    monkeypatch.setattr(mbs.time, "monotonic", lambda: next(clock))
+    session = mbs.MediaBridgeSession(
+        identity=SessionIdentity("pacing", account_id="account", device_id="h5")
+    )
+    def frame(sequence: int, samples: int, *, final: bool) -> mbs.PCMFrame:
+        return mbs.PCMFrame(
+            identity=session.identity,
+            turn_id=1,
+            generation_id=1,
+            tool_epoch=0,
+            sequence=sequence,
+            source_start_sample=sequence * samples,
+            frame_samples=samples,
+            pcm_s16le=b"\x00" * (samples * 2),
+            final=final,
+        )
+
+    # accept_downlink appends before measuring, so the queue depth it samples is
+    # the depth the transport-visible queue actually has.
+    with caplog.at_level("INFO"):
+        for sequence, samples, final in ((0, 12_000, False), (1, 12_000, False), (2, 24_000, True)):
+            pending = frame(sequence, samples, final=final)
+            session.downlink.append(pending)
+            session._record_downlink_pacing(pending)
+
+    pacing = [record.message for record in caplog.records if "downlink pacing" in record.message]
+    assert len(pacing) == 1
+    # 48000 samples at 24 kHz is 2000 ms of audio produced across 4000 ms.
+    assert "audio_ms=2000" in pacing[0]
+    assert "wall_ms=4000" in pacing[0]
+    assert "max_gap_ms=3500" in pacing[0]
+    assert "produced_ratio=0.50" in pacing[0]
+    assert "reason=final_frame" in pacing[0]
+    assert session._pacing_queue_high_water == 3

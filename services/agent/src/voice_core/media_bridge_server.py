@@ -110,6 +110,16 @@ class MediaBridgeSession:
     _stop_keys: deque[str] = field(default_factory=lambda: deque(maxlen=64))
     _stop_fences: dict[str, GenerationFence] = field(default_factory=dict)
     last_downlink_reject_log: float = 0.0
+    # Produced-audio pacing for the current downlink generation.  The device
+    # plays PCM in real time, so these numbers answer whether the audio arrived
+    # with any headroom at all; see _emit_downlink_pacing.
+    _pacing_started_at: float | None = field(default=None, init=False)
+    _pacing_last_at: float | None = field(default=None, init=False)
+    _pacing_frames: int = 0
+    _pacing_audio_ms: float = 0.0
+    _pacing_max_gap_ms: float = 0.0
+    _pacing_queue_high_water: int = 0
+    _pacing_logged: bool = False
 
     def __post_init__(self) -> None:
         if self.max_pending_audio_frames <= 0:
@@ -212,6 +222,71 @@ class MediaBridgeSession:
             self.uplink.popleft()
         return True
 
+    def _record_downlink_pacing(self, frame: PCMFrame) -> None:
+        """Accumulate produced-audio pacing for one accepted downlink frame."""
+
+        now = time.monotonic()
+        # The device downlink is 24 kHz mono PCM (device_client's downlink
+        # AudioFormat), so pacing is expressed against that rate.
+        self._pacing_audio_ms += frame.frame_samples / 24_000 * 1000.0
+        self._pacing_frames += 1
+        previous = self._pacing_last_at
+        if self._pacing_started_at is None:
+            self._pacing_started_at = now
+        elif previous is not None:
+            self._pacing_max_gap_ms = max(
+                self._pacing_max_gap_ms, (now - previous) * 1000.0
+            )
+        self._pacing_last_at = now
+        self._pacing_queue_high_water = max(
+            self._pacing_queue_high_water, len(self.downlink)
+        )
+        if frame.final:
+            self._emit_downlink_pacing("final_frame")
+
+    def _emit_downlink_pacing(self, reason: str) -> None:
+        """Log produced-audio pacing for the current generation, once.
+
+        The device plays the downlink in real time, so ``produced_ratio`` below
+        1.0 means the audio was produced slower than it plays and the device
+        had to draw down its buffer; ``max_gap_ms`` is the largest stall it had
+        to survive.  A generation with ratio near 1.0 and a low queue high
+        water is one scheduling hiccup away from an audible underrun, which is
+        the difference between "played completely" in the delivery ledger and
+        the stuttering the operator hears.
+        """
+
+        if (
+            self._pacing_logged
+            or self._pacing_started_at is None
+            or self._pacing_last_at is None
+        ):
+            return
+        self._pacing_logged = True
+        wall_ms = max(0.0, (self._pacing_last_at - self._pacing_started_at) * 1000.0)
+        produced_ratio = (self._pacing_audio_ms / wall_ms) if wall_ms > 0 else 0.0
+        logger.info(
+            "media downlink pacing session=%s reason=%s frames=%s audio_ms=%.0f "
+            "wall_ms=%.0f max_gap_ms=%.0f produced_ratio=%.2f queue_high_water=%s",
+            self.identity.session_id,
+            reason,
+            self._pacing_frames,
+            self._pacing_audio_ms,
+            wall_ms,
+            self._pacing_max_gap_ms,
+            produced_ratio,
+            self._pacing_queue_high_water,
+        )
+
+    def _reset_downlink_pacing(self) -> None:
+        self._pacing_started_at = None
+        self._pacing_last_at = None
+        self._pacing_frames = 0
+        self._pacing_audio_ms = 0.0
+        self._pacing_max_gap_ms = 0.0
+        self._pacing_queue_high_water = 0
+        self._pacing_logged = False
+
     def reset_downlink_generation(self, fence: GenerationFence) -> bool:
         """Reset output sequence/sample watermarks at an announced fence."""
 
@@ -224,6 +299,8 @@ class MediaBridgeSession:
         self.last_downlink_ack_sequence = -1
         self._last_downlink_source_end_sample = 0
         self.downlink.clear()
+        self._emit_downlink_pacing("generation_reset")
+        self._reset_downlink_pacing()
         return True
 
     def accept_client_stop(self, event: MediaEnvelope) -> bool:
@@ -462,6 +539,7 @@ class MediaBridgeSession:
         self.last_downlink_sequence = frame.sequence
         self._last_downlink_source_end_sample = frame.source_start_sample + frame.frame_samples
         self.downlink.append(frame)
+        self._record_downlink_pacing(frame)
         return True
 
     def pop_downlink(self, sequence: int | None = None) -> PCMFrame | None:
