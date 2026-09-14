@@ -61,6 +61,8 @@
 - **真机第二段（2026-09-14 18:24–18:30，两段会话 `7d9d3a2f` / `e81ff828`）**：修复后的「明天天气」ACK + 正文四条回执全齐、**没有再出现第二个轮次**（该缺陷复现路径未再触发）。但暴露两个新的用户可见问题：
   - **静默窗口竞态**：`MEDIA_OWNER_SILENCE_TIMEOUT_S=10.0`，窗口在用户开口前起计、裸 VAD 按设计不重置；用户说完（10:25:47.054）到 ASR final（10:25:48.980）的 1.9s 里窗口到期，Edge 10:25:49.012 以 `owner_silence_timeout` 关闭会话，轮次 10:25:49.359 提交后被 `stale_stream_epoch` 拒绝启动回复（`media final did not start reply`）→「问了没回答」。
   - **长天气截断**：`e81ff828` turn 2 gen 3 播放 39.4s，账本 `provider_completed` 与 `actual_heard/playback_ended` 都在 10:29:30.3/.4，即「账目完整播完」，但操作员听感是「天气没播报完就卡断」→ 截断发生在账本之外（候选：上游回复/TTS 合成被截短，或设备早停仍回报完成），需对比该轮文本长度与合成音频首尾帧。
+  - 长天气**断续**（操作员确认是「断续之后停」，不是内容被截）：`e81ff828` turn 2 gen 3 播放 39.4s。播放窗口 18:28:51–18:29:30 内串口只有首帧与两条状态迁移——**没有 VAD、没有 I2C 报错、没有 TLS/WSS 报错**，所以闪避/暂停不是原因，故障也没被现有日志记录。时序线索：`provider_completed` 距 `first_frame` 39.28s、播放 39.4s → 合成与播放几乎同为 1.0x 实时速率、**没有缓冲余量**，设备缓冲区欠载即表现为断续（主假设，尚未证明）。**当前可观测性测不了播放连续性**（只有上行 PCM tap，无下行 tap、无每帧/欠载计数），下一步先补测量：设备侧欠载/队列深度，或 Edge 下行分片节奏计数，再复测。
+  - 附带观察：第一段会话 18:28:26 因 **WSS 非正常关闭**结束（串口 `mbedtls_ssl_fetch_input error=76` → `esp-tls-mbedtls read error -0x004C` → `Device WebSocket disconnected attempt=1`，Edge 见 `close_code=1005`），2 秒后重连成第二段会话；BMI270 I2C `ESP_ERR_TIMEOUT` 在别处偶发（播放窗口内没有），两件都需单独跟踪。
   - 未跑到：告别（该段未触发，turn 2 后直接静默关闭）、待机与五表情照片、P0-04 学生安全话术。
   - 工具缺陷：`scripts/voice_session_report.py` 以 `(turn, generation)` 聚合，一段捕获含两个会话时会串（出现 `commit->frame=190.859s`），需并入 `session_id`。
   - 证据 `outputs/acceptance/run-20260914-p0-03-voice/session-2/`（`report.txt`、`findings.md`）。
