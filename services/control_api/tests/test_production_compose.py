@@ -406,6 +406,24 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "--mark-smokes-passed" not in script
     assert "--check-ready" not in script
 
+    # The stack release tag comes from the running containers: a component
+    # cutover swaps one service image while the stack keeps its tag, so the
+    # release directory name no longer identifies the deployed release and
+    # deriving the tag from it made every scheduled refresh fail its mark.
+    assert 'container_env_value "$control_container" MEMORIA_RELEASE_TAG' in script
+    assert 'falling back to release directory name' in script
+    assert 'release_tag="$(basename "$release_dir")"' not in script
+
+    # Smoke containers must run the live images, so the Compose file set each
+    # live container was created with is reused and then checked against the
+    # image the container actually runs.
+    assert 'com.docker.compose.project.config_files' in script
+    assert "compose_args_for \"$agent_container\"" in script
+    assert "compose_args_for \"$control_container\"" in script
+    assert 'require_live_service_image "$agent_container" agent' in script
+    assert 'require_live_service_image "$control_container" control-api' in script
+    assert "refusing to collect smoke evidence" in script
+
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
     maintenance_scripts = (

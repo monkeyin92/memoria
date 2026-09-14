@@ -2,23 +2,97 @@
 set -Eeuo pipefail
 
 release_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-release_tag="${MEMORIA_RELEASE_TAG:-}"
-if [[ -z "$release_tag" ]]; then
-  release_tag="$(basename "$release_dir")"
-fi
-compose=(docker compose -f "$release_dir/docker-compose.production.yml")
 agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"
+project_name="${MEMORIA_COMPOSE_PROJECT:-memoria}"
+control_container="${MEMORIA_CONTROL_CONTAINER:-memoria-control-api-1}"
+agent_container="${MEMORIA_AGENT_CONTAINER:-memoria-agent-1}"
+
+container_env_value() {
+  local container="$1" key="$2"
+  docker inspect "$container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n "s/^${key}=//p" \
+    | head -n 1
+}
+
+container_config_files() {
+  docker inspect "$1" \
+    --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null
+}
+
+# The stack release tag carried by the running containers is the authority.  A
+# component cutover swaps one service image while the stack keeps its tag, so
+# the release directory name stops identifying the deployed release; deriving
+# the tag from that name made every scheduled refresh fail its mark with HTTP
+# 409 from the 2026-09-01 stack release until this fix, which left readiness
+# permanently "smoke evidence expired" while the provider smokes were passing.
+if [[ -z "${MEMORIA_RELEASE_TAG:-}" ]]; then
+  MEMORIA_RELEASE_TAG="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
+fi
+if [[ -z "${MEMORIA_RELEASE_TAG:-}" ]]; then
+  MEMORIA_RELEASE_TAG="$(basename "$release_dir")"
+  echo "warning: $control_container is not running; falling back to release directory name '$MEMORIA_RELEASE_TAG'" >&2
+fi
+release_tag="$MEMORIA_RELEASE_TAG"
 
 export MEMORIA_RELEASE_TAG="$release_tag"
 
+# Smoke containers must run the very images the live stack runs, so reuse the
+# Compose file set each live container was created with (recorded by Compose in
+# its labels) instead of the base file alone.  A recorded file that has since
+# disappeared, such as a /tmp overlay after a reboot, is skipped with a warning;
+# the image equality check below then decides whether what remains still
+# reproduces the deployed service.
+COMPOSE_ARGS=(docker compose --project-name "$project_name")
+
+compose_args_for() {
+  local container="$1" recorded file
+  COMPOSE_ARGS=(docker compose --project-name "$project_name")
+  recorded="$(container_config_files "$container")"
+  if [[ -z "$recorded" ]]; then
+    COMPOSE_ARGS+=(-f "$release_dir/docker-compose.production.yml")
+    return 0
+  fi
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    if [[ ! -f "$file" ]]; then
+      echo "warning: compose file '$file' recorded by $container is missing; skipping" >&2
+      continue
+    fi
+    COMPOSE_ARGS+=(-f "$file")
+  # The trailing newline matters: `read` drops a final field that has no line
+  # terminator, which would silently drop the newest override file.
+  done < <(printf '%s\n' "$recorded" | tr ',' '\n')
+}
+
+require_live_service_image() {
+  local container="$1" service="$2"
+  local live resolved
+  live="$(docker inspect "$container" --format '{{.Config.Image}}')"
+  if ! resolved="$("${COMPOSE_ARGS[@]}" config --format json 2>/dev/null \
+    | python3 -c '
+import json
+import sys
+
+services = json.load(sys.stdin).get("services", {})
+print((services.get(sys.argv[1]) or {}).get("image") or "")
+' "$service")"; then
+    echo "cannot resolve the $service image from the Compose files recorded by $container" >&2
+    return 1
+  fi
+  if [[ "$resolved" != "$live" ]]; then
+    echo "refusing to collect smoke evidence: Compose resolves $service to '${resolved:-<none>}' but $container runs '$live'" >&2
+    return 1
+  fi
+}
+
 run_agent() {
-  "${compose[@]}" run --rm --no-deps \
+  "${COMPOSE_ARGS[@]}" run --rm --no-deps \
     -T \
     --entrypoint /app/.venv/bin/python agent "$@"
 }
 
 run_control() {
-  "${compose[@]}" run --rm --no-deps \
+  "${COMPOSE_ARGS[@]}" run --rm --no-deps \
     -T \
     --entrypoint /app/.venv/bin/python control-api "$@"
 }
@@ -49,11 +123,14 @@ assert agent.get("release_tag") == expected
 }
 
 run_required_provider_smoke() {
-  "${compose[@]}" run --rm --no-deps \
+  "${COMPOSE_ARGS[@]}" run --rm --no-deps \
     -T \
     -e MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
     --entrypoint /app/.venv/bin/python agent -m scripts.provider_smoke_test
 }
+
+compose_args_for "$agent_container"
+require_live_service_image "$agent_container" agent
 
 livekit_expected='livekit_smoke_test PASS: authenticated room-service access'
 for attempt in 1 2; do
@@ -90,6 +167,9 @@ for attempt in 1 2; do
 done
 
 run_agent -m scripts.verify_env
+
+compose_args_for "$control_container"
+require_live_service_image "$control_container" control-api
 
 # The Agent env intentionally has no MEMORIA_AUTH_SECRET.  Mark and verify
 # readiness from a short-lived Control API container instead.
