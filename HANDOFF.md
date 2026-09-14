@@ -1,6 +1,6 @@
 # Memoria 当前交接
 
-本文件只记录当前有效状态、紧邻回滚、生产操作和下一验收。历史发布过程不再保留；每次发布原地更新本文件。
+本文件只记录当前有效状态、紧邻回滚、生产操作和下一验收。历史发布过程不再保留；每次发布原地更新本文件。跨任务优先级与完成标记统一见 `TODOLIST.md`，这里保留现场步骤和运行证据。
 
 ## 权威状态
 
@@ -17,8 +17,8 @@ hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
-production_readiness: not_ready_smoke_evidence_expired
-production_readiness_observed_at: 2026-09-13T23:40:01+08:00
+production_readiness: ready
+production_readiness_observed_at: 2026-09-14T16:32:08+08:00
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
@@ -34,7 +34,7 @@ empty_input_resume_enabled: agent_bridge_20260913_p0_empty_input_resume_v1
 empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback_receipts_user_hearing_confirmed
 empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
 weather_user_acceptance_date: 2026-09-13
-farewell_immediate_standby_verified: false
+farewell_immediate_standby_verified: false # 播后已过；播放中语音告别仍受签名策略限制，不能总体标真
 firmware_playback_capture_code: clean_build_and_esp32_host_tests_pass
 firmware_playback_capture_wired: resolved_device_aec_and_board_compile_gate
 firmware_playback_capture_enabled: true_app_only_flashed_20260914T1506CST
@@ -63,7 +63,7 @@ last_wake_epoch: 1897
 idle_tap_pat_operator_verified: true
 ```
 
-`full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
+`full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序仅 profile 页允许经授权有界录制自定义音色样本，不承担实时对话、手机声纹登记或实时媒体回滚职责。
 
 当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷；Agent 依次切过 `20260910-1011` → `20260910-1526` → `20260910-1820`。
 
@@ -73,7 +73,7 @@ idle_tap_pat_operator_verified: true
 
 根因已修于候选 **`76ba6ad3b68a042566f97dc42f6f8101c32b20af`**（已推送）：锁定 upstream 的 `USE_DEVICE_AEC` 依赖未包含 Memoria 板型，manifest 的 `=y` 被静默丢弃，导致默认 AutoStop 在 Speaking 关闭语音处理。0001 补板型依赖，板级编译保护和 `check-overlay.sh` 检查最终配置；新增 CI firmware job 执行全部固件宿主回归。干净重放/构建、依赖锁门禁与 **203 项**定向回归通过，生成的 `sdkconfig.h` 已有 device AEC/audio processor 宏，server AEC 关闭。未调静音超时、增益、DTLN、声纹权限或服务器，AEC 残余/双讲仍未验收。旁查 `CONFIG_FLASH_EXPRESSION_ASSETS=y` 也是当前无效配置，但实际 default assets 承载唤醒命令词，本轮不改该路径。
 
-**当前阻塞：候选尚未刷写。** 身份区、分区表和 otadata 已回读，身份 SHA 与既有值相同，OTA 选择 `ota_0`；整槽回读遇到数据流中断，分块仅首个 512 KiB 成功并与旧构建一致。2026-09-14 10:20 操作员重插 USB 后仍枚举为同一板子，`cu`/`tty` 端口均无占用；15 秒被动采集为 0 字节，115200 baud / `usb-reset` / 2 次连接尝试的只读 flash-id 探测仍报 `No serial data received`。证据 `outputs/acceptance/run-20260914-aec-fix/reconnect-probe/` 与 `reconnect-flash-id.log`。USB 重插不足以恢复通信，下一步请操作员确认板子电源开关并手动断电重启；必要时再按实际板上按键进入下载模式，不反复盲探。恢复连接后完成**完整回滚备份 → app-only 刷入 → app/身份逐字节回读 → 启动与双端日志 → 天气追问、播中/播后告别**。所有本轮探测均已退出，未执行任何 write-flash，未重启服务器；不得把候选构建通过写成真机已启用。
+**旧 USB/未刷写阻塞已解除。** 2026-09-14 上午的只读探测失败已被当日 15:06 的 app-only 刷入、完整回读/受保护分区比对与 15:11 真机复测取代，详见下方「唤醒问候播放期越权 VAD 断链修复」。不要再按旧阻塞重复刷写；播放期语音打断仍受签名策略限制，未获 AEC/双讲验收。
 
 epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（17:30 CST，session `7c465319`）复现同一组缺陷，分两轮修：
 
@@ -95,6 +95,31 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
+
+现象：2026-08-31 之后每次 12h 定时刷新都跑通全部真实 smoke，却在最后一步停在 `readiness mark FAILED: HTTP 409`。统计 2026-08-25 以来 `mark FAILED` **83** 次、`refresh PASS` 10 次，最后一次 PASS 是 **Aug 31 00:42** `20260827-architecture-split-v1`。Control 的 gate 因此长期停在 `not_ready_smoke_evidence_expired`（TTL `READINESS_GATE_TTL_S=86400`，12h 刷新本应有的余量被吃光），是**假阴性**，不是 provider 故障；2026-09-13 23:40 记录的 503 就是这个状态。
+
+根因（两条，都源自 2026-08-27 架构拆分后的组件发布方式）：
+
+1. `scripts/refresh_readiness.sh` 在未设 `MEMORIA_RELEASE_TAG` 时用**发布目录名**当 stack tag（`basename /opt/memoria/releases/20260827-architecture-split-v1`），但 2026-09-01 全栈发布后容器内的 stack tag 是 `20260901-0945-wake-word-whitelist`。mark 的 `release_tag` 与 Control 的 `settings.memoria_release_tag` 不一致 → 409 `smoke release tag does not match config`。目录名不再等于 release tag，这就是 409 的起点。
+2. 同脚本只用 base `docker-compose.production.yml` 起一次性 smoke 容器，所以「provider smoke PASS」跑的是 **base 镜像**（`memoria-agent:20260827-architecture-split-v1` 一类），不是当时实际服务的组件镜像。即使 mark 成功，证据也不覆盖线上制品。
+
+修复（`scripts/refresh_readiness.sh`，读法与 `scripts/deploy_agent_component.sh` 的 `container_env_value` 一致）：
+
+- stack tag 改为从**运行中的 Control 容器**读取；只有容器不在运行时才回退目录名并打 warning。
+- 一次性 smoke 容器复用该 live 容器创建时记录的 Compose 文件集（`com.docker.compose.project.config_files`）；记录中的文件缺失时 warning 跳过，随后用 `compose config --format json` 断言解析出的服务镜像**等于**容器实际镜像，不等即拒收证据。
+- `run_agent` / `run_control` / `wait_for_current_release_readiness` 的行为与断言语义不变。回归：`services/control_api/tests/test_production_compose.py::test_readiness_refresh_passes_required_provider_gate_into_run_container` 已钉住上述规则，该文件 47 项全绿。
+
+部署与验收（2026-09-14）：
+
+- 仓库脚本 SHA256 `c0152d5b1768aa758d93f0540529ef00745bbee7560e91ad5386eb6621088288`，已 `install -m 755` 覆盖 `/opt/memoria/current/scripts/refresh_readiness.sh`；改前副本 `/opt/memoria/current/scripts/refresh_readiness.sh.bak-20260914-pre-tag-fix`（`dc8c95ce74883fa1ad68bcbe0c47f84357b9e956036fea397b135b8b21b28385`）。
+- 手动实跑：`livekit_smoke_test PASS` → `provider_smoke_test PASS: FunASR, QwenRealtimeSearch, Qwen, Doubao, InterruptSemantic` → `verify_env OK` → `readiness mark OK` → `readiness refresh PASS: 20260901-0945-wake-word-whitelist (qwen)`。
+- systemd 路径（同一 unit / ExecStart）：`systemctl start memoria-readiness-refresh.service` 于 16:32:08 CST `status=0/SUCCESS`，日志同样 `readiness mark OK` + `refresh PASS`。
+- 状态：loopback `http://127.0.0.1:8791/health/ready` **200 ready**；公网 `https://aigcnice.com:8443/memoria-api/health/ready` **200 ready**；具名 core **12/12 ready**；agent `ready`，boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`，`worker_ready/livekit_ready=true`，`last_loop_at 2026-09-14T08:33:01Z`。公网 readiness 在 **8443** 的 SNI 多路复用之后；443 属于同机既有 WMS vhost，`/memoria-api/...` 在 443 上无匹配路由会返回 404，**不能把 443 的 404 当作服务故障**。
+- 未完成子项：定时器因 `OnUnitActiveSec=12h` 重排到 **2026-09-15 04:35:21 CST**，本轮只验证了 unit 路径的手动触发，尚未观察一次“定时触发”的成功。
+
+口径更正：readiness 的 `release_tag` 是**栈级 env tag**（`20260901-0945-wake-word-whitelist`），不等于任何组件镜像版本。组件身份只认容器 image/labels（agent/bridge `20260913-p0-empty-input-resume-v1`、control-api `20260911-subject-switch-device-notify-control-api`、media-edge `20260908-1600-vocat-interrupt-assist-edge-component`、sensevoice `20260901-pin-language`）。gate 变绿只证明该栈 tag 下的 smoke 通过，不证明具体组件版本已验收。
 
 ## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 刷入；15:11 CST 真机复测 PASS）
 
@@ -174,7 +199,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-14 15:11 CST PASS**（同一 session）：`early conversation-close … partial_immediate` → Edge `conversation_end_explicit` → 屏 24 ms 回 idle，未走静音超时。早前 epoch 1936 亦通过 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-14 15:11 CST PASS**（同一 session）：`early conversation-close … partial_immediate` → Edge `conversation_end_explicit` → 串口 idle 的日志间隔约 24 ms，未走静音超时；不是物理屏幕延迟测量。早前 epoch 1936 亦通过 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
@@ -337,7 +362,7 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - epoch **1892** 唤醒欢迎语听感 + Actual Heard PASS；随后 `conversation_end_explicit` 关闭。
 - 自定义克隆已用于唤醒；天气正文音色绑定尚未真机复测。
 - 小程序开发版 **0.8.84**（2026-09-06 23:58 CST，源 `7e5137a`，903,051 bytes）。未正式发布、未设体验版。
-- 2026-09-13 23:40 CST 现场核验：loopback `/health/live` 200；loopback 与公网 `/memoria-api/health/ready` 均 503，`smokes=expired/missing=[]`，具名 core **12/12 ready**，agent `ready/worker_ready/livekit_ready=true`、新 boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`。这是切流前已有的 smoke 证据过期状态，本轮未改 Control 或重置证据以“修绿”；运行配置 GET 404 为旧记录，本轮未重测。不据容器 healthy 宣称全链路通过。
+- 2026-09-13 23:40 CST 现场核验（**已被 2026-09-14 16:32 CST 取代**）：loopback `/health/live` 200；loopback 与公网 `/memoria-api/health/ready` 均 503，`smokes=expired/missing=[]`，具名 core **12/12 ready**，agent `ready/worker_ready/livekit_ready=true`、boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`。当时记录为“切流前已有的 smoke 证据过期状态”，实际是 `refresh_readiness.sh` 的 stack tag 取自发布目录名导致 mark 恒 409 的假阴性，已于 2026-09-14 修复，见上节。
 
 ## 板卡与固件
 

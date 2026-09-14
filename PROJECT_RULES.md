@@ -1,6 +1,6 @@
 # Memoria Working Agreements
 
-本文件只保存长期有效的工程与产品规则。当前运行状态写入 `HANDOFF.md`；产品、架构和开发入口写入 `README.md`；外部研究扫描写入 `RESEARCH.md`。
+本文件只保存长期有效的工程与产品规则。当前运行状态写入 `HANDOFF.md`；产品、架构和开发入口写入 `README.md`；外部研究扫描写入 `RESEARCH.md`；优先级执行队列写入 `TODOLIST.md`。
 
 ## 工作方式
 
@@ -13,12 +13,13 @@
 
 ## 文档纪律
 
-仓库长期文档严格只有 `README.md`、`PROJECT_RULES.md`、`HANDOFF.md`、`RESEARCH.md` 四份。`RESEARCH.md` 是唯一额外文件，供外部研究助手写入扫描、开发评估并标记状态；同一文件持续合并更新。仍禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
+仓库长期文档严格只有 `README.md`、`PROJECT_RULES.md`、`HANDOFF.md`、`RESEARCH.md`、`TODOLIST.md` 五份。2026-09-14 用户明确新增 `TODOLIST.md` 作为唯一优先级执行清单；研究与执行分别在各自文件持续合并更新。仍禁止新增 session 记录、其他平行计划、组件 README、ADR、release note 或一次性排障文档。
 
 - 规则与稳定边界归入 `PROJECT_RULES.md`。
 - 产品、架构、开发和协议入口归入 `README.md`。
 - 当前状态、当前/回滚版本、运维步骤和下一验收归入 `HANDOFF.md`。
 - 外部研究扫描、待评估项与开发状态标记只写入 `RESEARCH.md`；同一想法复现时合并更新，不另建文档。
+- 执行顺序、任务依赖、完成条件和勾选状态只写入 `TODOLIST.md`；后续优先处理最高优先级未阻塞项。完成后标记日期与证据，或在权威结论已归位后删除；不得因删除完成项丢失剩余待办。
 - 机器事实优先放 schema、proto、JSON、TOML、锁文件和测试，不用 prose 重复。
 - 过时内容确认无代码/运维引用后直接删除，不保留兼容文档或“归档”目录。
 - 临时证据写入被忽略的 `outputs/` 或服务器证据目录，不提交到 Git。
@@ -77,7 +78,7 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 - 声纹登记按自然、轻声、带笑、认真顺序解锁，各段独立参与匹配。授权必须明确、可撤销；shadow 档案不得宣传为主人认证或声音克隆。
 - 称呼只在注册 UI 设置，文案“怎么称呼你？”；H5“我的”和小程序个人信息不再暴露称呼或陪伴方式编辑。
 - 供应商 `voice_id` 只能由 Agent 批准 registry 解析；客户端只传稳定目录键，试听文件路径包含供应商和版本。
-- 微信小程序是控制面：不申请 `scope.record`，不创建 RecorderManager，不播放实时 TTS，不建立媒体 WSS，不加入 LiveKit。
+- 微信小程序是控制面：`scope.record` / RecorderManager 仅限 profile 页经明确授权的有界自定义音色样本；不得扩展到手机声纹登记或实时对话。不播放实时 TTS，不建立媒体 WSS，不加入 LiveKit；范围由 `apps/miniprogram/tests/no-realtime-media-gate.test.js` 校验。
 - 设备屏幕表情是「对话脸」：360 圆屏黑底白描，签名是嘴（待命短平线），鼻子是米粒点，闭眼仍是月牙、睁眼是杏仁白眼加挖空瞳孔。几何以固件渲染源 `firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 为准，预览脚本与宿主测试编译同一份源码；未知情绪回落 `neutral`，不得回退到彩色 emoji，面部不绑定唤醒名。
 
 ## 固件与硬件安全
@@ -95,7 +96,7 @@ CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 - `full_duplex_verified` 另需 Edge 声学 registry 登记、真实 AEC residual、双讲 T1–T14 和 Actual Heard。未过证不得改 hello `aec_reference_verified`，不得宣传全双工。
 - 播放期保持采集；说话中 BOOT / 屏幕触摸仍是本地硬停。待机点屏幕和拍身体不得开麦。禁止用云端 holdoff、丢弃 VAD 边沿或加大 DTLN 增益去假装 AEC。
 - `TurnPhase` 在 interrupt_assist 真机打断未 `verified` 前，不得从 shadow 改为有副作用的生产策略。
-- 路演、对客口径必须与 `HANDOFF.md` 的 `advertised_duplex_level` 一致。当前工单步骤只写在 `HANDOFF.md`，不另建计划文档。
+- 路演、对客口径必须与 `HANDOFF.md` 的 `advertised_duplex_level` 一致。现场工单步骤与证据只写在 `HANDOFF.md`，跨任务优先级与完成条件只写在 `TODOLIST.md`，不再另建计划文档。
 
 ## 发布、回滚与保留
 

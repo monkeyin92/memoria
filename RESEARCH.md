@@ -2,12 +2,12 @@
 
 本文件是仓库唯一的外部研究扫描落地处。研究助手（memoria提升大师）每次扫描只更新这一份文件，不另建文档。开发在本文件评估条目、改状态、写备注。
 
-`RESEARCH.md` 是文档预算的唯一例外。规则、产品入口和线上状态仍分别只写在 `PROJECT_RULES.md`、`README.md`、`HANDOFF.md`。本文件不写生产密钥、环境路径、镜像 SHA、设备 ID 或运维细节。
+本文件与 `TODOLIST.md` 分工：这里保存研究依据与采纳状态，后者保存唯一优先级执行队列、依赖和完成标记。规则、产品入口和线上状态仍分别只写在 `PROJECT_RULES.md`、`README.md`、`HANDOFF.md`。本文件不写生产密钥、环境路径、镜像 SHA、设备 ID 或运维细节。
 
 ## 怎么用
 
 1. 研究助手扫描后：同一想法复用已有 id 并更新「最近更新」；新想法新增 `R-YYYYMMDD-NN`，状态先标「待评估」。已关闭 id 见文末，禁止用新 id 复活同一想法。
-2. 开发评估后：改「状态」「最近更新」「开发备注」。已完成、过时或被后继条目替代的内容删除，仍有效的结论并入活条目或「明确不做」。
+2. 开发评估后：改「状态」「最近更新」「开发备注」；采纳的执行项合并进 `TODOLIST.md`，不重复排队。已完成、过时或被后继条目替代的内容删除，仍有效的结论并入活条目或「明确不做」。
 3. 建议不得违反当前 SKU：VoCat、`interrupt_assist`、`advertised_duplex_level=none`、唤醒词「茉莉」。未过 T1–T14 不得建议宣传全双工或把 `aec_reference_verified` 改成 true。
 4. 扫描是合并活条目，不得清空本文件或删掉仍有效的活工单。开发精简已完成/过时内容不受行数下限限制。
 
@@ -37,10 +37,10 @@
 
 ## 当前约束
 
-- 扫描：2026-09-14。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。按使用人切换人格与音色是 2026-09-11 明确的新产品方向，见 R-20260911-05；该方向服务 2026-09-12 重申的分阶段人群定位（前期学生 / 后期老年 / 再后年轻人），见「当前站位」。
+- 扫描：2026-09-14。现场设备工单与证据只写 `HANDOFF.md`，跨任务优先级见 `TODOLIST.md`。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已有封闭 query rewrite；同日本地重跑长程三项 `recall@5=1`、整体 `recall@5=0.8125`。既有 VAD 期预取/事实人格分流已接线，暂不增加平行预取或缓存链。按使用人切换人格与音色见 R-20260911-05，已有实现和剩余验收须分开；服务前期学生 / 后期老年 / 再后年轻人的阶段定位。
 - SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。
 - 唤醒词「茉莉」。播放期 KWS 关；说话中 BOOT / 触摸硬停。DTLN makeup 冻结 `8.0×`。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
-- 钉档：云端 FunASR 仍 1.4.15（2026-09-14 复核 PyPI latest=1.4.15，无 1.4.16/1.5.0；钉档评估仍 R-20260910-01；已测 NumPy 2，旧 `numpy<2` 不再是硬约束）。sidecar ≥1.3.29。livekit-agents PyPI latest=1.8.1（2026-09-14 复核，无 1.8.2/1.9.0；含 DuplexModel）；仓内仍 1.6.10。升级评估见 R-20260907-01 + R-20260911-01。#7064 已随 1.8.0 合并（NC 时默认关 AGC）；stale「open」索引作废。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。`livekit-plugins-voicemem` 仍 0.2.2（`livekit-agents<1.8`），见 R-20260909-03。
+- 版本核验（2026-09-14 官方 PyPI）：FunASR 上游 1.4.15，**不是已知云端/sidecar 钉档**。实时链是 DashScope `fun-asr-realtime` WebSocket，本仓没有 `funasr` 包；仓内 SenseVoice 服务脚本用 `sherpa_onnx`，生产镜像包版本与构建来源待核，见 R-20260910-01。LiveKit Agents/OpenAI/Silero 仓内均 1.6.10、上游均 1.8.1；RTC 1.1.14→1.1.18、API 1.2.0→1.2.1 随耦合约束评估，统一 R-20260907-01。#7064 已随 1.8.0 合并，但本仓显式 `auto_gain_control=True`、未配 NC，默认值变化不直接改变现链路。LiveKit 侧按 dispatch metadata 保持兼容半双工禁打断；设备 Voice Core 侧按协商 `audio_mode` 派生，不能跨运行路径混称为统一开关；默认 preemptive 关闭。VoiceMem 插件仍 0.2.2 / `livekit-agents<1.8`，不安装。
 - 合规：拟人化办法已生效；令第25号已生效，声纹仍要单独同意、本月无新细则。最高法涉人工智能纠纷意见（法发〔2026〕10号，司法意见非 CAC 新法）加强见 R-20260910-02。大型处理者征求意见截止已过、截至 2026-09-14 仍无定稿；清朗二阶段 2026-09-02 进展稿（累计清理等）仍是执行报道非新规，见 R-20260901-08。NEW_LAW_IDS（法规/CAC）空。
 
 ## 当前站位（2026-09-12 用户重申，已采纳，不是工单）
@@ -69,28 +69,28 @@
 - 来源：https://docs.espressif.com/projects/esp-sr/zh_CN/latest/esp32s3/wake_word_engine/ESP_Wake_Words_Customization.html ；https://github.com/espressif/esp-sr/issues/194
 - 开发备注：白名单切词已切流。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0。电视/家庭噪声仍未做。
 
-### R-20260831-02 FunASR 空转写分账与钉档
+### R-20260831-02 FunASR 空转写分账与消费方核实
 
 - 类别：语音
 - 状态：进行中
 - 首次写入：2026-08-31
-- 最近更新：2026-09-10
+- 最近更新：2026-09-14
 - 吸收：R-20260901-02、R-20260902-01、R-20260903-01、R-20260904-01、R-20260901-11
-- 为何现在相关：空转写仍在真机路径上出现。云端钉写 `funasr>=1.4.14`（含 1.4.12 长段 partial、1.4.13 #3591 VAD overrun、1.4.14 默认 8s partial 窗），升钉评估见 R-20260910-01。sidecar SenseVoice 钉 ≥1.3.29。llama.cpp GGUF 空白是另一条路径。**注意钉不在本仓**：`funasr_stt.py` 经 `websockets` 直连 DashScope `fun-asr-realtime`（`services/agent/src/providers/funasr_stt.py:78,116`），`pyproject.toml`/`uv.lock` 都没有 `funasr` 包；sidecar 是服务器上的独立镜像（`SENSEVOICE_URL` 指向，见 `infra/memoria.env.production.example:304`）。
-- 建议下一步：真机按 empty+vendor_error / empty+silent / empty+gating / low_rms 补 receipt。sidecar 空时间轴先核版本。不要为对齐 ASR 终点去拧设备 VAD。Fun-ASR-Nano / GGUF 只可作离线档案回放，不上 ESP32、不替代实时路径。升钉 1.4.15 先看空转写分账与流式 VAD 边界。
+- 为何现在相关：空转写仍需要专项真机证据。`services/agent/src/providers/funasr_stt.py` 经 `websockets` 直连 DashScope `fun-asr-realtime`，`pyproject.toml`/`uv.lock` 没有 `funasr` 包；救援客户端经 `SENSEVOICE_URL` 调独立镜像。仓内 `scripts/run_sensevoice_asr.py` 用 sherpa-onnx，不能把 FunASR 1.3.29/1.4.x 的修复推定为现网已用或必需的升级。
+- 建议下一步：按 empty+vendor_error / empty+vendor_silent / empty+gating / low_rms 补 receipt；核实真实 sidecar 构建与版本后再做相关升级 A/B（R-20260910-01，执行 P1-02）。不要为对齐 ASR 终点去拧设备 VAD。Fun-ASR-Nano / GGUF 不上 ESP32、不替代实时路径。
 - 来源：https://github.com/modelscope/FunASR/releases/tag/v1.4.14 ；https://github.com/modelscope/FunASR/pull/3591 ；https://github.com/modelscope/FunASR/releases/tag/v1.3.29 ；https://pypi.org/project/funasr/1.4.15/ ；https://github.com/modelscope/FunASR/releases/tag/v1.4.15
-- 开发备注：Agent 已有 `funasr_empty_accounting`。2026-09-10 PyPI latest=1.4.15，无 1.5.0；1.4.15 已测 NumPy 2，旧 `numpy<2` 不再是硬约束。新 id 不并入关闭表，待开发评估。
+- 开发备注：Agent 已有 `funasr_empty_accounting`。2026-09-14 已纠正消费方口径；上游 PyPI latest=1.4.15 不证明 DashScope 或救援镜像使用该包。现有分账与空输入恢复保留，剩余是运行来源核验、同条件测试与真实链路验收。
 
-### R-20260910-01 FunASR 钉档评估 ≥1.4.15
+### R-20260910-01 ASR sidecar 可复现构建与 FunASR 1.4.15 适用性
 
 - 类别：语音
-- 状态：待评估
+- 状态：适合做
 - 首次写入：2026-09-10
 - 最近更新：2026-09-14
-- 为何现在相关：PyPI funasr 1.4.15 于 2026-09-09T04:03:45Z 上传（1.4.14 为 2026-09-03）。What's new：已测 NumPy 2 兼容；修流式 KWS/VAD 边界与 checkpoint ranking。Voice Core/Agent 用 FunASR；旧钉 ≥1.4.13/1.4.14 已吸收进 R-20260831-02。1.4.14 时代的 `numpy<2` 护栏不再是硬约束。
-- 建议下一步：评估把云端钉从 `funasr>=1.4.14` 升到 `>=1.4.15`（`python -m pip install -U "funasr==1.4.15"`）。先看空转写分账与流式 VAD 边界，再改约束。不因此改设备 VAD，不上 Fun-ASR-Nano 替实时路径。
+- 为何现在相关：PyPI funasr 1.4.15 于 2026-09-09 上传，含 NumPy 2 测试与流式 KWS/VAD 边界修复；但本仓实时链不是 pip 消费方，SenseVoice 脚本也使用 sherpa-onnx。线上镜像 Dockerfile 尚未入仓，当前首先缺可复现来源，不是缺一个盲升包命令。
+- 建议下一步：先只读核实生产脚本/包/模型与构建输入，并补精确可复现锁定。只有确认线上实际使用低版本 FunASR 才评估 1.4.15；若是 sherpa-onnx，按其自身修复评估，不强行引入 FunASR。验收空转写分类、中文短句/尾字、2.5s 救援上限与降级；完整执行条件见 `TODOLIST.md` P1-02。
 - 来源：https://pypi.org/project/funasr/1.4.15/ ；https://github.com/modelscope/FunASR/releases/tag/v1.4.15
-- 开发备注：2026-09-10 现场核 PyPI latest=1.4.15，无 1.5.0。活工单仍是 R-20260831-02。2026-09-11 更正：本仓不是消费方——实时路径是 DashScope 云 `fun-asr-realtime` websocket（`funasr_stt.py:78,116`），`funasr` 包只可能存在于服务器侧 sidecar 镜像；升钉要改的是服务器 sidecar，不是 `pyproject.toml`，因此**不走** agent-only 快速通道门禁。落地前需先确认 sidecar 镜像的构建来源（HANDOFF 记「Dockerfile 只在服务器该目录，重建不可复现」）。2026-09-14 复核 PyPI latest 仍 1.4.15，无 1.4.16/1.5.0。
+- 开发备注：2026-09-14 官方 PyPI latest=1.4.15；采纳的是「核实消费方并补可复现构建」，不是批准升级/切流。上游 NumPy 2 测试仅覆盖其公布环境，不能外推到未知 Torch/模型组合。sidecar 独立发布；如改主项目依赖，仍必须遵守完整镜像构建门禁。
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
 
@@ -114,28 +114,17 @@
 - 来源：
 - 开发备注：
 
-### R-20260907-01 LiveKit Agents 1.8.0 升级评估
+### R-20260907-01 LiveKit Agents 1.8.1 同组升级评估
 
 - 类别：产品技术
-- 状态：待评估
+- 状态：适合做
 - 首次写入：2026-09-07
-- 最近更新：2026-09-11
-- 吸收：R-20260831-04、R-20260902-02
-- 为何现在相关：PyPI livekit-agents 已有 1.8.1（2026-09-10；含 DuplexModel），细节与 DuplexModel 评估见 R-20260911-01。仓内仍钉 1.6.10。#7064 已随 1.8.0 合并：changelog 写明 NC→默认关 AGC；`AudioInputOptions.auto_gain_control` 为 `NotGivenOr[bool]=NOT_GIVEN`，省略时若已配 noise cancellation 则 AGC 关。GitHub 索引页曾误显示 open，以 tag / 源码为准。#7104 是 OTel/PII 破坏性变更。文档仍默认打断/抢跑为开。陪伴感靠 generation fence 丢掉 thinking 中的旧 generation，不靠抢话。
-- 建议下一步：仍先评估 1.6.10→1.8.0（或经 1.8.0 再到 1.8.1），核 traces 是否还带对话原文，以及 redaction 与现有低基数 telemetry 是否冲突。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。不要开 `user_turn_limit` 或 `expressive=True`。#7064 不是开 barge-in 的理由。
-- 来源：https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0 ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.1 ；https://pypi.org/project/livekit-agents/1.8.1/ ；https://github.com/livekit/agents/pull/7064 ；https://github.com/livekit/agents/pull/7104 ；https://docs.livekit.io/reference/agents/turn-handling-options/ ；https://pypi.org/project/livekit-agents/
-- 开发备注：2026-09-10 复核 #7064 = merged in 1.8.0（merged_at 2026-08-31）。不要再写「仍 open」。1.8.1 + DuplexModel 另钉 R-20260911-01，不并入本条。
-
-### R-20260911-01 LiveKit Agents 1.8.1 / DuplexModel 评估（不上线宣称全双工）
-
-- 类别：产品技术
-- 状态：待评估
-- 首次写入：2026-09-11
 - 最近更新：2026-09-14
-- 为何现在相关：PyPI livekit-agents 1.8.1 于 2026-09-10T18:59:28Z 上传；GitHub release livekit-agents@1.8.1 published 2026-09-10T21:26:43Z。相对 1.8.0：新增 DuplexModel（full-duplex speech models），首个实现 OpenAI GPT-Live；另有若干 voice/telemetry/TTS pool/false-interruption resume 测试修复。仓内仍钉 1.6.10；R-20260907-01 仍是 1.8.0 升级评估。memoria 当前协商上限 `interrupt_assist`、对外 `advertised_duplex_level=none`、`full_duplex_verified=false`——云侧出现 DuplexModel 不等于设备侧可宣传全双工。
-- 建议下一步：评估 1.6.10→1.8.1（或先 1.8.0 再 1.8.1）时把 DuplexModel 标为实验观察，不接生产会话路径；LiveKit 设备路径继续 `interruption.enabled=False` + `preemptive_generation.enabled=False`；不要因 DuplexModel 打开 `user_turn_limit` / `expressive=True` / 宣称全双工。VoiceMem 插件仍要求 `livekit-agents<1.8`，不能用 1.8.1 当 VoiceMem 升级借口。
-- 来源：https://pypi.org/project/livekit-agents/1.8.1/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.1 ；https://docs.livekit.io/agents/models/realtime/#full-duplex
-- 开发备注：与 R-20260907-01 并存；本条专钉 1.8.1 + DuplexModel。不把云侧 duplex API 写成 VoCat T1–T14 已通过。2026-09-14 复核 PyPI latest 仍 1.8.1，无 1.8.2/1.9.0；DuplexModel 仍只作实验观察，不宣称全双工。
+- 吸收：R-20260831-04、R-20260902-02、R-20260911-01
+- 为何现在相关：官方 1.8.1（2026-09-10）含连接池/会话关闭/音频计量与资源清理修复。仓内 Agents/OpenAI/Silero 均 1.6.10；候选三者同为 1.8.1，RTC 必须 1.1.18，API 1.2.1 还会推进 protocol 约束。需要读中间版本说明，但不需要先部署 1.8.0。收益要在本项目实测，不能承诺解决现有 ASR/硬件问题。
+- 建议下一步：统一为 `TODOLIST.md` P1-01 的本地兼容性→完整镜像→独立上线验收。LiveKit 侧保留 dispatch metadata→`controlled_half_duplex_session`，设备 Voice Core 侧保留 `audio_mode` 派生逻辑；兼容半双工路径禁打断、默认 preemptive 关闭。验证 TypedDict 字段实际被消费，不能只测构造成功。#7104 将对话 event 改 attributes，并变更 span/计量；内容采集与 PII 默认仍开启，要显式禁内容/PII并验证实际 exporter 不泄漏。
+- 来源：https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.0 ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.1 ；https://pypi.org/project/livekit-agents/1.8.1/ ；https://github.com/livekit/agents/pull/7064 ；https://github.com/livekit/agents/pull/7104 ；https://docs.livekit.io/reference/agents/turn-handling-options/ ；https://pypi.org/project/livekit-agents/
+- 开发备注：2026-09-14 已核官方包元数据与本仓消费点。#7064 于 2026-08-31 合并并随 1.8.0 发布；本仓 RoomIO 显式 `auto_gain_control=True`、未配置 NC，所以「NC 时默认关 AGC」不改变现有行为。1.8.1 的 DuplexModel 只观察，不接生产；禁止搭车开启 `user_turn_limit`、`expressive=True`、TurnPhase 副作用或放行设备语音打断。`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=0` 与 `LIVEKIT_TELEMETRY_ALLOW_PII=0` 需结合实际导出测试；锁变化不走 agent-only overlay。
 
 ### R-20260907-02 VoCat AEC / barge-in 真机未验
 
@@ -168,25 +157,25 @@
 - 首次写入：2026-09-09
 - 最近更新：2026-09-14
 - 为何现在相关：VoiceMem（v0.0.2）是实时语音智能体的记忆检索层：左脑事实、右脑人格/情绪笔记，ingest 抽事实、search 把 Top-K 注入回复。宣传 LoCoMo ~91%、PersonaMem ~69%、检索 ~134ms、每轮约 300–430 memory token。它不能替代 Memoria 的对话档案。与已落地的 Dense-Mem confirm/trace（原 R-20260831-07）同族：增强现有 catalog / persona / recall，不换栈。当前工单仍是 VoCat interrupt_assist，本条另轨。第三方 `livekit-plugins-voicemem` 0.2.2（PyPI 2026-09-01）是 pgvector 记忆插件，要求 `preemptive_generation` 关，且声明 `livekit-agents<1.8`，与仓内要评估的 1.8.0 / 现已发布的 1.8.1 仍不兼容。
-- 建议下一步：不 pip install voicemem / livekit-plugins-voicemem、不克隆、不接音频。只喂已 commit 且 `history_eligible=true` 的主人文本；输出只能当候选 Memory Claim。硬约束见 R-20260909-04。长程三项已过，但整体 `recall@5` 仍 0.8125（其余无共享词转述，如「避开」≠「香菜」）；不要开工预取、双通道注入或平行记忆库。新零重叠句式先加评测再扩封闭词表。
+- 建议下一步：不 pip install voicemem / livekit-plugins-voicemem、不克隆、不接音频。只喂已 commit 且 `history_eligible=true` 的主人文本；输出只能当候选 Memory Claim。硬约束见 R-20260909-04。先修整体 `recall@5=0.8125` 的遗漏与人物抽取（`TODOLIST.md` P1-06）；已有预取/分流不是零，不再新增平行记忆库或缓存链。
 - 来源：https://github.com/xzf-thu/VoiceMem ；https://xzf-thu.github.io/VoiceMem/ ；https://arxiv.org/pdf/2608.26005 ；https://pypi.org/project/livekit-plugins-voicemem/0.2.2/
 - 开发备注：2026-09-09 只读评估。LICENSE Apache 2.0；捆绑模型另有许可。左脑底层 Mem0 + 本地 Qdrant，默认不是多进程安全的生产 catalog。2026-09-10：插件版不能当升级路径，也不用来换 PG/MinIO 档案栈。同日扩 `memory_eval_zh_v1` 并让评测查询走生产 RecallPlanner。同日在 `RecallPlanner` 加封闭 rewrite（不改 archive、不设 entity 过滤）：「小朋友/小孩子/孩子」扩 `儿子/女儿` 及已确认子女别名；「难受/不开心/伤心/委屈」扩 `难过`；「小朋友」不误匹配「朋友」。`memory_eval_zh_v1`：跨会话 / 转述追问 / 安慰 `recall@5` 均为 1.0；隔离/候选泄漏仍 0；整体 `recall_at_5=0.8125`、`ndcg_at_10≈0.734`。抽取器仍抽不出「我儿子小周对猫毛过敏」的人物，所以转述靠词表而非实体。不引入 Mem0。2026-09-11：`livekit-plugins-voicemem` 0.2.2 仍声明 `livekit-agents<1.8`，与 1.8.1 仍不兼容；不因此换栈。2026-09-14：插件仍 0.2.2 / `livekit-agents<1.8`；仍禁止换 PG+MinIO 档案栈。
 
 产品拆两层，默认只做第一条：
 
-1. 记住用户（了解你）：从主人权威对话抽出稳定事实、关系、近期事件。对应 memory catalog（life_story / daily_life / 人物关系 / episode），candidate → confirmed；实时只把 confirmed 打进 MemoryContextClient。
+1. 记住用户（了解你）：从主人权威对话抽出稳定事实、关系、近期事件。对应 memory catalog（life_story / daily_life / 人物关系 / episode），candidate → confirmed；实时仅允许 confirmed 进入既有上下文路径，不把未消费的 MemoryContextClient 写成运行权威。
 2. 模仿用户（变成你）：口癖/句长/语速走 persona 胶囊；数字分身走 Companion / Self Preview，须披露「授权模拟，不能替本人作决定」，模拟输出不得反哺主人证据。VoiceMem 右脑是给模型看的内部笔记，不是分身引擎。
 
 「像正常人对话」不是第三块记忆库：日期是运行时上下文，查询是工具，关联旧事才要证据档案 + recall。安慰分三层——当轮 `emotion_observation`、persona 表达习惯、「上次你很难过」才是记忆 claim。合成一块右脑图会把当天心情写成性格。
 
-现有权威链不得拆：EvidenceEvent / ArchiveSink / PG + MinIO；主人历史只消费 `history_eligible=true`；事实走 extractor + write policy + catalog；召回走 RecallPlanner + `catalog.context(confirmed_only=true)`（超时 0.3s，最多 8 条）；说话方式走 persona；当轮情绪走 `emotion_observation`；guest / uncertain 不进主人历史、私人记忆和工具。`memory_eval_zh_v1` 已覆盖跨会话 / 转述追问 / 安慰召回；日历窗与封闭 rewrite 已过这三项，其余无共享词转述仍可能漏。
+现有权威链不得拆：EvidenceEvent / ArchiveSink / PG + MinIO；主人历史只消费 `history_eligible=true`；事实走 extractor + write policy + catalog；召回走 RecallPlanner + `catalog.context`（`include_candidates=false`，最多 8 条）；说话方式走 persona；当轮情绪走 `emotion_observation`；guest / uncertain 不进主人历史、私人记忆和工具。活跃预取的 HTTP 超时来自 ResponsePlannerClient 的有效 `MEMORIA_RESPONSE_PLAN_TIMEOUT_S`（代码默认 0.8s），不是未消费 MemoryContextClient 的 0.3s；实施时核现网覆盖和服务端超时，不把默认值当 SLA。`memory_eval_zh_v1` 已覆盖跨会话 / 转述追问 / 安慰召回；日历窗与封闭 rewrite 已过这三项，其余无共享词转述仍可能漏。
 
-后续四步（均在现有栈上）：
+2026-09-14 代码核销与剩余工作（均在现有栈上）：
 
-1. 说话过程中 query-conditioned 预取。在主人 partial / 即将 final 的转写上调用 RecallPlanner + `catalog.context()`，写入 MemoryContextClient 缓存。失败沿用旧缓存或空；不准改 archive、不准挡热路径、不准用 guest/uncertain 文本查询。
-2. 双通道注入 + 硬 token 预算。事实走记忆块；人格/情绪走独立块，只塑造语气，禁止念给用户听。把「最多 8 条、snippet 上限 4000 字」收成可观测的 memory-token 上限。
-3. 长程评测，不换引擎。跨会话 / 转述追问 / 安慰召回已进 `memory_eval_zh_v1`，三项 `recall@5=1`。整体 `recall@5` 仍 0.8125，因此第 1、2 步暂不开工。
-4. 可选：若第 3 步显示「问人问时间仍搜成语义大杂烩」，再加强 slot/entity 路由，仍落在 `catalog.search` 的 filter，不引入 Mem0。
+1. 已有 VAD 期 query-conditioned 预取：`agent.py` → `duplex_runtime.py` → `routes/interaction.py`，内部用 RecallPlanner + confirmed catalog。事实与 `persona_trait` 也已分流。独立 `MemoryContextClient` 构造后未消费；先追踪并明确一条权威路径，不能再从零造预取。
+2. 未完成的是硬 memory-token 预算、可观测裁剪与缓存隔离/失效；条数上限不等于 token 上限。换主体不能沿用旧私有缓存，guest/uncertain 不准发私人查询。执行 P2-01，依赖召回遗漏先修。
+3. 同日本地重跑 16 例：长程三项 `recall@5=1`，整体仍 0.8125。具体 miss 为 `paraphrase-food-preference`、`person-alias-mother`、`repeated-episode-campus-startup`；先加未见改写/反例再扩封闭规则，不靠改评测答案提高分数。
+4. 人物抽取仍漏「我儿子小周对猫毛过敏」「阿梅是我妈妈」；沿原 extractor/write policy 修 person 与属性 claim，保留 candidate→confirmed。只有评测证明必要才扩实体路由，不引入 Mem0。
 
 验收：相关 memory_eval / catalog 单测；prompt 注入有 token 或条数上限的回归；实时路径超时失败可降级。真机「记得上周那件事」另开设备验收。
 
@@ -220,9 +209,9 @@
 - 类别：产品技术
 - 状态：进行中
 - 首次写入：2026-09-11
-- 最近更新：2026-09-11
-- 为何现在相关：2026-09-11 用户要求「上传或录制声音后，尽量在一分钟内完成检验，并且前端要有友好告知或检验进度」。只读核查发现三件事与要求直接冲突：① 消费端（小程序）的「检验」是**写死的常量**——`services/control_api/app/routes/voice.py` 的 `_ready_profile_for_device()` 无条件调用 `manager.evaluate(similarity=4.0, …, candidate_preferred=True)` 与 `record_quality_measurement(first_audio_ms=800, …, long_sentence_completion_ratio=0.99)`，从不测量用户上传的音频，写库即 `evaluation_status=passed` / `quality_status=passed`；② 上传是**一个最长 120s 的阻塞请求**，前端只有一句静态文案、**从不轮询**，离开页面即断，且 provider 提交后失败会落成 `reconciliation_required`，重试必然 409，用户「再试」永远失败；③ 唯一的真校验是 `VoiceEnrollmentRequest.__post_init__` 的形状检查，`duration_ms`/`sample_rate` **由客户端声称**——测试 `test_ready_for_device_enrollment_activates_without_in_app_ab` 用一段假 RIFF 头 + 声称 12 秒即拿到 `status=active`。
-- 建议下一步：已落地（见开发备注）。剩余：真机/真 provider 量一次端到端耗时，确认「一分钟」承诺是否成立；若 provider 常态超过 60s，应改对客文案而不是放宽 `over_budget`。
+- 最近更新：2026-09-14
+- 为何现在相关：用户要求上传/录制后尽量一分钟内检验，并显示真实进度。过去的写死评估、伪样本放行与无轮询已由样本实测校验、failed 硬否决和数据库进度替代；当前缺的是线上版本对齐与真 provider/设备端到端耗时证据，不是重新实现这些功能。
+- 建议下一步：按 `TODOLIST.md` P1-04 核实际部署、异常/取消/撤销，再量上传到设备可听的总耗时；60s 对客预算与 120s provider 上限分开记录。若常态超过 60s，改文案或优化实际瓶颈，不放宽样本校验/over_budget。
 - 来源：仓库内证据为主
 - 开发备注：2026-09-11 已实现。**本地体检验真**：新增 `services/voice_profile/sample_validation.py`，用 PyAV（既有依赖 `av>=18`，与 `services/device_media_gateway/opus.py` 同一路解码）解出单声道 float32，量真实时长、采样率、声道、RMS/峰值 dBFS、削波占比、静音占比、有效人声时长、直流偏移；实测 15s WAV 7ms、15s MP3 4ms、60s WAV 15ms——**体检从来不是那一分钟的瓶颈**，瓶颈在 provider 克隆。判定阈值：≥10s、≤60s(+2s 容器余量)、≥16kHz、RMS ≥ −45 dBFS、有声 ≥8s、削波 <5%；不合格在**写入任何记录之前**抛 `VoiceSampleRejectedError`，路由翻成 422 + 中文可行动文案（`sample_copy.py`）并带 `X-Memoria-Voice-Rejection` 头。**判据改真**：新增 `voice_profiles.sample_validation_status` 与 `voice_sample_validations` 证据表（sqlite + postgres，双写），写死的 evaluate/quality 已从消费端移除；放行由单一函数 `voice_profile_delivery_admitted()` 决定——样本实测通过，或（A/B 评估通过 ∧ 质量测量通过）；任一项显式 `failed` 一律否决。这同时堵住了一个既有缺陷：小程序每次进「我的」页都会对 `candidate` 调 ready-for-device，会把**已被判失败**的评估翻成 `passed` 并激活；现在 `failed` 是不可覆盖的否决（回归测试 `test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read`）。**进度可续**：`POST /v1/voices/enrollments`（`ready_for_device=true`）改为立即返回 `enrolling` 并在后台任务里跑 provider；进度由**数据库状态推导**（`services/voice_profile/enrollment_progress.py`），不做请求内跟踪，因此刷新/离开/换端都能恢复；阶段 queued→cloning→activating，`over_budget` 在超过 `PROMISED_TOTAL_MS=60s` 后置真，前端据此撤掉「一分钟」措辞。`ready_for_device` 的 POST 仍在 45s 内直接等到 active（`_COMPLETION_WAIT_S`），超时返回真实在途状态而不是报错。前端（小程序 `pages/profile`）由子代理完成：2s 轮询、进度条、`stage_label` 原样渲染、终态不显示进度块、卸载清理定时器并加代际计数防迟到结果重新武装定时器。**测试**：`services/voice_profile/tests/test_sample_validation.py`(10)、`test_enrollment_progress.py`(5)、`test_manager.py`(13) 全绿；`services/control_api/tests/test_voice_profile_api.py`(21) 全绿；小程序 `node --test`(223) 全绿。**遗留**：未在真机/真 provider 上量端到端耗时；`MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S=120` 仍是 provider 侧上限，与 60s 对客承诺是两个量，未改。
 
@@ -319,10 +308,10 @@
 - 类别：产品技术
 - 状态：进行中
 - 首次写入：2026-09-06
-- 最近更新：2026-09-11
+- 最近更新：2026-09-14
 - 吸收：R-20260902-03
 - 为何现在相关：小程序是控制面，不承诺微信实时语音（原 R-20260831-14 已完成）。账号级设备发现已上传开发版；偏好保存、下拉刷新与 Wi-Fi 列表滚动已完成。设备侧已有 idle / listening / speaking，小程序会话态未对齐。
-- 建议下一步：只剩一项——同微信手机/电脑/开发工具三端验收（现场状态见 `HANDOFF.md`）。`app.json` 的 `scope.record` / RecorderManager 与服务端允许的自定义音色样本范围一致（`apps/miniprogram/tests/no-realtime-media-gate.test.js` 已钉住「仅 profile 页可用」），不再是冲突项，无需删除。
+- 建议下一步：剩余包括服务端权威会话态投影、小程序消费、按使用人分配入口（R-20260911-05）与同微信手机/电脑/开发工具三端验收，不是只验 UI。执行见 `TODOLIST.md` P1-03～05。`scope.record` / RecorderManager 仅限 profile 页自定义音色样本，既有门禁保留；不恢复实时媒体或手机声纹登记。
 - 来源：
 - 开发备注：2026-09-11 逐项对代码核销——`bind` 的 `familyName`/`familyDrafts` 确实不进请求体（`apps/miniprogram/tests/bind-flow.test.js:355` 断言，理由是「家庭名称与其他成员可以稍后添加」）；`_savePreference` 已有成功/失败双向 toast（`apps/miniprogram/pages/profile/index.js:731`）；下拉刷新 5 个页面各自 `enablePullDownRefresh: true` 且都有 `onPullDownRefresh` handler；Wi-Fi 列表已可滚动（`apps/miniprogram/pages/device-onboarding/index.wxss:58-59` 的 `max-height: 360rpx; overflow-y: scroll`）。所谓「家庭邀请」是另一个概念，已移到 R-20260911-05。HTML 原型 `apps/miniprogram/design-preview/memoria-mobile-redesign.html` 仍不是生产小程序。
 
@@ -331,11 +320,11 @@
 - 类别：产品技术
 - 状态：进行中
 - 首次写入：2026-09-11
-- 最近更新：2026-09-11
-- 为何现在相关：2026-09-11 用户明确产品方向——主人初始化后把设备给指定的人用（自己 / 父母 / 子女），机器人随使用人切换人格与音色（孩子用：温柔亲切、关心陪伴；老人用：沉稳、多问候身体、聊过去；自己用：知心朋友），使用者不需要再看小程序。这不是「邀请家人共享设备」，是**同一设备的按人切换**。骨架已在，但三条成熟管线互相没有连线。
-- 建议下一步：先在 Control 侧建最小闭环，不碰固件（音色是服务端下发 Opus、人格是 prompt 段，两者都不需要设备改动）：(1) 新增 `(binding, subject_id) → persona` 分配实体，替换 `ProfileAuthority.persona()` 里 `del subject_id` 的行为；(2) 音色归属从 account 级改为 subject 级（需放开 `voice_profiles` 的一账号一 active 唯一索引）；(3) 让 `switch_active_subject` 触发 runtime profile ledger 推进与 Edge `runtime_profile.invalidated`，使在线设备在安全点重协商；(4) 小程序补「设备与成员」页（`bind/index.wxml` 已承诺但页面不存在），邀请关系走后端**已有**的 `/v1/relationships/invites`。**不要**现在做「自动认人切换」——那需要多家庭成员声纹，当前架构不支持。
+- 最近更新：2026-09-14
+- 为何现在相关：2026-09-11 用户明确同一设备按指定使用人切换人格与音色，最终使用人无需操作小程序；这不等于家庭邀请。当前服务端分配、自定义人格和音色归属已实现，剩余是控制入口、运行版本对齐、安全点重协商与真机实听，不能重开已完成后端。
+- 建议下一步：执行 `TODOLIST.md` P1-03，先以 app_confirm 手动指定打通端到端：补小程序「设备与成员」与分配写入、核线上 Control/schema、验证切主体与取消分配回落。修正 advertised `voice_question` 与写接口只接受 `app_confirm` 的矛盾，暂不宣传未实现确认方式。多成员声纹/设备选人单列 P2-02；自动认人仍需独立身份与同意前提。人格文本和音色由服务端生效，设备不持有 persona 本体不是缺陷。
 - 来源：仓库内证据为主，见开发备注
-- 开发备注：2026-09-11 只读探查（未改代码）。**已有的地基**：多主体绑定模型（`services/identity/domain.py:732` 的复数 `primary_subject_ids`、roles、`family_space_id`）；事后改绑端点 `POST /v1/devices/{device_id}/binding/supersede`（`services/control_api/app/routes/identity_lifecycle.py:449`，请求体支持 `primary_subject_ids`）；会话内切主体端点 `POST /v1/sessions/{session_id}/active-subject` + 权限矩阵（`multi_subject.py:635`、`multi_subject_runtime.py:510`）；RuntimeProfile 已携带 `active_subject_id`/`subject_category` 且有签名与 fence 校验（`services/agent/src/runtime_profile.py:99`）；人格→system prompt 的单一接缝已能渲染 `【人格】`（`services/agent/src/prompt_composition.py:369,424`）；音色解析/下发全链路（`services/agent/src/agent_voice_profile.py:63`）；配置变更→版本推进→Edge 通知设备→安全点重协商的完整握手（`services/control_api/app/device_control.py:133`、`services/media_edge/device_ws_server.go:261`、`firmware/.../memoria_protocol.cc:1526`）；固件激活清单已定义 `persona_assignment_id`/`primary_subject_display_name`/`robot_name`（只校验不消费）。**完全没有的四块**：① person→persona 映射为零（`services/session_runtime/profile_service.py:293` 的 `persona()` 直接 `del subject_id`；persona 钉在 binding，`supersede` 还强制继承）；② person→voice 映射为零且架构不允许（`services/voice_profile/postgres_schema.sql:87` 的 `idx_voice_one_active` 限制一账号一 active，全表无 person/subject 列；RuntimeProfile 无 voice 字段）；③ 多家庭成员声纹为零（`services/speaker/authority.py:350` 的 identity 由 account 派生 uuid5，注册语句 `:372` 写死 `owner`，无 guest enrollment 路径，因此无法辨别「是谁」）；④ 设备端选人交互与协议为零（`memoria_protocol.cc:1526` 明写设备不持有 persona 数据；四个物理输入 BOOT 短按/长按、点屏、拍打没有一个与选人相关；无语音指令；协议无 persona/subject 消息）。**两个半成品**：小程序无「改用途/换主体/加成员」入口（`supersede` 端点存在但无人调用，`getDeviceBinding` 已定义但无页面调用，`familyDrafts` 收集了不进请求体）；`voice_question` 确认方式在 `allowed_confirmation_methods` 里返回给客户端却**被服务端拒绝**（`multi_subject.py:158` 只允许 `app_confirm`），即「使用者在设备上语音确认自己是谁」这条路是空的。**约束**：人格与设计音色在 companion 目录里强耦合（`services/common/companions.py:31,154`），换 persona 天然换音色，这是目前唯一「人格+音色成对切换」的机制，但它绑 binding 而非 subject。合规上仍走 R-20260901-08：家庭邀请只给控制面权限，写档案仍要设备端 owner 声纹；`reject_non_owner_voice` 不得放宽。**2026-09-11 拍板（决定 01，落在 `outputs/design/persona-switch-20260911/decision-01-persona-catalogue-freeze.md`）**：内置人格只读（只能选、不能改文本与音色）；自定义人格可自定义文本与音色，**创建即冻结，要改只能再创建一个**；一账号可建多个自定义人格并分别分配给不同使用人；自定义音色沿用「绑自己的克隆声音、未就绪回落设计音色」。**进度**：增量一 T01 已完成（2026-09-11）：`services/identity` 建表 + service/store/协议三层 CRUD，`action_identity_lock_binding` 新增 `persona_assignments`，`_LockedBinding.persona_for(subject)` 与 `InMemoryRuntimeAuthority.persona(binding_id, subject_id)` 是唯一的解析顺序（subject 覆盖 → binding 默认 → 全局兜底）。真 PG 上已验：同一 binding 两个 subject 解析出两个不同人格，去掉该解析即回落到 binding 默认（红→绿）。T02–T05 未开始。自定义人格实体化属增量二，尚未开工，且此前从未进入任何文档口径。
+- 开发备注：2026-09-14 按代码核销。`services/identity/postgres_schema.sql` 已有 `identity_persona_assignments` / `identity_custom_personas`；`routes/persona_assignment.py`、`routes/custom_personas.py`、`session_companion.py` 与相关 API/readend 测试已存在，旧「只完成 T01、T02–T05/增量二未开始」作废。`profile_service.py` 解析顺序为 subject 覆盖→binding 默认→全局兜底；voice schema 已用 `custom_persona_id` 与部分唯一索引替代旧账号级单 active，所以归属是 person→persona→voice，不能再按旧索引重建。边界保持：内置人格只读；自定义创建即冻结、改动须新建；绑定本人克隆声音，未就绪回落设计音色。小程序目前只读显示，尚未调用 persona-assignments 写接口；线上 Control 是否部署全部新代码需独立核验。失效通知与安全点重协商已有代码，真实在线切人验收待补。`speaker/authority.py` 仍只写 owner，无逐人 guest 登记；设备端选人体验仍未实现。邀请/指定使用人不赋予 owner 声纹权限。
 
 ### R-20260907-03 SiphonAI 可借鉴协议工程，不换栈
 
@@ -391,3 +380,4 @@
 | R-20260901-11 | 并入 R-20260831-02：Nano/GGUF 只作离线档案回放。 |
 | R-20260902-02 | 并入 R-20260907-01。 |
 | R-20260902-03 | 并入 R-20260906-01：设备侧三态已有，小程序会话态未对齐。 |
+| R-20260911-01 | 并入 R-20260907-01：统一评估 1.6.10→1.8.1；DuplexModel 不接生产，不作为设备全双工证据。 |
