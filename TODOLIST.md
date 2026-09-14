@@ -56,6 +56,8 @@
 ### [ ] P0-03 收口当前语音缺陷，建立升级前对照基线（真机时段已就绪待约）
 
 - 就绪状态（2026-09-14 17:00 CST）：板子在线（WiFi 192.168.8.142、Activation v3、唤醒词茉莉、idle），串口空闲，捕获工具需 `uv run --no-project --with pyserial --with esptool`（项目 `.venv` 无 pyserial/esptool），服务端 readiness ready。会话计划与 11 个场景、判据、分段安排见 `outputs/acceptance/run-20260914-p0-03-voice/session-plan.md`；逐轮原始数字由 `scripts/voice_session_report.py` 产出。**操作要点**：打开串口会让板子重启，每段捕获开头约 10 秒启动，须等 `activating -> idle` 再说话。设备端固定安全话术（P0-04 场景 10）与屏幕照片（场景 11）借用同一时段。
+- **真机第一段已完成（2026-09-14 17:05–17:11，epoch 1946，会话 `90f1dcf4`）**：时延全部达标——问候 0.990s、`commit→首帧` 0.394/0.395/0.440s、`ACK 播完→正文首帧` 0.420s/0.319s（**上一轮 1.766s 未复现**）；告别经 `conversation_end_explicit` 后 30ms `speaking -> idle`、无静音超时。**但发现一个真缺陷**：用户只提问一次「第二天天气」，系统提交了**两个用户轮次**（`turn 3 text_len=27 @09:07:03.39`、`turn 4 text_len=20 @09:07:07.20`）；turn 4 的文本来自同一次提问音频的离线救援转写（`funasr segment rescued offline text_len=20`），先被 supervisor 以 `straddles_committed_without_timing` 拒绝（stage=preview），1.5s 后仍提交为新轮次并取消 turn 3 尚未播出的正文（`preempted/output_task_cancelled`、首帧未发），用户听感为「连说三次稍等、第一遍答案丢失」。既有 `media duplicate media turn skipped` 只比文本相等（27≠20 未拦住）。证据 `outputs/acceptance/run-20260914-p0-03-voice/session-1/`（`report.txt`、`findings.md`）。**本项判据「有效答案不静默丢失」当前不通过。**
+- 待补场景（第二段）：ACK 播完沉默 5 秒的空输入恢复、独立短问答、慢查询单轮第二提示、长天气 >45s、屏幕待机与五表情照片、学生安全话术。
 - 进度（2026-09-14）：**本地对照基线已建立**——`test_media_session.py` 200 passed、`test_duplex_runtime_wiring.py` + `test_utterance_router.py` 191 passed（证据 `outputs/acceptance/run-20260914-p0-03-local-baseline/`）。ACK 后空输入恢复、旧查询不回流、同问重复不重复提示、空转写处理均有既有回归并通过。
 - 剩余阻塞：真机时序与听感需要操作员在场（说完到开口、ACK→正文纯静音间隙、慢查询第二提示、长天气 >45s、终端播放回执），板卡在线但本轮未做声学/听感验收；上一轮实测 ACK→正文为 0.366s/1.766s，第二轮仍超 1.5s。本地全绿不能替代真机证据。
 - 原因：当前已部署修复仍缺空输入恢复的专项真机时序，且 9 月 13 日一轮 ACK→正文纯静音为 1.766s，未过现有 1.5s 标准。
