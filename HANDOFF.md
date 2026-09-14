@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-14
-resume_checkpoint: vocat_aec_candidate_pushed_manual_device_reset_required_20260914
+resume_checkpoint: wake_greeting_playback_vad_fix_app_only_flashed_real_device_retest_pending_20260914
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -35,11 +35,20 @@ empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback
 empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
 weather_user_acceptance_date: 2026-09-13
 farewell_immediate_standby_verified: false
-firmware_playback_capture_code: clean_build_and_203_targeted_tests_pass
+firmware_playback_capture_code: clean_build_and_esp32_host_tests_pass
 firmware_playback_capture_wired: resolved_device_aec_and_board_compile_gate
-firmware_playback_capture_enabled: false_pending_manual_device_reset_and_app_only_flash
-firmware_playback_capture_verified: build_config_only_device_acceptance_pending
-firmware_playback_capture_evidence_at: 2026-09-14T10:08:20+08:00
+firmware_playback_capture_enabled: true_app_only_flashed_20260914T1506CST
+firmware_playback_capture_verified: app_full_readback_identity_and_non_app_partitions_unchanged_boot_idle
+firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
+wake_ack_playback_vad_fix_code: complete
+wake_ack_playback_vad_fix_wired: session_accepted_signed_allowed_barge_in_gate
+wake_ack_playback_vad_fix_enabled: true_app_only_flashed_20260914T1506CST
+wake_ack_playback_vad_fix_verified: boot_and_partition_integrity_only_greeting_retest_pending
+wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:07:14+08:00
+on_device_app_sha256: b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6
+on_device_app_elf_sha256: 7eb96fe19f275e3e0493073fd42aeca281bbce8b568b75d961b9aabbb5b605b7
+on_device_app_compiled_at: 2026-09-14T14:59:34+08:00
+nearest_rollback_app_sha256: 6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -57,6 +66,8 @@ idle_tap_pat_operator_verified: true
 `full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序不申请 `scope.record`，也不承担实时媒体回滚职责。
 
 当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷；Agent 依次切过 `20260910-1011` → `20260910-1526` → `20260910-1820`。
+
+2026-09-14 补充：板卡侧新增「按签名策略决定是否在播放期上报 VAD」的把关（commit `bdf2047`），修掉唤醒问候回声触发的越权 `vad.start` 断链。该把关只收窄设备行为，不放宽任何门禁；`allowed_barge_in` 仍以服务端签名为准。
 
 2026-09-14 USB 对照（`outputs/acceptance/run-20260914-0925-usb-goodbye/`）：epoch **1936** / session `0615d48c-3bdf-4a6c-a7c6-7543f4ffd96b` 播完告别走 `conversation_end_explicit`，随后串口回 idle；epoch **1937** / session `f216e1e0-1bfa-41b8-a259-457d0f2df2eb` 播放中告别却无 Speaking 期设备 VAD，仍报 `playback_completed`，播后三段空 ASR 后靠 `owner_silence_timeout` 关闭。Edge 09:29:08.032 关闭、串口 09:29:08.037 idle，只说明日志对齐没有秒级 UI 残留，不能当作物理屏幕延迟 5 ms。
 
@@ -84,6 +95,22 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 已刷入，真机问候复测待定论）
+
+现象：唤醒后机器人播放欢迎语「哎呀」，播到第一个可播放下行帧后约 20~30 ms 内设备 WebSocket 断开，屏幕进「连接中」，随后按 `1/5…5/5` 退避重连；重连后再次播放同一问候又断，最终由服务端 `owner_silence_timeout` 收尾。用户侧表现为「说了句哎呀就连接中了」——那句「哎呀」是机器人自己播的，不是用户说话。
+
+根因（单一决定性证据）：Direct Edge 对播放窗口内的 `vad.start` 做越权校验，`isPlaybackActive() && !bargeInSourceAllowed(AllowedBargeIn, "voice")` 时不转发该事件，先发 `session.error` 再关连接。生产库 `device_settings` 里该设备（`dev_atk_a4cb8fd6095c`，settings_version=22）的签名策略是 `allowed_barge_in=["button","keyword"]`，**不含 voice**；板上 AEC 参考未验证（`aec_reference_verified=false`、`aec_mode=fd_low_cost`），播放「哎呀」时的自身回声（串口 `rms=0.0474`）被设备当成人声上报，正好命中该分支。证据：
+
+- 串口 `outputs/acceptance/run-20260914-aec-fix/retest-2/serial.log`：13:05:12.654 `Device VAD start at sample=32640 rms=0.0474` → 13:05:12.677 `Device WebSocket disconnected attempt=1` → 13:05:12.706 `speaking -> recovering`。
+- Edge `outputs/acceptance/run-20260914-aec-fix/retest-2/edge.log`：同一 session/device 连续三次 `WSS handler rejected … kind=text`（epoch 1941/1942/1943），最后由 `owner_silence_timeout` 关闭——静音超时是断线后的结果，不是根因。
+- 设备签名策略只读读取：`outputs/acceptance/run-20260914-1510-wake-ack-vad/device-settings.txt`（经 ssh 在 control-api 容器内以 `mode=ro` 打开 SQLite，未改任何数据）。
+
+修复（commit `bdf2047`，已推送）：固件在 `session.accepted` 解析签名 `allowed_barge_in`，落地 `voice_barge_in_allowed_`；`SendVadState(true)` 在 `HasActivePlaybackGeneration()` 为真且策略未放行 voice 时本地抑制并打告警，播放结束后的普通聆听 VAD、`vad.end` 与物理硬停路径不变。overlay patch 0024 的把关条件补上 `VoiceBargeInAllowed()`，`ResetSessionState()` 清除该标志；回归断言加在 `firmware/esp32/tests/test_memoria_protocol_source.py`。
+
+验证边界：clean build + `check-overlay.sh` + `firmware/esp32/tests/` 全通过；app-only 只写 `0x20000`，写后全片回读字节一致，identity/NVS/otadata/bootloader/分区表/phy-init 未变，assets 与 ota_1 的 MD5 未变；启动进入 idle。**真机问候听感与后续双轮尚未复测**，故 `direct_real_device_verified` / `full_duplex_verified` 仍为 false。
+
+已知策略边界（不是本次缺陷）：签名策略未放行 voice，因此**播放途中用说话打断仍不会生效**——机器人会把当前句播完再回聆听，物理按键硬停不受影响。要放开需先让 AEC 参考通过验证（`device_acoustic_capabilities.aec_verified`）再升 `full_duplex_verified`，或显式把 `voice` 加入 `allowed_barge_in`；后者在 AEC 未生效前会让机器人把自己的声音识别成用户。
 
 ## 2026-09-13 天气提示后无声修复（23:35:36 CST 已切流，两次正文听感已确认，告别即时待命未通过）
 
@@ -133,7 +160,8 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过：播放期无 VAD，播后空 ASR，最后静音超时。AEC 候选 `76ba6ad` 已推送但 USB 阻塞，尚未刷机复测 |
+| 唤醒问候不掉线 | 唤醒后机器人把「哎呀」整句播完，屏不进「连接中」；串口无 `Device WebSocket disconnected`、无 `speaking -> recovering`；Edge 无 `WSS handler rejected` | 修复 `bdf2047` 已 app-only 刷入（2026-09-14 15:04 CST），启动到 idle 已验；真机问候复测待定论 |
+| barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过（播放期无 VAD、播后空 ASR、静音超时）。现签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice，播放中 `vad.start` 属越权、设备端已按合同抑制，故**该项在 AEC 参考验证前无法通过语音达成**；需先验证 AEC 或显式放行 voice 后再判 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
@@ -309,10 +337,10 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- 2026-09-14 现场运行基线仍是 **2026-09-13 01:56:16** 编译的 2.4.2，ELF `5e7b0150019709c62c9be30f2b525dd932f5f733b5ae0a999deeef1b9c81573b`；对应缓存 app SHA `ddcacfa79cdec0d329d3208692f789ae3544d07946958e4dbad8b0c9d9c8a0e0`。不是旧 9 月 10 日 0024 包。
-- 新 AEC 候选（**未刷**）：commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de21005e7c26a44b922e38483d4e9d2eca54b32c85ef6be296b9f498ae392`，overlay `6d17aa95d189c99334956e7f2c0d70ce25b68f45000163ab915ffb43f61f11e6`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
-- 紧邻回滚准备：旧构建保存在 `.cache/previous-20260914-014827/build/memoria.bin`；板上完整备份**未完成**，目前仅首个 512 KiB 已读回并匹配，不能把旧缓存代称已验证的板上完整备份。先恢复 USB、完成 `0x20000/0x3f0000` 回读与匹配再刷候选；不能使用旧 0023 包代替紧邻回滚。
-- 本轮预读身份区/分区表/otadata 位于 `outputs/acceptance/run-20260914-aec-fix/protected/`（0700/0600，禁止输出身份内容）。新旧构建 assets SHA 一致；本轮未写 bootloader、分区表、otadata、身份区、NVS 或 assets。
+- **当前板上构建**（2026-09-14 15:04 CST app-only 刷入）：commit `e1c6998`，编译 14:59:34，app 3,277,328 bytes / SHA `b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6`，ELF `7eb96fe19f275e3e0493073fd42aeca281bbce8b568b75d961b9aabbb5b605b7`，overlay `03fcdef56a5779374b9f1d033aaaf2d7960a7a0380b730425a9c59f332332e0c`，ESP-IDF v6.0.2。刷入后启动到 idle，App 2.4.2、激活 version=3。
+- 历史基线（已不在板上）：2026-09-13 01:56:16 编译的 2.4.2（ELF `5e7b0150…`）；上一轮 AEC 候选 commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de210…`，overlay `6d17aa95…`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
+- **紧邻回滚**：`6bcca089…`（上一轮 AEC 候选，即本次刷机前板上运行版本）已做完整回读并逐字节匹配，保存在 `outputs/acceptance/run-20260914-1510-wake-ack-vad/rollback-app.bin` 与 `protected/app-before-full-slot.bin`（0x20000/0x3f0000 全槽）。再前一版 `outputs/acceptance/run-20260914-aec-fix/rollback-app.bin` 仍保留，可作二级回滚。
+- 本轮预读身份区/分区表/otadata/bootloader/phy-init 位于 `outputs/acceptance/run-20260914-1510-wake-ack-vad/protected/`（0700/0600，禁止输出身份内容）。刷写只写 `0x20000..0x340fff`，写后全片回读一致，非 app 分区字节与 assets/ota_1 MD5 均未变。
 - 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
 
 ## 设备启用、唤醒与 shadow
@@ -467,6 +495,8 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 ## 回滚
 
 回滚以组件最小范围执行：冻结失败候选日志和 manifest，恢复切流前 image/软链/env，等待健康与具名 gRPC/readiness，再重跑外部路由和 provider smoke。若 Edge 长连接未自动重拨，按当次回滚回执中的受控步骤处理，不能假定重启无副作用。
+
+固件回滚与此独立：只回写 app 分区 `0x20000`，不要跑 `flash.sh` 整包、不要 `erase-all`。紧邻回滚件与回退方法见「板卡与固件」——写前先备份当前 `0x20000/0x3f0000` 全槽并逐字节匹配，写的整个过程保持 identity/NVS/otadata/bootloader/分区表/assets 不变。
 
 回滚完成后记录当前与回滚两个可运行版本，删除更早普通上传包、构建归档、候选和回滚镜像并检查磁盘。保留失败证据的摘要和服务器路径即可，不在仓库新增 release 文档。
 
