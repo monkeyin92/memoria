@@ -27,7 +27,7 @@ current_work_order: vocat_interrupt_assist
 code: complete
 wired: firmware_0024_and_agent_empty_input_resume
 enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist_empty_input_resume
-verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard
+verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard_server_release_health
 empty_input_resume_code: regression_and_full_release_gates_pass
 empty_input_resume_wired: python_media_coordinator_dispatch_and_empty_tail_retirement
 empty_input_resume_enabled: agent_bridge_20260913_p0_empty_input_resume_v1
@@ -113,7 +113,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **B 部分**：`media_session_projection.py` / `media_session_output_dispatch.py` 两处 `output_intent_inactive` 接缝加 WARNING，把「已完成深查答案被静默释放」变为可观测。**行为未变，不保底**。
 - **C 未修（判为已被 A 消解）**：跨 turn supersede 未出首帧答案的触发者就是重复提交本身，A 修好后不再进入。对真正的新话轮（换话题/打断）抢占仍是正确行为。
 
-**遗留工单（根因 2，未修）**：**不同文本**抢跑时首个深查答案仍被 supersede 丢弃（QA 探针实锤：问完南京改问北京，首答无帧）。真机若出现 FunASR 把同句误识别为不同文本（epoch 1911 有 1.2s 安静段误识别 2 字的先例），「答案丢失」会以另一种形式复发。修它要动跨话轮抢占语义（用户真换话题时首答是否保全），属产品取舍，需单独拍板。
+**根因 2 已修、待真机确认**：**不同文本**抢跑时，旧话轮的可取消 live lookup 现在会在新话轮切换前按 fence 取消并从任务注册表清理，避免旧结果回流、抢占新回复或形成 stale output。代码与回归测试已通过，真实设备仍需确认“南京后立即改问北京”时新问题正常作答。
 
 **发布工具工单（截至 2026-09-13：已用于本次真实发布）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；四个本地 release gates 显式使用 `uv run --extra dev`，保证 fresh worktree 安装开发依赖。`20260913-p0-empty-input-resume-v1` 已从 clean worktree 完整通过 ruff、module budget、strict mypy（157 source files）、Agent/production compose tests、artifact preflight，并完成真实远端构建与切流。共享 rollback tag 与线上健康证据见下方。
 
@@ -136,7 +136,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过：播放期无 VAD，播后空 ASR，最后静音超时。AEC 候选 `76ba6ad` 已推送但 USB 阻塞，尚未刷机复测 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
-| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **已随 20260912-1150 整树 overlay 恢复**：1855 底座源码无 `THINKING_FILLER`，HEAD 有且经 `media_session_projection.py` 生效，容器内已核实；待真机复测 |
+| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 2026-09-14 epoch 1936 已显式关闭并随即记录 idle；AEC 候选刷入后仍需与播中告别同场对照复测 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
@@ -186,7 +186,7 @@ echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
 | 6 | 唤醒问候后说一句较长的话 | 整句听完；允许串口 `Dropping server packet`，不得 `playback.error` 一字卡断 |
 | 7 | 主人与非主人各说一句 | 主人轮通过；非主人不放行；不得放宽 `reject_non_owner_voice` |
 | 8 | **同一句连问两遍**：先问「今天南京天气怎么样。」等它**答完**，再问完全同一句 | 第二遍**必须**正常作答。闸门只挡「同突发内的重复提交」，不得吞掉用户的真重复提问 |
-| 9 | 问「今天南京天气怎么样。」后**答案未出前**立刻改问「北京明天天气怎么样。」 | **已知未修（根因 2）**：若首答被丢弃，记下 `output_texts` 与 `terminal_reason=superseded`，作为根因 2 的真机证据，不回滚（新话轮答案仍应到达） |
+| 9 | 问「今天南京天气怎么样。」后**答案未出前**立刻改问「北京明天天气怎么样。」 | 根因已定位并修复：新话轮切换前按旧 fence 取消并清理旧 live lookup，避免 stale output、旧答案抢占或新答案丢失；已部署，待真实设备验证新问题正常作答 |
 
 日志判据（bridge 侧）：
 
