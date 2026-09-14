@@ -39,6 +39,10 @@ public:
     // interrupt_assist is the current ceiling; full_duplex_verified is a
     // contracted wire value, not a product claim from this helper.
     bool AllowsPlaybackBargeIn() const;
+    // True only when the signed device settings explicitly allow the voice
+    // barge-in source. Edge rejects playback-window vad.start otherwise,
+    // so the device must suppress its own echo-triggered VAD.
+    bool VoiceBargeInAllowed() const;
     // Called from Application's one-second clock tick. A quiet server is
     // healthy when it answers WebSocket Ping with Pong; only a missed active
     // probe retires the fenced transport and enters normal media recovery.
@@ -219,6 +223,7 @@ private:
     uint32_t runtime_profile_version_ = 0;      // acked from session.accepted v2
     uint32_t settings_version_ = 0;
     std::string audio_mode_;                    // negotiated; empty until session.accepted
+    bool voice_barge_in_allowed_ = false;      // signed allowed_barge_in contains voice
     bool runtime_profile_pending_ = false;
     uint32_t runtime_profile_pending_version_ = 0;
     ProfileApplyMode runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

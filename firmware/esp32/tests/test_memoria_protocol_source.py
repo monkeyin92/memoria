@@ -340,6 +340,16 @@ def test_interrupt_assist_emits_vad_start_during_playback() -> None:
     assert "bool AllowsPlaybackBargeIn() const;" in PROTOCOL_HEADER
     # Do not advertise full duplex from this helper; it only reads the wire mode.
     assert "not a product claim from this helper" in PROTOCOL_HEADER
+    # The signed allowlist decides voice barge-in, not the audio mode alone.
+    # Without voice, playback-echo VAD must be suppressed or Edge closes
+    # the transport mid-greeting.
+    assert "bool VoiceBargeInAllowed() const;" in PROTOCOL_HEADER
+    assert "voice_barge_in_allowed_ = false" in SOURCE
+    assert '"allowed_barge_in"' in SOURCE
+    assert "voice_barge_in_allowed_ = voice_barge_in_allowed" in SOURCE
+    assert "VoiceBargeInAllowed()" in PATCH_0024
+    assert "HasActivePlaybackGeneration() && !voice_barge_in_allowed_" in SOURCE
+    assert "Suppressing playback-window VAD start" in SOURCE
 
 
 def test_esp_component_versions_are_pinned_for_clean_rebuilds() -> None:

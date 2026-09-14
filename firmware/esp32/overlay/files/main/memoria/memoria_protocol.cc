@@ -871,6 +871,11 @@ bool MemoriaProtocol::AllowsPlaybackBargeIn() const {
     return audio_mode_ == "interrupt_assist" || audio_mode_ == "full_duplex_verified";
 }
 
+bool MemoriaProtocol::VoiceBargeInAllowed() const {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    return voice_barge_in_allowed_;
+}
+
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     if (!IsAudioChannelOpened() || packet == nullptr || packet->payload.empty() ||
         packet->sample_rate != static_cast<int>(kUplinkSampleRate) ||
@@ -1172,6 +1177,7 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     std::string wake_word_id;
     std::string wake_word_pinyin;
     std::string wake_word_display;
+    bool voice_barge_in_allowed = false;
     if (settings == nullptr || !cJSON_IsObject(settings) ||
         !GetUint32(settings, "settings_version", &settings_version) ||
         !GetUint32(settings, "volume_limit", &volume_limit) || volume_limit > 100 ||
@@ -1181,6 +1187,33 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         requested_audio_mode != audio_mode) {
         ESP_LOGE(kTag, "session.accepted device settings are invalid or not effective");
         return false;
+    }
+    const cJSON* allowed_barge_in =
+        cJSON_GetObjectItemCaseSensitive(settings, "allowed_barge_in");
+    if (allowed_barge_in == nullptr || !cJSON_IsArray(allowed_barge_in)) {
+        ESP_LOGE(kTag, "session.accepted device settings are missing allowed_barge_in");
+        return false;
+    }
+    const int allowed_count = cJSON_GetArraySize(allowed_barge_in);
+    if (allowed_count < 1 || allowed_count > 4) {
+        ESP_LOGE(kTag, "session.accepted allowed_barge_in has an invalid size");
+        return false;
+    }
+    for (int index = 0; index < allowed_count; ++index) {
+        const cJSON* kind = cJSON_GetArrayItem(allowed_barge_in, index);
+        if (!cJSON_IsString(kind) || kind->valuestring == nullptr) {
+            ESP_LOGE(kTag, "session.accepted allowed_barge_in entry is invalid");
+            return false;
+        }
+        const std::string_view entry(kind->valuestring);
+        if (entry != "none" && entry != "button" && entry != "keyword" &&
+            entry != "voice") {
+            ESP_LOGE(kTag, "session.accepted allowed_barge_in entry is unknown");
+            return false;
+        }
+        if (entry == "voice") {
+            voice_barge_in_allowed = true;
+        }
     }
     const cJSON* wake_word_item =
         cJSON_GetObjectItemCaseSensitive(settings, "wake_word_id");
@@ -1248,6 +1281,7 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         audio_mode_ = audio_mode;
+        voice_barge_in_allowed_ = voice_barge_in_allowed;
     }
     runtime_profile_pending_ = false;
     if (on_local_flush_requested_ != nullptr) {
@@ -2154,6 +2188,14 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
         if (stream_epoch_ == 0 || speaking == vad_active_) {
             return;
         }
+        // Edge rejects playback-window vad.start unless the signed settings
+        // allow the voice source. Suppress self-echo here instead of letting
+        // the control violation close the transport mid-greeting.
+        if (speaking && HasActivePlaybackGeneration() && !voice_barge_in_allowed_) {
+            ESP_LOGW(kTag,
+                       "Suppressing playback-window VAD start: voice barge-in not allowed");
+            return;
+        }
         if (protocol_version_ == kProtocolVersionV2) {
             ++control_sequence_;
             ScopedJson root{cJSON_CreateObject()};
@@ -2561,6 +2603,7 @@ void MemoriaProtocol::ResetSessionState() {
     runtime_profile_version_ = 0;
     settings_version_ = 0;
     audio_mode_.clear();
+    voice_barge_in_allowed_ = false;
     runtime_profile_pending_ = false;
     runtime_profile_pending_version_ = 0;
     runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;
