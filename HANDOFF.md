@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-14
-resume_checkpoint: wake_greeting_playback_vad_fix_app_only_flashed_real_device_retest_pending_20260914
+resume_checkpoint: wake_greeting_playback_vad_fix_verified_real_device_20260914
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -43,8 +43,8 @@ firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
 wake_ack_playback_vad_fix_code: complete
 wake_ack_playback_vad_fix_wired: session_accepted_signed_allowed_barge_in_gate
 wake_ack_playback_vad_fix_enabled: true_app_only_flashed_20260914T1506CST
-wake_ack_playback_vad_fix_verified: boot_and_partition_integrity_only_greeting_retest_pending
-wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:07:14+08:00
+wake_ack_playback_vad_fix_verified: real_device_greeting_no_disconnect_actual_heard_and_explicit_farewell_pass
+wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:11:29+08:00
 on_device_app_sha256: b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6
 on_device_app_elf_sha256: 7eb96fe19f275e3e0493073fd42aeca281bbce8b568b75d961b9aabbb5b605b7
 on_device_app_compiled_at: 2026-09-14T14:59:34+08:00
@@ -96,7 +96,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 已刷入，真机问候复测待定论）
+## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 刷入；15:11 CST 真机复测 PASS）
 
 现象：唤醒后机器人播放欢迎语「哎呀」，播到第一个可播放下行帧后约 20~30 ms 内设备 WebSocket 断开，屏幕进「连接中」，随后按 `1/5…5/5` 退避重连；重连后再次播放同一问候又断，最终由服务端 `owner_silence_timeout` 收尾。用户侧表现为「说了句哎呀就连接中了」——那句「哎呀」是机器人自己播的，不是用户说话。
 
@@ -108,7 +108,16 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 修复（commit `bdf2047`，已推送）：固件在 `session.accepted` 解析签名 `allowed_barge_in`，落地 `voice_barge_in_allowed_`；`SendVadState(true)` 在 `HasActivePlaybackGeneration()` 为真且策略未放行 voice 时本地抑制并打告警，播放结束后的普通聆听 VAD、`vad.end` 与物理硬停路径不变。overlay patch 0024 的把关条件补上 `VoiceBargeInAllowed()`，`ResetSessionState()` 清除该标志；回归断言加在 `firmware/esp32/tests/test_memoria_protocol_source.py`。
 
-验证边界：clean build + `check-overlay.sh` + `firmware/esp32/tests/` 全通过；app-only 只写 `0x20000`，写后全片回读字节一致，identity/NVS/otadata/bootloader/分区表/phy-init 未变，assets 与 ota_1 的 MD5 未变；启动进入 idle。**真机问候听感与后续双轮尚未复测**，故 `direct_real_device_verified` / `full_duplex_verified` 仍为 false。
+构建与刷机验证：clean build + `check-overlay.sh` + `firmware/esp32/tests/` 全通过；app-only 只写 `0x20000`，写后全片回读字节一致，identity/NVS/otadata/bootloader/分区表/phy-init 未变，assets 与 ota_1 的 MD5 未变；启动进入 idle。
+
+真机复测（2026-09-14 15:11 CST，session `8d013b25-8e52-4c94-9537-4e8aad645a56`，stream epoch 1945）：`outputs/acceptance/run-20260914-1510-wake-ack-vad/retest-1/`，机械判据 `gates.txt` **14/14 PASS**：
+
+- 唤醒后 15:11:07.568 首个可播放下行帧、`listening -> speaking`，15:11:09.112 `speaking -> listening`——问候整句播完，全程无 `Device WebSocket disconnected`、无 `speaking -> recovering`，Edge 无 `WSS handler rejected`。bridge 侧问候 generation 1 走完 `first_frame_sent → provider_completed → actual_heard=True → playback_ended=True`。
+- 一句天气 → turn 2 的 generation 2（ACK）与 generation 3（正文）两段都 `actual_heard=True`。
+- 告别：07:11:28.536 `media early conversation-close endpoint … text_len=5 source=partial_immediate` → 07:11:28.539 Edge `reason=conversation_end_explicit` → 串口 15:11:28.560 `listening -> idle`，约 24 ms，未走 `owner_silence_timeout`。
+- 本轮未出现 `Suppressing playback-window VAD start` 属预期：overlay 把关在 Application 调用点就拦住，播放期根本不会调用 `SendVadState(true)`；协议内抑制是其它调用路径的第二道防线。
+
+验收边界：一次干净会话不等于全链路通过，且本轮没有 AEC 残余/双讲/矩阵证据，`direct_real_device_verified` 与 `full_duplex_verified` 仍为 false；「播放中语音打断」按签名策略仍不生效（见下）。
 
 已知策略边界（不是本次缺陷）：签名策略未放行 voice，因此**播放途中用说话打断仍不会生效**——机器人会把当前句播完再回聆听，物理按键硬停不受影响。要放开需先让 AEC 参考通过验证（`device_acoustic_capabilities.aec_verified`）再升 `full_duplex_verified`，或显式把 `voice` 加入 `allowed_barge_in`；后者在 AEC 未生效前会让机器人把自己的声音识别成用户。
 
@@ -160,12 +169,12 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | --- | --- | --- |
 | 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
 | 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| 唤醒问候不掉线 | 唤醒后机器人把「哎呀」整句播完，屏不进「连接中」；串口无 `Device WebSocket disconnected`、无 `speaking -> recovering`；Edge 无 `WSS handler rejected` | 修复 `bdf2047` 已 app-only 刷入（2026-09-14 15:04 CST），启动到 idle 已验；真机问候复测待定论 |
+| 唤醒问候不掉线 | 唤醒后机器人把「哎呀」整句播完，屏不进「连接中」；串口无 `Device WebSocket disconnected`、无 `speaking -> recovering`；Edge 无 `WSS handler rejected` | **2026-09-14 15:11 CST PASS**（session `8d013b25`）：问候播完 `speaking -> listening`，无断线、无 Edge 拒绝，问候 `actual_heard=True`；判据 `outputs/acceptance/run-20260914-1510-wake-ack-vad/retest-1/gates.txt` 14/14 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过（播放期无 VAD、播后空 ASR、静音超时）。现签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice，播放中 `vad.start` 属越权、设备端已按合同抑制，故**该项在 AEC 参考验证前无法通过语音达成**；需先验证 AEC 或显式放行 voice 后再判 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | 当前 `20260913-p0-empty-input-resume-v1`；epoch 1935 两次查询各一段 ACK + 正文，均有播放结束/actual_heard 回执，2026-09-13 用户确认两次正文均听到；原空输入恢复时序仍待专项复测 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | 2026-09-14 epoch 1936 已显式关闭并随即记录 idle；AEC 候选刷入后仍需与播中告别同场对照复测 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-14 15:11 CST PASS**（同一 session）：`early conversation-close … partial_immediate` → Edge `conversation_end_explicit` → 屏 24 ms 回 idle，未走静音超时。早前 epoch 1936 亦通过 |
 | 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
