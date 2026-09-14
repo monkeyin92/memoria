@@ -32,4 +32,8 @@ def test_miniprogram_is_frozen_as_a_non_media_control_plane() -> None:
         "livekit_room_allowed: false",
     ):
         assert gate in STATUS
-    assert "不申请 `scope.record`" in STATUS
+    # ``scope.record`` is declared, but only for the bounded, consent-gated
+    # custom-voice sample on the profile page.  The status must keep stating that
+    # boundary instead of claiming the scope is absent.
+    assert "小程序仅 profile 页允许经授权有界录制自定义音色样本" in STATUS
+    assert "不申请 `scope.record`" not in STATUS
