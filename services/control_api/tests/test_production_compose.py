@@ -330,6 +330,10 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
     assert "--manifest-checksums=SHA256" in base_backup
     assert "--format=plain" in base_backup
     assert "--format=tar" not in base_backup
+    # pg_basebackup uses the replication protocol; ``-d/--dbname`` takes a
+    # connection string on PostgreSQL 17 and rejects a bare database name with
+    # ``missing "=" after "postgres" in connection info string``.
+    assert "--dbname" not in base_backup
     assert "postgres_backup_staging:/backup-staging:ro" in compose
     assert "postgres_wal_archive:/wal-archive" in compose
     assert "offsite/$MEMORIA_OFFSITE_S3_BUCKET/postgres/base" in mirror

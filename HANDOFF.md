@@ -526,6 +526,28 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 
 当前同机 PostgreSQL/MinIO/WAL 不能被宣传为异地灾备、PITR 或“永不丢失”。删除普通 release 制品前必须再次确认目标不是数据库、安全或合规备份。
 
+### 2026-09-14 备份现状核查与本地隔离恢复演练
+
+结论：**自动备份从未真正运行过**，但本轮首次建立了经过校验、可恢复的本地还原点。证据目录 `outputs/acceptance/run-20260914-p0-02-restore-drill/`（`report.json` + `drill-notes.md`）。
+
+现状（只读核查）：
+
+- `offsite-backup` profile 从未启动。`/etc/memoria-offsite-backup.env` 不存在，`postgres_backup_staging` 卷不存在；异地 endpoint 只有 `infra/memoria-offsite-backup.env.example` 的 `.invalid` 占位，**没有异地副本，也没有备份告警**。
+- `infra/backup/postgres-base-backup.sh` 的 `pg_basebackup --dbname=postgres` 在 PG 17.8 报 `missing "=" after "postgres" in connection info string`（客户端参数解析错误，已复现）。该脚本此前从未被执行，所以这个错误一直没暴露。
+- `pg_hba.conf` 只对 `127.0.0.1`/`::1`/本地 socket 放行 `replication`（`host all all all scram-sha-256` 不覆盖复制连接）。因此独立备份容器走 `memoria_default` 网桥会被拒：`no pg_hba.conf entry for replication connection from host 172.19.0.14, user memoria_admin, no encryption`（已复现）。
+- 后果：2026-08-27 起累计的 **1503 段 / 23.5GB WAL 归档此前没有任何 base backup 可配对**，单独不可恢复；`MEMORIA_WAL_LOCAL_RETENTION_DAYS=7` 的裁剪只由从未启动的 offsite-mirror 执行，所以 WAL 从未裁剪。
+
+本轮演练（隔离，未改生产配置、未覆盖生产数据）：
+
+- 用 `--network container:memoria-data-postgres-1` 共享网络命名空间走 loopback 复制，`pg_basebackup --format=plain --wal-method=stream --checkpoint=fast --manifest-checksums=SHA256` 生成 base backup，**2s / 71,814,936 bytes**，落在 `/var/backups/memoria/drill-20260914-p0-02/base`（root-only，保留）。
+- `pg_verifybackup`：`backup successfully verified`。
+- 隔离恢复：复制到 `restore-data` 后用 `--network none` 起独立容器，**5s** 到 `pg_isready`；应用表 `archive_evidence_events` / `guardian_links` / `tutor_practice_sessions` 均存在；`archive_evidence_events=2305`、`voice_samples=1`、`archive_evidence_blobs=0`、`guardian_links=0`；cluster state `in production`。验证后容器与 `restore-data` 已删除，只留 69MB 备份与报告。
+- 对象核对：恢复副本的 `voice_samples.object_key` 在 MinIO `memoria-voice` 同 key 存在（134KiB，ETag `94c6430d991fe7bcad12c57cab452800`），原始密文 SHA256 `05ca85ac…012d`。
+- WAL 连续性：首段 `000000010000000000000001`、末段 `0000000100000005000000DF`，**0 缺口**；base backup 的 `START WAL LOCATION` 正是末段（`2026-09-14 08:37:56 UTC`，timeline 1）。所以「base backup + 现有 WAL 归档」现在构成同机可恢复链。
+- 既有手工备份仍有效：`/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump` 的 `sha256sum -c` OK、`pg_restore --list` 1210 项。
+
+尚未完成（需要决定后才能做）：让备份**周期性**运行有三条路——(a) 修 `--dbname` 并在 `pg_hba.conf` 放行 `memoria_default` 网段的复制连接；(b) 把备份容器改成 `network_mode: service:postgres` 走 loopback，不改 pg_hba；(c) 仅在 DB 容器内执行。异地副本还需要真实 endpoint 与凭据。本机 WAL/MinIO/DB 仍同盘，**不能声称异地灾备或 PITR 已具备**。
+
 ## 回滚
 
 回滚以组件最小范围执行：冻结失败候选日志和 manifest，恢复切流前 image/软链/env，等待健康与具名 gRPC/readiness，再重跑外部路由和 provider smoke。若 Edge 长连接未自动重拨，按当次回滚回执中的受控步骤处理，不能假定重启无副作用。

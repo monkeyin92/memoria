@@ -25,7 +25,6 @@ while :; do
   PGPASSWORD="$POSTGRES_PASSWORD" pg_basebackup \
     --host=memoria-postgres \
     --username=memoria_admin \
-    --dbname=postgres \
     --pgdata="$temporary" \
     --format=plain \
     --wal-method=stream \
