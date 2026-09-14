@@ -19,6 +19,7 @@ miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
 production_readiness: ready
 production_readiness_observed_at: 2026-09-14T16:32:08+08:00
+offsite_backup_enabled: false # 用户 2026-09-14 决定：项目验证阶段暂不启用自动备份/异地副本；WAL 归档仍在写且无人裁剪
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
@@ -546,7 +547,9 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - WAL 连续性：首段 `000000010000000000000001`、末段 `0000000100000005000000DF`，**0 缺口**；base backup 的 `START WAL LOCATION` 正是末段（`2026-09-14 08:37:56 UTC`，timeline 1）。所以「base backup + 现有 WAL 归档」现在构成同机可恢复链。
 - 既有手工备份仍有效：`/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump` 的 `sha256sum -c` OK、`pg_restore --list` 1210 项。
 
-尚未完成（需要决定后才能做）：让备份**周期性**运行有三条路——(a) 修 `--dbname` 并在 `pg_hba.conf` 放行 `memoria_default` 网段的复制连接；(b) 把备份容器改成 `network_mode: service:postgres` 走 loopback，不改 pg_hba；(c) 仅在 DB 容器内执行。异地副本还需要真实 endpoint 与凭据。本机 WAL/MinIO/DB 仍同盘，**不能声称异地灾备或 PITR 已具备**。
+决定（2026-09-14，用户）：**项目验证阶段暂不启用自动备份与异地副本**。本阶段不新增 `offsite-backup` 容器、不配置异地 endpoint；已有的本地 base backup 与 9/12 手工 dump 保留，但不会自动更新。重新评估的触发条件：开始对真实家庭提供服务或写入真实家庭数据、正式发布前、或数据价值/量级显著增长。届时三条启用路径——(a) 修 `--dbname` 并在 `pg_hba.conf` 放行 `memoria_default` 网段的复制连接；(b) 备份容器改 `network_mode: service:postgres` 走 loopback，不改 pg_hba（推荐）；(c) 仅在 DB 容器内执行。异地副本另需真实 endpoint 与凭据。本机 WAL/MinIO/DB 仍同盘，**不能声称异地灾备或 PITR 已具备**。
+
+不受该决定影响、仍需处理的连带问题：WAL 归档仍在写且**无人裁剪**（`MEMORIA_WAL_LOCAL_RETENTION_DAYS` 只由从未启动的 mirror 执行）。实测 2026-08-27 → 09-14 累计 **1503 段 / 23.5GB**（约 1GB/天量级，随活动量变化），根盘 `/dev/vda2` 118G 已用 68%、可用 37GB，按当前速率约 **3–4 周**写满。处置二选一：批准后按保留期删除旧 WAL（可回收约 23GB，属生产数据删除，需明确授权），或停用归档（改 `archive_mode` 需重启 PostgreSQL）。本轮未动任何一项。
 
 ## 回滚
 

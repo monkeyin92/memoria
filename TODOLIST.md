@@ -45,14 +45,13 @@
 - 完成条件：当前 release 的真实 LiveKit/provider smokes 成功后生成证据，回环与公网 readiness 均 ready；core 12 个具名检查均 ready、Agent heartbeat/tag 匹配；至少再观察一次既有 12h 定时刷新成功。只手动刷绿一次不能关闭本项。不得延长 TTL、跳过 smoke 或伪造证据。
 - 入口：`scripts/refresh_readiness.sh`、`infra/memoria-readiness-refresh.*`、`services/control_api/app/routes/readiness.py`；定向验证 `test_readiness.py`、`test_mark_readiness.py`。
 
-### [ ] P0-02 确认备份在跑，并完成隔离恢复验证
+### [x] P0-02 备份现状核查与隔离恢复验证（启用备份按用户决定暂缓）
 
-- 进度（2026-09-14）：**自动备份从来没在跑**，但本轮已建立并验证一个本地还原点。核查结论：`offsite-backup` profile 从未启动（`/etc/memoria-offsite-backup.env` 与 `postgres_backup_staging` 都不存在）；`postgres-base-backup.sh` 的 `pg_basebackup --dbname=postgres` 在 PG 17.8 客户端直接报错（已复现）；`pg_hba.conf` 只允许本机复制连接，独立备份容器走网桥被拒（已复现）。因此 1503 段/23.5GB WAL 此前无 base backup 可配对、单独不可恢复。演练：base backup 2s/69MB → `pg_verifybackup` pass → 隔离容器 5s 起库 → 应用表与 2305 条证据事件可读 → MinIO 音频对象 key/校验值一致 → WAL 0 缺口且起点等于备份 `START WAL LOCATION`。证据 `outputs/acceptance/run-20260914-p0-02-restore-drill/`，细节见 `HANDOFF.md`。
-- 剩余阻塞（需要决定）：让备份周期性运行有三条路——修 `--dbname` 并在 pg_hba 放行 `memoria_default` 网段复制、改成 `network_mode: service:postgres` 走 loopback（不改 pg_hba）、或只在 DB 容器内执行；异地副本还需要真实 endpoint 与凭据。**没有异地副本前不能声称异地灾备或 PITR。** 未做 PITR replay 演练。
-- 原因：9 月 12 日交接只证明一次手工备份，当时自动备份未运行；不能据此认定今天仍停，也不能以存在备份文件证明可恢复。
-- 工作：查定时任务、最近成功时间、PG base/WAL 连续性、MinIO/异地副本与告警；先用现有脚本在隔离目标恢复，禁止覆盖生产。发现缺项后再按授权修复。
-- 完成条件：备份计划与保留策略有有效配置和成功证据；隔离恢复能读取抽样档案/音频对象并核对校验值，记录实际恢复点与耗时；新数据迁移有可用回退方案。
-- 入口：`infra/backup/postgres-base-backup.sh`、`infra/backup/offsite-mirror.sh`、`scripts/run_offsite_restore_drill.sh`、`scripts/run_archive_restore_drill.py`。普通制品 current+一个可运行 rollback 的清理规则不适用于数据备份。
+- 本项关闭的是**核查与演练**两部分。**启用自动备份不在本阶段范围**——用户 2026-09-14 决定：项目验证阶段暂不启用自动备份与异地副本；未完成子项已移入「暂不排入执行队列」，不计入本项完成。
+- 核查结论（2026-09-14）：自动备份**从来没在跑**。三个阻塞都已复现——`offsite-backup` profile 从未启动（`/etc/memoria-offsite-backup.env` 与 `postgres_backup_staging` 都不存在）；`postgres-base-backup.sh` 的 `pg_basebackup --dbname=postgres` 在 PG 17.8 客户端直接报 `missing "=" after "postgres"`（已在仓库修掉并加回归断言）；`pg_hba.conf` 只对本机放行复制连接，独立备份容器走 `memoria_default` 网桥被拒（`no pg_hba.conf entry for replication connection from host 172.19.0.14`）。因此 8/27 起累计的 1503 段/23.5GB WAL 此前无 base backup 可配对、单独不可恢复。
+- 演练（隔离，未改生产配置、未覆盖生产数据）：base backup 2s/69MB → `pg_verifybackup` pass → `--network none` 隔离容器 5s 起库 → 应用表与 2305 条证据事件可读 → MinIO 音频对象 key 与密文 SHA256 一致 → WAL 0 缺口且末段等于备份 `START WAL LOCATION`。
+- 保留资产：`/var/backups/memoria/drill-20260914-p0-02/base`（校验通过）、`report.json`；9/12 手工 dump 的 `sha256sum -c` 仍 OK、`pg_restore --list` 1210 项。证据 `outputs/acceptance/run-20260914-p0-02-restore-drill/`，细节与三条启用路径见 `HANDOFF.md`。
+- 未做：PITR replay 演练；异地副本（零）。
 
 ### [ ] P0-03 收口当前语音缺陷，建立升级前对照基线
 
@@ -158,6 +157,7 @@
 
 ## 暂不排入执行队列
 
+- 自动备份与异地副本：用户 2026-09-14 决定项目验证阶段暂不启用。重新评估触发条件：开始对真实家庭提供服务或写入真实家庭数据、正式发布前、或数据价值/量级显著增长。届时三条启用路径见 `HANDOFF.md`（推荐把备份容器改成 `network_mode: service:postgres` 走 loopback，不改 pg_hba）。**连带问题必须一起看**：WAL 归档仍在写且从不裁剪，实测 8/27→9/14 累计 1503 段 / 23.5GB（约 1GB/天量级），根盘可用 37GB，按当前速率约 3–4 周写满；即使不启用备份，也需要先决定删除旧 WAL（属生产数据删除，需授权）或停用 `archive_mode`。
 - EOU 新模型、DuplexModel、抢跑与 expressive：等现有语音质量基线和明确收益假设；若实验只做 shadow，不另建控制权威。
 - ESP-IDF/ESP-SR/upstream 整体升级：需明确现板修复或安全依据，届时按固定 upstream 重放 overlay、clean build、host 测试和保护身份区的真机门禁另立项。
 - 老年人生故事册/人物复刻、年轻人潮玩、机器人最终外形：保留阶段方向，当前学生线未闭环前不扩张。市场新闻继续留 `RESEARCH.md`，不自动变成工程任务。
