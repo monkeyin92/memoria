@@ -53,8 +53,9 @@
 - 保留资产：`/var/backups/memoria/drill-20260914-p0-02/base`（校验通过）、`report.json`；9/12 手工 dump 的 `sha256sum -c` 仍 OK、`pg_restore --list` 1210 项。证据 `outputs/acceptance/run-20260914-p0-02-restore-drill/`，细节与三条启用路径见 `HANDOFF.md`。
 - 未做：PITR replay 演练；异地副本（零）。
 
-### [ ] P0-03 收口当前语音缺陷，建立升级前对照基线
+### [ ] P0-03 收口当前语音缺陷，建立升级前对照基线（真机时段已就绪待约）
 
+- 就绪状态（2026-09-14 17:00 CST）：板子在线（WiFi 192.168.8.142、Activation v3、唤醒词茉莉、idle），串口空闲，捕获工具需 `uv run --no-project --with pyserial --with esptool`（项目 `.venv` 无 pyserial/esptool），服务端 readiness ready。会话计划与 11 个场景、判据、分段安排见 `outputs/acceptance/run-20260914-p0-03-voice/session-plan.md`；逐轮原始数字由 `scripts/voice_session_report.py` 产出。**操作要点**：打开串口会让板子重启，每段捕获开头约 10 秒启动，须等 `activating -> idle` 再说话。设备端固定安全话术（P0-04 场景 10）与屏幕照片（场景 11）借用同一时段。
 - 进度（2026-09-14）：**本地对照基线已建立**——`test_media_session.py` 200 passed、`test_duplex_runtime_wiring.py` + `test_utterance_router.py` 191 passed（证据 `outputs/acceptance/run-20260914-p0-03-local-baseline/`）。ACK 后空输入恢复、旧查询不回流、同问重复不重复提示、空转写处理均有既有回归并通过。
 - 剩余阻塞：真机时序与听感需要操作员在场（说完到开口、ACK→正文纯静音间隙、慢查询第二提示、长天气 >45s、终端播放回执），板卡在线但本轮未做声学/听感验收；上一轮实测 ACK→正文为 0.366s/1.766s，第二轮仍超 1.5s。本地全绿不能替代真机证据。
 - 原因：当前已部署修复仍缺空输入恢复的专项真机时序，且 9 月 13 日一轮 ACK→正文纯静音为 1.766s，未过现有 1.5s 标准。
@@ -63,14 +64,15 @@
 - 真机复测同时保留已通过的问候不掉线、播后告别、BOOT/触摸硬停；补待机与五表情照片。播放期语音告别不混进本项，移至 P1-07。
 - 入口：`HANDOFF.md`「下一验收」「20260913-empty-input-resume 复测清单」；`test_media_session.py`、`test_duplex_runtime_wiring.py`、`test_utterance_router.py`。没有在线板卡就只完成本地复现，设备项保持未完成。
 
-### [ ] P0-04 核实身份隔离，补齐学生安全闭环
+### [ ] P0-04 核实身份隔离，补齐学生安全闭环（不含家长通知发送链路）
 
 - 进度（2026-09-14）：身份/同意门的**本地合同与 RLS 证据已取得**——真 PG（`memoria-pgv`）跑 guardian schema/语料同意栅栏、guardian 表按 guardian/minor 作用域隔离、tutor 行 subject 隔离且 RLS 生效、账号能力门、生产同意接线、多主体权限矩阵、声纹权威合同，共 **34 passed**（证据 `outputs/acceptance/run-20260914-p0-04-identity-matrix/`）。这只到合同/API 级，不等于真机或真实账号端到端。
-- 剩余阻塞：家长通知投递还没实现（outbox 只有入队与列表读取，`wechat_subscription` 只是枚举），需要订阅消息模板、凭据与获准测试家长账号；学生危机真机话术与投递也未验。
+- 范围决定（2026-09-14，用户）：**本阶段不做微信订阅号/家长通知发送链路**（验证阶段）。因此本项不含发送 worker、重试、模板与凭据申请；通知侧只验「入队 + 家长端列表可读 + 明确记账当前无推送通道」，不把入队当作家长已收到。重新评估触发条件：开始对真实家庭或学生提供服务前。
+- 剩余待验：学生危机的**设备端固定话术**（借用 P0-03 真机时段的场景 10）与受控学生账号下的能力门端到端；guest/uncertain 不进主人私有链、撤销立即生效等已由合同/RLS 覆盖，但真实账号与真机路径仍需一次演练。
 - 原因：账号能力门、声纹与固定危机话术已有实现；家长通知目前只有 outbox 入队与列表读取，尚无发送 worker/投递状态更新，不能把入队当作家长已收到。学生阶段仍缺实际端到端闭环。
 - 工作：用受控测试账号/脚本覆盖 adult、minor、unknown/未声明类别，owner、guest、uncertain，以及 guardian 同意/撤销；核查历史、私人记忆、工具、自定义音色、删除/导出、切主体和告别的权限。模拟学生危机场景，不要求真实未成年人参与高风险试验。
-- 缺失实现：先核对已有 `wechat_subscription` 契约所需的订阅授权、模板与凭据，再补发送消费者、幂等重试、真实回执与失败可见性；只向获准的测试家长发送。未具备通道条件时记录明确阻塞，不能靠列表可读关闭本项，也不默认改用其他通知渠道。
-- 完成条件：无同意拒绝、撤销立即生效；guest/uncertain 不进入主人私有链；切使用人或邀请家人不提升 owner 身份；真实设备固定安全话术与家长端通知投递有脱敏回执，失败路径可见。涉及 schema/RLS/授权修改时带 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响域，跳过不算通过。
+- 本阶段实现边界：不新增发送消费者、幂等重试与模板凭据；只在文档与状态里显式记录「outbox 有入队、无投递通道」，避免被误读为家长已收到。
+- 完成条件：无同意拒绝、撤销立即生效；guest/uncertain 不进入主人私有链；切使用人或邀请家人不提升 owner 身份；**真实设备固定安全话术通过**，且 outbox 入队与家长端列表可读、无投递通道这一边界被显式记账（不要求微信回执）。涉及 schema/RLS/授权修改时带 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响域，跳过不算通过。
 - 入口：`services/control_api/app/account_gate.py`、`routes/guardian.py`、`services/guardian/crisis.py`、`services/agent/src/generation_output_policy.py`、`services/speaker/authority.py` 及对应测试。技术验收不代替法律合规结论。
 
 ## P1：受控升级与第一阶段产品闭环
