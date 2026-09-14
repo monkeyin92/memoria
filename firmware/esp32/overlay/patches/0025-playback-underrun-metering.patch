@@ -1,6 +1,6 @@
 --- a/main/audio/audio_service.cc
 +++ b/main/audio/audio_service.cc
-@@ -333,12 +333,44 @@
+@@ -333,6 +333,20 @@
      ESP_LOGW(TAG, "Audio input task stopped");
  }
  
@@ -9,7 +9,7 @@
 + * never deep and any jitter starves it.  The delivery ledger records
 + * "playback completed" while the listener hears stuttering, so count the
 + * starvation episodes: the codec task is the only producer of
-+ * audio_playback_queue_, and the consumer waits for frames here. */
++ * audio_playback_queue_, and this is where the consumer waits for a frame. */
 +#define MEMORIA_STARVE_LOG_MS 40
 +static uint32_t memoria_meter_generation = 0;
 +static uint32_t memoria_meter_stream_generation = 0;
@@ -21,31 +21,35 @@
  void AudioService::AudioOutputTask() {
      while (true) {
          std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-+        const auto memoria_wait_from = std::chrono::steady_clock::now();
-         audio_queue_cv_.wait(lock, [this]() {
-             return !audio_playback_queue_.empty() || service_stopped_.load();
-         });
-+        if (!service_stopped_.load() && memoria_meter_streaming) {
-+            const auto memoria_starve_ms =
-+                std::chrono::duration_cast<std::chrono::milliseconds>(
-+                    std::chrono::steady_clock::now() - memoria_wait_from).count();
-+            if (memoria_starve_ms >= MEMORIA_STARVE_LOG_MS) {
-+                memoria_meter_starve_count++;
-+                memoria_meter_starve_total_ms += memoria_starve_ms;
-+                if (memoria_starve_ms > memoria_meter_max_starve_ms) {
-+                    memoria_meter_max_starve_ms = memoria_starve_ms;
+@@ -374,9 +388,27 @@
+                 }
+                 audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(5));
+             } else {
++                const auto memoria_wait_from = std::chrono::steady_clock::now();
+                 audio_queue_cv_.wait(lock, [this]() {
+                     return !audio_playback_queue_.empty() || service_stopped_.load();
+                 });
++                if (!service_stopped_.load() && memoria_meter_streaming) {
++                    const auto memoria_starve_ms =
++                        std::chrono::duration_cast<std::chrono::milliseconds>(
++                            std::chrono::steady_clock::now() - memoria_wait_from).count();
++                    if (memoria_starve_ms >= MEMORIA_STARVE_LOG_MS) {
++                        memoria_meter_starve_count++;
++                        memoria_meter_starve_total_ms += memoria_starve_ms;
++                        if (memoria_starve_ms > memoria_meter_max_starve_ms) {
++                            memoria_meter_max_starve_ms = memoria_starve_ms;
++                        }
++                        ESP_LOGW(TAG,
++                                 "media playback starved generation=%u gap_ms=%lld starved_count=%u",
++                                 static_cast<unsigned int>(memoria_meter_stream_generation),
++                                 static_cast<long long>(memoria_starve_ms),
++                                 static_cast<unsigned int>(memoria_meter_starve_count));
++                    }
 +                }
-+                ESP_LOGW(TAG,
-+                         "media playback starved generation=%u gap_ms=%lld starved_count=%u",
-+                         static_cast<unsigned int>(memoria_meter_stream_generation),
-+                         static_cast<long long>(memoria_starve_ms),
-+                         static_cast<unsigned int>(memoria_meter_starve_count));
-+            }
-+        }
-         if (service_stopped_.load()) {
-             break;
+             }
          }
-@@ -398,6 +430,24 @@
+         if (service_stopped_.load()) {
+@@ -454,6 +486,24 @@
          if (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE) {
              auto packet = std::move(audio_decode_queue_.front());
              audio_decode_queue_.pop_front();
