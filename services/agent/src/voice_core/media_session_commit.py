@@ -438,6 +438,31 @@ class MediaSessionCommitMixin:
                 committed,
             )
             return
+        if (
+            reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+            and committed - result.capture_start_sample
+            > result.capture_end_sample - committed
+        ):
+            # The straddles_committed_without_timing shape has no complete word
+            # timings, so the text cannot be cut at the watermark: what remains
+            # of the result is its audio only if most of that audio is still
+            # uncommitted.  When the final is mostly audio that was already
+            # committed and answered, adopting its text re-answers that audio as
+            # a second turn.  Real session 2026-09-14 epoch 1946 asked the next
+            # day's weather once, the offline rescue of that same audio arrived
+            # as a second 20-character transcript, and the adopted text
+            # preempted the pending first answer.
+            logger.warning(
+                "media live-query recovery dropped: final is mostly committed "
+                "session=%s reason=%s text_len=%s samples=%s-%s committed=%s",
+                session_id,
+                reason.value,
+                len(text),
+                result.capture_start_sample,
+                result.capture_end_sample,
+                committed,
+            )
+            return
         adjusted_start = max(committed, result.capture_start_sample)
         adjusted = replace(
             result,

@@ -6909,6 +6909,66 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
 
 
 @pytest.mark.asyncio
+async def test_mostly_committed_straddling_final_is_dropped_not_readopted() -> None:
+    """One question must not become two turns (real session 2026-09-14 epoch 1946).
+
+    The offline rescue of already committed audio arrived as a shorter second
+    transcript covering samples 11200-392000 while the committed watermark was
+    369280, so 94% of its audio had already been committed and answered. Without
+    complete word timings that text cannot be cut at the watermark, and adopting
+    it re-answered the same audio: the operator heard the filler twice and the
+    pending first answer was preempted.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-straddle-rescue")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        context.asr.mark_committed(369_280)
+        context.runtime.commit_media_speech_range(
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=369_280,
+        )
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        rescue = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=2,
+            sentence_id="rescue-final",
+            revision=1,
+            capture_start_sample=11_200,
+            capture_end_sample=392_000,
+            text="明天南京的天气怎么样呢",
+            is_final=True,
+            confidence=0.9,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            rescue,
+        )
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+        assert context.live_query_forced_text is None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+@pytest.mark.asyncio
 async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> None:
     """Playback echo must not starve the first real user turn.
 
