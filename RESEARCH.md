@@ -37,11 +37,11 @@
 
 ## 当前约束
 
-- 扫描：2026-09-11。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。按使用人切换人格与音色是 2026-09-11 明确的新产品方向，见 R-20260911-05；该方向服务 2026-09-12 重申的分阶段人群定位（前期学生 / 后期老年 / 再后年轻人），见「当前站位」。
+- 扫描：2026-09-14。设备工单只写 `HANDOFF.md`（`vocat_interrupt_assist`：表情照片、barge-in、长天气、主人匹配、小程序 0.8.84）。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已加封闭 query rewrite，长程三项 `recall@5=1`；整体 `recall@5=0.8125`，仍不开预取。按使用人切换人格与音色是 2026-09-11 明确的新产品方向，见 R-20260911-05；该方向服务 2026-09-12 重申的分阶段人群定位（前期学生 / 后期老年 / 再后年轻人），见「当前站位」。
 - SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。
 - 唤醒词「茉莉」。播放期 KWS 关；说话中 BOOT / 触摸硬停。DTLN makeup 冻结 `8.0×`。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
-- 钉档：云端 FunASR 仍 1.4.15（无 1.4.16/1.5.0；钉档评估仍 R-20260910-01；已测 NumPy 2，旧 `numpy<2` 不再是硬约束）。sidecar ≥1.3.29。livekit-agents PyPI latest=1.8.1（2026-09-10；含 DuplexModel）；仓内仍 1.6.10。升级评估见 R-20260907-01 + R-20260911-01。#7064 已随 1.8.0 合并（NC 时默认关 AGC）；stale「open」索引作废。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。
-- 合规：拟人化办法已生效；令第25号已生效，声纹仍要单独同意、本月无新细则。最高法涉人工智能纠纷意见（法发〔2026〕10号，司法意见非 CAC 新法）加强见 R-20260910-02。大型处理者征求意见截止已过、截至 2026-09-11 仍无定稿；清朗无新实质。NEW_LAW_IDS（法规/CAC）空。
+- 钉档：云端 FunASR 仍 1.4.15（2026-09-14 复核 PyPI latest=1.4.15，无 1.4.16/1.5.0；钉档评估仍 R-20260910-01；已测 NumPy 2，旧 `numpy<2` 不再是硬约束）。sidecar ≥1.3.29。livekit-agents PyPI latest=1.8.1（2026-09-14 复核，无 1.8.2/1.9.0；含 DuplexModel）；仓内仍 1.6.10。升级评估见 R-20260907-01 + R-20260911-01。#7064 已随 1.8.0 合并（NC 时默认关 AGC）；stale「open」索引作废。LiveKit 设备路径保持 `interruption.enabled=False` + `preemptive_generation.enabled=False`。`livekit-plugins-voicemem` 仍 0.2.2（`livekit-agents<1.8`），见 R-20260909-03。
+- 合规：拟人化办法已生效；令第25号已生效，声纹仍要单独同意、本月无新细则。最高法涉人工智能纠纷意见（法发〔2026〕10号，司法意见非 CAC 新法）加强见 R-20260910-02。大型处理者征求意见截止已过、截至 2026-09-14 仍无定稿；清朗二阶段 2026-09-02 进展稿（累计清理等）仍是执行报道非新规，见 R-20260901-08。NEW_LAW_IDS（法规/CAC）空。
 
 ## 当前站位（2026-09-12 用户重申，已采纳，不是工单）
 
@@ -49,9 +49,9 @@
 
 声纹门禁、按需档案、带标识导出、可证明删除是贯穿各阶段的能力底座，不是定位本身；「家庭桌面记忆终端 / 声纹档案音箱」旧定位作废，仅作能力描述。订阅叙事随阶段走：前期学生线卖陪伴/教学价值与家庭席位，后期老年线承接人生故事册等档案服务；价格带仍对照钉钉 A1 / 安克×飞书（约 ¥499–1299），不对照萤石 RK3 适老看护或万元级人形。
 
-任何阶段都不做：7 寸数字人屏、跌倒/医疗级看护硬件、智家中枢、全屋 OS、运动巡航形态、耳机 Agent、微信实时语音。阶段外（后续阶段方向，当前不投入但不是反定位）：老年陪伴 / 人物复刻 / 人生故事册属后期，年轻人潮玩属再后期——Doova / HUA-H / bibo / Amoo / iKairos 等条目改作「阶段雷达」，供对应阶段回看；Bubbo / 二白Mini / JUOS / Microduck / Plaud One / 优必选 U1 仍纯反定位。童声 500–800 ms 停顿写成「不截断」，不写成「更懂情绪」。
+任何阶段都不做：7 寸数字人屏、跌倒/医疗级看护硬件、智家中枢、全屋 OS、运动巡航形态、耳机 Agent、微信实时语音。阶段外（后续阶段方向，当前不投入但不是反定位）：老年陪伴 / 人物复刻 / 人生故事册属后期，年轻人潮玩属再后期——Doova / HUA-H / bibo / Amoo / iKairos / 安安 等条目改作「阶段雷达」，供对应阶段回看；Bubbo / 二白Mini / JUOS / Microduck / Plaud One / 优必选 U1 / 小度 Pro Max 仍纯反定位。童声 500–800 ms 停顿写成「不截断」，不写成「更懂情绪」。
 
-2026-09-11 阶段雷达日历：优必选 U1 声称 2026-09-16 起交付（T-5），仍无「已开始交付」实锤；全年可交付仍 1,500–2,000 台（对比预售约 1.34 万 / 13,361），柳州工厂延期，京东仍约 60 天 / 9/15 后有货（https://leaderobot.com/news/9425 ；https://www.163.com/dy/article/L5U2PKT60511U82T.html）。海信 JUOS 约 8/31–9/3 起对首批电视/投影推 Sep OTA；小聚识人非默认，声纹/人脸需登记（https://www.3elife.net/Art/ie/202609/04/109709.html）；仍是 TV/AIOS 全家中枢，纯反定位。Plaud One 仍 explorer $249.99，未见大陆零售 SKU。Microduck 灰色市场国内约至 ¥5567（https://www.yicai.com/news/103350821.html）。华泰 ¥2000–4000 价带本月无修订。iKairos 见 R-20260911-02；bibo / HUA-H 见 R-20260911-03 / R-20260911-04。
+2026-09-14 阶段雷达日历：优必选 U1 声称 2026-09-16 起交付现为 T-2，仍无「已开始交付」实锤（沿用红星资本局 2026-09-03 + 京东约 60 天 / 9/15 后有货口径；全年可交付仍 1,500–2,000 台，对比预售约 1.34 万 / 13,361，柳州工厂延期；https://leaderobot.com/news/9425 ；https://www.163.com/dy/article/L5U2PKT60511U82T.html）。小度智能音箱 Pro Max 9/28 开售见 R-20260914-01（反定位·智能音箱/家庭 Agent，订阅叙事不对照 ¥299 音箱）。无芯科技安安欧洲 2026-09 开售见 R-20260914-02（阶段雷达·老年后期；Duncan 仅旁证学生线，不新开 id）。Doova / Amoo / iKairos / bibo / HUA-H 不新开 id（R-20260910-03 / R-20260910-04 / R-20260911-02 / R-20260911-03 / R-20260911-04）。海信 JUOS 约 8/31–9/3 起对首批电视/投影推 Sep OTA；小聚识人非默认，声纹/人脸需登记（https://www.3elife.net/Art/ie/202609/04/109709.html）；仍是 TV/AIOS 全家中枢，纯反定位。Plaud One 仍 explorer $249.99，未见大陆零售 SKU。Microduck 灰色市场国内约至 ¥5567（https://www.yicai.com/news/103350821.html）。华泰 ¥2000–4000 价带本月无修订。Bubbo / 二白Mini / JUOS / Microduck / Plaud One / 优必选 U1 仍纯反定位。
 
 ---
 
@@ -86,11 +86,11 @@
 - 类别：语音
 - 状态：待评估
 - 首次写入：2026-09-10
-- 最近更新：2026-09-10
+- 最近更新：2026-09-14
 - 为何现在相关：PyPI funasr 1.4.15 于 2026-09-09T04:03:45Z 上传（1.4.14 为 2026-09-03）。What's new：已测 NumPy 2 兼容；修流式 KWS/VAD 边界与 checkpoint ranking。Voice Core/Agent 用 FunASR；旧钉 ≥1.4.13/1.4.14 已吸收进 R-20260831-02。1.4.14 时代的 `numpy<2` 护栏不再是硬约束。
 - 建议下一步：评估把云端钉从 `funasr>=1.4.14` 升到 `>=1.4.15`（`python -m pip install -U "funasr==1.4.15"`）。先看空转写分账与流式 VAD 边界，再改约束。不因此改设备 VAD，不上 Fun-ASR-Nano 替实时路径。
 - 来源：https://pypi.org/project/funasr/1.4.15/ ；https://github.com/modelscope/FunASR/releases/tag/v1.4.15
-- 开发备注：2026-09-10 现场核 PyPI latest=1.4.15，无 1.5.0。活工单仍是 R-20260831-02。2026-09-11 更正：本仓不是消费方——实时路径是 DashScope 云 `fun-asr-realtime` websocket（`funasr_stt.py:78,116`），`funasr` 包只可能存在于服务器侧 sidecar 镜像；升钉要改的是服务器 sidecar，不是 `pyproject.toml`，因此**不走** agent-only 快速通道门禁。落地前需先确认 sidecar 镜像的构建来源（HANDOFF 记「Dockerfile 只在服务器该目录，重建不可复现」）。
+- 开发备注：2026-09-10 现场核 PyPI latest=1.4.15，无 1.5.0。活工单仍是 R-20260831-02。2026-09-11 更正：本仓不是消费方——实时路径是 DashScope 云 `fun-asr-realtime` websocket（`funasr_stt.py:78,116`），`funasr` 包只可能存在于服务器侧 sidecar 镜像；升钉要改的是服务器 sidecar，不是 `pyproject.toml`，因此**不走** agent-only 快速通道门禁。落地前需先确认 sidecar 镜像的构建来源（HANDOFF 记「Dockerfile 只在服务器该目录，重建不可复现」）。2026-09-14 复核 PyPI latest 仍 1.4.15，无 1.4.16/1.5.0。
 
 ### R-20260831-06 SenseVoice EOU 只当 sidecar 分数
 
@@ -131,22 +131,22 @@
 - 类别：产品技术
 - 状态：待评估
 - 首次写入：2026-09-11
-- 最近更新：2026-09-11
+- 最近更新：2026-09-14
 - 为何现在相关：PyPI livekit-agents 1.8.1 于 2026-09-10T18:59:28Z 上传；GitHub release livekit-agents@1.8.1 published 2026-09-10T21:26:43Z。相对 1.8.0：新增 DuplexModel（full-duplex speech models），首个实现 OpenAI GPT-Live；另有若干 voice/telemetry/TTS pool/false-interruption resume 测试修复。仓内仍钉 1.6.10；R-20260907-01 仍是 1.8.0 升级评估。memoria 当前协商上限 `interrupt_assist`、对外 `advertised_duplex_level=none`、`full_duplex_verified=false`——云侧出现 DuplexModel 不等于设备侧可宣传全双工。
 - 建议下一步：评估 1.6.10→1.8.1（或先 1.8.0 再 1.8.1）时把 DuplexModel 标为实验观察，不接生产会话路径；LiveKit 设备路径继续 `interruption.enabled=False` + `preemptive_generation.enabled=False`；不要因 DuplexModel 打开 `user_turn_limit` / `expressive=True` / 宣称全双工。VoiceMem 插件仍要求 `livekit-agents<1.8`，不能用 1.8.1 当 VoiceMem 升级借口。
 - 来源：https://pypi.org/project/livekit-agents/1.8.1/ ；https://github.com/livekit/agents/releases/tag/livekit-agents%401.8.1 ；https://docs.livekit.io/agents/models/realtime/#full-duplex
-- 开发备注：与 R-20260907-01 并存；本条专钉 1.8.1 + DuplexModel。不把云侧 duplex API 写成 VoCat T1–T14 已通过。
+- 开发备注：与 R-20260907-01 并存；本条专钉 1.8.1 + DuplexModel。不把云侧 duplex API 写成 VoCat T1–T14 已通过。2026-09-14 复核 PyPI latest 仍 1.8.1，无 1.8.2/1.9.0；DuplexModel 仍只作实验观察，不宣称全双工。
 
 ### R-20260907-02 VoCat AEC / barge-in 真机未验
 
 - 类别：硬件
 - 状态：进行中
 - 首次写入：2026-09-07
-- 最近更新：2026-09-11
+- 最近更新：2026-09-14
 - 为何现在相关：出货板已是 VoCat（ES7210 + ES8311）。协商 `interrupt_assist` 已切流，AEC residual、真机 barge-in 和 T1–T14 仍未过。现场步骤只写 `HANDOFF.md`。xiaozhi-esp32 #2036（ES7210 MIC3 作 AEC reference，MMR vs MR）仍与现板路径相关，不是已验证 barge-in。
 - 建议下一步：量 AEC residual，真机测打断。未过证不得改 `aec_reference_verified` 或宣传全双工。立创附件 `vocat_xiaozhi_1_1_0.bin` 只作适配参考，不要抄「萌宠全双工」叙事。LiveKit ESP32 指南可作 ES7210 `0x80` / ES8311 `0x30` 初始化参考。
 - 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://livekit.com/blog/esp32-custom-hardware-quickstart ；https://github.com/78/xiaozhi-esp32/issues/2036
-- 开发备注：hello 已报 simultaneous capture / fd_low_cost；Agent barge-in 跟 `audio_mode`。2026-09-11：#2036 仍 open，`updated_at` 仍 2026-07-07，无新活动；不外推为全双工证据。
+- 开发备注：hello 已报 simultaneous capture / fd_low_cost；Agent barge-in 跟 `audio_mode`。2026-09-11：#2036 仍 open，`updated_at` 仍 2026-07-07，无新活动；不外推为全双工证据。2026-09-14：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z（https://github.com/78/xiaozhi-esp32/issues/2036）；不外推为 VoCat AEC/barge-in 已验。相关 #2140 麦阵讨论不改变 memoria 围栏。
 
 ### R-20260909-02 XVF3800 硬件 AEC 是更高天花板
 
@@ -166,11 +166,11 @@
 - 类别：产品技术
 - 状态：进行中
 - 首次写入：2026-09-09
-- 最近更新：2026-09-11
+- 最近更新：2026-09-14
 - 为何现在相关：VoiceMem（v0.0.2）是实时语音智能体的记忆检索层：左脑事实、右脑人格/情绪笔记，ingest 抽事实、search 把 Top-K 注入回复。宣传 LoCoMo ~91%、PersonaMem ~69%、检索 ~134ms、每轮约 300–430 memory token。它不能替代 Memoria 的对话档案。与已落地的 Dense-Mem confirm/trace（原 R-20260831-07）同族：增强现有 catalog / persona / recall，不换栈。当前工单仍是 VoCat interrupt_assist，本条另轨。第三方 `livekit-plugins-voicemem` 0.2.2（PyPI 2026-09-01）是 pgvector 记忆插件，要求 `preemptive_generation` 关，且声明 `livekit-agents<1.8`，与仓内要评估的 1.8.0 / 现已发布的 1.8.1 仍不兼容。
 - 建议下一步：不 pip install voicemem / livekit-plugins-voicemem、不克隆、不接音频。只喂已 commit 且 `history_eligible=true` 的主人文本；输出只能当候选 Memory Claim。硬约束见 R-20260909-04。长程三项已过，但整体 `recall@5` 仍 0.8125（其余无共享词转述，如「避开」≠「香菜」）；不要开工预取、双通道注入或平行记忆库。新零重叠句式先加评测再扩封闭词表。
 - 来源：https://github.com/xzf-thu/VoiceMem ；https://xzf-thu.github.io/VoiceMem/ ；https://arxiv.org/pdf/2608.26005 ；https://pypi.org/project/livekit-plugins-voicemem/0.2.2/
-- 开发备注：2026-09-09 只读评估。LICENSE Apache 2.0；捆绑模型另有许可。左脑底层 Mem0 + 本地 Qdrant，默认不是多进程安全的生产 catalog。2026-09-10：插件版不能当升级路径，也不用来换 PG/MinIO 档案栈。同日扩 `memory_eval_zh_v1` 并让评测查询走生产 RecallPlanner。同日在 `RecallPlanner` 加封闭 rewrite（不改 archive、不设 entity 过滤）：「小朋友/小孩子/孩子」扩 `儿子/女儿` 及已确认子女别名；「难受/不开心/伤心/委屈」扩 `难过`；「小朋友」不误匹配「朋友」。`memory_eval_zh_v1`：跨会话 / 转述追问 / 安慰 `recall@5` 均为 1.0；隔离/候选泄漏仍 0；整体 `recall_at_5=0.8125`、`ndcg_at_10≈0.734`。抽取器仍抽不出「我儿子小周对猫毛过敏」的人物，所以转述靠词表而非实体。不引入 Mem0。2026-09-11：`livekit-plugins-voicemem` 0.2.2 仍声明 `livekit-agents<1.8`，与 1.8.1 仍不兼容；不因此换栈。
+- 开发备注：2026-09-09 只读评估。LICENSE Apache 2.0；捆绑模型另有许可。左脑底层 Mem0 + 本地 Qdrant，默认不是多进程安全的生产 catalog。2026-09-10：插件版不能当升级路径，也不用来换 PG/MinIO 档案栈。同日扩 `memory_eval_zh_v1` 并让评测查询走生产 RecallPlanner。同日在 `RecallPlanner` 加封闭 rewrite（不改 archive、不设 entity 过滤）：「小朋友/小孩子/孩子」扩 `儿子/女儿` 及已确认子女别名；「难受/不开心/伤心/委屈」扩 `难过`；「小朋友」不误匹配「朋友」。`memory_eval_zh_v1`：跨会话 / 转述追问 / 安慰 `recall@5` 均为 1.0；隔离/候选泄漏仍 0；整体 `recall_at_5=0.8125`、`ndcg_at_10≈0.734`。抽取器仍抽不出「我儿子小周对猫毛过敏」的人物，所以转述靠词表而非实体。不引入 Mem0。2026-09-11：`livekit-plugins-voicemem` 0.2.2 仍声明 `livekit-agents<1.8`，与 1.8.1 仍不兼容；不因此换栈。2026-09-14：插件仍 0.2.2 / `livekit-agents<1.8`；仍禁止换 PG+MinIO 档案栈。
 
 产品拆两层，默认只做第一条：
 
@@ -208,12 +208,12 @@
 - 类别：合规
 - 状态：待评估
 - 首次写入：2026-09-01
-- 最近更新：2026-09-11
+- 最近更新：2026-09-14
 - 吸收：R-20260901-03、R-20260901-05、R-20260901-09、R-20260903-03
-- 为何现在相关：令第25号已生效，声纹仍要单独同意，2026-09-11 无新声纹细则。大型处理者征求意见截止已过、截至 2026-09-11 仍无正式文本/延期公告/解读（https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm）；当前按小型处理者，不扩编守门人组织。清朗转载无新实质。最高法涉人工智能纠纷意见是司法意见不是 CAC 新法，拟声/训练语料见 R-20260910-02。导出是用户语音+模型回复混合物，执法点在文件标识。拟人化办法的落地页/2h 提醒已在小程序完成（原 R-20260831-13）。
+- 为何现在相关：令第25号已生效，声纹仍要单独同意，2026-09-14 无新声纹细则。大型处理者征求意见截止已过、截至 2026-09-14 仍无正式文本/延期公告/解读（https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm）；当前按小型处理者，不扩编守门人组织。清朗二阶段 2026-09-02 CAC 稿（https://www.cac.gov.cn/2026-09/02/c_1790099041364574.htm）为执行进展（清理 561 万余条等），非正式新规章。最高法涉人工智能纠纷意见是司法意见不是 CAC 新法，拟声/训练语料见 R-20260910-02。导出是用户语音+模型回复混合物，执法点在文件标识。拟人化办法的落地页/2h 提醒已在小程序完成（原 R-20260831-13）。
 - 建议下一步：默认云端只存转写+记忆条目；原始 wav/特征不长期留、不用于声纹登录。声纹单独同意，不并入一般同意。导出 JSON/音频包里模型侧显式「AI 生成」，元数据写服务提供者+内容编号；TTS 对齐 `aigc_watermark` + `aigc_metadata`。五个吉祥物禁止亲属/伴侣角色。家庭邀请只给控制面权限，写档案仍要设备端 owner 声纹。继续盯大型处理者正式文本，不新开法规 id。
-- 来源：https://www.cac.gov.cn/2026-07/24/c_1786638889704872.htm ；https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm ；https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm ；https://docs.volcengine.com/docs/6561/1598757
-- 开发备注：2026-09-11 NEW_LAW_IDS（法规/CAC）空。Seed-TTS `aigc_watermark` / `aigc_metadata` schema 仍 NO_CHANGE。不把大型处理者征求意见稿写成已生效。
+- 来源：https://www.cac.gov.cn/2026-07/24/c_1786638889704872.htm ；https://www.cac.gov.cn/2026-08/07/c_1787851071612596.htm ；https://www.cac.gov.cn/2026-09/02/c_1790099041364574.htm ；https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm ；https://docs.volcengine.com/docs/6561/1598757
+- 开发备注：2026-09-14 NEW_LAW_IDS（法规/CAC）空。Seed-TTS `aigc_watermark` / `aigc_metadata` schema 仍 NO_CHANGE（https://docs.volcengine.com/docs/6561/1598757）。不把大型处理者征求意见稿写成已生效；不把清朗二阶段进展稿写成新规。
 
 ### R-20260911-07 声音样本检验与「一分钟内可用」（消费端）
 
@@ -291,6 +291,28 @@
 - 建议下一步：老年陪伴是 Memoria 后期方向（见当前站位），仿生人头形态不是；养老陪护资本热度作信号。当前阶段不把人形头/养老看护写进 VoCat SKU，不新开养老看护工单。
 - 来源：https://www.vbdata.cn/1519092689.html
 - 开发备注：2026-09-12 定位重申后由「反定位」改挂「阶段雷达·老年后期」；本条只钉华拟融资。不复制新 id。
+
+### R-20260914-01 小度智能音箱 Pro Max / 百度搭子（反定位·智能音箱/家庭 Agent）
+
+- 类别：市场定位
+- 状态：待评估
+- 首次写入：2026-09-14
+- 最近更新：2026-09-14
+- 为何现在相关：百度 AI Day 小度 2026-09-08 发布小度智能音箱 Pro Max：上市价 ¥349、首销 ¥299，9/28 开售；强调多意图理解、长期记忆/家庭档案偏好、跨设备调度摄像机、小彩屏+温湿度光传感器联动家电。同期超能小度接入百度搭子。这是智能音箱/家庭 Agent 中枢路线，与 Memoria「陪伴机器人 + 声纹门禁/按需档案能力底座、非智家中枢」形成对照；不要把「长期记忆」口号抄成产品定位。
+- 建议下一步：作纯反定位日历（价带/记忆叙事对照）；不新开音箱屏/IoT 中枢工单；订阅叙事仍走学生陪伴/教学价值，不对照小度 ¥299 音箱。
+- 来源：https://www.ithome.com/0/999/786.htm ；https://finance.sina.com.cn/roll/2026-09-08/doc-inircmeu9356305.shtml ；https://www.eefocus.com/article/2083546.html
+- 开发备注：不并入 Doova/Amoo/iKairos；不属于阶段雷达（不是机器人形态）。
+
+### R-20260914-02 无芯科技安安 / 邓肯（IFA 2026）阶段雷达·老年后期（邓肯旁证学生线）
+
+- 类别：市场定位
+- 状态：待评估
+- 首次写入：2026-09-14
+- 最近更新：2026-09-14
+- 为何现在相关：深圳无芯科技（Mind With Heart Robotics）IFA 2026 推情感 AI 熊猫安安（CES 2026 AI 创新奖）：全身触觉、主动陪伴/提醒、长期记忆学习交互习惯；欧洲零售约 $1000–1500（约 ¥7k–11k），首批约 100 台，德/比渠道，2026-09 欧洲开售；另有 Duncan 系列面向神经多样性与学龄前儿童。老年情感陪护/机构康养仪表盘属后期阶段雷达；仿生熊猫+触觉+B 端康养数据不是当前学生线硬件。Duncan 仅作学生/儿童陪伴旁证，不新开医疗/神经多样性硬件工单。
+- 建议下一步：安安挂「阶段雷达·老年后期」；Duncan 备注旁证学生线情感陪伴，不复制新 id。不把欧洲仿生康养价带写成 Memoria 对标。
+- 来源：https://www.prnewswire.com/news-releases/mind-with-heart-robotics-brings-anan-panda-robot-to-europe-at-ifa-berlin-2026-302864722.html ；https://news.pedaily.cn/202609/568625.shtml ；https://theaiinsider.tech/2026/09/05/mind-with-heart-robotics-launches-anan-panda-robot-in-europe/
+- 开发备注：与 Doova/HUA-H 同类阶段雷达；不复活任何已关闭反定位 id。
 
 ### R-20260906-01 小程序控制面待验 P1/P2
 
