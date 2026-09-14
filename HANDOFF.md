@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-14
-resume_checkpoint: vocat_aec_candidate_pushed_usb_reconnect_required_20260914
+resume_checkpoint: vocat_aec_candidate_pushed_manual_device_reset_required_20260914
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -37,7 +37,7 @@ weather_user_acceptance_date: 2026-09-13
 farewell_immediate_standby_verified: false
 firmware_playback_capture_code: clean_build_and_203_targeted_tests_pass
 firmware_playback_capture_wired: resolved_device_aec_and_board_compile_gate
-firmware_playback_capture_enabled: false_pending_usb_reconnect_and_app_only_flash
+firmware_playback_capture_enabled: false_pending_manual_device_reset_and_app_only_flash
 firmware_playback_capture_verified: build_config_only_device_acceptance_pending
 firmware_playback_capture_evidence_at: 2026-09-14T10:08:20+08:00
 production_runtime_verified: true
@@ -62,7 +62,7 @@ idle_tap_pat_operator_verified: true
 
 根因已修于候选 **`76ba6ad3b68a042566f97dc42f6f8101c32b20af`**（已推送）：锁定 upstream 的 `USE_DEVICE_AEC` 依赖未包含 Memoria 板型，manifest 的 `=y` 被静默丢弃，导致默认 AutoStop 在 Speaking 关闭语音处理。0001 补板型依赖，板级编译保护和 `check-overlay.sh` 检查最终配置；新增 CI firmware job 执行全部固件宿主回归。干净重放/构建、依赖锁门禁与 **203 项**定向回归通过，生成的 `sdkconfig.h` 已有 device AEC/audio processor 宏，server AEC 关闭。未调静音超时、增益、DTLN、声纹权限或服务器，AEC 残余/双讲仍未验收。旁查 `CONFIG_FLASH_EXPRESSION_ASSETS=y` 也是当前无效配置，但实际 default assets 承载唤醒命令词，本轮不改该路径。
 
-**当前阻塞：候选尚未刷写。** 身份区、分区表和 otadata 已回读，身份 SHA 与既有值相同，OTA 选择 `ota_0`；整槽回读遇到数据流中断，分块仅首个 512 KiB 成功并与旧构建一致。之后串口与 ROM 连接均报 `No serial data received`，15 秒重置探测收到 0 字节。证据 `outputs/acceptance/run-20260914-aec-fix/`。需要操作员拔插 USB（必要时同时重新上电），重新确认连接后完成**完整回滚备份 → app-only 刷入 → app/身份逐字节回读 → 启动与双端日志 → 天气追问、播中/播后告别**。未执行任何 write-flash，未重启服务器；不得把候选构建通过写成真机已启用。
+**当前阻塞：候选尚未刷写。** 身份区、分区表和 otadata 已回读，身份 SHA 与既有值相同，OTA 选择 `ota_0`；整槽回读遇到数据流中断，分块仅首个 512 KiB 成功并与旧构建一致。2026-09-14 10:20 操作员重插 USB 后仍枚举为同一板子，`cu`/`tty` 端口均无占用；15 秒被动采集为 0 字节，115200 baud / `usb-reset` / 2 次连接尝试的只读 flash-id 探测仍报 `No serial data received`。证据 `outputs/acceptance/run-20260914-aec-fix/reconnect-probe/` 与 `reconnect-flash-id.log`。USB 重插不足以恢复通信，下一步请操作员确认板子电源开关并手动断电重启；必要时再按实际板上按键进入下载模式，不反复盲探。恢复连接后完成**完整回滚备份 → app-only 刷入 → app/身份逐字节回读 → 启动与双端日志 → 天气追问、播中/播后告别**。所有本轮探测均已退出，未执行任何 write-flash，未重启服务器；不得把候选构建通过写成真机已启用。
 
 epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（17:30 CST，session `7c465319`）复现同一组缺陷，分两轮修：
 
