@@ -116,6 +116,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     manifest = json.load(handle)
 sdkconfig = set(manifest["builds"][0]["sdkconfig_append"])
 required = {
+    "CONFIG_USE_DEVICE_AEC=y",
     "CONFIG_USE_CUSTOM_WAKE_WORD=y",
     "CONFIG_OTA_URL=\"\"",
     'CONFIG_CUSTOM_WAKE_WORD="mo li"',
@@ -143,6 +144,15 @@ if any(
     for item in sdkconfig
 ):
     raise SystemExit("Memoria board must select only CONFIG_SR_MN_CN_MULTINET6_QUANT=y")
+PY
+"$python_bin" - "$MEMORIA_UPSTREAM_DIR/main/Kconfig.projbuild" <<'PY'
+import pathlib
+import sys
+
+kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+device_aec = kconfig.split("config USE_DEVICE_AEC\n", 1)[1].split("\nconfig ", 1)[0]
+if "|| BOARD_TYPE_MEMORIA_ESP_VOCAT" not in device_aec:
+    raise SystemExit("Memoria board must be eligible for device-side AEC in Kconfig")
 PY
 (cd "$MEMORIA_UPSTREAM_DIR" && git diff --check)
 
@@ -402,6 +412,14 @@ sdkconfig="$MEMORIA_UPSTREAM_DIR/sdkconfig"
 metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
 flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
 [[ -s "$sdkconfig" ]] || die "final sdkconfig is missing"
+# Kconfig can silently discard sdkconfig_append entries when dependencies fail.
+for option in BOARD_TYPE_MEMORIA_ESP_VOCAT USE_AUDIO_PROCESSOR USE_DEVICE_AEC; do
+    rg -q "^CONFIG_${option}=y$" "$sdkconfig" || \
+        die "final sdkconfig must enable CONFIG_${option} for playback-time capture"
+done
+if rg -q '^CONFIG_USE_SERVER_AEC=y$' "$sdkconfig"; then
+    die "final sdkconfig must use device-side AEC, not server-side AEC"
+fi
 rg -q '^CONFIG_OTA_URL=""$' "$sdkconfig" || die "final sdkconfig still exposes an OTA endpoint"
 if rg -n 'api\.tenclass\.net/xiaozhi/ota|CONFIG_OTA_URL="https?://' "$sdkconfig"; then
     die "upstream OTA endpoint leaked into final sdkconfig"

@@ -1,6 +1,14 @@
 #ifndef _BOARD_CONFIG_H_
 #define _BOARD_CONFIG_H_
 
+#include "sdkconfig.h"
+
+// The advertised interrupt_assist path must not fall back to AutoStop, which
+// disables voice processing while speaking. Check resolved Kconfig, not defaults.
+#if !CONFIG_USE_AUDIO_PROCESSOR || !CONFIG_USE_DEVICE_AEC || CONFIG_USE_SERVER_AEC
+#error "Memoria ESP-VoCat requires device-side AEC for playback-time capture"
+#endif
+
 #include <driver/gpio.h>
 #include <driver/uart.h>
 #include <driver/spi_master.h>

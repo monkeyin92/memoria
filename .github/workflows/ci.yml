@@ -16,6 +16,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       media_edge: ${{ steps.filter.outputs.media_edge }}
       miniprogram: ${{ steps.filter.outputs.miniprogram }}
+      firmware: ${{ steps.filter.outputs.firmware }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v4
@@ -51,6 +52,27 @@ jobs:
               - 'infra/Dockerfile.media-edge'
             miniprogram:
               - 'apps/miniprogram/**'
+            firmware:
+              - '.github/workflows/ci.yml'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'firmware/esp32/**'
+
+  firmware:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Require host C++ compiler
+        run: c++ --version
+      - name: Firmware host regression tests
+        run: >-
+          uv run --frozen --extra dev pytest --import-mode=importlib --no-cov
+          firmware/esp32/tests
 
   agent:
     needs: changes
