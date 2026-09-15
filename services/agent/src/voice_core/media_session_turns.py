@@ -105,6 +105,11 @@ class MediaTurnEndpointMixin:
             reason: str,
         ) -> None: ...
 
+        async def _request_device_standby(
+            self, context: _MediaVoiceSession, *, reason: str,
+            expected_endpoint: tuple[int, int] | None = None,
+        ) -> bool: ...
+
         async def _emit_projection_patch(
             self,
             context: _MediaVoiceSession,
@@ -162,6 +167,10 @@ class MediaTurnEndpointMixin:
             user_text: str,
             fence: GenerationFence,
         ) -> OutputDispatchResult: ...
+
+        async def _abort_committed_turn(
+            self, context: _MediaVoiceSession, fence: GenerationFence, *, reason: str,
+        ) -> None: ...
 
         def _record_output_dispatch_result(
             self,
@@ -781,9 +790,21 @@ class MediaTurnEndpointMixin:
         endpoint_sample: int,
     ) -> None:
         context = self._sessions.get(session_id)
-        if context is None:
+        if (
+            context is None
+            or context.closed
+            or context.standby_requested
+            or context.stream_epoch != stream_epoch
+            or context.turn_endpoint_sample != endpoint_sample
+        ):
             return
         context.turn_endpoint_timeout_handle = None
+        deadline = context.turn_endpoint_tail_deadline
+        if deadline is not None and time.monotonic() < deadline:
+            # Timer callbacks can run slightly early. Keep the same deadline
+            # rather than entering an unbounded wait on the retry task.
+            self._arm_endpoint_tail_timeout(context, endpoint_sample)
+            return
         asyncio.create_task(
             self._expire_endpoint_tail(session_id, stream_epoch, endpoint_sample),
             name=f"media-turn-tail-{session_id}-{endpoint_sample}",
@@ -816,6 +837,9 @@ class MediaTurnEndpointMixin:
 
     @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
+        context.admitted_input_stream_epoch = None
+        context.active_vad_stream_epoch = None
+        context.active_vad_start_sample = None
         max_speech_task = context.max_user_speech_task
         context.max_user_speech_task = None
         context.max_user_speech_deadline = None
@@ -897,6 +921,24 @@ class MediaTurnEndpointMixin:
         ):
             return
         retry_task = context.turn_commit_retry_task
+        commit_task = context.turn_commit_task
+        deadline = context.turn_endpoint_tail_deadline
+        if (
+            deadline is not None
+            and time.monotonic() >= deadline
+            and (
+                (commit_task is not None and not commit_task.done())
+                or self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample)
+            )
+        ):
+            # Backoff count is not an I/O bound. Revoke admission before
+            # cancellation/lock acquisition so even a late provider result
+            # cannot publish or start output after the absolute deadline.
+            await self._request_device_standby(
+                context, reason="turn_prepare_timeout",
+                expected_endpoint=(stream_epoch, endpoint_sample),
+            )
+            return
         if retry_task is not None and self._turn_commit_retry_matches(
             context, stream_epoch, endpoint_sample
         ):
@@ -1022,19 +1064,21 @@ class MediaTurnEndpointMixin:
             self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:
+        if context.closed or context.standby_requested:
+            return
         task = context.turn_endpoint_task
         if task is not None and not task.done():
             task.cancel()
         endpoint_sample = context.turn_endpoint_sample
         if endpoint_sample is None:
             return
+        self._arm_endpoint_tail_timeout(context, endpoint_sample)
         if self._turn_commit_retry_matches(
             context,
             context.stream_epoch,
             endpoint_sample,
         ):
             return
-        self._arm_endpoint_tail_timeout(context, endpoint_sample)
         grace_deadline = context.turn_endpoint_grace_deadline or time.monotonic()
         context.turn_endpoint_task = asyncio.create_task(
             self._commit_pending_turn_after_grace(
@@ -1060,6 +1104,7 @@ class MediaTurnEndpointMixin:
             current_endpoint = bool(
                 context is not None
                 and not context.closed
+                and not context.standby_requested
                 and context.stream_epoch == stream_epoch
                 and context.turn_endpoint_sample == endpoint_sample
             )
@@ -1139,6 +1184,8 @@ class MediaTurnEndpointMixin:
     ) -> str | None:
         """Commit one VAD/ASR-coordinated logical turn through UtteranceRouter."""
 
+        if context.closed or context.standby_requested:
+            return "session_closed"
         start_sample = context.turn_start_sample
         end_sample = context.turn_end_sample
         endpoint_sample = context.turn_endpoint_sample
@@ -1153,6 +1200,9 @@ class MediaTurnEndpointMixin:
             or retire_sample < endpoint_sample
         ):
             return "invalid_pending_media_turn"
+        # Direct/fallback commits share the same absolute deadline as the
+        # scheduled endpoint. Rearming never grants a new retry interval.
+        self._arm_endpoint_tail_timeout(context, endpoint_sample)
         previous_fence = context.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
@@ -1207,6 +1257,9 @@ class MediaTurnEndpointMixin:
         # lock before scheduling the new turn; otherwise ``generate_reply``
         # sees a locked session and silently drops a valid user turn.
         await self._cancel_reply_task(context, previous_fence)
+        if context.closed or context.standby_requested:
+            await self._abort_committed_turn(context, fence, reason="session_closed")
+            return "session_closed"
         task = asyncio.create_task(
             self._dispatch_reply(
                 context.identity.session_id,
@@ -1264,6 +1317,9 @@ class MediaTurnEndpointMixin:
         endpoint_sample: int,
         provider_final_missing: bool,
     ) -> None:
+        if context.closed or context.standby_requested:
+            return
+        self._arm_endpoint_tail_timeout(context, endpoint_sample)
         if self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample):
             return
         self._clear_turn_commit_retry_state(context)

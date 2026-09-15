@@ -6,8 +6,8 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-14
-resume_checkpoint: wake_greeting_playback_vad_fix_verified_real_device_20260914
+as_of_date: 2026-09-15
+resume_checkpoint: p0_voice_lifecycle_and_playback_supply_meter_audit_20260915
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -36,20 +36,42 @@ empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback
 empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
 weather_user_acceptance_date: 2026-09-13
 farewell_immediate_standby_verified: false # 播后已过；播放中语音告别仍受签名策略限制，不能总体标真
-firmware_playback_capture_code: clean_build_and_esp32_host_tests_pass
-firmware_playback_capture_wired: resolved_device_aec_and_board_compile_gate
-firmware_playback_capture_enabled: true_app_only_flashed_20260914T1506CST
-firmware_playback_capture_verified: app_full_readback_identity_and_non_app_partitions_unchanged_boot_idle
+# 历史 0024/AEC 播放期 VAD 修复状态；不要与当前 0025 计量实现混读。
+firmware_playback_capture_code: historical_0024_clean_build_and_esp32_host_tests_pass
+firmware_playback_capture_wired: historical_resolved_device_aec_and_board_compile_gate
+firmware_playback_capture_enabled: historical_true_app_only_flashed_20260914T1506CST
+firmware_playback_capture_verified: historical_app_full_readback_identity_and_non_app_partitions_unchanged_boot_idle
 firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
+firmware_playback_supply_meter_code: complete_uncommitted_observation_only
+firmware_playback_supply_meter_wired: current_candidate_app_only_flashed_full_readback_verified
+firmware_playback_supply_meter_enabled: true_boot_verified_20260915T112207CST
+firmware_playback_supply_meter_verified: false_single_round_valid_long_capture_degraded_actual_heard_pending
+firmware_playback_supply_meter_worktree_overlay_hash: 97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8
+firmware_playback_supply_meter_board_overlay_hash: 97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8
+firmware_playback_supply_meter_board_release_head: 65257e0e1285a3126e484ad22c308315c971caad
+firmware_playback_supply_meter_board_upstream_commit: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
+firmware_playback_supply_meter_board_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
+firmware_playback_supply_meter_board_elf_sha256: efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625
+firmware_playback_supply_meter_board_receipt: outputs/acceptance/run-20260915-p0-03-firmware-metering/postflash.json
+firmware_playback_supply_meter_board_boot_verified: true
+firmware_playback_supply_meter_board_real_device_conversation_verified: false
+firmware_playback_supply_meter_real_device_conversation_verified: false
+pre_roll_code: not_implemented
+pre_roll_wired: false
+pre_roll_enabled: false
+pre_roll_verified: false
 wake_ack_playback_vad_fix_code: complete
 wake_ack_playback_vad_fix_wired: session_accepted_signed_allowed_barge_in_gate
 wake_ack_playback_vad_fix_enabled: true_app_only_flashed_20260914T1506CST
 wake_ack_playback_vad_fix_verified: real_device_greeting_no_disconnect_actual_heard_and_explicit_farewell_pass
 wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:11:29+08:00
-on_device_app_sha256: b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6
-on_device_app_elf_sha256: 7eb96fe19f275e3e0493073fd42aeca281bbce8b568b75d961b9aabbb5b605b7
-on_device_app_compiled_at: 2026-09-14T14:59:34+08:00
-nearest_rollback_app_sha256: 6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b
+# 当前板上 0025 候选；历史 0024/AEC 候选见「板卡与固件」。
+on_device_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
+on_device_app_elf_sha256: efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625
+on_device_app_build_recorded_at: 2026-09-15T11:17:17+08:00
+on_device_app_verified_at: 2026-09-15T11:22:07+08:00
+nearest_rollback_app_sha256: 176cc14fd468833f545202d41dbb98bf56f1990b488a52de29e334cf825172df
+previous_aec_candidate_app_sha256: 6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -96,6 +118,41 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-15 多日天气与续问关停修复（本地回归通过，未部署、未真机验收）
+
+本节对应用户「未来三天南京天气只答今天，播后再问没说完就待命」的反馈。证据是 **9 月 15 日**的 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-2/`，session `ee5f652b-1cd3-425d-bd6a-71fd91b7568f` / epoch **1953**；不是 9 月 14 日同名的 `session-2`。
+
+- **多日天气根因已证实**：`bridge.log:67` 的 geocode 输入保留「好未来3天南京」，而 `bridge.log:90` 实际请求是 `forecast_days=1`。旧确定性天气适配器只识别今天/明天/后天的单日偏移，未建模天数范围；不是只改提示词能修复的问题。
+- **续问关闭的现场事实**：`serial.log:304` 在 **12:57:21.672 CST** 播完进入 listening，`:306` 在 **12:57:27.566** 发出新 VAD start；`edge.log:2` 在 **12:57:29.101** 以 `owner_silence_timeout` 关闭，`serial.log:310` 在 **12:57:29.125** 回 idle。设备开口约 1.56 秒后被关停；旧 Bridge 日志没有受理 VAD、剩余静默预算、grace/watchdog 状态，**不能据此断言现场已进入某条 Python 受理分支**。
+- **代码与红测证实的结构性竞态**：VAD 的受理保护晚于异步 projection；已经启用的 one-shot processing grace 不随新受理 VAD 暂停；旧超时还可能已在等 `standby_lock`。仅取消定时任务或调长超时，均不能完整解决这三处接缝。
+
+本地修改沿用既有 provider 与 Python 会话权威链，不新增 listening 状态机、不放宽声纹/打断权限、不改固件或预缓冲：
+
+1. 天气适配器支持从今天起的明确 1–16 天范围；「未来三天」逐项回答今天、明天、后天。只移除匹配的日期片段，保留地名数字；模糊、超限、矛盾范围、非今天起点或不完整日数据走既有 fallback，不默默改答今天。城市在「天气」之后的倒装句仍不由此适配器解析，不能声称任意自然语言日期/地名均已覆盖。
+2. 合法 VAD 在 projection await 前受理，使用独立 active-VAD 标记；真实已启动的绝对说话 watchdog 才能接替 grace，锁内 revision 复核阻止旧静默关闭误杀。重复 VAD 不续 watchdog，也不补满静默预算；仍只有 verified owner 完成轮次能刷新预算。IGNORE、pin、空 VAD、旧 epoch 不获得保护；显式告别与绝对 watchdog 的关停不被 VAD 否决。
+3. 主审补齐两个异步边界：旧 `vad.end` 等待 projection/ASR 返回后不得截断较新 VAD；正常 `vad.end` 在 ASR finalization 等待期间保留原绝对 watchdog，完成终局/epoch/新语句与 pin 检查后，同步交给既有 endpoint-tail 处理。provider 卡住仍有上界，超时后迟到返回不复活会话；pin 早退由原提交/清理路径释放 watchdog。
+4. 新增 `media vad start admitted` 与 `media owner silence close superseded` 日志，记录 epoch、sample、remaining、grace、watchdog、revision，不记录用户原文。下一次捕获用它们证明真实受理与时限交接。
+
+状态（2026-09-15）：
+
+- `code`：本地补丁及主线回归完成，未提交；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
+- `wired`：接入 `OpenMeteoWeather.resolve`、`on_speech_segment` 与既有 ingress/standby/endpoint/reconnect/terminal 清理路径，没有新增并行状态机。
+- `enabled`：**生产 false（待本轮组件发布）**。2026-09-15 15:40 CST 已从线上 Bridge 的 `load_settings` 核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
+- `verified`：前一轮四套件 **314 passed**、完整 Agent unit **1970 passed**；本次增加 **43** 项异常路径用例后，完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`）。Agent Ruff、strict mypy（157 source files）、模块预算与 diff whitespace 检查通过。**未部署、未刷机、未 commit/push；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
+
+发布前异常路径补核（2026-09-15，本地故障注入与修复已完成）：
+
+- **ASR 异常恢复根因**：finalize 抛异常后的清理撤掉 watchdog/active-VAD，却没有接回 owner-silence，缺少后续 listening 事件时可悬空；旧异常还可能清掉较新 VAD。现在锁内校验 epoch 与原输入标记，仅清理自己拥有的输入；同步清理并恢复剩余静默预算后才异步发布 discard，故障不证明 owner 活动、不补满预算。主审追到下一帧恢复：`_reset_discontinuity` 也有同样的计时交接遗漏与 await 后误清新 VAD，已沿同一顺序修复。因音频不连续而退休输入的语义保留，不把缺失音频当成完整话轮。
+- **prepare retry 总期限根因**：匹配 retry 的早返回与直接提交入口可能没有真实 live tail；即使原 tail 存在，到期逻辑仍会 shield 等待卡住的 retry。0.05/0.15 秒的两次退避不等于 provider I/O 有上界。现在首次提交、retry 与 fallback 共用原绝对 deadline，不因重试续期；略早 timer 回调重挂原期限，旧 epoch/endpoint 回调不能摘掉新 timer。到期仍在 prepare 时走既有 `turn_prepare_timeout` 关停，先封输入、取消提交，再清理；等待 standby lock 后重核 epoch/endpoint/在途任务，避免成功提交、新 VAD 或重连被旧超时误关。失败/耗尽不刷新 owner 预算，正常 verified-owner 成功仍可刷新。
+- **重连接缝根因**：新 transport epoch 能正确否决旧 tail close，但旧 prepare 仍占着 `turn_commit_lock`，导致 `_reuse_session` 无界等待。身份及 authority 核验通过后，重连现在先取消旧输入的 tracked prepare，再进入既有锁内清理，并复核 terminal/context/epoch；不取消已选输出 generation、不发旧 tail 的 CLOSED。独立复核又证实：已分类 owner 的旧 prepare 吞取消后迟到成功，虽然不会发旧回复，却会把剩余 **7.5 秒**补成约 **100 秒**；预算刷新现额外要求当前 epoch，旧成功/异常都不能授予新静默窗口。重连等锁期间发生 terminal 也不能安装新 epoch。
+- **故障证据**：`test_media_finalize_failure_lifecycle.py` **10** 项；最初 5 项核心故障红测及追加的 2 项 next-PCM 红测修复后通过，关联 session/standby 回归 **259 passed**。`test_media_prepare_retry_lifecycle.py` **33** 项，覆盖真实 timer/deadline、两次重试成功/耗尽、每次 prepare 卡住、已耗 grace、terminal/reconnect/new VAD 迟到结果、timer 锁竞态及 verified-owner 预算；主线独立复现的 2 项重连卡锁红测和 1 项迟到成功刷新预算红测已转绿。测试先断言生产路径实际启动 timer，再驱动到期，不凭空补 timer，也不以测试防挂 timeout 代替生产期限。以上是代码缺口实证，不等于已证明它们均曾发生于 epoch 1953。
+- **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
+- **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
+
+仍开放：同一会话 `bridge.log:70,74` 有 `straddles_committed_without_timing` 与 mostly-committed rescue drop。该防重复提交门不能直接放宽；本次天气/待命修复不代表 ASR 重叠边界、语句完整性或长播断续已验收。下一步在获准的 Agent/Bridge 部署窗口核验有效 watchdog 配置并发布已审计切片，然后用新 session 连测三轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」，同步取设备 VAD、ASR 水位、admission/revision、天气请求天数、delivery 与操作员听感。USB/串口稳定后再做 >45 秒长播对照；没有新证据不再刷机、不做 `0026`。自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
+
+发布准备（2026-09-15 15:40–15:45 CST）：用户已授权继续下一步。切前 Agent/Bridge 均 healthy、restart=0，设备在线，回环与公网 readiness 200/core 12/12 ready；独立依赖底座身份已核实。捕获/报表工具另跑 **62 passed**（不在组件脚本的 Agent 门禁内）。冻结范围仅 Agent 生命周期、天气与测量工具及其测试/文档；未提交固件改动保留在主工作树，用独立干净 worktree 发布，不刷机、不改运行配置。证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`；待正式门禁、同镜像切流与候选 provider smoke 通过后更新启用状态，真机三轮另记。
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
@@ -201,8 +258,8 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-14 15:11 CST PASS**（同一 session）：`early conversation-close … partial_immediate` → Edge `conversation_end_explicit` → 串口 idle 的日志间隔约 24 ms，未走静音超时；不是物理屏幕延迟测量。早前 epoch 1936 亦通过 |
-| 长天气 | 完整播报不被 45s 墙钟掐断 | 代码已切流，未真机复测 |
-| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 0023 已 app-only 刷入，未真机说话 |
+| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **2026-09-15 当前候选：单轮有效但未通过**；设备首帧延迟 0.517s、software queue wait 全 0，Bridge `frames=120/audio_ms=2400/wall_ms=2413/max_gap_ms=69/ratio=0.99`；捕获因串口 `Device not configured` degraded，未完成完整长天气和听感确认。证据 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/` |
+| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 当前候选已刷入并启动验证，但本轮只取得一轮短捕获，未完成长回复听感验收 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
 | 切主体触发设备重协商 | 在线设备上从小程序切换使用者后，bridge 出现 `runtime_profile.invalidated`（`apply_at=next_safe_point`），设备安全点重连并加载新 profile；日志出现 `device profile change projected … delivered=true` | 代码已切流（`20260911-subject-switch-device-notify-control-api`），切流时设备离线，待真机 |
@@ -372,7 +429,10 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- **当前板上构建**（2026-09-14 19:05 CST app-only 刷入，含下行欠载计量 patch 0025）：commit `fa54d7d`，app **3,277,856 bytes** / SHA `f58f48a4b21df96df74750ed10638c2ca906f267f2228cf37add3e37fd4a9101`，ELF `16d981b31f45d0dbdaadc6d2ab8f19ab217c1f09ce96535ea0eea54c0cffa578`，ESP-IDF v6.0.2、overlay hash `9f6d083c…`。刷写只写 `0x20000..0x340fff`：写后全槽回读**逐字节一致**、erase 范围外字节未变、identity SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846` 未变、bootloader/partition/nvs/otadata/phy-init 与 ota_1/assets MD5 全未变；启动 `activating -> idle`、`Activation Manifest verified, version=3`。收据与回滚件在 `outputs/acceptance/run-20260914-p0-03-firmware-metering/`（`preflash.json`、`protected/`、`rollback-app.bin`）。**本版新增的可观测项**：`media playback starved generation=… gap_ms=… starved_count=…` 与 `media playback meter generation=… starved_count=… max_gap_ms=… total_gap_ms=…`——真机复测长回复时用它们判断是否确实欠载。
+- **板上 0025 历史候选（2026-09-14 19:05 CST app-only 刷入）**：收据对应 `release_head=fa54d7de027cccaee35e1721762a5d0bb060d60c`，app **3,277,856 bytes** / SHA `f58f48a4b21df96df74750ed10638c2ca906f267f2228cf37add3e37fd4a9101`，ELF `16d981b31f45d0dbdaadc6d2ab8f19ab217c1f09ce96535ea0eea54c0cffa578`，ESP-IDF v6.0.2、overlay marker `9f6d083c…`。刷写只写 `0x20000..0x340fff`：写后全槽回读**逐字节一致**、erase 范围外字节未变、identity SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846` 未变、bootloader/partition/nvs/otadata/phy-init 与 ota_1/assets MD5 全未变。收据与回滚件在 `outputs/acceptance/run-20260914-p0-03-firmware-metering/`（`preflash.json`、`protected/`、`rollback-app.bin`）。但收据明确 `boot_verified=false`、`real_device_conversation_verified=false`；当前工作树 overlay hash 为 `97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8`，与刷入收据对应的旧 marker 不同，因此不能称当前 `PlaybackSupplyMeter` 代码已 wired/enabled。
+- **当前候选（2026-09-15 11:19–11:22 CST app-only 刷入并启动验证）**：收据对应 HEAD `65257e0e1285a3126e484ad22c308315c971caad`、upstream `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5`、overlay hash `97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8`、app **3,280,512 bytes** / SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`、ELF SHA `efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625`。只写 `0x20000..0x340fff`；app 全槽回读逐字节一致，erase 范围外、identity、bootloader、partition、NVS、otadata、phy-init、ota_1/assets 均未变；启动日志见 `outputs/acceptance/run-20260915-p0-03-firmware-metering/boot-check/serial.log`，包含 `StateMachine: State: activating -> idle` 与匹配 ELF 前缀。完整收据：`outputs/acceptance/run-20260915-p0-03-firmware-metering/postflash.json`；回滚 app SHA `176cc14fd468833f545202d41dbb98bf56f1990b488a52de29e334cf825172df`。
+- **当前工作树 `PlaybackSupplyMeter`**：`0025` 补丁/header/宿主断言已完成，属于 observation-only software playout queue wait 计量，区分 `supply / prestart / boundary / close_dropped / outside`，并单独记录 exact TX-EOF completion；它不证明 I2S/DMA underrun，也不证明用户实际听感。当前代码未提交，`pre-roll` 未实现；当前候选已经完成 clean overlay apply、clean build、app-only 刷写、整槽回读和 boot 验证，但长天气听感仍未验收。
+- **2026-09-15 单轮真机计量**：捕获目录 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/`。设备 `vad_end -> first_received=0.517s`；generation 1 software queue wait 全部为 0（`supply/prestart/boundary/close_dropped/outside`）；Bridge `frames=120`、`audio_ms=2400`、`wall_ms=2413`、`max_gap_ms=69`、`after_pacer_send_ratio=0.99`；delivery stages 有 `first_frame_sent/provider_completed/actual_heard/playback_ended`。但捕获因串口 `SerialException: read failed: [Errno 6] Device not configured` 以 `CAPTURE_HEALTH degraded` 结束，`agent.log` 为空；本轮只能记为“单轮有效证据”，不能记为完整长天气、I2S/DMA 无欠载或用户完整听完。操作员只给出“说完了”，未明确确认完整播完且无断续。
 - 上一版（回滚目标）：commit `e1c6998`，app 3,277,328 bytes / SHA `b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6`，ELF `7eb96fe1…`，overlay `03fcdef5…`。
 - 历史基线（已不在板上）：2026-09-13 01:56:16 编译的 2.4.2（ELF `5e7b0150…`）；上一轮 AEC 候选 commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de210…`，overlay `6d17aa95…`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
 - **紧邻回滚**：`6bcca089…`（上一轮 AEC 候选，即本次刷机前板上运行版本）已做完整回读并逐字节匹配，保存在 `outputs/acceptance/run-20260914-1510-wake-ack-vad/rollback-app.bin` 与 `protected/app-before-full-slot.bin`（0x20000/0x3f0000 全槽）。再前一版 `outputs/acceptance/run-20260914-aec-fix/rollback-app.bin` 仍保留，可作二级回滚。

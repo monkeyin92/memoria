@@ -209,6 +209,17 @@ class MediaSessionConnectionMixin:
         context = self._sessions.get(session_id)
         if context is None:
             return
+        # Terminal admission must close before waiting on a provider prepare
+        # that holds turn_commit_lock. Endpoint shielding cannot keep it alive.
+        context.standby_requested = True
+        commit_task = context.turn_commit_task
+        if (
+            commit_task is not None
+            and commit_task is not current_task
+            and not commit_task.done()
+            and not commit_task.cancelling()
+        ):
+            commit_task.cancel()
         await context.turn_commit_lock.acquire()
         try:
             if self._sessions.get(session_id) is not context or context.closed:

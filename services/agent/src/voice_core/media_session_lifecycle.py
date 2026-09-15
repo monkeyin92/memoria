@@ -89,6 +89,10 @@ class MediaSessionLifecycleMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def _finish_owner_silence_turn(
+            self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
+        ) -> None: ...
+
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
         async def on_audio_frame(self, session: MediaBridgeSession, frame: AudioFrame) -> None: ...
@@ -306,15 +310,33 @@ class MediaSessionLifecycleMixin:
         discarded: ProjectionPatch | None = None
         reconnected = False
         if identity.stream_epoch > current.stream_epoch:
+            # This authenticated epoch replaces the pending input, not the
+            # selected output generation. Cancel its tracked preparation before
+            # waiting for turn_commit_lock: an old tail may correctly refuse
+            # to close the new transport and is no longer a cleanup backstop.
+            commit_task = current.turn_commit_task
+            if (
+                commit_task is not None
+                and commit_task is not asyncio.current_task()
+                and not commit_task.done()
+                and not commit_task.cancelling()
+            ):
+                commit_task.cancel()
             # The pending turn is discarded at an epoch boundary.  Do not let
             # its absolute speech watchdog fire against the replacement
             # transport while the old provider task is being rotated.
             self._cancel_max_user_speech_watchdog(current)
+            current.admitted_input_stream_epoch = None
             await self._cancel_audio_pump(current)
             async with current.ingress.finalize_lock:
                 async with current.turn_commit_lock:
                     # A pending commit or VAD final may have completed while this
                     # lookup waited. Re-check before mutating the session.
+                    if (
+                        current.closed or current.standby_requested
+                        or self._sessions.get(identity.session_id) is not current
+                    ):
+                        raise ValueError("media conversation is already closed")
                     if identity.stream_epoch < current.stream_epoch:
                         raise ValueError("media session stream epoch moved backwards")
                     if not current.identity.has_same_reconnect_authority(identity):

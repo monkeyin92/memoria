@@ -33,6 +33,10 @@ class MediaSessionStandbyMixin:
 
         async def _finalize_session(self, session_id: str) -> None: ...
 
+        def _stream_epoch_is_current(
+            self, context: _MediaVoiceSession, stream_epoch: int
+        ) -> bool: ...
+
         def _event_versions(
             self,
             context: _MediaVoiceSession,
@@ -51,6 +55,8 @@ class MediaSessionStandbyMixin:
     def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None:
         """Cancel the one-utterance watchdog and clear its deadline."""
 
+        context.active_vad_stream_epoch = None
+        context.active_vad_start_sample = None
         task = context.max_user_speech_task
         context.max_user_speech_task = None
         context.max_user_speech_deadline = None
@@ -82,6 +88,30 @@ class MediaSessionStandbyMixin:
             self._max_user_speech_watch(context, delay),
             name=f"media-max-user-speech-{context.identity.session_id}",
         )
+
+    def _admit_owner_silence_vad(self, context: _MediaVoiceSession, start_sample: int) -> None:
+        """Transfer accepted speech from silence timing to the absolute watchdog."""
+
+        context.active_vad_stream_epoch = context.stream_epoch
+        context.active_vad_start_sample = max(context.active_vad_start_sample or 0, start_sample)
+        self._arm_max_user_speech_watchdog(context)
+        watchdog_armed = context.max_user_speech_task is not None
+        if context.owner_silence_grace_deadline is not None:
+            if not watchdog_armed:
+                # Explicitly disabling the speech watchdog retains the old
+                # one-shot grace. Do not remove the only remaining bound, or
+                # invalidate a close already waiting for standby_lock.
+                return
+            self._cancel_owner_silence_timer(context, preserve_remaining=False)
+            context.owner_silence_grace_deadline = None
+            context.owner_silence_remaining_s = 0.0
+        else:
+            self._pause_owner_silence_timer(context)
+        # This is admission, not verified owner activity: never refresh the
+        # silence budget or clear grace_used. Only a live watchdog can replace
+        # a close already waiting for the lock, even for a non-grace timeout.
+        if watchdog_armed:
+            context.owner_silence_vad_revision += 1
 
     async def _max_user_speech_watch(
         self,
@@ -145,6 +175,14 @@ class MediaSessionStandbyMixin:
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
+        if context.owner_silence_grace_deadline is not None:
+            # Processing grace is an absolute close deadline, not a listening
+            # budget. Phase churn cannot cancel it or mint another interval.
+            return
+        if context.active_vad_stream_epoch == context.stream_epoch:
+            # A delayed listening projection must not re-arm a spent budget
+            # while an accepted utterance is still open.
+            return
         self._cancel_owner_silence_timer(
             context,
             preserve_remaining=not reset,
@@ -163,6 +201,8 @@ class MediaSessionStandbyMixin:
 
     def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None:
         if not self._owner_silence_enabled(context):
+            return
+        if context.owner_silence_grace_deadline is not None:
             return
         self._cancel_owner_silence_timer(context, preserve_remaining=True)
 
@@ -192,14 +232,22 @@ class MediaSessionStandbyMixin:
         context: _MediaVoiceSession,
         *,
         accepted: bool,
+        refresh_owner_budget: bool = True,
     ) -> None:
         """Resume a paused window after endpointing without trusting bare VAD."""
 
         self._cancel_max_user_speech_watchdog(context)
+        context.admitted_input_stream_epoch = None
         if not self._owner_silence_enabled(context) or context.standby_requested:
             return
+        if context.owner_silence_grace_deadline is not None:
+            self._cancel_owner_silence_timer(context, preserve_remaining=False)
+            context.owner_silence_grace_deadline = None
+            # Grace finishes admitted work; it is not new owner activity.
+            context.owner_silence_remaining_s = 0.0
         owner_verified = (
-            context.runtime.current_speaker_class == "owner"
+            refresh_owner_budget
+            and context.runtime.current_speaker_class == "owner"
             and context.runtime.current_speaker_authority_verified
         )
         if owner_verified:
@@ -241,14 +289,26 @@ class MediaSessionStandbyMixin:
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
-        if context.turn_start_sample is not None and not context.owner_silence_grace_used:
+        if (
+            context.active_vad_stream_epoch == context.stream_epoch
+            and context.owner_silence_grace_deadline is None
+        ):
+            self._pause_owner_silence_timer(context)
+            return
+        input_pending = (
+            context.turn_start_sample is not None
+            or context.admitted_input_stream_epoch == context.stream_epoch
+            or context.turn_commit_task is not None
+        )
+        if input_pending and not context.owner_silence_grace_used:
             # Speaker authority exists only after endpointing. Give one bounded
             # grace window to a started utterance; ambient or stuck VAD cannot
             # extend the owner-only deadline repeatedly.
             context.owner_silence_grace_used = True
             grace_s = min(3.0, max(0.1, self.owner_silence_timeout_s))
-            context.owner_silence_remaining_s = grace_s
-            context.owner_silence_deadline = asyncio.get_running_loop().time() + grace_s
+            context.owner_silence_remaining_s = 0.0
+            context.owner_silence_grace_deadline = asyncio.get_running_loop().time() + grace_s
+            context.owner_silence_deadline = context.owner_silence_grace_deadline
             context.owner_silence_task = asyncio.create_task(
                 self._owner_silence_watch(context, grace_s),
                 name=f"media-owner-silence-grace-{context.identity.session_id}",
@@ -256,14 +316,20 @@ class MediaSessionStandbyMixin:
             return
         context.owner_silence_task = None
         context.owner_silence_deadline = None
-        context.owner_silence_remaining_s = None
-        await self._request_device_standby(context, reason="owner_silence_timeout")
+        context.owner_silence_remaining_s = 0.0
+        await self._request_device_standby(
+            context,
+            reason="owner_silence_timeout",
+            expected_vad_revision=context.owner_silence_vad_revision,
+        )
 
     async def _request_device_standby(
         self,
         context: _MediaVoiceSession,
         *,
         reason: str,
+        expected_vad_revision: int | None = None,
+        expected_endpoint: tuple[int, int] | None = None,
     ) -> bool:
         if not reason or len(reason) > 128:
             raise ValueError("conversation close reason must be 1-128 characters")
@@ -274,8 +340,49 @@ class MediaSessionStandbyMixin:
                 or self._sessions.get(context.identity.session_id) is not context
             ):
                 return False
+            if expected_endpoint is not None:
+                stream_epoch, endpoint_sample = expected_endpoint
+                if (
+                    not self._stream_epoch_is_current(context, stream_epoch)
+                    or context.turn_endpoint_sample != endpoint_sample
+                    or not any(
+                        task is not None and not task.done()
+                        for task in (context.turn_commit_task, context.turn_commit_retry_task)
+                    )
+                ):
+                    # Tail expiry may have waited behind another close while
+                    # a successful commit, new VAD, or reconnect retired it.
+                    return False
+            if (
+                reason == "owner_silence_timeout"
+                and expected_vad_revision is not None
+                and expected_vad_revision != context.owner_silence_vad_revision
+            ):
+                # A newly accepted VAD already paused/retracted this timer.
+                # Explicit close and the absolute speech watchdog have no
+                # revision and can never be vetoed by acoustic observations.
+                logger.info(
+                    "media owner silence close superseded session=%s expected_vad_revision=%s "
+                    "current_vad_revision=%s",
+                    context.identity.session_id, expected_vad_revision,
+                    context.owner_silence_vad_revision,
+                )
+                return False
             context.standby_requested = True
             context.standby_reason = reason
+            # Admission and this terminal flag are set without yielding on the
+            # session event loop. Close cancels the tracked preparation before
+            # emitting CLOSED; a shielded endpoint cannot commit behind it.
+            commit_task = context.turn_commit_task
+            if (
+                commit_task is not None
+                and commit_task is not asyncio.current_task()
+                and not commit_task.done()
+                and not commit_task.cancelling()
+            ):
+                commit_task.cancel()
+            context.owner_silence_grace_deadline = None
+            context.admitted_input_stream_epoch = None
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
             fence = context.runtime.fence

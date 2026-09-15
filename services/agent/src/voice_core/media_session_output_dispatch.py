@@ -355,7 +355,7 @@ class MediaOutputDispatchMixin:
                 OutputDispatchStatus.SKIPPED,
                 "session_not_found",
             )
-        if context.closed:
+        if context.closed or context.standby_requested:
             return OutputDispatchResult(
                 fence,
                 OutputDispatchStatus.SKIPPED,
@@ -373,7 +373,11 @@ class MediaOutputDispatchMixin:
             deadline = loop.time() + self.delegation_initial_decision_timeout_s
             while claim is None and loop.time() < deadline:
                 await asyncio.sleep(0.01)
-                if context.closed or not context.runtime.fence.matches(fence):
+                if context.closed or context.standby_requested:
+                    return OutputDispatchResult(
+                        fence, OutputDispatchStatus.SKIPPED, "session_closed",
+                    )
+                if not context.runtime.fence.matches(fence):
                     return OutputDispatchResult(
                         fence,
                         OutputDispatchStatus.SKIPPED,
@@ -395,7 +399,11 @@ class MediaOutputDispatchMixin:
                             fence.session_id,
                             fence.generation_id,
                         )
-            if context.closed or not context.runtime.fence.matches(fence):
+            if context.closed or context.standby_requested:
+                return OutputDispatchResult(
+                    fence, OutputDispatchStatus.SKIPPED, "session_closed",
+                )
+            if not context.runtime.fence.matches(fence):
                 return OutputDispatchResult(
                     fence,
                     OutputDispatchStatus.SKIPPED,
@@ -524,7 +532,10 @@ class MediaOutputDispatchMixin:
                 reason="unsupported_streamcore_output_kind",
             )
             return False
-        if context.closed or not self._output_work_is_active(context, work):
+        if (
+            context.closed or context.standby_requested
+            or not self._output_work_is_active(context, work)
+        ):
             return False
         context.output_work[work.intent_id] = work
         if not context.runtime.output_floor_allows_assistant:
@@ -820,6 +831,8 @@ class MediaOutputDispatchMixin:
         race and be rejected while the gate is still on the previous greeting.
         """
 
+        if context.closed or context.standby_requested:
+            return False
         gate = getattr(self.bridge, "bridge", None)
         session = gate.get(context.identity.session_id) if gate is not None else None
         if session is None or not session.accepts_input():

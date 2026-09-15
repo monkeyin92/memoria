@@ -103,6 +103,14 @@ class MediaAudioIngressHost(Protocol):
 
     def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+    def _finish_owner_silence_turn(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        accepted: bool,
+        refresh_owner_budget: bool = True,
+    ) -> None: ...
+
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
 
@@ -230,8 +238,14 @@ class MediaAudioIngress:
                 context.turn_endpoint_timeout_handle.cancel()
                 context.turn_endpoint_timeout_handle = None
             context.asr.mark_committed(frame.capture_start_sample)
-            await self._host._discard_projection(context, "audio_discontinuity")
+            # Restarting the provider retires the discontinuous input too.
+            # Restore its remaining silence budget before publication yields;
+            # any VAD admitted during that await owns a new speech watchdog.
             self._host._clear_pending_turn_state(context)
+            self._host._finish_owner_silence_turn(
+                context, accepted=False, refresh_owner_budget=False,
+            )
+            await self._host._discard_projection(context, "audio_discontinuity")
             context.ingress.loss_concealed_ranges.clear()
             reset = getattr(context.provider, "reset_after_discontinuity", None)
             if callable(reset):
@@ -257,6 +271,11 @@ class MediaAudioIngress:
 
         async with context.ingress.finalize_lock:
             callback_stream_epoch = context.stream_epoch
+            input_token = (
+                context.turn_input_fence,
+                context.turn_start_sample,
+                context.active_vad_start_sample,
+            )
             await self._wait_until_idle(context)
             audio_watermark = context.asr.last_sent_sample
             previous_watermark = context.ingress.last_finalized_audio_watermark
@@ -315,16 +334,29 @@ class MediaAudioIngress:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self._host.metrics.inc_media_session_failed()
-                context.ingress.provider_failed = True
-                context.ingress.discontinuity_pending = True
-                self._drain(context.ingress.queue)
                 # Match endpoint-tail and reconnect cleanup: a finalize fault
                 # cannot delete the provisional turn while its commit is in
                 # the prepare/publish critical section.
                 async with context.turn_commit_lock:
-                    await self._host._discard_projection(context, "asr_finalize_failed")
-                    self._host._clear_pending_turn_state(context)
+                    if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                        return False
+                    self._host.metrics.inc_media_session_failed()
+                    context.ingress.provider_failed = True
+                    context.ingress.discontinuity_pending = True
+                    self._drain(context.ingress.queue)
+                    if input_token == (
+                        context.turn_input_fence,
+                        context.turn_start_sample,
+                        context.active_vad_start_sample,
+                    ):
+                        # Complete state cleanup before projection publication
+                        # yields: a new VAD admitted during that await owns its
+                        # own lifecycle. A fault never proves owner activity.
+                        self._host._clear_pending_turn_state(context)
+                        self._host._finish_owner_silence_turn(
+                            context, accepted=False, refresh_owner_budget=False,
+                        )
+                        await self._host._discard_projection(context, "asr_finalize_failed")
                 logger.exception(
                     "media ASR finalize failed session=%s stream_epoch=%s watermark=%s",
                     context.identity.session_id,
@@ -538,8 +570,9 @@ class MediaAudioIngress:
                 raise RuntimeError("media provider returned an invalid ASR result")
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
                 logger.warning(
-                    "media ASR results dropped after stream epoch change session=%s "
+                    "media ASR results dropped reason=%s session=%s "
                     "callback_stream_epoch=%s current_stream_epoch=%s dropped=%s",
+                    self._provider_result_rejection_reason(context, callback_stream_epoch),
                     context.identity.session_id,
                     callback_stream_epoch,
                     context.stream_epoch,
@@ -563,8 +596,9 @@ class MediaAudioIngress:
             )
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
                 logger.warning(
-                    "media ASR result handling aborted after stream epoch change "
+                    "media ASR result handling aborted reason=%s "
                     "session=%s callback_stream_epoch=%s current_stream_epoch=%s",
+                    self._provider_result_rejection_reason(context, callback_stream_epoch),
                     context.identity.session_id,
                     callback_stream_epoch,
                     context.stream_epoch,
@@ -581,6 +615,21 @@ class MediaAudioIngress:
             )
         if not observe_task_before_results:
             await self._observe_provider_task(context)
+
+    @staticmethod
+    def _provider_result_rejection_reason(
+        context: _MediaVoiceSession, callback_stream_epoch: int,
+    ) -> str:
+        if context.closed or context.standby_requested:
+            return "session_closed"
+        if (
+            context.stream_epoch != callback_stream_epoch
+            or context.identity.stream_epoch != callback_stream_epoch
+        ):
+            return "stream_epoch_changed"
+        # The bridge can revoke its input gate or advance its epoch before
+        # this context changes. Do not report equal epochs as an epoch change.
+        return "transport_gate_closed"
 
     async def _process(
         self,

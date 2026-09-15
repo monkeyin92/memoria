@@ -1380,24 +1380,35 @@ def test_downlink_pacing_reports_produced_audio_against_the_wall_clock(
     )
     def frame(sequence: int, samples: int, *, final: bool) -> mbs.PCMFrame:
         return mbs.PCMFrame(
-            identity=session.identity,
-            turn_id=1,
-            generation_id=1,
-            tool_epoch=0,
-            sequence=sequence,
-            source_start_sample=sequence * samples,
+                identity=session.identity,
+                turn_id=1,
+                generation_id=1,
+                tool_epoch=0,
+                sequence=sequence,
+                source_start_sample=(0, 12_000, 24_000)[sequence],
             frame_samples=samples,
             pcm_s16le=b"\x00" * (samples * 2),
             final=final,
         )
 
+    fence = GenerationFence(
+        session_id=session.identity.session_id,
+        turn_id=1,
+        generation_id=1,
+        tool_epoch=0,
+        # Generation session_epoch and transport stream_epoch are separate
+        # namespaces.  A fresh runtime generation starts at session_epoch 0;
+        # the identity's stream_epoch is transport metadata only.
+        session_epoch=0,
+    )
+    session.generation.advance(fence)
+    assert session.reset_downlink_generation(fence)
     # accept_downlink appends before measuring, so the queue depth it samples is
     # the depth the transport-visible queue actually has.
     with caplog.at_level("INFO"):
         for sequence, samples, final in ((0, 12_000, False), (1, 12_000, False), (2, 24_000, True)):
             pending = frame(sequence, samples, final=final)
-            session.downlink.append(pending)
-            session._record_downlink_pacing(pending)
+            assert session.accept_downlink(pending)
 
     pacing = [record.message for record in caplog.records if "downlink pacing" in record.message]
     assert len(pacing) == 1
@@ -1405,6 +1416,7 @@ def test_downlink_pacing_reports_produced_audio_against_the_wall_clock(
     assert "audio_ms=2000" in pacing[0]
     assert "wall_ms=4000" in pacing[0]
     assert "max_gap_ms=3500" in pacing[0]
-    assert "produced_ratio=0.50" in pacing[0]
+    assert "measurement=post_pacer_send" in pacing[0]
+    assert "send_audio_ratio=0.50" in pacing[0]
     assert "reason=final_frame" in pacing[0]
     assert session._pacing_queue_high_water == 3

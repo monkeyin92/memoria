@@ -49,6 +49,9 @@ class MediaVoiceSessionState:
     output_complete_emitted: bool = False
     reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     turn_commit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # The terminal close owns cancellation even when endpoint re-arming shields
+    # the caller. Only one preparation may run under turn_commit_lock.
+    turn_commit_task: asyncio.Task[tuple[GenerationFence | None, str | None]] | None = None
     reply_task: asyncio.Task[Any] | None = None
     output_owner: OutputOwnerLease | None = None
     output_work: dict[str, OutputWork] = field(default_factory=dict)
@@ -116,6 +119,14 @@ class MediaVoiceSessionState:
     owner_silence_deadline: float | None = None
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
+    owner_silence_grace_deadline: float | None = None
+    admitted_input_stream_epoch: int | None = None
+    # Only accepted VAD owns this latch; ASR admission/turn ranges do not prove
+    # that speech is still in progress. The revision fences an expired timer
+    # waiting for standby_lock and never resets within the session.
+    active_vad_stream_epoch: int | None = None
+    active_vad_start_sample: int | None = None
+    owner_silence_vad_revision: int = 0
     # Independent wall-clock bound for one accepted user utterance.  This is
     # deliberately separate from owner-silence timing: a stuck VAD stream
     # must eventually fail closed even while the owner is still speaking.

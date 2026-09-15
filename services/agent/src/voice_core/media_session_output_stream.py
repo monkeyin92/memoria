@@ -176,6 +176,18 @@ class MediaOutputStreamMixin:
         reason: str,
         emitted_audio: bool,
     ) -> None:
+        if reason == "session_closed" or context.closed or context.standby_requested:
+            # Generic finalization may set the local terminal flag before the
+            # Edge tombstone is installed.  Only revoke local output here;
+            # runtime close remains owned by the finalizer.
+            self._record_reply_delivery_event(
+                context,
+                fence,
+                ReplyDeliveryEvent.ERROR,
+                "session_closed",
+            )
+            await self._cancel_reply_task(context, fence, reason="session_closed")
+            return
         owner = context.output_owner
         owner_intent_active = False
         if owner is not None and owner.fence.matches(fence):
@@ -241,6 +253,8 @@ class MediaOutputStreamMixin:
     ) -> bool:
         """Allow a selected half-duplex owner to survive a transient floor flip."""
 
+        if context.closed or context.standby_requested:
+            return False
         if context.runtime.barge_in_enabled:
             return self._output_owner_is_current(context, lease)
         if (
@@ -447,8 +461,30 @@ class MediaOutputStreamMixin:
         # consumed.  It deliberately ends at the Edge-accepted PCM boundary;
         # device DAC/Actual Heard remain separate playback evidence.
         context.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
+
+        async def abort_for_session_close() -> OutputDispatchResult:
+            await self._abort_unheard_stream(
+                context,
+                fence,
+                reason="session_closed",
+                emitted_audio=emitted_audio,
+            )
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.ABORTED,
+                "session_closed",
+                emitted_audio,
+            )
         try:
-            async for chunk in chunks:
+            while True:
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
                 _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
                 if not await self._wait_for_unheard_output_floor(
                     context,
@@ -468,6 +504,8 @@ class MediaOutputStreamMixin:
                         "superseded",
                         emitted_audio,
                     )
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
                 # Provider TTS can produce much faster than wall clock. Pace at
                 # the generation owner before the gRPC/Edge jitter buffers so
                 # Direct Edge's intentional 80-200 ms queue never turns a
@@ -485,6 +523,8 @@ class MediaOutputStreamMixin:
                         extra_s=delay_s,
                     )
                     await asyncio.sleep(delay_s)
+                    if context.closed or context.standby_requested:
+                        return await abort_for_session_close()
                     if not await self._wait_for_unheard_output_floor(
                         context,
                         lease,
@@ -503,6 +543,8 @@ class MediaOutputStreamMixin:
                             "superseded",
                             emitted_audio,
                         )
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
                 announcement = (
                     chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
@@ -525,6 +567,8 @@ class MediaOutputStreamMixin:
                             lease,
                         ),
                     )
+                    if context.closed or context.standby_requested:
+                        return await abort_for_session_close()
                     if not speaking_started or not self._output_owner_can_start_first_frame(
                         context,
                         lease,
@@ -556,6 +600,8 @@ class MediaOutputStreamMixin:
                             text_delivered=True,
                             fence=fence,
                         )
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
                 gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
                 if gated is None:
                     self.metrics.inc_media_stale_generation()
@@ -605,6 +651,8 @@ class MediaOutputStreamMixin:
                         "transport_rejected",
                         emitted_audio,
                     )
+                if context.closed or context.standby_requested:
+                    return await abort_for_session_close()
                 if not context.playback.register_audio(
                     fence,
                     frame.sequence,

@@ -40,6 +40,10 @@ from services.agent.src.voice_core.media_protocol import should_pause_asr_for_pl
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
+from services.agent.src.voice_core.media_session_types import (
+    OutputDispatchResult,
+    OutputDispatchStatus,
+)
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
     SegmentKind,
@@ -133,6 +137,10 @@ class MediaSessionCommitMixin:
         interruption_policy: InterruptionPolicy
         _sessions: dict[str, _MediaVoiceSession]
 
+        def _record_output_dispatch_result(
+            self, context: _MediaVoiceSession | None, result: OutputDispatchResult
+        ) -> None: ...
+
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
         ) -> bool: ...
@@ -158,7 +166,7 @@ class MediaSessionCommitMixin:
         ) -> None: ...
 
         def _finish_owner_silence_turn(
-            self, context: _MediaVoiceSession, *, accepted: bool
+            self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
         ) -> None: ...
 
         def _nudge_missed_hearing(
@@ -241,6 +249,13 @@ class MediaSessionCommitMixin:
         context = self._sessions.get(session_id)
         if context is None or context.closed or context.standby_requested:
             return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+        if not self._stream_epoch_is_current(context, result.stream_epoch):
+            if result.is_final:
+                self.metrics.inc_media_stale_asr_final()
+            self._log_asr_rejection(
+                session_id, result, ASRDecisionReason.STALE_STREAM_EPOCH, stage="preview"
+            )
+            return ASRAcceptDecision(None, ASRDecisionReason.STALE_STREAM_EPOCH)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
         if candidate is None:
@@ -289,7 +304,11 @@ class MediaSessionCommitMixin:
         segment = asr_result_to_segment(accepted, session_id=session_id)
         if not context.runtime.ingest_media_speech_segment(segment):
             raise RuntimeError("ASR runtime timeline changed during atomic acceptance")
+        if accepted.is_final:
+            context.admitted_input_stream_epoch = accepted.stream_epoch
         await self._apply_projection_segment(context, segment)
+        if not self._stream_epoch_is_current(context, accepted.stream_epoch):
+            return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
         task_epoch, context_version = self._event_versions(context, context.runtime.fence)
         await self.bridge.emit_transcript(
             session_id,
@@ -297,6 +316,8 @@ class MediaSessionCommitMixin:
             task_epoch=task_epoch,
             context_version=context_version,
         )
+        if not self._stream_epoch_is_current(context, accepted.stream_epoch):
+            return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
         if accepted.is_final:
             self._observe_final_asr_result(context, accepted)
         else:
@@ -327,6 +348,8 @@ class MediaSessionCommitMixin:
             return
         close_needed = await context.runtime.resolve_conversation_close_needed(text)
         live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        if not self._stream_epoch_is_current(context, result.stream_epoch):
+            return
         if close_needed or live_lookup_needed:
             await self._recover_straddling_live_query_final(
                 context,
@@ -347,10 +370,15 @@ class MediaSessionCommitMixin:
 
         if reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
             return
+        if not self._stream_epoch_is_current(context, result.stream_epoch):
+            return
+        context.admitted_input_stream_epoch = result.stream_epoch
         segment = asr_result_to_segment(result, session_id=session_id)
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
                 await self._apply_projection_segment(context, segment)
+                if not self._stream_epoch_is_current(context, result.stream_epoch):
+                    return
                 task_epoch, context_version = self._event_versions(
                     context, context.runtime.fence
                 )
@@ -362,6 +390,8 @@ class MediaSessionCommitMixin:
                 )
         else:
             context.clock_fact_forced_text = result.text.strip()
+        if not self._stream_epoch_is_current(context, result.stream_epoch):
+            return
         # Timeline ingest above is intentional; only suppress re-arm/commit while
         # an earlier reply still owns the session (late offline finals).
         if self._reply_in_flight(context):
@@ -408,6 +438,8 @@ class MediaSessionCommitMixin:
             return
         close_needed = await context.runtime.resolve_conversation_close_needed(text)
         live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        if not self._stream_epoch_is_current(context, result.stream_epoch):
+            return
         if not (close_needed or live_lookup_needed):
             return
         if (
@@ -468,10 +500,13 @@ class MediaSessionCommitMixin:
             result,
             capture_start_sample=adjusted_start,
         )
+        context.admitted_input_stream_epoch = adjusted.stream_epoch
         segment = asr_result_to_segment(adjusted, session_id=session_id)
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
                 await self._apply_projection_segment(context, segment)
+                if not self._stream_epoch_is_current(context, adjusted.stream_epoch):
+                    return
                 task_epoch, context_version = self._event_versions(
                     context, context.runtime.fence
                 )
@@ -501,6 +536,8 @@ class MediaSessionCommitMixin:
                 adjusted.capture_start_sample,
                 adjusted.capture_end_sample,
             )
+        if not self._stream_epoch_is_current(context, adjusted.stream_epoch):
+            return
         # A farewell is terminal even when overlap/echo makes the same ASR
         # final also resemble a live lookup.  Device shutdown must win over
         # any tool intent so a trailing "再见" cannot trigger another reply.
@@ -605,27 +642,78 @@ class MediaSessionCommitMixin:
 
         context = self._sessions.get(session_id)
         if context is None or context.closed or context.standby_requested:
-            return None, "session_not_found"
+            return None, "session_closed" if context is not None else "session_not_found"
         if start_sample < 0 or end_sample <= start_sample:
             return None, "invalid_media_range"
         async with context.turn_commit_lock:
             if not self._stream_epoch_is_current(context, stream_epoch):
-                return None, "stale_stream_epoch"
-            result = await self._commit_user_turn_locked(
-                context,
-                session_id=session_id,
-                stream_epoch=stream_epoch,
-                start_sample=start_sample,
-                end_sample=end_sample,
-                retire_sample=retire_sample,
-                provider_final_missing=provider_final_missing,
+                return None, (
+                    "session_closed" if context.standby_requested or context.closed
+                    else "stale_stream_epoch"
+                )
+            context.admitted_input_stream_epoch = stream_epoch
+            before_commit_fence = context.runtime.fence
+            task = asyncio.create_task(
+                self._commit_user_turn_locked(
+                    context, session_id=session_id, stream_epoch=stream_epoch,
+                    start_sample=start_sample, end_sample=end_sample,
+                    retire_sample=retire_sample, provider_final_missing=provider_final_missing,
+                ),
+                name=f"media-turn-prepare-{session_id}-{stream_epoch}",
             )
+            context.turn_commit_task = task
+            try:
+                result = await task
+            except asyncio.CancelledError:
+                minted = context.runtime.fence
+                if (
+                    minted.session_epoch == before_commit_fence.session_epoch
+                    and minted.turn_id > before_commit_fence.turn_id
+                ):
+                    await self._abort_committed_turn(
+                        context, minted, reason="turn_commit_cancelled",
+                    )
+                if not context.standby_requested and not context.closed:
+                    raise
+                return None, "session_closed"
+            finally:
+                if context.turn_commit_task is task:
+                    context.turn_commit_task = None
+            if context.closed or context.standby_requested:
+                if result[0] is not None:
+                    await self._abort_committed_turn(context, result[0], reason="session_closed")
+                return None, "session_closed"
         fence, reason = result
         if reason == "conversation_end_explicit":
             await self._request_device_standby(context, reason=reason)
         else:
-            self._finish_owner_silence_turn(context, accepted=fence is not None)
+            self._finish_owner_silence_turn(
+                context, accepted=fence is not None,
+                # A failed provider or a result from the replaced transport
+                # cannot establish fresh owner activity for the next epoch.
+                refresh_owner_budget=(
+                    reason != "provider_prepare_failed"
+                    and self._stream_epoch_is_current(context, stream_epoch)
+                ),
+            )
         return result
+
+    async def _abort_committed_turn(
+        self, context: _MediaVoiceSession, fence: GenerationFence, *, reason: str,
+    ) -> None:
+        """Retain accepted user history but terminate a reply that cannot start."""
+
+        if context.closed or context.standby_requested:
+            reason = "session_closed"
+        delivery = context.reply_delivery.get(fence)
+        if delivery is None or not delivery.terminal:
+            # Record synchronously before yielding to runtime cleanup; close
+            # may race any provider/projection await after a turn was minted.
+            self._record_output_dispatch_result(
+                context, OutputDispatchResult(fence, OutputDispatchStatus.ABORTED, reason),
+            )
+        if not context.closed:
+            await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
 
     async def _commit_media_input_range(
         self,
@@ -984,6 +1072,7 @@ class MediaSessionCommitMixin:
                         )
                     )
                     if isinstance(recovered, CommittedTurn):
+                        self._log_media_turn_committed(context, prepared_fence, stream_epoch)
                         context.last_committed_turn_text = normalize_short(recovered.text)
                         context.last_committed_turn_fence = prepared_fence
                         context.last_committed_turn_at = time.monotonic()
@@ -1089,6 +1178,7 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, projection_result.value)
             return None, projection_result.value
         committed: CommittedTurn = projection_result
+        self._log_media_turn_committed(context, fence, stream_epoch)
         context.last_committed_turn_text = normalize_short(committed.text)
         context.last_committed_turn_fence = fence
         context.last_committed_turn_at = time.monotonic()
@@ -1168,3 +1258,16 @@ class MediaSessionCommitMixin:
                 context.stream_epoch,
             )
         return fence, None
+
+    @staticmethod
+    def _log_media_turn_committed(
+        context: _MediaVoiceSession, fence: GenerationFence, stream_epoch: int,
+    ) -> None:
+        # A successful Projection commit is the observation boundary. Include
+        # the full runtime fence; transport epochs are a different namespace.
+        logger.info(
+            "media turn committed session=%s session_epoch=%s stream_epoch=%s "
+            "turn_id=%s generation_id=%s tool_epoch=%s",
+            context.identity.session_id, fence.session_epoch, stream_epoch,
+            fence.turn_id, fence.generation_id, fence.tool_epoch,
+        )

@@ -122,6 +122,73 @@ class MediaSessionInputMixin:
 
         def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None: ...
 
+        def _admit_owner_silence_vad(
+            self, context: _MediaVoiceSession, start_sample: int
+        ) -> None: ...
+
+    def _admit_vad_start(self, context: _MediaVoiceSession, segment: SpeechSegment) -> bool:
+        """Open accepted speech synchronously, before projection can yield."""
+
+        for kind, endpoint in (
+            ("clock-fact", context.clock_fact_endpoint_pinned),
+            ("conversation-close", context.conversation_close_endpoint_pinned),
+            ("live-query", context.live_query_endpoint_pinned),
+        ):
+            if endpoint is not None:
+                logger.info(
+                    "media vad_start ignored after %s pin session=%s "
+                    "pinned_endpoint=%s vad_start=%s",
+                    kind, context.identity.session_id, endpoint, segment.capture_start_sample,
+                )
+                return False
+        if context.live_query_forced_authoritative and context.live_query_forced_text:
+            logger.info(
+                "media vad_start ignored after live-query forced recovery "
+                "session=%s endpoint=%s vad_start=%s text_len=%s",
+                context.identity.session_id, context.turn_endpoint_sample,
+                segment.capture_start_sample, len(context.live_query_forced_text),
+            )
+            return False
+        pending_endpoint = context.turn_endpoint_sample
+        if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
+            pause_s = (segment.capture_start_sample - pending_endpoint) / 16_000
+            previous_pause = context.observed_within_turn_pause_s
+            context.observed_within_turn_pause_s = (
+                pause_s if previous_pause is None else previous_pause * 0.7 + pause_s * 0.3
+            )
+        if context.turn_start_sample is None:
+            # One accepted start opens the speaker fence. Resumed VAD keeps
+            # that fence, including turns whose range was first created by ASR.
+            voice_decision = context.runtime.on_user_voice_started()
+            if voice_decision is PlaybackInputDecision.IGNORE:
+                return False
+            context.turn_input_fence = context.runtime.fence
+        task = context.turn_endpoint_task
+        if task is not None and not task.done():
+            task.cancel()
+        if context.turn_endpoint_timeout_handle is not None:
+            context.turn_endpoint_timeout_handle.cancel()
+            context.turn_endpoint_timeout_handle = None
+        context.turn_endpoint_sample = None
+        context.turn_retire_sample = None
+        context.turn_endpoint_grace_deadline = None
+        context.turn_endpoint_tail_deadline = None
+        context.turn_start_sample = min(
+            segment.capture_start_sample,
+            context.turn_start_sample
+            if context.turn_start_sample is not None
+            else segment.capture_start_sample,
+        )
+        self._admit_owner_silence_vad(context, segment.capture_start_sample)
+        logger.info(
+            "media vad start admitted session=%s stream_epoch=%s sample=%s "
+            "silence_remaining_s=%s grace_active=%s watchdog_armed=%s vad_revision=%s",
+            context.identity.session_id, context.stream_epoch, segment.capture_start_sample,
+            context.owner_silence_remaining_s, context.owner_silence_grace_deadline is not None,
+            context.max_user_speech_task is not None, context.owner_silence_vad_revision,
+        )
+        return True
+
     async def on_audio_frame(
         self,
         session: MediaBridgeSession,
@@ -181,6 +248,14 @@ class MediaSessionInputMixin:
             # A replayed/stale start is observational noise and must not discard
             # the still-authoritative provisional projection.
             await self._retire_prepare_retry_before_new_vad(context)
+        if (
+            context.closed
+            or context.standby_requested
+            or not session.accepts_input()
+            or context.stream_epoch != segment.stream_epoch
+            or self._sessions.get(session.identity.session_id) is not context
+        ):
+            return
         if segment.kind is SegmentKind.VAD:
             if context.runtime.assistant_speaking:
                 # VAD is an acoustic observation, never an interrupt by
@@ -235,14 +310,28 @@ class MediaSessionInputMixin:
                 )
             else:
                 interruption = None
+            # Keep interruption evidence and voice admission in one synchronous
+            # block: neither stale owner authority nor an expired timer can
+            # cross the projection publication await below.
+            vad_start_admitted = segment.final or self._admit_vad_start(context, segment)
             await self._apply_projection_segment(context, segment)
             if (
                 context.closed
                 or context.standby_requested
                 or not session.accepts_input()
+                or context.stream_epoch != segment.stream_epoch
+                or self._sessions.get(session.identity.session_id) is not context
             ):
                 return
             if segment.final:
+                if (
+                    context.active_vad_stream_epoch == segment.stream_epoch
+                    and context.active_vad_start_sample is not None
+                    and segment.capture_start_sample < context.active_vad_start_sample
+                ):
+                    # An older endpoint must not stop the watchdog for speech
+                    # admitted while this event was awaiting projection.
+                    return
                 if (
                     context.identity.client_type == "device"
                     and context.runtime.playback_overlap_input_blocked()
@@ -272,10 +361,9 @@ class MediaSessionInputMixin:
                     )
                     self._clear_pending_turn_state(context)
                     return
-                # VAD end is the only normal endpoint for this watchdog.  Do
-                # this before provider finalization, which may await remote
-                # ASR work and otherwise leave the timer racing teardown.
-                self._cancel_max_user_speech_watchdog(context)
+                # Keep the accepted utterance's absolute deadline across ASR
+                # finalization: silence is paused and endpoint-tail timing
+                # has not taken ownership yet. A hung provider must stay bounded.
                 if not await self._audio_ingress.finalize_speech_segment(
                     context,
                     vad_start_sample=context.turn_start_sample,
@@ -283,6 +371,21 @@ class MediaSessionInputMixin:
                     voiced_end_sample=segment.voiced_end_sample,
                     finalize_reason="vad_end",
                 ):
+                    return
+                if (
+                    context.closed
+                    or context.standby_requested
+                    or not session.accepts_input()
+                    or context.stream_epoch != segment.stream_epoch
+                    or self._sessions.get(session.identity.session_id) is not context
+                    or (
+                        context.active_vad_start_sample is not None
+                        and segment.capture_start_sample < context.active_vad_start_sample
+                    )
+                ):
+                    # Provider finalization is another yield point: a newer
+                    # utterance (or terminal/reconnected session) must not be
+                    # endpointed by the old VAD when its ASR call returns.
                     return
                 voiced_end_sample = (
                     segment.voiced_end_sample
@@ -329,6 +432,10 @@ class MediaSessionInputMixin:
                         len(context.live_query_forced_text),
                     )
                     return
+                # This synchronous handoff follows the post-await fences and
+                # pin checks. Only the current endpoint may release the speech
+                # watchdog; _schedule_turn_commit below arms the existing tail.
+                self._cancel_max_user_speech_watchdog(context)
                 previous_endpoint = context.turn_endpoint_sample
                 # Late/replayed VAD finals may arrive out of callback order.
                 # Never move a pending endpoint backwards, or an older tail
@@ -356,66 +463,11 @@ class MediaSessionInputMixin:
                     )
                 self._schedule_turn_commit(context)
             else:
-                if context.clock_fact_endpoint_pinned is not None:
-                    logger.info(
-                        "media vad_start ignored after clock-fact pin session=%s "
-                        "pinned_endpoint=%s vad_start=%s",
-                        context.identity.session_id,
-                        context.clock_fact_endpoint_pinned,
-                        segment.capture_start_sample,
-                    )
-                    return
-                if context.conversation_close_endpoint_pinned is not None:
-                    logger.info(
-                        "media vad_start ignored after conversation-close pin session=%s "
-                        "pinned_endpoint=%s vad_start=%s",
-                        context.identity.session_id,
-                        context.conversation_close_endpoint_pinned,
-                        segment.capture_start_sample,
-                    )
-                    return
-                if context.live_query_endpoint_pinned is not None:
-                    logger.info(
-                        "media vad_start ignored after live-query pin session=%s "
-                        "pinned_endpoint=%s vad_start=%s",
-                        context.identity.session_id,
-                        context.live_query_endpoint_pinned,
-                        segment.capture_start_sample,
-                    )
-                    return
                 if (
-                    context.live_query_forced_authoritative
-                    and context.live_query_forced_text
+                    not vad_start_admitted
+                    or context.active_vad_stream_epoch != segment.stream_epoch
                 ):
-                    logger.info(
-                        "media vad_start ignored after live-query forced recovery "
-                        "session=%s endpoint=%s vad_start=%s text_len=%s",
-                        context.identity.session_id,
-                        context.turn_endpoint_sample,
-                        segment.capture_start_sample,
-                        len(context.live_query_forced_text),
-                    )
                     return
-                pending_endpoint = context.turn_endpoint_sample
-                if (
-                    pending_endpoint is not None
-                    and segment.capture_start_sample >= pending_endpoint
-                ):
-                    pause_s = (segment.capture_start_sample - pending_endpoint) / 16_000
-                    previous_pause = context.observed_within_turn_pause_s
-                    context.observed_within_turn_pause_s = (
-                        pause_s if previous_pause is None else previous_pause * 0.7 + pause_s * 0.3
-                    )
-                if context.turn_start_sample is None:
-                    # One accepted range-stamped start opens the Runtime's
-                    # speaker fence. Resumed VAD segments keep the same fence;
-                    # sample ranges still decide the eventual turn boundary.
-                    voice_decision = context.runtime.on_user_voice_started()
-                    if voice_decision is PlaybackInputDecision.IGNORE:
-                        # Half-duplex OWNED/tool wait: do not open a user turn
-                        # or preempt the successor generation.
-                        return
-                    context.turn_input_fence = context.runtime.fence
                 interaction = context.runtime.decide_interaction(
                     InteractionSnapshot(
                         event=InteractionEvent.VAD_START,
@@ -441,27 +493,6 @@ class MediaSessionInputMixin:
                 if interaction.duck_output:
                     context.runtime.publish_assistant_audio("duck", gain=0.0)
                 context.runtime.apply_interaction_decision(interaction)
-                task = context.turn_endpoint_task
-                if task is not None and not task.done():
-                    task.cancel()
-                if context.turn_endpoint_timeout_handle is not None:
-                    context.turn_endpoint_timeout_handle.cancel()
-                    context.turn_endpoint_timeout_handle = None
-                context.turn_endpoint_sample = None
-                context.turn_retire_sample = None
-                context.turn_endpoint_grace_deadline = None
-                context.turn_endpoint_tail_deadline = None
-                context.turn_start_sample = min(
-                    segment.capture_start_sample,
-                    context.turn_start_sample
-                    if context.turn_start_sample is not None
-                    else segment.capture_start_sample,
-                )
-                # Runtime phase publication is scheduled asynchronously. Pause
-                # owner-silence synchronously at the accepted VAD boundary and
-                # arm an absolute per-utterance watchdog exactly once.
-                self._sync_owner_silence_phase(context, "user_speaking")
-                self._arm_max_user_speech_watchdog(context)
         # Sample ranges remain authoritative for media turn boundaries.
         if segment.kind is SegmentKind.KWS and segment.final:
             interruption = self.interruption_policy.evaluate(

@@ -144,6 +144,8 @@ class MediaOutputOwnerMixin:
         context: _MediaVoiceSession,
         lease: _OutputOwnerLease,
     ) -> bool:
+        if context.closed or context.standby_requested:
+            return False
         if (
             context.output_owner is not lease
             or lease.task is not asyncio.current_task()
@@ -271,7 +273,18 @@ class MediaOutputOwnerMixin:
         if task is None:
             return
         try:
-            await task
+            # Do not let a provider task that absorbs CancelledError hold
+            # finalization forever. shield keeps the task alive after the
+            # bounded wait, while the revoked owner and session gates prevent
+            # any late PCM.
+            async with asyncio.timeout(max(0.0, cancel_timeout_s)):
+                await asyncio.shield(task)
+        except TimeoutError:
+            logger.warning(
+                "media reply cancellation drain timed out session=%s generation=%s",
+                fence.session_id,
+                fence.generation_id,
+            )
         except asyncio.CancelledError:
             pass
         except Exception:
