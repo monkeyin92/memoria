@@ -69,6 +69,25 @@ renamed `send_audio_ratio` together with `measurement=` and the
 are both shown; a field this report does not know about is passed through rather
 than dropped.  The ratio is never read as audio or DAC output.
 
+Capture integrity (capture.json capture_status/completed_at_local/exit_reason,
+first stop_signal and cleanup_errors): the report states the capture tool's own
+lifecycle on its own line as `capture_integrity=completed|incomplete|degraded`.
+`incomplete` means the tool wrote no completion record; why it stopped is unknown
+and is never inferred, because an uncatchable SIGKILL, power loss or panic leaves
+exactly the same absence as any other interruption.  `degraded` means the tool
+finished but recorded anomalous evidence.  The verdict is fail-closed: partial or
+legacy fields are never promoted to `completed`.  A completion record needs both
+`capture_status=completed` and a non-empty `completed_at_local` that
+`datetime.fromisoformat` can parse: a label without a timestamp beside it is not a
+record this report can read.  `capture_status=preflight_only` is the one exception
+that finishes by construction, and it is reported as a metadata-only run that holds no
+device session.  When the capture requested the server log streams, the
+`log_stream_health=healthy` label is never taken on its own: the per-stream
+`log_streams` records are checked instead, so a missing stream, a stream the capture
+did not stop, a SIGKILL or an unknown exit code is reported as degraded with the
+stream named.  The verdict is a separate dimension from
+the firmware receipt, which is the operator's own record of the flash they performed.
+
 Usage: `python scripts/voice_session_report.py <capture-dir>
 [--firmware-receipt PATH]`
 """
@@ -245,6 +264,12 @@ def _seconds(later: datetime, earlier: datetime) -> float:
     return (later - earlier).total_seconds()
 
 
+def _has_generation(fields: dict[str, str]) -> bool:
+    """A device metering episode always names the generation it belongs to."""
+
+    return re.fullmatch(r"[0-9]+", fields.get("generation", "")) is not None
+
+
 def _stamp(when: datetime) -> str:
     return when.strftime("%H:%M:%S.%f")[:-3]
 
@@ -284,6 +309,7 @@ def device_segments(run: Path) -> tuple[list[DeviceSegment], list[str]]:
     parsed = 0
     seen_lines: dict[tuple[str, str], int] = {}
     repeats: list[tuple[int, int]] = []
+    notices: list[int] = []
 
     def open_segment(reason: str) -> DeviceSegment:
         segment = DeviceSegment(index=len(segments) + 1, opened_by=reason)
@@ -365,27 +391,40 @@ def device_segments(run: Path) -> tuple[list[DeviceSegment], list[str]]:
                 )
             )
         elif match := SUPPLY.search(body):
-            current.events.append(
-                DeviceEvent(
-                    when,
-                    f"supply.{match.group('kind').replace(' ', '_')}",
-                    " ".join(f"{key}={value}" for key, value in KEY_VALUE.findall(body)),
-                    uptime,
-                    number,
-                    dict(KEY_VALUE.findall(body)),
+            fields = dict(KEY_VALUE.findall(body))
+            if _has_generation(fields):
+                current.events.append(
+                    DeviceEvent(
+                        when,
+                        f"supply.{match.group('kind').replace(' ', '_')}",
+                        " ".join(f"{key}={value}" for key, value in fields.items()),
+                        uptime,
+                        number,
+                        fields,
+                    )
                 )
-            )
+            else:
+                # A status line about the producer's own logging (e.g. "media playback
+                # supply summary dropped: buffer too small") matches the prefix but is
+                # not a metering episode: counting it would invent a generation.
+                notices.append(number)
+                current.events.append(DeviceEvent(when, "metering_notice", body, uptime, number))
         elif match := LEGACY_METER.search(body):
-            current.events.append(
-                DeviceEvent(
-                    when,
-                    f"legacy_{match.group('kind').replace(' ', '_')}",
-                    " ".join(f"{key}={value}" for key, value in KEY_VALUE.findall(body)),
-                    uptime,
-                    number,
-                    dict(KEY_VALUE.findall(body)),
+            fields = dict(KEY_VALUE.findall(body))
+            if _has_generation(fields):
+                current.events.append(
+                    DeviceEvent(
+                        when,
+                        f"legacy_{match.group('kind').replace(' ', '_')}",
+                        " ".join(f"{key}={value}" for key, value in fields.items()),
+                        uptime,
+                        number,
+                        fields,
+                    )
                 )
-            )
+            else:
+                notices.append(number)
+                current.events.append(DeviceEvent(when, "metering_notice", body, uptime, number))
         elif state_match is not None:
             current.events.append(
                 DeviceEvent(
@@ -409,6 +448,13 @@ def device_segments(run: Path) -> tuple[list[DeviceSegment], list[str]]:
         notes.append(
             f"serial.log has {len(repeats)} byte-identical repeated line(s), kept in original "
             f"order and not merged: {examples}"
+        )
+    if notices:
+        examples = ", ".join(f"line {number}" for number in notices[:5])
+        notes.append(
+            f"serial.log has {len(notices)} 'media playback ...' line(s) with no numeric "
+            "generation= field; they are shown as metering_notice lines and are never counted as "
+            f"supply or legacy meter episodes: {examples}"
         )
     if parsed == 0:
         notes.append("serial.log has no parseable device lines")
@@ -537,6 +583,241 @@ def _receipt_binding(receipt: dict[str, object]) -> str:
             "evidence and not a live read)"
         )
     return "unbound_legacy_record"
+
+
+def _recorded_problems(payload: dict[str, object]) -> list[str]:
+    """The anomalies the capture tool recorded about its own run, verbatim."""
+
+    problems: list[str] = []
+    if payload.get("log_stream_health") == "degraded":
+        # Degraded is itself the anomaly: a missing or empty reason list must never
+        # promote a degraded capture back to `completed`.
+        reasons = payload.get("log_stream_health_reasons")
+        usable = (
+            [str(reason) for reason in reasons if str(reason)] if isinstance(reasons, list) else []
+        )
+        problems.extend(usable or ["log_stream_health=degraded without a recorded reason"])
+    cleanup_errors = payload.get("cleanup_errors")
+    if isinstance(cleanup_errors, list):
+        problems.extend(f"cleanup {error}" for error in cleanup_errors)
+    elif cleanup_errors is not None:
+        problems.append(f"cleanup_errors is not a list ({cleanup_errors!r})")
+    serial_error = payload.get("serial_error")
+    if serial_error and not any(problem.startswith("serial ") for problem in problems):
+        problems.append(f"serial {serial_error}")
+    return list(dict.fromkeys(problems))
+
+
+def _completion_timestamp(value: object) -> str | None:
+    """The tool's own completion timestamp, or None when it cannot be one.
+
+    `capture_status=completed` is a label; the timestamp written beside it is what a
+    reader can act on.  An empty string, any other falsy value, a non-string and a
+    string `datetime.fromisoformat` cannot parse are all rejected, so a label is
+    never accepted as a completion record on its own.
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+LOG_STREAM_LABELS = ("bridge", "agent", "edge")
+
+
+def _stream_record_problems(payload: dict[str, object]) -> list[str]:
+    """The evidence under a `log_stream_health=healthy` label, one check per stream.
+
+    The label is the capture tool's own summary; these records are the evidence it is
+    supposed to summarise, so a healthy label never stands in for them.  A missing or
+    unusable record, a stream the capture did not stop, a stream it had to SIGKILL and
+    a stopped stream with no real integer exit code each make the capture degraded, and
+    every reason names the stream it is about.
+    """
+
+    streams = payload.get("log_streams")
+    if not isinstance(streams, dict):
+        return [
+            "the capture recorded no usable per-stream records "
+            f"(log_streams={streams!r}); {', '.join(LOG_STREAM_LABELS)} are each required, each "
+            "status=stopped_by_capture with a real integer exit code and forced_kill=False"
+        ]
+    problems: list[str] = []
+    for label in LOG_STREAM_LABELS:
+        record = streams.get(label)
+        if not isinstance(record, dict):
+            problems.append(
+                f"log stream {label} has no usable record (log_streams[{label}]={record!r})"
+            )
+            continue
+        status = record.get("status")
+        exit_code = record.get("exit_code")
+        if status != "stopped_by_capture":
+            detail = f"log stream {label} {status} (exit={exit_code})"
+            if record.get("error"):
+                detail += f" error={record['error']}"
+            problems.append(detail)
+            continue
+        forced = record.get("forced_kill")
+        if forced is True:
+            problems.append(
+                f"log stream {label} needed SIGKILL to be reclaimed "
+                f"({record.get('forced_reason') or 'no reason recorded'})"
+            )
+        elif forced is not False:
+            problems.append(
+                f"log stream {label} does not record forced_kill=False (forced_kill={forced!r})"
+            )
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            problems.append(
+                f"log stream {label} stopped_by_capture without a real integer exit code "
+                f"(exit_code={exit_code!r})"
+            )
+    return problems
+
+
+def _capture_integrity(payload: dict[str, object] | None) -> tuple[str, list[str]]:
+    """Three-valued, fail-closed lifecycle verdict for one capture directory.
+
+    Independent of every firmware receipt: a receipt is the operator's own record of
+    the flash they performed, not a read of the board and not a statement about
+    whether this capture finished.  `completed` needs the tool's own completion
+    record (`capture_status=completed` *and* a parseable `completed_at_local`) with
+    evidence health this report can accept; `degraded` means the tool finished but recorded
+    anomalies; everything else is `incomplete`, including a legacy capture.json that
+    predates the lifecycle fields.  Partial fields are never promoted to `completed`,
+    and a missing record is reported as unknown rather than as a guessed cause.
+
+    `preflight_only` is the one metadata-only mode: it never opens the serial port, so
+    it finishes by construction and holds no device session to judge.  When the capture
+    requested the server log streams, the per-stream records are checked rather than the
+    `log_stream_health` label alone.
+    """
+
+    if payload is None:
+        return "incomplete", [
+            "no lifecycle record (capture.json is missing, unreadable or not a JSON object): "
+            "there is no completion record at all"
+        ]
+    status = payload.get("capture_status")
+    mode = payload.get("capture_mode")
+    if status == "preflight_only" or (status is None and mode == "preflight_only"):
+        # A metadata-only run finishes by construction and captured no device session.
+        return "completed", []
+    problems = _recorded_problems(payload)
+    completed_at = payload.get("completed_at_local")
+    if status is None:
+        # A legacy capture.json cannot prove its own ending, so it is never promoted.
+        return "incomplete", [
+            "no completion record (capture.json predates capture_status; it only has "
+            f"completed_at_local={completed_at!r}, which is not a completion record this "
+            "report can rely on)",
+            *problems,
+        ]
+    if status != "completed" or _completion_timestamp(completed_at) is None:
+        return "incomplete", [
+            f"no completion record (capture_status={status!r} and "
+            f"completed_at_local={completed_at!r}): the capture tool did not reach "
+            "finalization; why it stopped is not recorded and is not inferred here",
+            *problems,
+        ]
+    claimed_healthy = payload.get("log_stream_health") == "healthy"
+    if payload.get("server_logs_requested") or claimed_healthy:
+        # Check the records even if the label is missing/degraded, so the reason
+        # still names the stream whose evidence is absent or unhealthy.
+        problems.extend(_stream_record_problems(payload))
+        if not claimed_healthy:
+            problems.append(
+                "server logs were requested but the capture did not record all three streams as "
+                f"healthy (log_stream_health={payload.get('log_stream_health')!r})"
+            )
+    return ("degraded" if problems else "completed"), problems
+
+
+def _handlers_recorded(value: object) -> str:
+    if isinstance(value, list) and value:
+        return ",".join(str(name) for name in value)
+    if isinstance(value, list):
+        return "none (no stop-signal handler could be installed)"
+    return "not recorded"
+
+
+def print_capture_integrity(run: Path) -> None:
+    print("\n== capture integrity (capture tool lifecycle record)")
+    print("  The verdict below is about this capture's own lifecycle only: it says nothing about")
+    print("  audibility, duplex, or the firmware identity reported in the next section.")
+    payload: dict[str, object] | None = None
+    capture = run / "capture.json"
+    if not capture.exists():
+        print("  capture.json: missing")
+    else:
+        try:
+            loaded = json.loads(capture.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"  capture.json: unreadable ({type(error).__name__}: {error})")
+            loaded = None
+        if isinstance(loaded, dict):
+            payload = loaded
+        else:
+            print("  capture.json: not a JSON object")
+    verdict, problems = _capture_integrity(payload)
+    print(f"  capture_integrity={verdict}")
+    for problem in problems:
+        print(f"    reason: {problem}")
+    if payload is not None:
+        print(
+            f"  capture_status={payload.get('capture_status')} "
+            f"capture_mode={payload.get('capture_mode')}"
+        )
+        print(
+            f"  started_at_local={payload.get('started_at_local')} "
+            f"completed_at_local={payload.get('completed_at_local')}"
+        )
+        print(
+            f"  exit_reason={payload.get('exit_reason')} "
+            f"stop_signal={payload.get('stop_signal')} "
+            f"stop_signal_number={payload.get('stop_signal_number')} "
+            f"stop_requested_at_local={payload.get('stop_requested_at_local')}"
+        )
+        print(f"  stop_signal_handlers={_handlers_recorded(payload.get('stop_signal_handlers'))}")
+        cleanup_errors = payload.get("cleanup_errors")
+        recorded = len(cleanup_errors) if isinstance(cleanup_errors, list) else "not recorded"
+        print(f"  cleanup_errors={recorded}")
+        print(
+            f"  serial_opened={payload.get('serial_opened')} "
+            f"serial_error={payload.get('serial_error')} "
+            f"log_stream_health={payload.get('log_stream_health')} "
+            f"server_logs_requested={payload.get('server_logs_requested')}"
+        )
+    if verdict == "incomplete":
+        print("  note: this capture is incomplete because its tool wrote no completion record; why")
+        print(
+            "  note: it stopped is unknown here and is not inferred (an uncatchable SIGKILL, power"
+        )
+        print("  note: loss or panic leaves exactly the same absence as any other interruption).")
+    elif verdict == "degraded":
+        print("  note: the tool finished, but the reasons above are anomalies it recorded itself.")
+    else:
+        print("  note: completed means the tool reached finalization, not that the capture window")
+        print("  note: elapsed or that the session was healthy or audible.")
+    if payload is not None and payload.get("capture_mode") == "preflight_only":
+        print(
+            "  note: preflight_only never opens the serial port, so this run holds no device session."
+        )
+    if payload is not None and payload.get("stop_signal") is not None:
+        print(
+            "  note: the first stop signal is recorded verbatim (name, number, time); this report"
+        )
+        print("  note: does not interpret who or what sent it.")
+    print(
+        "  note: this verdict and the operator's firmware receipt (identity section) are separate"
+    )
+    print("  note: dimensions: a bound receipt is the flash the operator reports having performed,")
+    print("  note: not a read of the board and not a statement that this capture finished.")
 
 
 def print_identity(
@@ -1073,6 +1354,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, count in sorted(facts.duplicates.items()):
         print(f"note: ignored {count} duplicate delivery event line(s) for {name}")
 
+    print_capture_integrity(run)
     print_identity(run, args.firmware_receipt, supplied_receipt)
     print_device(segments)
     print_server(facts)

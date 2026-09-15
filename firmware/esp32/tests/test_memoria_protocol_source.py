@@ -3,12 +3,7 @@ import subprocess
 from pathlib import Path
 
 SOURCE = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "files"
-    / "main"
-    / "memoria"
-    / "memoria_protocol.cc"
+    Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_protocol.cc"
 ).read_text(encoding="utf-8")
 APPLICATION_PATCH = (
     Path(__file__).parents[1]
@@ -17,10 +12,7 @@ APPLICATION_PATCH = (
     / "0004-use-memoria-activation-and-media.patch"
 ).read_text(encoding="utf-8")
 AFE_PATCH = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0005-tune-memoria-afe-vad.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0005-tune-memoria-afe-vad.patch"
 ).read_text(encoding="utf-8")
 NS_PATCH = (
     Path(__file__).parents[1]
@@ -34,9 +26,9 @@ HALF_DUPLEX_PATCH = (
     / "patches"
     / "0006-fence-simplex-listening-playback.patch"
 ).read_text(encoding="utf-8")
-DEPENDENCY_LOCK = (
-    Path(__file__).parents[1] / "overlay" / "files" / "dependencies.lock"
-).read_text(encoding="utf-8")
+DEPENDENCY_LOCK = (Path(__file__).parents[1] / "overlay" / "files" / "dependencies.lock").read_text(
+    encoding="utf-8"
+)
 PROTOCOL_HEADER = (
     Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_protocol.h"
 ).read_text(encoding="utf-8")
@@ -65,28 +57,16 @@ PATCH_0009 = (
     / "0009-preserve-session-on-network-reconnect.patch"
 ).read_text(encoding="utf-8")
 PATCH_0010 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0010-atomic-playback-generation-gate.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0010-atomic-playback-generation-gate.patch"
 ).read_text(encoding="utf-8")
 PATCH_0011 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0011-recover-media-session.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0011-recover-media-session.patch"
 ).read_text(encoding="utf-8")
 PATCH_0012 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0012-main-task-transport-actions.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0012-main-task-transport-actions.patch"
 ).read_text(encoding="utf-8")
 PATCH_0013 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0013-prioritize-media-close-recovery.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0013-prioritize-media-close-recovery.patch"
 ).read_text(encoding="utf-8")
 PATCH_0014 = (
     Path(__file__).parents[1]
@@ -95,10 +75,7 @@ PATCH_0014 = (
     / "0014-load-memoria-assets-before-audio.patch"
 ).read_text(encoding="utf-8")
 PATCH_0016 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0016-order-device-playback-barrier.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0016-order-device-playback-barrier.patch"
 ).read_text(encoding="utf-8")
 PATCH_0023 = (
     Path(__file__).parents[1]
@@ -131,18 +108,10 @@ PATCH_0018 = (
     / "0018-disable-simplex-playback-wake-word.patch"
 ).read_text(encoding="utf-8")
 WAKE_WORD_SOURCE = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "files"
-    / "main"
-    / "memoria"
-    / "memoria_wake_word.cc"
+    Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_wake_word.cc"
 ).read_text(encoding="utf-8")
 PATCH_0021 = (
-    Path(__file__).parents[1]
-    / "overlay"
-    / "patches"
-    / "0021-memoria-wake-word-whitelist.patch"
+    Path(__file__).parents[1] / "overlay" / "patches" / "0021-memoria-wake-word-whitelist.patch"
 ).read_text(encoding="utf-8")
 CONTRACT = json.loads(
     (Path(__file__).parents[3] / "packages" / "contracts" / "device-media-v2.json").read_text(
@@ -150,9 +119,7 @@ CONTRACT = json.loads(
     )
 )
 FIRMWARE_README = (Path(__file__).parents[3] / "README.md").read_text(encoding="utf-8")
-BUILD_SCRIPT = (Path(__file__).parents[1] / "scripts" / "build.sh").read_text(
-    encoding="utf-8"
-)
+BUILD_SCRIPT = (Path(__file__).parents[1] / "scripts" / "build.sh").read_text(encoding="utf-8")
 BOARD_CONFIG = json.loads(
     (
         Path(__file__).parents[1]
@@ -212,7 +179,7 @@ def test_playback_cannot_grant_wake_word_local_stop_authority() -> None:
 def test_memoria_activation_applies_assets_before_audio_engine_can_load_models() -> None:
     assert "auto& assets = Assets::GetInstance();" in PATCH_0014
     assert "if (!assets.partition_valid() || !assets.Apply())" in PATCH_0014
-    assert "esp_srmodel_init(\"model\")" in PATCH_0014
+    assert 'esp_srmodel_init("model")' in PATCH_0014
     assert "Memoria assets partition/model load failed" in PATCH_0014
 
 
@@ -304,9 +271,7 @@ def test_simplex_playback_and_state_changes_cannot_leave_a_vad_epoch_open() -> N
 
     start = HALF_DUPLEX_PATCH.index("void Application::StartListeningAudio")
     send_start = HALF_DUPLEX_PATCH.index("protocol_->SendStartListening", start)
-    play_cue = HALF_DUPLEX_PATCH.index(
-        "audio_service_.PlaySound(Lang::Sounds::OGG_POPUP)", start
-    )
+    play_cue = HALF_DUPLEX_PATCH.index("audio_service_.PlaySound(Lang::Sounds::OGG_POPUP)", start)
     assert play_cue < send_start
     assert "pending_listening_start_ = true" in HALF_DUPLEX_PATCH[start:send_start]
     assert "playback-drained event" in HALF_DUPLEX_PATCH
@@ -406,9 +371,7 @@ def test_send_audio_rejects_null_or_empty_packets_before_encoding() -> None:
 
     assert "packet == nullptr" in send_audio
     assert "packet->payload.empty()" in send_audio
-    assert send_audio.index("packet == nullptr") < send_audio.index(
-        "MemoriaAudioFrame::Encode"
-    )
+    assert send_audio.index("packet == nullptr") < send_audio.index("MemoriaAudioFrame::Encode")
     assert send_audio.index("packet->payload.empty()") < send_audio.index(
         "MemoriaAudioFrame::Encode"
     )
@@ -430,9 +393,7 @@ def test_json_integer_parsing_is_finite_and_fail_closed_at_uint64_bound() -> Non
 
     assert "value >= std::ldexp(1.0, 64)" in uint64
     assert "static_cast<uint64_t>(item->valuedouble)" not in uint64
-    assert uint64.index("!IsFiniteInteger(value)") < uint64.index(
-        "static_cast<uint64_t>(value)"
-    )
+    assert uint64.index("!IsFiniteInteger(value)") < uint64.index("static_cast<uint64_t>(value)")
 
 
 def test_hello_v2_declares_honest_vocat_interrupt_assist_capabilities() -> None:
@@ -444,7 +405,10 @@ def test_hello_v2_declares_honest_vocat_interrupt_assist_capabilities() -> None:
     assert '"simultaneous_capture_playback"' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", true)' in hello_v2
     assert 'cJSON_AddStringToObject(capabilities, "aec_mode", "fd_low_cost")' in hello_v2
-    assert 'cJSON_AddStringToObject(capabilities, "aec_reference", "software_post_gain_pre_i2s")' in hello_v2
+    assert (
+        'cJSON_AddStringToObject(capabilities, "aec_reference", "software_post_gain_pre_i2s")'
+        in hello_v2
+    )
     assert 'cJSON_AddBoolToObject(capabilities, "aec_reference_verified", false)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_duck", false)' in hello_v2
@@ -537,9 +501,7 @@ def test_v2_playback_speaking_requires_a_real_downlink_frame() -> None:
     assert "const bool first_audio_frame = !playback_audio_ready_" in downlink
     assert "playback_audio_ready_ = true" in downlink
     assert 'EmitLegacyTts("start")' in downlink
-    assert downlink.index("playback_audio_ready_ = true") < downlink.index(
-        'EmitLegacyTts("start")'
-    )
+    assert downlink.index("playback_audio_ready_ = true") < downlink.index('EmitLegacyTts("start")')
 
     active = SOURCE[SOURCE.index("bool MemoriaProtocol::HasActivePlaybackGeneration") :]
     active = active[: active.index("bool MemoriaProtocol::SendAudio")]
@@ -583,7 +545,7 @@ def test_recovered_audio_callback_uses_protocol_generation_not_ui_speaking_state
 def test_websocket_client_id_header_is_bound_to_negotiated_ingress() -> None:
     open_channel = SOURCE[SOURCE.index("bool MemoriaProtocol::OpenAudioChannel") :]
     open_channel = open_channel[: open_channel.index("void MemoriaProtocol::CloseAudioChannel")]
-    assert 'protocol_version_ == kProtocolVersionV1' in open_channel
+    assert "protocol_version_ == kProtocolVersionV1" in open_channel
     assert 'SetHeader("Client-Id", identity_.client_id().c_str())' in open_channel
     assert 'SetHeader("X-Client-ID", identity_.client_id().c_str())' in open_channel
     assert open_channel.count('SetHeader("Client-Id"') == 1
@@ -594,7 +556,7 @@ def test_websocket_client_id_header_is_bound_to_negotiated_ingress() -> None:
     assert "protocol_version != kProtocolVersionV2" in create
     legacy = open_channel.index('SetHeader("Client-Id"')
     direct = open_channel.index('SetHeader("X-Client-ID"')
-    branch = open_channel.index('protocol_version_ == kProtocolVersionV1')
+    branch = open_channel.index("protocol_version_ == kProtocolVersionV1")
     assert branch < legacy < direct
     assert "legacy Python gateway" in open_channel
     assert "v2-only Go Edge" in open_channel
@@ -646,9 +608,7 @@ def test_memoria_transport_liveness_does_not_expire_on_server_silence() -> None:
     clock_tick = PATCH_0011[PATCH_0011.index("if (bits & MAIN_EVENT_CLOCK_TICK)") :]
     clock_tick = clock_tick[: clock_tick.index("display->UpdateStatusBar()")]
     assert "PollTransportLiveness()" in clock_tick
-    assert clock_tick.index("PollTransportLiveness()") < clock_tick.index(
-        "ContinueMediaRecovery()"
-    )
+    assert clock_tick.index("PollTransportLiveness()") < clock_tick.index("ContinueMediaRecovery()")
 
 
 def test_receive_and_audio_callbacks_defer_transport_io_to_the_main_task() -> None:
@@ -693,7 +653,9 @@ def test_receive_and_audio_callbacks_defer_transport_io_to_the_main_task() -> No
     assert "legacy_attempt == websocket_attempt_id_.load()" in legacy_vad
 
     profile_boundary = SOURCE[SOURCE.index("void MemoriaProtocol::MaybeApplyPendingProfile") :]
-    profile_boundary = profile_boundary[: profile_boundary.index("void MemoriaProtocol::SendButtonStop")]
+    profile_boundary = profile_boundary[
+        : profile_boundary.index("void MemoriaProtocol::SendButtonStop")
+    ]
     assert "std::lock_guard<std::recursive_mutex> state_lock" in profile_boundary
     assert "const uint32_t closing_attempt = websocket_attempt_id_.load()" in profile_boundary
     assert "if (QueueSessionClose" in profile_boundary
@@ -703,15 +665,17 @@ def test_receive_and_audio_callbacks_defer_transport_io_to_the_main_task() -> No
     )
 
     session_error = SOURCE[SOURCE.index("bool MemoriaProtocol::HandleSessionError") :]
-    session_error = session_error[: session_error.index("void MemoriaProtocol::MaybeApplyPendingProfile")]
+    session_error = session_error[
+        : session_error.index("void MemoriaProtocol::MaybeApplyPendingProfile")
+    ]
     assert "RetireTransportAttempt(websocket_attempt_id_.load())" in session_error
     assert "->Close()" not in session_error
 
     profile_apply = SOURCE[SOURCE.index("void MemoriaProtocol::MaybeApplyPendingProfile") :]
     profile_apply = profile_apply[: profile_apply.index("void MemoriaProtocol::SendButtonStop")]
-    assert profile_apply.index('QueueSessionClose("runtime_profile_invalidated")') < profile_apply.index(
-        "QueueTransportRetire()"
-    )
+    assert profile_apply.index(
+        'QueueSessionClose("runtime_profile_invalidated")'
+    ) < profile_apply.index("QueueTransportRetire()")
     assert "->Close()" not in profile_apply
 
     assert "MAIN_EVENT_MEMORIA_TRANSPORT" in PATCH_0012
@@ -769,7 +733,7 @@ def test_decode_queue_overflow_is_not_a_terminal_playback_error() -> None:
     additions = "\n".join(line[1:] for line in PATCH_0023.splitlines() if line.startswith("+"))
     assert "admit == AudioService::kServerPacketQueueFull" in additions
     assert "NotifyPlaybackDecodeError()" in additions
-    queue_drop = additions[additions.index("kServerPacketQueueFull"):]
+    queue_drop = additions[additions.index("kServerPacketQueueFull") :]
     queue_drop = queue_drop[: queue_drop.index("NotifyPlaybackDecodeError()")]
     assert "return;" in queue_drop
 
@@ -1095,7 +1059,9 @@ def test_v1_event_shapes_are_kept_exact_for_legacy_gateway() -> None:
     assert '"control_sequence"' not in vad_v1
     assert '"device_monotonic_ms"' not in vad_v1
     close_start = SOURCE.index("void MemoriaProtocol::CloseAudioChannel")
-    v1_close = SOURCE[close_start : SOURCE.index("bool MemoriaProtocol::IsAudioChannelOpened", close_start)]
+    v1_close = SOURCE[
+        close_start : SOURCE.index("bool MemoriaProtocol::IsAudioChannelOpened", close_start)
+    ]
     assert '"type", "session.close"' in v1_close
 
 
@@ -1120,8 +1086,7 @@ def test_outbound_websocket_controls_never_hand_concatenate_json() -> None:
     queued_sites = [
         line.strip()
         for line in SOURCE.splitlines()
-        if "QueueTransportText(" in line
-        and "bool MemoriaProtocol::QueueTransportText" not in line
+        if "QueueTransportText(" in line and "bool MemoriaProtocol::QueueTransportText" not in line
     ]
     assert queued_sites
     for site in queued_sites:
@@ -1165,8 +1130,9 @@ def test_generation_cancelled_flushes_p0_and_reports_received_watermark() -> Non
     terminal = SOURCE[SOURCE.index("bool MemoriaProtocol::HandleGenerationTerminal") :]
     terminal = terminal[: terminal.index("bool MemoriaProtocol::HandlePlaybackFlushV2")]
     cancel = terminal[
-        terminal.index("// generation.cancelled is never a normal completion") :
-        terminal.index("// generation.completed is an authoritative")
+        terminal.index("// generation.cancelled is never a normal completion") : terminal.index(
+            "// generation.completed is an authoritative"
+        )
     ]
     # The receipt state is finalized before the atomic queue flush so the
     # ResetDecoder drain callback cannot double-report the generation.
@@ -1345,9 +1311,7 @@ def test_terminal_ended_watermarks_use_only_confirmed_output_boundaries() -> Non
     # queued position is never a fallback for played watermarks.
     cancel = SOURCE[SOURCE.index("bool MemoriaProtocol::HandleGenerationTerminal") :]
     cancel = cancel[: cancel.index("bool MemoriaProtocol::HandlePlaybackFlushV2")]
-    cancel_branch = cancel[
-        cancel.index("// generation.cancelled is never a normal completion") :
-    ]
+    cancel_branch = cancel[cancel.index("// generation.cancelled is never a normal completion") :]
     assert "playback_output_frames_ > 0 ? playback_output_end_ : 0" in cancel_branch
     assert "playback_output_frames_ > 0 ? playback_output_sequence_ : 0" in cancel_branch
     assert (
@@ -1364,8 +1328,7 @@ def test_terminal_ended_watermarks_use_only_confirmed_output_boundaries() -> Non
     assert "playback_output_frames_ > 0 ? playback_output_end_ : 0" in flush
     assert "playback_output_frames_ > 0 ? playback_output_sequence_ : 0" in flush
     assert (
-        'SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end,'
-        in flush
+        'SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end,' in flush
     )
 
     finalize = SOURCE[SOURCE.index("void MemoriaProtocol::FinalizePlaybackEnded") :]
@@ -1415,10 +1378,7 @@ def test_legacy_control_schema_fallback_is_exact_and_fail_closed() -> None:
     detector = detector[: detector.index("bool GetString")]
     assert 'std::string_view(type->valuestring) != "extra_forbidden"' in detector
     assert 'std::string_view(scope->valuestring) != "body"' in detector
-    assert (
-        'std::string_view(field->valuestring) == "supported_protocol_versions"'
-        not in detector
-    )
+    assert 'std::string_view(field->valuestring) == "supported_protocol_versions"' not in detector
     assert 'field_name == "supported_protocol_versions"' in detector
     assert 'field_name == "resume_session_id"' in detector
     assert "error_count < 1 || error_count > 2" in detector
@@ -1438,12 +1398,12 @@ def test_legacy_control_schema_fallback_is_exact_and_fail_closed() -> None:
     assert "resumable_session_id_.clear()" in create
     assert "resumable_stream_epoch_ = 0" in create
     assert (
-        'cJSON_DeleteItemFromObjectCaseSensitive(request.value, '
+        "cJSON_DeleteItemFromObjectCaseSensitive(request.value, "
         '"supported_protocol_versions")' in create
     )
     assert create.count("HttpJson(session_url") == 2
     assert "other 422/auth/runtime error remains fail-closed" in create
-    assert 'Media session negotiated protocol v%u' in create
+    assert "Media session negotiated protocol v%u" in create
 
 
 def test_network_disconnect_actively_recovers_the_same_session() -> None:
@@ -1456,8 +1416,14 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "resumable_session_id_" in create
     assert "resumable_stream_epoch_" in create
     assert "std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_)" in create
-    assert '"resume_session_id",\n                                requested_session_id.c_str()' in create
-    assert '"resume_session_id",\n                                resumable_session_id_.c_str()' not in create
+    assert (
+        '"resume_session_id",\n                                requested_session_id.c_str()'
+        in create
+    )
+    assert (
+        '"resume_session_id",\n                                resumable_session_id_.c_str()'
+        not in create
+    )
     assert "session->session_id != requested_session_id" in create
     assert "protocol_version != kProtocolVersionV2" in create
     assert "session->stream_epoch <= requested_after_epoch" in create
@@ -1573,9 +1539,7 @@ def test_terminal_session_authority_cannot_be_auto_resumed() -> None:
     assert close.index("retiring_websocket = std::move(websocket_)") < unlocked_close
     assert unlocked_close < close.index("retiring_websocket->Close()")
     assert "if (!transport_close_notified_)" in close
-    assert close.index("if (!transport_close_notified_)") < close.index(
-        "++websocket_attempt_id_"
-    )
+    assert close.index("if (!transport_close_notified_)") < close.index("++websocket_attempt_id_")
     assert close.index("DrainTransportActions()") < close.index("ResetSessionState()")
     assert 'QueueSessionClose("device_close")' in close
     assert "QueueTransportRetire()" in close
@@ -1680,34 +1644,221 @@ def test_wake_word_whitelist_patch_bundles_catalog_commands_and_overrides_custom
     assert '"mei mo li ya"' in PATCH_0021
     assert "LoadFromNvs()" in PATCH_0021
 
-def test_playback_starvation_metering_patch_stays_observational() -> None:
-    """The device-side underrun meter must count gaps without changing playback.
 
-    The device plays at realtime while the bridge produces at ~1.0x, so a
-    listener hears stuttering that the delivery ledger records as a complete
-    playback (2026-09-14 epoch 1948 and the 18:47 retest).  Patch 0025 exists to
-    measure that starvation, and it is deliberately observation only: a pre-roll
-    built on these numbers must arrive as its own patch together with its own
-    first-audio measurement.
+def test_playback_supply_metering_patch_stays_observational() -> None:
+    """The playout-queue supply meter observes the queue without owning it.
+
+    The replaced counter sampled its generation flag after the wait returned, so
+    the 2026-09-14 session-4 log billed the wait before a reply's first frame and
+    the idle gap between two replies to the new generation.  Patch 0025 replaces
+    it with a software supply wait and stays observation only: pre-roll built on
+    these numbers must arrive as its own patch with its own first-audio
+    measurement.
     """
 
     patch = (
+        Path(__file__).parents[1] / "overlay" / "patches" / "0025-playback-underrun-metering.patch"
+    ).read_text(encoding="utf-8")
+    header = (
         Path(__file__).parents[1]
         / "overlay"
-        / "patches"
-        / "0025-playback-underrun-metering.patch"
+        / "files"
+        / "main"
+        / "audio"
+        / "memoria_playback_supply_meter.h"
     ).read_text(encoding="utf-8")
 
+    # The measurement state lives in a pure header that the host behavioural
+    # test compiles (firmware/esp32/tests/test_memoria_playback_supply_meter.py).
+    assert "--- a/main/audio/audio_service.h" in patch
     assert "--- a/main/audio/audio_service.cc" in patch
-    assert patch.count("--- a/") == 1
-    assert "#define MEMORIA_STARVE_LOG_MS 40" in patch
-    assert "media playback starved generation=%u gap_ms=%lld starved_count=%u" in patch
+    assert patch.count("--- a/") == 2
+    assert '#include "memoria_playback_supply_meter.h"' in patch
+    assert "memoria::PlaybackSupplyMeter playback_supply_meter_;" in patch
+    assert "#define MEMORIA_PLAYBACK_SUPPLY_LOG_MS 40" in patch
+
+    # Every boundary event is instrumented: the consumer's waits, the codec
+    # task's decode dequeue, codec output commits, the exact DMA completion
+    # branch and every generation switch / flush / reset / stop boundary.
+    for call in (
+        "playback_supply_meter_.NoteGenerationAnnounced(",
+        "playback_supply_meter_.NoteDecoderReset(",
+        "playback_supply_meter_.NoteDecodeDequeued(",
+        "playback_supply_meter_.CaptureOutputToken(",
+        "playback_supply_meter_.NoteOutputSubmitted(",
+        "playback_supply_meter_.NoteExactOutputArmed(",
+        "playback_supply_meter_.NoteWaitBegin(",
+        "playback_supply_meter_.NoteExactWaitBegin(",
+        "playback_supply_meter_.NoteWaitEnd(",
+        "playback_supply_meter_.NoteExactCompletionConfirmed();",
+        "playback_supply_meter_.NoteExactCompletionTimeout();",
+        "playback_supply_meter_.Close(",
+        "playback_supply_meter_.Reset();",
+    ):
+        assert call in patch, call
+
+    # The episode a codec submission belongs to is frozen while the consumer
+    # still holds the audio queue lock, the submission itself is bound to that
+    # token, and the exact-output watermark is armed with the same token.  The
+    # submission happens outside the lock, so a flush can replace the episode in
+    # between; the meter then drops the late observation instead of resurrecting
+    # the old episode or closing the new one.
+    assert "static_cast<uint32_t>(task->generation_id), playback_generation_);" in patch
     assert (
-        "media playback meter generation=%u starved_count=%u max_gap_ms=%lld total_gap_ms=%lld"
+        "playback_supply_meter_.NoteOutputSubmitted(supply_token, MemoriaSupplyNowMs());" in patch
+    )
+    assert "playback_supply_meter_.NoteExactOutputArmed(supply_token);" in patch
+    assert "generation_id, playback_generation_, now_ms);" in patch
+    # The no-argument decoder reset retains the accepted server generation.
+    # In particular, speaking entry is not an end-of-generation event.
+    assert "accepted_server_generation_, playback_generation_, MemoriaSupplyNowMs());" in patch
+    assert "memoria::SupplyCloseReason::kDecoderReset, MemoriaSupplyNowMs()" not in patch
+    patched_lines = "\n".join(
+        line[1:]
+        for line in patch.splitlines()
+        if line.startswith(("+", " ")) and not line.startswith("+++")
+    )
+    # Retaining the episode is safe only under the same queue lock, after the
+    # real reset has advanced the playback fence.  A bare parameter assertion
+    # would also accept a stale fence read or an observation outside the lock.
+    assert (
+        "    {\n"
+        "        std::lock_guard<std::mutex> lock(audio_queue_mutex_);\n"
+        "        notify_drained = ResetDecoderLocked(accepted_server_generation_);\n"
+        "        supply_summary = playback_supply_meter_.NoteDecoderReset(\n"
+        "            accepted_server_generation_, playback_generation_, MemoriaSupplyNowMs());\n"
+        "    }"
+    ) in patched_lines
+    stop_method = patched_lines.split("audio_testing_queue_.clear();", 1)[1].split(
+        "void AudioService::AudioOutputTask() {", 1
+    )[0]
+    assert (
+        "supply_summary = playback_supply_meter_.Close(\n"
+        "            memoria::SupplyCloseReason::kServiceStop, MemoriaSupplyNowMs());"
+    ) in stop_method
+    generation_reset = patched_lines.split(
+        "void AudioService::ResetDecoderForServerGeneration(uint32_t generation_id) {", 1
+    )[1]
+    assert (
+        "supply_summary = generation_id == 0\n"
+        "            ? playback_supply_meter_.Close(memoria::SupplyCloseReason::kChannelFlush, now_ms)"
+    ) in generation_reset
+    # The decode path is an observation whose result is deliberately unused: it
+    # may not be recorded as decoded output, as a playout-queue event or as a
+    # wait.
+    assert "(void)playback_supply_meter_.NoteDecodeDequeued(" in patch
+    # One log line per closed episode must fit: the summary buffer is sized from
+    # the header constant the host test fills with the widest possible fields.
+    # The summary also runs on the 4 KiB WSS receive stack. Each invocation
+    # owns a nothrow heap buffer; no shared scratch storage or 768-byte array.
+    assert (
+        "std::unique_ptr<char[]> buffer(new (std::nothrow) char[memoria::kSupplySummaryLogCapacity]);"
         in patch
     )
-    # Observation only: it may add lines, but must not remove or change any.
+    assert "char buffer[memoria::kSupplySummaryLogCapacity];" not in patch
+    assert "buffer.get(), memoria::kSupplySummaryLogCapacity, summary" in patch
+    assert "if (!buffer) {" in patch
+    assert "summary dropped: allocation failed" in patch
+    assert "char buffer[memoria::kSupplyWaitLogCapacity];" in patch
+    # Wait logging must not postpone the recovering frame. The stop branch
+    # logs after unlock; the live branch logs after output submission and the
+    # existing output/drained callbacks, when the queue lock is released.
+    output = patched_lines.split("void AudioService::AudioOutputTask() {", 1)[1]
+    output = output.split('ESP_LOGW(TAG, "Audio output task stopped");', 1)[0]
+    assert output.count("MemoriaLogSupplyWait(supply_wait);") == 2
+    assert (
+        "if (service_stopped_.load()) {\n"
+        "            lock.unlock();\n"
+        "            MemoriaLogSupplyWait(supply_wait);\n"
+        "            break;"
+    ) in output
+    live_output = output.split("auto task = std::move(audio_playback_queue_.front());", 1)[1]
+    assert live_output.index("NoteOutputSubmitted(") < live_output.index("MemoriaLogSupplyWait(")
+    assert live_output.index("callbacks_.on_playback_drained();") < live_output.index(
+        "MemoriaLogSupplyWait("
+    )
+
+    # Observation only: it may add lines, but must not remove or change any, it
+    # must not touch a playback condition or the cancel path, and it must stay
+    # inside its own write set.
     removed = [
         line for line in patch.splitlines() if line.startswith("-") and not line.startswith("---")
     ]
     assert removed == []
+    added = [
+        line[1:]
+        for line in patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    for forbidden in (
+        "exact_output_pending_ =",
+        "playback_generation_ =",
+        "accepted_server_generation_ =",
+        "audio_queue_cv_.wait",
+        "ResetDecoderLocked(",
+        "preroll",
+        "pre-roll",
+    ):
+        assert not any(forbidden in line for line in added), forbidden
+    assert "application.cc" not in patch
+    assert "memoria_protocol" not in patch
+    # The withdrawn attribution stays withdrawn.
+    assert "NoteFrameDecoded" not in patch
+    assert "MEMORIA_STARVE_LOG_MS" not in patch
+    for forbidden in ("starve", "underrun", "starvation", "audible", "dac"):
+        assert not any(forbidden in line.lower() for line in added), forbidden
+
+    # Honest scope: a software supply wait at the playout queue, never a measured
+    # hardware underrun and never a claim about what was heard.
+    assert "media playback supply wait layer=playout_queue scope=software_queue_wait" in header
+    assert "media playback supply summary layer=playout_queue scope=software_queue_wait" in header
+    assert "reported as a proven I2S/DMA underrun" in header
+    assert "nothing here establishes the sender's or the bridge's" in header
+    assert "exact TX-EOF completion" in header
+    # The episode identity that makes the token safe: an id that is neither the
+    # generation number nor reused across a flush.
+    assert "struct PlaybackSupplyEpisodeToken" in header
+    assert "bool episode_open_ = false;" in header
+    assert "uint64_t episode_id_ = 0;" in header
+    assert "uint64_t next_episode_id_ = 0;" in header
+    assert "bool token_is_current(const PlaybackSupplyEpisodeToken& token) const" in header
+    assert "PlaybackSupplyEpisodeToken NoteDecodeDequeued(" in header
+    assert (
+        "SupplyEpisodeSummary NoteOutputSubmitted(const PlaybackSupplyEpisodeToken& token,"
+        in header
+    )
+    assert "Decode-dequeue observation." in header
+    assert "produces a duplicate summary" in header
+    # Only an announcement opens an episode; a submission or a decode dequeue
+    # never can, which is what the replaced code did.
+    assert "OpenEpisode(generation, now_ms, false)" not in header
+    assert "OpenEpisode(generation, now_ms, true)" not in header
+    # The exact completion counters are watermark events, not frame counts.
+    assert "not a count of frames" in header
+    # Sizes that the host test proves sufficient and that a 512-byte buffer did
+    # not satisfy.
+    assert "inline constexpr size_t kSupplyWaitLogCapacity = 192;" in header
+    assert "inline constexpr size_t kSupplySummaryLogCapacity = 768;" in header
+    for field in (
+        "close=%s",
+        "output_frames=%u",
+        "first_output=%s",
+        "first_output_latency_ms=%lld",
+        "supply_waits=%u",
+        "supply_max_ms=%lld",
+        "supply_total_ms=%lld",
+        "prestart_waits=%u",
+        "prestart_max_ms=%lld",
+        "boundary_waits=%u",
+        "boundary_max_ms=%lld",
+        "close_dropped_waits=%u",
+        "close_dropped_ms=%lld",
+        "outside_waits=%u",
+        "outside_max_ms=%lld",
+        "exact_confirmed=%u",
+        "exact_timeouts=%u",
+        "exact_polls=%u",
+    ):
+        assert field in header, field
+    for reason in ("generation_switch", "channel_flush", "decoder_reset", "service_stop"):
+        assert reason in header, reason

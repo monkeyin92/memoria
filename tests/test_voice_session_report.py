@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from scripts import voice_session_report as report
 
 SESSION_A = "7d9d3a2f-51ea-4fbf-a427-d1c9f92950b9"
@@ -882,6 +883,475 @@ def test_non_directory_argument_is_rejected(tmp_path: Path, capsys) -> None:
     assert "is not a capture directory" in capsys.readouterr().out
 
 
+def test_capture_without_a_completion_record_is_reported_incomplete(tmp_path: Path, capsys) -> None:
+    # The exact shape of a capture whose tool stopped before it could finalize:
+    # no completed_at_local, no exit reason, capture_status still in_progress.
+    run = _capture(
+        tmp_path,
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "in_progress",
+            "started_at_local": "2026-09-15T16:15:43.000000+08:00",
+            "serial_opened": True,
+            "log_stream_health": "healthy",
+        },
+    )
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert "== capture integrity (capture tool lifecycle record)" in out
+    assert "capture_integrity=incomplete" in out
+    assert (
+        "reason: no completion record (capture_status='in_progress' and completed_at_local=None): "
+        "the capture tool did not reach finalization; why it stopped is not recorded and is not "
+        "inferred here" in out
+    )
+    assert "why" in out and "it stopped is unknown here and is not inferred" in out
+    assert "capture_status=in_progress capture_mode=live" in out
+    assert "completed_at_local=None" in out
+    assert "capture_integrity=completed" not in out
+    assert "capture_integrity=degraded" not in out
+
+
+def test_a_capture_whose_record_is_missing_any_completion_field_is_not_completed(
+    tmp_path: Path, capsys
+) -> None:
+    no_timestamp = _capture(
+        tmp_path / "a",
+        capture_json={"capture_mode": "live", "capture_status": "completed", "serial_opened": True},
+    )
+    unknown_status = _capture(
+        tmp_path / "b",
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "finishing",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "serial_opened": True,
+        },
+    )
+    requested_but_silent = _capture(
+        tmp_path / "c",
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "serial_opened": True,
+            "server_logs_requested": True,
+            "log_stream_health": "not_requested",
+        },
+    )
+
+    assert report.main([str(no_timestamp)]) == 0
+    out = capsys.readouterr().out
+    assert "capture_integrity=incomplete" in out
+    assert "capture_status='completed' and completed_at_local=None" in out
+    assert "capture_integrity=completed" not in out
+
+    assert report.main([str(unknown_status)]) == 0
+    out = capsys.readouterr().out
+    assert "capture_integrity=incomplete" in out
+    assert "capture_status='finishing'" in out
+
+    assert report.main([str(requested_but_silent)]) == 0
+    out = capsys.readouterr().out
+    assert "capture_integrity=degraded" in out
+    assert (
+        "reason: server logs were requested but the capture did not record all three streams as "
+        "healthy (log_stream_health='not_requested')" in out
+    )
+    assert "capture_integrity=completed" not in out
+
+
+def test_a_degraded_capture_without_usable_reasons_stays_degraded(tmp_path: Path, capsys) -> None:
+    # A missing or empty reason list must not turn a degraded capture back into completed.
+    no_reasons = _capture(
+        tmp_path / "a",
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "serial_opened": True,
+            "log_stream_health": "degraded",
+            "log_stream_health_reasons": None,
+        },
+    )
+    empty_reasons = _capture(
+        tmp_path / "b",
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "serial_opened": True,
+            "log_stream_health": "degraded",
+            "log_stream_health_reasons": [],
+        },
+    )
+
+    for run in (no_reasons, empty_reasons):
+        assert report.main([str(run)]) == 0
+        out = capsys.readouterr().out
+        assert "capture_integrity=degraded" in out
+        assert "reason: log_stream_health=degraded without a recorded reason" in out
+        assert "capture_integrity=completed" not in out
+
+
+@pytest.mark.parametrize("timestamp", ["", "not-a-date", False, 123, [], {}])
+def test_invalid_completion_timestamp_never_proves_completion(timestamp):
+    verdict, _ = report._capture_integrity(
+        {
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": timestamp,
+            "log_stream_health": "not_requested",
+        }
+    )
+    assert verdict == "incomplete"
+
+
+@pytest.mark.parametrize("defect", ["missing", "failed", "forced", "unknown_exit", "none"])
+def test_healthy_label_cannot_hide_missing_or_failed_stream_records(defect):
+    streams = {
+        label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
+        for label in ("bridge", "agent", "edge")
+    }
+    if defect == "missing":
+        del streams["bridge"]
+    elif defect == "failed":
+        streams["bridge"]["status"] = "failed"
+    elif defect == "forced":
+        streams["bridge"]["forced_kill"] = True
+    elif defect == "unknown_exit":
+        streams["bridge"]["exit_code"] = None
+    else:
+        streams = None
+    verdict, reasons = report._capture_integrity(
+        {
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42+08:00",
+            "server_logs_requested": True,
+            "log_stream_health": "healthy",
+            "log_streams": streams,
+        }
+    )
+    assert verdict == "degraded"
+    assert any("bridge" in reason for reason in reasons)
+
+
+def test_healthy_capture_requires_and_accepts_every_stream_record():
+    verdict, reasons = report._capture_integrity(
+        {
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42+08:00",
+            "server_logs_requested": True,
+            "log_stream_health": "healthy",
+            "log_streams": {
+                label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
+                for label in ("bridge", "agent", "edge")
+            },
+        }
+    )
+    assert (verdict, reasons) == ("completed", [])
+
+
+def _healthy_stream_records() -> dict[str, object]:
+    return {
+        label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
+        for label in ("bridge", "agent", "edge")
+    }
+
+
+def _healthy_completion(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "capture_mode": "live",
+        "capture_status": "completed",
+        "completed_at_local": "2026-09-15T16:31:42+08:00",
+        "server_logs_requested": True,
+        "log_stream_health": "healthy",
+        "log_streams": _healthy_stream_records(),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_a_completion_timestamp_must_be_a_parseable_non_empty_string() -> None:
+    # A blank or unparseable timestamp is a label without a record, and a real one is
+    # read as written: nothing here is inferred from capture_status alone.
+    def verdict(timestamp: object) -> str:
+        return report._capture_integrity(
+            _healthy_completion(
+                completed_at_local=timestamp,
+                server_logs_requested=False,
+                log_stream_health="not_requested",
+            )
+        )[0]
+
+    for timestamp in ("   ", "2026-09-15T16:31:42+08:00 ", "2026-13-45T99:99:99+08:00"):
+        assert verdict(timestamp) == "incomplete"
+    assert verdict("2026-09-15 16:31:42+08:00") == "completed"
+
+
+@pytest.mark.parametrize(
+    "streams",
+    [None, [], "stopped_by_capture", {"bridge": "stopped"}],
+)
+def test_a_healthy_label_without_usable_per_stream_records_names_the_stream(streams) -> None:
+    verdict, reasons = report._capture_integrity(_healthy_completion(log_streams=streams))
+
+    assert verdict == "degraded"
+    assert any("bridge" in reason for reason in reasons)
+
+
+def test_a_healthy_label_is_verified_even_when_the_requested_flag_is_absent() -> None:
+    # capture_status=completed + log_stream_health=healthy with no server_logs_requested and
+    # no records is still a claim about three streams nobody recorded: the label is never
+    # trusted on its own, whichever field carries the request.
+    without_flag = _healthy_completion()
+    del without_flag["server_logs_requested"]
+    del without_flag["log_streams"]
+
+    verdict, reasons = report._capture_integrity(without_flag)
+    assert verdict == "degraded"
+    assert any("bridge" in reason for reason in reasons)
+
+    no_records_but_claimed = {**_healthy_completion(), "log_streams": None}
+    del no_records_but_claimed["server_logs_requested"]
+    verdict, reasons = report._capture_integrity(no_records_but_claimed)
+    assert verdict == "degraded"
+    assert any("bridge" in reason for reason in reasons)
+
+    recorded = _healthy_completion()
+    del recorded["server_logs_requested"]
+    assert report._capture_integrity(recorded) == ("completed", [])
+
+
+@pytest.mark.parametrize("health", [None, "not_requested", "degraded"])
+def test_requested_streams_are_named_even_without_a_healthy_label(health) -> None:
+    verdict, reasons = report._capture_integrity(
+        _healthy_completion(log_stream_health=health, log_streams={"agent": {}})
+    )
+    assert verdict == "degraded"
+    for label in ("bridge", "agent", "edge"):
+        assert any(f"log stream {label}" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize("forced", [0, 1, "false"])
+def test_invalid_forced_kill_flags_do_not_assert_that_sigkill_happened(forced) -> None:
+    streams = _healthy_stream_records()
+    streams["bridge"]["forced_kill"] = forced
+    verdict, reasons = report._capture_integrity(_healthy_completion(log_streams=streams))
+    assert verdict == "degraded"
+    assert any(
+        "log stream bridge does not record forced_kill=False" in reason for reason in reasons
+    )
+    assert not any("needed SIGKILL" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize(
+    ("bridge", "expected"),
+    [
+        (
+            {
+                "status": "stopped_by_capture",
+                "exit_code": -15,
+                "forced_kill": True,
+                "forced_reason": "SIGTERM timed out",
+            },
+            "log stream bridge needed SIGKILL to be reclaimed (SIGTERM timed out)",
+        ),
+        (
+            {"status": "stopped_by_capture", "exit_code": -15},
+            "log stream bridge does not record forced_kill=False (forced_kill=None)",
+        ),
+        (
+            {"status": "stopped_by_capture", "exit_code": True, "forced_kill": False},
+            "log stream bridge stopped_by_capture without a real integer exit code "
+            "(exit_code=True)",
+        ),
+        (
+            {"status": "exited_early", "exit_code": 0, "forced_kill": False},
+            "log stream bridge exited_early (exit=0)",
+        ),
+        (
+            {"status": "failed", "exit_code": 3, "forced_kill": False, "error": "OSError: gone"},
+            "log stream bridge failed (exit=3) error=OSError: gone",
+        ),
+    ],
+)
+def test_a_defective_bridge_record_under_a_healthy_label_is_degraded_and_named(
+    bridge: dict[str, object], expected: str
+) -> None:
+    verdict, reasons = report._capture_integrity(
+        _healthy_completion(log_streams={**_healthy_stream_records(), "bridge": bridge})
+    )
+
+    assert verdict == "degraded"
+    assert expected in reasons
+    # The two healthy siblings are never blamed for the one defective record.
+    assert not any("agent" in reason or "edge" in reason for reason in reasons)
+
+
+def test_a_healthy_stream_record_needs_no_matching_log_file_on_disk(tmp_path: Path, capsys) -> None:
+    # The records are the capture tool's own metadata.  This report never opens
+    # bridge.log/agent.log/edge.log to re-derive health, so a complete record set is
+    # accepted as such even when no stream file was copied into the directory.
+    run = _capture(
+        tmp_path,
+        capture_json={**_healthy_completion(), "serial_opened": True},
+    )
+    assert not (run / "bridge.log").exists()
+
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert "capture_integrity=completed" in out
+    assert "capture_integrity=degraded" not in out
+
+
+def test_a_healthy_lifecycle_record_does_not_vouch_for_the_firmware_receipt(
+    tmp_path: Path, capsys
+) -> None:
+    # The two dimensions are reported independently: an unbound legacy receipt does not
+    # degrade a finished capture, and a finished capture does not bind that receipt.
+    run = _capture(
+        tmp_path,
+        capture_json={
+            **_healthy_completion(),
+            "firmware_receipt": {
+                "release_head": "96f58aed",
+                "verified_at": "2026-09-14T19:08:51+08:00",
+            },
+        },
+    )
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert "capture_integrity=completed" in out
+    assert "capture_receipt_binding=unbound_legacy_record" in out
+    assert out.index("capture_integrity=completed") < out.index("capture_receipt_binding=")
+
+
+def test_degraded_capture_is_reported_with_reasons_and_a_bound_receipt_stays_separate(
+    tmp_path: Path, capsys
+) -> None:
+    receipt = {
+        "release_head": "fa54d7de027cccaee35e1721762a5d0bb060d60c",
+        "candidate_app_sha256": "f" * 64,
+        "candidate_elf_sha256": "e" * 64,
+        "identity_sha256": "a" * 64,
+        "verified_at": "2026-09-14T19:08:51+08:00",
+        "path": "/evidence/postflash.json",
+        "sha256": "d" * 64,
+        "read_from_board_this_run": False,
+    }
+    run = _capture(
+        tmp_path,
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "exit_reason": "duration_elapsed",
+            "serial_opened": True,
+            "serial_error": None,
+            "cleanup_errors": ["closing the serial port: OSError: port flush failed"],
+            "log_stream_health": "degraded",
+            "log_stream_health_reasons": [
+                "log stream bridge not_started (exit=None)",
+                "cleanup closing the serial port: OSError: port flush failed",
+            ],
+            "firmware_receipt": receipt,
+        },
+    )
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert "capture_integrity=degraded" in out
+    assert "reason: log stream bridge not_started (exit=None)" in out
+    assert "reason: cleanup closing the serial port: OSError: port flush failed" in out
+    # The same cleanup failure is not listed twice, and it never reads as completed.
+    assert out.count("reason: cleanup closing the serial port") == 1
+    assert "cleanup_errors=1" in out
+    assert "capture_integrity=completed" not in out
+    # A bound receipt is evidence about the flash, not about this capture's life.
+    assert "capture_receipt_binding=bound_by_capture_tool" in out
+    assert out.index("capture_integrity=degraded") < out.index(
+        "capture_receipt_binding=bound_by_capture_tool"
+    )
+
+
+def test_a_recorded_stop_signal_is_reported_without_claiming_the_session_ended(
+    tmp_path: Path, capsys
+) -> None:
+    run = _capture(
+        tmp_path,
+        capture_json={
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42.000000+08:00",
+            "stop_signal": "SIGHUP",
+            "stop_signal_number": 1,
+            "stop_requested_at_local": "2026-09-15T16:31:41.000000+08:00",
+            "stop_signal_handlers": ["SIGHUP", "SIGQUIT", "SIGINT", "SIGTERM"],
+            "exit_reason": "stop_signal SIGHUP",
+            "cleanup_errors": [],
+            "log_stream_health": "not_requested",
+        },
+    )
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert "capture_integrity=completed" in out
+    assert "exit_reason=stop_signal SIGHUP stop_signal=SIGHUP stop_signal_number=1" in out
+    assert "stop_signal_handlers=SIGHUP,SIGQUIT,SIGINT,SIGTERM" in out
+    assert "the first stop signal is recorded verbatim (name, number, time)" in out
+    assert "does not interpret who or what sent it" in out
+    assert "completed means the tool reached finalization, not that the capture window" in out
+    assert "elapsed or that the session was healthy or audible" in out
+    assert "terminal or ssh session went away" not in out
+    assert "capture_integrity=incomplete" not in out
+    assert "capture_integrity=degraded" not in out
+
+
+def test_legacy_and_preflight_capture_json_are_not_called_completed_blindly(
+    tmp_path: Path, capsys
+) -> None:
+    legacy_unfinished = _capture(tmp_path / "a", capture_json={"git_head": "96f58aed"})
+    legacy_finished = _capture(
+        tmp_path / "b",
+        capture_json={"git_head": "96f58aed", "completed_at_local": "2026-09-14T19:08:51+08:00"},
+    )
+    preflight = _capture(
+        tmp_path / "c", capture_json={"capture_mode": "preflight_only", "serial_opened": False}
+    )
+    missing = tmp_path / "d"
+    missing.mkdir()
+
+    assert report.main([str(legacy_unfinished)]) == 0
+    out = capsys.readouterr().out
+    assert "capture_integrity=incomplete" in out
+    assert "no completion record (capture.json predates capture_status" in out
+    assert "completed_at_local=None, which is not a completion record" in out
+
+    assert report.main([str(legacy_finished)]) == 0
+    out = capsys.readouterr().out
+    # Legacy fields are never promoted: only a tool-written completion record counts.
+    assert "capture_integrity=incomplete" in out
+    assert "capture_integrity=completed" not in out
+
+    assert report.main([str(preflight)]) == 0
+    out = capsys.readouterr().out
+    assert "capture_status=None capture_mode=preflight_only" in out
+    assert "capture_integrity=completed" in out
+    assert "preflight_only never opens the serial port" in out
+
+    assert report.main([str(missing)]) == 0
+    out = capsys.readouterr().out
+    assert "capture.json: missing" in out
+    assert "capture_integrity=incomplete" in out
+    assert "no lifecycle record (capture.json is missing, unreadable or not a JSON object)" in out
+
+
 def test_device_boot_keeps_one_segment_for_startup_transitions(tmp_path: Path, capsys) -> None:
     serial = (
         "[2026-09-14T18:24:59.396+08:00] ESP-ROM:esp32s3-20210327\r\n"
@@ -923,6 +1393,45 @@ def test_multiple_supply_summaries_for_one_generation_are_kept_in_order(
     assert (
         "(each episode is kept in log order; a generation flushed more than once keeps every "
         "summary): gen 3=3" in out
+    )
+
+
+def test_a_dropped_supply_line_is_never_counted_as_a_metering_episode(
+    tmp_path: Path, capsys
+) -> None:
+    # The producer's logger can report its own dropped line ("media playback supply
+    # summary dropped: buffer too small").  Such a line matches the episode prefix but
+    # names no generation, so it must never be counted as a supply/meter episode.
+    serial = (
+        _state("2026-09-14T18:00:00.000+08:00", "idle", "connecting")
+        + _device_line(
+            "2026-09-14T18:00:11.000+08:00",
+            "audio_service: media playback supply summary dropped: buffer too small pending=9",
+        )
+        + _device_line(
+            "2026-09-14T18:00:11.200+08:00",
+            "audio_service: media playback starved dropped: buffer too small pending=9",
+        )
+        + _supply_summary("2026-09-14T18:00:11.400+08:00", close="channel_flush")
+    )
+    run = _capture(tmp_path, serial=serial)
+    assert report.main([str(run)]) == 0
+    out = capsys.readouterr().out
+
+    assert out.count("supply.") == 1
+    assert "supply.supply_summary" in out
+    assert "gen ?" not in out
+    assert "summary): gen 3=1" in out
+    timeline = out.split("== device timeline")[1].split("== server deliveries")[0]
+    assert timeline.count("metering_notice") == 2
+    assert timeline.count("supply.supply_summary") == 1
+    # Only the real episode carries a producer format claim.
+    assert out.count("producer_format=software_queue_wait_v2") == 1
+    assert "producer_format=legacy_playback_meter" not in out
+    assert (
+        "note: serial.log has 2 'media playback ...' line(s) with no numeric generation= field; "
+        "they are shown as metering_notice lines and are never counted as supply or legacy meter "
+        "episodes: line 2, line 3" in out
     )
 
 

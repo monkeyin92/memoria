@@ -1,15 +1,17 @@
 """Tests for the receipt-bound voice session capture tool.
 
 No serial port is ever opened here: the preflight path validates the receipt and
-writes capture.json, and the live path is skipped when pyserial is importable
-because it would touch real hardware (the project .venv does not ship pyserial).
+writes capture.json, and the live path runs against fake serial/process/handle objects
+only, including a `sys.modules` entry that makes `import serial` raise, so the
+dependency refusal can be tested without any hardware.
 """
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
+import os
+import signal
 import subprocess
 import sys
 import types
@@ -207,18 +209,62 @@ def test_duration_bounds_are_enforced(tmp_path: Path, capsys, duration: int) -> 
     assert not out.exists()
 
 
-def test_live_capture_without_pyserial_never_opens_a_port(tmp_path: Path, capsys) -> None:
-    if importlib.util.find_spec("serial") is not None:
-        pytest.skip("pyserial is installed; the live path would touch real hardware")
+def test_missing_pyserial_is_refused_and_recorded_without_opening_a_port(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    # Deterministic whatever the environment ships: a None entry in sys.modules makes
+    # `import serial` raise ImportError, and no real port can be involved.
+    monkeypatch.setitem(sys.modules, "serial", None)
     receipt = _receipt_file(tmp_path)
     out = tmp_path / "live"
+    _no_git(monkeypatch)
 
     assert capture.main(["--out", str(out), "--firmware-receipt", str(receipt)]) == 2
-    assert "needs pyserial" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "needs pyserial" in captured.err
     metadata = json.loads((out / "capture.json").read_text())
     assert metadata["capture_mode"] == "live"
     assert metadata["serial_opened"] is False
     assert not (out / "serial.log").exists()
+    # The refusal goes through the same finalization as any other ending: the record
+    # says the capture never started instead of leaving an in_progress file.
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["exit_reason"] == "capture_not_started"
+    assert metadata["cleanup_errors"] == []
+    assert metadata["log_stream_health"] == "degraded"
+    assert (
+        "the live capture never started: pyserial is not importable"
+        in metadata["log_stream_health_reasons"]
+    )
+    assert "CAPTURE_HEALTH degraded reasons=[" in captured.out
+
+
+def test_missing_esptool_for_boot_reset_is_refused_and_recorded(tmp_path, capsys, monkeypatch):
+    # pyserial is importable here (the fake module) while esptool is not, so --boot-reset
+    # must be refused before anything is opened, and recorded the same way.
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    seen = _fake_serial(monkeypatch)
+    monkeypatch.setitem(sys.modules, "esptool.reset", None)
+    _no_git(monkeypatch)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--boot-reset"]) == 2
+    )
+    captured = capsys.readouterr()
+    assert "needs esptool" in captured.err
+    assert seen["ports"] == []
+    assert not (out / "serial.log").exists()
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["serial_opened"] is False
+    assert metadata["capture_status"] == "completed"
+    assert metadata["exit_reason"] == "capture_not_started"
+    assert metadata["log_stream_health"] == "degraded"
+    assert (
+        "the live capture never started: --boot-reset needs esptool"
+        in metadata["log_stream_health_reasons"]
+    )
 
 
 def _no_git(monkeypatch) -> None:
@@ -238,7 +284,14 @@ def _fast_clock(monkeypatch, step: float = 0.001) -> None:
 
 
 def _fake_serial(
-    monkeypatch, chunks: list[bytes] | None = None, open_error: str = ""
+    monkeypatch,
+    chunks: list[bytes] | None = None,
+    open_error: str = "",
+    *,
+    signal_number: int | None = None,
+    close_error: str = "",
+    readline_hook=None,
+    close_hook=None,
 ) -> dict[str, list]:
     module = types.ModuleType("serial")
     seen: dict[str, list] = {"ports": []}
@@ -251,6 +304,8 @@ def _fake_serial(
             self.rts = None
             self.is_open = False
             self.closed = False
+            self.reads = 0
+            self.close_attempts = 0
             seen["ports"].append(self)
 
         def open(self) -> None:
@@ -259,10 +314,23 @@ def _fake_serial(
             self.is_open = True
 
         def readline(self) -> bytes:
+            index = self.reads
+            self.reads += 1
+            if readline_hook is not None:
+                readline_hook(self, index)
+            if signal_number is not None and index == 0:
+                # A real signal to this process: the capture's own handler is already
+                # installed at this point, so it must absorb it.
+                os.kill(os.getpid(), signal_number)
             return chunks.pop(0) if chunks else b""
 
         def close(self) -> None:
+            self.close_attempts += 1
+            if close_error:
+                raise OSError(5, close_error)
             self.closed = True
+            if close_hook is not None:
+                close_hook(self)
 
     module.Serial = Port
     monkeypatch.setitem(sys.modules, "serial", module)
@@ -294,6 +362,164 @@ class _FailingProcess(_RunningProcess):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._code = 3
+
+
+def test_metadata_write_failure_preserves_the_previous_complete_json(tmp_path, monkeypatch):
+    capture.write_metadata(tmp_path, {"capture_status": "in_progress"})
+    before = (tmp_path / "capture.json").read_bytes()
+    real_write = Path.write_text
+
+    def partial_write(path, text, *args, **kwargs):
+        real_write(path, text[:9], *args, **kwargs)
+        raise OSError(28, "disk full")
+
+    monkeypatch.setattr(Path, "write_text", partial_write)
+    with pytest.raises(OSError, match="disk full"):
+        capture.write_metadata(tmp_path, {"capture_status": "completed"})
+    assert (tmp_path / "capture.json").read_bytes() == before
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["capture.json"]
+
+
+def test_metadata_replace_failure_preserves_record_and_removes_temporary(tmp_path, monkeypatch):
+    capture.write_metadata(tmp_path, {"capture_status": "in_progress"})
+    before = (tmp_path / "capture.json").read_bytes()
+
+    def refused_replace(_source, _destination):
+        raise OSError(13, "replace refused")
+
+    monkeypatch.setattr(Path, "replace", refused_replace)
+    with pytest.raises(OSError, match="replace refused"):
+        capture.write_metadata(tmp_path, {"capture_status": "completed"})
+    assert (tmp_path / "capture.json").read_bytes() == before
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["capture.json"]
+
+
+@pytest.mark.parametrize("unknown_code", [None, False, True, "0", 0.0])
+def test_unknown_exit_code_never_claims_success_and_does_not_skip_other_streams(unknown_code):
+    class UnknownExit(_RunningProcess):
+        def __init__(self):
+            super().__init__()
+            self.wait_timeouts = []
+            self.killed = False
+
+        def terminate(self):
+            self._code = unknown_code
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_timeouts.append(timeout)
+            return self._code
+
+    unknown = UnknownExit()
+    processes = [("bridge", unknown), ("agent", _RunningProcess()), ("edge", _RunningProcess())]
+    state = capture.Capture(
+        processes=processes,
+        streams={label: {"status": "running", "exit_code": None} for label, _ in processes},
+    )
+    capture._stop_log_processes(state)
+    assert unknown.wait_timeouts == [capture.TERMINATE_WAIT_S, capture.KILL_WAIT_S]
+    assert unknown.killed
+    assert state.streams["bridge"]["status"] == "cleanup_failed"
+    assert state.streams["bridge"]["exit_code"] is None
+    assert state.streams["bridge"]["forced_kill"] is True
+    assert any(
+        "wait after SIGKILL for log stream bridge:" in error for error in state.cleanup_errors
+    )
+    for label in ("agent", "edge"):
+        assert state.streams[label]["status"] == "stopped_by_capture"
+        assert state.streams[label]["exit_code"] == -15
+        assert state.streams[label]["forced_kill"] is False
+
+
+def test_unreadable_returncode_does_not_skip_cleanup_of_the_next_stream():
+    class UnreadableExit(_RunningProcess):
+        @property
+        def returncode(self):
+            raise OSError(5, "returncode unavailable")
+
+        def wait(self, timeout=None):
+            return None
+
+    processes = [("bridge", UnreadableExit()), ("agent", _RunningProcess())]
+    state = capture.Capture(
+        processes=processes,
+        streams={label: {"status": "running", "exit_code": None} for label, _ in processes},
+    )
+    capture._stop_log_processes(state)
+    assert state.streams["bridge"]["status"] == "cleanup_failed"
+    assert state.streams["agent"]["status"] == "stopped_by_capture"
+    assert any("returncode unavailable" in error for error in state.cleanup_errors)
+
+
+@pytest.mark.parametrize("code_source", ["wait", "returncode"])
+def test_confirmed_zero_exit_code_is_not_mistaken_for_failed_reap(code_source):
+    class CleanExit(_RunningProcess):
+        def wait(self, timeout=None):
+            self._code = 0
+            return 0 if code_source == "wait" else None
+
+    state = capture.Capture(
+        processes=[("bridge", CleanExit())],
+        streams={"bridge": {"status": "running", "exit_code": None}},
+    )
+    capture._stop_log_processes(state)
+    assert state.streams["bridge"]["status"] == "stopped_by_capture"
+    assert state.streams["bridge"]["exit_code"] == 0
+    assert state.streams["bridge"]["forced_kill"] is False
+    assert not state.cleanup_errors
+
+
+def test_poll_failure_during_cleanup_still_reaps_all_streams_and_writes_metadata(
+    tmp_path, monkeypatch
+):
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    draining = {"now": False}
+    processes = []
+
+    class PollFailure(_RunningProcess):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.waited = False
+            processes.append(self)
+
+        def poll(self):
+            if draining["now"]:
+                raise OSError(5, "poll unavailable")
+            return super().poll()
+
+        def wait(self, timeout=None):
+            self.waited = True
+            return super().wait(timeout=timeout)
+
+    _fake_serial(monkeypatch, close_hook=lambda _port: draining.update(now=True))
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    monkeypatch.setattr(capture.subprocess, "Popen", PollFailure)
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "1",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    assert len(processes) == 3
+    assert all(process.waited and process.returncode == -15 for process in processes)
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["log_stream_health"] == "degraded"
+    for label, _container in capture.CONTAINERS:
+        assert any(f"polling log stream {label}:" in error for error in metadata["cleanup_errors"])
 
 
 def test_receipt_digest_and_payload_come_from_a_single_read(tmp_path, capsys, monkeypatch) -> None:
@@ -536,8 +762,556 @@ def test_stream_that_ignores_sigterm_is_flagged(tmp_path, capsys, monkeypatch):
         == 1
     )
     printed = capsys.readouterr().out
-    assert "log stream bridge ignored SIGTERM and needed SIGKILL" in printed
+    assert "log stream bridge needed SIGKILL to be reclaimed (SIGTERM timed out)" in printed
     metadata = json.loads((out / "capture.json").read_text())
     assert metadata["log_stream_health"] == "degraded"
     assert metadata["log_streams"]["bridge"]["status"] == "stopped_by_capture"
     assert metadata["log_streams"]["bridge"]["forced_kill"] is True
+
+
+def test_capture_json_stays_in_progress_until_the_finalization(tmp_path, capsys, monkeypatch):
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    writes: list[dict[str, object]] = []
+    real_write = capture.write_metadata
+
+    def recording(path: Path, metadata: dict[str, object]) -> None:
+        writes.append(json.loads(json.dumps(metadata)))
+        real_write(path, metadata)
+
+    monkeypatch.setattr(capture, "write_metadata", recording)
+    _fake_serial(monkeypatch, chunks=[b"SystemInfo: boot\r\n"])
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--duration", "1"])
+        == 0
+    )
+    capsys.readouterr()
+    assert len(writes) == 3
+    first, opened, last = writes
+    # The lifecycle record starts at the first metadata write and pre-writes nothing.
+    assert first["capture_status"] == "in_progress"
+    for field in ("completed_at_local", "exit_reason", "stop_signal", "cleanup_errors"):
+        assert field not in first
+    assert opened["serial_opened"] is True
+    assert opened["capture_status"] == "in_progress"
+    assert "completed_at_local" not in opened
+    assert last["capture_status"] == "completed"
+    assert last["completed_at_local"]
+    assert last["exit_reason"] == "duration_elapsed"
+    assert last["stop_signal"] is None
+    assert last["cleanup_errors"] == []
+    assert last["log_stream_health"] == "not_requested"
+
+
+def test_preflight_writes_no_completion_or_stop_state(tmp_path, capsys, monkeypatch) -> None:
+    _no_git(monkeypatch)
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "session-1"
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--preflight-only"])
+        == 0
+    )
+    capsys.readouterr()
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["capture_status"] == "preflight_only"
+    for field in ("completed_at_local", "exit_reason", "stop_signal", "cleanup_errors"):
+        assert field not in metadata
+
+
+STOP_SIGNALS = (signal.SIGHUP, signal.SIGQUIT, signal.SIGINT, signal.SIGTERM)
+
+
+@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda number: number.name)
+def test_every_stoppable_signal_is_handled_recorded_and_restored(
+    tmp_path, capsys, monkeypatch, signum
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    before = {number: signal.getsignal(number) for number in STOP_SIGNALS}
+    _fake_serial(
+        monkeypatch,
+        chunks=[b"StateMachine: State: activating -> idle\r\n"],
+        signal_number=signum,
+    )
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--duration", "900"])
+        == 0
+    )
+    printed = capsys.readouterr().out
+    assert f"CAPTURE_STOP_REQUESTED signal={signum.name}" in printed
+    assert "CAPTURE_HEALTH healthy exit_reason=stop_signal " in printed
+
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["capture_status"] == "completed"
+    assert metadata["stop_signal"] == signum.name
+    assert metadata["stop_signal_number"] == int(signum)
+    assert metadata["stop_requested_at_local"]
+    assert metadata["exit_reason"] == f"stop_signal {signum.name}"
+    assert metadata["completed_at_local"]
+    assert metadata["cleanup_errors"] == []
+    assert metadata["log_stream_health"] == "not_requested"
+    assert sorted(metadata["stop_signal_handlers"]) == ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
+    # The caller's handlers are handed back: a capture never leaves its own behind.
+    for number in STOP_SIGNALS:
+        assert signal.getsignal(number) is before[number]
+
+
+def test_a_stop_at_the_first_metadata_write_is_recorded_and_keeps_the_port_closed(
+    tmp_path, capsys, monkeypatch
+):
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    seen = _fake_serial(monkeypatch)
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    before = {number: signal.getsignal(number) for number in STOP_SIGNALS}
+    real_write = capture.write_metadata
+    calls = {"n": 0}
+
+    def write_then_stop(path: Path, metadata: dict[str, object]) -> None:
+        real_write(path, metadata)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # The handlers must already be installed for the first live metadata write:
+            # otherwise this signal kills the process and leaves no record at all.
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(capture, "write_metadata", write_then_stop)
+
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "900",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert "STOP_BEFORE_START signal=SIGTERM serial_not_opened=True" in captured.out
+    for label in ("bridge", "agent", "edge"):
+        assert f"LOG_STREAM_NOT_STARTED label={label} reason=stopping" in captured.out
+        assert f"log stream {label} not_started (exit=None)" in captured.out
+    assert "the serial port was never opened (the capture stopped before it opened)" in captured.out
+    assert "CAPTURE_HEALTH degraded reasons=[" in captured.out
+
+    assert seen["ports"] == []
+    assert not (out / "serial.log").exists()
+    for label in ("bridge", "agent", "edge"):
+        assert not (out / f"{label}.log").exists()
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["capture_status"] == "completed"
+    assert metadata["serial_opened"] is False
+    assert metadata["exit_reason"] == "stop_signal SIGTERM"
+    assert metadata["stop_signal"] == "SIGTERM"
+    assert sorted(metadata["stop_signal_handlers"]) == ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
+    assert metadata["cleanup_errors"] == []
+    assert sorted(metadata["log_streams"]) == ["agent", "bridge", "edge"]
+    assert metadata["log_stream_health"] == "degraded"
+    for number in STOP_SIGNALS:
+        assert signal.getsignal(number) is before[number]
+
+
+def test_a_capture_that_cannot_handle_every_stop_signal_refuses_to_start(
+    tmp_path, capsys, monkeypatch
+):
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    seen = _fake_serial(monkeypatch)
+    _no_git(monkeypatch)
+    before = {number: signal.getsignal(number) for number in STOP_SIGNALS}
+    real_install = capture._install_stop_handlers
+
+    def install_with_a_failure(recorder):
+        previous, failures = real_install(recorder)
+        return previous, [*failures, "installing the SIGHUP handler failed: OSError: no pty"]
+
+    monkeypatch.setattr(capture, "_install_stop_handlers", install_with_a_failure)
+
+    assert capture.main(["--out", str(out), "--firmware-receipt", str(receipt)]) == 2
+    err = capsys.readouterr().err
+    assert "installing the SIGHUP handler failed: OSError: no pty" in err
+    assert "refusing to start a capture that cannot record every stop signal" in err
+    # Nothing was opened, nothing was created, and no handler was left behind.
+    assert seen["ports"] == []
+    assert not out.exists()
+    for number in STOP_SIGNALS:
+        assert signal.getsignal(number) is before[number]
+
+
+class _RudeProcess(_RunningProcess):
+    """Refuses SIGTERM and SIGKILL, as a wedged process group can."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.terminate_attempts = 0
+
+    def terminate(self) -> None:
+        self.terminate_attempts += 1
+        raise OSError("terminate refused")
+
+    def kill(self) -> None:
+        raise OSError("kill refused")
+
+
+class _RudeHandle:
+    """A log handle whose close() fails; the other handles must still be closed."""
+
+    def __init__(self) -> None:
+        self.close_attempts = 0
+
+    def write(self, _data: bytes) -> int:
+        return 0
+
+    def close(self) -> None:
+        self.close_attempts += 1
+        raise OSError("bad file descriptor")
+
+
+def test_one_cleanup_error_neither_skips_the_others_nor_the_metadata(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    seen = _fake_serial(monkeypatch, close_error="port wedged")
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    processes: list[_RudeProcess] = []
+    handles: list[_RudeHandle] = []
+
+    def popen(*args: object, **kwargs: object) -> _RudeProcess:
+        process = _RudeProcess(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def open_handle(_path: Path) -> _RudeHandle:
+        handle = _RudeHandle()
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(capture.subprocess, "Popen", popen)
+    monkeypatch.setattr(capture, "_open_log_handle", open_handle)
+
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "1",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert "warning: closing the serial port: OSError: [Errno 5] port wedged" in captured.err
+
+    metadata = json.loads((out / "capture.json").read_text())
+    cleanup_errors = metadata["cleanup_errors"]
+    recorded = "\n".join(cleanup_errors)
+    assert "closing the serial port: OSError: [Errno 5] port wedged" in recorded
+    for label in ("bridge", "agent", "edge"):
+        assert f"terminating log stream {label}: OSError: terminate refused" in recorded
+    assert recorded.count("closing a log file handle: OSError: bad file descriptor") == 3
+    # Every later step still ran: the port was closed, every process was signalled and
+    # every handle was closed, even though the first of each raised.
+    assert [port.close_attempts for port in seen["ports"]] == [1]
+    assert [port.closed for port in seen["ports"]] == [False]
+    assert [process.terminate_attempts for process in processes] == [1, 1, 1]
+    assert [handle.close_attempts for handle in handles] == [1, 1, 1]
+
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["exit_reason"] == "duration_elapsed"
+    assert metadata["log_stream_health"] == "degraded"
+    for error in cleanup_errors:
+        assert f"cleanup {error}" in metadata["log_stream_health_reasons"]
+
+
+class _RefusesKillProcess(_RunningProcess):
+    """Never exits and refuses both signals: every wait must stay bounded."""
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        raise OSError("kill refused")
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        raise subprocess.TimeoutExpired(cmd="ssh", timeout=timeout)
+
+
+def test_a_failed_kill_and_a_timed_out_wait_after_kill_are_recorded(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    _fake_serial(monkeypatch)
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    monkeypatch.setattr(capture.subprocess, "Popen", _RefusesKillProcess)
+
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "1",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    metadata = json.loads((out / "capture.json").read_text())
+    cleanup_errors = metadata["cleanup_errors"]
+    recorded = "\n".join(cleanup_errors)
+    for label in ("bridge", "agent", "edge"):
+        assert f"SIGKILL for log stream {label}: OSError: kill refused" in recorded
+        assert f"wait after SIGKILL for log stream {label}: TimeoutExpired:" in recorded
+    # The bounded finalization still reached the metadata, and claims no success.
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["log_stream_health"] == "degraded"
+    # SIGKILL itself failed and the reap timed out, so nothing may claim the stream stopped.
+    assert metadata["log_streams"]["bridge"]["status"] == "cleanup_failed"
+    assert metadata["log_streams"]["bridge"]["forced_kill"] is True
+    assert "stopped_by_capture" not in json.dumps(metadata["log_streams"])
+
+
+class _WaitErrorProcess(_RunningProcess):
+    """Its first wait() fails for a non-timeout reason; kill+reap must still be tried."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._waits = 0
+        self.killed = False
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        self.killed = True
+        self._code = -9
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self._waits += 1
+        if self._waits == 1:
+            raise OSError("wait failed")
+        return self._code
+
+
+def test_a_non_timeout_wait_error_still_reclaims_the_stream_and_says_so(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    _fake_serial(monkeypatch)
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    processes: list[_WaitErrorProcess] = []
+
+    def popen(*args: object, **kwargs: object) -> _WaitErrorProcess:
+        process = _WaitErrorProcess(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(capture.subprocess, "Popen", popen)
+
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "1",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    metadata = json.loads((out / "capture.json").read_text())
+    recorded = "\n".join(metadata["cleanup_errors"])
+    for label in ("bridge", "agent", "edge"):
+        assert f"waiting for log stream {label}: OSError: wait failed" in recorded
+    # Every stream was still reclaimed with SIGKILL, and the record says it stopped.
+    assert [process.killed for process in processes] == [True, True, True]
+    assert metadata["log_streams"]["bridge"]["status"] == "stopped_by_capture"
+    assert metadata["log_streams"]["bridge"]["exit_code"] == -9
+    # SIGKILL was used (and reclaimed the stream), so it is recorded, with the reason it
+    # was needed: SIGTERM did not time out, so this must not claim it ignored SIGTERM.
+    assert metadata["log_streams"]["bridge"]["forced_kill"] is True
+    assert metadata["log_streams"]["bridge"]["forced_reason"] == "its wait failed"
+    assert "its wait failed" in json.dumps(metadata["log_stream_health_reasons"])
+    assert "ignored SIGTERM" not in json.dumps(metadata["log_stream_health_reasons"])
+    assert metadata["log_stream_health"] == "degraded"
+    assert metadata["capture_status"] == "completed"
+
+
+def test_a_stream_that_exited_before_the_drain_is_not_reported_as_stopped(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    # The read loop can exit between a stream's exit and its next poll, so the stream
+    # reaches the drain already exited: poll() has its code, and the record must say
+    # exited_early/failed instead of claiming this capture stopped it.
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    draining = {"now": False}
+
+    class _ExitsAtShutdown(_RunningProcess):
+        def poll(self) -> int | None:
+            return 0 if draining["now"] else None
+
+        def terminate(self) -> None:
+            raise AssertionError("an already-exited stream must not be terminated")
+
+    _fake_serial(
+        monkeypatch,
+        chunks=[b"StateMachine: State: activating -> idle\r\n"],
+        close_hook=lambda _port: draining.update(now=True),
+    )
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    monkeypatch.setattr(capture.subprocess, "Popen", _ExitsAtShutdown)
+
+    assert (
+        capture.main(
+            [
+                "--out",
+                str(out),
+                "--firmware-receipt",
+                str(receipt),
+                "--duration",
+                "1",
+                "--server-logs",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr().out
+    assert "LOG_STREAM_EXIT label=bridge exit=0 observed=at_drain" in captured
+    metadata = json.loads((out / "capture.json").read_text())
+    for label in ("bridge", "agent", "edge"):
+        assert metadata["log_streams"][label]["status"] == "exited_early"
+        assert metadata["log_streams"][label]["exit_code"] == 0
+    assert "stopped_by_capture" not in json.dumps(metadata["log_streams"])
+    assert "log stream bridge exited_early (exit=0)" in metadata["log_stream_health_reasons"]
+    assert metadata["log_stream_health"] == "degraded"
+
+
+class _GoneTerminal:
+    """A terminal or pipe that closed: every write raises, as BrokenPipeError does."""
+
+    def write(self, _text: str) -> int:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self) -> None:
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+def test_a_terminal_that_goes_away_cannot_cost_the_closing_record(tmp_path, monkeypatch) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    _fake_serial(monkeypatch, chunks=[b"SystemInfo: boot\r\n"])
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    terminal = _GoneTerminal()
+    monkeypatch.setattr(capture.sys, "stdout", terminal)
+    monkeypatch.setattr(capture.sys, "stderr", terminal)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--duration", "1"])
+        == 0
+    )
+    metadata = json.loads((out / "capture.json").read_text())
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["exit_reason"] == "duration_elapsed"
+    assert metadata["cleanup_errors"] == []
+    assert metadata["log_stream_health"] == "not_requested"
+    assert b"SystemInfo" in (out / "serial.log").read_bytes()
+
+
+def test_handlers_stay_installed_until_the_closing_record_is_written(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    before = {number: signal.getsignal(number) for number in STOP_SIGNALS}
+    _fake_serial(monkeypatch, chunks=[b"StateMachine: State: activating -> idle\r\n"])
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    real_write = capture.write_metadata
+    snapshots: list[tuple[object, object]] = []
+
+    def observing(path: Path, metadata: dict[str, object]) -> None:
+        snapshots.append((metadata.get("capture_status"), signal.getsignal(signal.SIGTERM)))
+        real_write(path, metadata)
+
+    monkeypatch.setattr(capture, "write_metadata", observing)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--duration", "1"])
+        == 0
+    )
+    capsys.readouterr()
+    assert [status for status, _ in snapshots] == ["in_progress", "in_progress", "completed"]
+    # The capture's own handler is still in place while the closing record is written...
+    assert snapshots[-1][1] is not before[signal.SIGTERM]
+    # ...and only afterwards are the caller's handlers handed back.
+    for number in STOP_SIGNALS:
+        assert signal.getsignal(number) is before[number]
+
+
+def test_a_stop_during_the_closing_record_leaves_a_complete_honest_record(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    receipt = _receipt_file(tmp_path)
+    out = tmp_path / "live"
+    _fake_serial(monkeypatch, chunks=[b"StateMachine: State: activating -> idle\r\n"])
+    _no_git(monkeypatch)
+    _fast_clock(monkeypatch)
+    real_write = capture.write_metadata
+    calls = {"n": 0}
+
+    def stop_during_the_record(path: Path, metadata: dict[str, object]) -> None:
+        calls["n"] += 1
+        if calls["n"] == 3:  # third write = the closing record
+            os.kill(os.getpid(), signal.SIGTERM)
+        real_write(path, metadata)
+
+    monkeypatch.setattr(capture, "write_metadata", stop_during_the_record)
+
+    assert (
+        capture.main(["--out", str(out), "--firmware-receipt", str(receipt), "--duration", "1"])
+        == 0
+    )
+    capsys.readouterr()
+    metadata = json.loads((out / "capture.json").read_text())
+    # The signal cannot kill the record, and the record does not hide it either.
+    assert metadata["capture_status"] == "completed"
+    assert metadata["completed_at_local"]
+    assert metadata["stop_signal"] == "SIGTERM"
+    assert metadata["exit_reason"] == "stop_signal SIGTERM"
+    assert metadata["log_stream_health"] == "not_requested"
