@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-15
-resume_checkpoint: p0_weather_lifecycle_released_device_three_round_acceptance_pending_20260915
+resume_checkpoint: p0_weather_lifecycle_functional_1_of_3_passed_metering_and_long_playback_pending_20260915
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -45,7 +45,7 @@ firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
 firmware_playback_supply_meter_code: complete_uncommitted_observation_only
 firmware_playback_supply_meter_wired: current_candidate_app_only_flashed_full_readback_verified
 firmware_playback_supply_meter_enabled: true_boot_verified_20260915T112207CST
-firmware_playback_supply_meter_verified: false_single_round_valid_long_capture_degraded_actual_heard_pending
+firmware_playback_supply_meter_verified: false_preoutput_decoder_reset_zero_coverage_20260915
 firmware_playback_supply_meter_worktree_overlay_hash: 97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8
 firmware_playback_supply_meter_board_overlay_hash: 97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8
 firmware_playback_supply_meter_board_release_head: 65257e0e1285a3126e484ad22c308315c971caad
@@ -119,7 +119,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-15 多日天气与续问关停修复（已发布，服务端通过、真机待验）
+## 2026-09-15 多日天气与续问关停修复（已发布，功能真机 1/3 通过、计量与长播待验）
 
 本节对应用户「未来三天南京天气只答今天，播后再问没说完就待命」的反馈。证据是 **9 月 15 日**的 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-2/`，session `ee5f652b-1cd3-425d-bd6a-71fd91b7568f` / epoch **1953**；不是 9 月 14 日同名的 `session-2`。
 
@@ -139,7 +139,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - `code`：已提交并推送 `d7214554316bdaa13984c7b8ecf00aeb61693311`，冻结 tag `20260915-weather-followup-lifecycle-v1`；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
 - `wired`：接入 `OpenMeteoWeather.resolve`、`on_speech_segment` 与既有 ingress/standby/endpoint/reconnect/terminal 清理路径，没有新增并行状态机。
 - `enabled`：**生产 true，2026-09-15 15:58:42 CST 仅切 Agent/Bridge**。线上 Bridge 的 `load_settings` 切前后均核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
-- `verified`：**server_only / device_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过，详见下方发布结果。**本轮未刷机，真机三轮未验；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
+- `verified`：**server_passed / functional_device_rounds_1_of_3_passed / metering_and_long_playback_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过。16:18–16:19 的首轮新媒体会话已取得双问/播放结束/播后告别记录，用户随后明确确认「三天齐全、续问正常、声音无断续或卡断」，首轮功能/听感通过。捕获与计量边界见下文。**本轮未刷机，剩余两轮、VAD/watchdog 竞态与 >45 秒长播未验；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
 
 发布前异常路径补核（2026-09-15，本地故障注入与修复已完成）：
 
@@ -150,11 +150,18 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
 - **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
 
-仍开放：旧会话 `bridge.log:70,74` 有 `straddles_committed_without_timing` 与 mostly-committed rescue drop。该防重复提交门不能直接放宽；本次发布不代表 ASR 重叠边界、语句完整性或长播断续已验收。下一步用新 session 连测三轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」，同步取设备 VAD、ASR 水位、admission/revision、天气请求天数、delivery 与操作员听感；正常轮次不强求出现竞态专属 `close superseded` 日志。USB/串口稳定后再做 >45 秒长播对照；没有新证据不再刷机、不做 `0026`。自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
+仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，本次双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。首轮功能/听感已通过，不再重复索要确认；下一步先用真实调用顺序复现并确定下述计量缺口的最小修复，再补剩余两轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」。补测应覆盖新 VAD 接管及接近静默期限的续问；正常轮次不强求出现竞态专属 `close superseded`。捕获可正常收尾、计量能覆盖真实播放后，再做 >45 秒长播；本轮仅审计，不再刷机、不做 `0026`。自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
 
 发布结果（2026-09-15）：证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。冻结范围仅 Agent 生命周期、天气、测量/捕获工具及其测试/文档；固件 dirty 留在主工作树，以干净 detached worktree 发布，未改有效环境或其它服务。CI **34943397294 success**（Agent 与 Python/PG 契约/offline E2E），正式 dry-run 全门禁及 production compose **47 passed**，捕获/报表 **62 passed**。正式切流复用同一 immutable commit 已通过的门禁（`gate-reuse.json`），不是跳过验证。候选真实天气 smoke 请求 `forecast_days=3`、回答含今天/明天/后天；切流后真实 LiveKit、FunASR、QwenRealtimeSearch、Qwen、Doubao、InterruptSemantic 和 readiness refresh 全部通过。16:00:49 回环/公网 8443 均 ready、core 12/12，新 Agent boot `98b37381-97e5-4af8-97b8-158d97b16602`，`last_loop_at=2026-09-15T08:00:45.163950+00:00`，非旧 heartbeat。
 
-设备边界与捕获：切流于 15:58:16 重启 Bridge 时旧 epoch 1953 的 WSS 关闭，Edge 的 channel 随新服务恢复；16:00:48 设备快照 **connected=false**。原始 `runtime-comparison.json` 因 `device_not_connected` 保留 `passed=false`；补充 `runtime-comparison-split.json` 明确 `server_release_passed=true / device_reconnect_verified=false`，不抹掉原始失败，新媒体会话重连仍需唤醒证明。`session-1/` 为 16:03:35–16:15:32 的启动/待机检查，正常停止、capture healthy、无语音验收。实际听测捕获 `session-2/` 于 **16:15:43 CST** 启动，限时 900 秒（约 16:30:43 截止）；正常硬复位后 **16:15:55.440 activating -> idle**、Activation v3，唤醒词「茉莉」。两段均绑定既有 `run-20260915-p0-03-firmware-metering/postflash.json`（app SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`），`read_from_board_this_run=false`，本次未重新读写固件。三轮及用户完整听感尚未验收；捕获结束后须核验串口与三路日志健康，按真实 session/epoch 分账。
+设备边界与捕获：15:58:16 重启 Bridge 时旧 epoch 1953 的 WSS 关闭；16:00:48 设备快照 **connected=false**。原始 `runtime-comparison.json` 的 `passed=false` 与 `runtime-comparison-split.json` 的 `device_reconnect_verified=false` 保留为当时事实。新增会话 `67286af6-06a4-40d3-a28d-aa2bb0ec1329`（media epoch **1** / device stream epoch **1954**）已证明随后唤醒并建立新媒体链，不改写旧快照。`session-1/` 仅为 16:03:35–16:15:32 正常收尾的启动/待机检查，无语音验收。`session-2/` 16:15:43 启动、16:15:55.440 进入 idle，串口最后记录 **16:21:42.952**；核查时 PID 27484 与 exec session 均已消失，`capture.json` 未写结束时间/最终流状态，退出原因未知，**不得说成 900 秒正常到期或 capture healthy**。16:40 只读补取同时间窗三容器日志，Bridge **199 行**、Edge **1 行**、Agent **0 行**均与原文件 SHA 相同，SSH exit 0/stderr 空；这确认已留存服务端记录，不补造串口尾部或收尾元数据。证据为 `session-2/report.txt`、`audit.json` 与独立 `*.supplement.log`。两段绑定既有 `run-20260915-p0-03-firmware-metering/postflash.json`（app SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`），`read_from_board_this_run=false`，本次未重新读写固件。
+
+首轮实际话轮审计（2026-09-15 16:18–16:19 CST，`session-2/`，**功能/听感 1/3 通过；有效计量长播 0 轮**）：
+
+- 两次问题各提交一次（turn 2/gen 2、turn 3/gen 4）；三天天气请求 `forecast_days=3 / days=3`，续问为 `forecast_days=1 / days=1`，均选中南京并 HTTP 200。正文 gen 3/gen 5 音频分别 **19.06 秒 / 5.18 秒**，五个 generation 均有 `first_frame_sent → provider_completed → actual_heard → playback_ended`，终态为 `playback_completed`。两次 ACK→正文服务端间隔 **0.374 / 0.349 秒**，正文 Bridge post-pacer 最大帧间隔 **33 / 25ms**；不是设备可闻间隔或 DAC 实测。用户在「说完了」后明确补充 **「三天齐全、续问正常、声音无断续或卡断」**，结合设备终端回执记首轮功能/听感通过；不再把听感标为 pending，也不从单独的 `actual_heard` 账本事件推断听感。日志未记录完整问答文本，日内容齐全依据用户确认。
+- 第一次 VAD 明确受理（16:18:53.174，remaining=8.952s、watchdog=true、revision=1）；第二问通过 ASR final 提交并播放，但串口和 Bridge **没有新的 VAD/admission**，不得据此关闭 VAD/watchdog 竞态专项。首次 rescue 13 字被重叠门拒绝并丢弃，没有生成第三个问题；空 ASR tail timeout 未关闭会话。正文中 16:19:08 的 `semantic_final` 告别候选被 `speaker_authority_unverified` 拒绝，随后正文正常终态；其来源未知，不判定为回声或真实说话。
+- 播后告别：16:19:37.739 Edge `conversation_end_explicit`，16:19:37.755 串口 `listening → idle`。保留两端原始时刻，不把跨时钟差当精确延迟；自动报告因一个 stream 对应五个 delivery 保守保留 `playback→close gap=unknown`，不猜最后 generation。
+- **播放计量不覆盖本轮实际播放，原因已由主线核对源码与五代日志**：`generation.started → ResetDecoderForServerGeneration(N) → NoteGenerationAnnounced/OpenEpisode` 先打开统计窗口；首帧触发 `EmitLegacyTts(start)`、进入 speaking，既有入口 `ResetDecoder()` 又执行 `Close(kDecoderReset)`，没有为实际播放重新打开窗口。gen 1–5 因此各只有播前 `close=decoder_reset / output_frames=0 / first_output=no / exact_confirmed=0`，没有有效播放结束统计；`NoteWaitBegin/End` 在窗口关闭后不计供给等待，末尾 flush 也不能补回统计。入口见 `memoria_protocol.cc:1019,1354`、补丁 `0010:141`、`0018:35`、计量 `0025:183–215` 与 `memoria_playback_supply_meter.h:218–226,279–338,371–408`（补丁行号不是落地 upstream 行号）。这是**测量生命周期缺口，不是本轮声音异常的根因**；用户已确认无断续。全零不能证明软件供给无等待或 I2S/DMA 无欠载；问候 Bridge 最大帧间隔 **201ms** 也仅作发送侧观察。下一步先补真实顺序回归、确定保留 generation/fence 隔离的最小观测修复，再考虑刷机与长播，不改音频控制权限或凭空增加预缓冲。
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
