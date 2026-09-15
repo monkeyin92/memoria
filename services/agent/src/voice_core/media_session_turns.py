@@ -43,6 +43,9 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # larger gaps remain fail-closed so an earlier provider sentence cannot commit
 # a later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
+# Conservative sample-gap policy for unanchored device candidates observed
+# during a previous reply, not a VAD silence measurement or endpoint timeout.
+_PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
@@ -185,6 +188,9 @@ class MediaTurnEndpointMixin:
     ) -> None:
         """Buffer a provider final until the sample-clock endpoint is stable."""
 
+        floor = context.pending_turn_onset_floor
+        if floor is not None and result.capture_start_sample < floor:
+            return
         key = (
             result.stream_epoch,
             result.sentence_id,
@@ -196,12 +202,15 @@ class MediaTurnEndpointMixin:
         context.committed_asr_keys[key] = None
         while len(context.committed_asr_keys) > 128:
             context.committed_asr_keys.popitem(last=False)
-        context.turn_start_sample = min(
+        self._split_pending_turn_at_unvoiced_gap(context, result)
+        onset = min(
             result.capture_start_sample,
             context.turn_start_sample
             if context.turn_start_sample is not None
             else result.capture_start_sample,
         )
+        floor = context.pending_turn_onset_floor
+        context.turn_start_sample = onset if floor is None else max(floor, onset)
         context.turn_end_sample = max(result.capture_end_sample, context.turn_end_sample or 0)
         partial = context.pending_partial
         if partial is not None and (
@@ -228,6 +237,75 @@ class MediaTurnEndpointMixin:
         # already ended, a late final re-arms the same logical-turn commit.
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
+
+    def _split_pending_turn_at_unvoiced_gap(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Bound an unanchored candidate after the reply and a long ASR gap.
+
+        No VAD edge means the acoustic boundary is unknown. This narrow
+        fallback must not segment ordinary long pauses or active barge-in.
+        The resulting sample fence also applies before ASR/rescue/VAD ingest.
+        """
+
+        if context.identity.client_type != "device":
+            return
+        if self._reply_in_flight(context):
+            if context.turn_endpoint_sample is None:
+                context.pending_turn_playback_overlap = True
+            return
+        if not context.pending_turn_playback_overlap:
+            return
+        if context.turn_end_sample is None:
+            return
+        if (
+            context.active_vad_start_sample is not None
+            or context.turn_endpoint_sample is not None
+            or context.live_query_forced_text
+            or context.clock_fact_forced_text
+        ):
+            return
+        if (
+            result.capture_start_sample - context.turn_end_sample
+            <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
+        ):
+            return
+        logger.warning(
+            "media pending turn split after reply session=%s "
+            "stream_epoch=%s gap_samples=%s pending=%s-%s final=%s-%s",
+            context.identity.session_id,
+            result.stream_epoch,
+            result.capture_start_sample - context.turn_end_sample,
+            context.turn_start_sample,
+            context.turn_end_sample,
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
+        # Drop even a cached partial crossing the boundary: its text cannot
+        # safely be sliced without word timing. Do not advance commit history.
+        timeline = context.runtime.speech_timeline
+        timeline.evict_segment_ids({
+            segment.segment_id
+            for segment in timeline.segments_in_range(
+                stream_epoch=result.stream_epoch,
+                start_sample=0,
+                end_sample=result.capture_start_sample,
+            )
+        })
+        context.turn_start_sample = None
+        context.turn_end_sample = None
+        context.pending_partial = None
+        context.clock_fact_partial_text = None
+        context.clock_fact_partial_stable_since = None
+        context.live_query_partial_text = None
+        context.live_query_partial_stable_since = None
+        context.conversation_close_partial_text = None
+        context.conversation_close_partial_stable_since = None
+        self._cancel_conversation_close_semantic_task(context)
+        context.pending_turn_playback_overlap = False
+        context.pending_turn_onset_floor = result.capture_start_sample
 
     @staticmethod
     def _reply_in_flight(context: _MediaVoiceSession) -> bool:
@@ -540,6 +618,7 @@ class MediaTurnEndpointMixin:
         stream_epoch: int,
         source: str,
     ) -> None:
+        pending_floor = context.pending_turn_onset_floor
         try:
             if (
                 context.closed
@@ -554,6 +633,8 @@ class MediaTurnEndpointMixin:
                 context.closed
                 or context.stream_epoch != stream_epoch
                 or context.turn_endpoint_sample is not None
+                or context.pending_turn_onset_floor != pending_floor
+                or context.conversation_close_semantic_task is not asyncio.current_task()
             ):
                 logger.warning(
                     "media early conversation-close semantic skipped after resolve "
@@ -581,7 +662,9 @@ class MediaTurnEndpointMixin:
                 exc_info=True,
             )
         finally:
-            if context.conversation_close_semantic_text == text:
+            # A cancelled old evaluation may finish after a new one for the
+            # same text was installed. Only its owning task may clear it.
+            if context.conversation_close_semantic_task is asyncio.current_task():
                 context.conversation_close_semantic_task = None
                 context.conversation_close_semantic_text = None
 
@@ -860,6 +943,8 @@ class MediaTurnEndpointMixin:
         context.turn_retire_sample = None
         context.turn_endpoint_grace_deadline = None
         context.turn_endpoint_tail_deadline = None
+        context.pending_turn_playback_overlap = False
+        context.pending_turn_onset_floor = None
         context.committed_asr_keys.clear()
         context.pending_partial = None
         context.clock_fact_partial_text = None

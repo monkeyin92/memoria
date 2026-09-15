@@ -11,6 +11,7 @@ from typing import Any
 
 import grpc
 import pytest
+import pytest_asyncio
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
@@ -53,6 +54,7 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceProvider,
     _OutputWork,
 )
+from services.agent.src.voice_core.media_session_commit import _resolve_media_turn_text
 from services.agent.src.voice_core.media_session_output_stream import _next_pcm_send_slot
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
@@ -12290,6 +12292,1158 @@ async def test_media_echo_restores_without_cancelling_or_committing() -> None:
     assert fence is None and reason == "assistant_echo"
     assert context.runtime.fence.matches(before)
     assert not [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"]
+
+
+@pytest.mark.asyncio
+async def _accept_media_asr_final(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    *,
+    sentence_id: str,
+    start_sample: int,
+    end_sample: int,
+    text: str,
+    revision: int = 1,
+) -> None:
+    decision = await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id=sentence_id,
+        start_sample=start_sample,
+        end_sample=end_sample,
+        text=text,
+        revision=revision,
+    )
+    assert decision.accepted is not None, decision.reason
+
+
+async def _accept_media_asr_decision(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    *,
+    sentence_id: str,
+    start_sample: int,
+    end_sample: int,
+    text: str,
+    revision: int = 1,
+    is_final: bool = True,
+) -> Any:
+    """Feed one provider result through the production acceptance seam."""
+
+    return await registry._accept_asr_result_decision(
+        identity.session_id,
+        ASRResult(
+            task_epoch=3,
+            sentence_id=sentence_id,
+            revision=revision,
+            capture_start_sample=start_sample,
+            capture_end_sample=end_sample,
+            text=text,
+            is_final=is_final,
+        ),
+    )
+
+
+# A device session must observe these five finals while the previous reply owns
+# output.  Field evidence 2026-09-15 epoch 1955: the device reported no VAD edge
+# after sample 113600, the replies played over samples ~163840-434240, and the
+# real question arrived at 484480-508800, i.e. 8.4 s after the last of them.
+_PLAYBACK_WINDOW_FINALS = (
+    ("playback-2", 158_560, 163_040, "AAA", 1),
+    ("playback-3", 185_280, 204_480, "BBBB", 2),
+    ("playback-6", 258_880, 264_640, "CCCCCCCCCCC", 3),
+    ("playback-9", 317_280, 332_640, "DDDD", 4),
+    ("playback-10", 338_880, 350_080, "EEEEEEE", 5),
+)
+_ABANDONED_WINDOW_END = 350_080
+_RETAINED_WINDOW_START = 484_480
+
+
+class _PreparingDeviceProvider(FakeMediaProvider):
+    """Records the text the production prepare seam hands to the provider."""
+
+    def __init__(self, runtime: DuplexRuntime) -> None:
+        super().__init__()
+        self._runtime = runtime
+        self.prepared: list[str] = []
+
+    async def prepare_committed_turn(
+        self,
+        _identity: SessionIdentity,
+        text: str,
+    ) -> GenerationFence:
+        self.prepared.append(text)
+        return await self._runtime.on_turn_committed(text, input_modality="audio")
+
+
+async def _open_device_overlap_session(
+    session_id: str,
+    *,
+    during_playback: bool = True,
+) -> SimpleNamespace:
+    """A real device session whose previous reply overlapped the uplink.
+
+    The identity is a ``client_type="device"`` one so the device-only early
+    commit chain runs; the provider is fake, the network never is.  Close
+    routing is the single semantic seam this scenario needs, so it is stubbed
+    deterministically: it must not replace the production commit path.
+    """
+
+    runtime = DuplexRuntime.create(session_id=session_id)
+    provider = _PreparingDeviceProvider(runtime)
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = _device_identity(session_id)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    bind_owner_policy(context.runtime)
+    _bind_verified_owner_classifier(context.runtime)
+    # Drain the session-start profile rotation before any turn: otherwise the
+    # first commit carries the epoch-drain barrier and the fake TTS pool cannot
+    # finish its discard step inside the test.
+    await context.runtime.settle_bootstrap_identity_epoch()
+
+    close_semantic = SimpleNamespace(
+        verdict_text=None,
+        gate=asyncio.Event(),
+        late_gate=asyncio.Event(),
+        on_resolve=None,
+        entered=asyncio.Event(),
+        swallow=False,
+        calls=0,
+    )
+    close_semantic.gate.set()
+    # Later generations resolve normally unless a test parks them explicitly.
+    close_semantic.late_gate.set()
+
+    async def _close_verdict(text: str) -> bool:
+        # Deterministic: the rule fast path still runs first, so only text it
+        # misses reaches this seam.  A test can hold the verdict open, and can
+        # make the step swallow cancellation like a production seam can.
+        close_semantic.entered.set()
+        # Later generations get their own gate so a test can finish one held
+        # verdict while the next same-text one stays parked.
+        gate = close_semantic.gate if close_semantic.calls == 0 else close_semantic.late_gate
+        close_semantic.calls += 1
+        while not gate.is_set():
+            try:
+                await gate.wait()
+            except asyncio.CancelledError:
+                if not close_semantic.swallow:
+                    raise
+        hook = close_semantic.on_resolve
+        if hook is not None:
+            hook()
+        verdict_text = close_semantic.verdict_text
+        return verdict_text is not None and verdict_text in text
+
+    context.runtime.set_conversation_close_semantic_resolver(_close_verdict)
+    if during_playback:
+        # The previous reply still owns output while the uplink keeps streaming:
+        # its barge-in voice start would rotate the epoch, so that start is left
+        # to ``_start_retained_utterance`` after the reply is over.  Ownership is
+        # installed directly so the test stays on the ASR/turn seam instead of
+        # simulating a full generator lifecycle.
+        context.runtime._was_speaking = True
+    return SimpleNamespace(
+        registry=registry,
+        identity=identity,
+        session=session,
+        context=context,
+        provider=provider,
+        close_semantic=close_semantic,
+    )
+
+
+async def _feed_playback_window_finals(window: SimpleNamespace) -> None:
+    for sentence_id, start_sample, end_sample, text, revision in _PLAYBACK_WINDOW_FINALS:
+        await _accept_media_asr_final(
+            window.registry,
+            window.identity,
+            sentence_id=sentence_id,
+            start_sample=start_sample,
+            end_sample=end_sample,
+            text=text,
+            revision=revision,
+        )
+
+
+async def _commit_pending_turn_from_device_endpoint(
+    window: SimpleNamespace,
+    *,
+    voiced_end_sample: int,
+) -> None:
+    """Drive the device VAD end and wait for the production commit path."""
+
+    await window.registry.on_speech_segment(
+        window.session,
+        SpeechSegment(
+            session_id=window.identity.session_id,
+            stream_epoch=window.identity.stream_epoch,
+            provider_task_epoch=9,
+            segment_id="device-vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=voiced_end_sample,
+            capture_end_sample=voiced_end_sample + 1,
+            final=True,
+            voiced_end_sample=voiced_end_sample,
+        ),
+    )
+    await _wait_until(
+        lambda: bool(window.provider.prepared) or window.context.standby_requested,
+        timeout=2.0,
+    )
+
+
+def _user_turn_texts(context: Any) -> list[str]:
+    return [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user" and turn.content
+    ]
+
+
+def _finish_previous_reply(context: Any) -> None:
+    """The reply that owned output is over; later finals are no longer overlap."""
+
+    context.runtime._was_speaking = False
+
+
+def _start_retained_utterance(window: SimpleNamespace) -> None:
+    """End the previous reply and open the new utterance with verified owner PCM."""
+
+    _finish_previous_reply(window.context)
+    window.context.runtime.on_user_voice_started()
+    window.context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)
+
+
+@pytest_asyncio.fixture
+async def device_media_session() -> AsyncIterator[Any]:
+    """Open device media sessions and drain every task they start at teardown."""
+
+    windows: list[SimpleNamespace] = []
+
+    async def open_session(session_id: str, *, during_playback: bool = True) -> SimpleNamespace:
+        window = await _open_device_overlap_session(
+            session_id,
+            during_playback=during_playback,
+        )
+        windows.append(window)
+        return window
+
+    try:
+        yield open_session
+    finally:
+        for window in windows:
+            context = window.context
+            # Release a held verdict so a swallowing step can finish, then wait
+            # for it: no task may outlive the test.
+            window.close_semantic.gate.set()
+            window.close_semantic.late_gate.set()
+            semantic_task = context.conversation_close_semantic_task
+            if semantic_task is not None and not semantic_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(semantic_task), timeout=1.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    semantic_task.cancel()
+            handle = context.turn_endpoint_timeout_handle
+            if handle is not None:
+                handle.cancel()
+            task = context.turn_endpoint_task
+            if task is not None and not task.done():
+                task.cancel()
+            await window.registry._finalize_session(window.identity.session_id)
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_overlap_finals_stay_out_of_the_next_commit(
+    device_media_session: Any,
+) -> None:
+    """Bridge evidence 2026-09-15 epoch 1955: a played-back reply on the uplink.
+
+    Five finals were accepted while the previous reply still owned playback
+    (text_len 3, 4, 11, 4 and 7), the device reported no VAD edge at all after
+    sample 113600, and the real question then arrived as text_len=10 on samples
+    484480-508800.  The turn committed as text_len=42: ``turn_start_sample`` had
+    been dragged back to the earliest of those finals, so the commit joined
+    every pending timeline segment inside the resulting range, and that
+    transcript is what the location lookup then searched.  Per-segment provider
+    text was not captured, so the placeholders keep the logged lengths.
+    """
+
+    window = await device_media_session("playback-overlap-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _feed_playback_window_finals(window)
+    assert context.pending_turn_playback_overlap is True
+
+    # Before the real question arrives the pending candidate window already
+    # resolves those five finals as one 29-character transcript: that is the
+    # polluted shape the field session committed as 42 characters.  The turn
+    # boundary below is what has to keep it out of the committed range.
+    pre_split = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=158_560,
+        end_sample=_ABANDONED_WINDOW_END,
+    )
+    assert pre_split is not None and "AAA" in pre_split
+    # The live projection already carries the same polluted text, so the commit
+    # has to reconcile an in-flight projection against the new boundary.
+    assert context.projection.provisional is not None
+    assert "AAA" in context.projection.provisional.text
+
+    _start_retained_utterance(window)  # the previous reply ended here
+    question = "今天南京的天气怎么样"
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="question-13",
+        start_sample=484_480,
+        end_sample=508_800,
+        text=question,
+    )
+
+    # 350080 -> 484480 is 8.4 s, far beyond the conservative candidate gap: the
+    # window closes and the question owns the turn on its own samples.
+    assert context.turn_start_sample == 484_480
+    assert context.turn_end_sample == 508_800
+
+    text = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=context.turn_start_sample,
+        end_sample=context.turn_end_sample,
+    )
+    assert text == question
+
+    # The abandoned window is retired, not merely out of range: resolving it
+    # again (and resolving the wide pre-fix range) can no longer reach its text.
+    abandoned = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=158_560,
+        end_sample=_ABANDONED_WINDOW_END,
+    )
+    assert not abandoned
+    wide = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=158_560,
+        end_sample=508_800,
+    )
+    assert wide == question
+
+    # The device chain then prepares exactly one turn, and the provider is
+    # handed only the new question.
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=2.0)
+    assert window.provider.prepared == [question]
+    assert _user_turn_texts(context) == [question]
+
+
+@pytest.mark.asyncio
+async def test_media_out_of_order_final_cannot_rejoin_a_split_pending_turn(
+    device_media_session: Any,
+) -> None:
+    """A late non-overlapping final for the abandoned window must not flow back.
+
+    The ASR supervisor deliberately keeps out-of-order non-overlapping finals
+    (``accept_result``), so the boundary cannot rely on arrival order: the split
+    has to be a lifecycle decision that survives a later final for the audio it
+    already closed.
+    """
+
+    window = await device_media_session("split-out-of-order-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+    for sentence_id, start_sample, end_sample, text, revision in (
+        ("playback-2", 158_560, 163_040, "AAA", 1),
+        ("playback-3", 185_280, 204_480, "BBBB", 2),
+    ):
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id=sentence_id,
+            start_sample=start_sample,
+            end_sample=end_sample,
+            text=text,
+            revision=revision,
+        )
+    _start_retained_utterance(window)
+    question = "下午一起出发吗"
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="question-13",
+        start_sample=484_480,
+        end_sample=508_800,
+        text=question,
+    )
+
+    # Non-overlapping, so the supervisor would accept it on interval grounds;
+    # the pending-turn boundary is what has to fail it closed.
+    late = await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id="late-playback-9",
+        start_sample=317_280,
+        end_sample=332_640,
+        text="DDDD",
+        revision=9,
+    )
+    assert late.accepted is None
+    assert late.reason is ASRDecisionReason.INTERVAL_CONFLICT
+
+    text = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=context.turn_start_sample,
+        end_sample=context.turn_end_sample,
+    )
+    assert text == question
+    assert context.turn_start_sample == 484_480
+
+
+@pytest.mark.asyncio
+async def test_media_long_pause_without_playback_overlap_still_merges(
+    device_media_session: Any,
+) -> None:
+    """An ordinary utterance that pauses longer than the tail keeps both clauses."""
+
+    window = await device_media_session("long-pause-session", during_playback=False)
+    registry, identity, context = window.registry, window.identity, window.context
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="clause-1",
+        start_sample=0,
+        end_sample=8_000,
+        text="未来三天南京天气",
+    )
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="clause-2",
+        start_sample=90_000,
+        end_sample=100_000,
+        text="还有明天呢",
+        revision=2,
+    )
+
+    assert context.turn_start_sample == 0
+    assert context.turn_end_sample == 100_000
+    text = _resolve_media_turn_text(
+        context, stream_epoch=1, start_sample=0, end_sample=100_000
+    )
+    assert text is not None
+    assert "未来三天南京天气" in text and "还有明天呢" in text
+
+
+@pytest.mark.asyncio
+async def test_media_out_of_order_final_inside_the_retained_window_still_merges(
+    device_media_session: Any,
+) -> None:
+    """The pending-turn boundary must not cost same-turn out-of-order support.
+
+    The retained window is one utterance with a hole in it (two clauses closer
+    than the tail).  A final that arrives last but belongs inside that hole is
+    still part of the same turn and has to merge.
+    """
+
+    window = await device_media_session("split-retained-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _accept_media_asr_final(
+       registry,
+       identity,
+       sentence_id="playback-2",
+       start_sample=158_560,
+       end_sample=163_040,
+       text="AAA",
+    )
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+       registry,
+       identity,
+       sentence_id="clause-1",
+       start_sample=484_480,
+       end_sample=490_000,
+       text="今天南京",
+    )
+    await _accept_media_asr_final(
+       registry,
+       identity,
+       sentence_id="clause-2",
+       start_sample=500_000,
+       end_sample=508_000,
+       text="还有明天呢",
+       revision=2,
+    )
+
+    # Non-overlapping, inside the retained window's hole: same turn, same onset.
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="clause-1b",
+        start_sample=493_000,
+        end_sample=498_000,
+        text="的",
+        revision=3,
+    )
+
+    assert context.turn_start_sample == 484_480
+    text = _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=context.turn_start_sample,
+        end_sample=context.turn_end_sample,
+    )
+    assert text is not None
+    assert "AAA" not in text
+    assert "今天南京" in text and "的" in text and "还有明天呢" in text
+
+
+@pytest.mark.asyncio
+async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
+    device_media_session: Any,
+) -> None:
+    """A VAD-admitted candidate keeps its onset; dropping the anchor splits it.
+
+    The positive control is the point: with the anchor removed the very same
+    accepted final and gap must split the window, so the blocked assertion
+    cannot be passing because an unrelated gate rejected the final first.
+    """
+
+    window = await device_media_session("split-vad-anchor")
+    await _feed_playback_window_finals(window)
+    _start_retained_utterance(window)
+    context = window.context
+    assert context.pending_turn_playback_overlap is True
+    assert context.turn_start_sample == 158_560
+    assert context.turn_end_sample == _ABANDONED_WINDOW_END
+
+    context.active_vad_start_sample = _ABANDONED_WINDOW_END
+    anchored = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-1",
+        start_sample=400_000,
+        end_sample=410_000,
+        text="下午一起出发吗",
+    )
+    assert anchored.accepted is not None
+    assert context.turn_start_sample == 158_560
+
+    context.active_vad_start_sample = None
+    split = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-2",
+        start_sample=470_000,
+        end_sample=480_000,
+        text="下午一起出发吗",
+        revision=2,
+    )
+    assert split.accepted is not None
+    assert context.turn_start_sample == 470_000
+
+
+@pytest.mark.asyncio
+async def test_media_playback_overlap_split_is_blocked_by_forced_text(
+    device_media_session: Any,
+) -> None:
+    """An authoritative forced text keeps the candidate; releasing it splits."""
+
+    window = await device_media_session("split-forced-text")
+    await _feed_playback_window_finals(window)
+    _start_retained_utterance(window)
+    context = window.context
+    assert context.pending_turn_playback_overlap is True
+
+    context.live_query_forced_text = "明天南京天气"
+    forced = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-1",
+        start_sample=400_000,
+        end_sample=410_000,
+        text="下午一起出发吗",
+    )
+    assert forced.accepted is not None
+    assert context.turn_start_sample == 158_560
+
+    context.live_query_forced_text = None
+    split = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-2",
+        start_sample=470_000,
+        end_sample=480_000,
+        text="下午一起出发吗",
+        revision=2,
+    )
+    assert split.accepted is not None
+    assert context.turn_start_sample == 470_000
+
+
+async def _open_retained_window(
+    open_session: Any,
+    session_id: str,
+    *,
+    retained_text: str = "下午一起出发吗",
+    retained_start: int = _RETAINED_WINDOW_START,
+    retained_end: int = 508_800,
+) -> SimpleNamespace:
+    """A playback-overlap candidate window, then one plain retained utterance."""
+
+    window = await open_session(session_id)
+    await _feed_playback_window_finals(window)
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=retained_start,
+        end_sample=retained_end,
+        text=retained_text,
+    )
+    return window
+
+
+@pytest.mark.parametrize(
+    ("late_text", "pin_attribute"),
+    (
+        ("今天几号", "clock_fact_endpoint_pinned"),
+        ("明天南京天气怎么样", "live_query_endpoint_pinned"),
+        ("再见", "conversation_close_endpoint_pinned"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_device_abandoned_window_final_cannot_pin_pollute_or_close(
+    device_media_session: Any,
+    late_text: str,
+    pin_attribute: str,
+) -> None:
+    """Audio for the closed candidate window may not pin, pollute or close."""
+
+    from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+    window = await _open_retained_window(
+        device_media_session,
+        f"device-abandoned-{pin_attribute}",
+    )
+    late = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="late-old-1",
+        start_sample=352_000,
+        end_sample=360_000,
+        text=late_text,
+    )
+    assert late.accepted is None
+    assert late.reason is ASRDecisionReason.INTERVAL_CONFLICT
+    assert getattr(window.context, pin_attribute) is None
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
+    assert _user_turn_texts(window.context) == ["下午一起出发吗"]
+    assert window.context.standby_requested is False
+
+
+@pytest.mark.asyncio
+async def test_device_abandoned_window_partial_cannot_pin_or_pollute(
+    device_media_session: Any,
+) -> None:
+    """A late partial for the closed window may not seed a semantic endpoint."""
+
+    window = await _open_retained_window(device_media_session, "device-abandoned-partial")
+    late = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="late-partial-1",
+        start_sample=352_000,
+        end_sample=360_000,
+        text="再见",
+        is_final=False,
+    )
+    assert late.accepted is None
+    assert window.context.conversation_close_partial_text is None
+    assert window.context.conversation_close_endpoint_pinned is None
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
+
+
+@pytest.mark.asyncio
+async def test_device_old_vad_edge_cannot_pull_the_retained_onset_back(
+    device_media_session: Any,
+) -> None:
+    """A late VAD edge for the closed window is not admitted and cannot re-anchor."""
+
+    window = await _open_retained_window(device_media_session, "device-old-vad")
+    context = window.context
+    for segment_id, revision, final, sample, voiced_end in (
+        ("stale-vad-start", 1, False, 317_280, None),
+        ("stale-vad-end", 2, True, 332_640, 332_640),
+    ):
+        await window.registry.on_speech_segment(
+            window.session,
+            SpeechSegment(
+                session_id=window.identity.session_id,
+                stream_epoch=window.identity.stream_epoch,
+                provider_task_epoch=8,
+                segment_id=segment_id,
+                revision=revision,
+                kind=SegmentKind.VAD,
+                capture_start_sample=sample,
+                capture_end_sample=sample + 1,
+                final=final,
+                voiced_end_sample=voiced_end,
+            ),
+        )
+
+    assert context.active_vad_start_sample is None
+    assert context.turn_start_sample == 484_480
+    assert context.turn_endpoint_sample is None
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
+
+
+@pytest.mark.asyncio
+async def test_device_current_vad_still_extends_the_retained_window(
+    device_media_session: Any,
+) -> None:
+    """The current utterance's VAD edges still open and close the retained window."""
+
+    window = await _open_retained_window(
+        device_media_session,
+        "device-current-vad",
+        retained_end=490_000,
+    )
+    context = window.context
+    await window.registry.on_speech_segment(
+        window.session,
+        SpeechSegment(
+            session_id=window.identity.session_id,
+            stream_epoch=window.identity.stream_epoch,
+            provider_task_epoch=8,
+            segment_id="current-vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=500_000,
+            capture_end_sample=500_001,
+        ),
+    )
+    assert context.active_vad_start_sample == 500_000
+    await _accept_media_asr_final(
+       window.registry,
+       window.identity,
+       sentence_id="clause-2",
+       start_sample=500_000,
+       end_sample=508_000,
+       text="还有明天呢",
+       revision=2,
+    )
+    assert context.turn_start_sample == 484_480
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_000)
+    text = window.provider.prepared[-1]
+    assert "下午一起出发吗" in text and "还有明天呢" in text
+
+
+@pytest.mark.asyncio
+async def test_device_retained_window_drops_playback_overlap_after_the_split(
+    device_media_session: Any,
+) -> None:
+    """The retained window is no longer overlap: its own long pause still merges."""
+
+    window = await _open_retained_window(
+        device_media_session,
+        "device-retained-flag",
+        retained_end=490_000,
+    )
+    context = window.context
+    assert context.pending_turn_playback_overlap is False
+    assert context.pending_turn_onset_floor == 484_480
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="clause-2",
+        start_sample=532_000,
+        end_sample=540_000,
+        text="还有明天呢",
+        revision=2,
+    )
+    assert context.turn_start_sample == 484_480
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=540_000)
+    text = window.provider.prepared[-1]
+    assert "下午一起出发吗" in text and "还有明天呢" in text
+    assert "AAA" not in text
+
+
+@pytest.mark.asyncio
+async def test_device_pinned_endpoint_is_never_split(device_media_session: Any) -> None:
+    """An already endpointed turn keeps its range while it is committing."""
+
+    window = await _open_retained_window(
+        device_media_session,
+        "device-pinned-endpoint",
+        retained_end=490_000,
+    )
+    context = window.context
+    context.pending_turn_playback_overlap = True
+    context.turn_endpoint_sample = 490_000
+    context.turn_retire_sample = 490_000
+    context.turn_endpoint_grace_deadline = time.monotonic() + 60.0
+
+    far = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-1",
+        start_sample=532_000,
+        end_sample=540_000,
+        text="还有明天呢",
+        revision=2,
+    )
+    assert far.accepted is not None
+    assert context.turn_start_sample == 484_480
+    assert context.turn_endpoint_sample == 490_000
+
+    # Positive control: the accepted final and its 42 000-sample gap above the
+    # candidate tail do split once the endpoint is gone, so the endpoint, not an
+    # unrelated gate, was what blocked the earlier final.
+    context.turn_endpoint_sample = None
+    context.turn_retire_sample = None
+    split = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="far-2",
+        start_sample=600_000,
+        end_sample=610_000,
+        text="还有明天呢",
+        revision=3,
+    )
+    assert split.accepted is not None
+    assert context.turn_start_sample == 600_000
+
+
+@pytest.mark.asyncio
+async def test_device_final_crossing_the_retained_onset_fails_closed(
+    device_media_session: Any,
+) -> None:
+    """A revision that reaches back across the boundary may not carry old text."""
+
+    from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+    window = await _open_retained_window(
+        device_media_session,
+        "device-boundary-revision",
+        retained_end=490_000,
+    )
+    crossing = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=400_000,
+        end_sample=495_000,
+        text="AAA 下午一起出发吗",
+        revision=2,
+    )
+    assert crossing.accepted is None
+    assert crossing.reason is ASRDecisionReason.INTERVAL_CONFLICT
+
+    text = _resolve_media_turn_text(
+        window.context,
+        stream_epoch=1,
+        start_sample=window.context.turn_start_sample,
+        end_sample=window.context.turn_end_sample,
+    )
+    assert text == "下午一起出发吗"
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=490_000)
+    assert window.provider.prepared == ["下午一起出发吗"]
+
+
+@pytest.mark.asyncio
+async def test_device_close_verdict_resolved_after_the_boundary_advanced_cannot_pin(
+    device_media_session: Any,
+) -> None:
+    """The post-await floor re-check drops a verdict that crossed the boundary.
+
+    The resolver plays the split: it advances ``pending_turn_onset_floor`` while
+    the verdict is in flight, so a late True must not pin the retained turn even
+    though it returned normally instead of being cancelled.
+    """
+
+    window = await device_media_session("device-close-crossed-verdict")
+    context = window.context
+    crossed_text = "我不想继续聊这个话题"
+    window.close_semantic.verdict_text = crossed_text
+    window.close_semantic.on_resolve = lambda: setattr(
+        context, "pending_turn_onset_floor", 484_480
+    )
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="candidate-close",
+        start_sample=258_880,
+        end_sample=264_640,
+        text=crossed_text,
+    )
+    task = context.conversation_close_semantic_task
+    assert task is not None
+    await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+
+    assert context.conversation_close_endpoint_pinned is None
+    assert context.standby_requested is False
+    # The owning evaluation cleared its own handle; nothing else may have.
+    assert context.conversation_close_semantic_task is None
+
+
+@pytest.mark.asyncio
+async def test_device_swallowed_cancel_finishes_without_clearing_the_next_task(
+    device_media_session: Any,
+) -> None:
+    """A step that swallows its cancellation must not clear the new same-text task.
+
+    The old evaluation is confirmed to be inside its await first, so the cancel
+    below cancels a running task rather than an unstarted one.
+    """
+
+    window = await device_media_session("device-close-swallow")
+    window.close_semantic.swallow = True
+    window.close_semantic.gate.clear()
+    window.close_semantic.late_gate.clear()
+    text = "我不想继续聊这个话题"
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="playback-close",
+        start_sample=258_880,
+        end_sample=264_640,
+        text=text,
+    )
+    abandoned = window.context.conversation_close_semantic_task
+    assert abandoned is not None
+    await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
+
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=484_480,
+        end_sample=508_800,
+        text=text,
+    )
+    current = window.context.conversation_close_semantic_task
+    assert current is not None and current is not abandoned
+    for _ in range(2):
+        await asyncio.sleep(0)
+    # The cancellation really was swallowed: the old evaluation is still alive,
+    # and the new same-text handle survived it.
+    assert not abandoned.done()
+    assert window.context.conversation_close_semantic_task is current
+
+    # Finish only the swallowed old evaluation: the new same-text handle must
+    # still be installed after its finally has run.
+    window.close_semantic.gate.set()
+    await asyncio.wait_for(asyncio.shield(abandoned), timeout=1.0)
+    assert abandoned.done()
+    assert window.context.conversation_close_semantic_task is current
+    assert window.context.conversation_close_endpoint_pinned is None
+
+    window.close_semantic.late_gate.set()
+    await asyncio.wait_for(asyncio.shield(current), timeout=1.0)
+    assert window.context.conversation_close_semantic_task is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seam", ("projection", "transcript"))
+async def test_device_accept_await_crossing_the_boundary_rejects_the_result(
+    device_media_session: Any,
+    seam: str,
+) -> None:
+    """An accepted result whose projection or transcript await crosses the floor fails closed."""
+
+    from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+    window = await device_media_session(f"device-{seam}-crossing")
+    context = window.context
+    original_apply = window.registry._apply_projection_segment
+    original_emit = window.registry.bridge.emit_transcript
+
+    async def crossing_apply(ctx: Any, segment: Any) -> None:
+        # Stands in for the boundary advancing while this await is in flight.
+        context.pending_turn_onset_floor = 484_480
+        return await original_apply(ctx, segment)
+
+    async def crossing_emit(*args: object, **kwargs: object) -> bool:
+        context.pending_turn_onset_floor = 484_480
+        return await original_emit(*args, **kwargs)
+
+    if seam == "projection":
+        window.registry._apply_projection_segment = crossing_apply  # type: ignore[method-assign]
+    else:
+        window.registry.bridge.emit_transcript = crossing_emit  # type: ignore[method-assign]
+
+    crossing = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="candidate-1",
+        start_sample=258_880,
+        end_sample=264_640,
+        text="下午一起出发吗",
+    )
+    assert crossing.accepted is None
+    assert crossing.reason is ASRDecisionReason.INTERVAL_CONFLICT
+    assert context.turn_start_sample is None
+    assert context.turn_end_sample is None
+
+
+@pytest.mark.asyncio
+async def test_device_swallowed_cancel_true_verdict_cannot_pin_the_new_pending_turn(
+    device_media_session: Any,
+) -> None:
+    """A swallowed cancel that resolves True later must not pin the new pending turn."""
+
+    window = await device_media_session("device-close-swallow-true")
+    window.close_semantic.swallow = True
+    window.close_semantic.gate.clear()
+    window.close_semantic.late_gate.clear()
+    abandoned_text = "我不想继续聊这个话题"
+    window.close_semantic.verdict_text = abandoned_text
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="playback-close",
+        start_sample=258_880,
+        end_sample=264_640,
+        text=abandoned_text,
+    )
+    abandoned = window.context.conversation_close_semantic_task
+    assert abandoned is not None
+    await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
+
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=484_480,
+        end_sample=508_800,
+        text="下午一起出发吗",
+    )
+    current = window.context.conversation_close_semantic_task
+    assert current is not None and current is not abandoned
+    assert window.context.pending_turn_onset_floor == 484_480
+    await asyncio.sleep(0)
+    assert not abandoned.done()  # the cancel was swallowed
+
+    # ABA: the boundary field returns to the value this evaluation captured, so
+    # the floor re-check alone cannot reject it -- only task ownership can.
+    window.context.pending_turn_onset_floor = None
+    window.close_semantic.gate.set()
+    await asyncio.wait_for(asyncio.shield(abandoned), timeout=1.0)
+    assert abandoned.done()
+    # The abandoned window's True verdict arrived after the boundary moved.
+    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.standby_requested is False
+    assert window.context.conversation_close_semantic_task is current
+
+    window.close_semantic.late_gate.set()
+    await asyncio.wait_for(asyncio.shield(current), timeout=1.0)
+    assert window.context.conversation_close_endpoint_pinned is None
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
+
+
+@pytest.mark.asyncio
+async def test_device_split_cancels_an_in_flight_close_verdict(
+    device_media_session: Any,
+) -> None:
+    """A close verdict still in flight for the closed window cannot land later."""
+
+    window = await device_media_session("device-abandoned-close-semantic")
+    window.close_semantic.gate.clear()
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="playback-close",
+        start_sample=258_880,
+        end_sample=264_640,
+        text="我不想继续聊这个话题",
+        revision=1,
+    )
+    assert window.context.conversation_close_semantic_task is not None
+
+    abandoned_task = window.context.conversation_close_semantic_task
+    await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=484_480,
+        end_sample=508_800,
+        text="下午一起出发吗",
+    )
+    await asyncio.sleep(0)
+    assert abandoned_task.cancelled()
+
+    # The abandoned window's verdict resolves only now: it must not pin.
+    window.close_semantic.verdict_text = "我不想继续聊这个话题"
+    window.close_semantic.gate.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.standby_requested is False
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
+
+
+@pytest.mark.asyncio
+async def test_device_partial_only_overlap_window_cannot_pollute_the_next_commit(
+    device_media_session: Any,
+) -> None:
+    """A candidate window built only from partials still owns no committed text."""
+
+    window = await device_media_session("device-partial-overlap")
+    partial = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="playback-partial-6",
+        start_sample=258_880,
+        end_sample=264_640,
+        text="CCCCCCCCCCC",
+        is_final=False,
+    )
+    assert partial.accepted is not None
+    _start_retained_utterance(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="plain-1",
+        start_sample=484_480,
+        end_sample=508_800,
+        text="下午一起出发吗",
+    )
+    assert window.context.turn_start_sample == 484_480
+
+    await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
+    assert window.provider.prepared == ["下午一起出发吗"]
 
 
 @pytest.mark.asyncio

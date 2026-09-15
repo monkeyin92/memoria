@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 from services.agent.src.providers.open_meteo_weather import (
     OpenMeteoWeather,
+    OpenMeteoWeatherConfig,
     _day_count,
+    _location_candidates,
     _WeatherWindow,
 )
 
@@ -492,3 +496,125 @@ def test_open_meteo_weather_day_count_accepts_only_canonical_counts() -> None:
     assert _day_count("二十") is None
     assert _day_count("几") is None
     assert _day_count(None) is None
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("今天南京天气怎么样", ("南京",)),
+        ("未来三天六盘水天气", ("六盘水",)),
+        ("明天乌鲁木齐天气", ("乌鲁木齐",)),
+        ("江苏省南京市未来三天天气", ("江苏省南京市", "南京市", "南京")),
+        ("广西壮族自治区南宁市天气", ("广西壮族自治区南宁市", "南宁市", "南宁")),
+        ("今天北京市天气", ("北京市", "北京")),
+        ("今天内蒙古自治区天气", ("内蒙古自治区",)),
+        ("今天塔什库尔干塔吉克自治县天气", ("塔什库尔干塔吉克自治县",)),
+        ("今天景德镇天气", ("景德镇",)),
+    ],
+)
+def test_location_candidates_keep_whole_names_and_explicit_boundaries(
+    query: str, expected: tuple[str, ...]
+) -> None:
+    assert _location_candidates(query) == expected
+
+
+@pytest.mark.asyncio
+async def test_geocoding_does_not_probe_every_suffix_of_a_polluted_query() -> None:
+    requests: list[httpx.Request] = []
+    query = "什能手机方Thankyou可确Thank今天南京天气怎么样"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={})
+        )
+    ) as client:
+        assert await OpenMeteoWeather(client=client).resolve(query=query) is None
+    # The old suffix loop made 21 requests and could resolve a different place.
+    assert _names(requests) == ["什能手机方Thankyou可确Thank南京"]
+
+
+@pytest.mark.asyncio
+async def test_administrative_name_fallback_is_bounded_and_preserves_priority() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "geocoding-api.open-meteo.com":
+            if request.url.params["name"] != "南京":
+                return httpx.Response(200, json={})
+            return httpx.Response(
+                200, json={"results": [{"name": "南京", "latitude": 32, "longitude": 118}]}
+            )
+        return httpx.Response(200, json={"daily": _daily((0, 30, 22, 10))})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await OpenMeteoWeather(client=client).resolve(query="江苏省南京市今天天气")
+    assert result == "南京今天晴，22到30度，降水概率10%。"
+    assert _names(requests) == ["江苏省南京市", "南京市", "南京"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow_stage", ["geocode", "forecast"])
+async def test_weather_deadline_cancels_in_flight_work(slow_stage: str) -> None:
+    cancelled = asyncio.Event()
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        stage = "geocode" if "name" in request.url.params else "forecast"
+        if stage == slow_stage:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+        return httpx.Response(200, json={"results": [{"latitude": 32, "longitude": 118}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolver = OpenMeteoWeather(OpenMeteoWeatherConfig(timeout_s=0.02), client=client)
+        assert await asyncio.wait_for(resolver.resolve(query="南京天气"), timeout=0.5) is None
+    assert cancelled.is_set()
+    assert len(requests) == (1 if slow_stage == "geocode" else 2)
+
+
+@pytest.mark.asyncio
+async def test_weather_deadline_is_shared_across_candidates_and_forecast() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        # Each request fits its own timeout, but the whole lookup does not.
+        await asyncio.sleep(0.025)
+        if "name" in request.url.params:
+            if len(requests) == 1:
+                return httpx.Response(200, json={})
+            return httpx.Response(
+                200, json={"results": [{"name": "南京", "latitude": 32, "longitude": 118}]}
+            )
+        return httpx.Response(200, json={"daily": _daily((0, 30, 22, 10))})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolver = OpenMeteoWeather(OpenMeteoWeatherConfig(timeout_s=0.06), client=client)
+        assert await resolver.resolve(query="江苏省南京市天气") is None
+    assert len(requests) <= 3
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_is_not_converted_to_weather_fallback() -> None:
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        raise AssertionError("unreachable")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolver = OpenMeteoWeather(client=client)
+        task = asyncio.create_task(resolver.resolve(query="南京天气"))
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert cancelled.is_set()

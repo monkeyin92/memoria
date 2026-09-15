@@ -73,6 +73,10 @@ class MediaVoiceSessionState:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # Observed while a reply owned output; not proof of acoustic echo.
+    pending_turn_playback_overlap: bool = False
+    # Closed candidate input may not re-enter through ASR, rescue, or VAD.
+    pending_turn_onset_floor: int | None = None
     turn_commit_retry_task: asyncio.Task[None] | None = None
     turn_commit_retry_attempt: int = 0
     turn_commit_retry_stream_epoch: int | None = None

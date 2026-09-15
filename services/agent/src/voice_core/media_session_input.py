@@ -62,6 +62,16 @@ def _is_spurious_connect_vad(segment: SpeechSegment, context: _MediaVoiceSession
     return empty or pending_connect
 
 
+def _vad_precedes_pending_turn(segment: SpeechSegment, context: _MediaVoiceSession) -> bool:
+    floor = context.pending_turn_onset_floor
+    if segment.kind is not SegmentKind.VAD or floor is None:
+        return False
+    sample = segment.capture_start_sample
+    if segment.final and segment.voiced_end_sample is not None:
+        sample = segment.voiced_end_sample
+    return sample < floor
+
+
 class MediaSessionInputMixin:
     """Translate transport input into the existing turn/interaction fences."""
 
@@ -129,6 +139,8 @@ class MediaSessionInputMixin:
     def _admit_vad_start(self, context: _MediaVoiceSession, segment: SpeechSegment) -> bool:
         """Open accepted speech synchronously, before projection can yield."""
 
+        if _vad_precedes_pending_turn(segment, context):
+            return False
         for kind, endpoint in (
             ("clock-fact", context.clock_fact_endpoint_pinned),
             ("conversation-close", context.conversation_close_endpoint_pinned),
@@ -240,6 +252,14 @@ class MediaSessionInputMixin:
                 context.device_wake_ack_pending,
             )
             return
+        if _vad_precedes_pending_turn(segment, context):
+            logger.info(
+                "media vad ignored before pending turn boundary session=%s "
+                "stream_epoch=%s sample=%s floor=%s final=%s",
+                context.identity.session_id, segment.stream_epoch,
+                segment.capture_start_sample, context.pending_turn_onset_floor, segment.final,
+            )
+            return
         if not context.runtime.ingest_media_speech_segment(segment):
             return
 
@@ -254,6 +274,7 @@ class MediaSessionInputMixin:
             or not session.accepts_input()
             or context.stream_epoch != segment.stream_epoch
             or self._sessions.get(session.identity.session_id) is not context
+            or _vad_precedes_pending_turn(segment, context)
         ):
             return
         if segment.kind is SegmentKind.VAD:
@@ -321,6 +342,7 @@ class MediaSessionInputMixin:
                 or not session.accepts_input()
                 or context.stream_epoch != segment.stream_epoch
                 or self._sessions.get(session.identity.session_id) is not context
+                or _vad_precedes_pending_turn(segment, context)
             ):
                 return
             if segment.final:
@@ -378,6 +400,7 @@ class MediaSessionInputMixin:
                     or not session.accepts_input()
                     or context.stream_epoch != segment.stream_epoch
                     or self._sessions.get(session.identity.session_id) is not context
+                    or _vad_precedes_pending_turn(segment, context)
                     or (
                         context.active_vad_start_sample is not None
                         and segment.capture_start_sample < context.active_vad_start_sample

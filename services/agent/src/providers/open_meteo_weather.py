@@ -194,7 +194,7 @@ def _wants_current_conditions(query: str) -> bool:
 
 
 def _location_candidates(query: str) -> tuple[str, ...]:
-    """Return bounded suffixes so leading conversational filler cannot poison geocoding."""
+    """Try at most three whole names, never arbitrary character suffixes."""
 
     compact = re.sub(r"[\s，,。！？!?；;：:、]", "", query or "")
     # Only text before "天气" is read as a city. A trailing clause such as
@@ -210,13 +210,15 @@ def _location_candidates(query: str) -> tuple[str, ...]:
     clean = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff·-]", "", before_weather)
     if len(clean) < 2:
         return ()
-    candidates: list[str] = []
-    # Try the complete administrative name first, then progressively shorter
-    # suffixes (e.g. ``江苏省南京市`` -> ``南京市`` -> ``南京``).
-    for start in range(0, max(1, len(clean) - 1)):
-        candidate = clean[start:]
-        if len(candidate) >= 2 and candidate not in candidates:
-            candidates.append(candidate)
+    candidates = [clean]
+    # Only an explicit administrative boundary may shorten the name. Do not
+    # guess that the last two characters of polluted ASR text name a city: that
+    # both amplified network latency and could resolve an unrelated place.
+    local = re.sub(r"^.+?(?:省|自治区|特别行政区)(?=.{2,}$)", "", clean, count=1)
+    if local != clean:
+        candidates.append(local)
+    if len(local) > 2 and local.endswith(("市", "县")) and not local.endswith("自治县"):
+        candidates.append(local[:-1])
     return tuple(candidates)
 
 
@@ -275,15 +277,18 @@ class OpenMeteoWeather:
         include_current = window.start_offset == 0 and _wants_current_conditions(query)
         started = time.monotonic()
         try:
-            location = await self._geocode(candidates)
-            if location is None:
-                return None
-            forecast = await self._forecast(
-                location, window=window, include_current=include_current
-            )
-            result = self._format(
-                location, forecast, window=window, include_current=include_current
-            )
+            # One deadline owns all geocoding attempts AND the forecast. An
+            # HTTP phase timeout alone renews the budget on every request.
+            async with asyncio.timeout(self.config.timeout_s):
+                location = await self._geocode(candidates)
+                if location is None:
+                    return None
+                forecast = await self._forecast(
+                    location, window=window, include_current=include_current
+                )
+                result = self._format(
+                    location, forecast, window=window, include_current=include_current
+                )
             elapsed_ms = round((time.monotonic() - started) * 1000)
             if elapsed_ms > self.config.slow_query_alert_ms:
                 logger.warning(
@@ -292,15 +297,23 @@ class OpenMeteoWeather:
                     elapsed_ms,
                 )
             logger.info(
-                "open meteo weather lookup completed model=%s start_offset=%s days=%s elapsed_ms=%s",
+                "open meteo weather lookup completed model=%s start_offset=%s days=%s "
+                "elapsed_ms=%s candidate_count=%s",
                 self.model,
                 window.start_offset,
                 window.days,
                 elapsed_ms,
+                len(candidates),
             )
             return result
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.warning(
+                "open meteo weather lookup failed reason=deadline_exceeded elapsed_ms=%s",
+                round((time.monotonic() - started) * 1000),
+            )
+            return None
         except (httpx.HTTPError, TypeError, ValueError, KeyError, IndexError, OverflowError):
             logger.warning("open meteo weather lookup failed reason=provider_error")
             return None

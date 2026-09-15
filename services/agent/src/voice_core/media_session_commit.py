@@ -165,6 +165,10 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _split_pending_turn_at_unvoiced_gap(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
         def _finish_owner_silence_turn(
             self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
         ) -> None: ...
@@ -256,6 +260,14 @@ class MediaSessionCommitMixin:
                 session_id, result, ASRDecisionReason.STALE_STREAM_EPOCH, stage="preview"
             )
             return ASRAcceptDecision(None, ASRDecisionReason.STALE_STREAM_EPOCH)
+        if self._asr_precedes_pending_turn(context, result):
+            # Neither a late semantic rescue nor an untimed cross-boundary
+            # revision may put abandoned candidate text into the new turn.
+            self._log_asr_rejection(
+                session_id, result, ASRDecisionReason.INTERVAL_CONFLICT,
+                stage="pending_turn_boundary",
+            )
+            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
         if candidate is None:
@@ -299,6 +311,9 @@ class MediaSessionCommitMixin:
             context.runtime.speech_timeline.evict_segment_ids(
                 set(decision.evicted_sentence_ids)
             )
+        if accepted.is_final:
+            # Establish the range fence before projection/transcript yields.
+            self._split_pending_turn_at_unvoiced_gap(context, accepted)
         # The provider result is never forwarded after supervisor policy has
         # normalized it (e.g. a committed-watermark tail).
         segment = asr_result_to_segment(accepted, session_id=session_id)
@@ -309,6 +324,8 @@ class MediaSessionCommitMixin:
         await self._apply_projection_segment(context, segment)
         if not self._stream_epoch_is_current(context, accepted.stream_epoch):
             return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+        if self._asr_precedes_pending_turn(context, accepted):
+            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         task_epoch, context_version = self._event_versions(context, context.runtime.fence)
         await self.bridge.emit_transcript(
             session_id,
@@ -318,6 +335,8 @@ class MediaSessionCommitMixin:
         )
         if not self._stream_epoch_is_current(context, accepted.stream_epoch):
             return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+        if self._asr_precedes_pending_turn(context, accepted):
+            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         if accepted.is_final:
             self._observe_final_asr_result(context, accepted)
         else:
@@ -327,6 +346,11 @@ class MediaSessionCommitMixin:
             self._maybe_early_commit_stable_conversation_close_partial(context)
         return decision
 
+    @staticmethod
+    def _asr_precedes_pending_turn(context: _MediaVoiceSession, result: ASRResult) -> bool:
+        floor = context.pending_turn_onset_floor
+        return floor is not None and result.capture_start_sample < floor
+
     async def _recover_rejected_semantic_final(
         self,
         context: _MediaVoiceSession,
@@ -335,6 +359,8 @@ class MediaSessionCommitMixin:
         result: ASRResult,
         reason: ASRDecisionReason,
     ) -> None:
+        if self._asr_precedes_pending_turn(context, result):
+            return
         text = result.text.strip()
         if not text:
             return
@@ -348,7 +374,10 @@ class MediaSessionCommitMixin:
             return
         close_needed = await context.runtime.resolve_conversation_close_needed(text)
         live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
-        if not self._stream_epoch_is_current(context, result.stream_epoch):
+        if (
+            not self._stream_epoch_is_current(context, result.stream_epoch)
+            or self._asr_precedes_pending_turn(context, result)
+        ):
             return
         if close_needed or live_lookup_needed:
             await self._recover_straddling_live_query_final(
@@ -370,14 +399,20 @@ class MediaSessionCommitMixin:
 
         if reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
             return
-        if not self._stream_epoch_is_current(context, result.stream_epoch):
+        if (
+            not self._stream_epoch_is_current(context, result.stream_epoch)
+            or self._asr_precedes_pending_turn(context, result)
+        ):
             return
         context.admitted_input_stream_epoch = result.stream_epoch
         segment = asr_result_to_segment(result, session_id=session_id)
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
                 await self._apply_projection_segment(context, segment)
-                if not self._stream_epoch_is_current(context, result.stream_epoch):
+                if (
+                    not self._stream_epoch_is_current(context, result.stream_epoch)
+                    or self._asr_precedes_pending_turn(context, result)
+                ):
                     return
                 task_epoch, context_version = self._event_versions(
                     context, context.runtime.fence
@@ -390,7 +425,10 @@ class MediaSessionCommitMixin:
                 )
         else:
             context.clock_fact_forced_text = result.text.strip()
-        if not self._stream_epoch_is_current(context, result.stream_epoch):
+        if (
+            not self._stream_epoch_is_current(context, result.stream_epoch)
+            or self._asr_precedes_pending_turn(context, result)
+        ):
             return
         # Timeline ingest above is intentional; only suppress re-arm/commit while
         # an earlier reply still owns the session (late offline finals).
@@ -433,12 +471,17 @@ class MediaSessionCommitMixin:
             ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
         ):
             return
+        if self._asr_precedes_pending_turn(context, result):
+            return
         text = result.text.strip()
         if not text:
             return
         close_needed = await context.runtime.resolve_conversation_close_needed(text)
         live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
-        if not self._stream_epoch_is_current(context, result.stream_epoch):
+        if (
+            not self._stream_epoch_is_current(context, result.stream_epoch)
+            or self._asr_precedes_pending_turn(context, result)
+        ):
             return
         if not (close_needed or live_lookup_needed):
             return
@@ -505,7 +548,10 @@ class MediaSessionCommitMixin:
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
                 await self._apply_projection_segment(context, segment)
-                if not self._stream_epoch_is_current(context, adjusted.stream_epoch):
+                if (
+                    not self._stream_epoch_is_current(context, adjusted.stream_epoch)
+                    or self._asr_precedes_pending_turn(context, adjusted)
+                ):
                     return
                 task_epoch, context_version = self._event_versions(
                     context, context.runtime.fence
@@ -536,7 +582,10 @@ class MediaSessionCommitMixin:
                 adjusted.capture_start_sample,
                 adjusted.capture_end_sample,
             )
-        if not self._stream_epoch_is_current(context, adjusted.stream_epoch):
+        if (
+            not self._stream_epoch_is_current(context, adjusted.stream_epoch)
+            or self._asr_precedes_pending_turn(context, adjusted)
+        ):
             return
         # A farewell is terminal even when overlap/echo makes the same ASR
         # final also resemble a live lookup.  Device shutdown must win over

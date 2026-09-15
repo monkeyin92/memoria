@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-15
-resume_checkpoint: p0_short_playback_and_capture_passed_pending_query_latency_vad_longplay_20260915
+resume_checkpoint: p0_asr_candidate_boundary_and_weather_budget_local_fix_pending_release_20260915
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -165,7 +165,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
 - **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
 
-仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。两轮功能/听感已通过，不再重复索要确认；新候选自身已有五代真实输出/终端 summary 和正常会话收尾，不是继承旧板结论。下一优先级是本轮暴露的**查询延迟**：第二问串行尝试 21 个地名候选、查询 7.93 秒，现有慢查询提示未覆盖 5.028 秒间隙；先复现输入拼接与候选链，杂词来源仍未知。之后补最后一轮功能复测，覆盖新 VAD 接管及接近静默期限的续问，再做 >45 秒长播；正常轮次不强求出现竞态专属 `close superseded`。本轮验收未读写固件、部署服务端或改配置。不做预缓冲 `0026`；自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
+仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。两轮功能/听感已通过，不再重复索要确认；新候选自身已有五代真实输出/终端 summary 和正常会话收尾，不是继承旧板结论。下一优先级是**查询延迟**：第二问串行尝试 21 个地名、查询 7.93 秒，ACK→正文 5.028 秒；现已本地复现旧 pending ASR 片段被宽范围拼接，旧片段声学来源仍未知。当前代码仅首 ACK，历史第二提示已移除，不是仍部署但失效。用户授权电脑外放/麦克风自动复测，机器回执/录音与人工听感分开。最后一轮人工功能复测、新 VAD/临近静默及 >45 秒长播仍待验；正常轮次不强求竞态专属 `close superseded`。不做预缓冲 `0026`、自动备份、家长通知发送或微信订阅号。
 
 发布结果（2026-09-15）：证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。冻结范围仅 Agent 生命周期、天气、测量/捕获工具及其测试/文档；固件 dirty 留在主工作树，以干净 detached worktree 发布，未改有效环境或其它服务。CI **34943397294 success**（Agent 与 Python/PG 契约/offline E2E），正式 dry-run 全门禁及 production compose **47 passed**，捕获/报表 **62 passed**。正式切流复用同一 immutable commit 已通过的门禁（`gate-reuse.json`），不是跳过验证。候选真实天气 smoke 请求 `forecast_days=3`、回答含今天/明天/后天；切流后真实 LiveKit、FunASR、QwenRealtimeSearch、Qwen、Doubao、InterruptSemantic 和 readiness refresh 全部通过。16:00:49 回环/公网 8443 均 ready、core 12/12，新 Agent boot `98b37381-97e5-4af8-97b8-158d97b16602`，`last_loop_at=2026-09-15T08:00:45.163950+00:00`，非旧 heartbeat。
 
@@ -198,7 +198,15 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **该候选构建期间的临时清理**：仅删除同一 run 下被 `final/` 替代的初版 `upstream/` 与 `artifacts/`，释放约 **1.2GiB**；保留最终候选、顶层 build.log、全部旧板收据与回滚件，未清理固件缓存或其它 run。本次会话验收未再清理。
 - **刷写前候选审计取舍**：计量/捕获本地审计未发现新的功能性阻塞，不包含后续真机暴露的查询延迟。审计提出“4096 栈深等于 16KiB”不适用于本次 ESP32-S3 Xtensa/non-SMP 构建：实际 IDF port 的 `StackType_t=uint8_t`，因此未据此改动候选。锁外日志仍可能占用任务时间，真实 UART/收包时延及栈余量未测，不声称对播放零影响。两个 `0025` 文件的完整路径不同且当前改动不重叠；计量 patch 的旧后像 `index` 元数据不影响现用普通 `git apply`，内容已与构建树核对。本轮保留既有命名/元数据以维持冻结候选，不改号为预缓冲 `0026`、不切换 `--3way/--index` 应用方式。
 
-下一步按 `TODOLIST.md` 先收口查询延迟，再补最后一轮功能复测中的新 VAD/临近静默续问与 >45 秒长播。短播放计量与本轮会话收尾已通过，不再重开相同捕获或重复刷机；后续发生强杀/缺记录仍保留 degraded/incomplete，不追写为 healthy。**本轮验收仅捕获与审计，未读写固件、部署/重启 Agent、Bridge、Edge 或改配置；P0-03 仍未整体完成，不能外推全双工。**
+下一步按 `TODOLIST.md` 验收下述输入边界/查询预算修复，再补最后一轮人工功能复测、新 VAD/临近静默续问与 >45 秒长播。短播放计量与原会话收尾已通过，不重复刷机；后续强杀/缺记录仍保留 degraded/incomplete，不追写为 healthy。P0-03 仍未整体完成，不能外推全双工。
+
+### 2026-09-15 ASR 候选边界与天气查询预算（本地候选，待发布）
+
+- 已复现代码根因：播放期无有效 VAD 端点的旧 final 留在 pending window，续问 final 沿用最早起点，timeline 将旧字拼进新提交；现场为 final 10 字、commit 42 字。上段 ASR「只是线索」结论由本轮复现更新，旧片段为何被识别出来（回声/背景/幻觉）仍未知。天气端逐字删首字符再串行 geocode 将污染放大为 21 次请求与 7.93s 查询。
+- 在现有 Python 生命周期加窄范围隔离：只处理 device 播放期遗留、无 active VAD/端点/已判定工具语义的候选，回复结束且新 final 与旧 end 相隔 >2.5s 时建 sample floor；这是保守 ASR 分窗策略，不是测得的 VAD 静默。清除旧候选/partial，旧 ASR revision、语义救援、VAD 和 await 后迟到结果不得越界；正常分句、主动 VAD 与已固定端点保留。不开新控制面、不推进 owner 或 generation。
+- 天气只尝试完整地名和明确行政边界，最多 3 个候选，污染串不猜末两字；同一绝对 deadline 覆盖 OpenMeteo geocode+forecast（默认 8s），超时走既有 fallback、外部取消继续传播。该 8s 不是包括 Qwen fallback 的整链上限，也不代替 1.5s 性能验收门。
+- 当前仅首 ACK；历史 1905/20260912 曾恢复的第二提示已被后续移除，相关旧条目只作当时事实，不是当前启用状态。修复不恢复重复提示、不改静默/VAD/声纹阈值、不做 0026 预缓冲。
+- 用户授权 Mac 外放提问和麦克风收音；使用有界脚本、独立唤醒、完整正文 fence/终态后才续问，测试后恢复原静音。机器录音/日志与人工听感分开，自动代测不累加人工 2/3；合成声音被门禁拒绝则停止。自动脚本及原始日志回放自检放 `outputs/design/auto-audio-20260915/`，发布证据放 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/`。
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
@@ -302,7 +310,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过（播放期无 VAD、播后空 ASR、静音超时）。现签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice，播放中 `vad.start` 属越权、设备端已按合同抑制，故**该项在 AEC 参考验证前无法通过语音达成**；需先验证 AEC 或显式放行 voice 后再判 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **2026-09-15 epoch 1955 本轮通过**：双问各提交一次、各一段完整 ACK + 正文，五代终端回执齐全，用户确认无重复提示；不等于所有 ASR overlap 或空输入恢复专项均通过 |
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | **未过**：epoch 1955 `commit→ACK首帧` 0.345s/0.526s；`ACK→正文` 服务端间隔 0.433s/**5.028s**，第二问 21 次串行 geocode、查询 7.93s。设备回 listening→正文首帧亦为 5.049s；非 DAC/可闻精密测量 |
-| 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | **未过**：既有代码已部署，epoch 1955 第二问 7.93s 查询未产生第二提示代；先修查询延迟并复现现有慢提示路径，不靠重复 ACK 掩盖等待 |
+| 长查询等待 | 提示间隙无 >1.5s 纯静音，不重复 ACK、不让旧正文回流 | **未过**：epoch 1955 第二问 7.93s 查询、ACK→正文 5.028s。当前已移除历史 2.5s 第二提示；先修输入拼接/候选串行放大与 provider 总期限，若仍越线再明确等待策略，不把历史机制记为已部署 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-15 epoch 1955 本轮通过**：19:06:34.402 Edge `conversation_end_explicit`，19:06:34.433 串口 `listening -> idle`；不靠静默超时，不把跨机器时钟差当物理屏幕延迟 |
 | 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **>45s 待验**。新计量固件 epoch 1955 的 17.04s/5.34s 正文、五代软件队列 summary 与听感通过，真实会话正常收尾；仅解除短播放计量前置条件，不证明长播或 I2S/DMA 无欠载，旧板全零/串口错误证据不回改 |
 | 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 功能/听感 **2/3（旧固件 1 + 新固件 1）**；新固件最长正文 17.04s，用户确认无断续卡断。>45s 长回复、临近静默续问专项仍待验 |
