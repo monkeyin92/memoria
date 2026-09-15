@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-15
-resume_checkpoint: p0_metering_lifecycle_and_capture_local_complete_new_firmware_pending_device_20260915
+resume_checkpoint: p0_metering_lifecycle_firmware_flashed_boot_and_capture_finalization_passed_pending_playback_20260915
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -42,31 +42,32 @@ firmware_playback_capture_wired: historical_resolved_device_aec_and_board_compil
 firmware_playback_capture_enabled: historical_true_app_only_flashed_20260914T1506CST
 firmware_playback_capture_verified: historical_app_full_readback_identity_and_non_app_partitions_unchanged_boot_idle
 firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
-# 新本地候选：源码接线与构建已完成，不继承下面旧板的刷写/启动收据。
+# 新候选已 app-only 刷入、回读并启动；实际播放计量与听感尚未验收。
 firmware_playback_supply_meter_code: true # observation-only lifecycle fix, local regressions passed
 firmware_playback_supply_meter_wired: true # candidate audio service reset/queue/exact-token lifecycle
-firmware_playback_supply_meter_enabled: false # new candidate not flashed
+firmware_playback_supply_meter_enabled: true # app-only flash and matching-ELF boot verified
 firmware_playback_supply_meter_verified: false # pending new-candidate device metering and hearing
 firmware_playback_supply_meter_evidence_date: 2026-09-15
 firmware_playback_supply_meter_worktree_overlay_hash: 24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3
 firmware_playback_supply_meter_candidate_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
 firmware_playback_supply_meter_candidate_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
 firmware_playback_supply_meter_candidate_dir: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-local/final
-# 旧板事实仅来自既有收据和 16:18–16:19 捕获，本轮未打开串口或读写设备。
-firmware_playback_supply_meter_board_overlay_hash: 97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8
-firmware_playback_supply_meter_board_release_head: 65257e0e1285a3126e484ad22c308315c971caad
+# 本轮板卡回读与启动证据；boot 记录独立于不可变 postflash 收据。
+firmware_playback_supply_meter_board_overlay_hash: 24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3
+firmware_playback_supply_meter_board_release_head: d1ad38fe0d9b36eb9057d8eb97e782b8cc8066d9
 firmware_playback_supply_meter_board_upstream_commit: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
-firmware_playback_supply_meter_board_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
-firmware_playback_supply_meter_board_elf_sha256: efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625
-firmware_playback_supply_meter_board_receipt: outputs/acceptance/run-20260915-p0-03-firmware-metering/postflash.json
+firmware_playback_supply_meter_board_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
+firmware_playback_supply_meter_board_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
+firmware_playback_supply_meter_board_receipt: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/postflash.json
+firmware_playback_supply_meter_board_boot_evidence: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/boot-verification.json
 firmware_playback_supply_meter_board_boot_verified: true
-firmware_playback_supply_meter_board_real_device_conversation_verified: false # original receipt field; later functional hearing 1/3 passed
-firmware_playback_supply_meter_board_metering_verified: false # preoutput decoder reset left no playback coverage
+firmware_playback_supply_meter_board_real_device_conversation_verified: false # new candidate; old-board hearing result is not inherited
+firmware_playback_supply_meter_board_metering_verified: false # boot-check only; no actual playback yet
 firmware_playback_supply_meter_real_device_conversation_verified: false
 capture_lifecycle_code: true
 capture_lifecycle_wired: true
-capture_lifecycle_enabled: local_cli_only_no_new_capture
-capture_lifecycle_verified: local_fault_injection_passed_device_capture_pending
+capture_lifecycle_enabled: new_cli_boot_check_completed_20260915T185219CST
+capture_lifecycle_verified: boot_capture_duration_elapsed_three_streams_stopped_no_forced_kill_conversation_pending
 pre_roll_code: not_implemented
 pre_roll_wired: false
 pre_roll_enabled: false
@@ -77,11 +78,12 @@ wake_ack_playback_vad_fix_enabled: true_app_only_flashed_20260914T1506CST
 wake_ack_playback_vad_fix_verified: real_device_greeting_no_disconnect_actual_heard_and_explicit_farewell_pass
 wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:11:29+08:00
 # 当前板上 0025 候选；历史 0024/AEC 候选见「板卡与固件」。
-on_device_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
-on_device_app_elf_sha256: efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625
-on_device_app_build_recorded_at: 2026-09-15T11:17:17+08:00
-on_device_app_verified_at: 2026-09-15T11:22:07+08:00
-nearest_rollback_app_sha256: 176cc14fd468833f545202d41dbb98bf56f1990b488a52de29e334cf825172df
+on_device_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
+on_device_app_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
+on_device_app_build_recorded_at: 2026-09-15T17:36:12+08:00
+on_device_app_verified_at: 2026-09-15T18:51:44.111+08:00
+nearest_rollback_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
+nearest_rollback_app_path: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/rollback-app.bin
 previous_aec_candidate_app_sha256: 6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b
 production_runtime_verified: true
 direct_real_device_verified: false
@@ -150,7 +152,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - `code`：已提交并推送 `d7214554316bdaa13984c7b8ecf00aeb61693311`，冻结 tag `20260915-weather-followup-lifecycle-v1`；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
 - `wired`：接入 `OpenMeteoWeather.resolve`、`on_speech_segment` 与既有 ingress/standby/endpoint/reconnect/terminal 清理路径，没有新增并行状态机。
 - `enabled`：**生产 true，2026-09-15 15:58:42 CST 仅切 Agent/Bridge**。线上 Bridge 的 `load_settings` 切前后均核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
-- `verified`：**server_passed / functional_device_rounds_1_of_3_passed / metering_and_long_playback_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过。16:18–16:19 的首轮新媒体会话已取得双问/播放结束/播后告别记录，用户随后明确确认「三天齐全、续问正常、声音无断续或卡断」，首轮功能/听感通过。捕获与计量边界见下文。**本轮未刷机，剩余两轮、VAD/watchdog 竞态与 >45 秒长播未验；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
+- `verified`：**server_passed / functional_device_rounds_1_of_3_passed / metering_and_long_playback_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过。16:18–16:19 的首轮新媒体会话已取得双问/播放结束/播后告别记录，用户随后明确确认「三天齐全、续问正常、声音无断续或卡断」，首轮功能/听感通过。捕获与计量边界见下文。**16:18–16:19 旧板那轮未刷机；后续新候选回读与启动见下节。剩余两轮、VAD/watchdog 竞态与 >45 秒长播未验；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
 
 发布前异常路径补核（2026-09-15，本地故障注入与修复已完成）：
 
@@ -161,7 +163,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
 - **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
 
-仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，本次双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。首轮功能/听感已通过，不再重复索要确认；下述计量生命周期与捕获收尾已完成本地修复，下一步进入新候选受控 app-only 刷写/回读/启动及捕获验收，再补剩余两轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」。补测应覆盖新 VAD 接管及接近静默期限的续问；正常轮次不强求出现竞态专属 `close superseded`。计量必须有真实输出帧及终端 summary、捕获必须正常保存最终状态，之后再做 >45 秒长播。旧板功能 **1/3** 不继承为新候选已验收；本轮仅本地修复与冻结，未打开串口、刷机、部署或改生产配置。不做预缓冲 `0026`；自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
+仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，本次双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。首轮功能/听感已通过，不再重复索要确认；下述新候选已完成 app-only 刷写/整槽回读/保护校验和启动检查，新工具短捕获也已正常收尾，下一步验证真实播放计量，再补剩余两轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」。补测应覆盖新 VAD 接管及接近静默期限的续问；正常轮次不强求出现竞态专属 `close superseded`。计量必须有真实输出帧及终端 summary、会话捕获必须正常保存最终状态，之后再做 >45 秒长播。旧板功能 **1/3** 不继承为新候选已验收；本轮只更新设备 app，未部署服务端或改生产配置。不做预缓冲 `0026`；自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
 
 发布结果（2026-09-15）：证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。冻结范围仅 Agent 生命周期、天气、测量/捕获工具及其测试/文档；固件 dirty 留在主工作树，以干净 detached worktree 发布，未改有效环境或其它服务。CI **34943397294 success**（Agent 与 Python/PG 契约/offline E2E），正式 dry-run 全门禁及 production compose **47 passed**，捕获/报表 **62 passed**。正式切流复用同一 immutable commit 已通过的门禁（`gate-reuse.json`），不是跳过验证。候选真实天气 smoke 请求 `forecast_days=3`、回答含今天/明天/后天；切流后真实 LiveKit、FunASR、QwenRealtimeSearch、Qwen、Doubao、InterruptSemantic 和 readiness refresh 全部通过。16:00:49 回环/公网 8443 均 ready、core 12/12，新 Agent boot `98b37381-97e5-4af8-97b8-158d97b16602`，`last_loop_at=2026-09-15T08:00:45.163950+00:00`，非旧 heartbeat。
 
@@ -172,9 +174,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - 两次问题各提交一次（turn 2/gen 2、turn 3/gen 4）；三天天气请求 `forecast_days=3 / days=3`，续问为 `forecast_days=1 / days=1`，均选中南京并 HTTP 200。正文 gen 3/gen 5 音频分别 **19.06 秒 / 5.18 秒**，五个 generation 均有 `first_frame_sent → provider_completed → actual_heard → playback_ended`，终态为 `playback_completed`。两次 ACK→正文服务端间隔 **0.374 / 0.349 秒**，正文 Bridge post-pacer 最大帧间隔 **33 / 25ms**；不是设备可闻间隔或 DAC 实测。用户在「说完了」后明确补充 **「三天齐全、续问正常、声音无断续或卡断」**，结合设备终端回执记首轮功能/听感通过；不再把听感标为 pending，也不从单独的 `actual_heard` 账本事件推断听感。日志未记录完整问答文本，日内容齐全依据用户确认。
 - 第一次 VAD 明确受理（16:18:53.174，remaining=8.952s、watchdog=true、revision=1）；第二问通过 ASR final 提交并播放，但串口和 Bridge **没有新的 VAD/admission**，不得据此关闭 VAD/watchdog 竞态专项。首次 rescue 13 字被重叠门拒绝并丢弃，没有生成第三个问题；空 ASR tail timeout 未关闭会话。正文中 16:19:08 的 `semantic_final` 告别候选被 `speaker_authority_unverified` 拒绝，随后正文正常终态；其来源未知，不判定为回声或真实说话。
 - 播后告别：16:19:37.739 Edge `conversation_end_explicit`，16:19:37.755 串口 `listening → idle`。保留两端原始时刻，不把跨时钟差当精确延迟；自动报告因一个 stream 对应五个 delivery 保守保留 `playback→close gap=unknown`，不猜最后 generation。
-- **旧板计量不覆盖本轮实际播放，原因已由主线核对源码与五代日志**：`generation.started → ResetDecoderForServerGeneration(N) → NoteGenerationAnnounced/OpenEpisode` 先打开统计窗口；首帧触发 `EmitLegacyTts(start)`、进入 speaking，既有入口 `ResetDecoder()` 又执行 `Close(kDecoderReset)`，没有为实际播放重新打开窗口。gen 1–5 因此各只有播前 `close=decoder_reset / output_frames=0 / first_output=no / exact_confirmed=0`，没有有效播放结束统计；`NoteWaitBegin/End` 在窗口关闭后不计供给等待，末尾 flush 也不能补回统计。这是**测量生命周期缺口，不是本轮声音异常的根因**；用户已确认无断续。全零不能证明软件供给无等待或 I2S/DMA 无欠载；问候 Bridge 最大帧间隔 **201ms** 也仅作发送侧观察。真实调用顺序回归及最小观测修复已在下节本地候选完成，不改音频控制权限或增加预缓冲，尚无新候选设备证据。
+- **旧板计量不覆盖本轮实际播放，原因已由主线核对源码与五代日志**：`generation.started → ResetDecoderForServerGeneration(N) → NoteGenerationAnnounced/OpenEpisode` 先打开统计窗口；首帧触发 `EmitLegacyTts(start)`、进入 speaking，既有入口 `ResetDecoder()` 又执行 `Close(kDecoderReset)`，没有为实际播放重新打开窗口。gen 1–5 因此各只有播前 `close=decoder_reset / output_frames=0 / first_output=no / exact_confirmed=0`，没有有效播放结束统计；`NoteWaitBegin/End` 在窗口关闭后不计供给等待，末尾 flush 也不能补回统计。这是**测量生命周期缺口，不是本轮声音异常的根因**；用户已确认无断续。全零不能证明软件供给无等待或 I2S/DMA 无欠载；问候 Bridge 最大帧间隔 **201ms** 也仅作发送侧观察。真实调用顺序回归及最小观测修复已在下节候选完成，不改音频控制权限或增加预缓冲；新候选回读与启动已通过，尚无实际播放计量证据。
 
-## 2026-09-15 计量生命周期与捕获收尾（本地完成，新候选未刷机）
+## 2026-09-15 计量生命周期与捕获收尾（新固件已启动，真实播放待验）
 
 本轮只修观测链和证据完整性，不修改 Agent/Bridge 线上版本、设备播放权限、静默预算或预缓冲。捕获工具异常退出的具体历史原因仍未知；修复验证的是可复现的清理/写盘缺口，不倒推旧进程一定收到了某个信号。
 
@@ -182,12 +184,14 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **捕获生命周期**：首个 metadata 写入前安装 SIGHUP/SIGQUIT/SIGINT/SIGTERM 记录，先写 `in_progress`；收尾独立关闭串口、逐路 terminate/有界 wait，必要时 kill/有界 wait，再关文件并记录 `completed_at_local`、首信号、退出原因和流状态，最后恢复 handler。一路 poll/wait/kill 报错不能跳过其余流；未知退出码不能冒充已回收，正常提前退出也不冒充捕获主动停止。BrokenPipe 不跳过清理。`capture.json` 同目录临时文件写完后原子替换，写满/替换失败保留原记录并清理临时文件；这不是自动备份，也不承诺 fsync 级断电持久性。
 - **报告 fail-closed**：`capture_integrity` 与固件 receipt 绑定独立。正常完整捕获要求 `completed` 和可解析结束时间；请求服务端日志或声称流 healthy 时，还须逐路验证 `bridge/agent/edge` 的合法 `stopped_by_capture`/整数退出码/`forced_kill=false`，缺路、提前退出、强杀、清理失败、布尔冒充退出码、非法字段均点名原因。声称 healthy 也不能绕过逐路记录；legacy 缺 `capture_status` 一律 incomplete。preflight-only 只是完成 metadata 检查，不能算设备会话。
 - **本地验证**：`uv run pytest -o addopts='' -q tests/test_voice_session_capture.py tests/test_voice_session_report.py firmware/esp32/tests` **304 passed**（53 捕获 + 74 报告 + 177 固件），包含先红后绿的故障注入；全仓 Ruff、模块预算及 `git diff --check` 通过。固定 upstream `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5`、ESP-IDF **v6.0.2**、app **2.4.2**，clean overlay apply/build 与既有 overlay gate 通过。计量专项依据宿主行为/接线测试、落地源码一致性和实际编译，不把既有 gate 的 exit 0 单独当作新增计量的覆盖证明。
-- **冻结候选**：`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-local/final/` 保留 `upstream/`、`artifacts/`、`build.log`。overlay **`24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3`**；app **3,280,832 bytes** / SHA **`7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65`**；ELF SHA **`da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2`**。主线重算 hash、对比 header 并反向检查 patch；独立只读审计也核对前后像与最终构建树。`code=true / wired=true / enabled=false / verified=false_pending_device`，不得使用旧板 `postflash.json` 为它背书。
+- **冻结候选**：源码 **`d1ad38fe0d9b36eb9057d8eb97e782b8cc8066d9`**；`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-local/final/` 保留 `upstream/`、`artifacts/`、`build.log`。overlay **`24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3`**；app **3,280,832 bytes** / SHA **`7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65`**；ELF SHA **`da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2`**。主线重算 hash、对比 header 并反向检查 patch；独立只读审计也核对前后像与最终构建树。现为 `code=true / wired=true / enabled=true_boot_verified / verified=false_pending_playback`，依据本轮新收据，不继承旧板听感。
+- **受控真机更新（18:49:13–18:51:06 CST）**：`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/` 保存本轮证据。写前工作树干净、候选 app/ELF/overlay 与冻结值一致；ESP32-S3、MAC `90e5b1d7832c`、32MB Flash、identity SHA 均匹配。写前 app 完整槽与旧板已验证的 postflash 整槽逐字节一致；本轮 `rollback-app.bin` 是紧邻旧 app **`dfba3d61…` / 3,280,512 bytes**，不是更早 run 的同名回滚件。固定 esptool **5.4.0**、no-stub、无自动写重试，只擦写 **`0x20000..0x340fff`**；写后回读 **0x3f0000 / 4,128,768 bytes**，app 前缀逐字节一致、擦除尾部为 FF、擦除范围外未变。bootloader/partition/NVS/otadata/phy-init/identity 六区域逐字节未变，ota_1/assets MD5 未变；不把具名分区校验外推为整个 32MB 所有字节均已读取。`postflash.json` SHA **`2229851e440525f3a619586cceae7f5ea906e3ef563e70040b0560c64d944b01`** 保持不可变，其 `boot_verified=false` 是写后当时事实。
+- **启动与新版捕获收尾（18:51:33–18:52:19 CST）**：`boot-check/` 是 45 秒启动/待机窗口，无语音话轮。启动 ELF 前缀 **`da6ebdd16…`**、编译时间 **17:36:12** 匹配候选，**18:51:44.111** `activating -> idle`。`capture_status=completed`、结束时间完整、`exit_reason=duration_elapsed`、serial error/cleanup errors 均无；三路日志均 `stopped_by_capture / exit_code=255 / forced_kill=false`，报告 `capture_integrity=completed`、receipt bound。三个服务日志为空符合该空闲窗口，不能当作媒体链已通过。新增 `boot-verification.json` 绑定原刷写收据、capture/serial SHA，单独记 `boot_verified=true`，不回改已被捕获绑定的收据。**18:51:45.728 出现一次 BMI270 I2C ESP_ERR_TIMEOUT**，之后心跳持续到 18:52:14.553、未见崩溃重启；保留独立异常，不归因为语音卡断。串口输出字节级重复的启动行原样保留，不重复计为新会话。
 - **旧捕获只读复核**：新版报告对 weather-lifecycle-release 的 `session-2/` 返回 `capture_integrity=incomplete`（缺 capture_status/结束时间），同时 `capture_receipt_binding=bound_by_capture_tool`。原 `capture.json` 前后 SHA 均为 `2801db93a6c74c23550a9771c3aba0a0b6acf0b8b0d65cb133e982c970af7de7`，未补写 metadata 或覆盖历史 `report.txt`；旧板首轮功能/听感 **1/3** 仍成立，但不变成计量通过。
 - **本轮临时构建清理**：仅删除同一 run 下被 `final/` 替代的初版 `upstream/` 与 `artifacts/`，释放约 **1.2GiB**；保留最终候选、顶层 build.log、全部旧板收据与回滚件，未清理固件缓存或其它 run。
 - **审计取舍**：未发现新的功能性阻塞。审计提出“4096 栈深等于 16KiB”不适用于本次 ESP32-S3 Xtensa/non-SMP 构建：实际 IDF port 的 `StackType_t=uint8_t`，因此未据此改动候选。锁外日志仍可能占用任务时间，真实 UART/收包时延及栈余量未测，不声称对播放零影响。两个 `0025` 文件的完整路径不同且当前改动不重叠；计量 patch 的旧后像 `index` 元数据不影响现用普通 `git apply`，内容已与构建树核对。本轮保留既有命名/元数据以维持冻结候选，不改号为预缓冲 `0026`、不切换 `--3way/--index` 应用方式。
 
-下一设备时段按顺序验收：核对候选与旧板身份/回滚 → app-only 刷写、整槽回读与非 app 区不变、boot → 新版捕获中确认实际播放的 `first_output=yes / output_frames>0` 和终端 summary → 补两轮新 VAD/临近静默续问 → >45 秒完整长播与操作员听感。正常捕获还须证明三路正常收尾；发生强杀/缺记录就保留 degraded/incomplete，不追写为 healthy。**本轮没有打开串口、读写板卡或执行部署；P0-03 仍未整体完成。**
+下一步直接在上述已启动候选上开新版会话捕获，继续绑定不可变 `postflash.json`，**不要重复刷机**。先确认实际播放的 `first_output=yes / output_frames>0` 和终端 summary，再补新 VAD/临近静默续问与 >45 秒完整长播、操作员听感。短启动捕获的正常收尾不替代下一轮会话收尾；发生强杀/缺记录仍保留 degraded/incomplete，不追写为 healthy。**本轮仅更新设备 app，未部署/重启 Agent、Bridge、Edge 或改生产配置；P0-03 仍未整体完成。**
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
@@ -293,8 +297,8 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | floor 关闭暂存、空 tail 恢复及 ACK→正文移交已部署；epoch 1935 的 ACK 结束→正文首帧约 0.366s/1.766s，第二轮仍超 1.5s，未验收通过 |
 | 提示音覆盖长查询 | 查询超过约 2.5s 时应有第二句提示，避免长静音 | 代码已随整树 overlay 部署，容器内已核实；真实设备行为尚待复测 |
 | 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-14 15:11 CST PASS**（同一 session）：`early conversation-close … partial_immediate` → Edge `conversation_end_explicit` → 串口 idle 的日志间隔约 24 ms，未走静音超时；不是物理屏幕延迟测量。早前 epoch 1936 亦通过 |
-| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **未通过**。2026-09-15 旧板短捕获首帧 0.517s、Bridge `frames=120/audio_ms=2400/wall_ms=2413/max_gap_ms=69/ratio=0.99`；software wait 全零因统计窗口未覆盖播放，不能记有效计量。串口 `Device not configured` 导致 degraded；本地生命周期修复候选未刷机，>45 秒与听感待验。旧证据 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/` |
-| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 旧板 16:18–16:19 的 19.06s/5.18s 正文用户听感通过（1/3），不等于 >45 秒长回复通过；新计量候选仅完成本地构建，未刷入或验收 |
+| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **待验**。旧板 software wait 全零因统计窗口未覆盖播放，不能记有效计量；旧串口错误与证据保留在 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/`。新生命周期修复候选 18:51 已刷入、回读并启动，短捕获正常收尾；仍无新候选实际播放计量、>45 秒或听感证据 |
+| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 旧板 16:18–16:19 的 19.06s/5.18s 正文用户听感通过（1/3），不等于 >45 秒长回复通过；新计量候选已回读并启动，真实播放和听感待验 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
 | 切主体触发设备重协商 | 在线设备上从小程序切换使用者后，bridge 出现 `runtime_profile.invalidated`（`apply_at=next_safe_point`），设备安全点重连并加载新 profile；日志出现 `device profile change projected … delivered=true` | 代码已切流（`20260911-subject-switch-device-notify-control-api`），切流时设备离线，待真机 |
@@ -465,13 +469,13 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 - IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
 - 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
 - **0025 历史候选（2026-09-14 19:05 CST app-only 刷入，已被后续版本替代）**：收据对应 `release_head=fa54d7de027cccaee35e1721762a5d0bb060d60c`，app **3,277,856 bytes** / SHA `f58f48a4b21df96df74750ed10638c2ca906f267f2228cf37add3e37fd4a9101`，ELF `16d981b31f45d0dbdaadc6d2ab8f19ab217c1f09ce96535ea0eea54c0cffa578`，ESP-IDF v6.0.2、overlay marker `9f6d083c…`。刷写只写 `0x20000..0x340fff`：写后全槽回读**逐字节一致**、erase 范围外字节未变、identity SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846` 未变、bootloader/partition/nvs/otadata/phy-init 与 ota_1/assets MD5 全未变。收据与回滚件在 `outputs/acceptance/run-20260914-p0-03-firmware-metering/`（`preflash.json`、`protected/`、`rollback-app.bin`）。收据明确 `boot_verified=false`、`real_device_conversation_verified=false`，不用于证明后续版本已启用或验收。
-- **当前板上旧候选（2026-09-15 11:19–11:22 CST app-only 刷入并启动验证）**：收据对应 HEAD `65257e0e1285a3126e484ad22c308315c971caad`、upstream `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5`、overlay hash `97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8`、app **3,280,512 bytes** / SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`、ELF SHA `efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625`。只写 `0x20000..0x340fff`；app 全槽回读逐字节一致，erase 范围外、identity、bootloader、partition、NVS、otadata、phy-init、ota_1/assets 均未变；启动日志见 `outputs/acceptance/run-20260915-p0-03-firmware-metering/boot-check/serial.log`，包含 `StateMachine: State: activating -> idle` 与匹配 ELF 前缀。完整收据：`outputs/acceptance/run-20260915-p0-03-firmware-metering/postflash.json`；回滚 app SHA `176cc14fd468833f545202d41dbb98bf56f1990b488a52de29e334cf825172df`。这些为既有证据，本轮未重新读写板卡；功能听感 1/3 通过，但计量窗口提前关闭。
-- **新本地 `PlaybackSupplyMeter` 候选**：`0025` 补丁/header/宿主回归已覆盖 reset/fence/late-token 生命周期，分类 `supply / prestart / boundary / close_dropped / outside` 与 exact TX-EOF；不证明 I2S/DMA 或听感。clean overlay apply/build、宿主测试通过，源码与本次文档一并冻结；overlay `24531273…b3`、app `7d95c8a1…b65`、ELF `da6ebdd1…69f2`，完整哈希与目录见「计量生命周期与捕获收尾」。`code=true / wired=true / enabled=false / verified=false_pending_device`，新候选未刷机，`pre-roll` 未实现。
+- **当前板上 `PlaybackSupplyMeter` 候选（2026-09-15 18:51 CST 回读及启动通过）**：源码 `d1ad38f`、upstream `e8d8a401…`、overlay `24531273…b3`、app **3,280,832 bytes** / SHA `7d95c8a1…b65`、ELF `da6ebdd1…69f2`；完整摘要、具名分区保护结果与新 `postflash.json` / `boot-verification.json` 见「计量生命周期与捕获收尾」。仅更新 `0x20000` app；实际播放计量与听感待验，`code=true / wired=true / enabled=true_boot_verified / verified=false_pending_playback`，`pre-roll` 未实现。
+- **紧邻旧板基线（本轮回滚依据）**：旧收据对应 HEAD `65257e0e1285a3126e484ad22c308315c971caad`，但当时为 dirty 构建，回滚依赖实际二进制，不能仅靠该 HEAD 重建。overlay `97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8`、app **3,280,512 bytes** / SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`、ELF SHA `efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625`。旧版 11:22 启动与 16:18–16:19 首轮功能听感 1/3 通过，计量窗口提前关闭；旧证据仍在 `outputs/acceptance/run-20260915-p0-03-firmware-metering/`，不继承为新固件验收。
 - **2026-09-15 11:34–11:39 旧板短捕获（计量无有效播放覆盖）**：目录 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/`。设备 `vad_end -> first_received=0.517s`；generation 1 software queue wait 原始记录全部为 0（`supply/prestart/boundary/close_dropped/outside`），但同版统计窗口会在首帧前关闭，不能记有效零等待；Bridge `frames=120`、`audio_ms=2400`、`wall_ms=2413`、`max_gap_ms=69`、`after_pacer_send_ratio=0.99` 只说明发送侧节奏。delivery 有 `first_frame_sent/provider_completed/actual_heard/playback_ended`。串口 `SerialException: read failed: [Errno 6] Device not configured` 导致 `CAPTURE_HEALTH degraded`，`agent.log` 为空；不计完整长天气、有效播放计量或用户完整听完。该段操作员只给出“说完了”，与后来 16:18–16:19 明确通过的听感确认分开。
-- 上一版（回滚目标）：commit `e1c6998`，app 3,277,328 bytes / SHA `b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6`，ELF `7eb96fe1…`，overlay `03fcdef5…`。
+- 历史候选（非当前回滚）：commit `e1c6998`，app 3,277,328 bytes / SHA `b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6`，ELF `7eb96fe1…`，overlay `03fcdef5…`。
 - 历史基线（已不在板上）：2026-09-13 01:56:16 编译的 2.4.2（ELF `5e7b0150…`）；上一轮 AEC 候选 commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de210…`，overlay `6d17aa95…`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
-- **紧邻回滚**：`6bcca089…`（上一轮 AEC 候选，即本次刷机前板上运行版本）已做完整回读并逐字节匹配，保存在 `outputs/acceptance/run-20260914-1510-wake-ack-vad/rollback-app.bin` 与 `protected/app-before-full-slot.bin`（0x20000/0x3f0000 全槽）。再前一版 `outputs/acceptance/run-20260914-aec-fix/rollback-app.bin` 仍保留，可作二级回滚。
-- 本轮预读身份区/分区表/otadata/bootloader/phy-init 位于 `outputs/acceptance/run-20260914-1510-wake-ack-vad/protected/`（0700/0600，禁止输出身份内容）。刷写只写 `0x20000..0x340fff`，写后全片回读一致，非 app 分区字节与 assets/ota_1 MD5 均未变。
+- **唯一紧邻回滚目标**：`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/rollback-app.bin`（app `dfba3d61…`、3,280,512 bytes）；同目录 `protected/app-before-full-slot.bin` 为本轮写前 **0x20000/0x3f0000** 整槽，SHA `cc175040af934575b7804ec01031ebf8543415c98c0084801682e8ce121da333`，与旧版已验证的 `protected/postflash/app-after-full-slot.bin` 完全一致。不要误用旧 run 的 `rollback-app.bin` 或早期 AEC 镜像。回退仍只写 app，并重新做身份/非 app 分区保护、回读及启动验收；本轮未执行回退。
+- 本轮受保护分区前后像位于 `outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/protected/`（0700/0600，禁止输出身份内容）；旧 run 证据未删除，普通固件保留清理待新候选实际会话验收后处理，不启动自动备份。
 - 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
 
 ## 设备启用、唤醒与 shadow
