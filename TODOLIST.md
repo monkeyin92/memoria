@@ -9,13 +9,13 @@
 - 按 P0 → P1 → P2、同级从上到下推进；每次先做最高优先级中未阻塞的一小项。设备/生产窗口受阻时，可并行做 P1-01 的本地兼容性验证、P1-06 的离线召回，不必等全部硬件矩阵通过才写代码。
 - `[ ]` 表示未完成；进行中或阻塞写在条目下，注明已完成层级、剩余条件和下一动作。只有本项所有完成条件满足才改 `[x]`，不能把 `code / wired / enabled / verified` 混为一谈。
 - 完成时附日期、提交与测试/证据位置；发布和设备事实先更新 `HANDOFF.md`，研究结论同步 `RESEARCH.md`。已完成条目可直接删去，但有效运行证据和未完成子项不能随之丢失；稳定 ID 不复用。
-- 本次仅完成分析与文档，不执行升级、安装、刷机、生产切流或放宽权限。清单不是持续运行的授权；后续每次任务仍核对用户授权、脏工作树和真实有效配置。
+- 清单最初于 2026-09-14 建立；后续实施按各项的日期与证据更新。清单不是持续运行的授权；每次任务仍核对用户授权、脏工作树和真实有效配置。
 - 依赖版本是 2026-09-14 的核验结果，实施前重新查官方发布与兼容约束；不按版本号大小批量追新。
 
 ## 已知基线：不要重复开发，也不要外推验收
 
-- 当前提交 HEAD 为 `65257e0`；工作树包含本轮 Agent 会话门禁、报告工具和固件 `0025` 计量实现的未提交修改，不能把这些源码等同于已发布或已启用。9 月 14 日 15:11 的既有真机证据确认唤醒问候不掉线、天气 ACK/正文可听、播后告别回 idle。该回归的 **14/14 不是 T1–T14**；`direct_real_device_verified`、`full_duplex_verified` 仍为 false。
-- `HANDOFF.md` 最近一次 readiness 观测是 **2026-09-13 23:40 CST**：core 12/12、Agent ready，但 smoke 证据过期使 readiness 返回 503。本轮公网探测 TLS 失败、未取得 HTTP 响应，不能据此确认它现在仍为 503，也不能推断服务宕机。
+- Agent/工具发布源码已冻结并推送为 `d721455`，2026-09-15 15:58:42 CST 仅切换 Agent/Bridge；固件 `0025` 计量实现仍为未提交改动，保留不动。9 月 14 日 15:11 的真机回归 **14/14 不是 T1–T14**，也不能继承为本次发布的真机验收；`direct_real_device_verified`、`full_duplex_verified` 仍为 false。
+- 最新服务端观测 **2026-09-15 16:00:49 CST**：回环与公网 8443 均 200 ready、core 12/12、新 Agent heartbeat ready；真实 LiveKit/provider smoke 通过。9 月 13 日的 503、早期公网 TLS 失败已不是当前状态。切流关闭旧设备会话，16:00:48 快照 `connected=false`；16:03:47 板子正常重启进入 idle，新媒体会话重连及听感仍待验。
 - 最近设备签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice。当前固件抑制未授权的播放期 `vad.start` 是修复，不是要删除的障碍；语音打断另走 P1-07。
 - person→persona 分配、不可变自定义人格、persona→voice 归属、subject-aware RuntimeProfile 和失效通知均已有代码；音频样本真实校验、训练进度与 2 秒轮询也已有代码。剩余以线上版本映射、入口和端到端验收为主。
 - RecallPlanner 已有封闭 query rewrite，现有 VAD 期预取与事实/人格分流也已接线。9 月 14 日本地重跑 16 例：`recall@5=0.8125`、`nDCG@10≈0.734`，跨会话/转述追问/安慰三项均为 1.0；不能再列成从零建设记忆系统。
@@ -36,12 +36,12 @@
 
 ## P0：当前链路与发布前提
 
-### [ ] P0-01 重新核准运行基线，恢复 readiness 的真实证据刷新
+### [x] P0-01 重新核准运行基线，恢复 readiness 的真实证据刷新
 
-- 进度（2026-09-14）：readiness 假阴性已定位并修复——`refresh_readiness.sh` 改用运行容器的 stack tag，并复用 live 容器的 Compose 文件集且断言 smoke 镜像等于容器镜像；已部署（脚本 SHA `c0152d5b…`，改前副本 `.bak-20260914-pre-tag-fix`）并实跑通过，loopback 与公网（8443）均 ready、core 12/12。**剩余子项只有一条**：定时器已重排到 2026-09-15 04:35:21 CST，需再观察一次“定时触发”成功，不能用手动 `systemctl start` 代替。
+- 完成（2026-09-15）：`refresh_readiness.sh` 的 live stack tag/Compose 镜像核验修复已部署。timer 实际于 **04:35:27 CST** 触发；04:36:23 Doubao 时间戳对齐失败，04:41:24 systemd 自动重试一次，**04:42:39 refresh PASS / Result=success / ExecMainStatus=0**。这是定时触发后自动恢复成功，不是首尝试通过，也不是手动触发。新 Agent/Bridge 发布后又直接执行真实 LiveKit/provider smoke 并通过，16:00:49 回环/公网 ready、core 12/12、新 heartbeat 已核实。证据：`outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/{readiness-timer.log,readiness-refresh.log,postflight.jsonl}`。
 - 原因：过期 smoke 使发布门状态失真；仓内新代码不等于当前 overlay 已部署，尤其 Control 与小程序。
 - 工作：只读取实际 image/source/override/有效 env，按组件对应 `code / wired / enabled / verified`；区分 Agent/Bridge、Control、sidecar、固件、小程序版本。核销 HANDOFF 遗留的旧阻塞和旧 epoch，播中/播后告别分开记。
-- 在后续获准维护生产时，检查已有 `memoria-readiness-refresh.timer/service` 的启用、最近执行、凭据和失败日志。核实 `refresh_readiness.sh` 是否使用当前组件 override、当前真实 release tag，而不是只用基础 compose/目录名；这是待查风险，不是已证明根因。
+- 已核实 timer/service、真实 provider 日志与生效 Compose；原目录名代替 stack tag、smoke 未覆盖 live 组件是已修复根因。保留本次 Doubao 短时失败记录，不把一次自动恢复外推为 provider 永不波动。
 - 完成条件：当前 release 的真实 LiveKit/provider smokes 成功后生成证据，回环与公网 readiness 均 ready；core 12 个具名检查均 ready、Agent heartbeat/tag 匹配；至少再观察一次既有 12h 定时刷新成功。只手动刷绿一次不能关闭本项。不得延长 TTL、跳过 smoke 或伪造证据。
 - 入口：`scripts/refresh_readiness.sh`、`infra/memoria-readiness-refresh.*`、`services/control_api/app/routes/readiness.py`；定向验证 `test_readiness.py`、`test_mark_readiness.py`。
 
@@ -56,13 +56,13 @@
 ### [ ] P0-03 收口当前语音缺陷，建立升级前对照基线（真机复测持续收口）
 
 - **最新状态（2026-09-15，以下历史过程以此为准）**：
-  - **Agent 本地候选**：`code=complete_uncommitted`，含会话/待机竞态与 delivery fence、报告会话归属、多日天气/续问保护，以及本次 ASR 故障恢复、prepare retry 总期限和重连清理；`wired=existing_provider_and_python_lifecycle`；`enabled=false_in_production`（本轮未部署）；`verified=local_only`。固件启用状态不能外推为这些 Agent 补丁已上线。
+  - **Agent 已发布候选**：`code=committed_d721455`；`wired=existing_provider_and_python_lifecycle`；`enabled=true_20260915T155842CST`；`verified=server_only_device_pending`。覆盖会话/待机与 delivery fence、报告会话归属、多日天气/续问、ASR 故障恢复、prepare retry 总期限和重连清理；具体当前/回滚与源码校验见 `HANDOFF.md`。
   - [x] 多日天气本地修复：旧日志保留「未来3天南京」却请求 `forecast_days=1`；明确从今天起的 1–16 天逐日回答，模糊/矛盾/超限范围及不完整结果走 fallback，不改答今天。
   - [x] 续问待命竞态本地修复与主审：合法 VAD 在 projection await 前接管，已启动的绝对 watchdog 撤销旧 grace；锁内 revision 排除旧关闭；旧 endpoint 不覆盖新语句；watchdog 覆盖 ASR finalization 等待到 endpoint-tail 接手。重复 VAD 不续预算，显式告别/terminal 门不放宽。
   - [x] 本地验证：前一轮关联四套件 **314 passed**；本次新增 **43** 项异常用例后，完整 Agent unit **2013 passed**，Agent Ruff、strict mypy（157 文件）、模块预算、diff whitespace 通过。新增受理/revision 日志用于下一轮实证，不能用单测代替真机。
   - [x] 发布前异常路径有界性补核（本地）：ASR finalize 故障及下一 PCM 恢复都在异步发布前接回剩余预算，旧回调不误清新 VAD；首次/两次 prepare retry 共用真实绝对 tail，超时经既有 terminal 链停止旧提交；重连在身份核验后先取消旧 prepare，避免旧 tail 被否决后卡住清理锁。ASR **10** 项、retry **33** 项均通过，包含失败先红后绿、成功/耗尽/卡住、已耗 grace、旧 epoch/新 VAD/锁竞态；失败和旧 epoch 迟到成功均不补满预算，重连等锁期间 terminal 不得复活，不放宽 ASR 防重复门。范围限协作取消与迟到结果 fencing，不代表永久吞取消的 provider 或全部 reset/close I/O 已有硬上界；详见 `HANDOFF.md` 同日条目。
-  - [ ] Agent/Bridge 发布：用户已授权继续；2026-09-15 15:40 CST 已核验线上有效 owner silence=10s、watchdog=60s、output stall=45s、设备在线、回环/公网 readiness ready。捕获与报告工具 **62 passed**。按干净 commit/tag/worktree 冻结已审计 Agent/工具切片，使用独立依赖底座，通过正式门禁和 CI 后仅切 Agent/Bridge；固件 dirty 保留，不刷机、不改配置。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。
-  - [ ] 三轮真机复测：组件发布与 provider smoke 通过后验证「未来三天 → 播完续问 → 播后告别」；按 session 记录完整问题、请求天数、VAD/ASR/受理/超时/播放回执与听感。服务端发布通过不等于此项完成。
+  - [x] Agent/Bridge 发布（2026-09-15 15:58:42 CST）：冻结 tag `20260915-weather-followup-lifecycle-v1`，正式干净 worktree 门禁及 CI **34943397294 success**；捕获/报告 **62 passed**。双容器同镜像 healthy/restart=0，各 **910** 文件 SHA 匹配；有效配置和 **17** 个非目标容器不变；候选真实天气请求 `forecast_days=3`、今天/明天/后天齐全，真实 LiveKit/provider 与回环/公网 readiness 通过。未刷机、未改运行配置。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`；设备重连/听感仍单独待验。
+  - [ ] 三轮真机复测：验证「未来三天 → 播完续问 → 播后告别」；按 session 记录完整问题、请求天数、VAD/ASR/受理/超时/播放回执与听感。`run-20260915-p0-03-weather-lifecycle-release/session-1/` 是启动/待机检查，16:15:32 正常停止、capture healthy，没有语音验收。实际听测窗口 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/session-2/` 于 **16:15:43 CST** 开始，16:15:55 正常重启进入 idle，限时 900 秒（约 16:30:43 截止）；绑定既有刷写回读收据，本次未重新读写固件。三轮尚未验收，服务端发布通过不等于此项完成。
   - 9 月 15 日现场证据：`outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-2/`，epoch 1953。播完 12:57:21.672、VAD start 12:57:27.566、静默关闭 12:57:29.101 CST；旧日志不足以证明具体受理/grace 分支。同轮 ASR overlap/recovery 仍开放，不回退防重复门；详见 `HANDOFF.md`「2026-09-15 多日天气与续问关停修复」。不要与下方 9 月 14 日的 `session-2` 混读。
   - **固件计量候选**：`code=complete_uncommitted_observation_only`；`wired=app_only_readback_verified`；`enabled=true_boot_verified_20260915T112207CST`；`verified=false_single_round_valid_long_capture_degraded_actual_heard_pending`。完整绑定收据见 `outputs/acceptance/run-20260915-p0-03-firmware-metering/postflash.json`。
   - [ ] 长播验收：Agent 候选发布后，稳定 USB/串口，再做完整 >45 秒天气/长回复捕获，保留设备 `supply / prestart / boundary / close_dropped / outside`、Bridge pacing、delivery ledger 和操作员完整听感确认。`pre-roll` 未实现；无新证据不再次刷机、不实现 `0026`。桥侧比率、软件队列与 `actual_heard/playback_ended` 均不能单独当作用户完整听完。

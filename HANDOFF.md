@@ -7,7 +7,7 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-15
-resume_checkpoint: p0_voice_lifecycle_and_playback_supply_meter_audit_20260915
+resume_checkpoint: p0_weather_lifecycle_released_device_three_round_acceptance_pending_20260915
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -18,7 +18,7 @@ miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
 production_readiness: ready
-production_readiness_observed_at: 2026-09-14T16:32:08+08:00
+production_readiness_observed_at: 2026-09-15T16:00:49+08:00
 offsite_backup_enabled: false # 用户 2026-09-14 决定：项目验证阶段暂不启用自动备份/异地副本；WAL 归档仍在写且无人裁剪
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
@@ -119,7 +119,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
 
-## 2026-09-15 多日天气与续问关停修复（本地回归通过，未部署、未真机验收）
+## 2026-09-15 多日天气与续问关停修复（已发布，服务端通过、真机待验）
 
 本节对应用户「未来三天南京天气只答今天，播后再问没说完就待命」的反馈。证据是 **9 月 15 日**的 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-2/`，session `ee5f652b-1cd3-425d-bd6a-71fd91b7568f` / epoch **1953**；不是 9 月 14 日同名的 `session-2`。
 
@@ -127,7 +127,7 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **续问关闭的现场事实**：`serial.log:304` 在 **12:57:21.672 CST** 播完进入 listening，`:306` 在 **12:57:27.566** 发出新 VAD start；`edge.log:2` 在 **12:57:29.101** 以 `owner_silence_timeout` 关闭，`serial.log:310` 在 **12:57:29.125** 回 idle。设备开口约 1.56 秒后被关停；旧 Bridge 日志没有受理 VAD、剩余静默预算、grace/watchdog 状态，**不能据此断言现场已进入某条 Python 受理分支**。
 - **代码与红测证实的结构性竞态**：VAD 的受理保护晚于异步 projection；已经启用的 one-shot processing grace 不随新受理 VAD 暂停；旧超时还可能已在等 `standby_lock`。仅取消定时任务或调长超时，均不能完整解决这三处接缝。
 
-本地修改沿用既有 provider 与 Python 会话权威链，不新增 listening 状态机、不放宽声纹/打断权限、不改固件或预缓冲：
+本次修改沿用既有 provider 与 Python 会话权威链，不新增 listening 状态机、不放宽声纹/打断权限、不改固件或预缓冲：
 
 1. 天气适配器支持从今天起的明确 1–16 天范围；「未来三天」逐项回答今天、明天、后天。只移除匹配的日期片段，保留地名数字；模糊、超限、矛盾范围、非今天起点或不完整日数据走既有 fallback，不默默改答今天。城市在「天气」之后的倒装句仍不由此适配器解析，不能声称任意自然语言日期/地名均已覆盖。
 2. 合法 VAD 在 projection await 前受理，使用独立 active-VAD 标记；真实已启动的绝对说话 watchdog 才能接替 grace，锁内 revision 复核阻止旧静默关闭误杀。重复 VAD 不续 watchdog，也不补满静默预算；仍只有 verified owner 完成轮次能刷新预算。IGNORE、pin、空 VAD、旧 epoch 不获得保护；显式告别与绝对 watchdog 的关停不被 VAD 否决。
@@ -136,10 +136,10 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 状态（2026-09-15）：
 
-- `code`：本地补丁及主线回归完成，未提交；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
+- `code`：已提交并推送 `d7214554316bdaa13984c7b8ecf00aeb61693311`，冻结 tag `20260915-weather-followup-lifecycle-v1`；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
 - `wired`：接入 `OpenMeteoWeather.resolve`、`on_speech_segment` 与既有 ingress/standby/endpoint/reconnect/terminal 清理路径，没有新增并行状态机。
-- `enabled`：**生产 false（待本轮组件发布）**。2026-09-15 15:40 CST 已从线上 Bridge 的 `load_settings` 核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
-- `verified`：前一轮四套件 **314 passed**、完整 Agent unit **1970 passed**；本次增加 **43** 项异常路径用例后，完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`）。Agent Ruff、strict mypy（157 source files）、模块预算与 diff whitespace 检查通过。**未部署、未刷机、未 commit/push；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
+- `enabled`：**生产 true，2026-09-15 15:58:42 CST 仅切 Agent/Bridge**。线上 Bridge 的 `load_settings` 切前后均核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
+- `verified`：**server_only / device_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过，详见下方发布结果。**本轮未刷机，真机三轮未验；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。**
 
 发布前异常路径补核（2026-09-15，本地故障注入与修复已完成）：
 
@@ -150,9 +150,11 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
 - **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
 
-仍开放：同一会话 `bridge.log:70,74` 有 `straddles_committed_without_timing` 与 mostly-committed rescue drop。该防重复提交门不能直接放宽；本次天气/待命修复不代表 ASR 重叠边界、语句完整性或长播断续已验收。下一步在获准的 Agent/Bridge 部署窗口核验有效 watchdog 配置并发布已审计切片，然后用新 session 连测三轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」，同步取设备 VAD、ASR 水位、admission/revision、天气请求天数、delivery 与操作员听感。USB/串口稳定后再做 >45 秒长播对照；没有新证据不再刷机、不做 `0026`。自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
+仍开放：旧会话 `bridge.log:70,74` 有 `straddles_committed_without_timing` 与 mostly-committed rescue drop。该防重复提交门不能直接放宽；本次发布不代表 ASR 重叠边界、语句完整性或长播断续已验收。下一步用新 session 连测三轮「未来三天南京天气 → 正文完整播完 → 续问 → 播后好的再见」，同步取设备 VAD、ASR 水位、admission/revision、天气请求天数、delivery 与操作员听感；正常轮次不强求出现竞态专属 `close superseded` 日志。USB/串口稳定后再做 >45 秒长播对照；没有新证据不再刷机、不做 `0026`。自动备份、家长通知发送与微信订阅号仍不在本阶段范围。
 
-发布准备（2026-09-15 15:40–15:45 CST）：用户已授权继续下一步。切前 Agent/Bridge 均 healthy、restart=0，设备在线，回环与公网 readiness 200/core 12/12 ready；独立依赖底座身份已核实。捕获/报表工具另跑 **62 passed**（不在组件脚本的 Agent 门禁内）。冻结范围仅 Agent 生命周期、天气与测量工具及其测试/文档；未提交固件改动保留在主工作树，用独立干净 worktree 发布，不刷机、不改运行配置。证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`；待正式门禁、同镜像切流与候选 provider smoke 通过后更新启用状态，真机三轮另记。
+发布结果（2026-09-15）：证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。冻结范围仅 Agent 生命周期、天气、测量/捕获工具及其测试/文档；固件 dirty 留在主工作树，以干净 detached worktree 发布，未改有效环境或其它服务。CI **34943397294 success**（Agent 与 Python/PG 契约/offline E2E），正式 dry-run 全门禁及 production compose **47 passed**，捕获/报表 **62 passed**。正式切流复用同一 immutable commit 已通过的门禁（`gate-reuse.json`），不是跳过验证。候选真实天气 smoke 请求 `forecast_days=3`、回答含今天/明天/后天；切流后真实 LiveKit、FunASR、QwenRealtimeSearch、Qwen、Doubao、InterruptSemantic 和 readiness refresh 全部通过。16:00:49 回环/公网 8443 均 ready、core 12/12，新 Agent boot `98b37381-97e5-4af8-97b8-158d97b16602`，`last_loop_at=2026-09-15T08:00:45.163950+00:00`，非旧 heartbeat。
+
+设备边界与捕获：切流于 15:58:16 重启 Bridge 时旧 epoch 1953 的 WSS 关闭，Edge 的 channel 随新服务恢复；16:00:48 设备快照 **connected=false**。原始 `runtime-comparison.json` 因 `device_not_connected` 保留 `passed=false`；补充 `runtime-comparison-split.json` 明确 `server_release_passed=true / device_reconnect_verified=false`，不抹掉原始失败，新媒体会话重连仍需唤醒证明。`session-1/` 为 16:03:35–16:15:32 的启动/待机检查，正常停止、capture healthy、无语音验收。实际听测捕获 `session-2/` 于 **16:15:43 CST** 启动，限时 900 秒（约 16:30:43 截止）；正常硬复位后 **16:15:55.440 activating -> idle**、Activation v3，唤醒词「茉莉」。两段均绑定既有 `run-20260915-p0-03-firmware-metering/postflash.json`（app SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`），`read_from_board_this_run=false`，本次未重新读写固件。三轮及用户完整听感尚未验收；捕获结束后须核验串口与三路日志健康，按真实 session/epoch 分账。
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
@@ -175,9 +177,9 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 - 手动实跑：`livekit_smoke_test PASS` → `provider_smoke_test PASS: FunASR, QwenRealtimeSearch, Qwen, Doubao, InterruptSemantic` → `verify_env OK` → `readiness mark OK` → `readiness refresh PASS: 20260901-0945-wake-word-whitelist (qwen)`。
 - systemd 路径（同一 unit / ExecStart）：`systemctl start memoria-readiness-refresh.service` 于 16:32:08 CST `status=0/SUCCESS`，日志同样 `readiness mark OK` + `refresh PASS`。
 - 状态：loopback `http://127.0.0.1:8791/health/ready` **200 ready**；公网 `https://aigcnice.com:8443/memoria-api/health/ready` **200 ready**；具名 core **12/12 ready**；agent `ready`，boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`，`worker_ready/livekit_ready=true`，`last_loop_at 2026-09-14T08:33:01Z`。公网 readiness 在 **8443** 的 SNI 多路复用之后；443 属于同机既有 WMS vhost，`/memoria-api/...` 在 443 上无匹配路由会返回 404，**不能把 443 的 404 当作服务故障**。
-- 未完成子项：定时器因 `OnUnitActiveSec=12h` 重排到 **2026-09-15 04:35:21 CST**，本轮只验证了 unit 路径的手动触发，尚未观察一次“定时触发”的成功。
+- 定时子项已完成（2026-09-15）：timer `LastTriggerUSec=04:35:27 CST`，04:36:23 首次因 Doubao word timestamp alignment degraded 失败；04:41:24 systemd `Scheduled restart job, restart counter=1`，04:42:35 providers PASS、04:42:38 mark OK、**04:42:39 refresh PASS / Result=success / ExecMainStatus=0**。因此为“定时触发后一次自动重试成功”，不是首尝试通过；证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/readiness-timer.log`。本轮发布后的 smoke 直接执行脚本，不用手动启动 unit 冒充定时触发。
 
-口径更正：readiness 的 `release_tag` 是**栈级 env tag**（`20260901-0945-wake-word-whitelist`），不等于任何组件镜像版本。组件身份只认容器 image/labels（agent/bridge `20260913-p0-empty-input-resume-v1`、control-api `20260911-subject-switch-device-notify-control-api`、media-edge `20260908-1600-vocat-interrupt-assist-edge-component`、sensevoice `20260901-pin-language`）。gate 变绿只证明该栈 tag 下的 smoke 通过，不证明具体组件版本已验收。
+口径更正：readiness 的 `release_tag` 是**栈级 env tag**（`20260901-0945-wake-word-whitelist`），不等于任何组件镜像版本。组件身份只认容器 image/labels，当前值见下方运行清单，不从旧 smoke 的版本推断。gate 变绿只证明该栈 tag 下的 smoke 通过，不证明设备场景已验收。
 
 ## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 刷入；15:11 CST 真机复测 PASS）
 
@@ -393,12 +395,12 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260914-downlink-pacing-v1`，image `sha256:cfdc7358b3a548e3e9df0268bb4a87945c8e87c84c37fff4da435d9cc2941ff8`，OCI revision `4bb70fc38397516d245202f0e8bd755e35c1f22b`。Agent/Bridge 共用该 image，2026-09-14 **18:45:37 CST**（10:45:37Z）切流；`bridge_grpc_socket=PASS`、双 `healthy`；两容器内 `media_bridge_server.py` 均含下行节奏测量（`grep -c "downlink pacing"` 均为 1），readiness `ready`、agent `ready`、栈 tag 仍为 `20260901-0945-wake-word-whitelist`。收据 `/opt/memoria/component-releases/20260914-downlink-pacing-v1/`。本版累计包含「跨已提交区间救援 final 不再复用」与「下行节奏测量」两项。
-- 紧邻回滚：`memoria-agent:rollback-20260914-downlink-pacing-v1-pre`（内容即 `memoria-agent:20260914-straddle-rescue-fix-v1`，image `sha256:f47dc87efcdd3a7841c121a10399a0aaa267575b6fc56a280a1041d29e969c16`，revision `11643528b1244a7dec57afcb4d9a9b1eb818bc16`）。切前后回滚 tag 与两个服务的 override 及镜像 ID 均已核实。**回滚只证明可运行，该版没有下行节奏测量，长回复断续仍不可观测。**
+- 当前：`memoria-agent:20260915-weather-followup-lifecycle-v1`，image `sha256:91c0eb36d2cc4ae35dce1d842308e7f4c0f7648ab9068908c1576661e287a398`，OCI revision `d7214554316bdaa13984c7b8ecf00aeb61693311`。Agent/Bridge 共用该 image，2026-09-15 **15:58:42 CST**（07:58:42Z）切流；gRPC 7001 PASS、双 healthy、restart=0；两容器各 **910 文件 SHA256** 与冻结源码匹配。栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。收据 `/opt/memoria/component-releases/20260915-weather-followup-lifecycle-v1/`，源包 22,343,680 bytes / SHA `e58e227154aeb075dd66e8e1e7d5e91979c82941c4cdaebbdb54f39b37de4d1a`。
+- 紧邻回滚：`memoria-agent:rollback-20260915-weather-followup-lifecycle-v1-pre`（保留原别名 `memoria-agent:20260914-downlink-pacing-v1`，image `sha256:cfdc7358b3a548e3e9df0268bb4a87945c8e87c84c37fff4da435d9cc2941ff8`，revision `4bb70fc38397516d245202f0e8bd755e35c1f22b`）。旧 Compose override 所需标签保留，`ROLLBACK_POINT.txt` 与 `CUTOVER_RESULT.txt` 均经 SHA 校验；回滚证明可运行，不代表旧版天气/续问缺陷已修复。
 - 独立依赖底座：`memoria-agent:20260912-p0-rollback-single-tag-agent-component` / `memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，共同 image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`；当前与回滚均依赖它，不按历史业务版本删除。
-- 有效 env SHA256 切前后相同：Agent `a17290c9f5d50994ebcb53263d13eb8ba8b499e468b67734196d3736e8883589`，Bridge `5162d117bce5b5e74de84a533a868390f49b0025c1e8dbdd47da647695a28738`；Edge、Control、device-media-gateway、Redis、miniprogram-gateway、speaker-model、既有 created 的 SLO reporter 容器 ID/image/StartedAt/env 摘要均未变。三处关键运行源码 SHA 与提交逐一相同，非仅凭标签验收。
-- 当前能力新增：跨已提交区间、且大部分音频已被提交的救援 final 不再被当作下一轮文本采用（真机 epoch 1946：一次「第二天天气」被提交成两个轮次、第一遍答案被 preempt 丢失）。保留上一版「floor 暂时关闭时排队有效输出」「严格同 fence 的无字 tail 结束后恢复播放」「ACK/正文 handoff 保留有效后继」以及 dispatch drain 重试与 live lookup 新话轮取消逻辑；不改配置、DB、Control、Edge 或固件。
-- 2026-09-13 保留清理：按预审计划 SHA256 `bd29cb0977c653d80836d3d06320b484cd6c9c5acddde64963af022926ddd83d` 删除 **266 个过期 Agent source-overlay tag、95 个旧版本的 190 项 source tar/build payload**。组件目录 1.7GB→246MB；磁盘 68% 已用、约 38GB 可用。完整 payload 只保留当前、紧邻回滚与依赖底座；所有 manifest/发布收据、runtime-base tag、full-image 底座标签与非目标消费者均保留，未动数据库/WAL/MinIO。`memoria-agent` 仓库尚有 8 个 tag/5 个 image ID（含非本轮范围的 full-image 别名和 SLO 依赖），不能描述成全栈仅余两版本。
+- 有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；**17 个非目标容器** ID/image/StartedAt/env/restarts/health/status 全部未变。详见发布证据 `preflight.jsonl`、`postflight.jsonl`、`runtime-source-check.log`。
+- 本版新增多日天气、VAD/静默/grace/watchdog 交接、ASR 异常恢复、prepare 绝对期限与重连旧结果 fencing；保留跨已提交区间救援防重复门、ACK/正文 handoff 与有效输出恢复。Bridge 下行计量已明确为 **post-pacer send**，不能外推 provider 产出速度或设备 I2S/DMA 状态；具体修复边界见上方同日条目。
+- 2026-09-15 保留清理：只读预检后删除 allowlist 内 **18 个旧 Agent source-overlay image ID（其中 3 对共 6 个 tag，另 15 个 dangling）**，以及三个旧版本的 **6 项 source tar/build payload**。当前、紧邻回滚及其旧 override 所需别名、独立 runtime-base、非目标容器、manifest/收据均保留；清理后再次核对保护镜像 ID 与双 healthy。`df -B1` 可用 **63,834,279,936 → 63,985,270,784 bytes**，净增约 **144 MiB**，不能按镜像虚拟大小声称回收数 GB。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/{retention-preflight.log,retention-apply.log}`；未清理 build cache、全栈 incoming 或任何数据库/WAL/MinIO/安全备份。
 
 **Media Edge**
 
