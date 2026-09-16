@@ -35,10 +35,28 @@ COPY packages ./packages
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py \
      scripts/run_media_bridge.py scripts/run_media_slo_reporter.py \
      scripts/media_runtime_smoke.py ./scripts/
+# Explicit mode: the runtime user (65532) must be able to read the gate, and
+# the source file's mode is not something a build may depend on.
+COPY --chmod=0644 scripts/verify_agent_release_artifact.py ./scripts/verify_agent_release_artifact.py
 # Reviewed runtime voice maps (no secrets).
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 COPY infra/kws/keywords.txt ./infra/kws/keywords.txt
+
+# COPY preserves the build host's file modes, and a checkout made under a
+# restrictive umask ships 0600 sources the runtime user (65532) cannot read —
+# including the gate script itself. Normalise every copied tree so the shipped
+# artifact does not depend on who built it.
+RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
+
+# Release gate: this exact venv and source tree must still carry the pinned
+# LiveKit group, the telemetry privacy defaults (fresh-process bootstrap, a
+# real-exporter canary and its negative control) and the 1.8.x turn-handling
+# contract. It runs offline. It is invoked as a module because the project
+# itself is not installed into the venv, so `-m` is what keeps /app on
+# sys.path; leaving the file in the image lets the release rehearsal re-run the
+# same gate against the deployed candidate.
+RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 
 USER 65532:65532
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "services.agent.src.main"]

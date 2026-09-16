@@ -29,6 +29,8 @@ jobs:
               - 'services/control_api/tests/test_production_compose.py'
               - 'infra/Dockerfile.agent-source-overlay'
               - 'scripts/deploy_agent_component.sh'
+              - 'scripts/verify_agent_release_artifact.py'
+              - 'scripts/resolve_target_images.py'
             python:
               - '.github/workflows/ci.yml'
               - 'pyproject.toml'
@@ -98,6 +100,11 @@ jobs:
           uv run pytest --import-mode=importlib --no-cov
           services/agent/tests/unit
           services/control_api/tests/test_production_compose.py
+      - name: Agent release gate script tests
+        run: >-
+          uv run pytest --import-mode=importlib --no-cov
+          scripts/tests/test_verify_agent_release_artifact.py
+          scripts/tests/test_resolve_target_images.py
       - name: Agent source-overlay script syntax
         run: bash -n scripts/deploy_agent_component.sh
 
@@ -218,6 +225,20 @@ jobs:
         run: go test ./...
       - name: Race test
         run: go test -race ./...
+
+  agent-image:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Agent image with its in-build release gate
+        run: docker build -f infra/Dockerfile.agent -t memoria-agent:ci .
+      - name: Re-run the release gate against the shipped candidate
+        run: >-
+          docker run --rm --network none
+          --entrypoint /app/.venv/bin/python memoria-agent:ci
+          -m scripts.verify_agent_release_artifact
 
   media-edge-image:
     needs: changes

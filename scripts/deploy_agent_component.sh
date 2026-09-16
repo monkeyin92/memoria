@@ -128,7 +128,9 @@ else
     "${gate_env[@]}" uv run --project "$ROOT" --extra dev pytest \
     --import-mode=importlib --no-cov -q \
     "$ROOT/services/agent/tests/unit" \
-    "$ROOT/services/control_api/tests/test_production_compose.py"
+    "$ROOT/services/control_api/tests/test_production_compose.py" \
+    "$ROOT/scripts/tests/test_verify_agent_release_artifact.py" \
+    "$ROOT/scripts/tests/test_resolve_target_images.py"
   echo "agent component release gates passed" >&2
 fi
 
@@ -184,7 +186,7 @@ scope_rejections=()
 while IFS= read -r changed; do
   [[ -z "$changed" ]] && continue
   case "$changed" in
-    services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh|scripts/run_media_bridge.py)
+    services/agent/*|services/control_api/tests/test_production_compose.py|infra/Dockerfile.agent-source-overlay|scripts/deploy_agent_component.sh|scripts/run_media_bridge.py|scripts/verify_agent_release_artifact.py|scripts/resolve_target_images.py)
       ;;
     packages/*|services/common/*)
       # Covered by the whole-tree component overlay; nothing goes stale.
@@ -211,22 +213,29 @@ tmp="$(mktemp -d /tmp/memoria-agent-component.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 artifact="$tmp/agent-source.tar"
 dockerfile="$tmp/Dockerfile.agent-source-overlay"
+resolver="$tmp/resolve_target_images.py"
 manifest="$tmp/component-manifest.txt"
 
 # The component overlay carries the whole application tree (see
 # infra/Dockerfile.agent-source-overlay): the Agent imports shared runtime
 # packages whose in-image copies are pinned by the dependency base image, so
-# the archive must ship one consistent source revision.
+# the archive must ship one consistent source revision. The release-artifact
+# verifier ships inside that tree because the overlay replaces the base image's
+# copy with the candidate's own source.
 git -C "$ROOT" archive \
   --format=tar \
   --prefix=memoria/ \
   "$expected_commit" \
   services packages \
   scripts/run_media_bridge.py \
+  scripts/verify_agent_release_artifact.py \
   >"$artifact"
 git -C "$ROOT" show \
   "$expected_commit:infra/Dockerfile.agent-source-overlay" \
   >"$dockerfile"
+git -C "$ROOT" show \
+  "$expected_commit:scripts/resolve_target_images.py" \
+  >"$resolver"
 
 archive_commit="$(git get-tar-commit-id <"$artifact")"
 [[ "$archive_commit" == "$expected_commit" ]] || {
@@ -237,10 +246,12 @@ archive_commit="$(git get-tar-commit-id <"$artifact")"
 if command -v sha256sum >/dev/null 2>&1; then
   source_sha="$(sha256sum "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(sha256sum "$dockerfile" | cut -d ' ' -f1)"
+  resolver_sha="$(sha256sum "$resolver" | cut -d ' ' -f1)"
   compose_sha="$(git -C "$ROOT" show "$base_commit:docker-compose.production.yml" | sha256sum | cut -d ' ' -f1)"
 else
   source_sha="$(shasum -a 256 "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(shasum -a 256 "$dockerfile" | cut -d ' ' -f1)"
+  resolver_sha="$(shasum -a 256 "$resolver" | cut -d ' ' -f1)"
   compose_sha="$(git -C "$ROOT" show "$base_commit:docker-compose.production.yml" | shasum -a 256 | cut -d ' ' -f1)"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
@@ -263,6 +274,7 @@ runtime_base=$runtime_base
 target_image=$target_image
 source_sha256=$source_sha
 dockerfile_sha256=$dockerfile_sha
+resolver_sha256=$resolver_sha
 compose_sha256=$compose_sha
 EOF
 
@@ -290,13 +302,13 @@ rsync \
   --protect-args \
   --chmod=F600 \
   "--rsync-path=sudo -n rsync" \
-  "$artifact" "$dockerfile" "$manifest" \
+  "$artifact" "$dockerfile" "$resolver" "$manifest" \
   "$remote:$remote_dir/"
 
 ssh "$remote" sudo -n bash -s -- \
   "$remote_dir" "$source_sha" "$dockerfile_sha" "$expected_commit" \
   "$base_image" "$base_image_id" "$base_commit" "$runtime_base" "$target_image" \
-  "$release_tag" <<'REMOTE_BUILD'
+  "$release_tag" "$resolver_sha" <<'REMOTE_BUILD'
 set -Eeuo pipefail
 remote_dir="$1"
 source_sha="$2"
@@ -308,10 +320,12 @@ base_commit="$7"
 runtime_base="$8"
 target_image="$9"
 release_tag="${10}"
+resolver_sha="${11}"
 
 cd "$remote_dir"
 printf '%s  %s\n' "$source_sha" agent-source.tar | sha256sum -c -
 printf '%s  %s\n' "$dockerfile_sha" Dockerfile.agent-source-overlay | sha256sum -c -
+printf '%s  %s\n' "$resolver_sha" resolve_target_images.py | sha256sum -c -
 archive_commit="$(git get-tar-commit-id <agent-source.tar)"
 [[ "$archive_commit" == "$expected_commit" ]]
 [[ "$(docker image inspect "$base_image" --format '{{.Id}}')" == "$base_image_id" ]]
@@ -389,7 +403,7 @@ fi
 ssh "$remote" sudo -n bash -s -- \
   "$remote_dir" "$target_image" "$release_tag" "$compose_sha" \
   "$expected_commit" "$base_image" "$base_image_id" "$base_commit" \
-  "$runtime_base" "$source_sha" "$dockerfile_sha" <<'REMOTE_CUTOVER'
+  "$runtime_base" "$source_sha" "$dockerfile_sha" "$resolver_sha" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
@@ -402,11 +416,13 @@ manifest_base_commit="$8"
 manifest_runtime_base="$9"
 manifest_source_sha="${10}"
 manifest_dockerfile_sha="${11}"
+manifest_resolver_sha="${12}"
 
 manifest_path="$remote_dir/component-manifest.txt"
 python3 - "$manifest_path" "$target_image" "$release_tag" "$release_commit" \
   "$manifest_base_image" "$manifest_base_image_id" "$manifest_base_commit" \
   "$manifest_runtime_base" "$manifest_source_sha" "$manifest_dockerfile_sha" \
+  "$manifest_resolver_sha" \
   "$expected_compose_sha" <<'PY'
 import re
 import sys
@@ -423,6 +439,7 @@ from pathlib import Path
     expected_runtime_base,
     expected_source_sha,
     expected_dockerfile_sha,
+    expected_resolver_sha,
     expected_compose_sha,
 ) = sys.argv[1:]
 expected_keys = (
@@ -437,6 +454,7 @@ expected_keys = (
     "target_image",
     "source_sha256",
     "dockerfile_sha256",
+    "resolver_sha256",
     "compose_sha256",
 )
 values: dict[str, str] = {}
@@ -469,6 +487,7 @@ expected = {
     "target_image": expected_target_image,
     "source_sha256": expected_source_sha,
     "dockerfile_sha256": expected_dockerfile_sha,
+    "resolver_sha256": expected_resolver_sha,
     "compose_sha256": expected_compose_sha,
 }
 if values != expected:
@@ -481,7 +500,7 @@ if not re.fullmatch(r"[0-9a-f]{40}", values["base_commit"]):
     raise SystemExit("component manifest base_commit is invalid")
 if not re.fullmatch(r"sha256:[0-9a-f]{64}", values["base_image_id"]):
     raise SystemExit("component manifest base_image_id is invalid")
-for key in ("source_sha256", "dockerfile_sha256", "compose_sha256"):
+for key in ("source_sha256", "dockerfile_sha256", "resolver_sha256", "compose_sha256"):
     if not re.fullmatch(r"[0-9a-f]{64}", values[key]):
         raise SystemExit(f"component manifest {key} is invalid")
 if not re.fullmatch(r"memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*", values["base_image"]):
@@ -1004,6 +1023,25 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
   } >"$remote_dir/ROLLBACK_POINT.txt"
 sha256sum "$remote_dir/ROLLBACK_POINT.txt" >"$remote_dir/ROLLBACK_POINT.txt.sha256"
 
+# Prove that the live Compose chain plus the candidate override resolves both
+# target services to THIS candidate before anything is replaced. The resolver
+# requires an explicit candidate identity, so a chain that still names the
+# effective stack image (a missing candidate override, or an old-image
+# override applied after it) fails here, while the running stack is untouched.
+resolve_output="$(
+  cd "$working_dir"
+  python3 "$remote_dir/resolve_target_images.py" \
+    --release-dir "$(cd "$(dirname "$base_file")" && pwd)" \
+    --stack-tag "$stack_release_tag" \
+    --release-commit "$stack_release_commit" \
+    --expected-tag "$release_tag" \
+    --expected-image "$target_image" \
+    --docker-cmd docker \
+    --override "$live_override" \
+    --override "$override"
+)"
+printf '%s\n' "$resolve_output"
+
 rollback() {
   exit_code=$?
   trap - ERR
@@ -1057,6 +1095,7 @@ trap - ERR
   docker inspect "$bridge_container" --format 'bridge_image={{.Config.Image}} bridge_image_id={{.Image}} bridge_health={{.State.Health.Status}}'
   printf 'runtime_stack_release_tag=%s\n' "$stack_release_tag"
   printf 'rollback_image=%s\n' "$rollback_image"
+  printf 'resolved_target_images=%s\n' "$(printf '%s' "$resolve_output" | paste -sd'|' -)"
 } | tee "$remote_dir/CUTOVER_RESULT.txt"
 (cd "$remote_dir" && sha256sum CUTOVER_RESULT.txt >CUTOVER_RESULT.txt.sha256)
 REMOTE_CUTOVER

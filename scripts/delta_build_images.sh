@@ -108,9 +108,15 @@ WORKDIR /app
 COPY services ./services
 COPY packages ./packages
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
+# Delta builds replace the source tree on top of a base image that may predate
+# the gate, so the verifier is copied from this source tree rather than reused
+# from the base, and then re-runs against the combined candidate.
+COPY --chmod=0644 scripts/verify_agent_release_artifact.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 COPY infra/kws/keywords.txt ./infra/kws/keywords.txt
+RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts /app/infra
+RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact
 USER 65532:65532
 EOF
 

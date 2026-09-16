@@ -1082,3 +1082,69 @@ def test_nginx_publicly_blocks_v1_internal_routes_without_touching_container_url
         "nginx-memoria-loopback-smoke.conf",
     ):
         assert exact not in (ROOT / "infra" / snippet).read_text(encoding="utf-8")
+
+
+def test_agent_release_artifact_gate_is_wired_into_every_agent_build_path() -> None:
+    """A green local build must not be able to skip the artifact gate.
+
+    The verifier checks the pinned LiveKit group, the telemetry privacy
+    defaults (fresh-process bootstrap, a real-exporter canary and its negative
+    control) and the 1.8.x turn-handling contract. It used to exist without any
+    caller, so all three Agent image paths must now run it, and the source
+    overlay must ship the candidate's own copy instead of trusting the base
+    image.
+    """
+
+    agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
+    overlay = (ROOT / "infra" / "Dockerfile.agent-source-overlay").read_text(
+        encoding="utf-8"
+    )
+    delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    gate = "RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact"
+    verifier = "scripts/verify_agent_release_artifact.py"
+    # `-m` is required: the project is not installed into the image venv, so
+    # running the file by path would leave /app off sys.path.
+    assert gate in agent_dockerfile
+    assert verifier in agent_dockerfile
+    assert gate in overlay
+    assert verifier in overlay
+    assert gate in delta_builder
+    assert verifier in delta_builder
+    assert "memoria/scripts/verify_agent_release_artifact.py" in overlay
+    assert verifier in deploy
+    assert "scripts/verify_agent_release_artifact.py \\\n" in deploy
+
+    # The same gate must be reproducible against the shipped candidate.
+    assert "-m scripts.verify_agent_release_artifact" in workflow
+    assert "scripts/tests/test_verify_agent_release_artifact.py" in workflow
+    assert "scripts/tests/test_resolve_target_images.py" in workflow
+
+
+def test_target_image_resolver_requires_an_explicit_candidate_identity() -> None:
+    """A consistency-only check passes when both services still point live."""
+
+    resolver = (ROOT / "scripts" / "resolve_target_images.py").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+
+    assert "explicit candidate identity is required" in resolver
+    assert "consistency alone" in resolver
+    assert "still resolves to the effective stack image" in resolver
+    # The effective stack tag and the candidate tag are different identities.
+    assert "--expected-tag" in deploy
+    assert '--stack-tag "$stack_release_tag"' in deploy
+    assert '--release-commit "$stack_release_commit"' in deploy
+    assert '--expected-image "$target_image"' in deploy
+    assert '"$remote_dir/resolve_target_images.py"' in deploy
+    assert '"$artifact" "$dockerfile" "$resolver" "$manifest" \\' in deploy
+    assert 'resolver="$tmp/resolve_target_images.py"' in deploy
+    assert "resolver_sha256=" in deploy
+    assert "resolved_target_images=" in deploy
+    # The resolver must run before the rollback trap: a chain that still names
+    # the live image has to fail closed without touching the running stack.
+    assert deploy.index("resolved_target_images=") > deploy.index("trap rollback ERR")
+    assert deploy.index('"$remote_dir/resolve_target_images.py"') < deploy.index(
+        '--profile media-runtime up -d --no-deps --no-build'
+    )

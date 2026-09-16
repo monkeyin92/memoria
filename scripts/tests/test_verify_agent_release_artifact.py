@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from scripts import verify_agent_release_artifact
 
 
 def test_verify_agent_release_artifact_runs_cleanly() -> None:
-    assert verify_agent_release_artifact.main() == 0
+    # The SDK compatibility check constructs a real AgentSession, which asks
+    # asyncio for the current loop. Give it one so the gate behaves the same
+    # whether it runs alone or after other tests that closed the default loop.
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        assert verify_agent_release_artifact.main() == 0
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def test_verify_agent_release_artifact_fails_when_entrypoint_lacks_privacy() -> None:
