@@ -920,3 +920,67 @@ async def test_batch_synthesis_classifies_a_stall_after_first_audio_as_total_tim
     finally:
         await tts.aclose()
         server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_voice_stall_after_audio_is_terminal_without_voice_change() -> None:
+    """After audio exists a stall ends the attempt; the sentence is never replayed.
+
+    A personal (cloned) voice may only fall back to the designed voice BEFORE any
+    audio arrived.  Once a PCM frame was produced the utterance is bound to the
+    requested speaker, so a stall must surface as a terminal error with the
+    partial audio instead of a second session in another voice.
+    """
+
+    server = MockDoubaoServer(scenario="stall_after_first_pcm")
+    server.start()
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.5, total_timeout_s=0.15))
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_personal_stall",
+        profile_id="personal-stall",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    try:
+        with pytest.raises(APIConnectionError, match="total-timeout"):
+            await tts.synthesize_stream_text(
+                ["只发一半就停下的个人音色句子"],
+                fence=GenerationFence("personal-stall", 1, 1, 0),
+            )
+        assert server.sessions == 1
+        assert server.speakers == ["S_personal_stall"]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_voice_failure_before_audio_still_falls_back_once() -> None:
+    """The retry that MAY change voice is the pre-audio one."""
+
+    server = MockDoubaoServer(scenario="slow_once")
+    server.start()
+    # The first session spends the first-packet budget before any PCM exists.
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_personal_before_audio",
+        profile_id="personal-before-audio",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    try:
+        result = await tts.synthesize_stream_text(
+            ["首包失败后回落设计音色。"],
+            fence=GenerationFence("personal-before-audio", 1, 1, 0),
+        )
+        assert result.pcm
+        assert server.sessions == 2
+        assert server.speakers[0] == "S_personal_before_audio"
+        assert server.speakers[1] != "S_personal_before_audio"
+    finally:
+        await tts.aclose()
+        server.stop()

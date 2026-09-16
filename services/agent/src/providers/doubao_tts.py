@@ -43,7 +43,11 @@ from services.agent.src.providers.doubao_voice_catalog import (
     catalog_by_id,
     resolve_approved_voice,
 )
-from services.agent.src.providers.generation_budget import GenerationBudget
+from services.agent.src.providers.generation_budget import (
+    BeforeAudioError,
+    GenerationBudget,
+    retry_allowed,
+)
 from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -221,16 +225,21 @@ class SynthesizeResult:
     discarded: bool = False
 
 
-class DoubaoBeforeAudioError(RuntimeError):
-    pass
+class DoubaoBeforeAudioError(BeforeAudioError, RuntimeError):
+    """Raised only while this attempt produced no PCM, so a retry may change voice."""
 
 
-class DoubaoFirstAudioTimeoutError(TimeoutError):
-    pass
+class DoubaoFirstAudioTimeoutError(BeforeAudioError, TimeoutError):
+    """Raised when the first-packet budget is spent before any PCM arrived."""
 
 
 class DoubaoTimestampError(RuntimeError):
-    pass
+    """Post-audio timestamp failure: terminal for the attempt (never retried).
+
+    Doubao delivers words alongside the audio stream; when the finished stream
+    cannot be aligned the attempt is treated as a provider failure.  There is no
+    alignment-only retry here, so a sentence with audio is never re-synthesized.
+    """
 
 
 class DoubaoPCMContinuityError(ValueError):
@@ -1244,6 +1253,22 @@ class DoubaoTTS(tts.TTS[Any]):
         fence: GenerationFence,
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
+        """Synthesize with at most one fresh-connection retry.
+
+        Retry rule (shared with the CosyVoice batch path):
+
+        - a pre-audio failure may be retried, and a personal voice may fall back
+          to the designed voice first, because no audio with the requested voice
+          reached the caller yet;
+        - once audio exists every failure is terminal for the attempt: a stall
+          (``APIConnectionError`` first-audio/total-timeout), a provider error,
+          a PCM continuity break and a timestamp failure all surface as errors
+          carrying what exists instead of re-synthesizing the sentence, so
+          partial audio is never replayed as a whole utterance;
+        - at most two attempts are ever made, and the failed attempt's buffer is
+          discarded.
+        """
+
         config = replace(self._config_for_fence(fence))
         pool = self._pools.for_config(config)
         for attempt in range(2):
@@ -1255,15 +1280,22 @@ class DoubaoTTS(tts.TTS[Any]):
                     config=config,
                     pool=pool,
                 )
-            except (DoubaoBeforeAudioError, DoubaoFirstAudioTimeoutError):
+            except (DoubaoBeforeAudioError, DoubaoFirstAudioTimeoutError) as exc:
+                if attempt == 1 or not retry_allowed(exc):
+                    raise
                 if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
                     fallback_config = self._personal_fallback_or_baseline_config()
                     self._activate_fallback_for_fence(fence, fallback_config)
                     config = fallback_config
                     pool = self._pools.for_config(config)
-                    continue
-                if attempt == 1:
-                    raise
+                self.trace(
+                    "doubao_retry",
+                    status="degraded",
+                    detail={
+                        "reason": type(exc).__name__,
+                        "audio_produced": exc.audio_produced,
+                    },
+                )
         raise AssertionError("unreachable")
 
     async def _synthesize_once(

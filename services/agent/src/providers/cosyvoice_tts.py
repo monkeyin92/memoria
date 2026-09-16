@@ -35,7 +35,13 @@ from services.agent.src.providers.cosyvoice_voice_catalog import (
     resolve_voice_id,
     uses_freeform_instruct,
 )
-from services.agent.src.providers.generation_budget import GenerationBudget
+from services.agent.src.providers.generation_budget import (
+    AlignmentRetryError,
+    BeforeAudioError,
+    GenerationBudget,
+    retry_allowed,
+    retry_may_change_voice,
+)
 from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -187,16 +193,20 @@ class SynthesizeResult:
     discarded: bool = False
 
 
-class CosyVoiceFirstAudioTimeoutError(TimeoutError):
+class CosyVoiceFirstAudioTimeoutError(BeforeAudioError, TimeoutError):
     """Raised when a task produces no PCM within the first-audio deadline."""
 
 
-class CosyVoiceBeforeAudioError(RuntimeError):
+class CosyVoiceBeforeAudioError(BeforeAudioError, RuntimeError):
     """Raised when a task fails before any PCM can reach the caller."""
 
 
-class CosyVoiceTimestampError(RuntimeError):
-    """Raised when a completed task has no usable word timestamps."""
+class CosyVoiceTimestampError(AlignmentRetryError, RuntimeError):
+    """Raised when a completed task has no usable word timestamps.
+
+    Audio for the utterance already exists by the time this is raised, so a
+    retry keeps the requested voice instead of falling back to the baseline.
+    """
 
 
 class CosyVoicePool:
@@ -747,7 +757,21 @@ class CosyVoiceTTS(tts.TTS[Any]):
         fence: GenerationFence,
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
-        """Synthesize with one fresh-connection retry for first-audio/timestamp failures."""
+        """Synthesize with at most one fresh-connection retry.
+
+        Retry rule (shared with the Doubao batch path):
+
+        - a pre-audio failure (``BeforeAudioError``) may be retried and may fall
+          back to the baseline voice, because no audio with the requested voice
+          reached the caller yet;
+        - a missing-timestamp failure (``AlignmentRetryError``) may be retried
+          too, but only with the SAME voice: audio for the sentence exists, and
+          switching speaker after audio would deliver another voice for it;
+        - any other failure -- including a stall or a provider error after audio
+          -- is terminal, so the sentence is never replayed as a whole;
+        - at most two attempts are ever made, and the failed attempt's buffer is
+          discarded, so partial audio is never returned as the sentence.
+        """
         config = replace(self._config)
         baseline = replace(
             config,
@@ -767,15 +791,29 @@ class CosyVoiceTTS(tts.TTS[Any]):
                 CosyVoiceFirstAudioTimeoutError,
                 CosyVoiceTimestampError,
             ) as exc:
-                if attempt == 1:
+                if attempt == 1 or not retry_allowed(exc):
                     raise
-                if (config.model, config.voice) != (baseline.model, baseline.voice):
+                voice_changed = False
+                if retry_may_change_voice(exc) and (config.model, config.voice) != (
+                    baseline.model,
+                    baseline.voice,
+                ):
                     config = baseline
+                    voice_changed = True
                     self.trace(
                         "cosyvoice_clone_fallback",
                         status="degraded",
                         detail={"reason": type(exc).__name__},
                     )
+                self.trace(
+                    "cosyvoice_retry",
+                    status="degraded",
+                    detail={
+                        "reason": type(exc).__name__,
+                        "audio_produced": exc.audio_produced,
+                        "voice_changed": voice_changed,
+                    },
+                )
         raise AssertionError("unreachable")
 
     async def _synthesize_once(

@@ -417,7 +417,7 @@ def _result(
 class MockCosyVoiceServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|late_ts|fail|slow|split_pcm
+    scenario: str = "happy"  # happy|late_ts|fail|slow|split_pcm|empty_ts_once|stall_after_pcm
     chunk_delay_s: float = 0.0
     closed_without_reuse: int = 0
     active: int = 0
@@ -552,6 +552,13 @@ class MockCosyVoiceServer:
                 # 20ms of 24kHz mono 16-bit silence * N
                 samples = max(480, len(full) * 240)  # rough
                 await ws.send(b"\x00\x00" * samples)
+
+            if self.scenario == "stall_after_pcm":
+                # The sentence audio exists, then the provider goes silent.  The
+                # client must end this attempt bounded instead of re-synthesizing
+                # the sentence.
+                await asyncio.sleep(30)
+                return
 
             words = []
             t = 0

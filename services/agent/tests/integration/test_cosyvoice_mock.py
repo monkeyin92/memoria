@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from livekit.agents import APIConnectionError
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoicePool, CosyVoiceTTS
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
@@ -322,6 +323,76 @@ async def test_cosyvoice_batch_renews_the_stall_watchdog_across_delayed_chunks()
         )
         assert result.pcm
         assert result.words
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_clone_missing_timestamps_retries_without_changing_voice() -> None:
+    """A post-audio retry keeps the requested voice.
+
+    ``empty_ts_once`` fails only AFTER the sentence audio exists (the word
+    timestamps are missing).  Re-synthesizing may recover the alignment, but it
+    must not fall back to the designed voice: the caller asked for the clone, and
+    switching speaker after audio would deliver another voice for that sentence.
+    """
+
+    srv = MockCosyVoiceServer(scenario="empty_ts_once")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+            pool_size=1,
+        )
+        tts = CosyVoiceTTS(cfg)
+        tts.apply_voice_profile(
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
+        )
+
+        result = await tts.synthesize_stream_text(
+            ["缺时间戳也要保持音色。"],
+            fence=GenerationFence("clone-ts-retry", 1, 1, 0),
+        )
+
+        assert result.pcm
+        assert result.words
+        assert srv.connections == 2
+        assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-clone-owner001",
+        ]
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_stall_after_audio_ends_the_attempt_without_replaying_the_sentence() -> None:
+    """Audio exists, the provider goes silent: bounded failure, no second attempt."""
+
+    srv = MockCosyVoiceServer(scenario="stall_after_pcm")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            pool_size=1,
+            first_audio_timeout_s=0.5,
+            total_timeout_s=0.15,
+        )
+        tts = CosyVoiceTTS(cfg)
+        await tts.pool.warm(1)
+        with pytest.raises(APIConnectionError, match="total-timeout"):
+            await tts.synthesize_stream_text(
+                ["只发一半就停下的句子"],
+                fence=GenerationFence("cosy-stall", 1, 1, 0),
+            )
+        assert srv.connections == 1
         await tts.aclose()
     finally:
         srv.stop()

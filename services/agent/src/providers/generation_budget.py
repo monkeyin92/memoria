@@ -60,3 +60,48 @@ class GenerationBudget:
 
     def failure_reason(self) -> str:
         return "total-timeout" if self.got_audio else "first-audio-timeout"
+
+
+class BeforeAudioError:
+    """Marker: the attempt failed before any audio existed for the utterance.
+
+    The batch helpers (``synthesize_stream_text``) retry by re-synthesizing the
+    **whole** utterance on a fresh connection, so the failed attempt's buffer is
+    discarded: partial audio is never returned as if it were the sentence.
+
+    Only this kind of failure may also change the voice (the personal/clone
+    fallback to the designed voice), because no audio with the requested voice
+    reached the caller yet.
+    """
+
+    audio_produced = False
+    may_change_voice = True
+
+
+class AlignmentRetryError:
+    """Marker: audio exists but the word timestamps for it are missing.
+
+    A retry may re-synthesize once to recover the alignment metadata, but it must
+    keep the SAME voice: audio for this utterance already exists, and switching
+    speaker on the retry would deliver another voice for a sentence the caller
+    asked to hear in the requested one.
+    """
+
+    audio_produced = True
+    may_change_voice = False
+
+
+def retry_allowed(exc: BaseException) -> bool:
+    """Whether one fresh attempt may re-synthesize this failure's utterance.
+
+    Fail closed: an error that is not explicitly marked retryable ends the call
+    instead of replaying the sentence.
+    """
+
+    return isinstance(exc, (BeforeAudioError, AlignmentRetryError))
+
+
+def retry_may_change_voice(exc: BaseException) -> bool:
+    """Whether the retry may fall back to another voice. Only before audio."""
+
+    return bool(getattr(exc, "may_change_voice", False))
