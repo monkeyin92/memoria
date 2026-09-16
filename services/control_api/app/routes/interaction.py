@@ -1981,22 +1981,52 @@ async def response_plan(
             frozen=frozen,
             now=now,
         )
-        profile = _store(request).get_subject_profile(user_id=account_id)
+        # Determine whether the current subject using this session is a student (minor).
+        # Check the persistent Runtime Profile for the session first to identify
+        # the active subject rather than assuming the login account_id.
+        active_subject_id: str = account_id
+        active_subject_category: str | None = None
+        active_age_band: str | None = None
+        runtime_service = getattr(request.app.state, "session_runtime_service", None)
+        if runtime_service is not None:
+            try:
+                session_dict = require_active_voice_session(request, body.session_id)
+                runtime_profile = await _current_persistent_runtime_profile(
+                    request, session_dict, session_id=body.session_id
+                )
+                active_subject_category = runtime_profile.get("subject_category")
+                active_age_band = runtime_profile.get("age_band")
+                if runtime_profile.get("active_subject_id"):
+                    active_subject_id = str(runtime_profile["active_subject_id"])
+            except Exception:
+                pass
+
+        if active_subject_category is None:
+            profile = _store(request).get_subject_profile(user_id=active_subject_id)
+            if profile is None and active_subject_id != account_id:
+                profile = _store(request).get_subject_profile(user_id=account_id)
+            if profile is not None:
+                active_subject_category = profile.get("subject_category")
+                active_age_band = profile.get("birth_year_band")
+
         retention_allowed = await _account_memory_retention_allowed(
             request,
             account_id=account_id,
-            subject_category=(profile or {}).get("subject_category"),
+            subject_category=active_subject_category,
+        )
+        is_minor_student = (
+            active_subject_category == "minor"
+            or active_age_band in {"under_14", "14_17"}
         )
         if (
             crisis.action == "crisis_support"
             and crisis.notify_guardian
             and crisis.script_version is not None
-            and profile is not None
-            and profile.get("subject_category") == "minor"
+            and is_minor_student
         ):
             try:
                 await _crisis_notifications(request).record_minor_crisis(
-                    minor_user_id=account_id,
+                    minor_user_id=active_subject_id,
                     session_id=body.session_id,
                     turn_id=body.fence.turn_id,
                     generation_id=body.fence.generation_id,

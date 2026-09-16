@@ -289,12 +289,14 @@ class MediaSessionStandbyMixin:
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
-        if (
-            context.active_vad_stream_epoch == context.stream_epoch
-            and context.owner_silence_grace_deadline is None
-        ):
-            self._pause_owner_silence_timer(context)
-            return
+        if context.active_vad_stream_epoch == context.stream_epoch:
+            if context.max_user_speech_task is not None:
+                self._cancel_owner_silence_timer(context, preserve_remaining=False)
+                context.owner_silence_grace_deadline = None
+                return
+            if context.owner_silence_grace_deadline is None:
+                self._pause_owner_silence_timer(context)
+                return
         input_pending = (
             context.turn_start_sample is not None
             or context.admitted_input_stream_epoch == context.stream_epoch

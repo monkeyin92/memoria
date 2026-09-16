@@ -223,6 +223,17 @@ class ConsentRecord:
 
 
 class GuardianStorePort(Protocol):
+    async def establish_active_link(
+        self,
+        *,
+        link_id: str | None = None,
+        guardian_user_id: str,
+        minor_user_id: str,
+        relation: Relation = "parent",
+        verified_via: VerifiedVia = "wechat_identity",
+        now: datetime,
+    ) -> GuardianLink: ...
+
     async def create_link(
         self,
         *,

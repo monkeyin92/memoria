@@ -763,10 +763,13 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
             loop = asyncio.get_running_loop()
             first_audio_deadline = loop.time() + config.first_audio_timeout_s
             total_deadline = loop.time() + config.total_timeout_s
+            hard_deadline = loop.time() + max(config.total_timeout_s * 5, 180.0)
             try:
                 while True:
                     deadline = (
-                        total_deadline if got_audio else min(total_deadline, first_audio_deadline)
+                        min(total_deadline, hard_deadline)
+                        if got_audio
+                        else min(total_deadline, first_audio_deadline)
                     )
                     try:
                         message = await self._receive(
@@ -776,6 +779,11 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                     except TimeoutError:
                         reason = "total-timeout" if got_audio else "first-audio-timeout"
                         raise APIConnectionError(reason) from None
+                    if got_audio or message.message_type == MessageType.AUDIO_ONLY_SERVER:
+                        # Streaming in progress: each received chunk resets the stall
+                        # watchdog so long answers are not cut off by an arbitrary
+                        # wall-clock limit, while hard_deadline caps runaway generation.
+                        total_deadline = loop.time() + config.total_timeout_s
                     if message.message_type == MessageType.AUDIO_ONLY_SERVER:
                         if not got_audio:
                             output_emitter.initialize(

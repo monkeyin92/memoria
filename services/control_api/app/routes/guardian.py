@@ -422,20 +422,25 @@ async def guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
     )
-    return {
-        "items": [
+    items = []
+    for item in notifications:
+        minor_profile = _profiles(request).get_subject_profile(user_id=item.minor_user_id)
+        minor_display_name = (minor_profile or {}).get("display_name")
+        if (not minor_display_name or minor_display_name == "朋友") and hasattr(
+            request.app.state, "identity_service"
+        ):
+            try:
+                person = await request.app.state.identity_service.get_person(
+                    item.minor_user_id, actor_person_id=user.user_id
+                )
+                minor_display_name = person.display_name
+            except Exception:
+                pass
+        items.append(
             {
                 "notification_id": item.notification_id,
                 "minor_user_id": item.minor_user_id,
-                "minor_display_name": str(
-                    (
-                        _profiles(request).get_subject_profile(
-                            user_id=item.minor_user_id
-                        )
-                        or {}
-                    ).get("display_name")
-                    or "孩子"
-                ),
+                "minor_display_name": str(minor_display_name or "孩子"),
                 "occurred_at": item.created_at.isoformat(),
                 "delivery_status": item.status,
                 "channel": item.channel,
@@ -443,9 +448,8 @@ async def guardian_notifications(
                 "contains_transcript": False,
                 "contains_severity": False,
             }
-            for item in notifications
-        ]
-    }
+        )
+    return {"items": items}
 
 
 @router.post("/links/{link_id}/confirm")

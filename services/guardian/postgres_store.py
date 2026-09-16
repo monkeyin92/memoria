@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -402,6 +402,71 @@ class PostgresGuardianStore:
                 else None
             ),
         )
+
+    async def establish_active_link(
+        self,
+        *,
+        link_id: str | None = None,
+        guardian_user_id: str,
+        minor_user_id: str,
+        relation: Relation = "parent",
+        verified_via: VerifiedVia = "wechat_identity",
+        now: datetime,
+    ) -> GuardianLink:
+        resolved_link_id = str(uuid.uuid4()) if link_id is None else str(_uuid(link_id, field="link_id"))
+        created_at = _timestamp(now, field="now")
+        expires_at = created_at + timedelta(days=365)
+        code_hash = hashlib.sha256(f"{resolved_link_id}:direct_active".encode()).hexdigest()
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian_user_id,
+                subject_user_id=minor_user_id,
+            )
+            existing = await connection.fetchrow(
+                """
+                SELECT * FROM guardian_links
+                WHERE guardian_user_id = $1 AND minor_user_id = $2 AND status IN ('pending', 'active')
+                """,
+                guardian_user_id,
+                minor_user_id,
+            )
+            if existing is not None:
+                if existing["status"] == "active":
+                    return self._link(existing)
+                row = await connection.fetchrow(
+                    """
+                    UPDATE guardian_links
+                    SET status = 'active', activated_at = $1
+                    WHERE link_id = $2
+                    RETURNING *
+                    """,
+                    created_at,
+                    existing["link_id"],
+                )
+                if row is not None:
+                    return self._link(row)
+            row = await connection.fetchrow(
+                """
+                INSERT INTO guardian_links(
+                    link_id, guardian_user_id, minor_user_id, relation, status,
+                    verified_via, binding_code_hash, binding_expires_at, created_at, activated_at
+                ) VALUES ($1,$2,$3,$4,'active',$5,$6,$7,$8,$8)
+                RETURNING *
+                """,
+                uuid.UUID(resolved_link_id),
+                guardian_user_id,
+                minor_user_id,
+                relation,
+                verified_via,
+                code_hash,
+                expires_at,
+                created_at,
+            )
+            if row is None:  # pragma: no cover
+                raise RuntimeError("guardian link insert failed")
+            return self._link(row)
 
     async def create_link(
         self,

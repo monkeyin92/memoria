@@ -236,3 +236,20 @@ async def test_run_propagates_factory_close_error_after_clean_server_shutdown(
     assert caught.value is close_error
     assert server.stopped
     assert session_factory.closed
+
+
+@pytest.mark.asyncio
+async def test_run_applies_telemetry_privacy_defaults_before_loading_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+    monkeypatch.delenv("LIVEKIT_TELEMETRY_ALLOW_PII", raising=False)
+    server = _Server()
+    session_factory = _SessionFactory()
+    _patch_run(monkeypatch, server=server, session_factory=session_factory)
+
+    await run_media_bridge.run()
+
+    import os
+    assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
+    assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"

@@ -1235,3 +1235,34 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
     assert context.provider_complete is False
     assert finalize is not None and finalize.done() and not finalize.cancelled()
     assert context.closed
+
+
+@pytest.mark.asyncio
+async def test_active_vad_with_armed_watchdog_supersedes_owner_silence_grace() -> None:
+    """When speech is accepted and watchdog armed, silence timer stand down so turns are not dropped."""
+    identity = _owner_silence_identity("vad-supersedes-grace")
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _: FakeMediaProvider(),
+        owner_silence_timeout_s=10,
+        max_user_speech_duration_s=60,
+    )
+    context = await registry._get_or_create(identity)
+    try:
+        # Simulate silence budget dropping to 0 and grace starting
+        context.owner_silence_grace_used = True
+        context.owner_silence_grace_deadline = asyncio.get_running_loop().time() + 0.1
+        context.owner_silence_deadline = context.owner_silence_grace_deadline
+
+        # Now VAD is admitted while grace was pending
+        context.turn_start_sample = 160
+        registry._admit_owner_silence_vad(context, start_sample=160)
+        assert context.active_vad_stream_epoch == identity.stream_epoch
+        assert context.max_user_speech_task is not None
+
+        # Expire owner timer: watchdog has taken ownership, so standby must NOT be requested
+        await _expire_owner_timer(registry, context)
+        assert not context.standby_requested
+        assert context.owner_silence_grace_deadline is None
+    finally:
+        await registry._finalize_session(identity.session_id)

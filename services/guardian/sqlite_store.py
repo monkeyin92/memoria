@@ -562,6 +562,67 @@ class SqliteGuardianStore:
             ),
         )
 
+    async def establish_active_link(
+        self,
+        *,
+        link_id: str | None = None,
+        guardian_user_id: str,
+        minor_user_id: str,
+        relation: Relation = "parent",
+        verified_via: VerifiedVia = "wechat_identity",
+        now: datetime,
+    ) -> GuardianLink:
+        self._ready()
+        created_at = _timestamp(now, field="now")
+        expires_at = created_at + timedelta(days=365)
+        resolved_link_id = str(uuid.UUID(link_id)) if link_id is not None else str(uuid.uuid4())
+        code_hash = hashlib.sha256(f"{resolved_link_id}:direct_active".encode()).hexdigest()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_links
+                WHERE guardian_user_id = ? AND minor_user_id = ? AND status IN ('pending', 'active')
+                """,
+                (guardian_user_id, minor_user_id),
+            ).fetchone()
+            if row is not None:
+                if row["status"] == "active":
+                    return self._link(row)
+                connection.execute(
+                    """
+                    UPDATE guardian_links
+                    SET status = 'active', activated_at = ?
+                    WHERE link_id = ?
+                    """,
+                    (created_at.isoformat(), row["link_id"]),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM guardian_links WHERE link_id = ?",
+                    (row["link_id"],),
+                ).fetchone()
+                if updated is not None:
+                    return self._link(updated)
+            connection.execute(
+                """
+                INSERT INTO guardian_links(
+                    link_id, guardian_user_id, minor_user_id, relation, status,
+                    verified_via, binding_code_hash, binding_expires_at, created_at, activated_at
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolved_link_id,
+                    guardian_user_id,
+                    minor_user_id,
+                    relation,
+                    verified_via,
+                    code_hash,
+                    expires_at.isoformat(),
+                    created_at.isoformat(),
+                    created_at.isoformat(),
+                ),
+            )
+        return await self.get_link(link_id=resolved_link_id, actor_user_id=guardian_user_id)
+
     async def create_link(
         self,
         *,

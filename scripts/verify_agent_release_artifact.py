@@ -8,7 +8,9 @@ non-zero on the first failed assertion, which fails the image build.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 
 EXPECTED_VERSIONS = {
@@ -34,6 +36,157 @@ def _check_versions() -> None:
         if actual != expected:
             raise SystemExit(f"{package}: expected {expected}, got {actual}")
     print(f"version pins OK: {EXPECTED_VERSIONS}")
+
+
+def _run_subprocess_check(code: str, *, env_overrides: Mapping[str, str | None] | None = None) -> None:
+    """Run verification code in a completely clean child interpreter."""
+    env = os.environ.copy()
+    if env_overrides:
+        for k, v in env_overrides.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
+    res = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        sys.stderr.write(res.stderr)
+        raise SystemExit(f"Subprocess privacy check failed with exit code {res.returncode}")
+
+
+def _check_privacy_defaults() -> None:
+    """Validate privacy gates across both Agent and Bridge in clean child processes.
+
+    Prevents false-greens:
+    1. Tests Agent bootstrap with unset and empty env vars.
+    2. Tests Media Bridge bootstrap with unset and empty env vars.
+    3. Runs real InMemorySpanExporter canary test to prove no PII/content leaks.
+    4. Runs negative control to prove that omitting the bootstrap call would FAIL.
+    5. Verifies explicit operator overrides are respected.
+    """
+    clean_env = {
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
+        "LIVEKIT_TELEMETRY_ALLOW_PII": None,
+    }
+
+    # 1. Agent bootstrap in fresh process
+    agent_code = """
+import os
+from services.agent.src.main import _apply_telemetry_privacy_defaults
+applied = _apply_telemetry_privacy_defaults()
+assert applied.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
+assert applied.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
+assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
+assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
+
+from livekit.agents.telemetry import gen_ai
+assert gen_ai.capture_content_enabled() is False, "Agent bootstrap failed to disable gen_ai content capture"
+"""
+    _run_subprocess_check(agent_code, env_overrides=clean_env)
+
+    # 2. Bridge bootstrap in fresh process (scripts.run_media_bridge)
+    bridge_code = """
+import os
+import scripts.run_media_bridge
+assert os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT") == "0"
+assert os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII") == "0"
+
+from livekit.agents.telemetry import gen_ai
+assert gen_ai.capture_content_enabled() is False, "Bridge bootstrap failed to disable gen_ai content capture"
+"""
+    _run_subprocess_check(bridge_code, env_overrides=clean_env)
+
+    # 3. Real exporter canary test
+    canary_code = """
+import os
+import json
+from services.agent.src.main import _apply_telemetry_privacy_defaults
+_apply_telemetry_privacy_defaults()
+
+from livekit.agents.telemetry import traces, gen_ai
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+traces.set_tracer_provider(provider)
+
+CANARY_NAME = "诸葛西柚-假名-canary-8f2c"
+CANARY_PRIVATE_TEXT = "我儿子小周对猫毛过敏，家里地址是假地址-canary-8f2c"
+
+with provider.get_tracer("memoria.pii.canary").start_as_current_span("gen_ai.chat") as span:
+    gen_ai.set_content_attributes(
+        span,
+        system_instructions=[{"type": "text", "content": CANARY_NAME}],
+        input_messages=[
+            {"role": "user", "parts": [{"type": "text", "content": CANARY_PRIVATE_TEXT}]}
+        ],
+    )
+
+exported = json.dumps(
+    [{k: str(v) for k, v in (s.attributes or {}).items()} for s in exporter.get_finished_spans()],
+    ensure_ascii=False,
+)
+assert CANARY_NAME not in exported, "CANARY_NAME leaked to exporter"
+assert CANARY_PRIVATE_TEXT not in exported, "CANARY_PRIVATE_TEXT leaked to exporter"
+"""
+    _run_subprocess_check(canary_code, env_overrides=clean_env)
+
+    # 4. Negative control: verify that without defaults, capture_content_enabled is True and canary leaks
+    negative_control_code = """
+import os
+import json
+from livekit.agents.telemetry import traces, gen_ai
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+assert gen_ai.capture_content_enabled() is True, "Expected default capture_content_enabled to be True"
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+traces.set_tracer_provider(provider)
+
+CANARY_PRIVATE = "canary-leak-proof-1234"
+with provider.get_tracer("memoria.test").start_as_current_span("gen_ai.chat") as span:
+    gen_ai.set_content_attributes(
+        span,
+        input_messages=[
+            {"role": "user", "parts": [{"type": "text", "content": CANARY_PRIVATE}]}
+        ],
+    )
+
+exported = json.dumps(
+    [{k: str(v) for k, v in (s.attributes or {}).items()} for s in exporter.get_finished_spans()],
+    ensure_ascii=False,
+)
+assert CANARY_PRIVATE in exported, "Expected canary to leak when defaults are not applied"
+"""
+    _run_subprocess_check(negative_control_code, env_overrides=clean_env)
+
+    # 5. Operator explicit preservation test
+    override_env = {
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "0",
+        "LIVEKIT_TELEMETRY_ALLOW_PII": "0",
+    }
+    override_code = """
+import os
+from services.agent.src.main import _apply_telemetry_privacy_defaults
+applied = _apply_telemetry_privacy_defaults()
+assert applied["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "0"
+assert applied["LIVEKIT_TELEMETRY_ALLOW_PII"] == "0"
+"""
+    _run_subprocess_check(override_code, env_overrides=override_env)
+
+    print("telemetry privacy defaults (Agent + Bridge + Canary + Anti-regression) OK")
 
 
 def _check_sdk_compatibility() -> None:
@@ -77,10 +230,10 @@ def _check_sdk_compatibility() -> None:
         if dict(resolved["endpointing"]) != config["endpointing"]:
             raise SystemExit(f"endpointing not consumed: {dict(resolved['endpointing'])}")
         for group in ("enabled", "mode", "min_duration", "false_interruption_timeout"):
-            if resolved["interruption"][group] != config["interruption"][group]:
+            if dict(resolved["interruption"])[group] != config["interruption"][group]:
                 raise SystemExit(f"interruption.{group} not consumed")
         for group in ("enabled", "preemptive_tts"):
-            if resolved["preemptive_generation"][group] != config["preemptive_generation"][group]:
+            if dict(resolved["preemptive_generation"])[group] != config["preemptive_generation"][group]:
                 raise SystemExit(f"preemptive_generation.{group} not consumed")
         # 1.8.x adds user_turn_limit; the upgrade must not start enforcing it.
         limits = resolved["user_turn_limit"]
@@ -105,26 +258,10 @@ def _check_sdk_compatibility() -> None:
     print("in-artifact SDK compatibility OK")
 
 
-def _check_privacy_defaults() -> None:
-    from services.agent.src import main as main_module
-
-    for name in (
-        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
-        "LIVEKIT_TELEMETRY_ALLOW_PII",
-    ):
-        os.environ.pop(name, None)
-    applied = main_module._apply_telemetry_privacy_defaults()
-    if applied["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] != "0":
-        raise SystemExit(f"content capture not disabled by default: {applied}")
-    if applied["LIVEKIT_TELEMETRY_ALLOW_PII"] != "0":
-        raise SystemExit(f"PII export not disabled by default: {applied}")
-    print(f"telemetry privacy defaults OK: {applied}")
-
-
 def main() -> int:
     _check_versions()
-    _check_sdk_compatibility()
     _check_privacy_defaults()
+    _check_sdk_compatibility()
     print("agent release artifact verification PASSED")
     return 0
 

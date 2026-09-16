@@ -666,6 +666,7 @@ class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
     scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
+    chunk_delay_s: float = 0.0
     connections: int = 0
     sessions: int = 0
     task_requests: list[list[str]] = field(default_factory=list)
@@ -818,6 +819,8 @@ class MockDoubaoServer:
         else:
             chunks = (pcm,)
         for chunk in chunks:
+            if self.chunk_delay_s > 0:
+                await asyncio.sleep(self.chunk_delay_s)
             await ws.send(
                 _doubao_server_frame(
                     EventType.TTS_RESPONSE,

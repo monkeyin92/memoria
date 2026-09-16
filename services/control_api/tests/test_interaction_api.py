@@ -295,6 +295,7 @@ def _attach_signed_runtime_profile(
     *,
     user_id: str,
     session_id: str,
+    active_subject_id: str | None = None,
     expired: bool = False,
     unknown_subject: bool = False,
     subject_category: str = "adult",
@@ -303,6 +304,7 @@ def _attach_signed_runtime_profile(
     capabilities: tuple[str, ...] | None = None,
 ) -> RuntimeProfileSignedV2:
     now = datetime.now(UTC)
+    resolved_active_subject_id = active_subject_id if active_subject_id is not None else user_id
     subject_payload = (
         {
             "active_subject_id": None,
@@ -333,7 +335,7 @@ def _attach_signed_runtime_profile(
         }
         if unknown_subject
         else {
-            "active_subject_id": user_id,
+            "active_subject_id": resolved_active_subject_id,
             "subject_revision": 1,
             "subject_category": subject_category,
             "age_band": age_band,

@@ -777,3 +777,24 @@ async def test_livekit_stream_does_not_replay_after_audio_without_subtitles() ->
     finally:
         await tts.aclose()
         server.stop()
+
+
+@pytest.mark.asyncio
+async def test_streaming_audio_resets_stall_watchdog_beyond_initial_total_timeout() -> None:
+    """Active chunk delivery resets the stall watchdog, allowing long generation beyond total_timeout_s."""
+    server = MockDoubaoServer(chunk_delay_s=0.04)
+    server.start()
+    # total_timeout_s is 0.08s; with 4 chunks delayed by 0.04s, total generation takes ~0.16s
+    # In the old logic, this timed out with total-timeout at 0.08s.
+    # In the fixed logic, each chunk resets total_deadline and generation completes.
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.2, total_timeout_s=0.08))
+    try:
+        result = await tts.synthesize_stream_text(
+            ["今天天气很好，温度二十度，适宜出行。"],
+            fence=GenerationFence("long-stream", 1, 1, 0),
+        )
+        assert result.pcm
+        assert result.words
+    finally:
+        await tts.aclose()
+        server.stop()

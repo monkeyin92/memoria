@@ -7,12 +7,29 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-16
-resume_checkpoint: livekit_181_released_to_agent_bridge_and_p0_04_student_safety_loop_http_verified_device_acceptance_pending_20260916
+resume_checkpoint: livekit_181_released_and_device_acceptance_20260916_longplay_48s_over_45s_but_device_stall_above_~55s_and_tts_20s_wall_open_20260916
 livekit_upgrade: released_20260916_agent_and_bridge_181_delta_build
 livekit_upgrade_candidate_verified: lock_check_frozen_install_sdk_compat_typeddict_consumption_pii_canary_5002_passed_in_artifact_verifier_passed
-student_safety_loop_verified: http_level_outbox_enqueue_guardian_readback_fixed_script_text_exact
+student_safety_loop_verified: http_level_outbox_enqueue_guardian_readback_fixed_script_text_exact_and_independent_minor_person_without_child_account_verified
 guardian_notification_delivery_channel: absent_outbox_only_status_pending
-next_human_action: real_device_acceptance_when_operator_available
+doubao_tts_total_wall_fixed_locally: streaming_stall_watchdog_reset_on_received_chunks_with_180s_hard_cap_20260916
+near_silence_followup_fixed_locally: active_vad_with_armed_watchdog_cancels_silence_timer_preventing_premature_close_during_speech_20260916
+bridge_privacy_gate_fixed_locally: bridge_startup_telemetry_defaults_wired_verifier_subprocess_canary_negative_control_passed_image_resolver_candidate_verification_passed_20260916
+next_human_action: investigate_device_playout_stall_above_~55s_answers_and_candidate_release_cutover_20260916
+# 2026-09-16 真机验收（当前版本 20260916-livekit-181-v1 + 板上 0025 计量候选）。五段捕获、八种会话；证据 outputs/acceptance/run-20260916-p0-03-livekit181-device-acceptance/findings.md。
+device_acceptance_20260916: captured_eight_conversations_latency_variable_vad_admission_pass_longplay_48.28s_over_45s_farewell_2of4_device_stall_2of2_above_~55s
+device_acceptance_three_step_20260916: completed_in_one_session_epoch_1963_session_de598a18_three_day_weather_then_followup_turn3_then_explicit_farewell
+device_acceptance_three_step_latency_20260916: first_answer_ack_to_body_1.969s_over_1.5s_gate_device_vad_end_to_frame_4.557s_latency_not_consistently_met
+near_silence_followup_20260916: epoch_1962_followup_asr_final_text_len_5_then_device_vad_start_6.77s_after_playback_admitted_with_zero_budget_then_owner_silence_timeout_no_turn_committed
+device_acceptance_latency_20260916: ack_to_body_samples_0.356s_0.383s_0.323s_0.362s_0.426s_0.642s_pass_and_1.969s_fail_commit_to_first_frame_0.310s_0.307s_0.316s_0.324s_0.318s_historical_5.028s_not_reproduced
+device_acceptance_vad_admission_20260916: followup_question_got_two_vad_start_admitted_lines_first_time_silence_remaining_1.59s_and_0.0s_grace_inactive_watchdog_armed
+device_playout_stall_20260916: reproduced_2of2_on_57.46s_and_58.88s_answers_devices_speaking_stuck_console_silent_until_hard_reset
+device_playout_stall_correlate_20260916: both_stalls_had_366ms_and_412ms_supply_wait_at_1.5-1.6s_clean_44.18s_and_48.28s_runs_had_none
+device_playout_stall_edge_side_20260916: backpressure_drop_0_stale_generation_drop_0_edge_lane_cap_32_frames_pacer_never_stalled
+doubao_tts_total_wall_20260916: production_env_DOUBAO_TTS_TOTAL_TIMEOUT_S_20_cut_58.88s_answer_at_20.23s_wall_error_terminal_38.6s_later
+post_playback_farewell_20260916: explicit_end_3of5_immediate_or_3.35s_speech_succeeds_8.5s_speech_lost_to_owner_silence_timeout_about_9s_window
+longplay_45s_20260916: achieved_once_48.28s_nine_day_answer_device_side_2413_frames_zero_supply_waits_operator_confirmed_complete
+firmware_unchanged_20260916: not_flashed_not_read_this_run_board_app_elf_da6ebdd16_still_0025_metering_candidate
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -146,6 +163,36 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-16 真机验收（当前版本）：三步连跑完成、延迟出现越线样本、>45s 长播达成（48.28s）、约 55s 以上卡死 2/2、播后告别 3/5
+
+用户要求「现在做一次真机测试」，本轮全程用**当前已发布版本**（Agent/Bridge `memoria-agent:20260916-livekit-181-v1`，Edge 仍为 `20260908-1600-vocat-interrupt-assist-edge-component`）与**板上既有 `0025` 计量固件**（ELF `da6ebdd16…`）。**未刷机、未重新读写固件、未改任何超时/门禁/静默预算/声纹策略**。逐项原始数字、日志行号与边界见 `outputs/acceptance/run-20260916-p0-03-livekit181-device-acceptance/findings.md`（同一目录含可复用看板 `live-watch.py` 与 Edge 指标探针 `edge-metrics-probe.py`）。
+
+五段捕获共八种会话（目录名是捕获名，不是会话名；`session-1/` 内含 A、B，`session-2/` 内含 C、D，`session-3/` 空跑复位，`session-4/` 内含 E、F，`session-5/` 内含 G、H）：
+
+### 已通过 / 已取得
+
+- **「三天天气 → 播完续问 → 播后告别」同一 session 三步连跑完成（H，epoch 1963 / session `de598a18`）**：续问 `turn 3 / gen 4` 提交并播完（`gen 4→gen 5` 间隔 0.642s），结尾 `conversation_end_explicit`、串口回 idle，五代四阶段齐全（含 `actual_heard`）。**但同一轮第一问的 `ACK→正文` 为 1.969s（设备侧 `vad_end→首帧` 4.557s），越过 1.5s 门**，所以「延迟稳定达标」不成立。
+- **「问完到开口」延迟：多数样本通过、已有越线样本**：`ACK→正文` 0.356 / 0.383 / 0.323 / 0.362 / 0.426 / 0.642s（六次通过）+ **1.969s（1 次越线）**；`commit→ACK首帧` 0.310 / 0.307 / 0.316 / 0.324 / 0.318s。历史 epoch 1955 的 **5.028s** 与 21 次串行 geocode 未复现。延迟是数据相关的，**不标通过**。
+- **新 VAD 受理首次真正取到**：A 第二问出现两条 `media vad start admitted`（sample 569600 / 613760），此前两轮「第二问没有任何 VAD/admission」的缺口被填上。受理时 `silence_remaining_s=1.59 / 1.57`、`grace_active=False`、`watchdog_armed=True`。
+- **`>45s` 长播判据首次达成**：F 的九天天气正文 **48.28s / 2414 帧**（桥侧 `reason=final_frame`、`send_audio_ratio=1.00`、`max_gap_ms=55`），设备侧 **`output_frames=2413`（48.24s）、`supply_waits=0`、`prestart_waits=1/476ms`、`boundary/close_dropped/outside` 全 0**，四阶段终态齐全并自行回 idle；操作员确认「九天全部播报了」。另一轮八天 **44.18s**（2209 帧、设备 2208 帧、`supply_waits=1/4ms`）也完整播完。**样本各 1 次，且约 55s 以上仍会卡死，所以不能宣称「长播稳定」。**
+- **播后告别的显式终态取得 2 次 / 4 次尝试**：E 播后 3.35s 开口、F 播后约 0.3s 开口，均 `reason=conversation_end_explicit` + 串口回 idle。
+- **供给计量在真实长播上首次取到连续数据**：44.18s 只有 1 次 4ms 等待，48.28s 为 **0 次**等待（仍只是软件队列视角，不含 I2S/DMA 与听感）。
+
+### 新增缺陷（三条独立、两条量化）
+
+1. **设备侧：约 55s 以上的长回答播放中停滞，2/2 复现，必须硬复位。** B（十天，58.88s）与 D（十天，57.46s）都在正文开播约 1.5–1.6s 时出现一次 **366ms / 412ms** 的软件队列供给等待，随后设备**停止出声、串口从此刻起再无任何输出**（含 SystemInfo），状态机停在 `speaking`，屏幕一直显示「说话中」，直到硬复位才恢复（复位后 ELF 不变、完全正常）。对照 C（44.18s）与 F（48.28s）都**没有**早期等待、完整播完。**D 的服务端全链路完全正常**（TTS 无错误、桥 `reason=final_frame`、无 `event=error`），所以**卡死不能归因于 TTS 超时**；两次卡死与「长正文 + 开播初期约 0.4s 供给等待」完全对应，但**尚未证明因果**，停滞发生在播放路径而不是计量路径。
+   - **Edge 侧已排除交付丢失**：`edge-metrics-probe.py` 取到 `device_backpressure_drop_total=0`、`stale_generation_drop_total=0`（Edge 自启动 7 天累计），而 `services/media_edge/device_backpressure.go` 的下行队列上限只有 **32 帧（640ms）**，说明设备把整段音频一直读走了。**故障在设备收包之后的播放路径**。下一次复核必须同时取卡死前/中/后的 `/metrics` 差分与 `device_downlink_queue_ms`。
+2. **服务端：`DOUBAO_TTS_TOTAL_TIMEOUT_S=20` 是单次 TTS 的挂钟上限，会截断最长答案。** 生产容器 env 实测为 20（非代码默认值）。B 中 TTS 在 **20.23s 挂钟**被切断并抛 `APIConnectionError: total-timeout`（`providers/doubao_tts.py:778`），此时已推送 58.88s 音频；LiveKit 因「部分音频已下发」跳过重试；本仓分发在**已排队音频排空之后**（距 TTS 报错 **38.6s**）才落 `event=error terminal_reason=output_task_exception`，该代 `provider_completed=False`。合成速率实测波动较大（2.90x / 3.18x / 6.8x），故 20s 上限对应的音频长度约在 58–140s 之间浮动——「是否越线」不能只按音频长度预估。
+3. **临近静默的续问可以被识别却拿不到话轮（G，epoch 1962，四环节同时抓齐）。** 跟随提问的 ASR final 于 13:59:15.946 已出现（`text_len=5`），**比设备上报的 `Device VAD start`（13:59:18.947，正文播完后 6.77s）还早约 3s**；受理时 `silence_remaining_s=0.0`、`grace_active=False`、`watchdog_armed=True`；endpoint 边界 13:59:22.723 才到，13:59:22.761 被 `owner_silence_timeout` 关闭。**整段没有任何 `media turn committed`、也没有 `early live-query endpoint`**，用户听到的是「问完没回答就待命」。对照 H 同脚本更快衔接（受理时剩 **8.72s**）则续问正常。**两次采样只差受理时的剩余预算**，故判为**预算/时序竞态**，不是识别或路由能力缺失；同时**不能**从两次采样推出固定安全阈值（实测窗口一次约 6.8s、一次约 9.2s）。
+4. **播后告别成败取决于开口时机（窗口约 9 秒，已量化）。** 播后 **约 0.3s / 3.35s** 开口（F/E）与 H（三步连跑结尾）→ 显式告别成功；播后约 **8.5s** 开口（C）→ 受理时 `silence_remaining_s` 只剩 0.119s，`再见` 的 ASR final 明确出现（`text_len=2`）却在 12:22:00.030 被 `owner_silence_timeout` 关掉；完全没开口（A）→ 播完 0.02s 即静默关闭。同轮受理日志均为 `grace_active=False / watchdog_armed=True`：**绝对 watchdog 已武装但不接管静默关闭**，与既有设计一致，属设计后果。**3/5 仍不足以判定告别场景通过。**
+
+### 明确未完成
+
+- **延迟**：本轮出现 1.969s 越线样本（H 的第一问），且 G 轮整轮丢失续问，因此「问完到开口」与「查询延迟」**都不标通过**。
+- 播后告别只有 **3/5** 成功；本轮**没有**执行播放期告别（P1-07 不动）。
+- `>45s` 判据只达成 **1 次（48.28s）**；**约 55s 以上两轮卡死**，长播的稳定边界尚未确定。
+- 未做 P0-04 学生危机固定话术、待机/五表情照片、回滚演练；`direct_real_device_verified`、`full_duplex_verified` 仍为 false。
 
 ## 2026-09-16 LiveKit 1.8.1 已发布到 Agent/Bridge（delta 构建）+ P0-04 学生安全闭环先落代码
 
@@ -423,11 +470,11 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 | 唤醒问候不掉线 | 唤醒后机器人把「哎呀」整句播完，屏不进「连接中」；串口无 `Device WebSocket disconnected`、无 `speaking -> recovering`；Edge 无 `WSS handler rejected` | **2026-09-14 15:11 CST PASS**（session `8d013b25`）：问候播完 `speaking -> listening`，无断线、无 Edge 拒绝，问候 `actual_heard=True`；判据 `outputs/acceptance/run-20260914-1510-wake-ack-vad/retest-1/gates.txt` 14/14 |
 | barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过（播放期无 VAD、播后空 ASR、静音超时）。现签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice，播放中 `vad.start` 属越权、设备端已按合同抑制，故**该项在 AEC 参考验证前无法通过语音达成**；需先验证 AEC 或显式放行 voice 后再判 |
 | 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **2026-09-15 epoch 1955 本轮通过**：双问各提交一次、各一段完整 ACK + 正文，五代终端回执齐全，用户确认无重复提示；不等于所有 ASR overlap 或空输入恢复专项均通过 |
-| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | **未过**：epoch 1955 `commit→ACK首帧` 0.345s/0.526s；`ACK→正文` 服务端间隔 0.433s/**5.028s**，第二问 21 次串行 geocode、查询 7.93s。设备回 listening→正文首帧亦为 5.049s；非 DAC/可闻精密测量 |
+| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | **2026-09-16 未通过（有越线样本）**：`ACK→正文` 服务端间隔 0.356 / 0.383 / 0.323 / 0.362 / 0.426 / 0.642s（六次通过）+ **1.969s（H 第一问，越线）**；`commit→ACK首帧` 0.310 / 0.307 / 0.316 / 0.324 / 0.318s。epoch 1955 的 5.028s 与 21 次串行 geocode **未复现**。设备侧 `vad_end→首帧` 另有 A 第二问 3.748s、H 第一问 4.557s 两次越线（由 ASR finalize 主导）。仍非 DAC/可闻精密测量；不把多数样本通过平均成该项通过 |
 | 长查询等待 | 提示间隙无 >1.5s 纯静音，不重复 ACK、不让旧正文回流 | **未过**：epoch 1955 第二问 7.93s 查询、ACK→正文 5.028s。当前已移除历史 2.5s 第二提示；先修输入拼接/候选串行放大与 provider 总期限，若仍越线再明确等待策略，不把历史机制记为已部署 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-15 epoch 1955 本轮通过**：19:06:34.402 Edge `conversation_end_explicit`，19:06:34.433 串口 `listening -> idle`；不靠静默超时，不把跨机器时钟差当物理屏幕延迟 |
-| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **>45s 待验**。新计量固件 epoch 1955 的 17.04s/5.34s 正文、五代软件队列 summary 与听感通过，真实会话正常收尾；仅解除短播放计量前置条件，不证明长播或 I2S/DMA 无欠载，旧板全零/串口错误证据不回改 |
-| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 功能/听感 **2/3（旧固件 1 + 新固件 1）**；新固件最长正文 17.04s，用户确认无断续卡断。>45s 长回复、临近静默续问专项仍待验 |
+| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-15 epoch 1955 通过；2026-09-16 合计 3/5**：E（播后 3.35s 开口）、F（九天长播后立刻开口）、H（三步连跑结尾）均 `conversation_end_explicit` + 串口 `listening → idle`，不靠静默超时；C 播后 **8.5s** 开口 → ASR 已给出 `text_len=2` 的 final，但受理时 `silence_remaining_s=0.119`，12:22:00.030 被 `owner_silence_timeout` 关掉；A 完全没开口 → 播完 0.02s 即静默关闭；G 因续问丢失未走到告别。播后窗口实测约 **9s**（F 播完 0.3s 开口时剩 8.93s，H 受理时剩 8.72s），但另一次实测窗口只有约 6.8s，故**不设固定安全阈值**；本轮未改静默预算与任何门 |
+| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **2026-09-16 达成 1 次**：九天天气 **48.28s** 完整播完（桥侧 2414 帧 / `reason=final_frame` / `send_audio_ratio=1.00` / `max_gap_ms=55`；设备侧 `output_frames=2413`、`supply_waits=0`、四阶段齐全、自行回 idle，操作员确认九天全部播报）。八天 44.18s 同样完好。**但约 55s 以上的十天回答 57.46s / 58.88s 两次卡死**（见「真机验收」一节），边界未定，不得宣称长播稳定。仍只测软件队列，不含 I2S/DMA 与可听连续性 |
+| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 功能/听感 **2/3（旧固件 1 + 新固件 1）**；**2026-09-16 新增反例**：57.46s / 58.88s 的十天回答在开播约 1.5–1.6s 出现 366 / 412ms 供给等待后，设备停止出声、串口自此刻起无输出、卡在 `speaking`，硬复位才恢复（**2/2 复现**）；44.18s 的八天回答无早期等待、完好播完。>45s 长回复与临近静默续问专项仍待验 |
 | 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
 | 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
 | 切主体触发设备重协商 | 在线设备上从小程序切换使用者后，bridge 出现 `runtime_profile.invalidated`（`apply_at=next_safe_point`），设备安全点重连并加载新 profile；日志出现 `device profile change projected … delivered=true` | 代码已切流（`20260911-subject-switch-device-notify-control-api`），切流时设备离线，待真机 |

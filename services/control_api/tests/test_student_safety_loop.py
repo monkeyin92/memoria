@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.crisis_policy import CRISIS_SCRIPT_VERSION
+from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_interaction_api import (
     _attach_signed_runtime_profile,
@@ -675,3 +676,162 @@ async def test_inviting_family_does_not_elevate_the_child_to_owner(
         speakers = await client.get("/v1/speakers", headers=child_headers)
         assert speakers.status_code == 403
         assert speakers.json()["detail"]["code"] == "minor_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_adult_account_manages_independent_under_14_subject_without_child_account(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """管理账号为 adult，独立设置 under_14 使用人（无需孩子注册账号），启用学生危机固定话术并正确入队家长通知。"""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. 成人注册并登录
+        parent, parent_headers = await _register(client, "adult-manager-001")
+        _mark_verified_adult(app, parent["user_id"])
+        await app.state.identity_service.register_person(
+            person_id=parent["user_id"],
+            display_name="成人管理者",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=datetime.now(UTC),
+        )
+        parent_headers = await _login(client, "adult-manager-001")
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=parent["user_id"],
+            identities={"wechat_openid": "adult-manager-openid"},
+            now=datetime.now(UTC).isoformat(),
+        )
+
+        # 2. 成人绑定设备，设置独立的使用人小明（under_14，未成年），无需孩子建账号
+        now = datetime.now(UTC)
+        token = mint_device_binding_token(
+            device_id="dev-child-no-account-1",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=10),
+            nonce="test-nonce-1234",
+        )
+        binding_res = await client.post(
+            "/v1/device-bindings",
+            headers={**parent_headers, "Idempotency-Key": "bind-child-independent-001"},
+            json={
+                "device_claim_token": token,
+                "declared_mode": "parent_for_child",
+                "account_owner_person_id": parent["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "guardian_of",
+                    "subject_draft": {
+                        "display_name": "独立小明",
+                        "age_band": "under_14",
+                    },
+                },
+                "persona_selection": "starlight",
+                "consent_offer_ids": [
+                    "offer_minor_voice_session_v1",
+                ],
+            },
+        )
+        assert binding_res.status_code == 201, binding_res.text
+        binding_manifest = binding_res.json()
+        child_person_id = binding_manifest["primary_subject_ids"][0]
+        assert child_person_id != parent["user_id"]
+
+        # 3. 开启会话
+        session_res = await client.post(
+            "/v1/sessions",
+            headers=parent_headers,
+            json={"session_focus": "tutor_english"},
+        )
+        assert session_res.status_code == 200
+        session_id = session_res.json()["session_id"]
+
+        # 挂载当前使用人（孩子小明）的签名 RuntimeProfile
+        _attach_signed_runtime_profile(
+            app,
+            user_id=parent["user_id"],
+            session_id=session_id,
+            active_subject_id=child_person_id,
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "tutor", "english_practice"),
+        )
+
+        # 4. 触发危机语句
+        response = await _response_plan(
+            client,
+            session_id=session_id,
+            query=_CRISIS_QUERY,
+            turn_id=1,
+            generation_id=1,
+            speaker_classification="owner",
+        )
+        assert response.status_code == 200, response.text
+        plan = response.json()
+
+        # 断言设备端下发的固定危机安全话术逐字一致
+        assert plan["direct_text"] == CRISIS_SUPPORT_REPLY
+
+        # 断言家长通知入队，且归属于孩子的 person_id
+        notifications = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert notifications.status_code == 200
+        items = notifications.json()["items"]
+        assert len(items) == 1
+        assert items[0]["minor_user_id"] == child_person_id
+        assert items[0]["minor_display_name"] == "独立小明"
+        assert items[0]["delivery_status"] == "pending"
+
+        # 5. 对照验证：若切换为成人使用人（例如家长本人），危机语句虽然给出通用固定话术，但绝不入队未成年危机通知
+        _attach_signed_runtime_profile(
+            app,
+            user_id=parent["user_id"],
+            session_id=session_id,
+            subject_category="adult",
+            age_band="adult",
+            service_mode="adult_companion",
+            capabilities=("chat",),
+        )
+        adult_response = await _response_plan(
+            client,
+            session_id=session_id,
+            query=_CRISIS_QUERY,
+            turn_id=2,
+            generation_id=2,
+            speaker_classification="owner",
+        )
+        assert adult_response.status_code == 200
+        assert adult_response.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+
+        # 通知队列数量依然为 1（成人危机不碰 minor outbox）
+        notifications_after = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert len(notifications_after.json()["items"]) == 1
+
+        # 6. 对照验证：若使用人为 unknown / guest，固定安全回复保留，但不进入主人通知链
+        _attach_signed_runtime_profile(
+            app,
+            user_id=parent["user_id"],
+            session_id=session_id,
+            unknown_subject=True,
+            service_mode="unknown_safe",
+        )
+        guest_response = await _response_plan(
+            client,
+            session_id=session_id,
+            query=_CRISIS_QUERY,
+            turn_id=3,
+            generation_id=3,
+            speaker_classification="guest",
+        )
+        assert guest_response.status_code == 200
+        assert guest_response.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+
+        # 通知队列依然为 1
+        notifications_final = await client.get("/v1/guardian/notifications", headers=parent_headers)
+        assert len(notifications_final.json()["items"]) == 1

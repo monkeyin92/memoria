@@ -289,7 +289,7 @@ async def _primary_subject(
     category: Literal["unknown", "minor"] = (
         "minor" if draft.age_band in {"under_14", "14_17"} else "unknown"
     )
-    return await _identity(request).register_person(
+    person = await _identity(request).register_person(
         display_name=draft.display_name,
         timezone="Asia/Shanghai",
         subject_category=category,
@@ -298,6 +298,26 @@ async def _primary_subject(
         actor_person_id=owner.person_id,
         now=now,
     )
+    if body.declared_mode == "parent_for_child" or body.primary_subject.relationship == "guardian_of":
+        proposed = await _identity(request).propose_relationship(
+            source_person_id=owner.person_id,
+            target_person_id=person.person_id,
+            relation_type="guardian_of",
+            established_evidence_id="parent_for_child_binding_claim",
+            actor_person_id=owner.person_id,
+            now=now,
+        )
+        await _identity(request).confirm_relationship(
+            relationship_id=proposed.relationship_id,
+            person_id=owner.person_id,
+            now=now,
+        )
+        await _identity(request).confirm_relationship(
+            relationship_id=proposed.relationship_id,
+            person_id=person.person_id,
+            now=now,
+        )
+    return person
 
 
 def _binding_roles(
@@ -475,6 +495,16 @@ async def create_device_binding(
                 ),
             )
         request.app.state.multi_subject_binding_manifests[device_id] = manifest
+        if body.declared_mode == "parent_for_child" and subject.subject_category == "minor":
+            guardian_store = getattr(request.app.state, "guardian_store", None)
+            if guardian_store is not None:
+                await guardian_store.establish_active_link(
+                    guardian_user_id=user.user_id,
+                    minor_user_id=subject.person_id,
+                    relation="parent",
+                    verified_via="wechat_identity",
+                    now=now,
+                )
         return manifest.to_dict()
     except DeviceBindingTokenError as exc:
         raise HTTPException(

@@ -21,6 +21,7 @@ from typing import Any, cast
 from services.agent.src.config import load_settings
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import GLOBAL_METRICS
+from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
@@ -28,6 +29,8 @@ from services.agent.src.voice_core.reply_delivery_reporter import (
     ReplyDeliveryReporter,
     ReplyDeliveryReporterConfig,
 )
+
+_apply_telemetry_privacy_defaults()
 
 logger = logging.getLogger("memoria.media_bridge")
 
@@ -110,6 +113,7 @@ def _tls_for_settings(settings: object) -> MediaBridgeTLS | None:
 
 
 async def run() -> None:
+    _apply_telemetry_privacy_defaults()
     settings = load_settings(require_keys=False)
     if not settings.media_bridge_grpc_enabled:
         raise RuntimeError(
@@ -259,6 +263,7 @@ async def run() -> None:
 
 
 def main() -> None:
+    _apply_telemetry_privacy_defaults()
     asyncio.run(run())
 
 
