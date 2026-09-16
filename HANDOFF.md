@@ -1,123 +1,41 @@
 # Memoria 当前交接
 
-本文件只记录当前有效状态、紧邻回滚、生产操作和下一验收。历史发布过程不再保留；每次发布原地更新本文件。跨任务优先级与完成标记统一见 `TODOLIST.md`，这里保留现场步骤和运行证据。
+更新于 2026-09-16。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收；完成过程与旧版本流水账已删除。唯一执行队列见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+
+本轮核对本地文档、源码、提交及 CI，未连接生产、未打开串口。下列生产/板卡状态均为标注日期的既有收据，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-16
-resume_checkpoint: livekit_181_released_and_device_acceptance_20260916_longplay_48s_over_45s_but_device_stall_above_~55s_and_tts_20s_wall_open_20260916
-livekit_upgrade: released_20260916_agent_and_bridge_181_delta_build
-livekit_upgrade_candidate_verified: lock_check_frozen_install_sdk_compat_typeddict_consumption_pii_canary_5002_passed_in_artifact_verifier_passed
-student_safety_loop_verified: http_level_outbox_enqueue_guardian_readback_fixed_script_text_exact_and_independent_minor_person_without_child_account_verified
-guardian_notification_delivery_channel: absent_outbox_only_status_pending
-doubao_tts_total_wall_fixed_locally: streaming_stall_watchdog_reset_on_received_chunks_with_180s_hard_cap_20260916
-near_silence_followup_fixed_locally: active_vad_with_armed_watchdog_cancels_silence_timer_preventing_premature_close_during_speech_20260916
-bridge_privacy_gate_fixed_locally: bridge_startup_telemetry_defaults_wired_verifier_subprocess_canary_negative_control_passed_image_resolver_candidate_verification_passed_20260916
-next_human_action: investigate_device_playout_stall_above_~55s_answers_and_candidate_release_cutover_20260916
-# 2026-09-16 真机验收（当前版本 20260916-livekit-181-v1 + 板上 0025 计量候选）。五段捕获、八种会话；证据 outputs/acceptance/run-20260916-p0-03-livekit181-device-acceptance/findings.md。
-device_acceptance_20260916: captured_eight_conversations_latency_variable_vad_admission_pass_longplay_48.28s_over_45s_farewell_2of4_device_stall_2of2_above_~55s
-device_acceptance_three_step_20260916: completed_in_one_session_epoch_1963_session_de598a18_three_day_weather_then_followup_turn3_then_explicit_farewell
-device_acceptance_three_step_latency_20260916: first_answer_ack_to_body_1.969s_over_1.5s_gate_device_vad_end_to_frame_4.557s_latency_not_consistently_met
-near_silence_followup_20260916: epoch_1962_followup_asr_final_text_len_5_then_device_vad_start_6.77s_after_playback_admitted_with_zero_budget_then_owner_silence_timeout_no_turn_committed
-device_acceptance_latency_20260916: ack_to_body_samples_0.356s_0.383s_0.323s_0.362s_0.426s_0.642s_pass_and_1.969s_fail_commit_to_first_frame_0.310s_0.307s_0.316s_0.324s_0.318s_historical_5.028s_not_reproduced
-device_acceptance_vad_admission_20260916: followup_question_got_two_vad_start_admitted_lines_first_time_silence_remaining_1.59s_and_0.0s_grace_inactive_watchdog_armed
-device_playout_stall_20260916: reproduced_2of2_on_57.46s_and_58.88s_answers_devices_speaking_stuck_console_silent_until_hard_reset
-device_playout_stall_correlate_20260916: both_stalls_had_366ms_and_412ms_supply_wait_at_1.5-1.6s_clean_44.18s_and_48.28s_runs_had_none
-device_playout_stall_edge_side_20260916: backpressure_drop_0_stale_generation_drop_0_edge_lane_cap_32_frames_pacer_never_stalled
-doubao_tts_total_wall_20260916: production_env_DOUBAO_TTS_TOTAL_TIMEOUT_S_20_cut_58.88s_answer_at_20.23s_wall_error_terminal_38.6s_later
-post_playback_farewell_20260916: explicit_end_3of5_immediate_or_3.35s_speech_succeeds_8.5s_speech_lost_to_owner_silence_timeout_about_9s_window
-longplay_45s_20260916: achieved_once_48.28s_nine_day_answer_device_side_2413_frames_zero_supply_waits_operator_confirmed_complete
-firmware_unchanged_20260916: not_flashed_not_read_this_run_board_app_elf_da6ebdd16_still_0025_metering_candidate
-firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
+reviewed_source_commit: a8a0e439b68efd4d238b716d9daf4a25824350b9
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
+current_work_order: vocat_interrupt_assist
+code: partial_candidate_fixes_and_open_review_findings
+wired: existing_python_voice_core_and_signed_runtime_profile_authorities
+enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
+verified: scoped_receipts_only_voice_stability_and_student_device_loop_pending
+production_readiness: ready_at_last_observation_not_refreshed_this_review
+production_readiness_observed_at: 2026-09-16T11:37:57+08:00
+student_safety_loop_verified: false
+student_safety_local_scope: sqlite_http_with_manually_injected_signed_runtime_profile
+guardian_notification_delivery_channel: absent_outbox_only_status_pending
+firmware_playback_supply_meter_verified: short_playback_software_queue_only_not_dma
+pre_roll_code: not_implemented
+firmware_face_hardware_verified: false
 miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
-miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
-production_readiness: ready
-production_readiness_observed_at: 2026-09-16T11:37:57+08:00
-offsite_backup_enabled: false # 用户 2026-09-14 决定：项目验证阶段暂不启用自动备份/异地副本；WAL 归档仍在写且无人裁剪
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
 realtime_media_wss_allowed: false
 livekit_room_allowed: false
-current_work_order: vocat_interrupt_assist
-code: complete
-wired: firmware_0024_and_agent_empty_input_resume
-enabled: production_agent_bridge_edge_true_device_audio_mode_interrupt_assist_empty_input_resume
-verified: production_runtime_provider_model_inference_identity_safe_board_boot_secure_device_onboarding_owner_silence_standby_and_device_wake_ack_heard_server_release_health
-empty_input_resume_code: regression_and_full_release_gates_pass
-empty_input_resume_wired: python_media_coordinator_dispatch_and_empty_tail_retirement
-empty_input_resume_enabled: agent_bridge_20260913_p0_empty_input_resume_v1
-empty_input_resume_verified: component_checks_and_epoch1935_two_weather_playback_receipts_user_hearing_confirmed
-empty_input_resume_evidence_at: 2026-09-13T23:47:21+08:00
-weather_user_acceptance_date: 2026-09-13
-farewell_immediate_standby_verified: false # 播后已过；播放中语音告别仍受签名策略限制，不能总体标真
-# 历史 0024/AEC 播放期 VAD 修复状态；不要与当前 0025 计量实现混读。
-firmware_playback_capture_code: historical_0024_clean_build_and_esp32_host_tests_pass
-firmware_playback_capture_wired: historical_resolved_device_aec_and_board_compile_gate
-firmware_playback_capture_enabled: historical_true_app_only_flashed_20260914T1506CST
-firmware_playback_capture_verified: historical_app_full_readback_identity_and_non_app_partitions_unchanged_boot_idle
-firmware_playback_capture_evidence_at: 2026-09-14T15:07:14+08:00
-# 新候选已 app-only 刷入、回读并启动；一轮短播放计量与听感通过，不含查询时延/VAD 专项/长播。
-firmware_playback_supply_meter_code: true # observation-only lifecycle fix, local regressions passed
-firmware_playback_supply_meter_wired: true # candidate audio service reset/queue/exact-token lifecycle
-firmware_playback_supply_meter_enabled: true # app-only flash and matching-ELF boot verified
-firmware_playback_supply_meter_verified: true # scoped to one short session, five sequential generations
-firmware_playback_supply_meter_verification_scope: short_playback_software_queue_only_not_dma_or_longplay
-firmware_playback_supply_meter_evidence_date: 2026-09-15
-firmware_playback_supply_meter_worktree_overlay_hash: 24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3
-firmware_playback_supply_meter_candidate_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
-firmware_playback_supply_meter_candidate_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
-firmware_playback_supply_meter_candidate_dir: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-local/final
-# 既有刷写回读与启动证据；boot 记录独立于不可变 postflash 收据，本次会话未重新回读。
-firmware_playback_supply_meter_board_overlay_hash: 24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3
-firmware_playback_supply_meter_board_release_head: d1ad38fe0d9b36eb9057d8eb97e782b8cc8066d9
-firmware_playback_supply_meter_board_upstream_commit: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
-firmware_playback_supply_meter_board_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
-firmware_playback_supply_meter_board_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
-firmware_playback_supply_meter_board_receipt: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/postflash.json
-firmware_playback_supply_meter_board_boot_evidence: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/boot-verification.json
-firmware_playback_supply_meter_board_boot_verified: true
-firmware_playback_supply_meter_board_real_device_conversation_verified: true # one new-candidate functional/hearing round; query latency failed
-firmware_playback_supply_meter_board_metering_verified: true # five short sequential generations, no boundary/cancel coverage
-firmware_playback_supply_meter_real_device_conversation_verified: true # scoped to the same one short session
-firmware_playback_supply_meter_board_session_evidence: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/session-1/audit.json
-capture_lifecycle_code: true
-capture_lifecycle_wired: true
-capture_lifecycle_enabled: new_cli_real_conversation_completed_20260915T190709CST
-capture_lifecycle_verified: conversation_sigterm_finalized_three_streams_stopped_no_forced_kill_or_cleanup_error
-asr_weather_boundary_code: committed_1cf8decaee8b28aa73d104f7aea89086e942db66
-asr_weather_boundary_wired: existing_python_candidate_lifecycle_and_open_meteo_provider
-asr_weather_boundary_enabled: agent_bridge_20260915_asr_weather_boundary_v1
-asr_weather_boundary_verified: release_gates_ci_and_real_provider_smoke_pass_device_pending
-asr_weather_boundary_evidence_date: 2026-09-15
-auto_audio_acceptance: blocked_before_question_1_no_wake_with_tingting_or_meijia
-auto_audio_human_listened: false
-auto_audio_sample_wall_clock_alignment: unverified_inconsistent_sample_wall_clock
-pre_roll_code: not_implemented
-pre_roll_wired: false
-pre_roll_enabled: false
-pre_roll_verified: false
-wake_ack_playback_vad_fix_code: complete
-wake_ack_playback_vad_fix_wired: session_accepted_signed_allowed_barge_in_gate
-wake_ack_playback_vad_fix_enabled: true_app_only_flashed_20260914T1506CST
-wake_ack_playback_vad_fix_verified: real_device_greeting_no_disconnect_actual_heard_and_explicit_farewell_pass
-wake_ack_playback_vad_fix_evidence_at: 2026-09-14T15:11:29+08:00
-# 当前板上 0025 候选；历史 0024/AEC 候选见「板卡与固件」。
-on_device_app_sha256: 7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65
-on_device_app_elf_sha256: da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2
-on_device_app_build_recorded_at: 2026-09-15T17:36:12+08:00
-on_device_app_verified_at: 2026-09-15T18:51:44.111+08:00
-nearest_rollback_app_sha256: dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d
-nearest_rollback_app_path: outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/rollback-app.bin
-previous_aec_candidate_app_sha256: 6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b
-production_runtime_verified: true
+offsite_backup_enabled: false
+wal_retention_policy: unresolved_no_automatic_pruning_at_last_observation
 direct_real_device_verified: false
 full_duplex_verified: false
 advertised_duplex_level: none
@@ -125,665 +43,171 @@ hardware_aec: pending
 hardware_double_talk_matrix: pending_real_hardware
 T1_T14: 0_pass_14_blocked_0_failed
 device_id: dev_atk_a4cb8fd6095c
-speaker_profile_id: 1b5b577b-669e-4573-b9b1-ea1dd8122ee4
-speaker_profile_status: active
-last_wake_epoch: 1897
-idle_tap_pat_operator_verified: true
 ```
 
-`full_duplex_verified` 只有真实硬件 AEC、双讲、打断、连续会话和 Actual Heard 证据全部通过后才能改为 true。在此之前产品不得宣传全双工。小程序仅 profile 页允许经授权有界录制自定义音色样本，不承担实时对话、手机声纹登记或实时媒体回滚职责。
+产品不得宣传全双工。小程序仅 profile 页允许经授权有界录制自定义音色样本，不承担实时对话、手机声纹登记或实时媒体回滚。登录账号、当前使用人、说话人确认和敏感授权不得互相替代。
 
-当前工单 `vocat_interrupt_assist`：播放期保持采集，Agent barge-in 跟协商 `audio_mode`。LiveKit 设备路径仍半双工。Direct Edge 把 `assistant_expression` 转成板子 `screen.expression`。ATK ES8388 半双工投资人 Demo 已退役。Control 默认镜像可后切，只影响新设备。0024 已刷；Agent 依次切过 `20260910-1011` → `20260910-1526` → `20260910-1820`。
+## 最新候选与审查边界
 
-2026-09-14 补充：板卡侧新增「按签名策略决定是否在播放期上报 VAD」的把关（commit `bdf2047`），修掉唤醒问候回声触发的越权 `vad.start` 断链。该把关只收窄设备行为，不放宽任何门禁；`allowed_barge_in` 仍以服务端签名为准。
+`a8a0e43`（2026-09-16 16:12 CST）是本轮已核对的本地与远端 `main`。CI `35072578098` 的 agent/python 通过；Edge、小程序、固件及镜像任务跳过，不能据此宣称这些制品通过。没有该候选上线的证据；最后记录的线上 Agent/Bridge 仍为 `d96d4c2`。
 
-2026-09-14 USB 对照（`outputs/acceptance/run-20260914-0925-usb-goodbye/`）：epoch **1936** / session `0615d48c-3bdf-4a6c-a7c6-7543f4ffd96b` 播完告别走 `conversation_end_explicit`，随后串口回 idle；epoch **1937** / session `f216e1e0-1bfa-41b8-a259-457d0f2df2eb` 播放中告别却无 Speaking 期设备 VAD，仍报 `playback_completed`，播后三段空 ASR 后靠 `owner_silence_timeout` 关闭。Edge 09:29:08.032 关闭、串口 09:29:08.037 idle，只说明日志对齐没有秒级 UI 残留，不能当作物理屏幕延迟 5 ms。
+- 语音：流式 `DoubaoSynthesizeStream._run_attempt` 的活跃分片续期在本地前后对照中有效，但新增测试实际走未修改的 `synthesize_stream_text/_synthesize_once`，父提交也通过。批式路径仍使用总挂钟；部分音频下发后的错误终态仍待闭环。临近静默的 G 时序复现仍关闭会话，不能写成“续问竞态已修”。
+- 学生安全：当前使用人接线存在，但 `multi_subject.py` 代新建孩子写双方确认，又直接建立 `verified_via=wechat_identity` 的 active link，缺少与记录相符的验证证据；`interaction.py` 混用使用人类别、账号 consent 和账号记忆，session-policy 与 response-plan 可得出相反结论。最新 Control 候选发布前先处理，见 P0-04。
+- 验证边界：学生定向测试 10 项通过，但独立孩子用例仍手工注入签名 RuntimeProfile，不是完整 API→设备取 profile。新 `establish_active_link` 未获专门 PostgreSQL/RLS 契约覆盖；CI 的既有 PG 测试不能替代。
+- 发布：Bridge 隐私默认值与隔离进程 canary 的本地检查通过，制品/镜像解析定向测试 9 项通过；标准 Dockerfile/发布流水线尚未调用两个新校验器。镜像解析未指定 expected candidate 时，两服务同指旧镜像仍通过；不能写成发布门禁已闭环。真实镜像与 exporter 的内容不泄露仍待验证。
 
-根因已修于候选 **`76ba6ad3b68a042566f97dc42f6f8101c32b20af`**（已推送）：锁定 upstream 的 `USE_DEVICE_AEC` 依赖未包含 Memoria 板型，manifest 的 `=y` 被静默丢弃，导致默认 AutoStop 在 Speaking 关闭语音处理。0001 补板型依赖，板级编译保护和 `check-overlay.sh` 检查最终配置；新增 CI firmware job 执行全部固件宿主回归。干净重放/构建、依赖锁门禁与 **203 项**定向回归通过，生成的 `sdkconfig.h` 已有 device AEC/audio processor 宏，server AEC 关闭。未调静音超时、增益、DTLN、声纹权限或服务器，AEC 残余/双讲仍未验收。旁查 `CONFIG_FLASH_EXPRESSION_ASSETS=y` 也是当前无效配置，但实际 default assets 承载唤醒命令词，本轮不改该路径。
+以上是待修/待验摘要；实现入口、顺序与完成条件只维护在 `TODOLIST.md`，不在此展开修复历史。
 
-**旧 USB/未刷写阻塞已解除。** 2026-09-14 上午的只读探测失败已被当日 15:06 的 app-only 刷入、完整回读/受保护分区比对与 15:11 真机复测取代，详见下方「唤醒问候播放期越权 VAD 断链修复」。不要再按旧阻塞重复刷写；播放期语音打断仍受签名策略限制，未获 AEC/双讲验收。
+## 当前生产与紧邻回滚
 
-epoch **1897** 真机（13:56 CST，session `b910a0ee`）与 **1899** 复测（17:30 CST，session `7c465319`）复现同一组缺陷，分两轮修：
+### Agent / Voice Core Media Bridge
 
-1. **filler 连播两遍**。1897：边车把同一句 11 字提问识别两次，turn 2/3/4/5 提交四次；可听序列是两段约 2s 输出之后才是 8.3s 正文。1899 复测仍在（说明第一轮修复不足）：提问同样提交两次（turn 2、turn 3），**两次提交各开一次委派、各播一遍 ACK**——`generation-2` 1.19s（被 turn 3 抢占）+ `generation-3` 1.95s，之后才是 `generation-4` 6.5s 正文。
-   - 第一轮（`b83e9b7` / 组件 `20260910-1526`）：只给 **deep result 前缀** 加了会话级去重 `_live_lookup_filler_already_audible`，没门控 ACK 本身的发出，所以 1899 仍听到两遍。该轮修复本身有效（1899 的 `generation-4` 前缀已被剥掉）。
-   - 第二轮（`df41596` / 组件 `20260910-1820`）：把 `_live_lookup_filler_already_audible` 也用作 **ACK 发出**的闸门，并新增 `_forget_live_lookup_filler` 在委派交付答案时释放「本次查询突发」记忆，保证之后的新提问仍会播自己的提示。复现测试 `test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack`（断言 ACK 只发一次，修前 2 == 1 红、修后绿）。
-   - 遗留取舍：重复提交若在 ACK 播完前抢占它，用户会听到**一句被截短的**提示且不重播（例如 1899 的 1.19s）。要「完整播一遍」，得让重复提交不抢占正在播的 ACK，属 turn-commit 层改动，本轮未做。
-2. **聆听中残留**。1897 靠 `owner_silence_timeout`（15.3s）关闭；1899 已改为 `conversation_end_explicit` 关闭——告别路由这轮生效了，但**屏上仍停留 15~18s**：18:30:42.42 进入 `user_speaking` 后，两次 `media turn discarded after ASR tail timeout`（endpoint 153920 / 248000，均 `empty+vendor_silent`）耗掉约 14s，直到 59.51 才拿出 `text_len=2`（「再见」）并关闭。被判空的两段并不相同：endpoint 153920 那段 `rms 1231 / peak_abs 32768 / provider_pcm_clipping_detected=true`，endpoint 248000 那段才是 `rms 292 / 无削波`。所以「1899 无削波、不是回声污染」不能作为整体结论，第一段确实削波。是否真的落在播放窗口内无法从现有材料判定（epoch 1899 的 tap WAV 当时未下载，服务器 `/tmp/media-pcm-tap` 已随容器重建清空），复测时按「媒体与音频」一节记 `provider_pcm_rms` + `provider_pcm_clipping_detected`。
+- 最后收据：2026-09-16 11:36:08 CST，两个容器同镜像、healthy、restart=0。当前 `memoria-agent:20260916-livekit-181-v1`；image `sha256:7033214ddc3a5f4b0f99e016d1edf156b091169d6511ee95139e81f6ec0a9ac4`；revision `d96d4c29b7f13719d052b94647b2c59223ea70a1`。
+- 紧邻回滚：`memoria-agent:rollback-20260916-livekit-181-v1-pre`；image `sha256:3f746b4dede8b2f35773ca5b2c6300174a278932eee7d720f4904c00d2b865bb`；revision `1cf8decaee8b28aa73d104f7aea89086e942db66`。本次升级后的实际回滚演练未做。
+- 当前为 delta 构建，不是仓库标准全量可复现构建。远端收据 `/opt/memoria/component-releases/20260916-livekit-181-v1/CUTOVER_RESULT.txt`；本地 `outputs/acceptance/run-20260916-livekit-181-deploy/` 内的 `CUTOVER_RESULT.txt`、`report.md` 与切流前后 overrides 均存在，本轮已核收据的 tag/image/revision 与上述记录一致，但未重新核验实时容器；标准全量构建与本次回滚演练仍未完成。
+- 独立构建依赖底座（不是第二个业务回滚）：`memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，别名 `memoria-agent:20260912-p0-rollback-single-tag-agent-component`；image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`。删除前必须核依赖，不按旧业务版本误删。
+- 11:37:57 CST readiness 的 12 个具名 core 检查与 heartbeat 均 ready。既有 LiveKit smoke 通过；provider smoke 首轮 InterruptSemantic 超时、重试通过。双进程实际隐私环境/exporter 仍待核：Compose 声明或本地 helper 不证明当前容器生效。
+- 锁文件：agents/openai/silero `1.8.1`、RTC `1.1.18`、API `1.2.1`、protocol `1.1.26`、local-inference `0.2.7`。研究中的旧 1.6.10 基线不再适用，1.8.2 仅为研究项，不自动再升级。
 
-串口结论也要改：`/dev/cu.usbmodem101` 实测正常，固件每 10s 输出一条 `SystemInfo`（probe 证据 `outputs/acceptance/run-20260911-serial-probe/serial-probe.log`，40s 收到 4 条），且 `MemoriaProtocol: Device VAD start/end` 在 2026-09-09 的串口抓取里有先例（`outputs/acceptance/run-20260909-0943-face/serial-follow.log`）。1899/1900 两次复测**根本没挂串口抓取**——`run-20260910-weather-goodbye/serial-follow.log` 停在上午 10:19，`retest-*` 只有 bridge 日志。所谓「芯片侧没往控制台写」是没抓，不是没写。
+### Media Edge / Control API
 
-epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化生效（`generation-2` 是唯一 ACK），但量出「问完到开口」的间隔问题，两处：
+- Edge 当前 `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component`，override `/tmp/media-runtime.override.yml`；回滚 `memoria-media-edge:20260901-0945-wake-word-whitelist`，配置备份 `/tmp/media-runtime.override.yml.pre-20260908-1600-vocat-interrupt-assist`。watermark close-frame 4002 修复仅在代码，未有发布证据；控制帧入队后 read-loop 提前销毁 lane 的通用问题仍待查。
+- Control 当前 `memoria-control-api:20260911-subject-switch-device-notify-control-api`；image `sha256:2af29dde2e8c6f1f1781bef322fe3b8d7f3b5ea13d3017b191aa443aa58bcebd`；overlay 源 `b2644124e002d1aac60b1b5a32c336c327af57bc`，仅覆盖 `device_control.py` 与 `multi_subject.py`，不代表当前全量 Control 已部署。
+- Control 回滚 `memoria-control-api:rollback-20260911-subject-switch-device-notify-control-api-pre-control`；image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`。收据 `/opt/memoria/component-releases/20260911-subject-switch-device-notify-control-api/`。
+- 主体变更→profile 版本→`runtime_profile.invalidated/apply_at=next_safe_point` 已接代码/线上 overlay；真机换人未验。设备 settings_version=12、`audio_mode=interrupt_assist`；签名 `allowed_barge_in=["button","keyword"]`，不含 voice。播放中语音告别不能按“播后告别通过”外推。
 
-1. **提示音被跨 turn 的重复提交掐断**：`gen-2` 首帧 17.680、18.483 被 turn 3 提交取消，只播 0.80s，正文 `gen-3` 直到 20.741 —— 用户听到残句 + **2.26s 纯静音** + 正文。取消点是 `media_session_turns.py` `_commit_pending_turn`：既有的「不切断已播出声音」守卫要求 `owner.fence.turn_id == fence.turn_id`，重复提交是跨 turn 所以不生效。**已修（组件 `20260910-1855`）**：不动该守卫（扩到跨 turn 会让新话轮的回复因 reply lock 未释放被静默丢弃），改为在 `media_session_commit.py` 的 `_commit_user_turn_locked` 里跳过**重复话轮本身**——待提交文本与上一轮已提交文本（`normalize_short`）相同**且** `_reply_in_flight` 为真时才跳过，同文本 + 回复在飞意味着信息量为零，不会丢内容；答案由仍在飞的那一轮交付。回复已结束后的真重复提问、以及尾部带新文本的 straddle（epoch 1361）都不受影响。复现测试 `test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight`（无闸门时第二次提交仍建出 turn 2 → 红；加闸门 → 绿）。
-2. **第二次提问完全没有提示音**：turn 4/5（35.715 / 35.905，相隔 190ms）都没播 ACK，正文 `gen-5` 到 42.098 才起，**6.38s 无提示**。两点结论：① turn 4 的 ACK 在 35.903 被 turn 5 抢占，`first_frame_sent=False`，即**又是重复提交**——已由 `20260910-1855` 的重复话轮闸门消除；② 即便有 ACK，一次 2s 提示也盖不住 6.4s 的检索，缺的是**第二句提示**。单测夹具另发现 ACK 可能被 `coordinator.output_intent_is_active` 判为非活动（前一个 output 仍占话轮），此时不发提示音且**不报错**，是隐性的（该观察未单独复现成真机故障）。**已修（组件 `20260910-1905`）**：`97978e9` 当年为守住 `agent.py` 行预算摘掉了 slow-think cover，本轮把它接回**到 `media_session_projection` 而不是 agent.py**——`_cover_slow_lookup` 在入队 ACK 之后、仅当委派仍在跑时等 `_LOOKUP_SECOND_CUE_AFTER_S = 2.5s` 并播 `THINKING_FILLER`（「稍等，我想一下。」），走同一条 fenced acknowledgement 路径；委派已完成则完全跳过等待，快查询的调度不变。复现测试 `test_slow_lookup_is_covered_by_a_second_cue`（先红后绿）。同轮还把「发不发提示音」的判据从 30s 突发窗口改成独立的 5s 窗口（`_LIVE_LOOKUP_FILLER_ACK_REPEAT_S`，组件 `20260910-1844`，复现测试 `test_later_live_lookup_still_announces_itself`）。
-3. 附带发现（**已被 1905 与本次 20260912-1150 发布取代**）：当时 `services/agent/src/prompts.py:90` 的 `THINKING_FILLER` 全仓库无消费点（只在 `__all__`），即 commit `83687b7` 的「覆盖慢查询间隙的第二个提示」机制实际已失效。1905 把它接回 `media_session_projection`，本次整树 overlay 让它重新生效（1855 源码 0 处、HEAD 有并在 `media_session_projection.py` 调用，容器内已核实）。
+### 其它组件
 
-
-另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
-
-模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
-
-## 2026-09-16 真机验收（当前版本）：三步连跑完成、延迟出现越线样本、>45s 长播达成（48.28s）、约 55s 以上卡死 2/2、播后告别 3/5
-
-用户要求「现在做一次真机测试」，本轮全程用**当前已发布版本**（Agent/Bridge `memoria-agent:20260916-livekit-181-v1`，Edge 仍为 `20260908-1600-vocat-interrupt-assist-edge-component`）与**板上既有 `0025` 计量固件**（ELF `da6ebdd16…`）。**未刷机、未重新读写固件、未改任何超时/门禁/静默预算/声纹策略**。逐项原始数字、日志行号与边界见 `outputs/acceptance/run-20260916-p0-03-livekit181-device-acceptance/findings.md`（同一目录含可复用看板 `live-watch.py` 与 Edge 指标探针 `edge-metrics-probe.py`）。
-
-五段捕获共八种会话（目录名是捕获名，不是会话名；`session-1/` 内含 A、B，`session-2/` 内含 C、D，`session-3/` 空跑复位，`session-4/` 内含 E、F，`session-5/` 内含 G、H）：
-
-### 已通过 / 已取得
-
-- **「三天天气 → 播完续问 → 播后告别」同一 session 三步连跑完成（H，epoch 1963 / session `de598a18`）**：续问 `turn 3 / gen 4` 提交并播完（`gen 4→gen 5` 间隔 0.642s），结尾 `conversation_end_explicit`、串口回 idle，五代四阶段齐全（含 `actual_heard`）。**但同一轮第一问的 `ACK→正文` 为 1.969s（设备侧 `vad_end→首帧` 4.557s），越过 1.5s 门**，所以「延迟稳定达标」不成立。
-- **「问完到开口」延迟：多数样本通过、已有越线样本**：`ACK→正文` 0.356 / 0.383 / 0.323 / 0.362 / 0.426 / 0.642s（六次通过）+ **1.969s（1 次越线）**；`commit→ACK首帧` 0.310 / 0.307 / 0.316 / 0.324 / 0.318s。历史 epoch 1955 的 **5.028s** 与 21 次串行 geocode 未复现。延迟是数据相关的，**不标通过**。
-- **新 VAD 受理首次真正取到**：A 第二问出现两条 `media vad start admitted`（sample 569600 / 613760），此前两轮「第二问没有任何 VAD/admission」的缺口被填上。受理时 `silence_remaining_s=1.59 / 1.57`、`grace_active=False`、`watchdog_armed=True`。
-- **`>45s` 长播判据首次达成**：F 的九天天气正文 **48.28s / 2414 帧**（桥侧 `reason=final_frame`、`send_audio_ratio=1.00`、`max_gap_ms=55`），设备侧 **`output_frames=2413`（48.24s）、`supply_waits=0`、`prestart_waits=1/476ms`、`boundary/close_dropped/outside` 全 0**，四阶段终态齐全并自行回 idle；操作员确认「九天全部播报了」。另一轮八天 **44.18s**（2209 帧、设备 2208 帧、`supply_waits=1/4ms`）也完整播完。**样本各 1 次，且约 55s 以上仍会卡死，所以不能宣称「长播稳定」。**
-- **播后告别的显式终态取得 2 次 / 4 次尝试**：E 播后 3.35s 开口、F 播后约 0.3s 开口，均 `reason=conversation_end_explicit` + 串口回 idle。
-- **供给计量在真实长播上首次取到连续数据**：44.18s 只有 1 次 4ms 等待，48.28s 为 **0 次**等待（仍只是软件队列视角，不含 I2S/DMA 与听感）。
-
-### 新增缺陷（三条独立、两条量化）
-
-1. **设备侧：约 55s 以上的长回答播放中停滞，2/2 复现，必须硬复位。** B（十天，58.88s）与 D（十天，57.46s）都在正文开播约 1.5–1.6s 时出现一次 **366ms / 412ms** 的软件队列供给等待，随后设备**停止出声、串口从此刻起再无任何输出**（含 SystemInfo），状态机停在 `speaking`，屏幕一直显示「说话中」，直到硬复位才恢复（复位后 ELF 不变、完全正常）。对照 C（44.18s）与 F（48.28s）都**没有**早期等待、完整播完。**D 的服务端全链路完全正常**（TTS 无错误、桥 `reason=final_frame`、无 `event=error`），所以**卡死不能归因于 TTS 超时**；两次卡死与「长正文 + 开播初期约 0.4s 供给等待」完全对应，但**尚未证明因果**，停滞发生在播放路径而不是计量路径。
-   - **Edge 侧已排除交付丢失**：`edge-metrics-probe.py` 取到 `device_backpressure_drop_total=0`、`stale_generation_drop_total=0`（Edge 自启动 7 天累计），而 `services/media_edge/device_backpressure.go` 的下行队列上限只有 **32 帧（640ms）**，说明设备把整段音频一直读走了。**故障在设备收包之后的播放路径**。下一次复核必须同时取卡死前/中/后的 `/metrics` 差分与 `device_downlink_queue_ms`。
-2. **服务端：`DOUBAO_TTS_TOTAL_TIMEOUT_S=20` 是单次 TTS 的挂钟上限，会截断最长答案。** 生产容器 env 实测为 20（非代码默认值）。B 中 TTS 在 **20.23s 挂钟**被切断并抛 `APIConnectionError: total-timeout`（`providers/doubao_tts.py:778`），此时已推送 58.88s 音频；LiveKit 因「部分音频已下发」跳过重试；本仓分发在**已排队音频排空之后**（距 TTS 报错 **38.6s**）才落 `event=error terminal_reason=output_task_exception`，该代 `provider_completed=False`。合成速率实测波动较大（2.90x / 3.18x / 6.8x），故 20s 上限对应的音频长度约在 58–140s 之间浮动——「是否越线」不能只按音频长度预估。
-3. **临近静默的续问可以被识别却拿不到话轮（G，epoch 1962，四环节同时抓齐）。** 跟随提问的 ASR final 于 13:59:15.946 已出现（`text_len=5`），**比设备上报的 `Device VAD start`（13:59:18.947，正文播完后 6.77s）还早约 3s**；受理时 `silence_remaining_s=0.0`、`grace_active=False`、`watchdog_armed=True`；endpoint 边界 13:59:22.723 才到，13:59:22.761 被 `owner_silence_timeout` 关闭。**整段没有任何 `media turn committed`、也没有 `early live-query endpoint`**，用户听到的是「问完没回答就待命」。对照 H 同脚本更快衔接（受理时剩 **8.72s**）则续问正常。**两次采样只差受理时的剩余预算**，故判为**预算/时序竞态**，不是识别或路由能力缺失；同时**不能**从两次采样推出固定安全阈值（实测窗口一次约 6.8s、一次约 9.2s）。
-4. **播后告别成败取决于开口时机（窗口约 9 秒，已量化）。** 播后 **约 0.3s / 3.35s** 开口（F/E）与 H（三步连跑结尾）→ 显式告别成功；播后约 **8.5s** 开口（C）→ 受理时 `silence_remaining_s` 只剩 0.119s，`再见` 的 ASR final 明确出现（`text_len=2`）却在 12:22:00.030 被 `owner_silence_timeout` 关掉；完全没开口（A）→ 播完 0.02s 即静默关闭。同轮受理日志均为 `grace_active=False / watchdog_armed=True`：**绝对 watchdog 已武装但不接管静默关闭**，与既有设计一致，属设计后果。**3/5 仍不足以判定告别场景通过。**
-
-### 明确未完成
-
-- **延迟**：本轮出现 1.969s 越线样本（H 的第一问），且 G 轮整轮丢失续问，因此「问完到开口」与「查询延迟」**都不标通过**。
-- 播后告别只有 **3/5** 成功；本轮**没有**执行播放期告别（P1-07 不动）。
-- `>45s` 判据只达成 **1 次（48.28s）**；**约 55s 以上两轮卡死**，长播的稳定边界尚未确定。
-- 未做 P0-04 学生危机固定话术、待机/五表情照片、回滚演练；`direct_real_device_verified`、`full_duplex_verified` 仍为 false。
-
-## 2026-09-16 LiveKit 1.8.1 已发布到 Agent/Bridge（delta 构建）+ P0-04 学生安全闭环先落代码
-
-用户要求「发布部署，然后真机测试」，并明确选择 **LiveKit + Edge + Agent 一起发**。
-版本先按 1.8.2 准备，但**生产机的构建通道不支持 1.8.2**：`UV_DEFAULT_INDEX` 默认指向阿里云镜像，
-而镜像上三件套只同步到 1.8.1（pypi.org 已有 1.8.2）。用户遂决定**改为发 1.8.1**。
-
-### 已发布
-
-- 源码提交 `d96d4c29b7f13719d052b94647b2c59223ea70a1`，tag `20260916-livekit-181-v1`。
-- 运行镜像 `memoria-agent:20260916-livekit-181-v1`，image
-  `sha256:7033214ddc3a5f4b0f99e016d1edf156b091169d6511ee95139e81f6ec0a9ac4`，revision 与 tag 已核对。
-- 2026-09-16 **11:36:08 CST** 仅重启 `memoria-agent-1` 与 `memoria-voice-core-media-bridge-1`，双 healthy、restart=0。
-- 运行时实测：容器内 `livekit-agents/plugins-openai/plugins-silero 1.8.1`、`livekit 1.1.18`、
-  `livekit-api 1.2.1`、`livekit-protocol 1.1.26`、`livekit-local-inference 0.2.7`；
-  启动日志报 `livekit.agents 1.8.1`、`rtc-version 1.1.18`，worker 已注册。
-- LiveKit smoke PASS；**provider smoke 第一次 InterruptSemantic 超时失败（返回 UNSURE），第二次全项 PASS**，
-  保留两次记录，不把第一次的失败抹掉。
-- readiness `ready`：core **12/12**、`livekit/funasr` true、LLM qwen、TTS doubao（含 word_timestamps）、
-  Agent heartbeat `ready/worker_ready/livekit_ready=true`，boot_id `405c229d…`，回环与公网 8443 均 ready。
-
-### 构建路径（必须记账）
-
-**这次不是仓库的标准全量镜像构建，而是 delta 构建**：基座是上一版
-`memoria-agent:20260915-asr-weather-boundary-v1`，只重建锁定的依赖集（7 个 livekit 包）并覆盖应用源码。
-在镜像**内部**跑了 `scripts/verify_agent_release_artifact.py` 断言版本 pin、真实 SDK 的
-`TurnHandlingOptions` 消费、半双工不可打断、`user_turn_limit` 未启用、遥测隐私默认值为 0/0，
-全部 PASS 后才切流。delta 路径**不等于**标准构建，收据里显式标注，后续如需重放请走标准路径。
-
-构建过程踩到并已记录的三件事（详见 `outputs/acceptance/run-20260916-livekit-181-deploy/report.md`）：
-① 阿里云镜像滞后会让 `uv export` 直接失败；② legacy builder 在 `RUN` 失败时静默重试且不打印错误；
-③ 生产机到 GitHub/PyPI 的网络会慢到 0.1–9 MB/min 并拖断 SSH，故改用本地 `git bundle` + `rsync` 传源码。
-还发现 delta Dockerfile 的两个真实陷阱：`uv pip install --requirements` 对已安装版本**默认不升级**
-（必须 `--upgrade`），以及依赖安装步骤必须排在 `COPY uv.lock` **之后**，否则导出的是基座镜像的旧锁。
-
-### 未完成
-
-- **`docker-compose.production.yml` 新增的两个隐私 env 不在容器环境里**：线上栈用的是
-  `20260827-architecture-split-v1` 那份 Compose，本次只重建了两个服务。实测 worker 进程（pid 21/32/34…）
-  里这两个变量是 `0`，来源是 `services/agent/src/main.py` 在导入 SDK 前设置的运行时默认值，
-  也就是隐私门依赖的那个 backstop。要落到容器环境需要一次完整栈切流。
-- Edge 仍是旧镜像（本次只改了 Edge 源码与一个测试）；Trivy 报的 Go toolchain 漏洞（需 >=1.26.6）**未修**。
-- 未执行回滚演练；回滚 tag 已冻结为切流前那个 image 的别名。
-- 真机验收待操作员。
-
-## 2026-09-15 无设备/LiveKit 专项（记录 18:20 后）：P1-01 本地候选 + P0-04 学生安全闭环
-
-本轮用户明确「真机测试明天再测」，所以**没有开串口、没有刷机、没有发布、没有动生产环境**。全部为本地代码、测试与证据。
-
-### P1-01 LiveKit 1.8.x 同组升级：本地候选就绪，未发布
-
-`pyproject.toml` / `uv.lock` 精确变更 7 项：`livekit-agents`、`livekit-plugins-openai`、`livekit-plugins-silero` 三件套 `1.6.10 → 1.8.1`；RTC `1.1.14 → 1.1.18`；`livekit-api` `1.2.0 → 1.2.1`（约束由 `>=1.1.1,<2` 收紧为 `>=1.2.1,<2`）；`livekit-protocol` `1.1.22 → 1.1.26`（新增显式 `>=1.1.25,<2`，否则 uv 会保留旧锁 1.1.22 而不满足 API 1.2.1）；`livekit-local-inference` `0.2.6 → 0.2.7`。`livekit-blingfire` 保持 `1.1.0`。无其他漂移，未用 `--no-deps`。
-
-新增两个测试文件：
-
-- `services/agent/tests/unit/test_livekit_candidate_compat.py`：`TypedDict` 会静默接收未知键，所以逐键核对 `TurnHandlingOptions`/`EndpointingOptions`/`InterruptionOptions`/`PreemptiveGenerationOptions` **零丢弃**，并回读 `AgentSession._opts.turn_handling` 证明配置被真实消费（不是"构造没抛异常"）。半双工禁打断、1.8.x 新增 `user_turn_limit` 默认不生效、`aec_warmup_duration=None` 仍读回 0.0、`room_io` 五个 Options 签名、`stt`/`tts`/`types` 符号全部钉住。
-- `services/agent/tests/unit/test_livekit_candidate_privacy.py`：用真实 `TracerProvider` + `InMemorySpanExporter` 与假姓名/私有正文/tool 参数 canary。**先有反证用例**证明不显式关闭时 canary 确实到达 exporter；显式 `allow_pii=False` 或 `LIVEKIT_TELEMETRY_ALLOW_PII=0` 时五处内容属性都不出现而非内容计量仍到达；`CAPTURE_MESSAGE_CONTENT=0` 时内容属性根本不写入。SDK 的 env 规则被钉住：**未设置/空串=采集**，只有 `0/false/no/off` 是关闭，且在 SDK 导入期求值。
-
-接线（不只停在"SDK 支持这个配置"）：`services/agent/src/main.py` 新增 `_apply_telemetry_privacy_defaults()`，在 `main()` 第一步执行（早于 `load_settings` 与 worker 启动）；`docker-compose.production.yml` 的 `agent` 与 `voice-core-media-bridge` 都显式写上这两项；`.env.example` 与 `infra/memoria.env.production.example` 补带注释的 `=0`（原文件是空值，空值等于采集）。
-
-门禁（本地）：`uv lock --check`、`uv sync --frozen --extra dev` 一致、靶向 **618 passed / 0 skipped**、全仓 **5002 passed / 0 failed / 3 skipped（合计 5005，带真 PG `MEMORIA_TEST_POSTGRES_DSN`）**、`ruff` 全绿、`mypy services --strict` 433 文件无问题、模块预算 **PASS 未放宽**、Media Edge `go build/vet/test` 通过。证据 `outputs/acceptance/run-20260915-p1-01-livekit-181/`（`report.md` 有逐条边界）。
-
-**未完成**：候选上线与回滚验收需要生产与设备窗口；依赖锁变化的发布**不能**走 agent-only source overlay 快速通道。
-
-记账的既有偏差：`uv sync --all-extras` 在 macOS 上会因可选 `kws` extra 的 `vosk==0.3.45` 没有 macOS wheel 而失败（开发机用 `--extra dev`，Linux 镜像路径不受影响）；`mypy` 报 5 个 unused override section（说明新版 SDK 自带类型标注，但清理它们会改 `pyproject.toml` 而在干净基线发布门禁里被 REJECT，故本轮故意不动）；`services/media_edge/device_ws_server_test.go` 不是 gofmt 干净（`1cf8dec` 基线同样存在）。
-
-### 顺手修掉一个既有 Go 测试失败（与 LiveKit 无关）
-
-`TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt` 在 `1cf8dec` 干净基线 worktree 上**已经失败**，不是本轮引入。保护逻辑本身正确（`approximate` 设备的回执不会被提升成 exact，即不会误升级为 Actual Heard），但拒绝路径只排队一个 `session.error` 就返回，读循环返回后连接被立刻拆除、队列里的诊断消息可能来不及写出，设备侧只见裸 `1006`，测试因此偶发失败（单独跑通过、全量跑失败）。修法：该路径补显式关闭帧 `4002 / playback_watermark_precision_mismatch`（与其它被拒控制帧同一个不可重试会话失败码），测试改为断言**确定性的关闭帧**，并注释说明 `session.error` 仍是 best-effort。`go test -count=5` 稳定通过。**未处理**：与其它拒绝路径共享的"读循环返回即拆 lane、排队控制消息可能丢"时序问题，需单独跟踪，本轮不声称整个 Edge 的 `session.error` 投递已可靠。
-
-### P0-04 学生安全闭环：HTTP 级端到端补齐
-
-新增 `services/control_api/tests/test_student_safety_loop.py`（9 项）。受控学生账号触发危机后：response plan 的 `direct_text` **逐字等于** `CRISIS_SUPPORT_REPLY`（即设备端会听到的文本，不被导师话轮约束改写）；`guardian_notification_outbox` 入队 1 条；家长端列表可读且 `delivery_status=pending`、`contains_transcript=false`、`contains_severity=false`；危机原文不进家长端响应、不进 evidence payload。
-
-另覆盖：同 generation 重放不重复入队（response-plan 缓存路径 + 绕缓存的 store 层幂等）、新 generation 是独立事件、**成人危机不碰 outbox**、**unknown/guest 拿固定话术但不进主人私有链**、入队不可用时固定话术不被压掉（异常仍可观测）、家长端列表按 guardian 作用域隔离且学生本人 403、**撤销学生语音同意立即生效**（新会话立刻 403 且已登记语音会话被终止）、**邀请家人不把学生提升为 owner**（`digital_self`/`speaker_enrollment` 继续 `minor_forbidden`）。
-
-真 PG 域合计 **45 passed / 0 failed / 0 errors / 0 skipped**（`memoria-pgv` @ `127.0.0.1:55439`；上一轮同一域是 34 passed）。证据 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/`。
-
-**边界（不得被误读）**：`guardian_notification_outbox` 仍只有入队与列表读取，`wechat_subscription` 只是枚举值，**没有**发送 worker、重试、投递状态更新、模板或凭据，所以 `delivery_status` 恒为 `pending`——**入队不等于家长已收到**。真实设备上的固定安全话术（听感）与真实账号+真机能力门演练仍待明天时段；本轮只证明下发给设备的文本逐字正确。技术验收不代替法律合规结论。
-
-### P1-06 召回遗漏：只做根因定位，未改检索代码
-
-在候选锁上重跑 16 例固定集：恰好 3 例 `r5=0.00`、其余 13 例 `r5=1.00`（与 `recall@5=0.8125=13/16` 吻合）。三条根因逐条可复现，诊断文档 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`：
-
-- `paraphrase-food-preference`：记忆已抽取并在 review 后为 `confirmed`，但查询「点菜时有哪些东西要帮我避开？」的 n-gram 与「我吃饭时不喜欢香菜。」**零词面重叠** → 检索缺语义桥，不是抽取失败。修法位置是 `recall_planner.py` 已有封闭词表扩展模式，不引入向量库。
-- `person-alias-mother`：人已抽到 `('李梅','mother',('妈妈','母亲','李梅'))`，但 `家里人也叫她阿梅` 的**别名「阿梅」没抽到**。另记：`_entities()` 只接受 `confirmed`，而 review 只提升 claim、**不提升 person 条目**。
-- `repeated-episode-campus-startup`：两段证据未合并成跨会话 episode，而数据集判据要求两条 `source_event_ids` 同时属于一条 `kind=episode`，**该判据当前不可满足**；不能靠改词表解决，要么做合并语义、要么改判据——需先明确取舍。
-
-未改 `recall_planner.py`/`memory_extractor.py`/`memory_catalog.py`/数据集，未新增词表或合并语义，未放宽任何 privacy 门。注：`MemoryCatalog.context()` 是 `confirmed_only=True`，本轮把它当**故意的质量门**，没有放宽。
-
-## 2026-09-15 多日天气与续问关停修复（功能真机 2/3、短播放计量通过；延迟/VAD/长播待验）
-
-本节对应用户「未来三天南京天气只答今天，播后再问没说完就待命」的反馈。证据是 **9 月 15 日**的 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-2/`，session `ee5f652b-1cd3-425d-bd6a-71fd91b7568f` / epoch **1953**；不是 9 月 14 日同名的 `session-2`。
-
-- **多日天气根因已证实**：`bridge.log:67` 的 geocode 输入保留「好未来3天南京」，而 `bridge.log:90` 实际请求是 `forecast_days=1`。旧确定性天气适配器只识别今天/明天/后天的单日偏移，未建模天数范围；不是只改提示词能修复的问题。
-- **续问关闭的现场事实**：`serial.log:304` 在 **12:57:21.672 CST** 播完进入 listening，`:306` 在 **12:57:27.566** 发出新 VAD start；`edge.log:2` 在 **12:57:29.101** 以 `owner_silence_timeout` 关闭，`serial.log:310` 在 **12:57:29.125** 回 idle。设备开口约 1.56 秒后被关停；旧 Bridge 日志没有受理 VAD、剩余静默预算、grace/watchdog 状态，**不能据此断言现场已进入某条 Python 受理分支**。
-- **代码与红测证实的结构性竞态**：VAD 的受理保护晚于异步 projection；已经启用的 one-shot processing grace 不随新受理 VAD 暂停；旧超时还可能已在等 `standby_lock`。仅取消定时任务或调长超时，均不能完整解决这三处接缝。
-
-本次修改沿用既有 provider 与 Python 会话权威链，不新增 listening 状态机、不放宽声纹/打断权限、不改固件或预缓冲：
-
-1. 天气适配器支持从今天起的明确 1–16 天范围；「未来三天」逐项回答今天、明天、后天。只移除匹配的日期片段，保留地名数字；模糊、超限、矛盾范围、非今天起点或不完整日数据走既有 fallback，不默默改答今天。城市在「天气」之后的倒装句仍不由此适配器解析，不能声称任意自然语言日期/地名均已覆盖。
-2. 合法 VAD 在 projection await 前受理，使用独立 active-VAD 标记；真实已启动的绝对说话 watchdog 才能接替 grace，锁内 revision 复核阻止旧静默关闭误杀。重复 VAD 不续 watchdog，也不补满静默预算；仍只有 verified owner 完成轮次能刷新预算。IGNORE、pin、空 VAD、旧 epoch 不获得保护；显式告别与绝对 watchdog 的关停不被 VAD 否决。
-3. 主审补齐两个异步边界：旧 `vad.end` 等待 projection/ASR 返回后不得截断较新 VAD；正常 `vad.end` 在 ASR finalization 等待期间保留原绝对 watchdog，完成终局/epoch/新语句与 pin 检查后，同步交给既有 endpoint-tail 处理。provider 卡住仍有上界，超时后迟到返回不复活会话；pin 早退由原提交/清理路径释放 watchdog。
-4. 新增 `media vad start admitted` 与 `media owner silence close superseded` 日志，记录 epoch、sample、remaining、grace、watchdog、revision，不记录用户原文。下一次捕获用它们证明真实受理与时限交接。
-
-状态（2026-09-15）：
-
-- `code`：已提交并推送 `d7214554316bdaa13984c7b8ecf00aeb61693311`，冻结 tag `20260915-weather-followup-lifecycle-v1`；天气/待命修复之外，已补 ASR 故障恢复、prepare retry 总期限及重连清理。
-- `wired`：接入 `OpenMeteoWeather.resolve`、`on_speech_segment` 与既有 ingress/standby/endpoint/reconnect/terminal 清理路径，没有新增并行状态机。
-- `enabled`：**生产 true，2026-09-15 15:58:42 CST 仅切 Agent/Bridge**。线上 Bridge 的 `load_settings` 切前后均核实 owner silence **10 秒**、speech watchdog **60 秒**、output stall **45 秒**；registry 库默认 0 不是线上生效值。显式配置 0 时保留旧 one-shot grace 与在途关闭，不能把 disabled 配置也说成已有同等续问保护。
-- `verified`：**server_passed / functional_device_rounds_2_of_3_passed / short_playback_metering_passed / query_latency_failed_vad_and_longplay_pending**。前一轮四套件 **314 passed**；增加 **43** 项异常用例后完整 Agent unit **2013 passed in 27.68s**（剥离 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`，`--import-mode=importlib`），Agent Ruff、strict mypy（157 文件）、模块预算通过；正式发布门禁、CI、运行源码及真实 provider 已过。16:18–16:19 旧固件与 19:05–19:06 新计量固件各取得一轮双问/播放结束/播后告别证据，用户分别确认三天齐全、续问正常、声音无断续或卡断。**2/3 仅指功能/听感（旧固件 1 + 新固件 1），不代表整体性能或新固件已有两轮通过。** 新固件本轮五代计量和真实会话捕获收尾通过，但第二问 ACK→正文服务端间隔 **5.028 秒**，时延未过；仍剩一轮功能复测、新 VAD/临近静默专项与 >45 秒长播。`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。
-
-发布前异常路径补核（2026-09-15，本地故障注入与修复已完成）：
-
-- **ASR 异常恢复根因**：finalize 抛异常后的清理撤掉 watchdog/active-VAD，却没有接回 owner-silence，缺少后续 listening 事件时可悬空；旧异常还可能清掉较新 VAD。现在锁内校验 epoch 与原输入标记，仅清理自己拥有的输入；同步清理并恢复剩余静默预算后才异步发布 discard，故障不证明 owner 活动、不补满预算。主审追到下一帧恢复：`_reset_discontinuity` 也有同样的计时交接遗漏与 await 后误清新 VAD，已沿同一顺序修复。因音频不连续而退休输入的语义保留，不把缺失音频当成完整话轮。
-- **prepare retry 总期限根因**：匹配 retry 的早返回与直接提交入口可能没有真实 live tail；即使原 tail 存在，到期逻辑仍会 shield 等待卡住的 retry。0.05/0.15 秒的两次退避不等于 provider I/O 有上界。现在首次提交、retry 与 fallback 共用原绝对 deadline，不因重试续期；略早 timer 回调重挂原期限，旧 epoch/endpoint 回调不能摘掉新 timer。到期仍在 prepare 时走既有 `turn_prepare_timeout` 关停，先封输入、取消提交，再清理；等待 standby lock 后重核 epoch/endpoint/在途任务，避免成功提交、新 VAD 或重连被旧超时误关。失败/耗尽不刷新 owner 预算，正常 verified-owner 成功仍可刷新。
-- **重连接缝根因**：新 transport epoch 能正确否决旧 tail close，但旧 prepare 仍占着 `turn_commit_lock`，导致 `_reuse_session` 无界等待。身份及 authority 核验通过后，重连现在先取消旧输入的 tracked prepare，再进入既有锁内清理，并复核 terminal/context/epoch；不取消已选输出 generation、不发旧 tail 的 CLOSED。独立复核又证实：已分类 owner 的旧 prepare 吞取消后迟到成功，虽然不会发旧回复，却会把剩余 **7.5 秒**补成约 **100 秒**；预算刷新现额外要求当前 epoch，旧成功/异常都不能授予新静默窗口。重连等锁期间发生 terminal 也不能安装新 epoch。
-- **故障证据**：`test_media_finalize_failure_lifecycle.py` **10** 项；最初 5 项核心故障红测及追加的 2 项 next-PCM 红测修复后通过，关联 session/standby 回归 **259 passed**。`test_media_prepare_retry_lifecycle.py` **33** 项，覆盖真实 timer/deadline、两次重试成功/耗尽、每次 prepare 卡住、已耗 grace、terminal/reconnect/new VAD 迟到结果、timer 锁竞态及 verified-owner 预算；主线独立复现的 2 项重连卡锁红测和 1 项迟到成功刷新预算红测已转绿。测试先断言生产路径实际启动 timer，再驱动到期，不凭空补 timer，也不以测试防挂 timeout 代替生产期限。以上是代码缺口实证，不等于已证明它们均曾发生于 epoch 1953。
-- **独立复核**：测试 worker 仅写 retry 故障套件，生产改动由主线完成；其最终单文件复测 **33 passed in 3.66s**，再审 epoch 预算门、取消和 terminal 竞态后，本轮范围内未发现新的可复现问题。主线已亲自复现红测、审读测试及生产改动，并完成上述全量回归。
-- **有界性范围**：已验证正常协作取消的 provider 会退出，取消后迟到返回不能发布旧轮次或启动回复。没有声称能强杀永久吞取消的第三方协程，也没有证明所有 provider reset/close、清理 I/O 都有硬上界；输入终局与资源完全回收是不同验收项。
-
-仍开放：防重复提交门不能直接放宽；新旧会话均有 `straddles_committed_without_timing` 与 mostly-committed rescue drop，双问各提交一次不等于所有 ASR 重叠边界和语句完整性都已验收。两轮功能/听感已通过，不再重复索要确认；新候选自身已有五代真实输出/终端 summary 和正常会话收尾，不是继承旧板结论。下一优先级是**查询延迟**：第二问串行尝试 21 个地名、查询 7.93 秒，ACK→正文 5.028 秒；现已本地复现旧 pending ASR 片段被宽范围拼接，旧片段声学来源仍未知。当前代码仅首 ACK，历史第二提示已移除，不是仍部署但失效。用户授权电脑外放/麦克风自动复测，机器回执/录音与人工听感分开。最后一轮人工功能复测、新 VAD/临近静默及 >45 秒长播仍待验；正常轮次不强求竞态专属 `close superseded`。不做预缓冲 `0026`、自动备份、家长通知发送或微信订阅号。
-
-发布结果（2026-09-15）：证据目录 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/`。冻结范围仅 Agent 生命周期、天气、测量/捕获工具及其测试/文档；固件 dirty 留在主工作树，以干净 detached worktree 发布，未改有效环境或其它服务。CI **34943397294 success**（Agent 与 Python/PG 契约/offline E2E），正式 dry-run 全门禁及 production compose **47 passed**，捕获/报表 **62 passed**。正式切流复用同一 immutable commit 已通过的门禁（`gate-reuse.json`），不是跳过验证。候选真实天气 smoke 请求 `forecast_days=3`、回答含今天/明天/后天；切流后真实 LiveKit、FunASR、QwenRealtimeSearch、Qwen、Doubao、InterruptSemantic 和 readiness refresh 全部通过。16:00:49 回环/公网 8443 均 ready、core 12/12，新 Agent boot `98b37381-97e5-4af8-97b8-158d97b16602`，`last_loop_at=2026-09-15T08:00:45.163950+00:00`，非旧 heartbeat。
-
-设备边界与捕获：15:58:16 重启 Bridge 时旧 epoch 1953 的 WSS 关闭；16:00:48 设备快照 **connected=false**。原始 `runtime-comparison.json` 的 `passed=false` 与 `runtime-comparison-split.json` 的 `device_reconnect_verified=false` 保留为当时事实。新增会话 `67286af6-06a4-40d3-a28d-aa2bb0ec1329`（media epoch **1** / device stream epoch **1954**）已证明随后唤醒并建立新媒体链，不改写旧快照。`session-1/` 仅为 16:03:35–16:15:32 正常收尾的启动/待机检查，无语音验收。`session-2/` 16:15:43 启动、16:15:55.440 进入 idle，串口最后记录 **16:21:42.952**；核查时 PID 27484 与 exec session 均已消失，`capture.json` 未写结束时间/最终流状态，退出原因未知，**不得说成 900 秒正常到期或 capture healthy**。16:40 只读补取同时间窗三容器日志，Bridge **199 行**、Edge **1 行**、Agent **0 行**均与原文件 SHA 相同，SSH exit 0/stderr 空；这确认已留存服务端记录，不补造串口尾部或收尾元数据。证据为 `session-2/report.txt`、`audit.json` 与独立 `*.supplement.log`。两段绑定既有 `run-20260915-p0-03-firmware-metering/postflash.json`（app SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`），`read_from_board_this_run=false`，本次未重新读写固件。
-
-首轮实际话轮审计（2026-09-15 16:18–16:19 CST，`session-2/`，**功能/听感 1/3 通过；有效计量长播 0 轮**）：
-
-- 两次问题各提交一次（turn 2/gen 2、turn 3/gen 4）；三天天气请求 `forecast_days=3 / days=3`，续问为 `forecast_days=1 / days=1`，均选中南京并 HTTP 200。正文 gen 3/gen 5 音频分别 **19.06 秒 / 5.18 秒**，五个 generation 均有 `first_frame_sent → provider_completed → actual_heard → playback_ended`，终态为 `playback_completed`。两次 ACK→正文服务端间隔 **0.374 / 0.349 秒**，正文 Bridge post-pacer 最大帧间隔 **33 / 25ms**；不是设备可闻间隔或 DAC 实测。用户在「说完了」后明确补充 **「三天齐全、续问正常、声音无断续或卡断」**，结合设备终端回执记首轮功能/听感通过；不再把听感标为 pending，也不从单独的 `actual_heard` 账本事件推断听感。日志未记录完整问答文本，日内容齐全依据用户确认。
-- 第一次 VAD 明确受理（16:18:53.174，remaining=8.952s、watchdog=true、revision=1）；第二问通过 ASR final 提交并播放，但串口和 Bridge **没有新的 VAD/admission**，不得据此关闭 VAD/watchdog 竞态专项。首次 rescue 13 字被重叠门拒绝并丢弃，没有生成第三个问题；空 ASR tail timeout 未关闭会话。正文中 16:19:08 的 `semantic_final` 告别候选被 `speaker_authority_unverified` 拒绝，随后正文正常终态；其来源未知，不判定为回声或真实说话。
-- 播后告别：16:19:37.739 Edge `conversation_end_explicit`，16:19:37.755 串口 `listening → idle`。保留两端原始时刻，不把跨时钟差当精确延迟；自动报告因一个 stream 对应五个 delivery 保守保留 `playback→close gap=unknown`，不猜最后 generation。
-- **旧板计量不覆盖本轮实际播放，原因已由主线核对源码与五代日志**：`generation.started → ResetDecoderForServerGeneration(N) → NoteGenerationAnnounced/OpenEpisode` 先打开统计窗口；首帧触发 `EmitLegacyTts(start)`、进入 speaking，既有入口 `ResetDecoder()` 又执行 `Close(kDecoderReset)`，没有为实际播放重新打开窗口。gen 1–5 因此各只有播前 `close=decoder_reset / output_frames=0 / first_output=no / exact_confirmed=0`，没有有效播放结束统计；`NoteWaitBegin/End` 在窗口关闭后不计供给等待，末尾 flush 也不能补回统计。这是**测量生命周期缺口，不是本轮声音异常的根因**；用户已确认无断续。全零不能证明软件供给无等待或 I2S/DMA 无欠载；问候 Bridge 最大帧间隔 **201ms** 也仅作发送侧观察。真实调用顺序回归及最小观测修复已完成，不改音频控制权限或增加预缓冲；新固件自己的短播放计量证据见下节，不回改本轮旧板结论。
-
-## 2026-09-15 计量生命周期与捕获收尾（新固件短播放与真实会话收尾通过）
-
-本节修复只涉及观测链和证据完整性，不修改 Agent/Bridge 线上版本、设备播放权限、静默预算或预缓冲。捕获工具异常退出的具体历史原因仍未知；修复验证的是可复现的清理/写盘缺口，不倒推旧进程一定收到了某个信号。
-
-- **计量生命周期**：`PlaybackSupplyMeter::NoteDecoderReset` 仅在 episode 已打开、同一非零 generation、playback fence 精确递增时保留原窗口和首帧计时；reset 切断在途等待归属并清除 exact token。换代、flush、stop、非法 fence 和已关闭窗口保持 fail-closed，不能复活旧统计。宿主回归覆盖真实 speaking 入口顺序、重复 reset、迟到 token 和 uint32 回绕。供给等待日志移至输出提交/记账、解锁及相关输出回调之后；summary 的 768B 临时缓冲使用 `nothrow` 独占堆内存，分配失败有 dropped 日志，不占用接收任务的大块栈空间。仍只测 decoded playout queue 的 software wait，不是 I2S/DMA underrun 或听感测量。
-- **捕获生命周期**：首个 metadata 写入前安装 SIGHUP/SIGQUIT/SIGINT/SIGTERM 记录，先写 `in_progress`；收尾独立关闭串口、逐路 terminate/有界 wait，必要时 kill/有界 wait，再关文件并记录 `completed_at_local`、首信号、退出原因和流状态，最后恢复 handler。一路 poll/wait/kill 报错不能跳过其余流；未知退出码不能冒充已回收，正常提前退出也不冒充捕获主动停止。BrokenPipe 不跳过清理。`capture.json` 同目录临时文件写完后原子替换，写满/替换失败保留原记录并清理临时文件；这不是自动备份，也不承诺 fsync 级断电持久性。
-- **报告 fail-closed**：`capture_integrity` 与固件 receipt 绑定独立。正常完整捕获要求 `completed` 和可解析结束时间；请求服务端日志或声称流 healthy 时，还须逐路验证 `bridge/agent/edge` 的合法 `stopped_by_capture`/整数退出码/`forced_kill=false`，缺路、提前退出、强杀、清理失败、布尔冒充退出码、非法字段均点名原因。声称 healthy 也不能绕过逐路记录；legacy 缺 `capture_status` 一律 incomplete。preflight-only 只是完成 metadata 检查，不能算设备会话。
-- **本地验证**：`uv run pytest -o addopts='' -q tests/test_voice_session_capture.py tests/test_voice_session_report.py firmware/esp32/tests` **304 passed**（53 捕获 + 74 报告 + 177 固件），包含先红后绿的故障注入；全仓 Ruff、模块预算及 `git diff --check` 通过。固定 upstream `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5`、ESP-IDF **v6.0.2**、app **2.4.2**，clean overlay apply/build 与既有 overlay gate 通过。计量专项依据宿主行为/接线测试、落地源码一致性和实际编译，不把既有 gate 的 exit 0 单独当作新增计量的覆盖证明。
-- **冻结候选**：源码 **`d1ad38fe0d9b36eb9057d8eb97e782b8cc8066d9`**；`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-local/final/` 保留 `upstream/`、`artifacts/`、`build.log`。overlay **`24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3`**；app **3,280,832 bytes** / SHA **`7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65`**；ELF SHA **`da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2`**。主线重算 hash、对比 header 并反向检查 patch；独立只读审计也核对前后像与最终构建树。现为 `code=true / wired=true / enabled=true / verified=true_short_playback_only`，依据新收据与下述新固件自己的会话证据，不继承旧板听感。
-- **受控真机更新（18:49:13–18:51:06 CST）**：`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/` 保存本轮证据。写前工作树干净、候选 app/ELF/overlay 与冻结值一致；ESP32-S3、MAC `90e5b1d7832c`、32MB Flash、identity SHA 均匹配。写前 app 完整槽与旧板已验证的 postflash 整槽逐字节一致；本轮 `rollback-app.bin` 是紧邻旧 app **`dfba3d61…` / 3,280,512 bytes**，不是更早 run 的同名回滚件。固定 esptool **5.4.0**、no-stub、无自动写重试，只擦写 **`0x20000..0x340fff`**；写后回读 **0x3f0000 / 4,128,768 bytes**，app 前缀逐字节一致、擦除尾部为 FF、擦除范围外未变。bootloader/partition/NVS/otadata/phy-init/identity 六区域逐字节未变，ota_1/assets MD5 未变；不把具名分区校验外推为整个 32MB 所有字节均已读取。`postflash.json` SHA **`2229851e440525f3a619586cceae7f5ea906e3ef563e70040b0560c64d944b01`** 保持不可变，其 `boot_verified=false` 是写后当时事实。
-- **启动与新版捕获收尾（18:51:33–18:52:19 CST）**：`boot-check/` 是 45 秒启动/待机窗口，无语音话轮。启动 ELF 前缀 **`da6ebdd16…`**、编译时间 **17:36:12** 匹配候选，**18:51:44.111** `activating -> idle`。`capture_status=completed`、结束时间完整、`exit_reason=duration_elapsed`、serial error/cleanup errors 均无；三路日志均 `stopped_by_capture / exit_code=255 / forced_kill=false`，报告 `capture_integrity=completed`、receipt bound。三个服务日志为空符合该空闲窗口，不能当作媒体链已通过。新增 `boot-verification.json` 绑定原刷写收据、capture/serial SHA，单独记 `boot_verified=true`，不回改已被捕获绑定的收据。**18:51:45.728 出现一次 BMI270 I2C ESP_ERR_TIMEOUT**，之后心跳持续到 18:52:14.553、未见崩溃重启；保留独立异常，不归因为语音卡断。串口输出字节级重复的启动行原样保留，不重复计为新会话。
-- **新固件真实会话（19:04:28–19:07:09 CST）**：同目录 `session-1/{capture.json,serial.log,bridge.log,edge.log,report.txt,audit.json}`；session **`684348e9-8f4e-4c6a-b5b9-58e0306d3875`** / media epoch **1** / device stream epoch **1955** / tool epoch **0**。捕获源码 `4128d95`（clean），固件源码 `d1ad38f`，两者不可混用。捕获绑定原 `postflash.json`，`read_from_board_this_run=false`；打开串口触发一次 `USB_UART_CHIP_RESET`，启动 ELF/编译时间再次匹配，19:04:40.588 回 idle 后才进入验收。用户明确确认 **「说完了，三天齐全、续问正常、无重复提示或断续卡断」**。双问各提交一次、各一段查询提示；南京请求依次 `forecast_days=3 / days=3`、`forecast_days=1 / days=1`，正文 **17.04s / 5.34s**。五代均 `first_frame_sent → provider_completed → actual_heard → playback_ended`、`terminal_reason=playback_completed`，结合用户听感记本轮功能通过，总计 **2/3（旧固件 1 + 新固件 1）**；不等于时延或全部 P0 通过。
-- **短播放计量通过**：gen 1–5 各一条终端 summary，全部 `close=channel_flush / first_output=yes`、输出帧 **71/124/852/133/267** 与 Bridge 一致；首输出计时 **327/360/439/543/387ms**。gen 1/gen 3 软件供给等待分别 **33ms/44ms**，gen 4 另有一次毫秒量化为 **0ms** 的等待；不是零等待，也不据此认定可闻卡顿。所有 exact timeout 为 0，boundary/close_dropped/outside 均为 0 且相关中断路径未覆盖。prestart 是首帧前等待（含思考/查询空档），exact polls 只是次数，不乘固定步长当耗时。计量限 decoded playout queue software wait，不证明 I2S/DMA 零欠载；`channel_flush` 的正常结束语义由服务端终态补证。未见 summary dropped；本轮最长正文 17.04s，不能代替 >45s 长播或日志开销专项。
-- **真实会话捕获收尾通过**：19:07:09.352 收到主动 `SIGTERM`，19:07:09.667 写入最终 metadata；`capture_status=completed / exit_reason=stop_signal SIGTERM`，不是 900 秒到期。三路均 `stopped_by_capture / exit_code=255 / forced_kill=false`，无 serial/cleanup error，报告 integrity completed、receipt bound。serial **274** 行、bridge **233** 行、edge **1** 行、agent **0** 行；Python voice runtime 证据在 bridge，空 agent 文件不代表业务日志全覆盖。原刷写收据与 boot 记录保持不可变，独立 `audit.json` 绑定其摘要及本轮六个原始文件/报告 SHA。
-- **独立查询延迟未过**：首问查询 **2064ms**、ACK→正文服务端间隔 **0.433s**；第二问查询 **7930ms**、间隔 **5.028s**。设备同一时钟亦有 gen 4 结束回 listening **19:06:20.770** → gen 5 首帧收到 **19:06:25.819**（5.049s），不是精确 DAC/可闻间隔，但不满足现有 1.5s 门。`bridge.log:165–200` 证实第二问逐个尝试 **21** 个地名才到南京，首末 geocode 响应相隔 **5.876s**；`open_meteo_weather.py` 的 `_location_candidates` 从完整残留字符串逐字删首字符、`_geocode` 串行 await，是已证的延迟放大点。ASR final 10 字到 commit 42 字是线索，杂词来源（回声/拼接/背景等）仍未知，不能定因；本轮也没有慢查询第二提示代。下一步先复现该真实输入、定位拼接来源并约束候选/总时限，核查既有慢提示路径；不放宽防重复门、不靠重复提示或预缓冲掩盖延迟。
-- **未覆盖与独立观察**：首问 19:05:48.294 有 `vad admitted`（remaining=8.524s、watchdog=true、revision=1），第二问仍无新 VAD/admission，只验证 ASR-final 续问；新 VAD 接管/临近静默专项仍开放。播后告别 19:06:34.402 Edge `conversation_end_explicit`、19:06:34.433 串口回 idle，不将跨机器 31ms 当屏幕延迟；报告因一个 stream 对应五个 delivery 保留 close gap unknown。首次 13 字 rescue 被 overlap 门拒绝并 drop，PCM 边界有一次 clipping 观察，不定为声学根因。启动期 `i2c.master port not initialized`，待机 **19:04:55.406 / 19:05:04.495 / 19:05:11.566 / 19:05:22.685** 四次 BMI270 I2C timeout 均早于唤醒，后续会话正常、无再次启动/panic/watchdog；独立跟踪，不归因为播放卡断或已证省电问题。
-- **旧捕获只读复核**：新版报告对 weather-lifecycle-release 的 `session-2/` 返回 `capture_integrity=incomplete`（缺 capture_status/结束时间），同时 `capture_receipt_binding=bound_by_capture_tool`。原 `capture.json` 前后 SHA 均为 `2801db93a6c74c23550a9771c3aba0a0b6acf0b8b0d65cb133e982c970af7de7`，未补写 metadata 或覆盖历史 `report.txt`；旧板首轮功能/听感 **1/3** 仍成立，但不变成计量通过。
-- **该候选构建期间的临时清理**：仅删除同一 run 下被 `final/` 替代的初版 `upstream/` 与 `artifacts/`，释放约 **1.2GiB**；保留最终候选、顶层 build.log、全部旧板收据与回滚件，未清理固件缓存或其它 run。本次会话验收未再清理。
-- **刷写前候选审计取舍**：计量/捕获本地审计未发现新的功能性阻塞，不包含后续真机暴露的查询延迟。审计提出“4096 栈深等于 16KiB”不适用于本次 ESP32-S3 Xtensa/non-SMP 构建：实际 IDF port 的 `StackType_t=uint8_t`，因此未据此改动候选。锁外日志仍可能占用任务时间，真实 UART/收包时延及栈余量未测，不声称对播放零影响。两个 `0025` 文件的完整路径不同且当前改动不重叠；计量 patch 的旧后像 `index` 元数据不影响现用普通 `git apply`，内容已与构建树核对。本轮保留既有命名/元数据以维持冻结候选，不改号为预缓冲 `0026`、不切换 `--3way/--index` 应用方式。
-
-下一步按 `TODOLIST.md` 验收下述输入边界/查询预算修复，再补最后一轮人工功能复测、新 VAD/临近静默续问与 >45 秒长播。短播放计量与原会话收尾已通过，不重复刷机；后续强杀/缺记录仍保留 degraded/incomplete，不追写为 healthy。P0-03 仍未整体完成，不能外推全双工。
-
-### 2026-09-15 ASR 候选边界与天气查询预算（已发布，自动代测未唤醒，真机待验）
-
-- 已复现代码根因：播放期无有效 VAD 端点的旧 final 留在 pending window，续问 final 沿用最早起点，timeline 将旧字拼进新提交；现场为 final 10 字、commit 42 字。上段 ASR「只是线索」结论由本轮复现更新，旧片段为何被识别出来（回声/背景/幻觉）仍未知。天气端逐字删首字符再串行 geocode 将污染放大为 21 次请求与 7.93s 查询。
-- 在现有 Python 生命周期加窄范围隔离：只处理 device 播放期遗留、无 active VAD/端点/已判定工具语义的候选，回复结束且新 final 与旧 end 相隔 >2.5s 时建 sample floor；这是保守 ASR 分窗策略，不是测得的 VAD 静默。清除旧候选/partial，旧 ASR revision、语义救援、VAD 和 await 后迟到结果不得越界；正常分句、主动 VAD 与已固定端点保留。不开新控制面、不推进 owner 或 generation。
-- 天气只尝试完整地名和明确行政边界，最多 3 个候选，污染串不猜末两字；同一绝对 deadline 覆盖 OpenMeteo geocode+forecast（默认 8s），超时走既有 fallback、外部取消继续传播。该 8s 不是包括 Qwen fallback 的整链上限，也不代替 1.5s 性能验收门。
-- 当前仅首 ACK；历史 1905/20260912 曾恢复的第二提示已被后续移除，相关旧条目只作当时事实，不是当前启用状态。修复不恢复重复提示、不改静默/VAD/声纹阈值、不做 0026 预缓冲。
-- 用户授权 Mac 外放提问和麦克风收音；使用有界脚本、独立唤醒、完整正文 fence/终态后才续问，测试后恢复原静音。机器录音/日志与人工听感分开，自动代测不累加人工 2/3；合成声音被门禁拒绝则停止。自动脚本及原始日志回放自检放 `outputs/design/auto-audio-20260915/`，发布证据放 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/`。
-
-发布与本轮验收（以下时间均为北京时间 UTC+08:00）：
-
-- **已发布**：冻结提交 `1cf8decaee8b28aa73d104f7aea89086e942db66` / tag `20260915-asr-weather-boundary-v1`，正式 release gates 通过；CI **34971139245 completed/success**（20:58:40 完成，收尾时经 GitHub 再查确认）。`ci-final.json` 实为发布时的 in-progress 快照，原样保留，新核验单列 `ci-verified.json`，不把文件名当最终状态。21:00:12 Agent/Bridge 启动新镜像，21:00:38 切流检查通过，当前 image 与紧邻回滚见「当前生产」。有效 env SHA 不变，17 个非目标容器不变，未刷固件/修改设备策略或生产配置。
-- **真实 provider smoke 通过，非设备听测**：今天南京 / 明天南京 / 未来三天南京均仅 1 次 geocode，分别请求 `forecast_days=1/2/3`，答案标签分别为今天 / 明天 / 今天、明天、后天；耗时 **4589/2857/2406ms**。污染长串仅 1 次 geocode、841ms，未逐字削首并猜成南京。四例 `device_acceptance=false`，不能用单次请求耗时推断真实 ACK→正文间隔，更不能关闭 1.5s 性能门。证据 `candidate-weather-smoke.jsonl`。
-- **运行验收通过**：真实 LiveKit/provider smoke 和 readiness refresh PASS；21:02:33 回环/公网 8443 均 HTTP 200 ready、具名 core 12/12、Agent heartbeat ready。发布原始 `runtime-compare.json` 仍为 `passed=false / server_release_passed=true / device_connected_at_snapshot=false / device_reconnect_verified=false`；保留“发布成功但真机尚未重连验收”的事实，不追写成整体验收成功。
-- **自动声学对照已执行，停在唤醒前置**：`run-20260915-auto-audio-retry3/` 的 Tingting（21:57–21:58）和 `run-20260915-auto-audio-meijia/` 的 Meijia（22:27–22:28）各播放 3 次「茉莉」。两轮自测及唤醒词参考波形匹配均证实 Mac 外放被 Mac 麦克风录到，但没有新的 wake detected / WSS session，设备一直 idle，`bindings=[] / turns=[]`，没有播放天气问题。尚未进入声纹判定，不能断言被 CAM++ 拒绝，也不能据此诊断机器人听不到或硬件故障；当前未知是合成音、摆位/距离还是其他声学条件所致。停止重复试播，不绕过唤醒/owner gate。
-- **自动工具审计与边界**：自测必须唯一匹配已播放参考，不能仅凭环境噪声起伏过关；正文必须唯一匹配完整 session/stream/turn/generation fence 与闭合播放窗，排除 ACK、旧会话、电脑 prompt、缺失/歧义/未闭窗口。离线自检、会话证据 **43** 项、音量恢复 **5** 项、Ruff 与编译检查通过。分析只写独立 `audio-analysis.json`，原始 `results.json` SHA 在分析前后不变。两轮录音的采样点与播放墙钟无法由同一 offset 对齐（`inconsistent_sample_wall_clock`），具体原因未定位；不做无证据的时间拉伸/平移，不产出精确 gap 或正文听感结论。能量只证明该窗口有能量，不能证明音源、语义、连续播放或人工 Actual Heard。
-- **现场已收尾**：Meijia 捕获于 **22:28:02.799** 正常 SIGTERM 完成，三路日志均 `stopped_by_capture`、无 forced kill/serial/cleanup error；ffmpeg 已停止，串口无占用。两轮 `volume-restore.json` 均确认输出恢复 **31%、muted=true**，输入仍 **82%**。收尾再读系统音量一致，无后台录音或后续自动播放。脚本/设计/录音位于 ignored 的 `outputs/`，没有随生产修复提交；不得声称 git 干净即这些工具已入库。
-- **用户要求提高音量后的追加对照**：保持 Meijia 不变，仅将输出 **80% → 90%**，22:36:49–22:37:18 分开播放三次「茉莉」。自测通过，Mac 录音内三次唤醒词均匹配参考，但仍无设备 wake/WSS 会话、无问题或正文，不能说明低音量是根因。自测匹配窗口 RMS **-9.75dBFS**、峰值接近满幅（四舍五入 **0.0dBFS**），只反映 Mac 收音，不等于机器人麦克风声压；不据此继续无限加音量。时轴仍为 `inconsistent_sample_wall_clock`。证据 `outputs/acceptance/run-20260915-auto-audio-meijia-volume90/`；捕获 **22:37:30.586** 正常 SIGTERM 收尾，三路无强杀/错误，录音和串口均释放，输出再次恢复 **31%/muted=true**、输入 **82%**。原始 results SHA 在独立分析前后相同。
-
-**剩余验收**：历史人工功能 2/3 仅属于前版 `d721455`，本次发布未取得新会话，不能继承为新版已通过。保持 P0-03 未完成；后续有可用声学条件时再验证本版三天天气、续问及告别、新 VAD/临近静默、查询时延与 >45s 长播。当前不再重复试播，不实施 `0026`、不改声纹/唤醒/VAD 阈值，`direct_real_device_verified` 与 `full_duplex_verified` 均为 false。
-
-## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
-
-现象：2026-08-31 之后每次 12h 定时刷新都跑通全部真实 smoke，却在最后一步停在 `readiness mark FAILED: HTTP 409`。统计 2026-08-25 以来 `mark FAILED` **83** 次、`refresh PASS` 10 次，最后一次 PASS 是 **Aug 31 00:42** `20260827-architecture-split-v1`。Control 的 gate 因此长期停在 `not_ready_smoke_evidence_expired`（TTL `READINESS_GATE_TTL_S=86400`，12h 刷新本应有的余量被吃光），是**假阴性**，不是 provider 故障；2026-09-13 23:40 记录的 503 就是这个状态。
-
-根因（两条，都源自 2026-08-27 架构拆分后的组件发布方式）：
-
-1. `scripts/refresh_readiness.sh` 在未设 `MEMORIA_RELEASE_TAG` 时用**发布目录名**当 stack tag（`basename /opt/memoria/releases/20260827-architecture-split-v1`），但 2026-09-01 全栈发布后容器内的 stack tag 是 `20260901-0945-wake-word-whitelist`。mark 的 `release_tag` 与 Control 的 `settings.memoria_release_tag` 不一致 → 409 `smoke release tag does not match config`。目录名不再等于 release tag，这就是 409 的起点。
-2. 同脚本只用 base `docker-compose.production.yml` 起一次性 smoke 容器，所以「provider smoke PASS」跑的是 **base 镜像**（`memoria-agent:20260827-architecture-split-v1` 一类），不是当时实际服务的组件镜像。即使 mark 成功，证据也不覆盖线上制品。
-
-修复（`scripts/refresh_readiness.sh`，读法与 `scripts/deploy_agent_component.sh` 的 `container_env_value` 一致）：
-
-- stack tag 改为从**运行中的 Control 容器**读取；只有容器不在运行时才回退目录名并打 warning。
-- 一次性 smoke 容器复用该 live 容器创建时记录的 Compose 文件集（`com.docker.compose.project.config_files`）；记录中的文件缺失时 warning 跳过，随后用 `compose config --format json` 断言解析出的服务镜像**等于**容器实际镜像，不等即拒收证据。
-- `run_agent` / `run_control` / `wait_for_current_release_readiness` 的行为与断言语义不变。回归：`services/control_api/tests/test_production_compose.py::test_readiness_refresh_passes_required_provider_gate_into_run_container` 已钉住上述规则，该文件 47 项全绿。
-
-部署与验收（2026-09-14）：
-
-- 仓库脚本 SHA256 `c0152d5b1768aa758d93f0540529ef00745bbee7560e91ad5386eb6621088288`，已 `install -m 755` 覆盖 `/opt/memoria/current/scripts/refresh_readiness.sh`；改前副本 `/opt/memoria/current/scripts/refresh_readiness.sh.bak-20260914-pre-tag-fix`（`dc8c95ce74883fa1ad68bcbe0c47f84357b9e956036fea397b135b8b21b28385`）。
-- 手动实跑：`livekit_smoke_test PASS` → `provider_smoke_test PASS: FunASR, QwenRealtimeSearch, Qwen, Doubao, InterruptSemantic` → `verify_env OK` → `readiness mark OK` → `readiness refresh PASS: 20260901-0945-wake-word-whitelist (qwen)`。
-- systemd 路径（同一 unit / ExecStart）：`systemctl start memoria-readiness-refresh.service` 于 16:32:08 CST `status=0/SUCCESS`，日志同样 `readiness mark OK` + `refresh PASS`。
-- 状态：loopback `http://127.0.0.1:8791/health/ready` **200 ready**；公网 `https://aigcnice.com:8443/memoria-api/health/ready` **200 ready**；具名 core **12/12 ready**；agent `ready`，boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`，`worker_ready/livekit_ready=true`，`last_loop_at 2026-09-14T08:33:01Z`。公网 readiness 在 **8443** 的 SNI 多路复用之后；443 属于同机既有 WMS vhost，`/memoria-api/...` 在 443 上无匹配路由会返回 404，**不能把 443 的 404 当作服务故障**。
-- 定时子项已完成（2026-09-15）：timer `LastTriggerUSec=04:35:27 CST`，04:36:23 首次因 Doubao word timestamp alignment degraded 失败；04:41:24 systemd `Scheduled restart job, restart counter=1`，04:42:35 providers PASS、04:42:38 mark OK、**04:42:39 refresh PASS / Result=success / ExecMainStatus=0**。因此为“定时触发后一次自动重试成功”，不是首尝试通过；证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/readiness-timer.log`。本轮发布后的 smoke 直接执行脚本，不用手动启动 unit 冒充定时触发。
-
-口径更正：readiness 的 `release_tag` 是**栈级 env tag**（`20260901-0945-wake-word-whitelist`），不等于任何组件镜像版本。组件身份只认容器 image/labels，当前值见下方运行清单，不从旧 smoke 的版本推断。gate 变绿只证明该栈 tag 下的 smoke 通过，不证明设备场景已验收。
-
-## 2026-09-14 唤醒问候播放期越权 VAD 断链修复（15:04 CST app-only 刷入；15:11 CST 真机复测 PASS）
-
-现象：唤醒后机器人播放欢迎语「哎呀」，播到第一个可播放下行帧后约 20~30 ms 内设备 WebSocket 断开，屏幕进「连接中」，随后按 `1/5…5/5` 退避重连；重连后再次播放同一问候又断，最终由服务端 `owner_silence_timeout` 收尾。用户侧表现为「说了句哎呀就连接中了」——那句「哎呀」是机器人自己播的，不是用户说话。
-
-根因（单一决定性证据）：Direct Edge 对播放窗口内的 `vad.start` 做越权校验，`isPlaybackActive() && !bargeInSourceAllowed(AllowedBargeIn, "voice")` 时不转发该事件，先发 `session.error` 再关连接。生产库 `device_settings` 里该设备（`dev_atk_a4cb8fd6095c`，settings_version=22）的签名策略是 `allowed_barge_in=["button","keyword"]`，**不含 voice**；板上 AEC 参考未验证（`aec_reference_verified=false`、`aec_mode=fd_low_cost`），播放「哎呀」时的自身回声（串口 `rms=0.0474`）被设备当成人声上报，正好命中该分支。证据：
-
-- 串口 `outputs/acceptance/run-20260914-aec-fix/retest-2/serial.log`：13:05:12.654 `Device VAD start at sample=32640 rms=0.0474` → 13:05:12.677 `Device WebSocket disconnected attempt=1` → 13:05:12.706 `speaking -> recovering`。
-- Edge `outputs/acceptance/run-20260914-aec-fix/retest-2/edge.log`：同一 session/device 连续三次 `WSS handler rejected … kind=text`（epoch 1941/1942/1943），最后由 `owner_silence_timeout` 关闭——静音超时是断线后的结果，不是根因。
-- 设备签名策略只读读取：`outputs/acceptance/run-20260914-1510-wake-ack-vad/device-settings.txt`（经 ssh 在 control-api 容器内以 `mode=ro` 打开 SQLite，未改任何数据）。
-
-修复（commit `bdf2047`，已推送）：固件在 `session.accepted` 解析签名 `allowed_barge_in`，落地 `voice_barge_in_allowed_`；`SendVadState(true)` 在 `HasActivePlaybackGeneration()` 为真且策略未放行 voice 时本地抑制并打告警，播放结束后的普通聆听 VAD、`vad.end` 与物理硬停路径不变。overlay patch 0024 的把关条件补上 `VoiceBargeInAllowed()`，`ResetSessionState()` 清除该标志；回归断言加在 `firmware/esp32/tests/test_memoria_protocol_source.py`。
-
-构建与刷机验证：clean build + `check-overlay.sh` + `firmware/esp32/tests/` 全通过；app-only 只写 `0x20000`，写后全片回读字节一致，identity/NVS/otadata/bootloader/分区表/phy-init 未变，assets 与 ota_1 的 MD5 未变；启动进入 idle。
-
-真机复测（2026-09-14 15:11 CST，session `8d013b25-8e52-4c94-9537-4e8aad645a56`，stream epoch 1945）：`outputs/acceptance/run-20260914-1510-wake-ack-vad/retest-1/`，机械判据 `gates.txt` **14/14 PASS**：
-
-- 唤醒后 15:11:07.568 首个可播放下行帧、`listening -> speaking`，15:11:09.112 `speaking -> listening`——问候整句播完，全程无 `Device WebSocket disconnected`、无 `speaking -> recovering`，Edge 无 `WSS handler rejected`。bridge 侧问候 generation 1 走完 `first_frame_sent → provider_completed → actual_heard=True → playback_ended=True`。
-- 一句天气 → turn 2 的 generation 2（ACK）与 generation 3（正文）两段都 `actual_heard=True`。
-- 告别：07:11:28.536 `media early conversation-close endpoint … text_len=5 source=partial_immediate` → 07:11:28.539 Edge `reason=conversation_end_explicit` → 串口 15:11:28.560 `listening -> idle`，约 24 ms，未走 `owner_silence_timeout`。
-- 本轮未出现 `Suppressing playback-window VAD start` 属预期：overlay 把关在 Application 调用点就拦住，播放期根本不会调用 `SendVadState(true)`；协议内抑制是其它调用路径的第二道防线。
-
-验收边界：一次干净会话不等于全链路通过，且本轮没有 AEC 残余/双讲/矩阵证据，`direct_real_device_verified` 与 `full_duplex_verified` 仍为 false；「播放中语音打断」按签名策略仍不生效（见下）。
-
-已知策略边界（不是本次缺陷）：签名策略未放行 voice，因此**播放途中用说话打断仍不会生效**——机器人会把当前句播完再回聆听，物理按键硬停不受影响。要放开需先让 AEC 参考通过验证（`device_acoustic_capabilities.aec_verified`）再升 `full_duplex_verified`，或显式把 `voice` 加入 `allowed_barge_in`；后者在 AEC 未生效前会让机器人把自己的声音识别成用户。
-
-## 2026-09-13 天气提示后无声修复（23:35:36 CST 已切流，两次正文听感已确认，告别即时待命未通过）
-
-- 根因已由线上 epoch **1934**、session `cb90521f-2254-4e76-ba69-5f571b1af4e8` 确认：22:42:52.963 filler 已 `actual_heard=True/playback_ended=True`；随后 VAD 将 floor 切为 `user_speaking`，但后续 ASR 为无字短输入（RMS 87、160ms）。22:42:53.886 天气查询成功返回 187 字，却因 `output intent inactive` 被丢弃；22:42:56.058 空 tail 退休也没有恢复 floor。这次 VAD **没有推进 generation**，不是查询失败或 TTS 无声。
-- 修复：Media coordinator 在 floor 暂时关闭时保留仍有效的输出候选，但不授予播放权限；真空输入结束且原 fence/context 仍严格匹配时恢复 floor，事件驱动重试。普通回答和查询失败 fallback 同样覆盖；有效正文排队时不额外发“没听清”抢占它。内部 ACK/正文 handoff 的 generation bump 同时携带有效排队后继，避免只保留 ACK 而再次丢掉正文，已播放/取消 owner 不会重播。
-- 安全边界：新问题、stop/cancel、身份或 session/context 切换、过期、关闭、standby、声纹登记以及有文本输入不能被旧空 tail 复活；不延长 TTL、不放宽声纹门禁、不改 VAD/音量/固件。Go output-arbiter shadow 的 VAD 清队列口径与 Python 暂存候选存在诊断差异，仍无执行副作用，不能据 shadow 统计宣称 Go 已能接管。
-- 验证：故障时序“结果先到/空 tail 先到”与 ACK+deep 同时排队的 promote/preempt 路径均红→绿；完整 clean-worktree release gates（ruff、模块预算、strict mypy 157 files、全部 Agent 单测及 production compose tests）通过，`duplex_runtime.py` 仍为 **4246/4246**。提交 `6ca25f71da05ec1cf0c08d46ce4b92c643a8f466` 与 release tag 已推送。
-- 发布只重建 Agent/Bridge，运行源码 hash、镜像 revision、双 healthy/restarts=0、Bridge gRPC、有效 env 摘要与非目标容器不变均已核实，23:47:21 CST 延迟复核仍通过。当前镜像/回滚/收据见“当前生产”；`direct_real_device_verified/full_duplex_verified` 保持 false。
-- 上线后新设备会话 epoch **1935**、session `d0a30dbe-18e7-4dbd-9304-e8a75a6eae52`：Edge 确认绑定 `dev_atk_a4cb8fd6095c`。南京当天/次日天气查询分别 2527ms/4391ms 完成；turn 2/gen 3 正文在 23:45:51.005 发首帧、23:45:57.181 收到播放结束，turn 3/gen 5 正文在 23:46:05.446 发首帧、23:46:10.459 收到播放结束，均 `actual_heard=True/playback_ended=True`。每次查询一段 ACK 后一段正文，本轮没有 `output intent inactive`；提示结束到正文首帧分别约 **0.366s/1.766s**，第二轮仍超过 1.5s 时延标准。2026-09-13 用户已确认今天、明天天气均听到，并报告追问与“好的再见”时均能中断；**这只确认本轮两次正文交付，未重新触发 epoch 1934 的同一空输入恢复时序，不能把特定故障场景或全双工验收记为通过。**
-- 告别即时待命未通过：用户报告“好的再见”后屏幕继续聆听数秒才待命。本轮日志中 23:46:10.465 由 `media_playback_ack` 进入 listening；其后输入经 FunASR/SenseVoice 未产生文本（provider PCM RMS 49.943、peak 553），23:46:19.117 空 ASR tail 退休，23:46:19.237 Edge 才以 `owner_silence_timeout` 投递关闭，距进入聆听约 **8.77s**。未见这句告别被接受或 `conversation_end_explicit`；当前证据定位在告别输入/识别链，不能断言权限拒绝、告别规则漏词或界面延迟。用户报告的中断也不替代带 fence 的服务端抢话与设备串口证据；下一步需对齐原始上行 PCM 与设备 VAD，不调大增益或绕过声纹门禁。
-
-下节保留既有故障背景；其中旧镜像和旧回滚只作历史证据，不再作为当前操作入口。
-
-## 2026-09-12 闸门修复背景（旧版本真机复测未过）
-
-问「今天南京天气怎么样」听到两遍 filler 且答案丢失（epoch 1911/1912）的代码修复：
-
-**12:45 真机复测未过（epoch 1915，会话 `5188ae2c`）**：症状与 1911/1912 一致（两遍稍等 + 无答案）。**上轮闸门确认生效**（29.998 有 `media duplicate media turn skipped`），但整轮定位出三个新缺陷：**D1** 重复闸门在「委派结果已交付（claim=COMPLETED）、答案尚未播出」的空窗失守，延迟提交重试把同文本放行为 turn-3 并掐断第一遍 filler；**D2** filler 播完 129ms 后的回声假触发 vad_start 翻转话轮权，把就绪答案在 `first_frame_sent=False` 时以 `superseded` 杀掉（无 AEC 下此时序确定性复现）；**D3** 已被 `cross_sentence_overlap` 拒绝的静音幻觉文本（rms=308 → text_len=3）仍驱动会话关闭。SenseVoice 整段转写证实用户只问了一句「今天南宁天气怎么样？」（926ms），之后 1.3s 近静音。证据与修复设计 F1-F3：`outputs/acceptance/run-20260912-1245-epoch1915/findings-epoch1915.md`（含全量 bridge 日志与上行 PCM tap）。
-
-**发布记录（2026-09-12 12:39:40 CST 切流 PASS）**：`memoria-agent:20260912-1150-companion-persona-and-lookup-gate`，image `sha256:7fce8545aa20e49b51f772b22b14f51e2020e39d207cb44c2eef2f5589822228`，commit `43b28f181764126fa7d0e688cf797a58e8c3b176`。agent/bridge 双双 healthy、restarts=0；**容器内已逐条核实**闸门新调用（`media_session_commit.py` 第 679 行 `_reply_or_delegation_pending`）与 `media_session_turns.py` 的两个 staticmethod 真实存在，不是只凭脚本自报。回滚基线 `rollback-20260912-1150-companion-persona-and-lookup-gate-pre-agent/-pre-bridge`（= 切流前的 1855，`sha256:6088221753038e0e448a78580fb6b179bf59c5e91b93ff833b23986fb57513a0`）。**回滚即回到带同一 bug 的 1855（epoch 1912 已实锤），本轮没有干净可退版本——复测再失败时没有好兜底，这是当前最大风险。**
-
-**本次发布形态变更**：组件通道自本次起改用**整树 overlay**——`infra/Dockerfile.agent-source-overlay` 由「`rm -rf /app/services/agent` + 只覆盖 agent」改为「`rm -rf /app/services /app/packages` + 整树 COPY」，因为新 agent 依赖 `services/persona/custom_persona_fields`（1855 底座无此包）。仍然复用 1855 依赖层构建、`uv.lock` 未动。契约测试 `services/control_api/tests/test_production_compose.py` 已同步，`deploy_agent_component.sh` 的归档范围与回滚恢复路径一并改为整树。**副作用（正向）**：1905 的慢查询第二句提示随整树恢复（1855 源码 0 处 `THINKING_FILLER`，HEAD 有并在 `media_session_projection.py` 生效）。
-
-**数据层**：`services/identity/postgres_schema.sql` 已前向迁移到 `memoria` 库——新增 `identity_custom_personas`、`identity_persona_assignments`，并把 `identity_idempotency_records_operation_check` 加宽至含 `persona.create`。幂等 IF-NOT-EXISTS、向后兼容；已在库内核实两表与约束。切流前的库备份在服务器 `/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/`（注意：自动备份当时并未在跑，这次是手工 `pg_dump`）。
-
-- **A 已修**：`media_session_commit.py` 的 `_commit_user_turn_locked` 重复话轮闸门由 `_reply_in_flight` 改为 `_reply_or_delegation_pending` = `_reply_in_flight or _delegation_output_pending`。后者在 `context.delegation_output_claims` 存在 `PENDING/OWNED` claim 时为真，即把「输出已 `delegation_output_owned` 移交、深查结果未交付」的空窗计入 in-flight（两个 staticmethod 加在 `media_session_turns.py`）。**刻意不改 `_reply_in_flight` 本身**——它仍被 6 处 early-commit 路径复用，混入委派语义会饿死新话轮的端点锚定。
-- **B 部分**：`media_session_projection.py` / `media_session_output_dispatch.py` 两处 `output_intent_inactive` 接缝加 WARNING，把「已完成深查答案被静默释放」变为可观测。**行为未变，不保底**。
-- **C 未修（判为已被 A 消解）**：跨 turn supersede 未出首帧答案的触发者就是重复提交本身，A 修好后不再进入。对真正的新话轮（换话题/打断）抢占仍是正确行为。
-
-**根因 2 已修、待真机确认**：**不同文本**抢跑时，旧话轮的可取消 live lookup 现在会在新话轮切换前按 fence 取消并从任务注册表清理，避免旧结果回流、抢占新回复或形成 stale output。代码与回归测试已通过，真实设备仍需确认“南京后立即改问北京”时新问题正常作答。
-
-**发布工具工单（截至 2026-09-13：已用于本次真实发布）**：根因是回滚 override 曾为 Agent/Bridge 生成两个不同 tag，而前进式切流要求 `agent_image == bridge_image`。`scripts/deploy_agent_component.sh` 现使用单一 `memoria-agent:rollback-<release_tag>-pre`，两个服务和 `ROLLBACK_POINT.txt` 共享该 tag；四个本地 release gates 显式使用 `uv run --extra dev`，保证 fresh worktree 安装开发依赖。`20260913-p0-empty-input-resume-v1` 已从 clean worktree 完整通过 ruff、module budget、strict mypy（157 source files）、Agent/production compose tests、artifact preflight，并完成真实远端构建与切流。共享 rollback tag 与线上健康证据见下方。
-
-**真实设备告别复测（2026-09-12）**：新会话 `53c86566-6fec-48fa-9ddd-43da81674ce3`、epoch `1925`，不是旧日志。设备成功唤醒并进入 `listening`，收到“好的，再见”后线上记录 `conversation_end_explicit`，后续输入以 `reason=terminal` 拒绝，设备回到 `idle`；告别即时停止闭环已通过。天气会话 `eae63bac-d0d2-4f63-ad37-00f7b0a9a457` 是另一条独立的新会话。
-
-**已由 2026-09-13 empty-input-resume 修复更新**：floor 暂时关闭改为排队，不再仅因用户抢话释放有效候选。`output intent inactive` WARNING 仍用于 fence/context/TTL 等真正失效；通过 `empty_input_retired`、`media output carried` 和 output retired 原因区分恢复、内部移交与淘汰。
-
-**测试面（本地，全部剥 `PYTHONPATH`）**：`test_media_session.py` 172 passed（含新增 6 条：工程师 2 + QA 4）、`test_agent_production_wiring.py` + `test_realtime_information_markers.py` 98 passed、相关回归面（delegation_coordinator / conversation_projection / duplex_runtime_wiring / media_runtime_hardening / media_agent_factory / interaction_mode_runtime）192 passed；`mypy services --strict` 433 文件无问题；`ruff check` 干净；`check_module_budget.py check` PASS，预算未放宽。
-
-**文档失效提醒**：`outputs/repro-red.txt` 记的是 epoch-1897 之前的旧病，在当前 HEAD 上**不可复现**；`test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler` 在干净 HEAD 上是通过的，且走 `runtime.on_turn_committed` **绕过闸门**，不是该 bug 的回归守卫（QA 用 `git stash` 退回 HEAD 源码实测确认）。后续以本次新增的 6 条测试为准。
-
-## 下一验收
-
-按顺序。点屏 / 摇晃 / 短拍逻辑已于 2026-09-09 16:08 CST 操作员 PASS；本轮只换 v3 对话脸画面，不改点屏拍击接线。半双工双轮（星期几 + 天气 + 短告别）曾在 epoch 1379 PASS，不代替下列项。
-
-| 项 | 标准 | 状态 |
-| --- | --- | --- |
-| 待机脸照片 | 拍 `idle.jpg`，黑底月牙+平嘴+鼻点，对照 `outputs/firmware-face-v3-20260909/sheet.png` 的 `neutral` | 待拍 |
-| 五表情照片 | 唤醒后按「屏幕表情」表各拍一张（happy/loving/sad/surprised/thinking），说完回待命月牙+平嘴 | 待拍 |
-| 唤醒问候不掉线 | 唤醒后机器人把「哎呀」整句播完，屏不进「连接中」；串口无 `Device WebSocket disconnected`、无 `speaking -> recovering`；Edge 无 `WSS handler rejected` | **2026-09-14 15:11 CST PASS**（session `8d013b25`）：问候播完 `speaking -> listening`，无断线、无 Edge 拒绝，问候 `actual_heard=True`；判据 `outputs/acceptance/run-20260914-1510-wake-ack-vad/retest-1/gates.txt` 14/14 |
-| barge-in 告别 | 天气播报中途说「好的，再见」：Speaking 期 Device VAD start、`conversation_end_explicit` / `session.close`、屏回待命，不靠静音超时；BOOT 仍能硬停 | 2026-09-14 epoch 1937 未通过（播放期无 VAD、播后空 ASR、静音超时）。现签名策略 `allowed_barge_in=["button","keyword"]` 未放行 voice，播放中 `vad.start` 属越权、设备端已按合同抑制，故**该项在 AEC 参考验证前无法通过语音达成**；需先验证 AEC 或显式放行 voice 后再判 |
-| 单次查询提示 | 问天气只听到**一遍**「稍等，我查询一下。」，随后直接是正文；重复提问不得连播两遍 filler | **2026-09-15 epoch 1955 本轮通过**：双问各提交一次、各一段完整 ACK + 正文，五代终端回执齐全，用户确认无重复提示；不等于所有 ASR overlap 或空输入恢复专项均通过 |
-| 问完到开口的间隔 | 说完到机器人开口不应有 >1.5s 的纯静音；提示音若已起不得被掐成残句 | **2026-09-16 未通过（有越线样本）**：`ACK→正文` 服务端间隔 0.356 / 0.383 / 0.323 / 0.362 / 0.426 / 0.642s（六次通过）+ **1.969s（H 第一问，越线）**；`commit→ACK首帧` 0.310 / 0.307 / 0.316 / 0.324 / 0.318s。epoch 1955 的 5.028s 与 21 次串行 geocode **未复现**。设备侧 `vad_end→首帧` 另有 A 第二问 3.748s、H 第一问 4.557s 两次越线（由 ASR finalize 主导）。仍非 DAC/可闻精密测量；不把多数样本通过平均成该项通过 |
-| 长查询等待 | 提示间隙无 >1.5s 纯静音，不重复 ACK、不让旧正文回流 | **未过**：epoch 1955 第二问 7.93s 查询、ACK→正文 5.028s。当前已移除历史 2.5s 第二提示；先修输入拼接/候选串行放大与 provider 总期限，若仍越线再明确等待策略，不把历史机制记为已部署 |
-| 播后短告别 | 正文播完再说「好的，再见」应关闭会话回待命，不靠 `owner_silence_timeout` 兜底 | **2026-09-15 epoch 1955 通过；2026-09-16 合计 3/5**：E（播后 3.35s 开口）、F（九天长播后立刻开口）、H（三步连跑结尾）均 `conversation_end_explicit` + 串口 `listening → idle`，不靠静默超时；C 播后 **8.5s** 开口 → ASR 已给出 `text_len=2` 的 final，但受理时 `silence_remaining_s=0.119`，12:22:00.030 被 `owner_silence_timeout` 关掉；A 完全没开口 → 播完 0.02s 即静默关闭；G 因续问丢失未走到告别。播后窗口实测约 **9s**（F 播完 0.3s 开口时剩 8.93s，H 受理时剩 8.72s），但另一次实测窗口只有约 6.8s，故**不设固定安全阈值**；本轮未改静默预算与任何门 |
-| 长天气 | 完整播报不被 45s 墙钟掐断，且操作员确认完整播完、无断续 | **2026-09-16 达成 1 次**：九天天气 **48.28s** 完整播完（桥侧 2414 帧 / `reason=final_frame` / `send_audio_ratio=1.00` / `max_gap_ms=55`；设备侧 `output_frames=2413`、`supply_waits=0`、四阶段齐全、自行回 idle，操作员确认九天全部播报）。八天 44.18s 同样完好。**但约 55s 以上的十天回答 57.46s / 58.88s 两次卡死**（见「真机验收」一节），边界未定，不得宣称长播稳定。仍只测软件队列，不含 I2S/DMA 与可听连续性 |
-| 长回复不断音 | 唤醒问候后再说一句较长的话，整句听完；允许串口 `Dropping server packet`，不得再把队列满升级成 `playback.error` 一字卡断 | 功能/听感 **2/3（旧固件 1 + 新固件 1）**；**2026-09-16 新增反例**：57.46s / 58.88s 的十天回答在开播约 1.5–1.6s 出现 366 / 412ms 供给等待后，设备停止出声、串口自此刻起无输出、卡在 `speaking`，硬复位才恢复（**2/2 复现**）；44.18s 的八天回答无早期等待、完好播完。>45s 长回复与临近静默续问专项仍待验 |
-| 主人匹配 | 主人轮通过，非主人不放行；不要放宽 `reject_non_owner_voice` | 声纹 active，当轮匹配未复测 |
-| 小程序 0.8.84 | 手机微信切开发版，核「设备在线」、首页新文案、设备 095c | 已上传，未体验版 / 未提审 / 未手机验 |
-| 切主体触发设备重协商 | 在线设备上从小程序切换使用者后，bridge 出现 `runtime_profile.invalidated`（`apply_at=next_safe_point`），设备安全点重连并加载新 profile；日志出现 `device profile change projected … delivered=true` | 代码已切流（`20260911-subject-switch-device-notify-control-api`），切流时设备离线，待真机 |
-
-**勿做**：宣传全双工；把 `hardware_verified` / `direct_real_device_verified` / `full_duplex_verified` 从刷机、欢迎语或点屏拍击外推为 true；hello 把 `aec_reference_verified` 写成 true；打开播放期 KWS；把 TurnPhase 从 shadow 改成有副作用；伪造 owner；把未 active 的声纹当主人认证宣传。
-
-### 20260913-empty-input-resume 复测清单
-
-先决条件（1899/1900 就是漏了第 1 步，串口全程没挂）：
-
-1. **会前一分钟**挂串口采集，确认 15s 内至少出现一条 `SystemInfo` 心跳；没有心跳就别开始，先查 USB 与波特率。用系统 `python3`（有 pyserial；`uv run` 的 venv 没有）。把下面存成 `$RUN/capture_serial.py` 后后台起：
-
-```python
-import sys, time, serial
-dest = open(sys.argv[1], "ab", buffering=0)
-with serial.Serial("/dev/cu.usbmodem101", 460800, timeout=0.5) as ser:
-    while True:
-        chunk = ser.readline()
-        if chunk:
-            dest.write(b"[" + time.strftime("%H:%M:%S").encode() + b"] " + chunk)
-```
-
-```bash
-RUN=outputs/acceptance/run-$(date +%Y%m%d-%H%M)-empty-input-resume-retest
-mkdir -p "$RUN"
-nohup python3 "$RUN/capture_serial.py" "$RUN/serial.raw" >"$RUN/capture.out" 2>&1 &
-echo "RUN=$RUN"; sleep 15; grep -c SystemInfo "$RUN/serial.raw"
-```
-
-先决条件 1 已本机实测：40s 收到 4 条心跳，原始输出 `outputs/acceptance/run-20260911-serial-probe/serial-probe.log`。
-
-2. 挂 bridge 日志：`ssh memoria-prod "docker logs -f memoria-voice-core-media-bridge-1 --since $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$RUN/bridge.log"`。
-3. 记录 `--since` 那个 UTC 时刻；收尾用同一时刻 `docker logs <container> --since` 落盘，不靠模糊时间窗。
-
-场景（按序；每句等回复**完全播完**再问下一句；当前版本为 `20260913-p0-empty-input-resume-v1`，不能借用旧版听感验收）：
-
-| # | 说什么 | 判据 |
-| --- | --- | --- |
-| 1 | 唤醒后问「今天南京天气怎么样。」 | 只听到**一遍**「稍等，我查询一下。」；不得 >1.5s 纯静音；答案必须到达 |
-| 2 | 隔几秒再问一句天气类 | 新提问仍播自己的提示音（5s 窗口只挡同一突发的兄弟提交） |
-| 3 | 问「今天星期几。」 | 快查询直接出正文，**不**多等 2.5s、不补第二句提示 |
-| 4 | 天气播报中途说「好的，再见」 | 串口 `MemoriaProtocol: Device VAD start`；bridge `conversation_end_explicit`；屏回待命月牙；BOOT 仍可硬停 |
-| 5 | **正文播完、彻底安静后**再说「好的，再见」 | 应立刻关闭回待命，不靠 `owner_silence_timeout`（10s）。**主目标**，1899 未达成 |
-| 6 | 唤醒问候后说一句较长的话 | 整句听完；允许串口 `Dropping server packet`，不得 `playback.error` 一字卡断 |
-| 7 | 主人与非主人各说一句 | 主人轮通过；非主人不放行；不得放宽 `reject_non_owner_voice` |
-| 8 | **同一句连问两遍**：先问「今天南京天气怎么样。」等它**答完**，再问完全同一句 | 第二遍**必须**正常作答。闸门只挡「同突发内的重复提交」，不得吞掉用户的真重复提问 |
-| 9 | 问「今天南京天气怎么样。」后**答案未出前**立刻改问「北京明天天气怎么样。」 | 根因已定位并修复：新话轮切换前按旧 fence 取消并清理旧 live lookup，避免 stale output、旧答案抢占或新答案丢失；已部署，待真实设备验证新问题正常作答 |
-
-日志判据（bridge 侧）：
-
-- 每个 delivery/generation 恰有一次 `media reply delivery … event=first_frame_sent`；每次查询的 ACK 和正文分别交付一次，可属于同一 turn 的不同 generation。同一问题出现两次提交/两次 ACK 即失败。
-- 说完到首个 `first_frame_sent` 间隔 ≤1.5s；出现 `event=preempted … first_frame_sent=False`（提示音被掐）即失败。
-- 场景 5 应出现 `media final did not start reply … reason=conversation_end_explicit`，且**不**应再出现 `media turn discarded after ASR tail timeout`。
-- `media_asr_boundary` 里同时记 `provider_pcm_clipping_detected` 与 `provider_pcm_rms`；播放窗口内仍削波就记下该 `endpoint`，这是回声而不是 vendor 空转写。
-- 无字 VAD tail 结束且原 fence 不变时应出现 `cause=empty_input_retired`，随后正文应有首帧和设备终端回执；新问题/stop/身份切换后不得恢复旧答案。`media output carried` 只证明内部候选移交，不等于 Actual Heard。`output intent inactive` 要核对 fence/context/TTL 原因，不能再把仅 floor 关闭时丢正文解释为正常抢话。
-
-回滚判据与命令：
-
-本次组件启动、健康或新话轮/stop 安全边界出现回归时，先冻结日志和 manifest，再按当前收据回滚 Agent/Bridge。紧邻回滚 `20260913-p0-interrupt-output-resume-v1` 已有切前健康证据，但**仍含本次天气静音缺陷**；天气复测再失败需据新会话取证，不能把退回旧版称为问题解决。下列当前 rollback override 已在服务器以 `config --format json` 验证两服务共用唯一回滚 tag，本轮没有执行破坏性的真实回滚演练：
-
-```bash
-cd /opt/memoria/releases/20260827-architecture-split-v1
-sudo env MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist \
-  MEMORIA_RELEASE_COMMIT=7ca3d4ec531305d968d67ef1bb13b944e566e4cf \
-  docker compose --project-name memoria \
-  --file docker-compose.production.yml \
-  --file /opt/memoria/component-releases/20260913-p0-empty-input-resume-v1/pre-cutover-live.override.yml \
-  --file /opt/memoria/component-releases/20260913-p0-empty-input-resume-v1/agent-component.rollback.override.yml \
-  --profile media-runtime up -d --no-deps --no-build agent voice-core-media-bridge
-```
-
-旧多级 Agent 回滚链已退出保留范围，不能继续执行历史 tag/override；依赖底座或其他消费者保留的镜像不属于可任选的业务回滚点。
-
-## 屏幕表情：对话脸
-
-```yaml
-change: vocat_conversation_face_v3
-code: complete
-wired: overlay_board_layer_memoria_face_display
-verified: host_renderer_tests_preview_esp32s3_build_overlay_gate
-hardware_verified: false
-next_owner_action: 拍待机脸 idle.jpg 与五表情（happy/loving/sad/surprised/thinking）；短拍应为杏仁瞳孔+小O
-on_device_flash: app_only_0x20000_20260909-1845-conversation-face-v3
-evidence_dir: outputs/acceptance/run-20260909-face-v3
-backup_app: firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin
-backup_app_sha256: d7efa9859e12df3f9b54981b05d2f7ba84fd58951c242f2e3d9e1d79e9d6aaaa
-operator_pulse_pat_result: tap_pass_shake_pass_pat_pass
-operator_verified_at: 2026-09-09 16:08 CST
-pending_flash: none
-```
-
-360x360 圆屏是黑底白描对话脸，不再显示黄色 Noto emoji。签名是嘴，鼻子是米粒点，闭眼仍是月牙，睁眼是杏仁白眼加挖空瞳孔。协议 `screen.expression` 未改：`neutral/happy/sad/surprised/loving/thinking`；固件另能画 `embarrassed`/`wink`/`speaking`，本轮服务端不必接线。未知名字回落 `neutral`。`Application` 在 idle / connecting / listening 下发 `neutral`，说完回到待命月牙+平嘴。面部不绑定唤醒名。固件摘要与身份区 SHA 见「板卡与固件」。
-
-**本地待机交互（逻辑已可用；本轮换画面后需重看）**
-
-- 点屏：保持待命月牙+平嘴，串口 `idle screen tap ignored`，不开麦。
-- 摇晃：保持待命月牙+平嘴，不开麦。
-- 短拍身体：闪 `surprised`（杏仁白眼+瞳孔+小 O）约 1.5s，再回待命；不开麦、不 `ToggleChatState`。
-
-点屏/摇晃/短拍接线证据：`outputs/acceptance/run-20260909-1531-confirm-pat/serial-follow.log`。这不等于 v3 视觉验收，`hardware_verified` 保持 false。
-
-**对话表情（待拍照）**
-
-对照 `outputs/firmware-face-v3-20260909/sheet.png`。触发源是助手回复语气（`mascot_expression_for_reply`），不是用户原话。照片存 `outputs/acceptance/run-20260909-face-v3/`。caring 词会先判 `loving`；要 `sad` 就换一句带「遗憾 / 抱歉」且不含 caring 词的话。
-
-| 你说 | 期望助手语气 | 屏幕脸 | 串口收据 | 存图 |
-| --- | --- | --- | --- | --- |
-| 「我拿到心仪的 offer 了」 | 太好了 / 恭喜 | `happy`：外眼角上挑的眯眼+四角星+笑嘴 | `emotion=happy open_eyes=0` | `happy.jpg` |
-| 「我今天有点难过」 | 辛苦 / 心疼 / 听起来… | `loving`：内倾月牙+灰调红晕 | `emotion=loving open_eyes=0` | `loving.jpg` |
-| 「我的同事今天离职了」 | 遗憾 / 抱歉 | `sad`：外眼角下垂+泪+撇嘴 | `emotion=sad open_eyes=0` | `sad.jpg` |
-| 「没想到今天下雪了」 | 没想到 / 真的吗 | `surprised`：杏仁白眼+瞳孔+小 O | `emotion=surprised open_eyes=1` | `surprised.jpg` |
-| 「有什么建议吗」 | 反问（回复带「？」） | `thinking`：杏仁上移偏右+思考点 | `emotion=thinking open_eyes=1` | `thinking.jpg` |
-
-每轮说完应自动回到待命月牙+平嘴（串口再出现 `emotion=neutral`）。字幕仍是白字黑底；长按 BOOT 配网二维码盖在脸之上。`surprised` / `thinking` / `speaking` 每 4–7 秒眨一次约 150 ms。
-
-只有待机脸 + 五张表情 + 不回归项都亲眼确认后，才把本节 `hardware_verified` 改为 true。编译、刷机、点屏拍击都不算。
-
-**回滚 app（不动身份区、NVS、分区表）**
-
-```bash
-python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --after hard-reset \
-  write-flash --flash-mode dio --flash-size 32MB --flash-freq 80m \
-  0x20000 firmware/esp32/artifacts/backups/pre-playback-barge-in-20260910/app-before.bin
-```
-
-回滚目标是刷之前的 overlay 0023 app（SHA `d7efa9859e12df3f9b54981b05d2f7ba84fd58951c242f2e3d9e1d79e9d6aaaa`）。不要写入 `0x10000..0x1ffff`，也不要用会写 bootloader / 分区表 / assets 的 `flash.sh`。表情固件会把 `display/theme` 写成 dark 并留在 NVS；回滚后仍是深色主题，不是故障。若需重刷当前 0024 app：确认 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin` SHA 仍是 `9e52bdf44a1022dc23f9ffaab043ebb8c0acc426733e4f28ffa37dd5d2748186`，再 app-only 写 `0x20000`。
-
-## 当前生产
-
-现场回滚前读取容器 image ID、Compose override 和证据目录，不从本文猜测标签。普通制品只保留当前与一个已确认可运行的紧邻回滚；数据库、WAL、MinIO、安全备份不按两版本清理。
-
-**Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
-
-- 当前：`memoria-agent:20260916-livekit-181-v1`，image `sha256:7033214ddc3a5f4b0f99e016d1edf156b091169d6511ee95139e81f6ec0a9ac4`，OCI revision `d96d4c29b7f13719d052b94647b2c59223ea70a1`。Agent/Bridge 共用该 image，2026-09-16 **11:36:08 CST**（03:36:08Z）启动、双 healthy、restart=0；栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。**本次是 delta 构建而非仓库标准全量构建**：基座为上一版 `memoria-agent:20260915-asr-weather-boundary-v1`，只重建锁定的依赖集与应用源码；收据 `/opt/memoria/component-releases/20260916-livekit-181-v1/CUTOVER_RESULT.txt`，逐条证据见 `outputs/acceptance/run-20260916-livekit-181-deploy/`。
-- 紧邻回滚：`memoria-agent:rollback-20260916-livekit-181-v1-pre`（image `sha256:3f746b4dede8b2f35773ca5b2c6300174a278932eee7d720f4904c00d2b865bb`，revision `1cf8decaee8b28aa73d104f7aea89086e942db66`，即本次切流前线上那个 image 的重打标签，回滚无需 pull 或重建）。前版 `memoria-agent:20260915-asr-weather-boundary-v1` 仍保留在同一 image ID 上。本轮未执行实际回滚演练；不要再把更早的 `rollback-20260915-asr-weather-boundary-v1-pre` 当作当前回滚目标。
-- 独立依赖底座：`memoria-agent:20260912-p0-rollback-single-tag-agent-component` / `memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，共同 image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`；当前与回滚均依赖它，不按历史业务版本删除。
-- 上一版（`20260915-asr-weather-boundary-v1`）的有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；那次有 **17 个非目标容器**未变，详见 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/`。**本次（20260916）切流**的非目标容器是 **12 个**（control-api、media-edge、sensevoice-asr、device-media-gateway、miniprogram-gateway、speaker-model、postgres、redis、minio、livekit、saas-redis、saas-mysql），指纹 md5 `08cb579c3715f6b6651f4baab2f8dd25`；本次没有重新计算 env SHA256，**不要把它当作已复核**。
-- 本版新增 ASR 遗留候选 sample boundary/revision 隔离、天气最多 3 个明确地名候选及 OpenMeteo 共享 deadline；保留前版多日天气、VAD/静默/grace/watchdog 交接、ASR 异常恢复、prepare 绝对期限、重连 fencing，以及跨已提交区间救援防重复门、ACK/正文 handoff 与有效输出恢复。Bridge 下行计量仍为 **post-pacer send**，不能外推 provider 产出速度或设备 I2S/DMA 状态；具体修复与真机未验边界见上方同日条目。
-- 2026-09-15 保留清理：只读预检后删除 allowlist 内 **18 个旧 Agent source-overlay image ID（其中 3 对共 6 个 tag，另 15 个 dangling）**，以及三个旧版本的 **6 项 source tar/build payload**。当前、紧邻回滚及其旧 override 所需别名、独立 runtime-base、非目标容器、manifest/收据均保留；清理后再次核对保护镜像 ID 与双 healthy。`df -B1` 可用 **63,834,279,936 → 63,985,270,784 bytes**，净增约 **144 MiB**，不能按镜像虚拟大小声称回收数 GB。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/{retention-preflight.log,retention-apply.log}`；未清理 build cache、全栈 incoming 或任何数据库/WAL/MinIO/安全备份。
-
-**Media Edge**
-
-- 当前：`memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component`。override `/tmp/media-runtime.override.yml`。healthy、restart=0。
-- 回滚：`memoria-media-edge:20260901-0945-wake-word-whitelist`；override 备份 `/tmp/media-runtime.override.yml.pre-20260908-1600-vocat-interrupt-assist`。
-
-**Control API**
-
-- 当前：`memoria-control-api:20260911-subject-switch-device-notify-control-api`，overlay 源 `b2644124e002d1aac60b1b5a32c336c327af57bc`，image `sha256:2af29dde2e8c6f1f1781bef322fe3b8d7f3b5ea13d3017b191aa443aa58bcebd`。healthy、restart=0、OCI revision 已核对；仅覆盖 `services/control_api/app/routes/device_control.py` 与 `multi_subject.py` 2 个文件，依赖层与有效环境不变。切流 `2026-09-11T04:55:06Z`。收据 `/opt/memoria/component-releases/20260911-subject-switch-device-notify-control-api/`。
-- 回滚：`memoria-control-api:rollback-20260911-subject-switch-device-notify-control-api-pre-control`（原 `20260906-1458-account-device-discovery-control-api`，image `sha256:0b2dbbd8cbb36b06e9d0dd2f13bd62d63cba49ae9d1914d661226b80e0b3d078`）。
-- 切主体现在会推进设备可见的 profile 版本并通知 Edge：`POST /v1/sessions/{session_id}/active-subject` 提交后调用 `project_device_profile_change`，在 `device_runtime_profile_ledger` 上按稳定指纹推进版本，只有真正变化时才向 Edge 发 `runtime_profile.invalidated`（`apply_at=next_safe_point`）。重复确认同一主体仍只提升 session_epoch，不推进设备版本、不重复通知；Edge 不可达只记日志并延后，不影响已提交的切换。真机端到端未验（切流时设备 `connected=false`）。
-- 现网设备 `dev_atk_a4cb8fd6095c` 已改为 `audio_mode=interrupt_assist`（settings_version 12）。Control 镜像未切新设备默认值，旧票据不会自行升档。
-
-**其它运行事实**
-
-- 栈 env `MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist`。对话 `qwen3.7-flash`，分类 `qwen-flash`，深查 `qwen-plus`。
-- SenseVoice sidecar：`memoria-sensevoice-asr:20260901-pin-language`（默认 `zh`，未知语言 415）。回滚镜像 `v1` + `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Dockerfile 只在服务器该目录，重建不可复现。
-- 主人主体两库 `adult/verified`；声纹 `1b5b577b` **active**。CAM++ 反欺骗仍 `unavailable`，不要改成 `verified`。
-- epoch **1892** 唤醒欢迎语听感 + Actual Heard PASS；随后 `conversation_end_explicit` 关闭。
-- 自定义克隆已用于唤醒；天气正文音色绑定尚未真机复测。
-- 小程序开发版 **0.8.84**（2026-09-06 23:58 CST，源 `7e5137a`，903,051 bytes）。未正式发布、未设体验版。
-- 2026-09-13 23:40 CST 现场核验（**已被 2026-09-14 16:32 CST 取代**）：loopback `/health/live` 200；loopback 与公网 `/memoria-api/health/ready` 均 503，`smokes=expired/missing=[]`，具名 core **12/12 ready**，agent `ready/worker_ready/livekit_ready=true`、boot_id `e8b0983a-07a9-4e8f-83c1-39dc06cb3fc1`。当时记录为“切流前已有的 smoke 证据过期状态”，实际是 `refresh_readiness.sh` 的 stack tag 取自发布目录名导致 mark 恒 409 的假阴性，已于 2026-09-14 修复，见上节。
+- SenseVoice：`memoria-sensevoice-asr:20260901-pin-language`，默认 zh、未知语言 415；回滚 `v1` + `/opt/memoria/sidecars/sensevoice-asr/run_sensevoice_asr.py.rollback-20260901-prelang`。Dockerfile 仅在服务器该目录，尚不可由仓库重建；仓内实现使用 sherpa-onnx，不能假定升 FunASR 就能修此服务。
+- 对话/分类/深查最后配置分别为 `qwen3.7-flash/qwen-flash/qwen-plus`。声纹 profile `1b5b577b` 为 active，CAM++ anti-spoof 为 unavailable；不宣称主人认证已验证。克隆唤醒听感有旧证据，天气正文音色绑定待听测。
+- 小程序仅记录开发版 `0.8.84`（2026-09-06，源 `7e5137a`）；手机/电脑验收、体验版和正式发布均未完成。
 
 ## 板卡与固件
 
-- 硬件：乐鑫 ESP-VoCat N32R16（ESP32-S3，32MB Flash / 16MB Octal PSRAM）。board `memoria-esp-vocat`，app 2.4.2。现场 `192.168.8.142`，uuid `1ac87deb-0fa3-4300-a304-ad6c472ab8c7`。
-- 音频：ES8311 输出 + ES7210 双麦，输入增益 **36.0 dB**。hello 报 `simultaneous_capture_playback=true`、`aec_mode=fd_low_cost`、`aec_reference=software_post_gain_pre_i2s`、`barge_in_level=1`；`aec_reference_verified=false`。
-- 屏幕：1.85 寸 QSPI 圆屏 ST77916 360x360。触摸 CST816S：说话中单击硬停，聆听中单击退出聆听；**待机/连接中单击忽略**。
-- IMU：BMI270。待机只认短拍（阈值 dx+dy+dz>3200、最多 120ms 脉冲、落地后再确认 60ms），冷却 2.5s，只闪 surprised。持续摇晃忽略；点屏 PRESS/HOLD mute IMU 400 ms。开麦权威仍是唤醒词「茉莉」或 BOOT。
-- 身份区 `0x10000` 64KB 写保护，SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`。OTA app `ota_0` `0x20000`。assets 8MB。
-- **0025 历史候选（2026-09-14 19:05 CST app-only 刷入，已被后续版本替代）**：收据对应 `release_head=fa54d7de027cccaee35e1721762a5d0bb060d60c`，app **3,277,856 bytes** / SHA `f58f48a4b21df96df74750ed10638c2ca906f267f2228cf37add3e37fd4a9101`，ELF `16d981b31f45d0dbdaadc6d2ab8f19ab217c1f09ce96535ea0eea54c0cffa578`，ESP-IDF v6.0.2、overlay marker `9f6d083c…`。刷写只写 `0x20000..0x340fff`：写后全槽回读**逐字节一致**、erase 范围外字节未变、identity SHA `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846` 未变、bootloader/partition/nvs/otadata/phy-init 与 ota_1/assets MD5 全未变。收据与回滚件在 `outputs/acceptance/run-20260914-p0-03-firmware-metering/`（`preflash.json`、`protected/`、`rollback-app.bin`）。收据明确 `boot_verified=false`、`real_device_conversation_verified=false`，不用于证明后续版本已启用或验收。
-- **当前板上 `PlaybackSupplyMeter` 候选（2026-09-15 18:51 CST 回读及启动、19:05–19:06 短播放通过）**：源码 `d1ad38f`、upstream `e8d8a401…`、overlay `24531273…b3`、app **3,280,832 bytes** / SHA `7d95c8a1…b65`、ELF `da6ebdd1…69f2`；完整摘要、具名分区保护结果与 `postflash.json` / `boot-verification.json` / `session-1/audit.json` 见「计量生命周期与捕获收尾」。仅更新 `0x20000` app；新候选自身五代短播放计量、听感和真实会话收尾通过，`code=true / wired=true / enabled=true / verified=true_short_playback_only`；查询延迟、新 VAD/临近静默、>45s 长播未收口，`pre-roll` 未实现。
-- **紧邻旧板基线（本轮回滚依据）**：旧收据对应 HEAD `65257e0e1285a3126e484ad22c308315c971caad`，但当时为 dirty 构建，回滚依赖实际二进制，不能仅靠该 HEAD 重建。overlay `97fc64f28dcd95c365a99176d2ed26a749beb20c3e7f0179283c26484e7559e8`、app **3,280,512 bytes** / SHA `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`、ELF SHA `efe1b241c3d6b4126e3b2e9d57ab4bfbe76bbd6a4844b063c0a9aa8d160c58625`。旧版 11:22 启动与 16:18–16:19 首轮功能听感 1/3 通过，计量窗口提前关闭；旧证据仍在 `outputs/acceptance/run-20260915-p0-03-firmware-metering/`，不继承为新固件验收。
-- **2026-09-15 11:34–11:39 旧板短捕获（计量无有效播放覆盖）**：目录 `outputs/acceptance/run-20260915-p0-03-firmware-metering/long-weather/session-1/`。设备 `vad_end -> first_received=0.517s`；generation 1 software queue wait 原始记录全部为 0（`supply/prestart/boundary/close_dropped/outside`），但同版统计窗口会在首帧前关闭，不能记有效零等待；Bridge `frames=120`、`audio_ms=2400`、`wall_ms=2413`、`max_gap_ms=69`、`after_pacer_send_ratio=0.99` 只说明发送侧节奏。delivery 有 `first_frame_sent/provider_completed/actual_heard/playback_ended`。串口 `SerialException: read failed: [Errno 6] Device not configured` 导致 `CAPTURE_HEALTH degraded`，`agent.log` 为空；不计完整长天气、有效播放计量或用户完整听完。该段操作员只给出“说完了”，与后来 16:18–16:19 明确通过的听感确认分开。
-- 历史候选（非当前回滚）：commit `e1c6998`，app 3,277,328 bytes / SHA `b411838342db5cd07fec492c5baf6762d964cc58eb5df8ea7bdcb5b33caa52e6`，ELF `7eb96fe1…`，overlay `03fcdef5…`。
-- 历史基线（已不在板上）：2026-09-13 01:56:16 编译的 2.4.2（ELF `5e7b0150…`）；上一轮 AEC 候选 commit `76ba6ad`，2026-09-14 09:54:29 编译，app 3,276,480 bytes / SHA `6bcca089d996cd7cb3c25daca9dccfacc45554b426a5497345ddf21e5c22001b`，ELF `3b5de210…`，overlay `6d17aa95…`。冻结包 `outputs/acceptance/run-20260914-aec-fix/candidate-app.bin`。
-- **唯一紧邻回滚目标**：`outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/rollback-app.bin`（app `dfba3d61…`、3,280,512 bytes）；同目录 `protected/app-before-full-slot.bin` 为本轮写前 **0x20000/0x3f0000** 整槽，SHA `cc175040af934575b7804ec01031ebf8543415c98c0084801682e8ce121da333`，与旧版已验证的 `protected/postflash/app-after-full-slot.bin` 完全一致。不要误用旧 run 的 `rollback-app.bin` 或早期 AEC 镜像。回退仍只写 app，并重新做身份/非 app 分区保护、回读及启动验收；本轮未执行回退。
-- 本轮受保护分区前后像位于 `outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/protected/`（0700/0600，禁止输出身份内容）；旧 run 证据未删除，普通固件保留清理待新候选实际会话验收后处理，不启动自动备份。
-- 远场 30~60cm 双轮曾在 epoch 1417 PASS（ES7210 36.0 dB）。嘈杂环境定量抗噪未做。普通固件更新只 app-only 写 `0x20000`，不要跑 `flash.sh` 整包。
+当前硬件 ESP-VoCat N32R16，`board=memoria-esp-vocat`；ES7210 双麦 + ES8311 输出，36dB 输入增益。hello 声明 simultaneous capture、software_post_gain_pre_i2s reference，但 `aec_reference_verified=false`。旧 ATK ES8388 已退役。
 
-## 设备启用、唤醒与 shadow
+- 板上源码 `d1ad38fe0d9b36eb9057d8eb97e782b8cc8066d9`；upstream `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5`；ESP-IDF 6.0.2；overlay `24531273fe03bc72980087efbb92314a95c5b25ec68c2e44eb28ae689a1ebbb3`。
+- 当前 app 3,280,832 bytes，SHA256 `7d95c8a1c5319f4200f840ea988e448ca7411e508be19ae2a5dd9db0130ddb65`；ELF `da6ebdd16e4e7436ed1e126a94fad69a9e376faca681f474712743b5b55069f2`。2026-09-15 18:51 CST 匹配启动；仅 app-only `0x20000`。
+- 证据目录 `outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/`：`postflash.json` 是不可变刷写收据（其中 `boot_verified=false`）；实际启动独立记录在 `boot-verification.json`，五代短播放与人工听感在 `session-1/audit.json`。不得回改原收据或把短播放软件队列计量称为 DMA/长稳验证。
+- 唯一紧邻回滚为该目录 `rollback-app.bin`，3,280,512 bytes，SHA256 `dfba3d619084c6a27b9349b6b230d758238bf289808cefcb848589dca47d581d`；它来自 dirty 构建，以实际二进制为准，不能仅靠旧 HEAD 重建。
+- 同目录 `protected/app-before-full-slot.bin` 为写前 `0x20000/0x3f0000` 全槽，SHA256 `cc175040af934575b7804ec01031ebf8543415c98c0084801682e8ce121da333`。身份区 `0x10000..0x1ffff` SHA256 `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`；身份/NVS/otadata/bootloader/分区表/assets 均须保护，禁止输出身份内容。
+- `pre-roll` 未实现。固件声学、AEC residual、双讲、Exact DAC 与 T1–T14 仍未通过；普通制品清理须在新候选和可运行回滚核验后另行执行，不因精简文档删除实体证据。
 
-配网闭环已于 2026-08-27 验证：二维码 introspect → BLE Protocomm Security 1 → claim/binding → Activation Manifest → ACK → `ready_for_conversation`。设备 `dev_atk_a4cb8fd6095c`（BLE `MEM-095C`）`activation_version=3`。这不等于语音对话或屏幕验收。小程序不采集声纹或实时语音。
+## 当前语音缺口与下一验收
 
-唤醒词默认「茉莉」（`mo li`），白名单 `mo_li` / `mei_mo_li_ya`，自定义拼音 v1。主人静默 10 秒由 Python Voice Core 计时，裸 VAD 不能重置；「没听清」提示不再把窗口刷满。epoch **1892** 已听到 allowlisted 欢迎语（Actual Heard + `playback.ended`），随后 `conversation_end_explicit` 关闭。两音节误唤醒的电视 / 家庭噪声仍未定量。不要给动态欢迎语走非 allowlist 生成。
+原始证据：`outputs/acceptance/run-20260916-p0-03-livekit181-device-acceptance/findings.md` 及同目录五段捕获。八种会话 A–H 均使用上述板卡与 1.8.1 线上版本；原始文件保留，本节纠正其中超出证据的归因。
 
-`TurnPhase` 只作 `ConversationProjection` 内部证据和低基数 telemetry，`enabled: false`，不改变 endpoint / interrupt / commit。FCDR 影子指标未发布，不得据此调策略。
+- H（epoch 1963 / session `de598a18`）同会话完成三天天气→续问→播后告别，但 ACK→正文 `1.969s` 超过 1.5s 门，设备 VAD end→首帧 `4.557s`；A 第二问为 `3.748s`。功能成功不等于时延稳定。
+- F 的九天天气 `48.28s`、设备 2413 帧、supply_waits=0，操作员确认完整；C 的 `44.18s` 也完成。B/D 桥侧音频长度 `58.88s/57.46s`，但设备在开始后数秒就停滞，1.5–1.6s 处先有 `366ms/412ms` supply wait，speaking/控制台冻结直到复位。尚无“约 55s 阈值”证据；Edge drop=0 也不能排除 WS writer、网络、接收/解码/播放路径。
+- B 在 `20.23s` 挂钟触发旧 TTS 总超时，错误终态又延后约 `38.6s`；D 未见同类 TTS 错误。最新流式修复不能解释两次设备停滞，也未解决部分音频失败后及时 cancel/flush/回 listening。
+- G（epoch 1962）ASR final 先于迟到 VAD，受理时静默预算 0，无新 turn，最终 owner_silence_timeout；本轮最新代码对照仍复现。E/F/H 播后告别成功，C 的迟到告别失败；A 无有效告别输入，G 未到告别步骤，不计算“3/5 成功率”。
 
-## 生产拓扑
+下一次设备窗口先确认已冻结并实际启用目标候选；执行顺序及修复前置见 P0-03/P0-04/P1-01：
 
-- 当前 runtime：`/opt/memoria/current` 原子软链；候选目录：`/opt/memoria/releases/`。
-- Control SQLite：`/data/memoria.sqlite3`（挂载 `/data <- /var/lib/memoria`）。
-- 已退役 H5：`/memoria-h5` 固定返回 `410 Gone`，不再发布或切流静态前端。
-- LiveKit：`livekit/livekit-server:v1.13.5`，Compose project `memoria-livekit`。
-- Control API loopback：`127.0.0.1:8791`；legacy mini gateway：`127.0.0.1:8792`；legacy device gateway：`127.0.0.1:8793`；direct Edge device WSS：`127.0.0.1:8794`。
-- Voice Core Media Bridge 生产容器名：`memoria-voice-core-media-bridge-1`（与 Agent 同镜像）。
-- 终身档案：PostgreSQL 17 + pgvector；对象：MinIO；设备共享权威：独立 mTLS Redis。
-- Edge override：`/tmp/media-runtime.override.yml`。
+1. 开串口可能复位，先等 `activating→idle` 和心跳再讲话；唤醒词“茉莉”。无人配合或设备未连接时只做离线检查，不自行刷机或播放自动代测。
+2. 同一候选重跑三天天气→续问→播后告别，至少三轮；另测 >45s 长答、B/D 同类长答、临近静默续问，以及已下发部分音频后 provider 失败。每项分别判定功能、时延、终态、听感，不跨 release 累加通过数。
+3. 同时取 Bridge/Edge WS writer/设备接收、解码、播放消费及任务/锁状态，绑定 session/stream/turn/generation/tool fence。保留 supply/prestart/boundary/close_dropped/outside、delivery ledger、指标差分、PCM RMS/削波；缺观测先补观测，不先加预缓冲或改阈值。
+4. 学生危机场景先按 P0-04 的正式 app_confirm 路径确认测试使用人及年龄，核对设备实际取得的签名 profile 与有效监护授权；不手工注入 profile 或绕过声纹/准入门。只由受控成人模拟话术，固定话术逐字交付、终端回执和人工听感、正确主体的通知 outbox/幂等/家长读取同时验；HTTP 文本正确不是设备已说出。通知发送 worker 按用户决定暂缓。
 
-ESP32 Direct 正式入口是 `wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。
+使用新目录，绑定板上收据（不是本次重新回读的证明）：
 
-`wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media` 是已退役的原生小程序媒体兼容回滚入口，只能用于明确的 legacy 回滚。443/8443 Nginx 必须继续包含：
+```bash
+uv run --no-project --with pyserial --with esptool scripts/voice_session_capture.py \
+  --out "$CAPTURE_DIR" \
+  --firmware-receipt outputs/acceptance/run-20260915-p0-03-metering-lifecycle-device/postflash.json \
+  --server-logs --duration 900
+uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
+```
+
+`--preflight-only` 不触碰设备；`--boot-reset` 仅在明确需要时使用。捕获必须有结束时间、逐路退出原因、无未解释 serial/cleanup error；缺终态不能报 healthy。Actual Heard 需设备终端证据和用户听感共同确认。
+
+## 屏幕表情：对话脸
+
+当前是 360 圆屏黑底白描 v3；`code/wired/enabled` 有既有证据，`hardware_verified=false`，仍缺待机脸和五表情照片。权威几何在 `memoria_face.cc`；预览 `outputs/firmware-face-v3-20260909/sheet.png` 只作对照。
+
+| 助手实际表达 | 期望表情 | 照片 |
+| --- | --- | --- |
+| 待机/回复结束 | neutral 月牙眼、短平嘴 | idle.jpg |
+| 祝贺、开心 | happy | happy.jpg |
+| 关怀 | loving | loving.jpg |
+| 遗憾、抱歉 | sad | sad.jpg |
+| 惊讶 | surprised 杏仁瞳孔、小 O | surprised.jpg |
+| 思考 | thinking | thinking.jpg |
+
+以同代 `assistant_expression→screen.expression` 和串口 `emotion` 为准，不从用户原话猜脸；未知表情回 neutral。照片连同 fence 存入本次 ignored 验收目录。说完/断线/中断清除表情；待机点屏、摇晃不开麦，短拍只短暂惊讶；说话中 BOOT/触摸硬停。不回归项和六张照片均亲眼确认后才签收；回滚只用上节唯一 app，不再保留旧表情专用回滚命令。
+
+## 生产拓扑与安全边界
+
+- `/opt/memoria/current` 最后指向 `/opt/memoria/releases/20260827-architecture-split-v1`；有效栈 `MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist`。目录名、栈 tag、组件 tag 是三个概念；readiness 刷新必须取有效栈配置。
+- Control/legacy mini/legacy device/Direct Edge 仅回环端口 `8791/8792/8793/8794`；当前 Bridge 容器 `memoria-voice-core-media-bridge-1`。PostgreSQL 17 + pgvector、MinIO、独立 mTLS Redis；LiveKit server `1.13.5`。SQLite 兼容库 `/data/memoria.sqlite3` 挂载自 `/var/lib/memoria`。
+- readiness 入口 `https://aigcnice.com:8443/memoria-api/health/ready`；443 根站是 WMS，不用该端口的 404 判断 Memoria 健康。
+- ESP32 Direct：`wss://aigcnice.com:8443/memoria-device-edge/v1/device/media`。公共 8080 不承载设备 WSS。H5 `/memoria-h5` 固定返回 `410 Gone`，不再发布静态前端。
+- `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media` 是已退役的原生小程序媒体兼容回滚入口，只能用于明确的 legacy 回滚，不接回小程序产品；443/8443 Nginx 保留以下 include，不改同机 WMS 路由/数据。
 
 ```nginx
 include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 ```
 
-不得把该 legacy 路径重新接入当前小程序产品链，也不得修改同机 WMS 的既有根路由和数据。
-
-## Secret 与安全边界
-
-生产 secret 分到 `/etc/memoria-control-api.env`、`/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env`、两个 legacy gateway env 和可选 `/etc/memoria-media-edge.env`，均为 `root:root 0600`。候选 env 从当前 root-only 源复制并用 `scripts/split_production_env.py` 分流；仓库、命令行、浏览器、日志、manifest 和回执不得包含值。
-
-内部 capability token 两两不同、至少 32 字符，不能替代账号身份。设备 ticket、LiveKit token 和 H5 auth token 都必须短期、绑定 audience/subject/fence。生产 direct-device 缺少 mTLS Device State Redis 时 Media Edge 必须 fail closed，不回退进程内 map。
+Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真实源复制并按 `scripts/split_production_env.py` 分流，禁止在输出/日志/manifest 留值。内部 token 不等于账号身份；设备/LiveKit token 必须短期且绑定 audience/subject/fence。Direct 缺少 mTLS Device State Redis 时 fail closed，不回退本地权威。
 
 ## 发布前门禁
 
-1. 在干净 worktree 锁定 source commit/tag，确认只包含目标 slice。
-2. 运行 Python、小程序、Go、契约、镜像和 `git diff --check` 门禁；供应商与 LiveKit smoke 必须使用候选容器。
-3. 冻结 source、images、manifest、verifier 的 SHA-256；验证 OCI revision/role/architecture。
-4. 现场记录当前容器 ID/image ID、软链、env 摘要、数据快照和一个可运行回滚点。
-5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
+1. 干净 worktree 冻结目标 source/tag，按影响域运行定向/必需门禁；Agent/python CI 通过不代替跳过的镜像、固件和客户端检查。授权/schema/RLS 变动须带真实 `MEMORIA_TEST_POSTGRES_DSN` 跑受影响契约，跳过不算通过。
+2. 在候选镜像核依赖版本、双进程隐私默认值与真实 exporter；镜像解析显式给 expected candidate 并对齐有效 overrides。当前自动门禁接线缺口见 P1-01。
+3. 冻结 source/images/manifest/verifier 摘要和 OCI revision/role/architecture；现场复核 image ID、软链、有效 env 摘要、数据风险与一个可运行回滚。
+4. dry-run→上传校验→授权切流→候选 provider/LiveKit smoke→具名 readiness、外部 Host/SNI 路由、设备和延迟复核；非目标容器/配置不得变化，失败即停止或按授权回滚。
 
-`deploy_agent_component.sh` 在确认 worktree 干净之后、SSH 之前跑 ruff、`check_module_budget.py check`、`mypy services/agent --strict`、Agent 单测与部署契约；用 `env -u LISTENER_CUES_ENABLED -u LIVEKIT_ADAPTIVE_INTERRUPTION -u OFFLINE_MOCK -u INTERRUPTION_MIN_DURATION_S` 剥掉本地 `.env`。`--skip-gates` 必须在收据写明理由。`main` 的 agent + python CI 必须绿。Agent-only 切片只允许 `services/agent/**`；overlay 无关漂移可用 `--allow-scope-drift`。Cutover 用 Control 的 `MEMORIA_RELEASE_TAG` 做 compose 插值，不要用 Control 镜像 label 当栈 tag。
+`scripts/deploy_agent_component.sh` 的 source overlay 仅适用 Agent 源码切片；`.dockerignore/pyproject.toml/uv.lock/infra/Dockerfile.agent` 变化必须完整构建，`--allow-scope-drift` 不豁免。不得为行预算顺手修改依赖输入；`check_module_budget.py check` 校验精确行数。切流 Compose 使用 Control 有效栈 tag，不用 OCI revision 或目录名代替。
 
-两条容易踩的快速通道硬约束：① `.dockerignore`、`pyproject.toml`、`uv.lock`、`infra/Dockerfile.agent` 是依赖输入，`base_commit..expected_commit` 里任一被改动就直接 REJECT，与 `--allow-scope-drift` 无关——所以 agent-only 切片**不能**改 `[tool.memoria.module-budgets]`，要么原地压缩，要么走完整镜像路径。② `check_module_budget.py check` 要求行数与配置**精确相等**，多一行少一行都判失败；`update` 只会收紧、永不放宽，`--allow-scope-drift` 不覆盖这一条。
-
-③ 上传段用 `rsync --protect-args`，**PATH 里的 `rsync` 必须是 ≥3.0**。macOS 自带 `/usr/bin/rsync` 是 openrsync 2.6.9，会以 `rsync: unrecognized option '--protect-args'` 在 `install -d` 之后、远端构建之前失败（生产不受影响，但服务端会留下一个空的 `component-releases/<tag>/` 目录，重跑会复用它）。脚本非交互 shell 若没有 `/opt/homebrew/bin`，先精确注入：`mkdir -p outputs/.tools && ln -sf /opt/homebrew/bin/rsync outputs/.tools/rsync`，再以 `PATH="$PWD/outputs/.tools:$PATH"` 运行。同一类问题：WorkBuddy 沙箱跑门禁要 `env -u PYTHONPATH`（宿主 shim 拦 `mkdir`，pytest 收集期报 EEXIST），`uv` 也不在默认 PATH。
-
-```bash
-scripts/deploy_agent_component.sh \
-  --remote memoria-prod \
-  --release-tag "$RELEASE_TAG" \
-  --base-image "memoria-agent:$BASE_TAG" \
-  --expected-commit "$SOURCE_COMMIT" \
-  --dry-run
-
-scripts/deploy_agent_component.sh \
-  --remote memoria-prod \
-  --release-tag "$RELEASE_TAG" \
-  --base-image "memoria-agent:$BASE_TAG" \
-  --expected-commit "$SOURCE_COMMIT" \
-  --allow-scope-drift \
-  --cutover
-```
+运行门禁需剥离本地 `LISTENER_CUES_ENABLED/LIVEKIT_ADAPTIVE_INTERRUPTION/OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`；`--skip-gates` 必须有明确理由与收据。上传要求 PATH 中 `rsync>=3.0` 支持 `--protect-args`，macOS 内置版本不可假定满足。
 
 ## 完整制品上传与校验
 
-构建机先生成 portable verifier 和 manifest；manifest 必须显式绑定 source 与 images 两个主工件：
+构建机生成 portable verifier 和绑定 source/images 的 manifest：
 
 ```bash
 uv run python scripts/package_release_verifier.py \
   --output "$ARTIFACT_DIR/release-verifier.pyz"
-
 uv run python scripts/create_release_manifest.py \
-  --release-tag "$RELEASE_TAG" \
-  --expected-commit "$SOURCE_COMMIT" \
+  --release-tag "$RELEASE_TAG" --expected-commit "$SOURCE_COMMIT" \
   --source-archive "$ARTIFACT_DIR/source.tar" \
   --images-archive "$ARTIFACT_DIR/images.tar" \
   --output "$ARTIFACT_DIR/release-manifest.json"
-```
-
-`images.tar + images.tar.sha256` 必须成对上传。构建机在工件目录内校验，避免把目录前缀重复拼接：
-
-```bash
 for artifact in source.tar images.tar release-manifest.json release-verifier.pyz; do
   (cd "$ARTIFACT_DIR" && sha256sum "$artifact")
 done
 ```
 
-先 dry-run，再使用当前基座做 seeded upload。不要对 basis 使用 `rsync --inplace`；远端必须保留可验证的不可变基座，上传失败不能污染它。
+`images.tar + images.tar.sha256` 必须成对上传。先 dry-run，再 seeded upload；不要对 basis 使用 `rsync --inplace`，失败不得污染不可变基座。
 
 ```bash
 scripts/upload_release_artifacts.sh \
-  --artifact-dir "$ARTIFACT_DIR" \
-  --remote memoria-prod \
-  --release-tag "$RELEASE_TAG" \
-  --base-tag "$BASE_TAG" \
-  --dry-run
-
+  --artifact-dir "$ARTIFACT_DIR" --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" --base-tag "$BASE_TAG" --dry-run
 scripts/upload_release_artifacts.sh \
-  --artifact-dir "$ARTIFACT_DIR" \
-  --remote memoria-prod \
-  --release-tag "$RELEASE_TAG" \
-  --base-tag "$BASE_TAG"
+  --artifact-dir "$ARTIFACT_DIR" --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" --base-tag "$BASE_TAG"
 ```
 
-把构建机可信摘要带入已认证运维 shell，先验 verifier 与 manifest，再运行 verifier；校验通过前禁止解包：
+构建机可信摘要须经已认证运维通道提供；先验 verifier/manifest，再运行 verifier，成功后才解包：
 
 ```bash
 : "${MEMORIA_RELEASE_VERIFIER_SHA256:?required}"
 : "${MEMORIA_RELEASE_MANIFEST_SHA256:?required}"
 printf '%s  %s\n' "$MEMORIA_RELEASE_VERIFIER_SHA256" "$UPLOAD_DIR/release-verifier.pyz" | sha256sum -c -
 printf '%s  %s\n' "$MEMORIA_RELEASE_MANIFEST_SHA256" "$UPLOAD_DIR/release-manifest.json" | sha256sum -c -
-
 python3 "$UPLOAD_DIR/release-verifier.pyz" \
-  --manifest "$UPLOAD_DIR/release-manifest.json" \
-  --artifact-dir "$UPLOAD_DIR" \
-  --expected-tag "$RELEASE_TAG" \
-  --expected-commit "$SOURCE_COMMIT" \
+  --manifest "$UPLOAD_DIR/release-manifest.json" --artifact-dir "$UPLOAD_DIR" \
+  --expected-tag "$RELEASE_TAG" --expected-commit "$SOURCE_COMMIT" \
   --verify-imported-images
-
 tar --extract --file "$UPLOAD_DIR/source.tar" --directory "$CANDIDATE_DIR"
 ```
 
-不允许手工 retag 缺少 manifest 绑定的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、provider smoke、容器健康、私有 readiness、外部 Host/SNI 路由和延迟复核。
+不允许手工 retag 未绑定 manifest 的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、真实 provider smoke、健康/私有 readiness/外部路由和延迟复核。
 
-## 数据层启动、备份与恢复
+## 数据层、备份与恢复
 
-数据 Compose 必须从当前 release 的真实目录启动。先让 runtime Compose 创建共享网络，再启动数据层；不得在其他工作目录用相对路径创建同名卷或网络：
+仅在需要启动/恢复且获授权时，先创建 runtime 共享网络，再从真实目录启动数据层，避免异地工作目录建错卷：
 
 ```bash
 DATA_COMPOSE_DIR=/opt/memoria/current/infra
@@ -793,60 +217,21 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
   -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" up -d
 ```
 
-发布前联合备份至少覆盖 PostgreSQL base backup/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest 和恢复回执。备份成功只表示“可尝试恢复”；必须定期运行隔离的 `scripts/run_offsite_restore_drill.sh`，通过 `pg_verifybackup`、对象清单、哈希、外键和应用级读取后才能称为已验证恢复。
+- 用户 2026-09-14 决定验证阶段暂缓自动备份/异地副本；最后核查 offsite profile 未启用、无真实 endpoint/告警。真实家庭数据、正式发布或价值/量级增长前必须重评，不把同机副本称为异地灾备或已验证 PITR。
+- 当前保留的本地还原点：`/var/backups/memoria/drill-20260914-p0-02/base`；2026-09-14 通过 `pg_verifybackup`、隔离启动、应用表/对象核对。报告 `outputs/acceptance/run-20260914-p0-02-restore-drill/report.json`。另保留 `/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump`。它们不会自动更新。
+- WAL 最后观察仍归档且无自动裁剪；旧日增长估计/磁盘余量不是当前值。P1-08 单独处理保留策略，不因备份暂缓而遗漏。禁止只按文件年龄删 WAL，必须保护仍保留 base backup 所需连续链；本轮未删任何数据。
+- 重新启用备份时，已修的 pg_basebackup CLI 仍需真实部署验证；网桥复制受现有 pg_hba 限制，优先评估 `network_mode: service:postgres` 走 loopback。真实异地 endpoint/凭据与恢复演练须另行补齐。
 
-搜索/档案投影是可重建数据，不从缓存当权威恢复。恢复不可变证据与 claims 后，在 Control API 镜像中执行：
+恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。恢复不可变 evidence/claims 后，在 Control API 镜像中重建投影：
 
 ```bash
 python -m scripts.rebuild_memory_projections --confirm-rebuild
 ```
 
-当前同机 PostgreSQL/MinIO/WAL 不能被宣传为异地灾备、PITR 或“永不丢失”。删除普通 release 制品前必须再次确认目标不是数据库、安全或合规备份。
+## 回滚与验收底线
 
-### 2026-09-14 备份现状核查与本地隔离恢复演练
+服务回滚按最小组件：保留失败候选日志/manifest，恢复切前 image、软链和 env，等待健康与具名 gRPC/readiness，再验外部路由/provider 和设备重连。回滚镜像曾可运行不等于本次回滚演练通过。
 
-结论：**自动备份从未真正运行过**，但本轮首次建立了经过校验、可恢复的本地还原点。证据目录 `outputs/acceptance/run-20260914-p0-02-restore-drill/`（`report.json` + `drill-notes.md`）。
+固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
 
-现状（只读核查）：
-
-- `offsite-backup` profile 从未启动。`/etc/memoria-offsite-backup.env` 不存在，`postgres_backup_staging` 卷不存在；异地 endpoint 只有 `infra/memoria-offsite-backup.env.example` 的 `.invalid` 占位，**没有异地副本，也没有备份告警**。
-- `infra/backup/postgres-base-backup.sh` 的 `pg_basebackup --dbname=postgres` 在 PG 17.8 报 `missing "=" after "postgres" in connection info string`（客户端参数解析错误，已复现）。该脚本此前从未被执行，所以这个错误一直没暴露。
-- `pg_hba.conf` 只对 `127.0.0.1`/`::1`/本地 socket 放行 `replication`（`host all all all scram-sha-256` 不覆盖复制连接）。因此独立备份容器走 `memoria_default` 网桥会被拒：`no pg_hba.conf entry for replication connection from host 172.19.0.14, user memoria_admin, no encryption`（已复现）。
-- 后果：2026-08-27 起累计的 **1503 段 / 23.5GB WAL 归档此前没有任何 base backup 可配对**，单独不可恢复；`MEMORIA_WAL_LOCAL_RETENTION_DAYS=7` 的裁剪只由从未启动的 offsite-mirror 执行，所以 WAL 从未裁剪。
-
-本轮演练（隔离，未改生产配置、未覆盖生产数据）：
-
-- 用 `--network container:memoria-data-postgres-1` 共享网络命名空间走 loopback 复制，`pg_basebackup --format=plain --wal-method=stream --checkpoint=fast --manifest-checksums=SHA256` 生成 base backup，**2s / 71,814,936 bytes**，落在 `/var/backups/memoria/drill-20260914-p0-02/base`（root-only，保留）。
-- `pg_verifybackup`：`backup successfully verified`。
-- 隔离恢复：复制到 `restore-data` 后用 `--network none` 起独立容器，**5s** 到 `pg_isready`；应用表 `archive_evidence_events` / `guardian_links` / `tutor_practice_sessions` 均存在；`archive_evidence_events=2305`、`voice_samples=1`、`archive_evidence_blobs=0`、`guardian_links=0`；cluster state `in production`。验证后容器与 `restore-data` 已删除，只留 69MB 备份与报告。
-- 对象核对：恢复副本的 `voice_samples.object_key` 在 MinIO `memoria-voice` 同 key 存在（134KiB，ETag `94c6430d991fe7bcad12c57cab452800`），原始密文 SHA256 `05ca85ac…012d`。
-- WAL 连续性：首段 `000000010000000000000001`、末段 `0000000100000005000000DF`，**0 缺口**；base backup 的 `START WAL LOCATION` 正是末段（`2026-09-14 08:37:56 UTC`，timeline 1）。所以「base backup + 现有 WAL 归档」现在构成同机可恢复链。
-- 既有手工备份仍有效：`/var/backups/memoria/20260912-1150-companion-persona-and-lookup-gate/memoria-archive-20260912T043155Z.dump` 的 `sha256sum -c` OK、`pg_restore --list` 1210 项。
-
-决定（2026-09-14，用户）：**项目验证阶段暂不启用自动备份与异地副本**。本阶段不新增 `offsite-backup` 容器、不配置异地 endpoint；已有的本地 base backup 与 9/12 手工 dump 保留，但不会自动更新。重新评估的触发条件：开始对真实家庭提供服务或写入真实家庭数据、正式发布前、或数据价值/量级显著增长。届时三条启用路径——(a) 修 `--dbname` 并在 `pg_hba.conf` 放行 `memoria_default` 网段的复制连接；(b) 备份容器改 `network_mode: service:postgres` 走 loopback，不改 pg_hba（推荐）；(c) 仅在 DB 容器内执行。异地副本另需真实 endpoint 与凭据。本机 WAL/MinIO/DB 仍同盘，**不能声称异地灾备或 PITR 已具备**。
-
-不受该决定影响、仍需处理的连带问题：WAL 归档仍在写且**无人裁剪**（`MEMORIA_WAL_LOCAL_RETENTION_DAYS` 只由从未启动的 mirror 执行）。
-
-2026-09-14 按用户授权做过一次回收：删除严格早于 base backup `START WAL LOCATION` 的 **1502 段 / 25,199,378,432 bytes**。这些段对应的还原点本来就不存在（8/27 起没有任何 base backup，9/12 那份是逻辑 dump、不需要 WAL），属于纯占用。只保留 3 个文件：`0000000100000005000000DF`、它的 `.00000028.backup` 历史文件和更新的 `0000000100000005000000E0`。结果：根盘 `/dev/vda2` 从 **77G 用 / 37G 可用（68%）** 变为 **54G 用 / 60G 可用（47%）**；`pg_verifybackup` 复验仍 `backup successfully verified`；`pg_stat_archiver` 的 `failed_count` 未变化（16032），删除后归档继续推进到 `…E0`（08:42:57Z）。**只动了归档卷，未触碰 `pg_wal`，未重启 PostgreSQL。**
-
-这只是回收历史积压，不解决增长：归档仍以约 1GB/天量级累积（实测 8/27→9/14 共 1504 段），60GB 可用大约 **6 周**后再次写满。三个可选终态：(a) 加一个**只裁剪**的定时任务（沿用 `find /wal-archive -mtime +N -delete`，不是备份），(b) 停用归档（改 `archive_mode`，需重启 PostgreSQL），(c) 维持现状、临近阈值再手工回收。本轮未安装任何定时任务。
-
-## 回滚
-
-回滚以组件最小范围执行：冻结失败候选日志和 manifest，恢复切流前 image/软链/env，等待健康与具名 gRPC/readiness，再重跑外部路由和 provider smoke。若 Edge 长连接未自动重拨，按当次回滚回执中的受控步骤处理，不能假定重启无副作用。
-
-固件回滚与此独立：只回写 app 分区 `0x20000`，不要跑 `flash.sh` 整包、不要 `erase-all`。紧邻回滚件与回退方法见「板卡与固件」——写前先备份当前 `0x20000/0x3f0000` 全槽并逐字节匹配，写的整个过程保持 identity/NVS/otadata/bootloader/分区表/assets 不变。
-
-回滚完成后记录当前与回滚两个可运行版本，删除更早普通上传包、构建归档、候选和回滚镜像并检查磁盘。保留失败证据的摘要和服务器路径即可，不在仓库新增 release 文档。
-
-## 验收门槛
-
-T1–T14 的原始 evidence/receipt 写到被忽略的 `outputs/acceptance/`，通过 `scripts/hardware_realtime_acceptance.py` 验证。覆盖设备启动、票据、防重放、上行、首帧、播放终态、硬停、网络恢复、连续轮次、AEC/双讲、长稳和小程序独立性。
-
-以下任一出现都 REJECT：
-
-- 首个可播放下行帧不是当前 fence 的 sequence/sample 0/0。
-- 旧 session/stream/generation/tool epoch 产生可听输出或档案写入。
-- playback terminal 缺失、错误被记为完成、Actual Heard 从网络发送量推断。
-- Redis/Bridge/Provider authority 不可用时回退到并行本地权威。
-- 真实设备、真实 provider 或真实网络证据被本地 mock、零会话 readiness 或旧候选证据替代。
+普通制品仅保留当前+一个可运行紧邻回滚，核验后按授权清理更早普通制品并查磁盘；数据库、WAL、MinIO、安全/合规备份不适用两版本规则。T1–T14 证据写 ignored `outputs/acceptance/`，由 `scripts/hardware_realtime_acceptance.py` 校验。旧 fence 可听输出/写档案、缺播放终态、错误记完成、以发送量伪造 Actual Heard、权威失败回退平行本地实现，任一均拒收。
