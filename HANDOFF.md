@@ -2,7 +2,7 @@
 
 更新于 2026-09-16。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收；完成过程与旧版本流水账已删除。唯一执行队列见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮核对本地文档、源码、提交及 CI，未连接生产、未打开串口。下列生产/板卡状态均为标注日期的既有收据，不是本轮实时健康证明；操作前须重新核验。
+本轮第二轮核对本地文档、源码、提交及 CI，并修改 P0-04/P0-03/P1-01 的代码与测试；未连接生产、未打开串口、未构建镜像、未启动 docker/PG/设备。下列生产/板卡状态均为标注日期的既有收据，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
@@ -16,14 +16,18 @@ hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: partial_candidate_fixes_and_open_review_findings
+code: uncommitted_local_p0_04_p0_03_p1_01_fixes_on_a8a0e43
 wired: existing_python_voice_core_and_signed_runtime_profile_authorities
 enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
 verified: scoped_receipts_only_voice_stability_and_student_device_loop_pending
 production_readiness: ready_at_last_observation_not_refreshed_this_review
 production_readiness_observed_at: 2026-09-16T11:37:57+08:00
 student_safety_loop_verified: false
-student_safety_local_scope: sqlite_http_with_manually_injected_signed_runtime_profile
+student_safety_local_scope: sqlite_http_with_manually_injected_signed_runtime_profile_and_declared_guardian_notification
+guardian_authority_evidence: parent_declaration_only_never_verified_link
+guardian_declaration_notification_basis: deliberate_identity_declaration_not_consent
+postgres_contracts_for_new_paths: executed_and_passing_on_real_pg17_ephemeral_container
+agent_release_gate_wiring: image_built_and_gate_rerun_offline_as_runtime_user_passing
 guardian_notification_delivery_channel: absent_outbox_only_status_pending
 firmware_playback_supply_meter_verified: short_playback_software_queue_only_not_dma
 pre_roll_code: not_implemented
@@ -49,14 +53,25 @@ device_id: dev_atk_a4cb8fd6095c
 
 ## 最新候选与审查边界
 
-`a8a0e43`（2026-09-16 16:12 CST）是本轮已核对的本地与远端 `main`。CI `35072578098` 的 agent/python 通过；Edge、小程序、固件及镜像任务跳过，不能据此宣称这些制品通过。没有该候选上线的证据；最后记录的线上 Agent/Bridge 仍为 `d96d4c2`。
+`a8a0e43`（2026-09-16 16:12 CST）是上一轮已核对的本地与远端 `main`。CI `35072578098` 的 agent/python 通过；Edge、小程序、固件及镜像任务跳过，不能据此宣称这些制品通过。没有该候选上线的证据；最后记录的线上 Agent/Bridge 仍为 `d96d4c2`。
 
-- 语音：流式 `DoubaoSynthesizeStream._run_attempt` 的活跃分片续期在本地前后对照中有效，但新增测试实际走未修改的 `synthesize_stream_text/_synthesize_once`，父提交也通过。批式路径仍使用总挂钟；部分音频下发后的错误终态仍待闭环。临近静默的 G 时序复现仍关闭会话，不能写成“续问竞态已修”。
-- 学生安全：当前使用人接线存在，但 `multi_subject.py` 代新建孩子写双方确认，又直接建立 `verified_via=wechat_identity` 的 active link，缺少与记录相符的验证证据；`interaction.py` 混用使用人类别、账号 consent 和账号记忆，session-policy 与 response-plan 可得出相反结论。最新 Control 候选发布前先处理，见 P0-04。
-- 验证边界：学生定向测试 10 项通过，但独立孩子用例仍手工注入签名 RuntimeProfile，不是完整 API→设备取 profile。新 `establish_active_link` 未获专门 PostgreSQL/RLS 契约覆盖；CI 的既有 PG 测试不能替代。
-- 发布：Bridge 隐私默认值与隔离进程 canary 的本地检查通过，制品/镜像解析定向测试 9 项通过；标准 Dockerfile/发布流水线尚未调用两个新校验器。镜像解析未指定 expected candidate 时，两服务同指旧镜像仍通过；不能写成发布门禁已闭环。真实镜像与 exporter 的内容不泄露仍待验证。
+2026-09-16 第二轮在**未提交的本地工作区**上改了 P0-04/P0-03/P1-01 的代码、测试与接线；没有新建候选、没有推送、没有 CI 结果。下列"已改"只表示 `code`（本地实现 + 定向测试通过），不是 `wired/enabled/verified`。
 
-以上是待修/待验摘要；实现入口、顺序与完成条件只维护在 `TODOLIST.md`，不在此展开修复历史。
+- 语音 TTS（P0-03）：空洞的 TTS 回归测试已删除，`services/agent/src/providers/generation_budget.py::GenerationBudget` 现在是两条 provider、四条路径（Doubao/CosyVoice × stream/batch）唯一的"首包预算 / 收到消息即续期的停滞预算 / `max(total*5, hard_deadline_s)` 硬上限"决策点，超时分类统一为 `first-audio-timeout` 与 `total-timeout`（批式首包后不再抛裸 `TimeoutError`）。新增 `DOUBAO_TTS_HARD_DEADLINE_S`（默认 180，生效上限取 `max(total*5, 该值)`，默认行为与旧内联 180 一致）。用例：流式续期（父提交 `a8a0e43^` 上以 `total-timeout` 失败）、真实停顿有界失败、40 分片持续进展仍被 0.5s 硬上限按 `total-timeout` 终止、批式续期与批式首包后分类、CosyVoice 批式续期；后四条在 `HEAD` provider 上均失败。`MockDoubaoServer` 新增 `pcm_chunks`（N 路分片输入）与 `chunk_count`（已发分片计数），`MockCosyVoiceServer` 新增 `chunk_delay_s`。
+- 语音输出终态（P0-03）：首帧已下发后的 provider 崩溃、停滞（`MEDIA_OUTPUT_GENERATION_TIMEOUT_S`）与硬期限（`APIConnectionError: total-timeout`）三种故障已本地注入验证：`services/agent/tests/unit/test_media_output_partial_failure.py` 断言有界时间内（0.2s 停滞预算内）落地同一终态——一个后继代 `REALTIME_EFFECT_KIND_CANCEL_GENERATION`（设备据此退出 speaking 并 flush，source `output_provider_failed`/`output_timeout`）、交付账终态为 `ReplyDeliveryEvent.ERROR` 而非 `PLAYBACK_ENDED`、`provider_complete=false`、`interaction_phase=listening`、`assistant_speaking=false`，且旧代的迟到 ACK/ENDED 不改变权威 fence、终态与发射计数。这验证的是进程内故障注入；B 的真机表现（桥侧旧总挂钟 20.23s 出错、约 38.6s 后才错误收尾）仍需设备捕获核对。
+- 语音续问（P0-03）：G 的静默预算语义已统一：`owner_silence_remaining_s` 的 `None/0.0/>0` 三态明确，结束已测预算记 `0.0` 而非 `None`；计数器改为 `owner_silence_activity_revision` 并收敛到 `_note_owner_silence_activity`；被受理的 ASR final 与已受理 VAD 一样可作为"已受理主人活动"失效仍在等锁的关闭，但只在仍有其它界时生效、且不刷新预算。`test_accepted_final_can_veto_a_parked_grace_close` 与 `test_ending_a_measured_budget_records_it_as_spent_not_unmeasured` 在 `HEAD` 上失败、当前通过；两条真实入口保护用例两版都通过。仍未做：真机复跑 G 取证、无验证说话人且无其它界时的关闭语义、endpoint/commit 乱序与 watchdog 交接的 10s/60s 完整矩阵、部分音频失败终态、B/D 设备停滞、时延门。
+- 学生安全（P0-04）：`_primary_subject` 不再替孩子确认，`guardian_of` 保持 `pending` 且只记录家长一侧确认（evidence `guardian_declaration_v1:device_binding`）；伪造的 `establish_active_link`（含 `verified_via=wechat_identity`、合成 code hash、365d 到期，并会激活既有 pending link）已从 port 与两个 store 删除。危机通知改由调用方从 Identity 解析声明监护人以 `declared_guardian_ids` 显式传入，PostgreSQL 侧新增 `guardian_enqueue_declared_notification` 在库内用 `identity_relationship_source_confirmed` 复核声明；SQLite 直接插入。这是有意决定：单方声明是通知依据，但不是已验证监护，也不解锁 consent。
+- 记忆召回（P1-06）：固定集 16 例 recall@5 由 0.8125 升到 0.9375、nDCG@10 由 0.734 升到 0.859，`candidate_leakage`/`cross_account_leakage` 仍为 0、`extraction_recall`=1.0、p50≈0.72ms。三处改动：`RecallPlanner` 新增“避开/忌口/不能吃/别吃/注意别/过敏”标记 → “不喜欢/讨厌/不吃/忌口/不要”词表扩展；评测 adapter 改为与生产读路径一致（生产总是先 plan）；规则抽取器新增“家里人叫(她|他)X”别名句式（仅在唯一人物且非角色词时生效，并补了反例）；编译期为人物建立 search document（此前 person 只在 `person_aliases`，没有任何读路径会搜它），确认时随同事件投影提升，未确认人物仍被 confirmed-only 挡在外面。仅剩 `repeated-episode-campus-startup`（跨会话 episode 合并的产品语义未定，不抬分）。人物投影已同步到生产 `postgres_memory_catalog.py`，并补了 DSN 门控契约 `test_postgres_person_alias_is_recallable_and_status_gated`；本轮已用本机 Docker（`/usr/local/bin/docker`，Docker Desktop 29.7.2）起临时 `pgvector/pgvector:0.8.1-pg17-bookworm` 容器（宿主 55432），把全部 DSN 门控契约实跑通过；`scripts/tests/run_authoritative_postgres_gate.sh` 的 init + repeat-upgrade 门禁与带 DSN 的全量 `pytest services/ tests/` 都通过。实跑发现并修掉两处真缺陷（跨 schema 授权的安装顺序依赖、声明监护人被 RLS 拒绝写/读）。
+- ASR 救援边界（P1-02）：`services/agent/tests/integration/test_funasr_rescue_audio_shapes.py` 用**合成** PCM 波形（非真实录音）钉住救援路径的判定边界——静音/室内底噪在本地被门禁拦下且厂商零请求、削波满幅按上行原始字节送判、超长段只送最新尾帧（内容精确比对）、三路并发 + 慢厂商降级为有界 `no_text`、在飞行中的救援发布 `now + 2.5s` 预算。仍未做：真实中文录音语料与 sidecar 的生产启动脚本/Dockerfile/模型摘要入仓（后者只在服务器上，本轮未连生产），故 P1-02 的「仓内输入可重建」仍不成立。
+- 真实 API 路径（P0-04）：`test_accountless_child_profile_reaches_the_device_through_the_real_api` 用真实 HTTP 链（device-binding → session → resolve-subject → app_confirm 切人 → device runtime-profile）取到 account-less 孩子的签名 profile，并用决策路径同一 `verify_runtime_profile_payload` 校验 `active_subject_id/subject_category/age_band/service_mode` 与「仍无 active guardian link」；此前该链只有手工注入。把该 profile 送进 `/response-plan`/`/session-policy` 仍不可行——这两条路由要求 `PostgresSessionRuntimeService`（仅生产安装）。
+- 选人入口一致性（P1-03）：`resolve_subject` 不再广告写接口不接受的 `voice_question`，只返回 `app_confirm`；`test_advertised_subject_confirmation_methods_match_the_write_api` 断言广告集合、`app_confirm` 被接受、`voice_question` 仍 422。
+- 数据主体（P0-04）：`interaction.py` 的记忆上限改为同一 person id 同时提供类别与 `memory_retention` consent；`session-policy` 改按签名 RuntimeProfile 的 active subject 判定并把 `owner_display_name` 限定账号本人当轮；`response_plan` 在 subject≠account 时不再读账号键旧档案记忆（该表把第一人称 claim 全存成 `subject_key="self"`），并补了正/反向回归。会话记忆迁到 subject 键的 `services/memory_scope` 仍未做。
+- 不可见降级（P0-04）：当前使用人权威"配置存在但读取失败/过期"现在记日志并保持保守能力门（不回落账号资料、不猜 minor、不通知家长），公开固定安全回复保留；离线无该权威的部署仍按账号即使用人。正常 unknown/guest 与读取失败仍分别有测试。
+- 验证边界：新增 3 条 PostgreSQL/RLS 契约（identity 声明、parent_for_child 仍要求关系、guardian 声明通知），本机无 `MEMORIA_TEST_POSTGRES_DSN`/docker，全部跳过，**必须由带 postgres service 的 CI `python` job 实跑通过才算数**。独立孩子用例仍用手工注入的签名 RuntimeProfile，真实 API→设备取 profile 路径未补。
+- 发布实跑（P1-01，2026-09-16 本机 Docker Desktop 29.7.2）：`infra/Dockerfile.agent` 全量构建成功，构建期 gate 通过；对构建出的镜像按运行用户离线复跑同一 gate 通过（exit 0）。构建暴露一处真缺陷：`COPY` 保留宿主文件模式，umask 077 的检出会让源文件与 gate 脚本变成 0600，非 root 运行用户读不到——三条构建路径现都显式 `--chmod=0644` 并在 COPY 后统一放宽，镜像不再依赖构建者 umask。`resolve_target_images.py` 在真实 compose + override 链上演通过（候选命中 exit 0；缺候选 override / 旧镜像后置覆盖 → exit 1；未给候选身份 → exit 2）。
+- 发布（P1-01）：三条 Agent 镜像路径（全量 / delta / source overlay）现在 COPY 并 `RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact`；`deploy_agent_component.sh` 随候选上传并校验 `resolve_target_images.py` 的 sha256，在写回滚点之后、切流之前强制解析"有效 stack tag + release commit + 预期 candidate tag/image + 真实 override 链"，失败即停止且不触碰在线栈。`resolve_target_images.py` 必须显式给出候选身份（缺省/无效 tag/缺服务/不一致/仍指向 stack 镜像分别拒绝）。CI 新增 `agent-image` job 与显式采集 `scripts/tests` 门禁测试的步骤（此前 `testpaths` 不含 `scripts`，9 项定向测试默认不会被任何 pytest 运行收集）。本机无 docker，镜像构建、`docker run` 复跑与 compose 解析均未执行；verifier 的 canary 仍基于 InMemorySpanExporter，不等于生产 exporter 已证明不泄露。
+
+以上是本轮改动与待验摘要；实现入口、顺序与完成条件只维护在 `TODOLIST.md`，不在此展开修复历史。
 
 ## 当前生产与紧邻回滚
 
