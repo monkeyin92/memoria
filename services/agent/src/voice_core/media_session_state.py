@@ -130,7 +130,10 @@ class MediaVoiceSessionState:
     # waiting for standby_lock and never resets within the session.
     active_vad_stream_epoch: int | None = None
     active_vad_start_sample: int | None = None
-    owner_silence_vad_revision: int = 0
+    #: Incremented by accepted owner-activity evidence (an admitted VAD
+    #: edge or an accepted transcript). A close that snapshotted an
+    #: older revision is stale and must not fire.
+    owner_silence_activity_revision: int = 0
     # Independent wall-clock bound for one accepted user utterance.  This is
     # deliberately separate from owner-silence timing: a stuck VAD stream
     # must eventually fail closed even while the owner is still speaking.

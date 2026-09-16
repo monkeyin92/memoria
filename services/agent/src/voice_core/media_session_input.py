@@ -197,7 +197,7 @@ class MediaSessionInputMixin:
             "silence_remaining_s=%s grace_active=%s watchdog_armed=%s vad_revision=%s",
             context.identity.session_id, context.stream_epoch, segment.capture_start_sample,
             context.owner_silence_remaining_s, context.owner_silence_grace_deadline is not None,
-            context.max_user_speech_task is not None, context.owner_silence_vad_revision,
+            context.max_user_speech_task is not None, context.owner_silence_activity_revision,
         )
         return True
 

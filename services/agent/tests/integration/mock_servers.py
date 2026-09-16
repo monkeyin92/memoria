@@ -418,6 +418,7 @@ class MockCosyVoiceServer:
     host: str = "127.0.0.1"
     port: int = 0
     scenario: str = "happy"  # happy|late_ts|fail|slow|split_pcm
+    chunk_delay_s: float = 0.0
     closed_without_reuse: int = 0
     active: int = 0
     connections: int = 0
@@ -540,8 +541,12 @@ class MockCosyVoiceServer:
             )
             if self.scenario == "split_pcm":
                 # Two transport chunks from one continuous stream. Their different
-                # amplitudes make any per-chunk gain adjustment observable.
+                # amplitudes make any per-chunk gain adjustment observable, and
+                # the optional delay keeps one attempt progressing past an
+                # initial wall clock.
                 for level in (1200, 16000):
+                    if self.chunk_delay_s > 0:
+                        await asyncio.sleep(self.chunk_delay_s)
                     await ws.send(struct.pack("<480h", *([level] * 480)))
             else:
                 # 20ms of 24kHz mono 16-bit silence * N
@@ -665,10 +670,16 @@ def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, A
 class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|stall_after_first_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
     chunk_delay_s: float = 0.0
     connections: int = 0
     sessions: int = 0
+    #: PCM frames actually sent, so a test proves how much the server streamed
+    #: instead of inferring it from the client's reassembled output.
+    chunk_count: int = 0
+    #: Split every synthesis into this many PCM frames (0 keeps the scenario's
+    #: own framing). Used to drive long, progressing streams.
+    pcm_chunks: int = 0
     task_requests: list[list[str]] = field(default_factory=list)
     start_session_params: list[dict[str, Any]] = field(default_factory=list)
     speakers: list[str] = field(default_factory=list)
@@ -809,7 +820,12 @@ class MockDoubaoServer:
             samples = max(samples, 24_000)
         pcm = struct.pack(f"<{samples}h", *([1200] * samples))
         self.pcm = pcm
-        if self.scenario == "split_pcm":
+        if self.pcm_chunks >= 2:
+            step = max(1, len(pcm) // self.pcm_chunks)
+            chunks = tuple(
+                pcm[offset : offset + step] for offset in range(0, len(pcm), step)
+            )
+        elif self.scenario == "split_pcm":
             midpoint = len(pcm) // 2
             chunks = (pcm[:midpoint], pcm[midpoint:])
         elif self.scenario == "split_pcm_odd":
@@ -818,7 +834,7 @@ class MockDoubaoServer:
             chunks = (pcm + b"\x00",)
         else:
             chunks = (pcm,)
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             if self.chunk_delay_s > 0:
                 await asyncio.sleep(self.chunk_delay_s)
             await ws.send(
@@ -829,6 +845,12 @@ class MockDoubaoServer:
                     audio=True,
                 )
             )
+            self.chunk_count += 1
+            if self.scenario == "stall_after_first_pcm" and index == 0:
+                # Mid-utterance freeze: no further frame and no SESSION_FINISHED,
+                # so the client's bounded failure path (not its happy path) is
+                # what ends the stream.
+                return
         if self.scenario != "empty_ts":
             duration_s = samples / 24000
             # A realistic long utterance can be linearly normalized when its

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from livekit.agents import APIConnectOptions
+from livekit.agents import APIConnectionError, APIConnectOptions
 from livekit.agents.types import USERDATA_TIMED_TRANSCRIPT
 from scripts import provider_smoke_test
 from services.agent.src.contracts.ids import GenerationFence
@@ -780,21 +780,143 @@ async def test_livekit_stream_does_not_replay_after_audio_without_subtitles() ->
 
 
 @pytest.mark.asyncio
-async def test_streaming_audio_resets_stall_watchdog_beyond_initial_total_timeout() -> None:
-    """Active chunk delivery resets the stall watchdog, allowing long generation beyond total_timeout_s."""
-    server = MockDoubaoServer(chunk_delay_s=0.04)
+async def test_livekit_stream_renews_the_stall_watchdog_across_delayed_chunks() -> None:
+    """Every delivered chunk renews the stall budget on the live stream path.
+
+    This drives ``DoubaoTTS.stream()`` (the path LiveKit uses for real speech),
+    not the batch ``synthesize_stream_text`` helper.  ``total_timeout_s`` is
+    0.08s while each of the two PCM chunks arrives after 0.05s, so every gap
+    stays inside the per-chunk budget while the elapsed wall clock exceeds the
+    initial total budget: the pre-fix absolute deadline fails with
+    ``total-timeout`` even though the server keeps making progress.
+    """
+    server = MockDoubaoServer(scenario="split_pcm", chunk_delay_s=0.05)
     server.start()
-    # total_timeout_s is 0.08s; with 4 chunks delayed by 0.04s, total generation takes ~0.16s
-    # In the old logic, this timed out with total-timeout at 0.08s.
-    # In the fixed logic, each chunk resets total_deadline and generation completes.
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.2, total_timeout_s=0.08))
+    try:
+        await tts.pool.warm(1)
+        async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+            stream.push_text("今天天气很好，温度二十度，适宜出行。")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        assert server.chunk_count >= 2
+        assert events
+        assert sum(event.frame.duration for event in events) > 0
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_livekit_stream_still_fails_bounded_when_generation_really_stalls() -> None:
+    """Renewal must not defuse the watchdog: a genuine stall ends bounded.
+
+    The server stops mid-utterance after the first PCM frame.  The stall budget
+    (0.15s) is far below the first-audio budget (0.5s), so only the post-audio
+    watchdog can end this stream and it must end it with the classified
+    ``total-timeout`` failure instead of hanging.
+    """
+    server = MockDoubaoServer(scenario="stall_after_first_pcm")
+    server.start()
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.5, total_timeout_s=0.15))
+    try:
+        await tts.pool.warm(1)
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(APIConnectionError, match="total-timeout"):
+            async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+                stream.push_text("只发一半就停下的句子")
+                stream.end_input()
+                async for _ in stream:
+                    pass
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert server.chunk_count == 1
+        assert elapsed < 2.0
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_stream_hard_deadline_bounds_runaway_generation_despite_progress() -> None:
+    """Continuous chunks cannot extend a generation forever.
+
+    ``total_timeout_s`` is the *stall* budget, so every received chunk renews
+    it; the hard deadline (``max(total_timeout_s * 5, hard_deadline_s)``) is the
+    only absolute cap.  The server keeps producing frames far past that cap, so
+    the client must fail with the classified ``total-timeout`` (not a raw
+    ``TimeoutError``, and not a silent success) after receiving many frames.
+    """
+    server = MockDoubaoServer(scenario="split_pcm", chunk_delay_s=0.05, pcm_chunks=40)
+    server.start()
+    tts = DoubaoTTS(
+        _config(
+            server,
+            first_audio_timeout_s=0.2,
+            total_timeout_s=0.1,
+            # The effective cap is max(total_timeout_s * 5, hard_deadline_s).
+            hard_deadline_s=0.05,
+        )
+    )
+    try:
+        await tts.pool.warm(1)
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(APIConnectionError, match="total-timeout"):
+            async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+                stream.push_text("无限流式的长句")
+                stream.end_input()
+                async for _ in stream:
+                    pass
+        elapsed = asyncio.get_running_loop().time() - started
+
+        # Renewal really happened (many frames), and the cap really bound.
+        assert server.chunk_count >= 8
+        assert elapsed < 2.0
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_batch_synthesis_renews_the_stall_watchdog_across_delayed_chunks() -> None:
+    """The batch path shares the stream path's progress semantics.
+
+    ``total_timeout_s`` is 0.08s while each of the two PCM chunks arrives after
+    0.05s: every gap is inside the stall budget, but the elapsed wall clock
+    exceeds the initial total budget.  An absolute wall clock on the batch path
+    fails here even though the provider keeps making progress.
+    """
+    server = MockDoubaoServer(scenario="split_pcm", chunk_delay_s=0.05)
+    server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.2, total_timeout_s=0.08))
     try:
         result = await tts.synthesize_stream_text(
             ["今天天气很好，温度二十度，适宜出行。"],
-            fence=GenerationFence("long-stream", 1, 1, 0),
+            fence=GenerationFence("batch-renewal", 1, 1, 0),
         )
+        assert server.chunk_count >= 2
         assert result.pcm
         assert result.words
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_batch_synthesis_classifies_a_stall_after_first_audio_as_total_timeout() -> None:
+    """Post-audio failures must keep the same meaning on both paths."""
+
+    server = MockDoubaoServer(scenario="stall_after_first_pcm")
+    server.start()
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.5, total_timeout_s=0.15))
+    try:
+        with pytest.raises(APIConnectionError, match="total-timeout"):
+            await tts.synthesize_stream_text(
+                ["只发一半就停下的句子"],
+                fence=GenerationFence("batch-stall", 1, 1, 0),
+            )
+        assert server.chunk_count == 1
     finally:
         await tts.aclose()
         server.stop()

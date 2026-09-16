@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -42,6 +43,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
     catalog_by_id,
     resolve_approved_voice,
 )
+from services.agent.src.providers.generation_budget import GenerationBudget
 from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,12 @@ class DoubaoTTSConfig:
     connect_timeout_s: float = 5.0
     first_audio_timeout_s: float = 1.5
     total_timeout_s: float = 20.0
+    #: Absolute cap for one generation attempt, however much progress it keeps
+    #: reporting. The effective cap is ``max(total_timeout_s * 5, hard_deadline_s)``
+    #: so an actively generating utterance is bounded by progress alone, while
+    #: runaway generation still ends. Configurable so the bound is provable in
+    #: tests and operators can tighten it without a code change.
+    hard_deadline_s: float = 180.0
     instruction: str | None = None
     reference_contexts: tuple[str, ...] = ()
     style_control_enabled: bool = False
@@ -99,6 +107,10 @@ class DoubaoTTSConfig:
             raise ValueError("Doubao loudness_rate must be between -50 and 100")
         if not -12 <= self.pitch <= 12:
             raise ValueError("Doubao pitch must be between -12 and 12")
+        for name in ("connect_timeout_s", "first_audio_timeout_s", "total_timeout_s", "hard_deadline_s"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Doubao TTS {name} must be finite and positive")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> DoubaoTTSConfig:
@@ -152,6 +164,7 @@ class DoubaoTTSConfig:
             connect_timeout_s=float(values.get("DOUBAO_TTS_CONNECT_TIMEOUT_S", "5")),
             first_audio_timeout_s=float(values.get("DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(values.get("DOUBAO_TTS_TOTAL_TIMEOUT_S", "20")),
+            hard_deadline_s=float(values.get("DOUBAO_TTS_HARD_DEADLINE_S", "180")),
             style_control_enabled=(
                 values.get("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").strip().lower() == "true"
             ),
@@ -761,29 +774,27 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
 
             send_task = asyncio.create_task(sender(), name="doubao-tts-send")
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + config.first_audio_timeout_s
-            total_deadline = loop.time() + config.total_timeout_s
-            hard_deadline = loop.time() + max(config.total_timeout_s * 5, 180.0)
+            budget = GenerationBudget(
+                started_at=loop.time(),
+                first_audio_timeout_s=config.first_audio_timeout_s,
+                total_timeout_s=config.total_timeout_s,
+                hard_deadline_s=config.hard_deadline_s,
+            )
             try:
                 while True:
-                    deadline = (
-                        min(total_deadline, hard_deadline)
-                        if got_audio
-                        else min(total_deadline, first_audio_deadline)
-                    )
                     try:
                         message = await self._receive(
                             conn,
-                            timeout_s=max(0.0, deadline - loop.time()),
+                            timeout_s=budget.timeout_s(loop.time()),
                         )
                     except TimeoutError:
-                        reason = "total-timeout" if got_audio else "first-audio-timeout"
-                        raise APIConnectionError(reason) from None
+                        raise APIConnectionError(budget.failure_reason()) from None
                     if got_audio or message.message_type == MessageType.AUDIO_ONLY_SERVER:
                         # Streaming in progress: each received chunk resets the stall
                         # watchdog so long answers are not cut off by an arbitrary
-                        # wall-clock limit, while hard_deadline caps runaway generation.
-                        total_deadline = loop.time() + config.total_timeout_s
+                        # wall-clock limit, while the hard deadline caps runaway
+                        # generation.
+                        budget.renew(loop.time())
                     if message.message_type == MessageType.AUDIO_ONLY_SERVER:
                         if not got_audio:
                             output_emitter.initialize(
@@ -1336,21 +1347,31 @@ class DoubaoTTS(tts.TTS[Any]):
                 build_client_message(EventType.FINISH_SESSION, session_id=session_id)
             )
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + config.first_audio_timeout_s
-            total_deadline = loop.time() + config.total_timeout_s
+            # The batch path answers the same three budget questions as the
+            # stream path: first-packet budget, per-chunk stall budget and the
+            # absolute hard deadline. A long but progressing utterance must not
+            # be cut off by an initial wall clock, and the classification of a
+            # spent budget must not change just because audio already arrived.
+            budget = GenerationBudget(
+                started_at=loop.time(),
+                first_audio_timeout_s=config.first_audio_timeout_s,
+                total_timeout_s=config.total_timeout_s,
+                hard_deadline_s=config.hard_deadline_s,
+            )
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     return SynthesizeResult(bytes(pcm), tuple(words), session_id, "degraded", True)
-                deadline = total_deadline if pcm else min(total_deadline, first_audio_deadline)
                 try:
                     message = await DoubaoSynthesizeStream._receive(
                         conn,
-                        timeout_s=max(0.0, deadline - loop.time()),
+                        timeout_s=budget.timeout_s(loop.time()),
                     )
                 except TimeoutError:
-                    if not pcm:
+                    if not budget.got_audio:
                         raise DoubaoFirstAudioTimeoutError() from None
-                    raise
+                    raise APIConnectionError(budget.failure_reason()) from None
+                if budget.got_audio or message.message_type == MessageType.AUDIO_ONLY_SERVER:
+                    budget.renew(loop.time())
                 if message.message_type == MessageType.AUDIO_ONLY_SERVER:
                     if not pcm:
                         self.trace("doubao_first_pcm", detail={"pcm_bytes": len(message.payload)})

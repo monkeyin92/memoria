@@ -293,3 +293,35 @@ async def test_pool_discard_refills_in_background_and_shutdown_waits_for_it() ->
         assert not pool._refill_tasks
     finally:
         srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_cosyvoice_batch_renews_the_stall_watchdog_across_delayed_chunks() -> None:
+    """The batch path must not keep an absolute wall clock.
+
+    ``total_timeout_s`` is 0.08s while the second transport chunk arrives after
+    0.05s: each gap is inside the stall budget, but the elapsed wall clock
+    exceeds the initial total budget. An absolute wall clock fails here even
+    though the provider keeps producing audio.
+    """
+    srv = MockCosyVoiceServer(scenario="split_pcm", chunk_delay_s=0.06)
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            pool_size=1,
+            first_audio_timeout_s=0.2,
+            total_timeout_s=0.08,
+        )
+        tts = CosyVoiceTTS(cfg)
+        await tts.pool.warm(1)
+        result = await tts.synthesize_stream_text(
+            ["今天天气很好，温度二十度。"],
+            fence=GenerationFence("cosy-renewal", 1, 1, 0),
+        )
+        assert result.pcm
+        assert result.words
+        await tts.aclose()
+    finally:
+        srv.stop()

@@ -35,6 +35,7 @@ from services.agent.src.providers.cosyvoice_voice_catalog import (
     resolve_voice_id,
     uses_freeform_instruct,
 )
+from services.agent.src.providers.generation_budget import GenerationBudget
 from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ class CosyVoiceConfig:
     connect_timeout_s: float = 5.0
     first_audio_timeout_s: float = 1.5
     total_timeout_s: float = 20.0
+    #: Absolute cap for one generation attempt, however much progress it keeps
+    #: reporting. The effective cap is ``max(total_timeout_s * 5, hard_deadline_s)``.
+    hard_deadline_s: float = 180.0
     instruction: str | None = None
     # auto | fixed | freeform — auto picks freeform for v3.5 / designed voices.
     instruct_style: str = "auto"
@@ -157,6 +161,7 @@ class CosyVoiceConfig:
             connect_timeout_s=float(e.get("COSYVOICE_CONNECT_TIMEOUT_S", "5")),
             first_audio_timeout_s=float(e.get("COSYVOICE_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(e.get("COSYVOICE_TOTAL_TIMEOUT_S", "20")),
+            hard_deadline_s=float(e.get("COSYVOICE_HARD_DEADLINE_S", "180")),
             instruction=e.get("COSYVOICE_INSTRUCTION") or None,
             instruct_style=e.get("COSYVOICE_INSTRUCT_STYLE", "auto"),
             voice_profile=profile,
@@ -446,23 +451,28 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
 
             send_task = asyncio.create_task(sender(), name="cosy-send")
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + self._config.first_audio_timeout_s
-            total_deadline = loop.time() + self._config.total_timeout_s
+            budget = GenerationBudget(
+                started_at=loop.time(),
+                first_audio_timeout_s=self._config.first_audio_timeout_s,
+                total_timeout_s=self._config.total_timeout_s,
+                hard_deadline_s=self._config.hard_deadline_s,
+            )
             try:
                 while True:
-                    deadline = (
-                        total_deadline if got_audio else min(total_deadline, first_audio_deadline)
-                    )
                     try:
                         msg = await asyncio.wait_for(
                             conn.ws.recv(),
-                            timeout=max(0.0, deadline - loop.time()),
+                            timeout=budget.timeout_s(loop.time()),
                         )
                     except TimeoutError:
-                        reason = "total-timeout" if got_audio else "first-audio-timeout"
+                        reason = budget.failure_reason()
                         await self._pool.discard(conn, reason=reason)
                         self._conn = None
                         raise APIConnectionError(reason) from None
+                    if got_audio or isinstance(msg, bytes):
+                        # Streaming in progress: every delivered chunk renews the
+                        # stall budget; only the hard cap bounds runaway generation.
+                        budget.renew(loop.time())
                     if isinstance(msg, bytes):
                         if not got_audio:
                             self._tts_instance.trace(
@@ -860,8 +870,17 @@ class CosyVoiceTTS(tts.TTS[Any]):
             await conn.ws.send(json.dumps(build_finish_task(task_id), ensure_ascii=False))
 
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + config.first_audio_timeout_s
-            total_deadline = loop.time() + config.total_timeout_s
+            # The batch path answers the same three budget questions as the
+            # stream path: first-packet budget, per-chunk stall budget and the
+            # absolute hard deadline. A long but progressing utterance must not
+            # be cut off by an initial wall clock, and a spent budget must not
+            # change meaning just because audio already arrived.
+            budget = GenerationBudget(
+                started_at=loop.time(),
+                first_audio_timeout_s=config.first_audio_timeout_s,
+                total_timeout_s=config.total_timeout_s,
+                hard_deadline_s=config.hard_deadline_s,
+            )
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     discarded = True
@@ -869,18 +888,17 @@ class CosyVoiceTTS(tts.TTS[Any]):
                     return SynthesizeResult(
                         bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
                     )
-                deadline = total_deadline
-                if not pcm_buf:
-                    deadline = min(deadline, first_audio_deadline)
                 try:
                     msg = await asyncio.wait_for(
                         conn.ws.recv(),
-                        timeout=max(0.0, deadline - loop.time()),
+                        timeout=budget.timeout_s(loop.time()),
                     )
                 except TimeoutError:
-                    if not pcm_buf:
+                    if not budget.got_audio:
                         raise CosyVoiceFirstAudioTimeoutError() from None
-                    raise
+                    raise APIConnectionError(budget.failure_reason()) from None
+                if budget.got_audio or isinstance(msg, bytes):
+                    budget.renew(loop.time())
                 if isinstance(msg, bytes):
                     if not pcm_buf:
                         self.trace(

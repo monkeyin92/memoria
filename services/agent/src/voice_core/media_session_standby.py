@@ -104,14 +104,46 @@ class MediaSessionStandbyMixin:
                 return
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             context.owner_silence_grace_deadline = None
-            context.owner_silence_remaining_s = 0.0
         else:
             self._pause_owner_silence_timer(context)
-        # This is admission, not verified owner activity: never refresh the
-        # silence budget or clear grace_used. Only a live watchdog can replace
-        # a close already waiting for the lock, even for a non-grace timeout.
+        # This is admission, not verified owner activity: a bare VAD edge must
+        # never refresh the silence budget or clear grace_used, or ambient noise
+        # would keep the conversation open forever. Only a live watchdog can
+        # replace a close already waiting for the lock, even for a non-grace
+        # timeout.
         if watchdog_armed:
-            context.owner_silence_vad_revision += 1
+            self._note_owner_silence_activity(context)
+
+    def _note_owner_silence_activity(self, context: _MediaVoiceSession) -> None:
+        """Invalidate a pending silence close for evidence that arrived first.
+
+        The acceptance decision is made from a snapshot taken when the silence
+        budget ran out, and the close then waits for ``standby_lock``.  Any
+        owner-activity evidence accepted before that lock is taken supersedes
+        the snapshot; bumping one revision is the single decision point for
+        "this close is stale", instead of every caller re-deriving the rule.
+        """
+
+        context.owner_silence_activity_revision += 1
+
+    def _note_owner_speech_text(self, context: _MediaVoiceSession) -> None:
+        """An accepted transcript is admitted owner speech, not a bare VAD edge.
+
+        It may invalidate a silence close that snapped an earlier snapshot and
+        is still waiting for ``standby_lock`` — but only while another bound
+        (the absolute speech watchdog or a pending grace) still holds, so it can
+        never leave the session with no bound at all.  It deliberately does not
+        refresh the silence budget: text without verified speaker authority must
+        not extend the conversation, or the device would keep listening to a
+        room that merely produces transcripts.
+        """
+
+        if (
+            context.max_user_speech_task is None
+            and context.owner_silence_grace_deadline is None
+        ):
+            return
+        self._note_owner_silence_activity(context)
 
     async def _max_user_speech_watch(
         self,
@@ -148,6 +180,21 @@ class MediaSessionStandbyMixin:
         *,
         preserve_remaining: bool,
     ) -> None:
+        """Stop the timer and record what the owner's measured budget now is.
+
+        ``owner_silence_remaining_s`` has exactly three meanings, and the
+        difference decides whether the next arm hands out a whole interval:
+
+        - ``None``: nothing was measured yet, so the next arm starts the full
+          interval.
+        - ``0.0``: the measured budget is spent, so the next arm is immediate.
+        - ``> 0.0``: paused with that much left.
+
+        Ending a measured budget must therefore record ``0.0`` rather than
+        ``None``.  ``None`` means "unmeasured", and using it for a spent window
+        silently grants a session that already used its window a brand new one.
+        """
+
         task = context.owner_silence_task
         deadline = context.owner_silence_deadline
         if preserve_remaining and deadline is not None:
@@ -155,8 +202,8 @@ class MediaSessionStandbyMixin:
                 0.0,
                 deadline - asyncio.get_running_loop().time(),
             )
-        elif not preserve_remaining:
-            context.owner_silence_remaining_s = None
+        elif not preserve_remaining and deadline is not None:
+            context.owner_silence_remaining_s = 0.0
         context.owner_silence_deadline = None
         context.owner_silence_task = None
         if task is not None and task is not asyncio.current_task() and not task.done():
@@ -322,7 +369,7 @@ class MediaSessionStandbyMixin:
         await self._request_device_standby(
             context,
             reason="owner_silence_timeout",
-            expected_vad_revision=context.owner_silence_vad_revision,
+            expected_activity_revision=context.owner_silence_activity_revision,
         )
 
     async def _request_device_standby(
@@ -330,7 +377,7 @@ class MediaSessionStandbyMixin:
         context: _MediaVoiceSession,
         *,
         reason: str,
-        expected_vad_revision: int | None = None,
+        expected_activity_revision: int | None = None,
         expected_endpoint: tuple[int, int] | None = None,
     ) -> bool:
         if not reason or len(reason) > 128:
@@ -357,17 +404,17 @@ class MediaSessionStandbyMixin:
                     return False
             if (
                 reason == "owner_silence_timeout"
-                and expected_vad_revision is not None
-                and expected_vad_revision != context.owner_silence_vad_revision
+                and expected_activity_revision is not None
+                and expected_activity_revision != context.owner_silence_activity_revision
             ):
                 # A newly accepted VAD already paused/retracted this timer.
                 # Explicit close and the absolute speech watchdog have no
                 # revision and can never be vetoed by acoustic observations.
                 logger.info(
-                    "media owner silence close superseded session=%s expected_vad_revision=%s "
-                    "current_vad_revision=%s",
-                    context.identity.session_id, expected_vad_revision,
-                    context.owner_silence_vad_revision,
+                    "media owner silence close superseded session=%s "
+                    "expected_activity_revision=%s current_activity_revision=%s",
+                    context.identity.session_id, expected_activity_revision,
+                    context.owner_silence_activity_revision,
                 )
                 return False
             context.standby_requested = True

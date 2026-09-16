@@ -386,7 +386,7 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
     context.admitted_input_stream_epoch = identity.stream_epoch
     await _expire_owner_timer(registry, context)
     deadline = context.owner_silence_grace_deadline
-    revision = context.owner_silence_vad_revision
+    revision = context.owner_silence_activity_revision
     segment = _vad(identity)
     if rejection == "ignore":
         monkeypatch.setattr(
@@ -410,7 +410,7 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
     try:
         await registry.on_speech_segment(session, segment)
         assert context.owner_silence_grace_deadline == deadline
-        assert context.owner_silence_vad_revision == revision
+        assert context.owner_silence_activity_revision == revision
         assert context.active_vad_stream_epoch is None
         assert context.max_user_speech_task is None
         assert context.turn_start_sample is None
@@ -589,7 +589,7 @@ async def test_turn_cleanup_releases_active_vad_without_resetting_revision(clean
     session = registry.bridge._open_connection(identity).session
     try:
         await registry.on_speech_segment(session, _vad(identity))
-        revision = context.owner_silence_vad_revision
+        revision = context.owner_silence_activity_revision
         assert revision > 0
         if cleanup == "clear":
             registry._clear_pending_turn_state(context)
@@ -602,7 +602,7 @@ async def test_turn_cleanup_releases_active_vad_without_resetting_revision(clean
         assert context.active_vad_stream_epoch is None
         assert context.active_vad_start_sample is None
         assert context.max_user_speech_task is None
-        assert context.owner_silence_vad_revision == revision
+        assert context.owner_silence_activity_revision == revision
         registry._sync_owner_silence_phase(context, "listening")
         assert context.owner_silence_task is not None
     finally:
@@ -1264,5 +1264,148 @@ async def test_active_vad_with_armed_watchdog_supersedes_owner_silence_grace() -
         await _expire_owner_timer(registry, context)
         assert not context.standby_requested
         assert context.owner_silence_grace_deadline is None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace() -> None:
+    """A spent window must never be recorded as an unmeasured one.
+
+    The near-silence order is "budget spent" -> "late VAD admitted" ->
+    "endpoint".  Retracting the grace moves the bound to the absolute speech
+    watchdog; if that retraction forgot the spent budget (recording it as
+    "nothing measured yet"), the next listening arm would silently hand the
+    session a whole fresh interval.
+    """
+
+    registry, context, _, _, identity = await _device_registry("spent-budget-semantics")
+    registry.max_user_speech_duration_s = 60
+    session = registry.bridge._open_connection(identity).session
+    try:
+        # A recognized result is pending, so the spent budget moves to grace.
+        context.admitted_input_stream_epoch = identity.stream_epoch
+        await _expire_owner_timer(registry, context)
+        assert context.owner_silence_grace_deadline is not None
+        assert context.owner_silence_remaining_s == 0.0
+
+        # The VAD that belongs to that speech arrives late, through the seam.
+        await registry.on_speech_segment(session, _vad(identity, start=640))
+        assert context.owner_silence_grace_deadline is None
+        assert context.max_user_speech_task is not None
+        assert context.owner_silence_remaining_s == 0.0
+
+        # The endpoint must not resurrect the window either.
+        await registry.on_speech_segment(session, _vad(identity, start=960, final=True))
+        assert context.owner_silence_remaining_s == 0.0
+        assert context.owner_silence_remaining_s is not None
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_accepted_final_can_veto_a_parked_grace_close(monkeypatch: Any) -> None:
+    """The ASR final that overtakes its own VAD still holds the session open.
+
+    The near-silence order is "budget spent" -> "final promoted" -> "VAD late".
+    While the grace close is still waiting for ``standby_lock``, the accepted
+    transcript must be able to invalidate it — and the pending grace keeps
+    another bound alive, so the session is never left unbounded.
+    """
+
+    registry, context, _, _, identity = await _device_registry("final-vetoes-parked-close")
+    try:
+        context.admitted_input_stream_epoch = identity.stream_epoch
+        await _expire_owner_timer(registry, context)
+        assert context.owner_silence_grace_deadline is not None
+
+        entered = asyncio.Event()
+        original = registry._request_device_standby
+
+        async def close(ctx: Any, **kwargs: Any) -> bool:
+            entered.set()
+            return await original(ctx, **kwargs)
+
+        monkeypatch.setattr(registry, "_request_device_standby", close)
+        async with context.standby_lock:
+            parked = asyncio.create_task(_expire_owner_timer(registry, context))
+            await asyncio.wait_for(entered.wait(), 1)
+            assert await registry.accept_asr_result(
+                identity.session_id,
+                _final_at(identity, "茉莉，给我讲个故事"),
+            )
+        await asyncio.wait_for(parked, 1)
+
+        assert not context.standby_requested
+        assert not context.closed
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_accepted_final_cannot_hold_an_unbounded_session_open(
+    monkeypatch: Any,
+) -> None:
+    """Without another bound the parked silence close still stands.
+
+    The transcript vetoes a stale close; it never becomes a new bound of its
+    own.  A conversation with no speech watchdog and no pending grace must
+    still end on owner silence instead of being kept alive by text.
+    """
+
+    registry, context, _, _, identity = await _device_registry("final-no-live-bound")
+    registry.max_user_speech_duration_s = 0
+    try:
+        entered = asyncio.Event()
+        original = registry._request_device_standby
+
+        async def close(ctx: Any, **kwargs: Any) -> bool:
+            entered.set()
+            return await original(ctx, **kwargs)
+
+        monkeypatch.setattr(registry, "_request_device_standby", close)
+        async with context.standby_lock:
+            parked = asyncio.create_task(_expire_owner_timer(registry, context))
+            await asyncio.wait_for(entered.wait(), 1)
+            assert await registry.accept_asr_result(
+                identity.session_id,
+                _final_at(identity, "茉莉，给我讲个故事"),
+            )
+        await asyncio.wait_for(parked, 1)
+
+        assert context.standby_requested
+        assert context.standby_reason == "owner_silence_timeout"
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_ending_a_measured_budget_records_it_as_spent_not_unmeasured() -> None:
+    """``None`` means "never measured"; a spent window must record ``0.0``.
+
+    Conflating them hands a session that already used its window a whole fresh
+    interval on the next arm, which is how an owner-silence close is silently
+    postponed by the branch that ends the measured budget.
+    """
+
+    registry, context, _, _, identity = await _device_registry("spent-vs-unmeasured")
+    try:
+        # An unmeasured window arms the full interval once.
+        context.owner_silence_remaining_s = None
+        registry._arm_owner_silence_timer(context, reset=False)
+        assert context.owner_silence_remaining_s == pytest.approx(
+            registry.owner_silence_timeout_s
+        )
+
+        # Ending a measured budget records it as spent, not as unmeasured.
+        registry._cancel_owner_silence_timer(context, preserve_remaining=False)
+        assert context.owner_silence_remaining_s == 0.0
+
+        # The next arm is therefore immediate instead of a whole new window.
+        registry._arm_owner_silence_timer(context, reset=False)
+        assert context.owner_silence_deadline is not None
+        assert (
+            context.owner_silence_deadline - asyncio.get_running_loop().time()
+        ) < 0.5
     finally:
         await registry._finalize_session(identity.session_id)

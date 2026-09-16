@@ -173,6 +173,8 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
         ) -> None: ...
 
+        def _note_owner_speech_text(self, context: _MediaVoiceSession) -> None: ...
+
         def _nudge_missed_hearing(
             self,
             context: _MediaVoiceSession,
@@ -321,6 +323,10 @@ class MediaSessionCommitMixin:
             raise RuntimeError("ASR runtime timeline changed during atomic acceptance")
         if accepted.is_final:
             context.admitted_input_stream_epoch = accepted.stream_epoch
+            # Recognized speech is admitted owner activity and can arrive
+            # before its own VAD; it must be able to invalidate a silence close
+            # that already snapshotted a spent budget.
+            self._note_owner_speech_text(context)
         await self._apply_projection_segment(context, segment)
         if not self._stream_epoch_is_current(context, accepted.stream_epoch):
             return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
