@@ -1,0 +1,615 @@
+"""P0-04: the signed Runtime Profile must reach both policy seams through the
+REAL persistent Session Runtime.
+
+``test_student_safety_loop.py`` injects a signed RuntimeProfile with
+``_attach_signed_runtime_profile``, so it proves the decision path but not the
+runtime chain; ``test_accountless_child_profile_reaches_the_device_through_the
+_real_api`` closes the HTTP half (binding -> session -> resolve-subject ->
+app_confirm switch -> device runtime-profile) and still stops before the two
+Agent-facing seams, because those resolve the profile from
+``PostgresSessionRuntimeService``, which is installed only for production.
+
+This module wires that authority to a real PostgreSQL instance and drives
+``/v1/interaction/session-policy`` and ``/v1/interaction/response-plan`` with the
+profile the authority itself issued after an authoritative subject switch.  The
+authority under test (binding, subject facts, subject switch, signed profile,
+session epoch) is PostgreSQL.  The login-account plane, the guardian outbox and
+the one-sided guardian declaration live in the app's local stores, exactly as in
+the other Control tests, and the declaration is written through the same
+Identity API the production write path uses.
+
+Boundary: nothing here is a device receipt.  Device admission, the speaker/voice
+gate and the on-device crisis script still need the hardware window.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import asyncpg
+import pytest
+from httpx import ASGITransport, AsyncClient
+from packages.contracts.generated.python.multi_subject_contracts import (
+    RuntimeProfileSignedV2,
+)
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.control_api.app.main import create_app
+from services.control_api.app.subject_verification import ensure_account_person
+from services.control_api.tests.test_interaction_api import _MemoryCatalog
+from services.guardian.domain import ConsentRecord
+from services.session_runtime.postgres_store import PostgresSessionRuntimeStore
+from services.session_runtime.profile_service import verify_runtime_profile_payload
+from services.session_runtime.service import (
+    PersistentSessionDenied,
+    PostgresSessionRuntimeService,
+    SwitchPersistentSubjectCommand,
+    build_postgres_session_runtime_service,
+)
+from services.session_runtime.tests.test_postgres_store import (
+    _SIGNING_KEY,
+    _seed_delegated_binding,
+    postgres_runtime,  # noqa: F401 - pytest discovers imported fixtures by name
+)
+
+_POLICY_TOKEN = "interaction-policy-token-that-is-long-enough"
+_RESPONSE_PLAN_TOKEN = "response-plan-token-that-is-long-enough"
+_CRISIS_QUERY = "我不会做题。我不想活了"
+_MEMORY_QUERY = "我们以前聊过什么？"
+# The same evidence id the production guardian declaration writes.
+_DECLARATION_EVIDENCE = "guardian_declaration_v1:device_binding"
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the real persistent Session Runtime chain",
+)
+
+
+def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
+    monkeypatch.setenv("MEMORIA_AUTH_SECRET", "persistent-runtime-auth-secret-long-enough")
+    monkeypatch.setenv(
+        "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET",
+        _SIGNING_KEY.decode(),
+    )
+    monkeypatch.setenv("MEMORIA_RELEASE_TAG", "persistent-runtime-chain-test")
+    monkeypatch.setenv("READINESS_GATE_TTL_S", "86400")
+    monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
+    monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", _RESPONSE_PLAN_TOKEN)
+    monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+@dataclass(frozen=True, slots=True)
+class _Chain:
+    """One device session whose active subject is an account-less minor."""
+
+    account_id: str
+    session_id: str
+    child_person_id: str
+    initial_profile: RuntimeProfileSignedV2
+    child_profile: RuntimeProfileSignedV2
+    runtime_service: PostgresSessionRuntimeService
+
+
+async def _anonymous_account(client: AsyncClient) -> tuple[str, dict[str, str]]:
+    response = await client.post("/v1/auth/anonymous")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return str(body["user_id"]), {"Authorization": f"Bearer {body['access_token']}"}
+
+
+async def _declare_guardianship(
+    app: Any,
+    *,
+    guardian_id: str,
+    child_id: str,
+    now: datetime,
+) -> None:
+    """Record the one-sided guardian declaration through the Identity API.
+
+    The subject has no account, so the ``guardian_of`` relationship stays
+    pending: the guardian confirms their own side and the target side is never
+    confirmed.  This is the production write shape, not an activated link.  Both
+    account persons are reconciled through ``ensure_account_person`` first, which
+    is the same helper the login/binding routes use.
+    """
+
+    identity = app.state.identity_service
+    await ensure_account_person(
+        app.state.memory_store,
+        identity,
+        user_id=guardian_id,
+        now=now,
+    )
+    await identity.register_person(
+        person_id=child_id,
+        display_name="独立小明",
+        timezone="Asia/Shanghai",
+        subject_category="minor",
+        age_band="under_14",
+        age_evidence_status="unverified",
+        now=now,
+    )
+    proposed = await identity.propose_relationship(
+        source_person_id=guardian_id,
+        target_person_id=child_id,
+        relation_type="guardian_of",
+        established_evidence_id=_DECLARATION_EVIDENCE,
+        actor_person_id=guardian_id,
+        now=now,
+    )
+    await identity.confirm_relationship(
+        relationship_id=proposed.relationship_id,
+        person_id=guardian_id,
+        now=now,
+    )
+
+
+async def _start_session_and_switch_to_child(
+    client: AsyncClient,
+    app: Any,
+    *,
+    bootstrap_dsn: str,
+    device_id: str,
+    binding_id: str,
+    child_person_id: str,
+) -> _Chain:
+    """Bind a device in the authority, start a session, switch to the child."""
+
+    account_id, headers = await _anonymous_account(client)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_delegated_binding(
+            admin,
+            actor_id=account_id,
+            subject_id=child_person_id,
+            device_id=device_id,
+            binding_id=binding_id,
+            declared_mode="parent_for_child",
+            subject_category="minor",
+            age_band="under_14",
+        )
+    finally:
+        await admin.close()
+
+    created = await client.post(
+        "/v1/sessions",
+        headers={**headers, "Idempotency-Key": f"{binding_id}-session-1"},
+        json={
+            "client": {
+                "platform": "web",
+                "timezone": "Asia/Shanghai",
+                "device_id": device_id,
+                "binding_version": 1,
+            }
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    session_id = str(body["session_id"])
+    initial_profile = RuntimeProfileSignedV2.model_validate(body["runtime_profile"])
+    assert initial_profile.active_subject_id is None
+    assert initial_profile.service_mode.value == "unknown_safe"
+    assert initial_profile.session_epoch == 1
+
+    runtime_service = app.state.session_runtime_service
+    assert isinstance(runtime_service, PostgresSessionRuntimeService)
+    child_profile = await runtime_service.switch_subject(
+        SwitchPersistentSubjectCommand(
+            session_id=session_id,
+            actor_id=account_id,
+            subject_id=child_person_id,
+            now=datetime.now(UTC),
+            requested_capabilities=("chat", "tutor", "english_practice"),
+        )
+    )
+    assert child_profile.active_subject_id == child_person_id
+    assert child_profile.session_epoch == initial_profile.session_epoch + 1
+    return _Chain(
+        account_id=account_id,
+        session_id=session_id,
+        child_person_id=child_person_id,
+        initial_profile=initial_profile,
+        child_profile=child_profile,
+        runtime_service=runtime_service,
+    )
+
+
+async def _activate_link_and_grant_retention(
+    app: Any,
+    *,
+    guardian_id: str,
+    child_id: str,
+    now: datetime,
+) -> None:
+    """Fixture state: an activated guardian link with a retention consent.
+
+    The link is written directly in the local guardian store because an
+    account-less subject cannot drive the HTTP confirmation flow; the recorded
+    ``verified_via`` is ``manual_review``, never a fabricated WeChat
+    verification.  What matters for the assertions below is only that the
+    minor's own person id now has a retention consent.
+    """
+
+    store = app.state.guardian_store
+    binding_code = "persistent-runtime-retention-binding-code"
+    digest = hashlib.sha256(binding_code.encode("utf-8")).hexdigest()
+    link = await store.create_link(
+        guardian_user_id=guardian_id,
+        minor_user_id=child_id,
+        relation="parent",
+        verified_via="manual_review",
+        binding_code_hash=digest,
+        binding_expires_at=now + timedelta(minutes=15),
+        now=now,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id=child_id,
+        binding_code_hash=digest,
+        now=now,
+    )
+    await store.grant_consent(
+        ConsentRecord(
+            consent_id="consent-retention-real-runtime",
+            link_id=link.link_id,
+            consent_kind="memory_retention",
+            policy_version="minor-retention-v1",
+            granted_at=now,
+            evidence_event_id="evidence-retention-real-runtime",
+        ),
+        actor_user_id=guardian_id,
+    )
+
+
+async def _response_plan(
+    client: AsyncClient,
+    *,
+    session_id: str,
+    query: str,
+    turn_id: int,
+    generation_id: int,
+) -> Any:
+    return await client.post(
+        "/v1/interaction/response-plan",
+        headers={"X-Memoria-Internal-Token": _RESPONSE_PLAN_TOKEN},
+        json={
+            "session_id": session_id,
+            "query": query,
+            "utterance_intent": "chat",
+            "fence": {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "generation_id": generation_id,
+                "tool_epoch": 0,
+            },
+            "speaker_decision": {
+                "classification": "owner",
+                "reason_code": "trusted",
+                "model_version": "campplus-test-v1",
+                "profile_id": "speaker-profile-1",
+                "template_version": 1,
+            },
+        },
+    )
+
+
+async def _session_policy(client: AsyncClient, *, session_id: str) -> Any:
+    return await client.post(
+        "/v1/interaction/session-policy",
+        headers={"X-Memoria-Internal-Token": _POLICY_TOKEN},
+        json={"session_id": session_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_runtime_child_profile_reaches_both_policy_seams(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    assert signing_key == _SIGNING_KEY
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        chain = await _start_session_and_switch_to_child(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id="device-real-runtime-chain",
+            binding_id="binding-real-runtime-chain",
+            child_person_id="minor-real-runtime-chain",
+        )
+        await _declare_guardianship(
+            app,
+            guardian_id=chain.account_id,
+            child_id=chain.child_person_id,
+            now=datetime.now(UTC),
+        )
+
+        # A private-context question for the child reads nothing: the account's
+        # memory belongs to the account, and the child has no retention consent.
+        memory_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert memory_turn.status_code == 200, memory_turn.text
+        assert memory_turn.json()["grounded_items"] == []
+        assert catalog.queries == []
+
+        # The fixed crisis text is still delivered verbatim for this subject.
+        crisis_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_CRISIS_QUERY,
+            turn_id=2,
+            generation_id=2,
+        )
+        assert crisis_turn.status_code == 200, crisis_turn.text
+        assert crisis_turn.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+
+        # /session-policy must read the SAME signed profile the authority issued
+        # for the child — not an account fallback, not a fixture.
+        policy_response = await _session_policy(client, session_id=chain.session_id)
+        assert policy_response.status_code == 200, policy_response.text
+        policy = policy_response.json()
+        signed = policy["runtime_profile"]
+        assert signed["runtime_profile_id"] == chain.child_profile.runtime_profile_id
+        assert signed["session_epoch"] == 2 == chain.child_profile.session_epoch
+        assert signed["active_subject_id"] == chain.child_person_id
+        assert signed["subject_category"] == "minor"
+        assert signed["age_band"] == "under_14"
+        assert signed["service_mode"] == "student_minor"
+        assert signed["speaker_state"] == "confirmed"
+        assert verify_runtime_profile_payload(signed, signing_key=signing_key) is True
+        assert policy["interaction_mode"] == "companion"
+        assert policy["runtime_profile_version"] == 0  # never observed by the device yet
+        # The account owner's own name must not follow another subject.
+        assert "owner_display_name" not in policy
+        # One-sided declaration only: no consent, no verified link, so the child
+        # keeps the ephemeral-only ceiling and no session capability.
+        assert policy["memory_retention"] == "ephemeral_only"
+        assert policy["history_eligible"] is False
+        assert policy["owner_projection_eligible"] is False
+        assert policy["capabilities"] == {
+            "conversation": False,
+            "private_memory": False,
+            "persona": False,
+            "persona_low_sensitivity": False,
+            "tools": False,
+            "history": False,
+            "learning": False,
+            "voice_profile": False,
+        }
+        assert chain.child_profile.capabilities == ()
+        assert {str(item) for item in signed["capabilities"]} == set()
+
+        # The subject switch superseded the previous epoch's profile.
+        with pytest.raises(PersistentSessionDenied, match="stale"):
+            await chain.runtime_service.decide(
+                runtime_profile_id=chain.initial_profile.runtime_profile_id,
+                capability="chat",
+                actor_id=chain.account_id,
+                data_classification="ephemeral",
+                safety_state="normal",
+                now=datetime.now(UTC),
+            )
+
+        # The crisis notification is bound to the child AND to the declared
+        # guardian, without manufacturing an active guardian link.
+        notifications = await app.state.guardian_store.guardian_notifications(
+            guardian_user_id=chain.account_id
+        )
+        assert [(item.minor_user_id, item.status) for item in notifications] == [
+            (chain.child_person_id, "pending")
+        ]
+        assert (
+            await app.state.guardian_store.active_link(
+                guardian_user_id=chain.account_id,
+                minor_user_id=chain.child_person_id,
+            )
+            is None
+        )
+        events = await app.state.life_archive.evidence_window(
+            account_id=chain.child_person_id,
+            occurred_after=datetime(1970, 1, 1, tzinfo=UTC),
+            occurred_before=datetime.now(UTC),
+            event_types=("guardian.crisis_event",),
+        )
+        assert len(events) == 1
+        payload = dict(events[0].payload)
+        assert payload["declared_guardian_count"] == 1
+        assert payload["contains_transcript"] is False
+        assert _CRISIS_QUERY not in json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_same_session_reads_account_memory_only_for_the_account_subject(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Subject-scoped memory, proven inside one real session.
+
+    The only difference between the two turns is the subject the signed Runtime
+    Profile names: the child turn reads nothing, the account's own turn reads
+    exactly once.  That is what makes the first turn evidence rather than an
+    always-empty path.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        chain = await _start_session_and_switch_to_child(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id="device-real-runtime-memory",
+            binding_id="binding-real-runtime-memory",
+            child_person_id="minor-real-runtime-memory",
+        )
+
+        child_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert child_turn.status_code == 200, child_turn.text
+        assert child_turn.json()["grounded_items"] == []
+        assert catalog.queries == []
+
+        account_profile = await chain.runtime_service.switch_subject(
+            SwitchPersistentSubjectCommand(
+                session_id=chain.session_id,
+                actor_id=chain.account_id,
+                subject_id=chain.account_id,
+                now=datetime.now(UTC),
+                requested_capabilities=("chat",),
+            )
+        )
+        assert account_profile.active_subject_id == chain.account_id
+        assert account_profile.session_epoch == 3
+
+        owner_policy_response = await _session_policy(client, session_id=chain.session_id)
+        assert owner_policy_response.status_code == 200, owner_policy_response.text
+        owner_policy = owner_policy_response.json()
+        assert owner_policy["runtime_profile"]["active_subject_id"] == chain.account_id
+        assert (
+            verify_runtime_profile_payload(owner_policy["runtime_profile"], signing_key=signing_key)
+            is True
+        )
+        # The account's own turn may keep its own display name and is not
+        # subject to the minor retention ceiling.
+        assert owner_policy["owner_display_name"] == "朋友"
+        assert owner_policy["capabilities"]["conversation"] is True
+        assert "memory_retention" not in owner_policy
+
+        owner_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=3,
+            generation_id=3,
+        )
+        assert owner_turn.status_code == 200, owner_turn.text
+        items = owner_turn.json()["grounded_items"]
+        assert len(catalog.queries) == 1
+        assert items
+        assert "杭州" in json.dumps(items, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A consented minor still must not be fed the account owner's memory.
+
+    The retention ceiling and the memory scope are two different decisions.  A
+    retention consent for the child lifts only the ceiling: the account-keyed
+    legacy archive stores every first-person claim under the login account, so
+    reading it "for the child" would hand the child the account owner's own
+    memory.  This case is the one where that second gate is load-bearing —
+    without it the read would run and return the account's row.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        chain = await _start_session_and_switch_to_child(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id="device-real-runtime-consent",
+            binding_id="binding-real-runtime-consent",
+            child_person_id="minor-real-runtime-consent",
+        )
+        await _activate_link_and_grant_retention(
+            app,
+            guardian_id=chain.account_id,
+            child_id=chain.child_person_id,
+            now=datetime.now(UTC),
+        )
+
+        # The consent is found for the child's OWN person id: the ceiling lifts.
+        child_policy_response = await _session_policy(client, session_id=chain.session_id)
+        assert child_policy_response.status_code == 200, child_policy_response.text
+        child_policy = child_policy_response.json()
+        assert child_policy["runtime_profile"]["active_subject_id"] == chain.child_person_id
+        assert "memory_retention" not in child_policy
+        # Consent is not relationship evidence: the runtime still issues no
+        # session capability for this subject.
+        assert child_policy["capabilities"]["conversation"] is False
+        assert chain.child_profile.capabilities == ()
+
+        # ... yet the child's turn still reads nothing from the account key.
+        child_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert child_turn.status_code == 200, child_turn.text
+        assert child_turn.json()["grounded_items"] == []
+        assert catalog.queries == []
+
+        # The account's own turn, in the same session, does read exactly once.
+        account_profile = await chain.runtime_service.switch_subject(
+            SwitchPersistentSubjectCommand(
+                session_id=chain.session_id,
+                actor_id=chain.account_id,
+                subject_id=chain.account_id,
+                now=datetime.now(UTC),
+                requested_capabilities=("chat",),
+            )
+        )
+        assert account_profile.active_subject_id == chain.account_id
+        owner_turn = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=2,
+            generation_id=2,
+        )
+        assert owner_turn.status_code == 200, owner_turn.text
+        assert len(catalog.queries) == 1
+        assert owner_turn.json()["grounded_items"]
