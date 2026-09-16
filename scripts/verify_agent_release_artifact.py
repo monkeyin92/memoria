@@ -68,6 +68,10 @@ def _check_privacy_defaults() -> None:
     3. Runs real InMemorySpanExporter canary test to prove no PII/content leaks.
     4. Runs negative control to prove that omitting the bootstrap call would FAIL.
     5. Verifies explicit operator overrides are respected.
+
+    ``_check_real_exporter_privacy`` then repeats the canary over a real OTLP/HTTP
+    export, which is the only form that proves what an exporter actually receives.
+    
     """
     clean_env = {
         "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
@@ -258,9 +262,39 @@ def _check_sdk_compatibility() -> None:
     print("in-artifact SDK compatibility OK")
 
 
+def _check_real_exporter_privacy() -> None:
+    """Drive the same privacy canary through a REAL OTLP exporter.
+
+    The in-process canary above uses ``InMemorySpanExporter``: it proves the SDK's
+    gating logic but never exercises an exporter, a wire payload or a receiver.
+    This step runs ``services.agent.tests.integration.telemetry_pii_probe``, which
+    starts the shipped bootstrap in fresh interpreters, exports over real OTLP/HTTP
+    to a loopback collector and asserts on the bytes that arrived -- including that
+    an explicit operator opt-in still carries content (so the gate is not vacuous).
+    """
+
+    code = """
+from services.agent.tests.integration.telemetry_pii_probe import run_all
+
+results = run_all()
+failed = [(result.case.name, result.detail) for result in results if not result.ok]
+assert not failed, failed
+print(f"real-exporter PII probe OK: {len(results)} cases")
+"""
+    _run_subprocess_check(
+        code,
+        env_overrides={
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": None,
+            "LIVEKIT_TELEMETRY_ALLOW_PII": None,
+        },
+    )
+    print("real-exporter telemetry privacy probe OK")
+
+
 def main() -> int:
     _check_versions()
     _check_privacy_defaults()
+    _check_real_exporter_privacy()
     _check_sdk_compatibility()
     print("agent release artifact verification PASSED")
     return 0
