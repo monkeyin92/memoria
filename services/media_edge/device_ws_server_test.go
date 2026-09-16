@@ -323,10 +323,10 @@ func deviceAssistantExpressionEvent(sessionID string, epoch, turnID, generationI
 	}
 	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Client{
 		Client: &mediav1.ClientEvent{
-			Identity: deviceCoreIdentity(sessionID, epoch),
-			Type:     "assistant_expression",
+			Identity:    deviceCoreIdentity(sessionID, epoch),
+			Type:        "assistant_expression",
 			JsonPayload: payload,
-			TurnId: turnID, GenerationId: generationID,
+			TurnId:      turnID, GenerationId: generationID,
 		},
 	}}
 }

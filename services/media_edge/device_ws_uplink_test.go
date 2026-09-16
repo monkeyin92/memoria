@@ -1,6 +1,7 @@
 package mediaedge
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -253,8 +254,26 @@ func TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt(t *testing.T) {
 		RenderedSampleEnd: 320,
 		Approximate:       false,
 	})
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
+	// The frame is refused fail-closed. What the device observes on the wire is
+	// the explicit close frame, not only a bare 1006: 4002 is the same
+	// non-retryable session-failure code every other refused control frame
+	// uses, so the device does not have to guess whether an approximate
+	// receipt may be replayed as exact.
+	//
+	// The queued session.error stays best-effort: the lane is torn down when
+	// the read loop returns, so a message still waiting to be written can be
+	// dropped. The close frame is the deterministic contract; do not assert on
+	// the diagnostic here.
+	_, _, err := readDeviceMessage(connection, 3*time.Second)
+	if err == nil {
 		t.Fatal("approximate device upgraded its receipt to exact")
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		t.Fatalf("watermark refusal did not close the connection: %v", err)
+	}
+	if closeErr.Code != 4002 || closeErr.Text != "playback_watermark_precision_mismatch" {
+		t.Fatalf("watermark refusal close code: %d %q", closeErr.Code, closeErr.Text)
 	}
 }
 
