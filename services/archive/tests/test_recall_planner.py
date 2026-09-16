@@ -189,3 +189,27 @@ def test_distress_query_adds_a_closed_emotion_synonym() -> None:
     assert "难过" in plan.text
     assert "验收" not in plan.text
     assert plan.text.startswith("我有点难受")
+
+
+def test_avoidance_question_expands_to_preference_wording() -> None:
+    """An avoidance question shares no surface with the memory that answers it."""
+
+    plan = RecallPlanner.plan(
+        query="点菜时有哪些东西要帮我避开？",
+        now=_NOW,
+        people=(),
+    )
+
+    # The original question stays in the plan; the closed preference wording is
+    # appended so the confirmed "我吃饭时不喜欢香菜。" is reachable.
+    assert "避开" in plan.text
+    assert "不喜欢" in plan.text
+    assert plan.entity_ids == ()
+    assert plan.occurred_after is None
+
+
+def test_avoidance_expansion_does_not_fire_without_an_avoidance_question() -> None:
+    plan = RecallPlanner.plan(query="点菜的时候我点了什么？", now=_NOW, people=())
+
+    assert "不喜欢" not in plan.text
+    assert plan.text == "点菜的时候我点了什么？"

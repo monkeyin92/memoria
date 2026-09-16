@@ -630,6 +630,46 @@ class PostgresMemoryCatalog:
                     alias,
                     event.event_id,
                 )
+            # Same projection as the SQLite catalog: aliases live only in
+            # person_aliases, which no read path searches, so a confirmed
+            # nickname ("阿梅") could never recall the person. The document
+            # carries the relationship and every alias and moves with the
+            # event's review lifecycle, so confirmed-only recall still gates
+            # unconfirmed people.
+            await self._insert_search_document(
+                connection,
+                account_id=event.account_id,
+                item_id=person_id,
+                kind="person",
+                memory_kind="relationship",
+                title=person.display_name,
+                body=" ".join(
+                    dict.fromkeys(
+                        part
+                        for part in (
+                            person.relationship_to_owner,
+                            person.display_name,
+                            *person.aliases,
+                        )
+                        if part
+                    )
+                )[:8000],
+                domain_category=(
+                    extraction.claims[0].domain_category
+                    if extraction.claims
+                    else "daily_life"
+                ),
+                entity_ids=(person_id,),
+                source_event_ids=(event.event_id,),
+                valid_from=None,
+                valid_to=None,
+                occurred_at=event.occurred_at,
+                observed_at=event.occurred_at,
+                stability=0.7,
+                salience=0.6,
+                sensitivity="personal",
+                conflict_state="none",
+            )
 
         for index, relationship in enumerate(extraction.relationships):
             person_id = person_ids.get(relationship.person_key) or _stable_uuid(

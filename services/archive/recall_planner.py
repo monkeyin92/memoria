@@ -36,6 +36,12 @@ _CHILD_RELATIONS = frozenset({"son", "daughter"})
 _CHILD_LEXEMES = ("儿子", "女儿")
 _DISTRESS_QUERY_MARKERS = ("难受", "不开心", "伤心", "委屈")
 _DISTRESS_LEXEMES = ("难过",)
+#: An avoidance question ("点菜时有哪些东西要帮我避开？") and the confirmed
+#: memory that answers it ("我吃饭时不喜欢香菜。") share no lexical surface at
+#: all, so the closed vocabulary has to carry the preference wording itself.
+#: Expansion is additive: the original query terms stay in the plan.
+_AVOIDANCE_QUERY_MARKERS = ("避开", "忌口", "不能吃", "别吃", "注意别", "过敏")
+_AVOIDANCE_LEXEMES = ("不喜欢", "讨厌", "不吃", "忌口", "不要")
 _MAX_QUERY_EXPANSIONS = 8
 
 
@@ -178,6 +184,9 @@ def _query_expansions(query: str, people: Sequence[PersonItem]) -> tuple[str, ..
                 add(alias)
     if any(marker in query for marker in _DISTRESS_QUERY_MARKERS):
         for lexeme in _DISTRESS_LEXEMES:
+            add(lexeme)
+    if any(marker in query for marker in _AVOIDANCE_QUERY_MARKERS):
+        for lexeme in _AVOIDANCE_LEXEMES:
             add(lexeme)
     return tuple(extra[:_MAX_QUERY_EXPANSIONS])
 

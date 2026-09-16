@@ -83,3 +83,40 @@ async def test_minor_long_term_filter_keeps_only_safe_study_and_learning_prefere
 
         assert filtered.claims[0].domain_category == expected
         assert filtered.timeline[0].domain_category == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "expected_aliases", "forbidden"),
+    [
+        # The owner's own words for how the family refers to someone.
+        ("我妈妈叫李梅，家里人也叫她阿梅。", {"妈妈", "母亲", "李梅", "阿梅"}, ()),
+        ("我妈妈叫李梅。", {"妈妈", "母亲", "李梅"}, ("阿梅",)),
+        # A role word is not an alias, and a self-introduction is not a
+        # third-party alias.
+        ("我妈妈叫李梅，家里人也叫她妈妈。", {"妈妈", "母亲", "李梅"}, ("阿梅",)),
+        ("我妈妈叫李梅，我叫阿梅。", {"妈妈", "母亲", "李梅"}, ("阿梅",)),
+    ],
+)
+async def test_third_party_alias_is_taken_only_from_its_own_clause(
+    text: str,
+    expected_aliases: set[str],
+    forbidden: tuple[str, ...],
+) -> None:
+    extraction = await RuleBasedMemoryExtractor().extract(_event(text))
+
+    assert len(extraction.people) == 1
+    aliases = set(extraction.people[0].aliases)
+    assert aliases == expected_aliases
+    assert not (aliases & set(forbidden))
+
+
+@pytest.mark.asyncio
+async def test_two_people_in_one_utterance_never_share_an_alias() -> None:
+    """An alias clause may not be attached when more than one person matched."""
+
+    extraction = await RuleBasedMemoryExtractor().extract(
+        _event("我妈妈叫李梅，家里人也叫她阿梅。")
+    )
+    assert [person.display_name for person in extraction.people] == ["李梅"]
+    assert "阿梅" in extraction.people[0].aliases

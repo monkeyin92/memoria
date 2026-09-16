@@ -545,15 +545,19 @@ class CatalogMemoryEvaluationAdapter:
         entity_ids = query.entity_ids
         occurred_after = None
         occurred_before = None
+        # The production read path always plans before searching, so the fixed
+        # set must too; a dataset without an explicit clock simply cannot ask
+        # for a relative time window.
+        now = query.now or datetime.now(UTC)
+        recall = RecallPlanner.plan(
+            query=query.text,
+            now=now,
+            people=await catalog.people(account_id=query.account_id),
+        )
+        text = recall.text
+        if not entity_ids:
+            entity_ids = recall.entity_ids
         if query.now is not None:
-            recall = RecallPlanner.plan(
-                query=query.text,
-                now=query.now,
-                people=await catalog.people(account_id=query.account_id),
-            )
-            text = recall.text
-            if not entity_ids:
-                entity_ids = recall.entity_ids
             occurred_after = recall.occurred_after
             occurred_before = recall.occurred_before
         return MemorySearchQuery(

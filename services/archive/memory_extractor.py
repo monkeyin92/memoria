@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import (
@@ -36,6 +37,18 @@ _PERSON = re.compile(
     r"(?:叫|名叫|是)?(?P<name>[\u4e00-\u9fff]{2,4}?)(?=今年|负责|[，。,.]|$)"
 )
 _AGE = re.compile(r"(?:今年)?(?P<age>\d{1,3})岁")
+#: Third-party alias in the owner's own words: "家里人也叫她阿梅".
+#: Only the alias in this exact clause shape is taken, so a sentence that
+#: merely contains a name elsewhere cannot silently become an alias.
+_THIRD_PARTY_ALIAS = re.compile(
+    r"(?:家里人|家人|大家|别人|我们|村里人|同事)"
+    r"(?:都|也)?"
+    r"叫(?:她|他|它|ta|TA)"
+    r"(?P<alias>[\u4e00-\u9fff]{2,4}?)"
+    r"(?=的|说|，|。|,|\?|？|$)"
+)
+#: Words that describe a role rather than name a person.
+_ROLE_WORDS = frozenset({"妈妈", "母亲", "爸爸", "父亲", "妻子", "丈夫", "儿子", "女儿", "同事", "朋友"})
 
 
 def _category(text: str) -> DomainCategory:
@@ -137,6 +150,21 @@ class RuleBasedMemoryExtractor:
                         valid_from=event.occurred_at,
                         salience=0.7,
                     )
+                )
+        if len(people) == 1:
+            known = {alias.casefold() for alias in people[0].aliases}
+            for match in _THIRD_PARTY_ALIAS.finditer(text):
+                alias = match.group("alias").strip()
+                if (
+                    len(alias) < 2
+                    or alias in _ROLE_WORDS
+                    or alias.casefold() in known
+                ):
+                    continue
+                known.add(alias.casefold())
+                people[0] = replace(
+                    people[0],
+                    aliases=tuple((*people[0].aliases, alias)),
                 )
         knowledge = (
             (

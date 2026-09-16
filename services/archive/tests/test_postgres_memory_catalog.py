@@ -565,3 +565,85 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     await connection.close()
     await catalog.close()
     await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to a pgvector PostgreSQL for person recall",
+)
+async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
+    """The production catalog must expose the same person projection as SQLite.
+
+    Aliases live in ``person_aliases``, which no read path searches, so without
+    this projection a confirmed nickname cannot recall the person at all. The
+    document must also stay gated: a candidate person never appears in the
+    confirmed-only context.
+    """
+
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"person-alias-{uuid.uuid4()}"
+    event_id = f"person-alias-event-{uuid.uuid4()}"
+    archive = PostgresLifeArchive(dsn)
+    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
+    await archive.initialize()
+    await catalog.initialize()
+    try:
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="person-alias-contract-test",
+                payload={
+                    "text": "我妈妈叫李梅，家里人也叫她阿梅。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        report = await catalog.compile_pending(limit=1000)
+        assert report.failed_events == 0
+
+        people = await catalog.people(account_id=account_id)
+        assert [(person.display_name, person.status) for person in people] == [
+            ("李梅", "candidate")
+        ]
+        assert "阿梅" in people[0].aliases
+
+        context = await catalog.context(
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="阿梅是谁？",
+            )
+        )
+        assert context.items == ()
+
+        search = await catalog.search(
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="阿梅是谁？",
+                include_candidates=True,
+            )
+        )
+        recallable = [item for item in search.items if item.kind == "person"]
+        assert len(recallable) == 1
+        assert recallable[0].title == "李梅"
+        assert "阿梅" in recallable[0].snippet
+        assert "妈妈" in recallable[0].snippet
+    finally:
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "DELETE FROM archive_evidence_events WHERE account_id = $1",
+                account_id,
+            )
+        finally:
+            await connection.close()
+        await catalog.close()
+        await archive.close()

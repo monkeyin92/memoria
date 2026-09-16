@@ -766,6 +766,45 @@ class MemoryCatalog:
                     """,
                     (person_id, event.account_id, alias, event.event_id),
                 )
+            # A person is only recallable through the search projection. Without
+            # it the owner can confirm "我妈妈叫李梅，家里人也叫她阿梅" and still
+            # never get an answer to "阿梅是谁？": the alias lives in
+            # person_aliases, which no read path searches. The document carries
+            # the relationship and every alias so nickname-only questions work.
+            self._insert_search_document(
+                connection,
+                account_id=event.account_id,
+                item_id=person_id,
+                kind="person",
+                memory_kind="relationship",
+                title=person.display_name,
+                body=" ".join(
+                    dict.fromkeys(
+                        part
+                        for part in (
+                            person.relationship_to_owner,
+                            person.display_name,
+                            *person.aliases,
+                        )
+                        if part
+                    )
+                )[:8000],
+                domain_category=(
+                    extraction.claims[0].domain_category
+                    if extraction.claims
+                    else "daily_life"
+                ),
+                entity_ids=(person_id,),
+                source_event_ids=(event.event_id,),
+                valid_from=None,
+                valid_to=None,
+                occurred_at=occurred_at,
+                observed_at=created_at,
+                stability=0.7,
+                salience=0.6,
+                sensitivity="personal",
+                conflict_state="none",
+            )
 
         for index, relationship in enumerate(extraction.relationships):
             person_id = person_ids.get(relationship.person_key) or _stable_id(

@@ -785,6 +785,9 @@ async def test_claim_review_moves_same_event_life_projections_without_promoting_
         ("claim", "reviewed-family-001", "confirmed"),
         ("knowledge", "reviewed-family-001", "confirmed"),
         ("episode", "reviewed-family-001", "confirmed"),
+        # The person named in the confirmed utterance is confirmable too, and
+        # its projection is what makes "阿梅是谁？" answerable at all.
+        ("person", "reviewed-family-001", "confirmed"),
     }
     assert {(item.source_event_id, item.status) for item in confirmed_timeline} == {
         ("reviewed-family-001", "confirmed"),
@@ -1003,3 +1006,53 @@ async def test_related_turns_share_an_episode_but_keep_individual_evidence(
     assert episode.memory_kind == "episodic"
     assert episode.source_event_ids == ("episode-work-001", "episode-work-002")
     assert episode.stability > 0.5
+
+
+@pytest.mark.asyncio
+async def test_person_alias_is_recallable_and_stays_gated_by_status(tmp_path: Path) -> None:
+    """A confirmed nickname must be able to answer "who is that?".
+
+    The alias lives in ``person_aliases``, which no read path searches, so the
+    person needs a search projection or the owner can confirm the utterance and
+    still never recall it by the name the family actually uses. Candidate
+    people stay out of the confirmed-only context.
+    """
+
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="alias-person-001",
+        text="我妈妈叫李梅，家里人也叫她阿梅。",
+    )
+    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    await catalog.compile_pending()
+
+    people = await catalog.people(account_id="account-memory")
+    assert [(person.display_name, person.status) for person in people] == [
+        ("李梅", "candidate")
+    ]
+    assert "阿梅" in people[0].aliases
+
+    context = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="阿梅是谁？",
+        )
+    )
+    assert context.items == (), "a candidate person must stay out of confirmed recall"
+
+    search = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="阿梅是谁？",
+            include_candidates=True,
+        )
+    )
+    recallable = [item for item in search.items if item.kind == "person"]
+    assert len(recallable) == 1
+    assert recallable[0].title == "李梅"
+    assert "阿梅" in recallable[0].snippet
+    assert "妈妈" in recallable[0].snippet
