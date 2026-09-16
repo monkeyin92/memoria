@@ -6,10 +6,10 @@
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-15
-resume_checkpoint: p1_01_livekit_181_local_candidate_ready_and_p0_04_student_safety_loop_http_verified_device_acceptance_pending_20260915
-livekit_upgrade_candidate: local_lock_181_ready_not_built_not_released
-livekit_upgrade_candidate_verified: lock_check_frozen_install_sdk_compat_typeddict_consumption_pii_canary_5005_passed
+as_of_date: 2026-09-16
+resume_checkpoint: livekit_181_released_to_agent_bridge_and_p0_04_student_safety_loop_http_verified_device_acceptance_pending_20260916
+livekit_upgrade: released_20260916_agent_and_bridge_181_delta_build
+livekit_upgrade_candidate_verified: lock_check_frozen_install_sdk_compat_typeddict_consumption_pii_canary_5002_passed_in_artifact_verifier_passed
 student_safety_loop_verified: http_level_outbox_enqueue_guardian_readback_fixed_script_text_exact
 guardian_notification_delivery_channel: absent_outbox_only_status_pending
 next_human_action: real_device_acceptance_when_operator_available
@@ -23,7 +23,7 @@ miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
 production_readiness: ready
-production_readiness_observed_at: 2026-09-15T21:02:33+08:00
+production_readiness_observed_at: 2026-09-16T11:37:57+08:00
 offsite_backup_enabled: false # 用户 2026-09-14 决定：项目验证阶段暂不启用自动备份/异地副本；WAL 归档仍在写且无人裁剪
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
@@ -146,6 +146,50 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-16 LiveKit 1.8.1 已发布到 Agent/Bridge（delta 构建）+ P0-04 学生安全闭环先落代码
+
+用户要求「发布部署，然后真机测试」，并明确选择 **LiveKit + Edge + Agent 一起发**。
+版本先按 1.8.2 准备，但**生产机的构建通道不支持 1.8.2**：`UV_DEFAULT_INDEX` 默认指向阿里云镜像，
+而镜像上三件套只同步到 1.8.1（pypi.org 已有 1.8.2）。用户遂决定**改为发 1.8.1**。
+
+### 已发布
+
+- 源码提交 `d96d4c29b7f13719d052b94647b2c59223ea70a1`，tag `20260916-livekit-181-v1`。
+- 运行镜像 `memoria-agent:20260916-livekit-181-v1`，image
+  `sha256:7033214ddc3a5f4b0f99e016d1edf156b091169d6511ee95139e81f6ec0a9ac4`，revision 与 tag 已核对。
+- 2026-09-16 **11:36:08 CST** 仅重启 `memoria-agent-1` 与 `memoria-voice-core-media-bridge-1`，双 healthy、restart=0。
+- 运行时实测：容器内 `livekit-agents/plugins-openai/plugins-silero 1.8.1`、`livekit 1.1.18`、
+  `livekit-api 1.2.1`、`livekit-protocol 1.1.26`、`livekit-local-inference 0.2.7`；
+  启动日志报 `livekit.agents 1.8.1`、`rtc-version 1.1.18`，worker 已注册。
+- LiveKit smoke PASS；**provider smoke 第一次 InterruptSemantic 超时失败（返回 UNSURE），第二次全项 PASS**，
+  保留两次记录，不把第一次的失败抹掉。
+- readiness `ready`：core **12/12**、`livekit/funasr` true、LLM qwen、TTS doubao（含 word_timestamps）、
+  Agent heartbeat `ready/worker_ready/livekit_ready=true`，boot_id `405c229d…`，回环与公网 8443 均 ready。
+
+### 构建路径（必须记账）
+
+**这次不是仓库的标准全量镜像构建，而是 delta 构建**：基座是上一版
+`memoria-agent:20260915-asr-weather-boundary-v1`，只重建锁定的依赖集（7 个 livekit 包）并覆盖应用源码。
+在镜像**内部**跑了 `scripts/verify_agent_release_artifact.py` 断言版本 pin、真实 SDK 的
+`TurnHandlingOptions` 消费、半双工不可打断、`user_turn_limit` 未启用、遥测隐私默认值为 0/0，
+全部 PASS 后才切流。delta 路径**不等于**标准构建，收据里显式标注，后续如需重放请走标准路径。
+
+构建过程踩到并已记录的三件事（详见 `outputs/acceptance/run-20260916-livekit-181-deploy/report.md`）：
+① 阿里云镜像滞后会让 `uv export` 直接失败；② legacy builder 在 `RUN` 失败时静默重试且不打印错误；
+③ 生产机到 GitHub/PyPI 的网络会慢到 0.1–9 MB/min 并拖断 SSH，故改用本地 `git bundle` + `rsync` 传源码。
+还发现 delta Dockerfile 的两个真实陷阱：`uv pip install --requirements` 对已安装版本**默认不升级**
+（必须 `--upgrade`），以及依赖安装步骤必须排在 `COPY uv.lock` **之后**，否则导出的是基座镜像的旧锁。
+
+### 未完成
+
+- **`docker-compose.production.yml` 新增的两个隐私 env 不在容器环境里**：线上栈用的是
+  `20260827-architecture-split-v1` 那份 Compose，本次只重建了两个服务。实测 worker 进程（pid 21/32/34…）
+  里这两个变量是 `0`，来源是 `services/agent/src/main.py` 在导入 SDK 前设置的运行时默认值，
+  也就是隐私门依赖的那个 backstop。要落到容器环境需要一次完整栈切流。
+- Edge 仍是旧镜像（本次只改了 Edge 源码与一个测试）；Trivy 报的 Go toolchain 漏洞（需 >=1.26.6）**未修**。
+- 未执行回滚演练；回滚 tag 已冻结为切流前那个 image 的别名。
+- 真机验收待操作员。
 
 ## 2026-09-15 无设备/LiveKit 专项（记录 18:20 后）：P1-01 本地候选 + P0-04 学生安全闭环
 
@@ -517,10 +561,10 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260915-asr-weather-boundary-v1`，image `sha256:3f746b4dede8b2f35773ca5b2c6300174a278932eee7d720f4904c00d2b865bb`，OCI revision `1cf8decaee8b28aa73d104f7aea89086e942db66`。Agent/Bridge 共用该 image，2026-09-15 **21:00:12 CST**（13:00:12Z）启动、**21:00:38 CST** 切流检查 PASS；gRPC 7001 PASS、双 healthy、restart=0，自动代测结束后现场复查仍一致。栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。收据 `/opt/memoria/component-releases/20260915-asr-weather-boundary-v1/`，源包 **22,405,120 bytes** / SHA `2e1f000bf3f74944ac842703760a56e500e538b6697af81938ea57cc8899b850`；不沿用前版的 910 文件核验计数。
-- 紧邻回滚：`memoria-agent:rollback-20260915-asr-weather-boundary-v1-pre`（保留原别名 `memoria-agent:20260915-weather-followup-lifecycle-v1`，image `sha256:91c0eb36d2cc4ae35dce1d842308e7f4c0f7648ab9068908c1576661e287a398`，revision `d7214554316bdaa13984c7b8ecf00aeb61693311`）。已由本次切流记录及收尾时 live image inspect 核对；前版有真实短会话运行证据，本轮未执行实际回滚演练。不要再用下方历史清理条目的前前版标签作为当前回滚目标。
+- 当前：`memoria-agent:20260916-livekit-181-v1`，image `sha256:7033214ddc3a5f4b0f99e016d1edf156b091169d6511ee95139e81f6ec0a9ac4`，OCI revision `d96d4c29b7f13719d052b94647b2c59223ea70a1`。Agent/Bridge 共用该 image，2026-09-16 **11:36:08 CST**（03:36:08Z）启动、双 healthy、restart=0；栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。**本次是 delta 构建而非仓库标准全量构建**：基座为上一版 `memoria-agent:20260915-asr-weather-boundary-v1`，只重建锁定的依赖集与应用源码；收据 `/opt/memoria/component-releases/20260916-livekit-181-v1/CUTOVER_RESULT.txt`，逐条证据见 `outputs/acceptance/run-20260916-livekit-181-deploy/`。
+- 紧邻回滚：`memoria-agent:rollback-20260916-livekit-181-v1-pre`（image `sha256:3f746b4dede8b2f35773ca5b2c6300174a278932eee7d720f4904c00d2b865bb`，revision `1cf8decaee8b28aa73d104f7aea89086e942db66`，即本次切流前线上那个 image 的重打标签，回滚无需 pull 或重建）。前版 `memoria-agent:20260915-asr-weather-boundary-v1` 仍保留在同一 image ID 上。本轮未执行实际回滚演练；不要再把更早的 `rollback-20260915-asr-weather-boundary-v1-pre` 当作当前回滚目标。
 - 独立依赖底座：`memoria-agent:20260912-p0-rollback-single-tag-agent-component` / `memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，共同 image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`；当前与回滚均依赖它，不按历史业务版本删除。
-- 有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；**17 个非目标容器** ID/image/StartedAt/env/restarts/health/status 全部未变。详见 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/{preflight.jsonl,postflight.jsonl,runtime-compare.json}`。
+- 上一版（`20260915-asr-weather-boundary-v1`）的有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；那次有 **17 个非目标容器**未变，详见 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/`。**本次（20260916）切流**的非目标容器是 **12 个**（control-api、media-edge、sensevoice-asr、device-media-gateway、miniprogram-gateway、speaker-model、postgres、redis、minio、livekit、saas-redis、saas-mysql），指纹 md5 `08cb579c3715f6b6651f4baab2f8dd25`；本次没有重新计算 env SHA256，**不要把它当作已复核**。
 - 本版新增 ASR 遗留候选 sample boundary/revision 隔离、天气最多 3 个明确地名候选及 OpenMeteo 共享 deadline；保留前版多日天气、VAD/静默/grace/watchdog 交接、ASR 异常恢复、prepare 绝对期限、重连 fencing，以及跨已提交区间救援防重复门、ACK/正文 handoff 与有效输出恢复。Bridge 下行计量仍为 **post-pacer send**，不能外推 provider 产出速度或设备 I2S/DMA 状态；具体修复与真机未验边界见上方同日条目。
 - 2026-09-15 保留清理：只读预检后删除 allowlist 内 **18 个旧 Agent source-overlay image ID（其中 3 对共 6 个 tag，另 15 个 dangling）**，以及三个旧版本的 **6 项 source tar/build payload**。当前、紧邻回滚及其旧 override 所需别名、独立 runtime-base、非目标容器、manifest/收据均保留；清理后再次核对保护镜像 ID 与双 healthy。`df -B1` 可用 **63,834,279,936 → 63,985,270,784 bytes**，净增约 **144 MiB**，不能按镜像虚拟大小声称回收数 GB。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/{retention-preflight.log,retention-apply.log}`；未清理 build cache、全栈 incoming 或任何数据库/WAL/MinIO/安全备份。
 

@@ -130,7 +130,9 @@
 - [x] 完整构建与回归：`uv lock --check`、frozen 安装、ruff/module budget/strict mypy、Agent 单测/集成、Control/API 与 Bridge 使用面、offline E2E；所有消费共享锁的镜像分别验证，不只测开发 venv。Agent/Bridge 必须同一镜像；依赖锁变化不走 agent-only source overlay 快速通道。
   - 完成（本地，2026-09-15）：靶向 618 passed、全仓 5005 passed / 0 failed / 3 skipped（真 PG）、ruff 全绿、`mypy services --strict` 433 文件无问题、模块预算 PASS 未放宽、Media Edge Go `build/vet/test` 通过。**镜像级验证仍未做**：本轮只验证开发 venv 与 Go 使用面，没有构建候选镜像、也没有分别验证消费共享锁的每个镜像。
 - [ ] 候选上线与回滚验收：依赖 P0-01/02 的发布前提和 P0-03/04 的相关基线；获准后最小切片发布，真实 provider smoke、当前设备对照与延迟复核通过，留当前+一个可运行 rollback。未获生产/设备窗口时只标本地子项完成。
-  - 未开始：需要生产与设备窗口。依赖锁变化的发布**不能**走 agent-only source overlay 快速通道（`.dockerignore`/`pyproject.toml`/`uv.lock`/`infra/Dockerfile.agent` 任一被改动即 REJECT）。
+  - **已上线（2026-09-16）**：`d96d4c2` / tag `20260916-livekit-181-v1`，2026-09-16 11:36:08 CST 仅重启 Agent/Bridge，双 healthy、restart=0。运行时实测 1.8.1（agents/plugins）/1.1.18（RTC），LiveKit smoke PASS，provider smoke 第二次全项 PASS（第一次 InterruptSemantic 超时，两次都留档），readiness ready、core 12/12、Agent heartbeat ready。回滚 tag 冻结为切流前 image。
+  - **仍是 delta 构建，不是仓库标准全量构建**：依赖锁变化不能走 agent-only overlay，本次改用「以上一版镜像为基座、只重建锁定依赖集 + 覆盖源码」的路径，并在镜像内部跑 `scripts/verify_agent_release_artifact.py` 断言版本/SDK 消费/隐私默认值通过才切流。收据 `outputs/acceptance/run-20260916-livekit-181-deploy/CUTOVER_RESULT.txt`。重放请优先走标准全量构建路径。
+  - 未完成子项：`docker-compose.production.yml` 的两个新隐私 env 未进容器环境（只有运行时默认值），需要一次完整栈切流；Edge 仍是旧镜像且 Trivy 报的 Go toolchain 漏洞（需 >=1.26.6）未修；未执行回滚演练；真实设备对照与延迟复核待真机。
 - 禁止搭车：不启用 DuplexModel、`expressive=True`、`user_turn_limit`、TurnPhase 生产副作用；本仓显式 `auto_gain_control=True` 且未配 NC，#7064 默认值变化不直接改变现链路，也不授权改声学增益。入口：`pyproject.toml`、`uv.lock`、`session_entrypoint.py`、`infra/Dockerfile.*`。
 - 附带修复（与 LiveKit 无关，2026-09-15）：全仓 Go 测试在 `1cf8dec` 基线上就有一个失败——`TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt`（已在干净基线 worktree 复现，非本轮引入）。保护逻辑本身正确（approximate 设备的回执不会被提升成 exact），但拒绝路径只排队 `session.error` 就返回，读循环返回后 lane 被拆、诊断消息可能来不及写出，设备只见裸 `1006`，测试因此偶发失败。修法：该路径补显式关闭帧 `4002 / playback_watermark_precision_mismatch`（与其它被拒控制帧同一个不可重试会话失败码），测试改为断言确定性的关闭帧并注明 `session.error` 仍是 best-effort。**未处理**：与其它拒绝路径共享的「读循环返回即拆 lane、排队控制消息可能丢」时序问题，需单独跟踪。
 
