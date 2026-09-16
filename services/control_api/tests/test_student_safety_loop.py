@@ -23,6 +23,7 @@ from services.control_api.app.main import create_app
 from services.control_api.tests.test_interaction_api import (
     _attach_signed_runtime_profile,
 )
+from services.session_runtime.profile_service import verify_runtime_profile_payload
 
 _RESPONSE_PLAN_TOKEN = "p0-04-student-safety-plan-token-long-enough"
 _POLICY_TOKEN = "p0-04-student-safety-policy-token-long-enough"
@@ -835,3 +836,117 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
         # 通知队列依然为 1
         notifications_final = await client.get("/v1/guardian/notifications", headers=parent_headers)
         assert len(notifications_final.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_accountless_child_profile_reaches_the_device_through_the_real_api(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The device's signed profile must come from the API, not a fixture.
+
+    The crisis-loop cases above inject a signed RuntimeProfile by hand, so they
+    prove the decision path but not that a device can actually obtain the
+    child's profile.  This walks the real chain — device binding ->
+    session -> resolution -> app-confirmed subject switch -> device
+    runtime-profile — and checks the payload with the same signature
+    verification the decision path uses.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        parent, _ = await _register(client, "realpath-parent")
+        _mark_verified_adult(app, parent["user_id"])
+        await app.state.identity_service.register_person(
+            person_id=parent["user_id"],
+            display_name="成人管理者",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=datetime.now(UTC),
+        )
+        parent_headers = await _login(client, "realpath-parent")
+
+        now = datetime.now(UTC)
+        token = mint_device_binding_token(
+            device_id="dev-realpath-child",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=10),
+            nonce="realpath-nonce-1",
+        )
+        binding = await client.post(
+            "/v1/device-bindings",
+            headers={**parent_headers, "Idempotency-Key": "realpath-bind-001"},
+            json={
+                "device_claim_token": token,
+                "declared_mode": "parent_for_child",
+                "account_owner_person_id": parent["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "guardian_of",
+                    "subject_draft": {"display_name": "独立小明", "age_band": "under_14"},
+                },
+                "persona_selection": "starlight",
+                "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            },
+        )
+        assert binding.status_code == 201, binding.text
+        child_id = binding.json()["primary_subject_ids"][0]
+
+        unresolved = await client.get(
+            "/v1/devices/dev-realpath-child/runtime-profile",
+            headers=parent_headers,
+        )
+        assert unresolved.status_code == 200, unresolved.text
+        assert unresolved.json()["service_mode"] == "unknown_safe"
+        session_id = unresolved.json()["session_id"]
+
+        resolution = await client.post(
+            "/v1/sessions/resolve-subject",
+            headers=parent_headers,
+            json={"device_id": "dev-realpath-child", "environment": {}},
+        )
+        assert resolution.status_code == 200, resolution.text
+        assert child_id in {
+            str(candidate["person_id"])
+            for candidate in resolution.json()["candidate_subjects"]
+        }
+        assert set(resolution.json()["allowed_confirmation_methods"]) == {"app_confirm"}
+
+        switched = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=parent_headers,
+            json={"person_id": child_id, "confirmation_method": "app_confirm"},
+        )
+        assert switched.status_code == 200, switched.text
+        assert switched.json()["active_subject_id"] == child_id
+
+        device_profile = await client.get(
+            "/v1/devices/dev-realpath-child/runtime-profile",
+            headers=parent_headers,
+        )
+        assert device_profile.status_code == 200, device_profile.text
+        signed = device_profile.json()
+
+    assert signed["active_subject_id"] == child_id
+    assert signed["subject_category"] == "minor"
+    assert signed["age_band"] == "under_14"
+    assert signed["service_mode"] == "student_minor"
+    assert signed["speaker_state"] == "confirmed"
+    assert signed["signature"]
+    assert verify_runtime_profile_payload(
+        signed,
+        signing_key=app.state.settings.runtime_profile_signing_key(),
+    )
+    # The declaration never upgrades to verified guardianship.
+    assert (
+        await app.state.guardian_store.active_link(
+            guardian_user_id=parent["user_id"],
+            minor_user_id=child_id,
+        )
+        is None
+    )

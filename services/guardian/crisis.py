@@ -45,6 +45,7 @@ class CrisisNotificationStorePort(Protocol):
         minor_user_id: str,
         occurred_at: datetime,
         script_version: str,
+        declared_guardian_ids: tuple[str, ...] = (),
     ) -> CrisisNotificationReceipt: ...
 
     async def guardian_notifications(
@@ -78,7 +79,19 @@ class CrisisNotificationService:
         tool_epoch: int,
         script_version: str,
         occurred_at: datetime | None = None,
+        declared_guardian_ids: tuple[str, ...] = (),
     ) -> CrisisNotificationReceipt:
+        """Queue one crisis event for every guardian that is authorized to read it.
+
+        ``declared_guardian_ids`` carries guardians whose ``guardian_of``
+        relationship is a one-sided declaration (the guardian confirmed, the
+        subject has no account and never confirmed).  They are resolved from
+        the Identity authority by the caller and are a distinct, honestly
+        labelled basis from an activated guardian link: the declaration is
+        never upgraded to a verified link, and it never unlocks consent-gated
+        capabilities such as memory retention or session admission.
+        """
+
         now = (occurred_at or datetime.now(UTC)).astimezone(UTC)
         fence_key = f"{minor_user_id}:{session_id}:{turn_id}:{generation_id}:{tool_epoch}"
         crisis_event_id = str(
@@ -102,6 +115,7 @@ class CrisisNotificationService:
                     "tool_epoch": tool_epoch,
                     "contains_transcript": False,
                     "contains_severity": False,
+                    "declared_guardian_count": len(declared_guardian_ids),
                 },
             )
         )
@@ -111,10 +125,11 @@ class CrisisNotificationService:
             minor_user_id=minor_user_id,
             occurred_at=now,
             script_version=script_version,
+            declared_guardian_ids=declared_guardian_ids,
         )
         if receipt.notification_count < 1:
             raise CrisisNotificationUnavailableError(
-                "minor crisis has no active guardian notification target"
+                "minor crisis has no authorized guardian notification target"
             )
         return receipt
 

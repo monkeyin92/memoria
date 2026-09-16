@@ -775,6 +775,45 @@ class SqliteIdentityStore:
             ).fetchone()
             return row is not None
 
+    async def has_source_confirmed_relationship(
+        self,
+        *,
+        source_person_id: str,
+        target_person_id: str,
+        relation_type: str,
+        at: datetime,
+    ) -> bool:
+        """True for a one-sided declaration: source confirmed, target never did.
+
+        The row stays ``pending``, so it is a declaration of the source
+        endpoint, never verified guardianship.
+        """
+
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM identity_relationships
+                WHERE source_person_id = ?
+                  AND target_person_id = ?
+                  AND relation_type = ?
+                  AND status = 'pending'
+                  AND confirmed_by_source_at IS NOT NULL
+                  AND confirmed_by_target_at IS NULL
+                  AND valid_from <= ?
+                  AND (valid_until IS NULL OR valid_until > ?)
+                LIMIT 1
+                """,
+                (
+                    source_person_id,
+                    target_person_id,
+                    relation_type,
+                    _ts(at, field="at"),
+                    _ts(at, field="at"),
+                ),
+            ).fetchone()
+            return row is not None
+
     async def save_relationship(
         self,
         relationship: Relationship,

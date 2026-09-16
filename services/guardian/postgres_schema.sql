@@ -562,6 +562,33 @@ $outbox_worker$;
 -- This predicate is deliberately invoker-security: it is called from the
 -- outbox policy while the caller is still subject-scoped, so the linked event
 -- and relationship remain subject to the same RLS boundary.
+-- The recipient of a crisis notification is either an activated guardian link
+-- or a declared guardianship: an account-less subject can never confirm a
+-- link, and the declaration is the only basis its guardian has.  The declared
+-- branch is delegated to a maintenance-owned SECURITY DEFINER wrapper so the
+-- Identity authority stays a pure boolean and no table visibility leaks.
+CREATE OR REPLACE FUNCTION guardian_relationship_declared(
+    p_guardian_user_id TEXT,
+    p_minor_user_id TEXT,
+    p_at TIMESTAMPTZ
+) RETURNS BOOLEAN
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public SET row_security = on
+AS $guardian_declared$
+BEGIN
+    -- plpgsql so the Guardian schema can be installed before Identity; the
+    -- name is resolved at execution, and a missing authority means there is no
+    -- declaration to honour (fail closed, never fail open).
+    IF to_regprocedure(
+        'public.identity_relationship_source_confirmed(text,text,text,timestamptz)'
+    ) IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    RETURN identity_relationship_source_confirmed(
+        p_guardian_user_id, p_minor_user_id, 'guardian_of'::text, p_at
+    );
+END
+$guardian_declared$;
+
 CREATE OR REPLACE FUNCTION guardian_notification_subject_allowed(
     p_crisis_event_id UUID,
     p_guardian_user_id TEXT,
@@ -572,14 +599,24 @@ AS $notification_scope$
     SELECT EXISTS (
         SELECT 1
         FROM guardian_crisis_events crisis
-        JOIN guardian_links link
-          ON link.guardian_user_id = p_guardian_user_id
-         AND link.minor_user_id = crisis.minor_user_id
-         AND link.status = 'active'
         WHERE crisis.crisis_event_id = p_crisis_event_id
           AND (
               crisis.minor_user_id = p_subject_id
               OR p_subject_id = p_guardian_user_id
+          )
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM guardian_links link
+                  WHERE link.guardian_user_id = p_guardian_user_id
+                    AND link.minor_user_id = crisis.minor_user_id
+                    AND link.status = 'active'
+              )
+              OR guardian_relationship_declared(
+                  p_guardian_user_id,
+                  crisis.minor_user_id,
+                  crisis.occurred_at
+              )
           )
     )
 $notification_scope$;
@@ -618,6 +655,56 @@ BEGIN
     PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
 END
 $notification_enqueue$;
+
+-- A subject created by an adult device binding has no account, so no guardian
+-- link can ever be confirmed for it.  The only authorized recipient is the
+-- guardian whose ``guardian_of`` relationship to the subject is a one-sided
+-- declaration (the guardian confirmed; the subject has no endpoint to
+-- confirm).  The declaration is verified here against the Identity authority,
+-- so this function never becomes a generic "enqueue for any id" primitive,
+-- and it is deliberately separate from the active-link function so a
+-- declaration can never be mistaken for verified guardianship.
+CREATE OR REPLACE FUNCTION guardian_enqueue_declared_notification(
+    p_notification_id UUID,
+    p_crisis_event_id UUID,
+    p_guardian_user_id TEXT,
+    p_created_at TIMESTAMPTZ
+) RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $notification_enqueue_declared$
+DECLARE
+    v_minor_user_id TEXT;
+BEGIN
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    -- A declared guardian has no active link, so the ordinary actor/subject
+    -- branch of the outbox policy can never pass for this row.  This dedicated
+    -- flag is set only here, inside a SECURITY DEFINER function whose owner is
+    -- the maintenance role; the policy's current_user check keeps an API-role
+    -- caller from forging it.
+    PERFORM set_config('memoria.guardian_declared_notification_scope', '1', true);
+    SELECT crisis.minor_user_id INTO v_minor_user_id
+    FROM guardian_crisis_events crisis
+    WHERE crisis.crisis_event_id = p_crisis_event_id;
+    IF v_minor_user_id IS NULL THEN
+        RAISE EXCEPTION 'guardian notification target has no crisis event';
+    END IF;
+    IF NOT identity_relationship_source_confirmed(
+        p_guardian_user_id, v_minor_user_id, 'guardian_of', p_created_at
+    ) THEN
+        RAISE EXCEPTION
+            'guardian notification target is not a declared guardian';
+    END IF;
+    INSERT INTO guardian_notification_outbox(
+        notification_id, crisis_event_id, guardian_user_id,
+        channel, status, attempts, created_at
+    ) VALUES (
+        p_notification_id, p_crisis_event_id, p_guardian_user_id,
+        'wechat_subscription', 'pending', 0, p_created_at
+    ) ON CONFLICT(crisis_event_id, guardian_user_id) DO NOTHING;
+    PERFORM set_config('memoria.guardian_declared_notification_scope', '0', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '0', true);
+END
+$notification_enqueue_declared$;
 
 ALTER TABLE guardian_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents ENABLE ROW LEVEL SECURITY;
@@ -1006,11 +1093,22 @@ BEGIN
                 OR (
                     current_setting('memoria.guardian_actor_id', true)
                         = current_setting('memoria.guardian_subject_id', true)
-                    AND EXISTS (
-                        SELECT 1 FROM guardian_links link
-                        WHERE link.guardian_user_id = current_setting('memoria.guardian_actor_id', true)
-                          AND link.minor_user_id = guardian_crisis_events.minor_user_id
-                          AND link.status = 'active'
+                    AND (
+                        EXISTS (
+                            SELECT 1 FROM guardian_links link
+                            WHERE link.guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                              AND link.minor_user_id = guardian_crisis_events.minor_user_id
+                              AND link.status = 'active'
+                        )
+                        -- The declared guardian reads the crisis evidence of the
+                        -- subject they declared responsibility for; without this
+                        -- the notification row is stranded behind the event it
+                        -- belongs to.
+                        OR guardian_relationship_declared(
+                            current_setting('memoria.guardian_actor_id', true),
+                            guardian_crisis_events.minor_user_id,
+                            guardian_crisis_events.occurred_at
+                        )
                     )
                 )
             )
@@ -1071,6 +1169,20 @@ BEGIN
                         current_setting('memoria.guardian_subject_id', true)
                     )
                 )
+                -- A declared guardian has no active link, so every branch above
+                -- is unreachable for that recipient.  Only the declared-guardian
+                -- enqueue port sets this flag, and only inside the maintenance
+                -- role's own SECURITY DEFINER transaction after validating the
+                -- declaration against the Identity authority.
+                OR (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting(
+                            'memoria.guardian_declared_notification_scope', true
+                        ),
+                        ''
+                    ) = '1'
+                )
             );
 
         -- Account governance and outbox delivery run through dedicated
@@ -1082,11 +1194,23 @@ BEGIN
             GRANT SELECT, INSERT, UPDATE, DELETE
                 ON tutor_practice_sessions, tutor_study_progress
                 TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_relationship_declared(TEXT, TEXT, TIMESTAMPTZ)
+                FROM PUBLIC;
             REVOKE EXECUTE ON FUNCTION guardian_enqueue_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION guardian_relationship_declared(TEXT, TEXT, TIMESTAMPTZ)
+                TO memoria_guardian;
+            ALTER FUNCTION guardian_relationship_declared(TEXT, TEXT, TIMESTAMPTZ)
+                OWNER TO memoria_guardian_maintenance;
             GRANT EXECUTE ON FUNCTION guardian_enqueue_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 TO memoria_guardian;
             ALTER FUNCTION guardian_enqueue_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
+                OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
+                FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
+                TO memoria_guardian;
+            ALTER FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 OWNER TO memoria_guardian_maintenance;
             REVOKE EXECUTE ON FUNCTION guardian_tutor_account_scope_export(TEXT)
                 FROM PUBLIC;
@@ -1121,3 +1245,24 @@ BEGIN
     END IF;
 END
 $guardian_policy$;
+
+-- The declared-guardian notification port validates its recipient against the
+-- Identity authority.  The function is a pure boolean and grants no table
+-- visibility.  Each schema grants for the order it can observe: Guardian grants
+-- here when Identity is already installed, and the Identity schema grants to
+-- this owner when Guardian was installed first.  Without both, the SECURITY
+-- DEFINER function raises "permission denied" at runtime instead of failing
+-- at install time.
+DO $guardian_identity_authority_grant$
+BEGIN
+    IF to_regprocedure(
+        'public.identity_relationship_source_confirmed(text,text,text,timestamptz)'
+    ) IS NOT NULL THEN
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION %s TO %I',
+            'identity_relationship_source_confirmed(text, text, text, timestamptz)',
+            'memoria_guardian_maintenance'
+        );
+    END IF;
+END
+$guardian_identity_authority_grant$;

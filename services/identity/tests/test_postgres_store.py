@@ -24,6 +24,7 @@ from services.identity.domain import (
     CustomPersonaLimitError,
     IdentityConflictError,
     IdentityNotFoundError,
+    ModeConstraintError,
     StructuredPersonaFields,
 )
 from services.identity.postgres_store import PostgresIdentityStore
@@ -2119,3 +2120,161 @@ async def api_privilege(dsn: str, table: str, privilege: str) -> bool:
         )
     finally:
         await connection.close()
+
+
+async def test_declared_guardianship_is_one_sided_and_never_verified() -> None:
+    """A guardian declaration must stay a declaration in PostgreSQL.
+
+    The subject created by an adult device binding has no account, so nothing
+    can confirm the target endpoint.  Identity must report the relationship as
+    a one-sided declaration, must let the binding exist on that basis, and must
+    never upgrade it to an active/verified relationship without the subject's
+    own confirmation.
+    """
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 9, 16, 4, 0, tzinfo=UTC)
+        guardian = (
+            await service.register_person(
+                display_name="家长",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-guardian-declaration",
+                now=now,
+            )
+        ).person_id
+        ward = (
+            await service.register_person(
+                display_name="孩子",
+                timezone="Asia/Shanghai",
+                subject_category="minor",
+                age_band="under_14",
+                age_evidence_status="unverified",
+                now=now,
+            )
+        ).person_id
+
+        proposed = await service.propose_relationship(
+            source_person_id=guardian,
+            target_person_id=ward,
+            relation_type="guardian_of",
+            established_evidence_id="guardian_declaration_v1:device_binding",
+            actor_person_id=guardian,
+            now=now,
+        )
+        await service.confirm_relationship(
+            relationship_id=proposed.relationship_id,
+            person_id=guardian,
+            now=now,
+        )
+
+        assert await store.has_active_relationship(
+            source_person_id=guardian,
+            target_person_id=ward,
+            relation_type="guardian_of",
+            at=now,
+        ) is False
+        assert await store.has_source_confirmed_relationship(
+            source_person_id=guardian,
+            target_person_id=ward,
+            relation_type="guardian_of",
+            at=now,
+        ) is True
+        # The reverse direction is not a declaration of the ward.
+        assert await store.has_source_confirmed_relationship(
+            source_person_id=ward,
+            target_person_id=guardian,
+            relation_type="guardian_of",
+            at=now,
+        ) is False
+
+        binding = await service.create_binding(
+            device_id="dev-pg-declared-guardian",
+            declared_mode="parent_for_child",
+            account_owner_person_id=guardian,
+            primary_subject_ids=(ward,),
+            roles=((guardian, "guardian"), (guardian, "device_admin")),
+            service_profile_version="parent_for_child-v1",
+            policy_bundle_version="multi-subject-v1",
+            now=now,
+        )
+        assert binding.primary_subject_ids == (ward,)
+        assert await service.declared_guardians(subject_person_id=ward) == (guardian,)
+
+        # Once the subject really confirms, the declaration stops being the
+        # recorded basis and the relationship becomes verified.
+        await service.confirm_relationship(
+            relationship_id=proposed.relationship_id,
+            person_id=ward,
+            now=now + timedelta(minutes=1),
+        )
+        assert await store.has_active_relationship(
+            source_person_id=guardian,
+            target_person_id=ward,
+            relation_type="guardian_of",
+            at=now + timedelta(minutes=2),
+        ) is True
+        assert await store.has_source_confirmed_relationship(
+            source_person_id=guardian,
+            target_person_id=ward,
+            relation_type="guardian_of",
+            at=now + timedelta(minutes=2),
+        ) is False
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+async def test_parent_for_child_still_requires_a_relationship_for_the_guardian_role() -> None:
+    """The declaration path must not weaken the role check itself."""
+
+    database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 9, 16, 5, 0, tzinfo=UTC)
+        owner = (
+            await service.register_person(
+                display_name="家长",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-owner",
+                now=now,
+            )
+        ).person_id
+        ward = (
+            await service.register_person(
+                display_name="孩子",
+                timezone="Asia/Shanghai",
+                subject_category="minor",
+                age_band="under_14",
+                age_evidence_status="unverified",
+                now=now,
+            )
+        ).person_id
+
+        with pytest.raises(ModeConstraintError, match="active confirmed"):
+            await service.create_binding(
+                device_id="dev-pg-undeclared-guardian",
+                declared_mode="parent_for_child",
+                account_owner_person_id=owner,
+                primary_subject_ids=(ward,),
+                roles=((owner, "guardian"), (owner, "device_admin")),
+                service_profile_version="parent_for_child-v1",
+                policy_bundle_version="multi-subject-v1",
+                now=now,
+            )
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)

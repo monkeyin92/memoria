@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -402,71 +402,6 @@ class PostgresGuardianStore:
                 else None
             ),
         )
-
-    async def establish_active_link(
-        self,
-        *,
-        link_id: str | None = None,
-        guardian_user_id: str,
-        minor_user_id: str,
-        relation: Relation = "parent",
-        verified_via: VerifiedVia = "wechat_identity",
-        now: datetime,
-    ) -> GuardianLink:
-        resolved_link_id = str(uuid.uuid4()) if link_id is None else str(_uuid(link_id, field="link_id"))
-        created_at = _timestamp(now, field="now")
-        expires_at = created_at + timedelta(days=365)
-        code_hash = hashlib.sha256(f"{resolved_link_id}:direct_active".encode()).hexdigest()
-        pool = await self._ready_pool()
-        async with pool.acquire() as connection, connection.transaction():
-            await self._set_api_context(
-                connection,
-                actor_user_id=guardian_user_id,
-                subject_user_id=minor_user_id,
-            )
-            existing = await connection.fetchrow(
-                """
-                SELECT * FROM guardian_links
-                WHERE guardian_user_id = $1 AND minor_user_id = $2 AND status IN ('pending', 'active')
-                """,
-                guardian_user_id,
-                minor_user_id,
-            )
-            if existing is not None:
-                if existing["status"] == "active":
-                    return self._link(existing)
-                row = await connection.fetchrow(
-                    """
-                    UPDATE guardian_links
-                    SET status = 'active', activated_at = $1
-                    WHERE link_id = $2
-                    RETURNING *
-                    """,
-                    created_at,
-                    existing["link_id"],
-                )
-                if row is not None:
-                    return self._link(row)
-            row = await connection.fetchrow(
-                """
-                INSERT INTO guardian_links(
-                    link_id, guardian_user_id, minor_user_id, relation, status,
-                    verified_via, binding_code_hash, binding_expires_at, created_at, activated_at
-                ) VALUES ($1,$2,$3,$4,'active',$5,$6,$7,$8,$8)
-                RETURNING *
-                """,
-                uuid.UUID(resolved_link_id),
-                guardian_user_id,
-                minor_user_id,
-                relation,
-                verified_via,
-                code_hash,
-                expires_at,
-                created_at,
-            )
-            if row is None:  # pragma: no cover
-                raise RuntimeError("guardian link insert failed")
-            return self._link(row)
 
     async def create_link(
         self,
@@ -1543,6 +1478,7 @@ class PostgresGuardianStore:
         minor_user_id: str,
         occurred_at: datetime,
         script_version: str,
+        declared_guardian_ids: tuple[str, ...] = (),
     ) -> CrisisNotificationReceipt:
         event_uuid = _uuid(crisis_event_id, field="crisis_event_id")
         occurred = _timestamp(occurred_at, field="occurred_at")
@@ -1590,21 +1526,46 @@ class PostgresGuardianStore:
                 """,
                 minor_user_id,
             )
-            for guardian in guardians:
-                guardian_user_id = str(guardian["guardian_user_id"])
+            linked_guardians = {
+                str(guardian["guardian_user_id"]) for guardian in guardians
+            }
+            targets = set(linked_guardians)
+            # Declared guardians are a separate, honestly labelled basis: the
+            # caller resolved them from the Identity authority because the
+            # subject has no account to confirm a guardian link. They never
+            # become an active link and never unlock consent-gated capability,
+            # and the database re-validates the declaration itself instead of
+            # trusting the caller's id.
+            targets.update(
+                guardian_id
+                for guardian_id in declared_guardian_ids
+                if guardian_id and guardian_id != minor_user_id
+            )
+            for guardian_user_id in sorted(targets):
                 notification_id = uuid.uuid5(
                     uuid.NAMESPACE_URL,
                     f"memoria:guardian-crisis:{event_uuid}:{guardian_user_id}",
                 )
-                await connection.execute(
-                    """
-                    SELECT guardian_enqueue_notification($1, $2, $3, $4)
-                    """,
-                    notification_id,
-                    event_uuid,
-                    guardian_user_id,
-                    created,
-                )
+                if guardian_user_id in linked_guardians:
+                    await connection.execute(
+                        """
+                        SELECT guardian_enqueue_notification($1, $2, $3, $4)
+                        """,
+                        notification_id,
+                        event_uuid,
+                        guardian_user_id,
+                        created,
+                    )
+                else:
+                    await connection.execute(
+                        """
+                        SELECT guardian_enqueue_declared_notification($1, $2, $3, $4)
+                        """,
+                        notification_id,
+                        event_uuid,
+                        guardian_user_id,
+                        created,
+                    )
             notification_count = int(
                 await connection.fetchval(
                     """

@@ -75,7 +75,53 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
         "tool_epoch": 1,
         "contains_transcript": False,
         "contains_severity": False,
+        "declared_guardian_count": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_declared_guardian_receives_the_crisis_without_an_active_link(
+    tmp_path: Path,
+) -> None:
+    """A declared guardian is a distinct, working notification basis.
+
+    The subject has no account, so no guardian link can be confirmed.  The
+    caller resolves the declaring guardian from the Identity authority and the
+    enqueue must reach exactly that guardian — never an arbitrary id, and
+    never by fabricating an active ``wechat_identity`` link.
+    """
+
+    archive = LifeArchive.sqlite(tmp_path / "guardian.sqlite3")
+    store = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
+    store.initialize()
+    service = CrisisNotificationService(store, archive)
+    now = datetime(2026, 9, 16, 4, 0, tzinfo=UTC)
+
+    receipt = await service.record_minor_crisis(
+        minor_user_id="minor-declared",
+        session_id="voice-session-declared",
+        turn_id=1,
+        generation_id=1,
+        tool_epoch=1,
+        script_version="crisis-transfer-draft-v1",
+        occurred_at=now,
+        declared_guardian_ids=("guardian-declared",),
+    )
+
+    assert receipt.notification_count == 1
+    assert await store.active_link(
+        guardian_user_id="guardian-declared",
+        minor_user_id="minor-declared",
+    ) is None
+    notifications = await store.guardian_notifications(
+        guardian_user_id="guardian-declared"
+    )
+    assert [notification.minor_user_id for notification in notifications] == [
+        "minor-declared"
+    ]
+    assert (
+        await store.guardian_notifications(guardian_user_id="guardian-other") == ()
+    )
 
 
 @pytest.mark.asyncio

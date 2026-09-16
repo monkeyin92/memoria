@@ -4,6 +4,7 @@ import hashlib
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
@@ -884,3 +885,142 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
             if role_created:
                 await admin.execute("DROP ROLE IF EXISTS memoria_guardian")
             await admin.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL guardian contract",
+)
+async def test_declared_guardian_notification_requires_the_identity_declaration() -> None:
+    """A declared guardian is a distinct, database-validated notification basis.
+
+    An account-less subject can never confirm a guardian link, so the only
+    authorized recipient is the guardian whose ``guardian_of`` relationship is
+    a one-sided declaration.  SQLite inserts that row directly, so the
+    production path has to be proven here: the PostgreSQL port must accept a
+    real declaration and still refuse an id that has none.
+    """
+
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_guardian_declared_{uuid.uuid4().hex[:10]}"
+    admin = await asyncpg.connect(admin_dsn)
+    store: PostgresGuardianStore | None = None
+    try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+        dsn = _postgres_dsn(admin_dsn, database=database)
+        await _ensure_roles(admin, database=database)
+        store = PostgresGuardianStore(
+            dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian",
+                password="api-role-password",
+            ),
+            bootstrap_dsn=dsn,
+            maintenance_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_maintenance",
+                password="maintenance-role-password",
+            ),
+            worker_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_worker",
+                password="worker-role-password",
+            ),
+        )
+        await store.initialize()
+
+        # The declared-guardian port validates against the Identity authority,
+        # so that schema has to be installed in the same database.
+        bootstrap = await asyncpg.connect(dsn)
+        now = datetime.now(UTC)
+        try:
+            await bootstrap.execute(
+                (
+                    Path(__file__).resolve().parents[2]
+                    / "identity"
+                    / "postgres_schema.sql"
+                ).read_text(encoding="utf-8")
+            )
+            # The schema only allows 'adult' with verified age evidence, so the
+            # fixture has to declare the same rows the identity authority would.
+            for person_id, category, band, evidence in (
+                ("declared-guardian", "adult", "adult", "verified"),
+                ("undeclared-guardian", "adult", "adult", "verified"),
+                ("declared-ward", "minor", "under_14", "unverified"),
+            ):
+                await bootstrap.execute(
+                    """
+                    INSERT INTO identity_persons(
+                        person_id, display_name, subject_category, age_band,
+                        age_evidence_status, locale, timezone, status,
+                        created_at, updated_at
+                    ) VALUES ($1,$2,$3,$4,$6,'zh-CN','Asia/Shanghai',
+                              'active',$5,$5)
+                    """,
+                    person_id,
+                    person_id,
+                    category,
+                    band,
+                    now,
+                    evidence,
+                )
+            await bootstrap.execute(
+                """
+                INSERT INTO identity_relationships(
+                    relationship_id, source_person_id, target_person_id,
+                    relation_type, status, valid_from, established_evidence_id,
+                    confirmed_by_source_at, confirmed_by_target_at,
+                    requires_confirmation, can_delegate, delegation_depth,
+                    permissions_json, auto_suspended, created_at, updated_at
+                ) VALUES (
+                    'declaration-1', 'declared-guardian', 'declared-ward',
+                    'guardian_of', 'pending', $1,
+                    'guardian_declaration_v1:device_binding',
+                    $1, NULL, TRUE, FALSE, 0, '[]'::jsonb, FALSE, $1, $1
+                )
+                """,
+                now,
+            )
+        finally:
+            await bootstrap.close()
+
+        receipt = await store.enqueue_crisis_event(
+            crisis_event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "declared-crisis")),
+            evidence_event_id="declared-crisis-evidence",
+            minor_user_id="declared-ward",
+            occurred_at=now,
+            script_version="crisis-transfer-v1",
+            declared_guardian_ids=("declared-guardian",),
+        )
+        assert receipt.notification_count == 1
+        notifications = await store.guardian_notifications(
+            guardian_user_id="declared-guardian"
+        )
+        assert len(notifications) == 1
+        assert notifications[0].minor_user_id == "declared-ward"
+        assert (
+            await store.active_link(
+                guardian_user_id="declared-guardian",
+                minor_user_id="declared-ward",
+            )
+            is None
+        )
+
+        with pytest.raises(asyncpg.PostgresError, match="not a declared guardian"):
+            await store.enqueue_crisis_event(
+                crisis_event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "undeclared-crisis")),
+                evidence_event_id="undeclared-crisis-evidence",
+                minor_user_id="declared-ward",
+                occurred_at=now,
+                script_version="crisis-transfer-v1",
+                declared_guardian_ids=("undeclared-guardian",),
+            )
+    finally:
+        if store is not None:
+            await store.close()
+        await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
+        await admin.close()

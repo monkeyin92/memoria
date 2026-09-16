@@ -949,6 +949,39 @@ class IdentityService:
             actor_person_id=actor_person_id or person_id,
         )
 
+    async def declared_guardians(
+        self,
+        *,
+        subject_person_id: str,
+    ) -> tuple[str, ...]:
+        """Guardians whose ``guardian_of`` link to the subject is a declaration only.
+
+        The relationship is still ``pending`` because the subject has no
+        account and never confirmed an endpoint.  Callers may use the result
+        for the narrow purpose the declaration actually covers — reaching the
+        guardian who declared responsibility — and must not treat it as
+        verified guardianship, consent, or evidence that the subject agreed to
+        anything.
+        """
+
+        relationships = await self._store.list_relationships(
+            subject_person_id,
+            statuses=("pending",),
+            actor_person_id=subject_person_id,
+        )
+        return tuple(
+            sorted(
+                {
+                    relationship.source_person_id
+                    for relationship in relationships
+                    if relationship.relation_type == "guardian_of"
+                    and relationship.target_person_id == subject_person_id
+                    and relationship.confirmed_by_source_at is not None
+                    and relationship.confirmed_by_target_at is None
+                }
+            )
+        )
+
     # ------------------------------------------------------------------
     # Bindings
     # ------------------------------------------------------------------
@@ -2422,7 +2455,17 @@ class IdentityService:
     ) -> None:
         """Binding roles must be backed by exact active/confirmed
         relationships; a known person_id alone can never grant a role
-        (acceptance 2, PR-05)."""
+        (acceptance 2, PR-05).
+
+        One exception is named explicitly: a ``parent_for_child`` guardian
+        role may rest on a **declared** ``guardian_of`` relationship when the
+        subject has no account of their own.  Such a relationship is still
+        ``pending`` with only the guardian endpoint confirmed, so the binding
+        records a declaration.  It never becomes verified guardianship here,
+        and guardian capabilities (consent, notification, memory retention,
+        session admission) stay gated on the guardian authority that requires
+        the subject's own confirmation.
+        """
         if declared_mode == "self_use":
             return
 
@@ -2432,18 +2475,27 @@ class IdentityService:
             target: str,
             *,
             role_label: str,
+            accept_declaration: bool = False,
         ) -> None:
-            if not await self._store.has_active_relationship(
+            if await self._store.has_active_relationship(
                 source_person_id=source,
                 target_person_id=target,
                 relation_type=relation_type,
                 at=now,
             ):
-                raise ModeConstraintError(
-                    f"{role_label} requires an active confirmed "
-                    f"{relation_type} relationship "
-                    f"({source} -> {target})"
-                )
+                return
+            if accept_declaration and await self._store.has_source_confirmed_relationship(
+                source_person_id=source,
+                target_person_id=target,
+                relation_type=relation_type,
+                at=now,
+            ):
+                return
+            raise ModeConstraintError(
+                f"{role_label} requires an active confirmed "
+                f"{relation_type} relationship "
+                f"({source} -> {target})"
+            )
 
         subjects = set(primary_ids)
         guardian_ids = {
@@ -2468,6 +2520,7 @@ class IdentityService:
                         guardian_id,
                         subject_id,
                         role_label="guardian",
+                        accept_declaration=True,
                     )
             for admin_id in admin_ids - owner_set:
                 for subject_id in subjects:

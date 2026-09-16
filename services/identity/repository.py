@@ -170,6 +170,15 @@ class IdentityStore(Protocol):
         at: datetime,
     ) -> bool: ...
 
+    async def has_source_confirmed_relationship(
+        self,
+        *,
+        source_person_id: str,
+        target_person_id: str,
+        relation_type: str,
+        at: datetime,
+    ) -> bool: ...
+
     async def save_relationship(
         self,
         relationship: Relationship,

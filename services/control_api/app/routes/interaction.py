@@ -267,6 +267,30 @@ def _crisis_notifications(request: Request) -> CrisisNotificationService:
     )
 
 
+async def _declared_guardian_ids(request: Request, *, subject_person_id: str) -> tuple[str, ...]:
+    """Guardians who declared responsibility for a subject without an account.
+
+    The declaration is the only basis these guardians have: the subject never
+    confirmed a guardian link, so their consent-gated capabilities stay
+    closed.  A read failure is logged and degrades to "no declared guardian"
+    instead of inventing one.
+    """
+
+    identity_service = getattr(request.app.state, "identity_service", None)
+    if not isinstance(identity_service, IdentityService):
+        return ()
+    try:
+        return await identity_service.declared_guardians(
+            subject_person_id=subject_person_id,
+        )
+    except Exception:
+        logger.exception(
+            "declared guardian lookup failed subject_person_id=%s",
+            subject_person_id,
+        )
+        return ()
+
+
 async def _route_crisis_with_bounded_evidence(request: Request, query: str) -> CrisisRoute:
     deterministic = route_crisis(query)
     classifier = getattr(request.app.state, "crisis_semantic_classifier", None)
@@ -342,17 +366,26 @@ async def _custom_persona_definition(
     return custom_persona_definition(record) if record is not None else None
 
 
-async def _account_memory_retention_allowed(
+async def _subject_memory_retention_allowed(
     request: Request,
     *,
-    account_id: str,
+    subject_person_id: str,
     subject_category: object,
 ) -> bool:
+    """One subject supplies both the category and the consent lookup.
+
+    A minor's retention consent is recorded against the minor's own person id
+    on an activated guardian link.  Reading the category from the current
+    subject while looking the consent up under the login account would both
+    miss real consent and answer about a different person, and it would let
+    the two decisions disagree inside one turn.
+    """
+
     consent_active = False
     if subject_category == "minor":
         consent_active = (
             await cast(GuardianStorePort, request.app.state.guardian_store).active_consent(
-                minor_user_id=account_id,
+                minor_user_id=subject_person_id,
                 consent_kind="memory_retention",
             )
             is not None
@@ -361,6 +394,26 @@ async def _account_memory_retention_allowed(
         subject_category=subject_category,
         active_consent=consent_active,
     )
+
+
+def _account_keyed_memory_is_subject_scoped(
+    *,
+    active_subject_id: str,
+    account_id: str,
+) -> bool:
+    """Whether the account-keyed legacy archive may answer for this turn.
+
+    Every first-person claim in the legacy archive is stored under
+    ``subject_key="self"`` inside the login account, so an account-keyed read
+    cannot tell the account owner apart from the subject currently using the
+    device.  Re-keying the query would not fix that either: it would return the
+    account owner's own rows to the subject (and no rows at all for an
+    account-less subject).  The read is therefore allowed only while the two
+    are the same person; subject-keyed memory lives in the MemoryScope store
+    and is wired separately.
+    """
+
+    return active_subject_id == account_id
 
 
 def _registry(request: Request) -> RegistryPort:
@@ -635,11 +688,26 @@ async def session_policy(
     policy = ModePolicy.session_context(frozen)
     if frozen.interaction_mode == "companion":
         account_id = str(session["user_id"])
-        subject = _store(request).get_subject_profile(user_id=account_id)
-        retention_allowed = await _account_memory_retention_allowed(
+        # Both the category and the consent must describe the subject that is
+        # actually using the device.  The signed Runtime Profile is that
+        # authority; the login account's own profile is used only when the
+        # profile carries no subject at all (unknown-safe).
+        profile_subject_id = runtime_profile.get("active_subject_id")
+        subject_person_id = (
+            profile_subject_id
+            if isinstance(profile_subject_id, str) and profile_subject_id.strip()
+            else account_id
+        )
+        profile_subject_category = runtime_profile.get("subject_category")
+        subject_category = (
+            profile_subject_category
+            if isinstance(profile_subject_category, str)
+            else None
+        )
+        retention_allowed = await _subject_memory_retention_allowed(
             request,
-            account_id=account_id,
-            subject_category=(subject or {}).get("subject_category"),
+            subject_person_id=subject_person_id,
+            subject_category=subject_category,
         )
         policy = apply_memory_retention_ceiling(policy, allowed=retention_allowed)
         profile = _store(request).get_profile(
@@ -647,9 +715,15 @@ async def session_policy(
             now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         display_name = profile.get("display_name")
-        if isinstance(display_name, str) and display_name.strip():
+        if (
+            isinstance(display_name, str)
+            and display_name.strip()
+            and subject_person_id == account_id
+        ):
             # This stays on the internal Agent policy path. The Agent adds it
-            # only after the current speaker is confirmed as the account owner.
+            # only after the current speaker is confirmed as the account owner,
+            # and it is the account owner's own name: a different subject using
+            # the device must not receive it.
             policy["owner_display_name"] = display_name.strip()
         persona_snapshot = runtime_profile.get("persona")
         persona_id = (
@@ -1484,6 +1558,7 @@ async def _companion_items(
     speaker: ResponsePlanSpeakerDecision,
     now: datetime,
     recall_context: tuple[str, ...] = (),
+    account_keyed_memory_readable: bool = True,
 ) -> tuple[tuple[GroundedItem, ...], PersonaCapsule | None]:
     trusted = ModePolicy.trusted_context(
         frozen,
@@ -1511,7 +1586,11 @@ async def _companion_items(
             )
         )
 
-    memory_task = asyncio.create_task(fetch_memory()) if capabilities["private_memory"] else None
+    memory_task = (
+        asyncio.create_task(fetch_memory())
+        if capabilities["private_memory"] and account_keyed_memory_readable
+        else None
+    )
     persona_task = (
         asyncio.create_task(
             _persona_engine(request).capsule(
@@ -1981,38 +2060,59 @@ async def response_plan(
             frozen=frozen,
             now=now,
         )
-        # Determine whether the current subject using this session is a student (minor).
-        # Check the persistent Runtime Profile for the session first to identify
-        # the active subject rather than assuming the login account_id.
+        # The current subject is read once and decides the category, the
+        # consent lookup, the memory scope and the notification target. A
+        # configured-but-unavailable authority stays observable and
+        # conservative: it never silently degrades to the account profile,
+        # never guesses a minor, and never notifies a guardian.
+        subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
         active_subject_id: str = account_id
         active_subject_category: str | None = None
         active_age_band: str | None = None
         runtime_service = getattr(request.app.state, "session_runtime_service", None)
-        if runtime_service is not None:
+        if runtime_service is None:
+            # This deployment profile has no persistent Session Runtime; the
+            # login account is the subject by construction.
+            subject_authority = "account_profile"
+        else:
+            subject_authority = "unavailable"
             try:
                 session_dict = require_active_voice_session(request, body.session_id)
                 runtime_profile = await _current_persistent_runtime_profile(
                     request, session_dict, session_id=body.session_id
                 )
-                active_subject_category = runtime_profile.get("subject_category")
-                active_age_band = runtime_profile.get("age_band")
-                if runtime_profile.get("active_subject_id"):
-                    active_subject_id = str(runtime_profile["active_subject_id"])
             except Exception:
-                pass
+                logger.exception(
+                    "current subject authority unavailable session_id=%s; "
+                    "keeping the conservative capability gate",
+                    body.session_id,
+                )
+            else:
+                subject_authority = "runtime_profile"
+                profile_subject_id = runtime_profile.get("active_subject_id")
+                if isinstance(profile_subject_id, str) and profile_subject_id.strip():
+                    active_subject_id = profile_subject_id
+                profile_category = runtime_profile.get("subject_category")
+                if isinstance(profile_category, str):
+                    active_subject_category = profile_category
+                profile_age_band = runtime_profile.get("age_band")
+                if isinstance(profile_age_band, str):
+                    active_age_band = profile_age_band
 
-        if active_subject_category is None:
+        if subject_authority == "account_profile" and active_subject_category is None:
             profile = _store(request).get_subject_profile(user_id=active_subject_id)
-            if profile is None and active_subject_id != account_id:
-                profile = _store(request).get_subject_profile(user_id=account_id)
             if profile is not None:
                 active_subject_category = profile.get("subject_category")
                 active_age_band = profile.get("birth_year_band")
 
-        retention_allowed = await _account_memory_retention_allowed(
+        retention_allowed = await _subject_memory_retention_allowed(
             request,
-            account_id=account_id,
+            subject_person_id=active_subject_id,
             subject_category=active_subject_category,
+        )
+        account_keyed_memory_readable = _account_keyed_memory_is_subject_scoped(
+            active_subject_id=active_subject_id,
+            account_id=account_id,
         )
         is_minor_student = (
             active_subject_category == "minor"
@@ -2033,6 +2133,10 @@ async def response_plan(
                     tool_epoch=body.fence.tool_epoch,
                     script_version=crisis.script_version,
                     occurred_at=now,
+                    declared_guardian_ids=await _declared_guardian_ids(
+                        request,
+                        subject_person_id=active_subject_id,
+                    ),
                 )
             except Exception:
                 logger.exception(
@@ -2069,6 +2173,7 @@ async def response_plan(
                 speaker=body.speaker_decision,
                 now=now,
                 recall_context=tuple(body.recall_context),
+                account_keyed_memory_readable=account_keyed_memory_readable,
             )
             if (
                 frozen.interaction_mode == "companion" and fixed_reply is None and retention_allowed

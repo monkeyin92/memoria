@@ -903,6 +903,34 @@ class PostgresIdentityStore:
                 )
             )
 
+    async def has_source_confirmed_relationship(
+        self,
+        *,
+        source_person_id: str,
+        target_person_id: str,
+        relation_type: str,
+        at: datetime,
+    ) -> bool:
+        """True for a one-sided declaration: source confirmed, target never did.
+
+        The row stays ``pending``, so it is a declaration of the source
+        endpoint, never verified guardianship.
+        """
+
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            return bool(
+                await connection.fetchval(
+                    """
+                    SELECT identity_relationship_source_confirmed($1, $2, $3, $4)
+                    """,
+                    source_person_id,
+                    target_person_id,
+                    relation_type,
+                    _timestamp(at, field="at"),
+                )
+            )
+
     async def save_relationship(
         self,
         relationship: Relationship,

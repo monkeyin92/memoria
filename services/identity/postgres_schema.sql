@@ -746,6 +746,28 @@ BEGIN
 END
 $$;
 
+CREATE OR REPLACE FUNCTION identity_relationship_source_confirmed(
+    p_source text, p_target text, p_relation_type text, p_at timestamptz
+) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET row_security = on AS $$
+BEGIN
+    -- One-sided declaration: the source endpoint confirmed its own side and
+    -- the target never did, so the relationship is still pending.  It is
+    -- evidence of a declaration, never of verified guardianship.
+    RETURN (SELECT EXISTS (
+        SELECT 1 FROM identity_relationships r
+        WHERE r.source_person_id = p_source
+          AND r.target_person_id = p_target
+          AND r.relation_type = p_relation_type
+          AND r.status = 'pending'
+          AND r.confirmed_by_source_at IS NOT NULL
+          AND r.confirmed_by_target_at IS NULL
+          AND r.valid_from <= p_at
+          AND (r.valid_until IS NULL OR r.valid_until > p_at)
+    ));
+END
+$$;
+
 CREATE OR REPLACE FUNCTION identity_person_visible(
     p_actor text, p_person_id text
 ) RETURNS boolean
@@ -1804,6 +1826,9 @@ REVOKE ALL ON FUNCTION identity_next_binding_version(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_relationship_active(
     text, text, text, timestamptz
 ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_relationship_source_confirmed(
+    text, text, text, timestamptz
+) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_person_visible(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_relationship_visible(
     text, text, text, text
@@ -2054,6 +2079,9 @@ BEGIN
         GRANT EXECUTE ON FUNCTION identity_relationship_active(
             text, text, text, timestamptz
         ) TO memoria_identity;
+        GRANT EXECUTE ON FUNCTION identity_relationship_source_confirmed(
+            text, text, text, timestamptz
+        ) TO memoria_identity;
         GRANT EXECUTE ON FUNCTION identity_person_visible(text, text)
             TO memoria_identity;
         GRANT EXECUTE ON FUNCTION identity_relationship_visible(
@@ -2222,3 +2250,26 @@ BEGIN
     END IF;
 END
 $identity_policy$;
+
+
+-- A Guardian-owned SECURITY DEFINER port calls this function to validate a
+-- declared guardianship.  Guardian may be installed before Identity, in which
+-- case the Guardian-side conditional grant has nothing to grant yet; this side
+-- covers that order.  Both guards are needed so neither install order can leave
+-- the call without EXECUTE.
+DO $identity_guardian_authority_grant$
+BEGIN
+    IF to_regprocedure(
+        'public.identity_relationship_source_confirmed(text,text,text,timestamptz)'
+    ) IS NOT NULL
+    AND EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_maintenance'
+    ) THEN
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION %s TO %I',
+            'identity_relationship_source_confirmed(text, text, text, timestamptz)',
+            'memoria_guardian_maintenance'
+        );
+    END IF;
+END
+$identity_guardian_authority_grant$;

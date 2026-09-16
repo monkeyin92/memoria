@@ -67,6 +67,11 @@ router = APIRouter(tags=["multi-subject"])
 
 PrimaryRelationship = Literal["self", "guardian_of", "child_of", "family_member_of"]
 
+#: Evidence id for a guardian's unilateral declaration over a subject that has
+#: no account. It is deliberately distinct from any verification evidence: the
+#: declaration never satisfies a verified-guardian capability gate.
+_GUARDIAN_DECLARATION_EVIDENCE = "guardian_declaration_v1:device_binding"
+
 _RELATIONSHIP_FOR_MODE: dict[DeviceDeclaredModeValue, PrimaryRelationship] = {
     "parent_for_child": "guardian_of",
     "self_use": "self",
@@ -299,22 +304,24 @@ async def _primary_subject(
         now=now,
     )
     if body.declared_mode == "parent_for_child" or body.primary_subject.relationship == "guardian_of":
+        # The subject was created here and has no account, so nobody can
+        # confirm the target endpoint.  Record only the guardian's own
+        # declaration: the relationship stays pending with
+        # ``confirmed_by_source_at`` set and ``confirmed_by_target_at`` NULL.
+        # Identity therefore reports a declared guardianship, never a
+        # completed two-party confirmation, a WeChat verification or a manual
+        # review, and no guardian link/consent is manufactured from it.
         proposed = await _identity(request).propose_relationship(
             source_person_id=owner.person_id,
             target_person_id=person.person_id,
             relation_type="guardian_of",
-            established_evidence_id="parent_for_child_binding_claim",
+            established_evidence_id=_GUARDIAN_DECLARATION_EVIDENCE,
             actor_person_id=owner.person_id,
             now=now,
         )
         await _identity(request).confirm_relationship(
             relationship_id=proposed.relationship_id,
             person_id=owner.person_id,
-            now=now,
-        )
-        await _identity(request).confirm_relationship(
-            relationship_id=proposed.relationship_id,
-            person_id=person.person_id,
             now=now,
         )
     return person
@@ -495,16 +502,14 @@ async def create_device_binding(
                 ),
             )
         request.app.state.multi_subject_binding_manifests[device_id] = manifest
-        if body.declared_mode == "parent_for_child" and subject.subject_category == "minor":
-            guardian_store = getattr(request.app.state, "guardian_store", None)
-            if guardian_store is not None:
-                await guardian_store.establish_active_link(
-                    guardian_user_id=user.user_id,
-                    minor_user_id=subject.person_id,
-                    relation="parent",
-                    verified_via="wechat_identity",
-                    now=now,
-                )
+        # No guardian link is created here.  A guardian link is a separate
+        # authority whose activation needs the subject's own binding-code
+        # confirmation (``POST /v1/guardian/links`` -> ``.../confirm``); an
+        # account-less subject can never confirm, so manufacturing an active
+        # link here would fabricate both the confirmation and the
+        # ``wechat_identity`` verification.  Until that confirmation exists the
+        # subject has a declared guardianship only: consent, notification,
+        # memory retention and session admission stay closed.
         return manifest.to_dict()
     except DeviceBindingTokenError as exc:
         raise HTTPException(
@@ -658,7 +663,11 @@ async def resolve_session_subject(
         "resolution": result.resolution,
         "candidate_subjects": result.candidate_subjects,
         "temporary_service_mode": result.profile.service_mode,
-        "allowed_confirmation_methods": ["voice_question", "app_confirm"],
+        # Only the method the write API actually accepts. Advertising
+        # ``voice_question`` made clients offer a flow whose request is
+        # rejected with 422, and a voice answer cannot be identity evidence
+        # until a trusted voice-evidence channel exists.
+        "allowed_confirmation_methods": ["app_confirm"],
         "runtime_profile_id": result.profile.runtime_profile_id,
     }
 

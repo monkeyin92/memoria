@@ -186,6 +186,36 @@ class InMemoryIdentityStore:
                 for relationship in self._relationships.values()
             )
 
+    async def has_source_confirmed_relationship(
+        self,
+        *,
+        source_person_id: str,
+        target_person_id: str,
+        relation_type: str,
+        at: datetime,
+    ) -> bool:
+        """True for a one-sided declaration: source confirmed, target never did.
+
+        Such a relationship is still ``pending`` and never activates a role on
+        its own; callers must name it a declaration rather than verification.
+        """
+
+        with self._lock:
+            return any(
+                relationship.relation_type == relation_type
+                and relationship.status == "pending"
+                and relationship.source_person_id == source_person_id
+                and relationship.target_person_id == target_person_id
+                and relationship.confirmed_by_source_at is not None
+                and relationship.confirmed_by_target_at is None
+                and relationship.valid_from <= at
+                and (
+                    relationship.valid_until is None
+                    or relationship.valid_until > at
+                )
+                for relationship in self._relationships.values()
+            )
+
     async def save_relationship(
         self,
         relationship: Relationship,

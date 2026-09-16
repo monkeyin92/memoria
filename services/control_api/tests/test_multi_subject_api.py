@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -1383,6 +1384,121 @@ async def test_plain_member_can_confirm_self_but_not_switch_others(
 
 
 @pytest.mark.asyncio
+async def test_parent_for_child_binding_records_only_a_guardian_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A guardian declaration is recorded as a declaration, never as verification.
+
+    The subject is created by this call and has no account, so nothing can
+    confirm the target endpoint. The API must therefore leave the
+    ``guardian_of`` relationship pending with only the guardian's own
+    confirmation, must not bind a ``wechat_identity`` guardian link or any
+    consent to it, and must expose the declaration to the notification path
+    under its own name.
+    """
+
+    app = _env(monkeypatch, tmp_path, "guardian-declaration")
+    now = datetime.now(UTC)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "guardian-declaration-owner")
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="家长",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=now,
+        )
+        token = mint_device_binding_token(
+            device_id="device-guardian-declaration",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=5),
+            nonce="guardian-declaration-1",
+        )
+        created = await client.post(
+            "/v1/device-bindings",
+            headers={"Authorization": f"Bearer {owner['access_token']}"},
+            json={
+                "device_claim_token": token,
+                "declared_mode": "parent_for_child",
+                "account_owner_person_id": owner["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "guardian_of",
+                    "subject_draft": {
+                        "display_name": "独立小明",
+                        "age_band": "under_14",
+                    },
+                },
+                "persona_selection": "starlight",
+                "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+        assert child_id != owner["user_id"]
+
+        relationships = await app.state.identity_service.list_relationships(
+            person_id=child_id
+        )
+        assert len(relationships) == 1
+        declaration = relationships[0]
+        assert declaration.relation_type == "guardian_of"
+        assert declaration.source_person_id == owner["user_id"]
+        assert declaration.target_person_id == child_id
+        assert declaration.status == "pending"
+        assert declaration.confirmed_by_source_at is not None
+        assert declaration.confirmed_by_target_at is None
+        assert declaration.established_evidence_id == "guardian_declaration_v1:device_binding"
+
+        # No audit row may attribute a confirmation to the subject.
+        identity_db = tmp_path / "guardian-declaration-identity.sqlite3"
+        with sqlite3.connect(identity_db) as connection:
+            confirmations = connection.execute(
+                """
+                SELECT actor_person_id FROM identity_audit_events
+                WHERE action = 'relationship.confirm'
+                """
+            ).fetchall()
+        assert confirmations, "the guardian's own confirmation must be audited"
+        assert {row[0] for row in confirmations} == {owner["user_id"]}
+
+        # The declaration must not manufacture a guardian link or a consent.
+        guardian_store = app.state.guardian_store
+        assert (
+            await guardian_store.active_link(
+                guardian_user_id=owner["user_id"],
+                minor_user_id=child_id,
+            )
+            is None
+        )
+        assert (
+            await guardian_store.active_consent(
+                minor_user_id=child_id,
+                consent_kind="memory_retention",
+            )
+            is None
+        )
+        assert (
+            await guardian_store.active_consent(
+                minor_user_id=child_id,
+                consent_kind="minor_voice_session",
+            )
+            is None
+        )
+        # The notification path sees the declaring guardian under that name.
+        assert await app.state.identity_service.declared_guardians(
+            subject_person_id=child_id
+        ) == (owner["user_id"],)
+
+
+@pytest.mark.asyncio
 async def test_guardian_can_confirm_primary_subject_but_not_other_members(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -1941,3 +2057,74 @@ async def test_matching_actor_can_decide_own_profile(
         )
         assert denied.status_code == 200
         assert denied.json()["effect"] == "deny"
+
+
+@pytest.mark.asyncio
+async def test_advertised_subject_confirmation_methods_match_the_write_api(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A resolution must not advertise a confirmation method the write API rejects.
+
+    ``voice_question`` used to be advertised while ``SwitchActiveSubjectRequest``
+    only accepts ``app_confirm``, so a client could offer a flow whose request
+    came back 422. A voice answer is not identity evidence until a trusted
+    voice-evidence channel exists, so the advertisement is the part that had to
+    change.
+    """
+
+    app = _env(monkeypatch, tmp_path, "confirmation-methods")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "confirmation-methods-owner")
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="主人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=datetime.now(UTC),
+        )
+        await _bind_self(
+            client,
+            app,
+            owner=owner,
+            device_id="device-confirmation-methods",
+            nonce="confirmation-methods-1",
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        profile = await client.get(
+            "/v1/devices/device-confirmation-methods/runtime-profile",
+            headers=headers,
+        )
+        assert profile.status_code == 200, profile.text
+        session_id = profile.json()["session_id"]
+
+        resolution = await client.post(
+            "/v1/sessions/resolve-subject",
+            headers=headers,
+            json={"device_id": "device-confirmation-methods", "environment": {}},
+        )
+        assert resolution.status_code == 200, resolution.text
+        advertised = set(resolution.json()["allowed_confirmation_methods"])
+        assert advertised == {"app_confirm"}
+
+        accepted = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": owner["user_id"], "confirmation_method": "app_confirm"},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["active_subject_id"] == owner["user_id"]
+
+        # The method that is no longer advertised stays rejected, so the
+        # advertisement is the only lie that could have existed.
+        rejected = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": owner["user_id"], "confirmation_method": "voice_question"},
+        )
+        assert rejected.status_code == 422

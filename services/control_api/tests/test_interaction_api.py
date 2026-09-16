@@ -2025,6 +2025,119 @@ async def test_minor_without_memory_retention_cannot_read_private_context(
 
 
 @pytest.mark.asyncio
+async def test_response_plan_does_not_read_account_keyed_memory_for_another_subject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The current subject owns the memory; the account only authorizes the turn.
+
+    The legacy archive stores every first-person claim inside the login
+    account, so an account-keyed read for a different current subject returns
+    the account owner's own memory.  Even with a retention-allowing category,
+    the read must not run while subject and account differ — and it must still
+    run for the account's own turn.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            active_subject_id="person-independent-child",
+            subject_category="adult",
+            age_band="adult",
+            capabilities=("chat", "memory_recall_private"),
+        )
+        other_subject = _response_plan_body(session_id)
+        other_subject["query"] = "我们以前聊过什么？"
+        other_response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=other_subject
+        )
+
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            capabilities=("chat", "memory_recall_private"),
+        )
+        owner_turn = _response_plan_body(session_id)
+        owner_turn["fence"] = {**owner_turn["fence"], "turn_id": 8, "generation_id": 4}
+        owner_response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=owner_turn
+        )
+
+    assert other_response.status_code == 200, other_response.text
+    assert owner_response.status_code == 200, owner_response.text
+    # Exactly one read happened, and it belongs to the account's own turn.
+    assert len(catalog.queries) == 1
+    assert owner_response.json()["grounded_items"]
+
+
+@pytest.mark.asyncio
+async def test_response_plan_looks_up_retention_consent_for_the_active_subject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Category and consent must be read from the same person.
+
+    A minor's retention consent lives on the minor's own person id, so looking
+    it up under the login account both misses real consent and answers about
+    the wrong person.
+    """
+
+    class _RecordingGuardianStore:
+        def __init__(self) -> None:
+            self.minor_ids: list[str] = []
+
+        async def active_consent(self, *, minor_user_id: str, consent_kind: str) -> None:
+            del consent_kind
+            self.minor_ids.append(minor_user_id)
+            return None
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+    guardian = _RecordingGuardianStore()
+    app.state.guardian_store = guardian
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            active_subject_id="person-independent-child",
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "tutor", "english_practice"),
+        )
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=body
+        )
+
+    assert response.status_code == 200, response.text
+    assert guardian.minor_ids == ["person-independent-child"]
+    assert catalog.queries == []
+    assert response.json()["grounded_items"] == []
+
+
+@pytest.mark.asyncio
 async def test_response_plan_rejects_deleted_sessions_and_accounts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
