@@ -10,8 +10,8 @@ from services.agent.src import heartbeat as heartbeat_module
 from services.agent.src import main as main_module
 
 
-def test_livekit_1_6_10_registration_probe_tracks_reconnect_state() -> None:
-    assert version("livekit-agents") == "1.6.10"
+def test_livekit_1_8_2_registration_probe_tracks_reconnect_state() -> None:
+    assert version("livekit-agents") == "1.8.2"
     server = agents.AgentServer()
     assert server._id == "unregistered"
     assert server._closed is True
@@ -56,6 +56,64 @@ def test_online_start_validates_required_keys_first(monkeypatch: pytest.MonkeyPa
         main_module.main()
 
     assert requested == [True]
+
+
+def test_telemetry_privacy_defaults_fail_closed_before_sdk_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-01: LiveKit 1.8.x must not collect content or allow PII by default."""
+
+    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+    monkeypatch.delenv("LIVEKIT_TELEMETRY_ALLOW_PII", raising=False)
+
+    applied = main_module._apply_telemetry_privacy_defaults()
+
+    assert applied == {
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "0",
+        "LIVEKIT_TELEMETRY_ALLOW_PII": "0",
+    }
+    import os
+
+    assert os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "0"
+    assert os.environ["LIVEKIT_TELEMETRY_ALLOW_PII"] == "0"
+
+
+def test_telemetry_privacy_defaults_treat_blank_as_unset_and_keep_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    # A blank value is exactly the leaky case: unset and "" both mean "capture".
+    monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "  ")
+    monkeypatch.setenv("LIVEKIT_TELEMETRY_ALLOW_PII", "1")
+
+    applied = main_module._apply_telemetry_privacy_defaults()
+
+    assert applied["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] == "0"
+    # An explicit non-blank operator value is preserved, not silently overridden.
+    assert os.environ["LIVEKIT_TELEMETRY_ALLOW_PII"] == "1"
+
+
+def test_production_start_applies_privacy_defaults_before_loading_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, str | None] = {}
+
+    def record_and_fail(*, require_keys: bool = False) -> None:
+        import os
+
+        seen["capture"] = os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT")
+        seen["pii"] = os.environ.get("LIVEKIT_TELEMETRY_ALLOW_PII")
+        raise RuntimeError("stop before worker startup")
+
+    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+    monkeypatch.delenv("LIVEKIT_TELEMETRY_ALLOW_PII", raising=False)
+    monkeypatch.setattr(main_module, "load_settings", record_and_fail)
+
+    with pytest.raises(RuntimeError, match="stop before worker startup"):
+        main_module.main()
+
+    assert seen == {"capture": "0", "pii": "0"}
 
 
 def test_offline_import_health_skips_livekit_start(

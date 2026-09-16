@@ -21,7 +21,34 @@ def _livekit_server_is_registered(server: object) -> bool:
     )
 
 
+#: LiveKit 1.8.1 collects GenAI message content and lets third-party exporters
+#: receive conversational content unless told otherwise. Both switches are read
+#: from the environment, and ``capture_content`` is read when the SDK module is
+#: imported, so they must be set before ``livekit.agents`` is imported.
+_TELEMETRY_PRIVACY_DEFAULTS = {
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "0",
+    "LIVEKIT_TELEMETRY_ALLOW_PII": "0",
+}
+
+
+def _apply_telemetry_privacy_defaults() -> dict[str, str]:
+    """Fail closed on LiveKit content capture / PII export before SDK import.
+
+    An operator who really needs message content in an external GenAI backend
+    can still opt in explicitly; the default must not be "collect".
+    """
+
+    applied: dict[str, str] = {}
+    for name, value in _TELEMETRY_PRIVACY_DEFAULTS.items():
+        current = os.environ.get(name)
+        if current is None or current.strip() == "":
+            os.environ[name] = value
+        applied[name] = os.environ[name]
+    return applied
+
+
 def main() -> None:
+    _apply_telemetry_privacy_defaults()
     settings = load_settings(require_keys=True)
     # Offline health: allow import without starting LiveKit CLI.
     if settings.offline_mock and len(sys.argv) == 1:

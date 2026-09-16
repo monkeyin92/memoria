@@ -7,7 +7,12 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-15
-resume_checkpoint: p0_asr_candidate_boundary_and_weather_budget_local_fix_pending_release_20260915
+resume_checkpoint: p1_01_livekit_181_local_candidate_ready_and_p0_04_student_safety_loop_http_verified_device_acceptance_pending_20260915
+livekit_upgrade_candidate: local_lock_181_ready_not_built_not_released
+livekit_upgrade_candidate_verified: lock_check_frozen_install_sdk_compat_typeddict_consumption_pii_canary_5005_passed
+student_safety_loop_verified: http_level_outbox_enqueue_guardian_readback_fixed_script_text_exact
+guardian_notification_delivery_channel: absent_outbox_only_status_pending
+next_human_action: real_device_acceptance_when_operator_available
 firmware_face_acceptance: conversation_face_v3_flashed_awaiting_idle_and_five_expression_photos
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
@@ -18,7 +23,7 @@ miniprogram_role: control_plane_only
 miniprogram_development_version: 0.8.84
 miniprogram_account_device_sync: uploaded_0.8.84_phone_desktop_pending
 production_readiness: ready
-production_readiness_observed_at: 2026-09-15T16:00:49+08:00
+production_readiness_observed_at: 2026-09-15T21:02:33+08:00
 offsite_backup_enabled: false # 用户 2026-09-14 决定：项目验证阶段暂不启用自动备份/异地副本；WAL 归档仍在写且无人裁剪
 realtime_microphone_allowed: false
 realtime_tts_playback_allowed: false
@@ -70,6 +75,14 @@ capture_lifecycle_code: true
 capture_lifecycle_wired: true
 capture_lifecycle_enabled: new_cli_real_conversation_completed_20260915T190709CST
 capture_lifecycle_verified: conversation_sigterm_finalized_three_streams_stopped_no_forced_kill_or_cleanup_error
+asr_weather_boundary_code: committed_1cf8decaee8b28aa73d104f7aea89086e942db66
+asr_weather_boundary_wired: existing_python_candidate_lifecycle_and_open_meteo_provider
+asr_weather_boundary_enabled: agent_bridge_20260915_asr_weather_boundary_v1
+asr_weather_boundary_verified: release_gates_ci_and_real_provider_smoke_pass_device_pending
+asr_weather_boundary_evidence_date: 2026-09-15
+auto_audio_acceptance: blocked_before_question_1_no_wake_with_tingting_or_meijia
+auto_audio_human_listened: false
+auto_audio_sample_wall_clock_alignment: unverified_inconsistent_sample_wall_clock
 pre_roll_code: not_implemented
 pre_roll_wired: false
 pre_roll_enabled: false
@@ -133,6 +146,51 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 另修 `a43668c` 引入的回归：它把 `duplex_runtime` **未分类 VAD 路径**的 `explicit_interrupt` 从 `False` 放宽成「含命令意图」，使影子/uncertain 声纹的「停一下」也能抢话轮停播，`test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout[停一下]` 转红（干净 HEAD 上就红）。已把该路径收窄为仅 `END_SESSION` 放行，`h1`（`_speaker_allows_user_input` 的告别子句）与 `h4`（已分类路径的告别放行）**按原样保留**——它们没有单测覆盖，但是为真机播放期告别所加，不能用「单测绿」反推可删。新增 `test_playback_unconfirmed_farewell_still_takes_the_floor` 钉住告别仍可抢到话轮。
 
 模块预算没有上调：`a43668c` 让 `duplex_runtime` 从正好 4246 涨到 4260，而 `deploy_agent_component.sh` 把 `pyproject.toml` 当依赖输入（见「发布前门禁」），改预算就断快速通道。改为在 `a43668c` 自己引入的表达式内原地压缩 13 行（合并多行调用、折叠集合字面量、精简注释），行为不变，文件回到正好 4246。
+
+## 2026-09-15 无设备/LiveKit 专项（记录 18:20 后）：P1-01 本地候选 + P0-04 学生安全闭环
+
+本轮用户明确「真机测试明天再测」，所以**没有开串口、没有刷机、没有发布、没有动生产环境**。全部为本地代码、测试与证据。
+
+### P1-01 LiveKit 1.8.x 同组升级：本地候选就绪，未发布
+
+`pyproject.toml` / `uv.lock` 精确变更 7 项：`livekit-agents`、`livekit-plugins-openai`、`livekit-plugins-silero` 三件套 `1.6.10 → 1.8.2`；RTC `1.1.14 → 1.1.18`；`livekit-api` `1.2.0 → 1.2.1`（约束由 `>=1.1.1,<2` 收紧为 `>=1.2.1,<2`）；`livekit-protocol` `1.1.22 → 1.1.26`（新增显式 `>=1.1.25,<2`，否则 uv 会保留旧锁 1.1.22 而不满足 API 1.2.1）；`livekit-local-inference` `0.2.6 → 0.2.7`。`livekit-blingfire` 保持 `1.1.0`。无其他漂移，未用 `--no-deps`。
+
+新增两个测试文件：
+
+- `services/agent/tests/unit/test_livekit_candidate_compat.py`：`TypedDict` 会静默接收未知键，所以逐键核对 `TurnHandlingOptions`/`EndpointingOptions`/`InterruptionOptions`/`PreemptiveGenerationOptions` **零丢弃**，并回读 `AgentSession._opts.turn_handling` 证明配置被真实消费（不是"构造没抛异常"）。半双工禁打断、1.8.x 新增 `user_turn_limit` 默认不生效、`aec_warmup_duration=None` 仍读回 0.0、`room_io` 五个 Options 签名、`stt`/`tts`/`types` 符号全部钉住。
+- `services/agent/tests/unit/test_livekit_candidate_privacy.py`：用真实 `TracerProvider` + `InMemorySpanExporter` 与假姓名/私有正文/tool 参数 canary。**先有反证用例**证明不显式关闭时 canary 确实到达 exporter；显式 `allow_pii=False` 或 `LIVEKIT_TELEMETRY_ALLOW_PII=0` 时五处内容属性都不出现而非内容计量仍到达；`CAPTURE_MESSAGE_CONTENT=0` 时内容属性根本不写入。SDK 的 env 规则被钉住：**未设置/空串=采集**，只有 `0/false/no/off` 是关闭，且在 SDK 导入期求值。
+
+接线（不只停在"SDK 支持这个配置"）：`services/agent/src/main.py` 新增 `_apply_telemetry_privacy_defaults()`，在 `main()` 第一步执行（早于 `load_settings` 与 worker 启动）；`docker-compose.production.yml` 的 `agent` 与 `voice-core-media-bridge` 都显式写上这两项；`.env.example` 与 `infra/memoria.env.production.example` 补带注释的 `=0`（原文件是空值，空值等于采集）。
+
+门禁（本地）：`uv lock --check`、`uv sync --frozen --extra dev` 一致、靶向 **618 passed / 0 skipped**、全仓 **5002 passed / 0 failed / 3 skipped（合计 5005，带真 PG `MEMORIA_TEST_POSTGRES_DSN`）**、`ruff` 全绿、`mypy services --strict` 433 文件无问题、模块预算 **PASS 未放宽**、Media Edge `go build/vet/test` 通过。证据 `outputs/acceptance/run-20260915-p1-01-livekit-181/`（`report.md` 有逐条边界）。
+
+**未完成**：候选上线与回滚验收需要生产与设备窗口；依赖锁变化的发布**不能**走 agent-only source overlay 快速通道。
+
+记账的既有偏差：`uv sync --all-extras` 在 macOS 上会因可选 `kws` extra 的 `vosk==0.3.45` 没有 macOS wheel 而失败（开发机用 `--extra dev`，Linux 镜像路径不受影响）；`mypy` 报 5 个 unused override section（说明新版 SDK 自带类型标注，但清理它们会改 `pyproject.toml` 而在干净基线发布门禁里被 REJECT，故本轮故意不动）；`services/media_edge/device_ws_server_test.go` 不是 gofmt 干净（`1cf8dec` 基线同样存在）。
+
+### 顺手修掉一个既有 Go 测试失败（与 LiveKit 无关）
+
+`TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt` 在 `1cf8dec` 干净基线 worktree 上**已经失败**，不是本轮引入。保护逻辑本身正确（`approximate` 设备的回执不会被提升成 exact，即不会误升级为 Actual Heard），但拒绝路径只排队一个 `session.error` 就返回，读循环返回后连接被立刻拆除、队列里的诊断消息可能来不及写出，设备侧只见裸 `1006`，测试因此偶发失败（单独跑通过、全量跑失败）。修法：该路径补显式关闭帧 `4002 / playback_watermark_precision_mismatch`（与其它被拒控制帧同一个不可重试会话失败码），测试改为断言**确定性的关闭帧**，并注释说明 `session.error` 仍是 best-effort。`go test -count=5` 稳定通过。**未处理**：与其它拒绝路径共享的"读循环返回即拆 lane、排队控制消息可能丢"时序问题，需单独跟踪，本轮不声称整个 Edge 的 `session.error` 投递已可靠。
+
+### P0-04 学生安全闭环：HTTP 级端到端补齐
+
+新增 `services/control_api/tests/test_student_safety_loop.py`（9 项）。受控学生账号触发危机后：response plan 的 `direct_text` **逐字等于** `CRISIS_SUPPORT_REPLY`（即设备端会听到的文本，不被导师话轮约束改写）；`guardian_notification_outbox` 入队 1 条；家长端列表可读且 `delivery_status=pending`、`contains_transcript=false`、`contains_severity=false`；危机原文不进家长端响应、不进 evidence payload。
+
+另覆盖：同 generation 重放不重复入队（response-plan 缓存路径 + 绕缓存的 store 层幂等）、新 generation 是独立事件、**成人危机不碰 outbox**、**unknown/guest 拿固定话术但不进主人私有链**、入队不可用时固定话术不被压掉（异常仍可观测）、家长端列表按 guardian 作用域隔离且学生本人 403、**撤销学生语音同意立即生效**（新会话立刻 403 且已登记语音会话被终止）、**邀请家人不把学生提升为 owner**（`digital_self`/`speaker_enrollment` 继续 `minor_forbidden`）。
+
+真 PG 域合计 **45 passed / 0 failed / 0 errors / 0 skipped**（`memoria-pgv` @ `127.0.0.1:55439`；上一轮同一域是 34 passed）。证据 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/`。
+
+**边界（不得被误读）**：`guardian_notification_outbox` 仍只有入队与列表读取，`wechat_subscription` 只是枚举值，**没有**发送 worker、重试、投递状态更新、模板或凭据，所以 `delivery_status` 恒为 `pending`——**入队不等于家长已收到**。真实设备上的固定安全话术（听感）与真实账号+真机能力门演练仍待明天时段；本轮只证明下发给设备的文本逐字正确。技术验收不代替法律合规结论。
+
+### P1-06 召回遗漏：只做根因定位，未改检索代码
+
+在候选锁上重跑 16 例固定集：恰好 3 例 `r5=0.00`、其余 13 例 `r5=1.00`（与 `recall@5=0.8125=13/16` 吻合）。三条根因逐条可复现，诊断文档 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`：
+
+- `paraphrase-food-preference`：记忆已抽取并在 review 后为 `confirmed`，但查询「点菜时有哪些东西要帮我避开？」的 n-gram 与「我吃饭时不喜欢香菜。」**零词面重叠** → 检索缺语义桥，不是抽取失败。修法位置是 `recall_planner.py` 已有封闭词表扩展模式，不引入向量库。
+- `person-alias-mother`：人已抽到 `('李梅','mother',('妈妈','母亲','李梅'))`，但 `家里人也叫她阿梅` 的**别名「阿梅」没抽到**。另记：`_entities()` 只接受 `confirmed`，而 review 只提升 claim、**不提升 person 条目**。
+- `repeated-episode-campus-startup`：两段证据未合并成跨会话 episode，而数据集判据要求两条 `source_event_ids` 同时属于一条 `kind=episode`，**该判据当前不可满足**；不能靠改词表解决，要么做合并语义、要么改判据——需先明确取舍。
+
+未改 `recall_planner.py`/`memory_extractor.py`/`memory_catalog.py`/数据集，未新增词表或合并语义，未放宽任何 privacy 门。注：`MemoryCatalog.context()` 是 `confirmed_only=True`，本轮把它当**故意的质量门**，没有放宽。
 
 ## 2026-09-15 多日天气与续问关停修复（功能真机 2/3、短播放计量通过；延迟/VAD/长播待验）
 
@@ -200,13 +258,25 @@ epoch **1900** 真机（18:26 CST，session `4da51bf8`）确认 filler 单次化
 
 下一步按 `TODOLIST.md` 验收下述输入边界/查询预算修复，再补最后一轮人工功能复测、新 VAD/临近静默续问与 >45 秒长播。短播放计量与原会话收尾已通过，不重复刷机；后续强杀/缺记录仍保留 degraded/incomplete，不追写为 healthy。P0-03 仍未整体完成，不能外推全双工。
 
-### 2026-09-15 ASR 候选边界与天气查询预算（本地候选，待发布）
+### 2026-09-15 ASR 候选边界与天气查询预算（已发布，自动代测未唤醒，真机待验）
 
 - 已复现代码根因：播放期无有效 VAD 端点的旧 final 留在 pending window，续问 final 沿用最早起点，timeline 将旧字拼进新提交；现场为 final 10 字、commit 42 字。上段 ASR「只是线索」结论由本轮复现更新，旧片段为何被识别出来（回声/背景/幻觉）仍未知。天气端逐字删首字符再串行 geocode 将污染放大为 21 次请求与 7.93s 查询。
 - 在现有 Python 生命周期加窄范围隔离：只处理 device 播放期遗留、无 active VAD/端点/已判定工具语义的候选，回复结束且新 final 与旧 end 相隔 >2.5s 时建 sample floor；这是保守 ASR 分窗策略，不是测得的 VAD 静默。清除旧候选/partial，旧 ASR revision、语义救援、VAD 和 await 后迟到结果不得越界；正常分句、主动 VAD 与已固定端点保留。不开新控制面、不推进 owner 或 generation。
 - 天气只尝试完整地名和明确行政边界，最多 3 个候选，污染串不猜末两字；同一绝对 deadline 覆盖 OpenMeteo geocode+forecast（默认 8s），超时走既有 fallback、外部取消继续传播。该 8s 不是包括 Qwen fallback 的整链上限，也不代替 1.5s 性能验收门。
 - 当前仅首 ACK；历史 1905/20260912 曾恢复的第二提示已被后续移除，相关旧条目只作当时事实，不是当前启用状态。修复不恢复重复提示、不改静默/VAD/声纹阈值、不做 0026 预缓冲。
 - 用户授权 Mac 外放提问和麦克风收音；使用有界脚本、独立唤醒、完整正文 fence/终态后才续问，测试后恢复原静音。机器录音/日志与人工听感分开，自动代测不累加人工 2/3；合成声音被门禁拒绝则停止。自动脚本及原始日志回放自检放 `outputs/design/auto-audio-20260915/`，发布证据放 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/`。
+
+发布与本轮验收（以下时间均为北京时间 UTC+08:00）：
+
+- **已发布**：冻结提交 `1cf8decaee8b28aa73d104f7aea89086e942db66` / tag `20260915-asr-weather-boundary-v1`，正式 release gates 通过；CI **34971139245 completed/success**（20:58:40 完成，收尾时经 GitHub 再查确认）。`ci-final.json` 实为发布时的 in-progress 快照，原样保留，新核验单列 `ci-verified.json`，不把文件名当最终状态。21:00:12 Agent/Bridge 启动新镜像，21:00:38 切流检查通过，当前 image 与紧邻回滚见「当前生产」。有效 env SHA 不变，17 个非目标容器不变，未刷固件/修改设备策略或生产配置。
+- **真实 provider smoke 通过，非设备听测**：今天南京 / 明天南京 / 未来三天南京均仅 1 次 geocode，分别请求 `forecast_days=1/2/3`，答案标签分别为今天 / 明天 / 今天、明天、后天；耗时 **4589/2857/2406ms**。污染长串仅 1 次 geocode、841ms，未逐字削首并猜成南京。四例 `device_acceptance=false`，不能用单次请求耗时推断真实 ACK→正文间隔，更不能关闭 1.5s 性能门。证据 `candidate-weather-smoke.jsonl`。
+- **运行验收通过**：真实 LiveKit/provider smoke 和 readiness refresh PASS；21:02:33 回环/公网 8443 均 HTTP 200 ready、具名 core 12/12、Agent heartbeat ready。发布原始 `runtime-compare.json` 仍为 `passed=false / server_release_passed=true / device_connected_at_snapshot=false / device_reconnect_verified=false`；保留“发布成功但真机尚未重连验收”的事实，不追写成整体验收成功。
+- **自动声学对照已执行，停在唤醒前置**：`run-20260915-auto-audio-retry3/` 的 Tingting（21:57–21:58）和 `run-20260915-auto-audio-meijia/` 的 Meijia（22:27–22:28）各播放 3 次「茉莉」。两轮自测及唤醒词参考波形匹配均证实 Mac 外放被 Mac 麦克风录到，但没有新的 wake detected / WSS session，设备一直 idle，`bindings=[] / turns=[]`，没有播放天气问题。尚未进入声纹判定，不能断言被 CAM++ 拒绝，也不能据此诊断机器人听不到或硬件故障；当前未知是合成音、摆位/距离还是其他声学条件所致。停止重复试播，不绕过唤醒/owner gate。
+- **自动工具审计与边界**：自测必须唯一匹配已播放参考，不能仅凭环境噪声起伏过关；正文必须唯一匹配完整 session/stream/turn/generation fence 与闭合播放窗，排除 ACK、旧会话、电脑 prompt、缺失/歧义/未闭窗口。离线自检、会话证据 **43** 项、音量恢复 **5** 项、Ruff 与编译检查通过。分析只写独立 `audio-analysis.json`，原始 `results.json` SHA 在分析前后不变。两轮录音的采样点与播放墙钟无法由同一 offset 对齐（`inconsistent_sample_wall_clock`），具体原因未定位；不做无证据的时间拉伸/平移，不产出精确 gap 或正文听感结论。能量只证明该窗口有能量，不能证明音源、语义、连续播放或人工 Actual Heard。
+- **现场已收尾**：Meijia 捕获于 **22:28:02.799** 正常 SIGTERM 完成，三路日志均 `stopped_by_capture`、无 forced kill/serial/cleanup error；ffmpeg 已停止，串口无占用。两轮 `volume-restore.json` 均确认输出恢复 **31%、muted=true**，输入仍 **82%**。收尾再读系统音量一致，无后台录音或后续自动播放。脚本/设计/录音位于 ignored 的 `outputs/`，没有随生产修复提交；不得声称 git 干净即这些工具已入库。
+- **用户要求提高音量后的追加对照**：保持 Meijia 不变，仅将输出 **80% → 90%**，22:36:49–22:37:18 分开播放三次「茉莉」。自测通过，Mac 录音内三次唤醒词均匹配参考，但仍无设备 wake/WSS 会话、无问题或正文，不能说明低音量是根因。自测匹配窗口 RMS **-9.75dBFS**、峰值接近满幅（四舍五入 **0.0dBFS**），只反映 Mac 收音，不等于机器人麦克风声压；不据此继续无限加音量。时轴仍为 `inconsistent_sample_wall_clock`。证据 `outputs/acceptance/run-20260915-auto-audio-meijia-volume90/`；捕获 **22:37:30.586** 正常 SIGTERM 收尾，三路无强杀/错误，录音和串口均释放，输出再次恢复 **31%/muted=true**、输入 **82%**。原始 results SHA 在独立分析前后相同。
+
+**剩余验收**：历史人工功能 2/3 仅属于前版 `d721455`，本次发布未取得新会话，不能继承为新版已通过。保持 P0-03 未完成；后续有可用声学条件时再验证本版三天天气、续问及告别、新 VAD/临近静默、查询时延与 >45s 长播。当前不再重复试播，不实施 `0026`、不改声纹/唤醒/VAD 阈值，`direct_real_device_verified` 与 `full_duplex_verified` 均为 false。
 
 ## 2026-09-14 readiness 证据刷新修复（16:32 CST unit 路径 PASS；回环与公网均 ready）
 
@@ -447,11 +517,11 @@ python -m esptool --chip esp32s3 -p PORT -b 460800 --before default-reset --afte
 
 **Agent / Bridge**（容器 `memoria-agent-1` / `memoria-voice-core-media-bridge-1`）
 
-- 当前：`memoria-agent:20260915-weather-followup-lifecycle-v1`，image `sha256:91c0eb36d2cc4ae35dce1d842308e7f4c0f7648ab9068908c1576661e287a398`，OCI revision `d7214554316bdaa13984c7b8ecf00aeb61693311`。Agent/Bridge 共用该 image，2026-09-15 **15:58:42 CST**（07:58:42Z）切流；gRPC 7001 PASS、双 healthy、restart=0；两容器各 **910 文件 SHA256** 与冻结源码匹配。栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。收据 `/opt/memoria/component-releases/20260915-weather-followup-lifecycle-v1/`，源包 22,343,680 bytes / SHA `e58e227154aeb075dd66e8e1e7d5e91979c82941c4cdaebbdb54f39b37de4d1a`。
-- 紧邻回滚：`memoria-agent:rollback-20260915-weather-followup-lifecycle-v1-pre`（保留原别名 `memoria-agent:20260914-downlink-pacing-v1`，image `sha256:cfdc7358b3a548e3e9df0268bb4a87945c8e87c84c37fff4da435d9cc2941ff8`，revision `4bb70fc38397516d245202f0e8bd755e35c1f22b`）。旧 Compose override 所需标签保留，`ROLLBACK_POINT.txt` 与 `CUTOVER_RESULT.txt` 均经 SHA 校验；回滚证明可运行，不代表旧版天气/续问缺陷已修复。
+- 当前：`memoria-agent:20260915-asr-weather-boundary-v1`，image `sha256:3f746b4dede8b2f35773ca5b2c6300174a278932eee7d720f4904c00d2b865bb`，OCI revision `1cf8decaee8b28aa73d104f7aea89086e942db66`。Agent/Bridge 共用该 image，2026-09-15 **21:00:12 CST**（13:00:12Z）启动、**21:00:38 CST** 切流检查 PASS；gRPC 7001 PASS、双 healthy、restart=0，自动代测结束后现场复查仍一致。栈 tag 仍为 `20260901-0945-wake-word-whitelist`，`/opt/memoria/current` 仍指向 `20260827-architecture-split-v1`。收据 `/opt/memoria/component-releases/20260915-asr-weather-boundary-v1/`，源包 **22,405,120 bytes** / SHA `2e1f000bf3f74944ac842703760a56e500e538b6697af81938ea57cc8899b850`；不沿用前版的 910 文件核验计数。
+- 紧邻回滚：`memoria-agent:rollback-20260915-asr-weather-boundary-v1-pre`（保留原别名 `memoria-agent:20260915-weather-followup-lifecycle-v1`，image `sha256:91c0eb36d2cc4ae35dce1d842308e7f4c0f7648ab9068908c1576661e287a398`，revision `d7214554316bdaa13984c7b8ecf00aeb61693311`）。已由本次切流记录及收尾时 live image inspect 核对；前版有真实短会话运行证据，本轮未执行实际回滚演练。不要再用下方历史清理条目的前前版标签作为当前回滚目标。
 - 独立依赖底座：`memoria-agent:20260912-p0-rollback-single-tag-agent-component` / `memoria-agent-runtime-base:uv-c34f031b4a40c7a7-af6e83d18883`，共同 image `sha256:3d46ca183984c2e5e7fd5f06e62b2eac6660049c637d1e9177d5c6874741364a`；当前与回滚均依赖它，不按历史业务版本删除。
-- 有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；**17 个非目标容器** ID/image/StartedAt/env/restarts/health/status 全部未变。详见发布证据 `preflight.jsonl`、`postflight.jsonl`、`runtime-source-check.log`。
-- 本版新增多日天气、VAD/静默/grace/watchdog 交接、ASR 异常恢复、prepare 绝对期限与重连旧结果 fencing；保留跨已提交区间救援防重复门、ACK/正文 handoff 与有效输出恢复。Bridge 下行计量已明确为 **post-pacer send**，不能外推 provider 产出速度或设备 I2S/DMA 状态；具体修复边界见上方同日条目。
+- 有效 env SHA256（排序并保留末尾换行）切前后相同：Agent `31d95c9851c1c50c1b16b6cb5ada890479daafc654fd5414d82b678e9843d12e`，Bridge `f5b67cb63838038e3b101ed97812b3169cf368e90437f2af202cfca235f3d05d`；**17 个非目标容器** ID/image/StartedAt/env/restarts/health/status 全部未变。详见 `outputs/acceptance/run-20260915-p0-03-asr-weather-boundary-release/{preflight.jsonl,postflight.jsonl,runtime-compare.json}`。
+- 本版新增 ASR 遗留候选 sample boundary/revision 隔离、天气最多 3 个明确地名候选及 OpenMeteo 共享 deadline；保留前版多日天气、VAD/静默/grace/watchdog 交接、ASR 异常恢复、prepare 绝对期限、重连 fencing，以及跨已提交区间救援防重复门、ACK/正文 handoff 与有效输出恢复。Bridge 下行计量仍为 **post-pacer send**，不能外推 provider 产出速度或设备 I2S/DMA 状态；具体修复与真机未验边界见上方同日条目。
 - 2026-09-15 保留清理：只读预检后删除 allowlist 内 **18 个旧 Agent source-overlay image ID（其中 3 对共 6 个 tag，另 15 个 dangling）**，以及三个旧版本的 **6 项 source tar/build payload**。当前、紧邻回滚及其旧 override 所需别名、独立 runtime-base、非目标容器、manifest/收据均保留；清理后再次核对保护镜像 ID 与双 healthy。`df -B1` 可用 **63,834,279,936 → 63,985,270,784 bytes**，净增约 **144 MiB**，不能按镜像虚拟大小声称回收数 GB。证据 `outputs/acceptance/run-20260915-p0-03-weather-lifecycle-release/{retention-preflight.log,retention-apply.log}`；未清理 build cache、全栈 incoming 或任何数据库/WAL/MinIO/安全备份。
 
 **Media Edge**
