@@ -215,6 +215,18 @@ class _ResponsePlanCache:
             self._entries.move_to_end(key)
             return copy.deepcopy(cached.payload)
 
+    async def invalidate(self, key: _ResponsePlanCacheKey) -> None:
+        """Drop one entry so a withdrawn plan stops being served and retained.
+
+        A cached payload can contain private persona/memory context.  Once the
+        read path reports that the session's authorization is gone, the entry is
+        not merely unusable, it is private data the process has no reason to keep
+        holding.
+        """
+
+        async with self._guard:
+            self._entries.pop(key, None)
+
     async def put(
         self,
         key: _ResponsePlanCacheKey,
@@ -250,6 +262,45 @@ def _response_plan_cache(request: Request) -> _ResponsePlanCache:
         cache = _ResponsePlanCache()
         request.app.state.response_plan_cache = cache
     return cache
+
+
+async def _cached_plan_is_still_authorized(
+    request: Request,
+    *,
+    session_id: str,
+    actor_id: str,
+) -> bool:
+    """Re-fence a cached plan before it is reused.
+
+    A cached payload can contain private persona/memory context, and the cache is
+    keyed only by the generation fence.  A retried identical request would
+    otherwise be served a plan computed before a legal manager change withdrew
+    the session's authorization -- bypassing exactly the check the read path
+    exists to apply.  Widening the key would NOT fix it: the take-over leaves the
+    signed profile and the session epoch untouched, so the key is identical and
+    only a live read of the device binding can tell the two apart.
+
+    No configured authority means the login account is the subject by
+    construction, which is the same convention the rest of this module follows.
+    """
+
+    runtime_service = getattr(request.app.state, "session_runtime_service", None)
+    if runtime_service is None:
+        return True
+    try:
+        await runtime_service.current(
+            actor_id=actor_id,
+            session_id=session_id,
+            now=datetime.now(UTC),
+        )
+    except Exception:
+        logger.warning(
+            "cached response plan is no longer authorized session_id=%s",
+            session_id,
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 def _tutor_turn_policy(request: Request) -> TutorTurnPolicy:
@@ -414,6 +465,103 @@ def _account_keyed_memory_is_subject_scoped(
     """
 
     return active_subject_id == account_id
+
+
+@dataclass(frozen=True, slots=True)
+class _SubjectMemoryScope:
+    """Which memory one turn may read, resolved in exactly one place.
+
+    Two Agent-facing seams have to answer this question (`/response-plan` and
+    `/context-prefetch`).  When they answered it independently, the seam that
+    skipped the authority read became an account-keyed read for a subject that
+    was not the login account -- and kept reading after a legal manager change
+    withdrew the session's authorization.  One resolver is the point.
+    """
+
+    subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
+    subject_id: str
+    subject_category: str | None
+    age_band: str | None
+    retention_allowed: bool
+    account_keyed_memory_readable: bool
+
+    @property
+    def memory_readable(self) -> bool:
+        """Whether an account-keyed memory read may answer for this turn."""
+
+        return self.retention_allowed and self.account_keyed_memory_readable
+
+
+async def _resolve_subject_memory_scope(
+    request: Request,
+    *,
+    session_id: str,
+    account_id: str,
+) -> _SubjectMemoryScope:
+    """Read the current subject once and decide the memory it may read.
+
+    The current subject is read once and decides the category, the consent
+    lookup, the memory scope and the notification target.  A configured-but-
+    unavailable authority stays observable and conservative: it never silently
+    degrades to the account profile, never guesses a minor, and never notifies a
+    guardian.  The signed Runtime Profile is the subject authority, and the
+    authority's own read path fences it against the device's current binding, so
+    a withdrawn session resolves to `unavailable` here.
+    """
+
+    subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
+    subject_id = account_id
+    subject_category: str | None = None
+    age_band: str | None = None
+    runtime_service = getattr(request.app.state, "session_runtime_service", None)
+    if runtime_service is None:
+        # This deployment profile has no persistent Session Runtime; the login
+        # account is the subject by construction.
+        subject_authority = "account_profile"
+    else:
+        subject_authority = "unavailable"
+        try:
+            session_dict = require_active_voice_session(request, session_id)
+            runtime_profile = await _current_persistent_runtime_profile(
+                request, session_dict, session_id=session_id
+            )
+        except Exception:
+            logger.exception(
+                "current subject authority unavailable session_id=%s; "
+                "keeping the conservative capability gate",
+                session_id,
+            )
+        else:
+            subject_authority = "runtime_profile"
+            profile_subject_id = runtime_profile.get("active_subject_id")
+            if isinstance(profile_subject_id, str) and profile_subject_id.strip():
+                subject_id = profile_subject_id
+            profile_category = runtime_profile.get("subject_category")
+            if isinstance(profile_category, str):
+                subject_category = profile_category
+            profile_age_band = runtime_profile.get("age_band")
+            if isinstance(profile_age_band, str):
+                age_band = profile_age_band
+    if subject_authority == "account_profile" and subject_category is None:
+        profile = _store(request).get_subject_profile(user_id=subject_id)
+        if profile is not None:
+            subject_category = profile.get("subject_category")
+            age_band = profile.get("birth_year_band")
+    return _SubjectMemoryScope(
+        subject_authority=subject_authority,
+        subject_id=subject_id,
+        subject_category=subject_category,
+        age_band=age_band,
+        retention_allowed=await _subject_memory_retention_allowed(
+            request,
+            subject_person_id=subject_id,
+            subject_category=subject_category,
+        ),
+        account_keyed_memory_readable=_account_keyed_memory_is_subject_scoped(
+            active_subject_id=subject_id,
+            account_id=account_id,
+        ),
+    )
 
 
 def _registry(request: Request) -> RegistryPort:
@@ -2050,7 +2198,16 @@ async def response_plan(
                     raise HTTPException(status_code=409, detail="account deletion is in progress")
                 cached = await cache.get(key, fingerprint)
                 if cached is not None:
-                    return cached
+                    if await _cached_plan_is_still_authorized(
+                        request,
+                        session_id=body.session_id,
+                        actor_id=account_id,
+                    ):
+                        return cached
+                    # The session's authorization is gone, so the snapshot is
+                    # private data this process must stop serving AND stop
+                    # holding; the fresh pass below answers conservatively.
+                    await cache.invalidate(key)
         except AccountDeletingError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
@@ -2060,63 +2217,20 @@ async def response_plan(
             frozen=frozen,
             now=now,
         )
-        # The current subject is read once and decides the category, the
-        # consent lookup, the memory scope and the notification target. A
-        # configured-but-unavailable authority stays observable and
-        # conservative: it never silently degrades to the account profile,
-        # never guesses a minor, and never notifies a guardian.
-        subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
-        active_subject_id: str = account_id
-        active_subject_category: str | None = None
-        active_age_band: str | None = None
-        runtime_service = getattr(request.app.state, "session_runtime_service", None)
-        if runtime_service is None:
-            # This deployment profile has no persistent Session Runtime; the
-            # login account is the subject by construction.
-            subject_authority = "account_profile"
-        else:
-            subject_authority = "unavailable"
-            try:
-                session_dict = require_active_voice_session(request, body.session_id)
-                runtime_profile = await _current_persistent_runtime_profile(
-                    request, session_dict, session_id=body.session_id
-                )
-            except Exception:
-                logger.exception(
-                    "current subject authority unavailable session_id=%s; "
-                    "keeping the conservative capability gate",
-                    body.session_id,
-                )
-            else:
-                subject_authority = "runtime_profile"
-                profile_subject_id = runtime_profile.get("active_subject_id")
-                if isinstance(profile_subject_id, str) and profile_subject_id.strip():
-                    active_subject_id = profile_subject_id
-                profile_category = runtime_profile.get("subject_category")
-                if isinstance(profile_category, str):
-                    active_subject_category = profile_category
-                profile_age_band = runtime_profile.get("age_band")
-                if isinstance(profile_age_band, str):
-                    active_age_band = profile_age_band
-
-        if subject_authority == "account_profile" and active_subject_category is None:
-            profile = _store(request).get_subject_profile(user_id=active_subject_id)
-            if profile is not None:
-                active_subject_category = profile.get("subject_category")
-                active_age_band = profile.get("birth_year_band")
-
-        retention_allowed = await _subject_memory_retention_allowed(
+        # The current subject is read once and decides the category, the consent
+        # lookup, the memory scope and the notification target -- through the one
+        # resolver every Agent-facing seam shares, so they cannot drift apart.
+        scope = await _resolve_subject_memory_scope(
             request,
-            subject_person_id=active_subject_id,
-            subject_category=active_subject_category,
-        )
-        account_keyed_memory_readable = _account_keyed_memory_is_subject_scoped(
-            active_subject_id=active_subject_id,
+            session_id=body.session_id,
             account_id=account_id,
         )
+        active_subject_id = scope.subject_id
+        retention_allowed = scope.retention_allowed
+        account_keyed_memory_readable = scope.account_keyed_memory_readable
         is_minor_student = (
-            active_subject_category == "minor"
-            or active_age_band in {"under_14", "14_17"}
+            scope.subject_category == "minor"
+            or scope.age_band in {"under_14", "14_17"}
         )
         if (
             crisis.action == "crisis_support"
@@ -2292,7 +2406,23 @@ async def context_prefetch(
     frozen, account_id, _version, _relationship, _legacy_access = await _response_plan_context(
         request, body.session_id
     )
-    if frozen.interaction_mode != "companion":
+    scope = (
+        await _resolve_subject_memory_scope(
+            request,
+            session_id=body.session_id,
+            account_id=account_id,
+        )
+        if frozen.interaction_mode == "companion"
+        else None
+    )
+    if scope is None or not scope.memory_readable:
+        # The same contract as /response-plan: a non-companion turn, a subject the
+        # authority cannot read, a subject that is not the login account, or a
+        # minor without retention consent gets no account-keyed memory and no
+        # persona capsule.  This endpoint used to skip both gates and hand the
+        # account's private memory to whatever subject was using the device -- and
+        # to keep doing it after a legal manager change withdrew the session's
+        # authorization.
         return {
             "speaker_class": body.speaker_decision.classification,
             "grounded_items": [],
@@ -2306,6 +2436,7 @@ async def context_prefetch(
         query=body.query,
         speaker=body.speaker_decision,
         now=_local_now(cast(ControlSettings, request.app.state.settings)),
+        account_keyed_memory_readable=scope.account_keyed_memory_readable,
     )
     return {
         "speaker_class": body.speaker_decision.classification,

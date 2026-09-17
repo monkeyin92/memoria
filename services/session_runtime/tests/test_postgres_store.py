@@ -3346,6 +3346,88 @@ async def test_postgres_readiness_rejects_missing_receipt_authority_execute(
 
 
 @pytest.mark.asyncio
+async def test_postgres_readiness_rejects_missing_binding_fence_execute(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """The read-role binding fence must be a verified grant, not a hope.
+
+    Without EXECUTE the fence cannot answer, and the read path would turn that
+    into a 503 for every turn instead of denying only the withdrawn one -- so the
+    grant is part of the contract and its absence has to fail readiness.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await admin.execute(
+            "REVOKE EXECUTE ON FUNCTION "
+            "action_identity_binding_is_current(text, text, integer, timestamptz) "
+            "FROM memoria_session_api"
+        )
+    finally:
+        await admin.close()
+
+    with pytest.raises(SessionRuntimeAuthorityUnavailable, match="EXECUTE"):
+        await store.readiness()
+
+
+@pytest.mark.asyncio
+async def test_postgres_binding_fence_port_is_definer_fixed_path_and_read_role_only(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """The binding fence is a fixed-path definer port granted to the read role.
+
+    It reads an Identity table that the read role has no privilege on, so the
+    security properties are part of the contract: definer rights, a fixed
+    ``search_path``, RLS still on, no PUBLIC EXECUTE, and EXECUTE for exactly the
+    read role.  The write-side ports are executor-only; this one deliberately is
+    not, because the read path is what applies it.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        row = await admin.fetchrow(
+            """
+            SELECT p.proname,
+                   p.prosecdef,
+                   p.provolatile::text AS provolatile,
+                   pg_get_userbyid(p.proowner) AS owner,
+                   p.proconfig,
+                   has_function_privilege(
+                       'memoria_session_api', p.oid, 'EXECUTE'
+                   ) AS read_exec,
+                   has_function_privilege(
+                       'memoria_action_executor', p.oid, 'EXECUTE'
+                   ) AS executor_exec,
+                   has_function_privilege('public', p.oid, 'EXECUTE')
+                       AS public_exec
+            FROM pg_proc p
+            WHERE p.oid = to_regprocedure(
+                'public.action_identity_binding_is_current'
+                '(text,text,integer,timestamptz)'
+            )
+            """
+        )
+    finally:
+        await admin.close()
+
+    assert row is not None
+    assert str(row["proname"]) == "action_identity_binding_is_current"
+    assert row["prosecdef"] is True
+    assert str(row["owner"]) == "memoria_identity_owner"
+    config = [str(item) for item in row["proconfig"] or []]
+    assert "search_path=pg_catalog, public" in config
+    assert "row_security=on" in config
+    assert str(row["provolatile"]) == "s"
+    assert row["read_exec"] is True
+    assert row["public_exec"] is False
+    # The action executor runs under its own binding lock; it must not be handed
+    # this read-path predicate as well.
+    assert row["executor_exec"] is False
+
+
+@pytest.mark.asyncio
 async def test_postgres_action_executor_cannot_read_fence_tables_directly(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:

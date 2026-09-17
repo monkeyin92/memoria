@@ -2286,6 +2286,55 @@ REVOKE ALL ON FUNCTION action_identity_can_switch_subject(
 GRANT EXECUTE ON FUNCTION action_identity_can_switch_subject(
     text, text, integer, text
 ) TO memoria_action_executor, memoria_session_owner;
+
+-- Read-path binding fence.  Both Agent-facing seams decide from the signed
+-- profile, so a legal manager change has to close them too.  The WRITE path
+-- already refuses a superseded binding (action_identity_lock_binding validates
+-- version and status), but the read path only re-checked the profile
+-- projection, the session epoch and the TTL, so it kept answering for the OLD
+-- subject until the signed profile TTL expired.  This predicate answers exactly
+-- one question -- is (device, binding_id, binding_version) still the device's
+-- ACTIVE binding -- and nothing else, so the read path can fail closed without
+-- ever touching Identity tables directly.  The partial unique index
+-- identity_device_bindings(device_id) WHERE status = 'active' is what makes "my
+-- row is active" and "my row is the device's active binding" the same sentence.
+-- Deliberately read-only: no locking clause (the caller runs it in a read-only
+-- transaction), and the validity window is part of the answer for the same
+-- reason the lock port applies it.  Granted to the read role, not the action
+-- executor, because this is the read path's own check.
+CREATE OR REPLACE FUNCTION action_identity_binding_is_current(
+    p_device_id text,
+    p_binding_id text,
+    p_binding_version integer,
+    p_now timestamptz
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $action_identity_binding_is_current$
+    SELECT p_device_id IS NOT NULL
+       AND p_binding_id IS NOT NULL
+       AND p_binding_version IS NOT NULL
+       AND p_now IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+           FROM identity_device_bindings
+           WHERE device_id = p_device_id
+             AND binding_id = p_binding_id
+             AND binding_version = p_binding_version
+             AND status = 'active'
+             AND valid_from <= p_now
+             AND (valid_until IS NULL OR p_now < valid_until)
+       )
+$action_identity_binding_is_current$;
+REVOKE ALL ON FUNCTION action_identity_binding_is_current(
+    text, text, integer, timestamptz
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION action_identity_binding_is_current(
+    text, text, integer, timestamptz
+) TO memoria_session_api, memoria_session_owner;
 RESET ROLE;
 
 -- Device-owned trust lock port.  The NOLOGIN bridge has no public operation

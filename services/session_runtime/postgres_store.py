@@ -51,6 +51,7 @@ _REQUIRED_ROLES = frozenset(
 _REQUIRED_FUNCTIONS = frozenset(
     {
         "action_device_lock_trust",
+        "action_identity_binding_is_current",
         "action_identity_lock_binding",
         "action_identity_can_switch_subject",
         "action_policy_insert_receipt",
@@ -187,6 +188,15 @@ _WORKER_FUNCTION_SIGNATURES = frozenset(
     {
         "session_runtime_tool_effect_outbox_claim(text, integer, integer)",
         "session_runtime_tool_effect_outbox_complete(text, text, text, text)",
+    }
+)
+#: Ports the Session READ role needs, verified as a grant and not a hope.  The
+#: read path now fences the signed profile against the device's current binding,
+#: so a missing grant here would silently turn the fence into a 503 for every
+#: turn instead of denying only the withdrawn one.
+_SESSION_API_FUNCTION_SIGNATURES = frozenset(
+    {
+        "action_identity_binding_is_current(text, text, integer, timestamptz)",
     }
 )
 
@@ -531,6 +541,22 @@ class PostgresSessionRuntimeStore:
                 raise SessionRuntimeAuthorityUnavailable(
                     "Session Runtime read DSN has the wrong role"
                 )
+            for signature in _SESSION_API_FUNCTION_SIGNATURES:
+                row = await read.fetchrow(
+                    """
+                    SELECT proname,
+                           has_function_privilege(
+                               current_user, p.oid, 'EXECUTE'
+                           ) AS can_execute
+                    FROM pg_proc p
+                    WHERE p.oid = to_regprocedure($1)
+                    """,
+                    signature,
+                )
+                if row is None or not bool(row["can_execute"]):
+                    raise SessionRuntimeAuthorityUnavailable(
+                        f"Session read role is missing EXECUTE on {signature}"
+                    )
         finally:
             await read.close()
         action = await self._connect(
@@ -915,6 +941,35 @@ class PostgresSessionRuntimeStore:
             tool_epoch=int(row["tool_epoch"]),
             created_at=cast(datetime, row["created_at"]),
             updated_at=cast(datetime, row["updated_at"]),
+        )
+
+    async def binding_is_current(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        device_id: str,
+        binding_id: str,
+        binding_version: int,
+        now: datetime,
+    ) -> bool:
+        """Whether this binding is still the device's ACTIVE binding.
+
+        One narrow Identity-owner predicate instead of a direct table read: the
+        read role is not granted ``identity_device_bindings`` and must not be.
+        A database whose port is missing raises ``UndefinedFunctionError``, so
+        the caller's PostgresError path turns it into a 503 -- a deployment that
+        cannot answer this question never answers ``True``.
+        """
+
+        _require_transaction(connection)
+        return bool(
+            await connection.fetchval(
+                "SELECT action_identity_binding_is_current($1, $2, $3, $4)",
+                device_id,
+                binding_id,
+                binding_version,
+                now,
+            )
         )
 
     async def context_any_state(

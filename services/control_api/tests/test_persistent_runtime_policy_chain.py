@@ -358,6 +358,29 @@ async def _session_policy(client: AsyncClient, *, session_id: str) -> Any:
     )
 
 
+async def _context_prefetch(
+    client: AsyncClient,
+    *,
+    session_id: str,
+    query: str,
+) -> Any:
+    return await client.post(
+        "/v1/interaction/context-prefetch",
+        headers={"X-Memoria-Internal-Token": _RESPONSE_PLAN_TOKEN},
+        json={
+            "session_id": session_id,
+            "query": query,
+            "speaker_decision": {
+                "classification": "owner",
+                "reason_code": "trusted",
+                "model_version": "campplus-test-v1",
+                "profile_id": "speaker-profile-1",
+                "template_version": 1,
+            },
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_real_runtime_child_profile_reaches_both_policy_seams(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -2058,32 +2081,48 @@ async def test_both_policy_seams_reject_a_diverged_runtime_projection(
 
 
 @pytest.mark.asyncio
-async def test_legal_manager_change_does_not_yet_close_the_agent_facing_seams(
+async def test_legal_manager_change_closes_the_agent_facing_seams(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """P0-04 OPEN DEFECT (characterization): the seams survive a manager change.
+    """P0-04: a legal manager change closes every Agent-facing memory route.
 
-    Characterization test, NOT a guarantee.  It pins today's behaviour so the
-    gap is measured instead of assumed, and so a future fix has a failing case
-    to flip.
+    The take-over is applied on the authority plane: the device's ACTIVE binding
+    goes ``superseded`` and another owner's binding version 2 becomes ACTIVE for
+    the same device.  The signed profile the seams had been reading is left
+    untouched, so the only thing that can withdraw the session's authorization is
+    the read path re-validating the binding itself.
 
-    What it shows: once a device's ACTIVE binding is superseded by an owner that
-    is NOT the session's account, `/v1/interaction/session-policy` and
-    `/v1/interaction/response-plan` keep answering for the OLD session — same
-    active subject, same capabilities, and for a self-owned account turn still a
-    real account-keyed memory read.  The read path only re-checks the profile
-    projection, epoch and TTL (`PostgresSessionRuntimeService.current`), and
-    nothing in `interaction.py` consults the binding or device trust, so the
-    authorization basis can be withdrawn while the Agent-facing policy keeps
-    being granted until the profile TTL expires.
+    Contract pinned here: ``PostgresSessionRuntimeService.current`` raises
+    ``PersistentSessionDenied``, ``/v1/interaction/session-policy`` fails closed
+    with 503 ``session_runtime_authority_unavailable`` instead of deciding, and
+    ``/v1/interaction/response-plan`` keeps its deliberately bounded conservative
+    200 with ZERO account-keyed memory reads.  The reason that conservative shape
+    exists still holds: the crisis fixed reply must stay deliverable in the same
+    turn, because a turn whose authority cannot be read must still be able to
+    answer a crisis.
 
-    The invariant that DOES hold today and must not regress is asserted too: no
-    other person's subject is ever substituted, and the crisis fixed reply is
-    never suppressed.  Deliberately NOT fixed here: deciding whether the
-    advisory seams must re-validate the binding (and what a legitimate rebind
-    should then return) is a product/security decision with real blast radius.
+    Three ways the withdrawn subject's memory could still reach the Agent are
+    covered, because closing only the freshest one was not enough: a new turn
+    (``/response-plan``), a verbatim RETRY of the pre-change turn (the cache is
+    keyed by the generation fence, which the take-over leaves intact), and
+    ``/v1/interaction/context-prefetch`` (which used to skip the subject scope
+    entirely and so also handed the account's memory to a non-account subject
+    without any take-over).  ``/context-prefetch`` is asserted as a positive
+    control BEFORE the change, so the empty result afterwards is not vacuous.
+
+    Invariants that must survive any future change: nobody else's subject is ever
+    substituted, no crisis evidence is recorded for a subject the seams could not
+    read, and the close-only path still closes -- closure deliberately does not
+    require the binding to remain active, otherwise a withdrawn device could
+    never be cleaned up.
+
+    This cell was an OPEN DEFECT until the read path gained the binding fence.
+    The previous revision of this test characterized the opposite outcome (a real
+    account-keyed read after the change), because the read path only re-checked
+    the profile projection, the session epoch and the TTL, so both seams kept
+    answering for the OLD subject until the signed profile TTL expired.
     """
 
     store, bootstrap_dsn = postgres_runtime
@@ -2130,6 +2169,21 @@ async def test_legal_manager_change_does_not_yet_close_the_agent_facing_seams(
         )
         assert before_turn.status_code == 200, before_turn.text
         reads_before = len(catalog.queries) - queries_before
+
+        # The same endpoint as a positive control: while the session is still
+        # authorized, /context-prefetch does hand out the account's own memory, so
+        # the empty result asserted after the take-over is not vacuous.  It is
+        # counted separately so it cannot move `reads_before`.
+        prefetch_before = await _context_prefetch(
+            client,
+            session_id=session.session_id,
+            query=_MEMORY_QUERY,
+        )
+        assert prefetch_before.status_code == 200, prefetch_before.text
+        assert prefetch_before.json()["grounded_items"], (
+            "positive control failed: /context-prefetch is supposed to read the "
+            "account's own memory while the device binding is still current"
+        )
 
         # The manager change on the authority plane.  Only ``status`` and
         # ``valid_until`` are mutable on a binding row (the schema guard rejects
@@ -2200,6 +2254,23 @@ async def test_legal_manager_change_does_not_yet_close_the_agent_facing_seams(
             turn_id=3,
             generation_id=3,
         )
+        # The two other ways the OLD subject's memory could still reach the Agent:
+        # a verbatim retry of the pre-change turn (the response-plan cache is keyed
+        # by the generation fence, and the take-over leaves that fence intact --
+        # only a live binding read can tell the two apart), and the
+        # context-prefetch seam, which used to skip both memory gates entirely.
+        replayed = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        prefetched = await _context_prefetch(
+            client,
+            session_id=session.session_id,
+            query=_MEMORY_QUERY,
+        )
         # The authority read path itself, deliberately probed on its own: if this
         # succeeds after the take-over, the seams above are downstream of a read
         # path that never re-validated the binding.
@@ -2265,31 +2336,83 @@ async def test_legal_manager_change_does_not_yet_close_the_agent_facing_seams(
                 else None,
                 "authority_current_after": current_after,
                 "authority_switch_after": switch_after,
+                "replay_status_after": replayed.status_code,
+                "replay_grounded_items_after": (
+                    len(replayed.json().get("grounded_items", []))
+                    if replayed.status_code == 200
+                    else None
+                ),
+                "prefetch_status_after": prefetched.status_code,
+                "prefetch_grounded_items_after": (
+                    len(prefetched.json().get("grounded_items", []))
+                    if prefetched.status_code == 200
+                    else None
+                ),
             },
         )
 
         # Baseline: this shape really does read the account's own memory, so the
-        # "still reading after the change" observation below is not a no-op.
+        # "zero reads after the change" result below is not a no-op.
         assert reads_before == 1
         assert before_turn.json()["grounded_items"]
 
-        # Invariants that hold today and must survive any fix.
+        # The crisis fixed reply is never suppressed, before or after the change.
         assert crisis_after.status_code == 200, crisis_after.text
         assert crisis_after.json()["direct_text"] == CRISIS_SUPPORT_REPLY
-        assert (
-            after_policy.json()["runtime_profile"]["active_subject_id"]
-            in (session.account_id, None)
-        ), "no other person's subject may be substituted"
 
-        # The open defect, pinned: the withdrawn session is still authorised.
-        assert after_policy.status_code == 200, after_policy.text
+        # The read path itself must have withdrawn the authorization basis, and
+        # both its read and its write entry points must agree on that.
+        assert current_after == "PersistentSessionDenied", current_after
+        assert switch_after == "PersistentSessionDenied", switch_after
+        # So the advisory seam refuses to decide instead of answering for the OLD
+        # subject with the account still the active one ...
+        assert after_policy.status_code == 503, after_policy.text
         assert (
-            after_policy.json()["runtime_profile"]["active_subject_id"]
-            == session.account_id
+            after_policy.json()["detail"]["code"]
+            == "session_runtime_authority_unavailable"
+        ), after_policy.text
+        # ... and the bounded conservative plan carries NO account-keyed read.
+        assert reads_after_change == 0, (
+            "a withdrawn session must not read the account-keyed memory: the "
+            "binding was superseded by another owner, so the signed profile is "
+            "no longer an authorization basis for this device"
         )
-        assert after_policy.json()["capabilities"]["conversation"] is True
-        assert reads_after_change == 1, (
-            "OPEN DEFECT: after the binding was superseded by another owner the "
-            "seam still reads the account-keyed memory; this assertion is the "
-            "one a fix must flip to 0 (and the seam should fail closed instead)"
+        assert after_turn.status_code == 200, after_turn.text
+        assert after_turn.json()["grounded_items"] == []
+        assert after_turn.json().get("memory_retention") in (None, "ephemeral_only")
+        # Neither of the other two Agent-facing routes may serve the OLD subject's
+        # memory either: the cache replay is the identical retry the cache exists
+        # for, and context-prefetch used to bypass both gates outright.
+        assert replayed.status_code == 200, replayed.text
+        assert replayed.json()["grounded_items"] == [], (
+            "a verbatim retry of the pre-change turn must not be answered from a "
+            "cached plan computed while the superseded binding still authorized it"
         )
+        assert prefetched.status_code == 200, prefetched.text
+        assert prefetched.json()["grounded_items"] == [], (
+            "context-prefetch must apply the same subject scope as response-plan"
+        )
+        assert prefetched.json()["persona_version_id"] is None
+        # Nobody else's subject may be substituted, and no crisis evidence may be
+        # recorded for a subject the seams could no longer read.
+        assert await _crisis_evidence_events(app, account_id=session.account_id) == ()
+
+        # The close-only path must survive the withdrawal: closure deliberately
+        # does not require the binding to remain active, because requiring it
+        # would strand sessions precisely when unbind/revocation needs them
+        # closed (same reasoning as session_runtime_close_session).
+        close_result = await runtime_service.close_session(
+            actor_id=session.account_id,
+            session_id=session.session_id,
+            reason_code="manager_change_cleanup",
+            now=datetime.now(UTC),
+        )
+        _dump_matrix(
+            "manager_change_after_close",
+            {
+                "close_applied": close_result.applied,
+                "close_already_closed": close_result.already_closed,
+            },
+        )
+        assert close_result.applied is True, close_result
+        assert close_result.already_closed is False

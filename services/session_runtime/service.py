@@ -1436,7 +1436,48 @@ class PostgresSessionRuntimeService:
             session_id=session_id,
         )
         self._require_current_profile(profile, now=now)
+        await self._require_current_binding(
+            actor_id=actor_id,
+            profile=profile,
+            now=now,
+        )
         return profile, context
+
+    async def _require_current_binding(
+        self,
+        *,
+        actor_id: str,
+        profile: RuntimeProfileSignedV2,
+        now: datetime,
+    ) -> None:
+        """Deny work once the signed profile's binding is no longer the current one.
+
+        The signed profile stays the decision basis for the whole turn, so a
+        legal manager change has to close this read path too.  The WRITE path
+        already refuses the identical state (``action_identity_lock_binding``
+        validates version and status), but this read path only re-checked the
+        profile projection, the session epoch and the TTL -- which left both
+        Agent-facing seams answering for the OLD subject, account-keyed memory
+        read included, until the signed profile TTL expired.
+
+        Deliberately outside ``_active_profile_context``: the close-only path
+        must still be able to close a session whose authorization was withdrawn,
+        otherwise a revoked device could never be cleaned up.
+        """
+
+        try:
+            async with self._store.read_transaction(actor_id=actor_id) as connection:
+                still_current = await self._store.binding_is_current(
+                    connection,
+                    device_id=profile.device_id,
+                    binding_id=profile.binding_id,
+                    binding_version=profile.binding_version,
+                    now=now,
+                )
+        except asyncpg.PostgresError as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if not still_current:
+            raise PersistentSessionDenied("session binding is no longer active")
 
     async def switch_subject(
         self,
