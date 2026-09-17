@@ -289,6 +289,12 @@ def test_window_excludes_settle_period_wake_from_numerator(
     assert window.wakes == []
     assert window.exposure_started_monotonic == pytest.approx(2002.0)
     assert window.started_monotonic == pytest.approx(2000.0)
+    report = wwm._build_report({"windows": [asdict(window)], "trials": []})
+    line = next(
+        entry for entry in report.splitlines() if entry.startswith("- tv：")
+    )
+    assert "0 次" in line
+    assert "有效曝光 1.1s/1.0s" in line
 
 
 def test_window_exposure_excludes_pre_gate_idle_history(

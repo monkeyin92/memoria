@@ -1,22 +1,22 @@
 # Memoria 当前交接
 
-更新于 2026-09-17（读一致性/TTS 软件边界/唤醒工具/会话回顾，`f2a95d6`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+更新于 2026-09-18（advisory 整改，`39e7fa2`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮在 `350d62d` 之上完成 P0-04 读一致性契约（`read_transaction` 固定 REPEATABLE READ + 真实 PG 交错回归）、P0-03 两个 TTS 软件缺口（`COSYVOICE_WORD_TIMESTAMPS=false` 降级不重试、Doubao 流式回落单次闸门）、P2-05 唤醒计数与自包含测试（含 CI 显式采集）、P1-05 最小会话只读出口（`GET /v1/archive/conversation-history`）；未部署、未构建发布候选、未连接生产或设备。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
+本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据；未部署、未构建发布候选、未连接生产或设备。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
-as_of_date: 2026-09-17
-reviewed_source_commit: f2a95d6
+as_of_date: 2026-09-18
+reviewed_source_commit: 39e7fa2
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_f2a95d6
+code: committed_through_39e7fa2
 wired: existing_python_voice_core_and_signed_runtime_profile_authorities
 enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
 verified: scoped_receipts_only_read_snapshot_tts_wake_history_fixed_device_pending

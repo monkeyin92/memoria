@@ -14,7 +14,7 @@
 
 当前证据：远端 CI 仍是 `35231388322`（`350d62d`）2026-09-17 22:17:21 CST success；`f2a95d6` 与本轮整改均只跑本地门禁，远端 CI 未跑，不替发布背书。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
 
-本轮整改（advisory 驱动，未提交）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算（修前 2.5 s、修复后 ~1.0 s，修前首个 playback 在门前）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
+本轮整改（advisory 驱动，已提交 `27a16cf`/`0d200c6`/`39e7fa2` docs）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算，分子/收据 wall 同口径（修前多算 ~1.5 s 且 settle wake 计入，修复后排除，report wall 回归锁定分母≈1.0）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 上一轮（`f2a95d6`）回归：2 个读快照交错、1 个无时间戳降级、2 个曝光时间线、1 个会话回顾在修前失败、修复后通过；wake 去重用例内联 3 行 fixture（删 ignored 文件 9/9）；CI 新增 wake 显式步骤。`f2a95d6` 的流式单次回落用例收据作废（`slow_once` 未触发重入，改前已通过），已由本轮真回归替代。
 
 ## P0：发布前必须闭环的安全与语音问题
