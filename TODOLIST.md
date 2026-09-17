@@ -1,19 +1,19 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-17（成员写入边界修复）。修复提交 `350d62d`；本轮完成 P0-04/P1-03 的成员追加修复（空权限被恢复、并发新增丢成员、`family_shared` 丢家庭空间）及回归，未部署、未连接生产或设备。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-17（读一致性/TTS 软件边界/唤醒工具/会话回顾）。修复提交 `f2a95d6`（在 `350d62d` 之上）；本轮完成 P0-04 读一致性契约、P0-03 两个 TTS 软件缺口、P2-05 唤醒计数与自包含测试、P1-05 最小会话只读出口及本地全门禁，未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
 1. **成员写入边界已修（`350d62d`）**：三个缺陷都有修复前失败的回归，并发项另有真实 PG 契约（见 `HANDOFF.md`）；剩余的是小程序成员 UI 接线与设备链。
-2. **接着补 P0-04 的 Runtime 读一致性契约**：定义 profile/context/binding 的一致性与授权生效点，补真实 PG 读间交错测试；需要稳定快照时落实隔离或单语句读取。
-3. 可并行完成 P0-03 剩余 TTS/续问软件边界、P2-05 唤醒计数与自包含测试，以及 P1-05 的最小会话内容/汇总只读出口。后者是下一设备功能窗口的前置，不必等待完整三端 UI。
+2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
+3. **TTS 软件边界已修（`f2a95d6`，P2/P3）**：`COSYVOICE_WORD_TIMESTAMPS=false` 时 batch 降级为完整音频+空词+`degraded`、单次连接不重试；Doubao 流式回落加单次闸门（`_fallback_used`），框架重入不再逐次重落回调/trace。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
 4. 完成拟发布修复后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
 5. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 6. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-当前证据：CI `35231388322`（`350d62d`）2026-09-17 22:17:21 CST 完成 success，`python`（Ruff、模块预算、strict mypy、协议/契约可复现、authoritative PG gate、pytest、覆盖率、Offline E2E）、`agent-image`、`miniprogram` 实跑通过，agent/media-edge/firmware 跳过；provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
+当前证据：远端 CI 仍是 `35231388322`（`350d62d`）2026-09-17 22:17:21 CST success；本轮 `f2a95d6` 只跑了本地全门禁（Ruff、模块预算、strict mypy 435 files、带 `MEMORIA_TEST_POSTGRES_DSN` 全量 pytest **5107 passed / 3 skipped**、覆盖率 87.86%、85/90/95 门禁通过、Offline E2E PASS），远端 CI 未跑，不替发布背书。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
 
-本轮回归：三个成员缺陷的用例在修复前源码上全部失败（以 stash 复核），修复后通过；identity/control_api 成员、多主体与文档约束套件在真实 PG（本机 Docker PG17）下全绿；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 为 **5101 passed / 3 skipped**，覆盖率 87.77%，85/90/95 门禁通过。唤醒 7 例仍依赖本机历史日志（P2-05），Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍待定位（P2-04）；两者不是本轮结论。生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
+本轮回归：新增 2 个读快照交错用例、1 个无时间戳降级用例、1 个流式单次回落用例、2 个曝光时间线用例、1 个会话回顾用例，修前源码上分别失败（读间混对/409 式翻转、整句重试、回落多发、曝光 10s 计 2s 应得、空话轮），修复后通过；wake 去重用例已内联 3 行 fixture，本地删 ignored console.log 仍 9/9 通过；CI 新增 wake 显式步骤。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 
 ## P0：发布前必须闭环的安全与语音问题
 
@@ -21,7 +21,7 @@
 
 - 既有基线：person-consent 授予/读/撤销/解绑后撤销/幂等/导出，真实 PG 的类别、权威失效、profile-session 错绑、合法管理人变化围栏，以及真实 catalog 的账号/主体键隔离已有软件收据；Agent plan stamp、旧 epoch 驱逐和轮换清理已实现。保留这些回归，不重复开发，也不据此声称“软件全闭、只剩设备”。声明监护关系仍是 binding-scoped owner 单侧 pending，不等于 verified guardian、consent 或外部通知送达。
 - **成员写入缺陷已修（`350d62d`）。** 空权限被恢复为角色默认值、并发新增丢成员两项在 `routes/identity_lifecycle.py` 与 `services/identity/service.py` 修复：追加逐字携带既有角色的权限集合（含空集合），`supersede_binding` 新增 `expected_binding_id` 比较并设置，路由对陈旧视图有界重试且每次都从新版本重算列表。真实 PG 契约证明同一版本的并发追加只有一个胜者、被拒尝试不留审计/版本行，带新版本重试后两名成员都在；仍未证明的是下游同意门是否曾被绕过（未复现）。
-- **读一致性仍待证，不标已泄漏。** `current()` 已共用一个只读事务，但 `PostgresSessionRuntimeStore.read_transaction` 未指定 isolation；本机既有 PG17 测试库实读默认 `read committed`，无角色/库级 isolation override。同事务多条 SELECT 不足以证明文档所称“单快照”。先定义 profile/context/binding 的一致性及授权生效点，补在两次读取之间切主体/撤绑定的真实 PG 交错测试；需要稳定快照时落实对应隔离或单语句读取，保留最终 action fence。close-only 在失效后仍可关闭，不误加使用权门；未复现跨主体泄漏，不把这个缺口写成既成泄漏。
+- **读一致性已修（`f2a95d6`，不标已泄漏）。** `read_transaction` 现固定 `REPEATABLE READ` 只读事务（只读故无谓词锁、无序列化失败；写侧仍靠各自 CAS），profile/context/binding 三次读取共享同一快照：读间切主体不产生新旧混对、读间撤绑定不翻转当次 fence，下一次新鲜事务可见。close-only 在失效后仍可关闭，不误加使用权门；最终 action fence 保留；未复现跨主体泄漏。
 - 软件完成条件：两条策略入口覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、无同意/撤销/过期/无权限、合法管理账号更换；切人/改年龄与旧 epoch/generation/缓存并发不得串人。`session-policy` 不能决定时 503，`response-plan` 保留有界保守 200 和固定安全回复、零私密记忆；真实 subject/account catalog、Agent 缓存与新成员写入负例均须过门。
 - 控制入口及产品链：成人管理账号可建独立 under_14/14_17 使用人，不要求孩子登录账号；成员写入已随 `350d62d` 修复，接下来接最小年龄资料/app_confirm UI。成人学生不自动视为未成年人，零同意可创建 HTTP session 不等于设备准入已验；会话记忆迁入现有 subject 键 `services/memory_scope` 仍需 P1-06/P2-01 配合。
 - 当前设备窗口只验顶部四类功能，不手工注入 profile、不绕声纹/准入门；HTTP 文本正确不是设备已说出。安全专项随后再核 app_confirm 身份/年龄→有效同意→准入/受限能力→固定话术真实交付→outbox 绑定/幂等/家长读回；发送 worker/外部投递暂缓。
@@ -31,8 +31,8 @@
 
 - 当前设备证据：2026-09-16 H 同会话天气→续问→播后告别成功，F 的 48.28s 九天天气完整听完；但 B/D 停滞、G 续问丢失、H 时延越线，整体稳定性未通过。不跨 release 累计轮数，不把原笔记的约 55s 阈值或告别 3/5 当作结论。
 - 已有软件基线（`7c0ef48`/`3e0b738`）：Doubao/CosyVoice × stream/batch 共用 `GenerationBudget` 的首包、进展续期、停滞与硬上限；batch retry 已明确为音频前可重试/回落、已有音频仅缺词时间戳时最多同音色重试一次，其余音频后失败终态、丢弃失败缓冲。上轮 generation budget + 两 provider mock 50 项通过；当时核到 LiveKit 在 pushed_duration>0 后不重试流式输出，未发现整句重放的该项回归，本轮未重跑。不能把 batch 的最多两次扩写成所有流式尝试也最多两次。
-- 保留缺口（P2，条件性，上轮已复现）：`COSYVOICE_WORD_TIMESTAMPS=false` 时 batch 仍强制要求 `all_words`，完整音频但无词会抛 `CosyVoiceTimestampError`，随后以同一关闭配置再合成一次。本地 `empty_ts` mock 复现 2 次 run request、两个 flag 均为 False，最终异常；真实厂商/现网是否使用该配置未验。先明确不支持时启动即拒绝还是允许无对齐音频降级，再让重试遵守该配置，补 mock 尊重 flag 的用例；不能用重复整句合成补不存在的时间戳。
-- 保留缺口（P3，流式回落放大，上轮已复现）：Doubao `_run` 每次被框架重入都从个人音色再回落设计音色，缺少 CosyVoice 的一次性闸门。本地连续音频前超时、`max_retry=2` 时实测 6 个 provider session、同 fence 回落回调/trace 各 3 次。后续收口 stream 级回落次数与总体尝试预算，补框架级重试用例；这是额外请求/时延，未证明账本重复或音频后重放。
+- 缺口已修（P2，`f2a95d6`）：`COSYVOICE_WORD_TIMESTAMPS=false` 即“只要纯音频”——batch 返回完整 PCM、空词、`alignment_status="degraded"`，单次连接不重试。真实厂商/现网是否使用该配置仍未验；仍不能用重复整句合成补不存在的时间戳。
+- 缺口已修（P3，`f2a95d6`）：Doubao 流式加单次闸门（`_fallback_used`），框架重入续用已回落音色、不再逐次重发回落回调/trace；`max_retry=3` 下实测 2 个 provider session + 1 次回调。这是额外请求/时延，未证明账本重复或音频后重放。
 - G 已有本地修复：`owner_silence_remaining_s` 为 `None` 未测量 / `0.0` 已耗尽 / `>0` 暂停剩余；结束已测预算不再白送满窗口。受理 ASR final/VAD 可否决等锁的迟到关闭，但仅在另有绝对说话看门狗或未到期 grace 时成立，不刷新静默预算。相关区分度与保护用例见 `HANDOFF.md`，不再把修复前失败写成当前 HEAD 失败。
 - G 待闭环：明确无验证说话人且无其它界时的 owner_silence_timeout 语义（现保守关闭）；补 endpoint/commit 乱序、watchdog 交接在真实 10s/60s 配置下的矩阵，再在冻结候选捕获 G 终态。没有真机捕获不宣称续问不再丢失。
 - EOU/告别边界：sidecar/END_SESSION 只能生成 END_CANDIDATE/clock fact，关闭仍经当前使用人的 subject capability；guest 只能停止公开播放或等待超时，不能由分类授予关会话能力。TurnPhase 保持 shadow，不造第二话轮控制面。
@@ -86,7 +86,7 @@
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
-- 最小会话回顾出口是下一功能设备窗口的前置：先核实际日志/会话记录的可读查询入口，按 session/subject 查询双方话轮、可追溯汇总及交付状态；缺失时补最小受鉴权只读出口，不把原始日志或模型生成文本冒充已听到。跨主体拒读，无 retention 同意按策略仅临时读回，不默默长期保存。
+- 最小会话回顾出口已修（`f2a95d6`，`code`）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对 Curve（history-eligible owner 文本 + actual-heard assistant 文本），与 `/conversation-review` 同一 owner 鉴权域、无跨主体读、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
 - 只读状态开发可独立进行；完整三端集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
 - 投影带 session/generation fence 和新鲜度，重连/断线/过期显示 offline/unknown；不从字幕、零散 diagnostics 或客户端计时猜态，不增加话轮控制面。
 - 完成条件：微信手机/电脑/开发工具同版本覆盖登录绑定、三态/断线、主体人格切换、样本进度、回顾、权限拒绝与刷新；录音范围门禁通过。0.8.84 仅开发版；体验版、提审、正式发布分别授权和记录。
@@ -136,8 +136,8 @@
 ### [ ] P2-05 补齐唤醒计数与测试可复现性，再采家庭噪声矩阵
 
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
-- **已复现，P2：有效曝光被高估。** `_run_window` 在一次 play_fn 或 quiet 轮询的首尾都是 idle 时累计整段时间，漏掉中间 busy。fake clock 输入 1s idle→8s connecting→1s idle，输出 exposure=10s、idle=10s、paused=[]，输入时间线仅有 2s idle。按状态时间线逐段与窗口/有效检测区间求交，不用端点猜全程；补完整 idle→busy→idle、跨窗口、等待入窗和零曝光用例，保留真实分母/暂停原因。不得为凑曝光开启播放期 KWS。
-- **已复现，P2：离线测试依赖未入库日志，且常规 CI 未收集。** `scripts/tests/test_wake_word_matrix.py` 固定读取 ignored outputs 的 console.log 第 627/628/650 行；模拟该文件不存在即 FileNotFoundError。只提取必要、匿名、最小日志 fixture 入库（不把整份设备收据搬入）；pytest testpaths 仅 services/tests，CI 的 scripts 步骤也未列 wake 文件，须显式纳入合适 job 并确保改测试会触发该 job。干净检出无 outputs 也应能跑完工具回归。
+- **已修（`f2a95d6`），P2：有效曝光改为时间线求交。** `_exposure_over_timeline` 把窗口与 console 状态时间线逐段求交：仅 idle 段计曝光，busy 段逐段记 dated pause。fake clock 1s idle→8s connecting→1s idle 现得 exposure=2s、paused=8s；另有跨窗口裁剪与零曝光用例。不得为凑曝光开启播放期 KWS。
+- **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。
 - 原误唤醒修正保留：带 `(state: N)` 首次行去重后新事件 0，TV=1 是上一试次滞后重复；但 TV 133.038s 内 idle=0、约 92.382s speaking/KWS off，small_talk 124.471s 内 idle≈100.909s，quiet 300.001s 均为日志可见 idle。故不能宣称电视/多人各 2 分钟有效零误唤醒；配置日志不自动证明整个窗口 detector 持续启用。
 - 工具验收：音量/静音、录音和串口错误都在 finally 恢复，恢复结果实读；真人 Markdown/JSON 口径一致，不从人工提示时刻算真实开口延迟。记录实际输入电平、warmup 配置/实际等待、状态与 detector 证据，错误不算 miss 或零误唤醒。

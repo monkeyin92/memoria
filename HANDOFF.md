@@ -1,34 +1,34 @@
 # Memoria 当前交接
 
-更新于 2026-09-17（成员写入边界修复，`350d62d`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+更新于 2026-09-17（读一致性/TTS 软件边界/唤醒工具/会话回顾，`f2a95d6`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮修复 P0-04/P1-03 的成员追加三处缺陷（空权限被恢复、并发新增丢成员、`family_shared` 丢家庭空间），回归与真实 PG 契约见下；未部署、未构建发布候选、未连接生产或设备。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
+本轮在 `350d62d` 之上完成 P0-04 读一致性契约（`read_transaction` 固定 REPEATABLE READ + 真实 PG 交错回归）、P0-03 两个 TTS 软件缺口（`COSYVOICE_WORD_TIMESTAMPS=false` 降级不重试、Doubao 流式回落单次闸门）、P2-05 唤醒计数与自包含测试（含 CI 显式采集）、P1-05 最小会话只读出口（`GET /v1/archive/conversation-history`）；未部署、未构建发布候选、未连接生产或设备。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-17
-reviewed_source_commit: 350d62d
+reviewed_source_commit: f2a95d6
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_350d62d
+code: committed_through_f2a95d6
 wired: existing_python_voice_core_and_signed_runtime_profile_authorities
 enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
-verified: scoped_receipts_only_member_write_fixed_wake_tool_and_device_pending
+verified: scoped_receipts_only_read_snapshot_tts_wake_history_fixed_device_pending
 guardian_declaration_scope: binding_scoped_owner_only_third_party_excluded
 accountless_person_consent: person_scoped_grant_read_revoke_replay_unbind_revoke_and_export_verified_device_pending
 production_readiness: ready_at_last_observation_not_refreshed_this_review
 production_readiness_observed_at: 2026-09-16T11:37:57+08:00
 student_safety_loop_verified: false
-student_safety_local_scope: real_persistent_session_runtime_on_ephemeral_pg_with_sqlite_account_and_declared_guardian_outbox_real_pg_person_consent_gate_real_catalog_subject_key_isolation_and_read_path_binding_fence_closing_the_agent_facing_seams_after_a_legal_manager_change_including_context_prefetch_and_cached_plan_reuse
+student_safety_local_scope: real_persistent_session_runtime_on_ephemeral_pg_with_sqlite_account_and_declared_guardian_outbox_real_pg_person_consent_gate_real_catalog_subject_key_isolation_and_read_path_binding_fence_closing_the_agent_facing_seams_after_a_legal_manager_change_including_context_prefetch_and_cached_plan_reuse_plus_repeatable_read_snapshot
 guardian_authority_evidence: parent_declaration_only_never_verified_link
 guardian_declaration_notification_basis: deliberate_identity_declaration_not_consent
-postgres_contracts_for_new_paths: prior_scoped_pg17_contracts_passed_new_member_and_read_interleaving_cases_pending
+postgres_contracts_for_new_paths: scoped_pg17_contracts_passed_including_member_write_read_snapshot_and_history_exit
 agent_release_gate_wiring: image_built_and_gate_rerun_offline_as_runtime_user_passing
 guardian_notification_delivery_channel: absent_outbox_only_status_pending
 firmware_playback_supply_meter_verified: short_playback_software_queue_only_not_dma
@@ -55,25 +55,29 @@ device_id: dev_atk_a4cb8fd6095c
 
 ## 最新候选与审查边界
 
-审查基线 `d191ef1`（2026-09-17 18:26:24 CST），本轮修复提交 `350d62d`（CI `35231388322` 于 2026-09-17 22:17:21 CST 完成 success：`python` 的 Ruff/模块预算/strict mypy/可复现协议与契约/authoritative PG gate/pytest/覆盖率/Offline E2E 与 `agent-image`、`miniprogram` 实跑，agent/media-edge/firmware 跳过），最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。CI `35210492481`（`d191ef1`）于 18:36:33 CST 完成 success，`python`、`agent-image` 实跑通过，其余 agent/firmware/Edge/小程序任务跳过；前一轮 `35210204933`（`fd0290a`，含 `092dcf4`）的 agent、python、firmware host tests、agent-image 通过。python 中真实 PG gate、pytest、覆盖率和 Offline E2E 已执行，provider smoke 使用 `OFFLINE_MOCK=true`，不算真实厂商验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
+审查基线 `d191ef1`（2026-09-17 18:26:24 CST），上轮修复提交 `350d62d`（CI `35231388322` 于 2026-09-17 22:17:21 CST 完成 success：`python` 的 Ruff/模块预算/strict mypy/可复现协议与契约/authoritative PG gate/pytest/覆盖率/Offline E2E 与 `agent-image`、`miniprogram` 实跑，agent/media-edge/firmware 跳过）；本轮 `f2a95d6` 只跑本地全门禁（Ruff、模块预算、strict mypy 435 files、带 DSN 全量 pytest 5107 passed / 3 skipped、覆盖率 87.86%、85/90/95 通过、Offline E2E PASS），远端 CI 未跑。最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。python 中真实 PG gate（上轮 CI）、pytest、覆盖率和 Offline E2E 已执行，provider smoke 使用 `OFFLINE_MOCK=true`，不算真实厂商验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
 
 本轮仍开放的审查项：
 
 - P0-04 / P1-03：成员追加的三处缺陷已修（`350d62d`，见下方收据）。同一轮仍未证明的是下游同意门是否曾被绕过——本地只证明了 binding grant 扩大，没有复现越权读取。
-- P0-04：`current()` 已共用只读事务，但 store 未设 isolation，本机既有 PG17 默认实读为 `read committed`，无库/角色覆盖；“同事务即单快照”的结论未证。需定义一致性并补读间交错测试，不把验证缺口写成已发生泄漏。
-- P2-05：fake clock 的 1s idle→8s connecting→1s idle 被累计成 10s 有效曝光，漏掉中间忙态；wake 回归又依赖 ignored 历史日志，模拟缺失即 FileNotFoundError，常规 CI 未采集该文件。须修计数、自包含 fixture 与 CI 触发/收集后再采设备矩阵。
-- 修复轮回归：三个成员缺陷的用例在修复前源码上全部失败（以 stash 复核：409 `family_shared requires a family_space_id`、默认权限恢复、并发丢成员），修复后通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 为 5101 passed / 3 skipped、覆盖率 87.77%（85/90/95 门禁通过）。wake 7 例仍依赖本机历史日志（P2-05），Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，两者都不是本轮结论。
+- P0-04 读一致性已修（`f2a95d6`）：`read_transaction` 固定 `REPEATABLE READ` 只读；真实 PG 交错回归各 1 例（读间旋转混对、读间撤销翻转），修前源码上失败、修复后通过。不标已泄漏。
+- P0-03 TTS 软件边界已修（`f2a95d6`）：无时间戳降级 1 例、流式单次回落 1 例，修前失败、修复后通过。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。
+- P2-05 工具已修（`f2a95d6`）：曝光时间线 2 例、会话回顾 1 例同上；去重用例内联 fixture 后删 ignored 文件仍 9/9；CI 新增 wake 显式步骤。设备矩阵未采。
+- 修复轮回归：带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 为 5107 passed / 3 skipped、覆盖率 87.86%（85/90/95 门禁通过）。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，不是本轮结论。
 
-下一步补 P0-04 的 Runtime 读一致性契约与真实 PG 读间交错测试；并行补语音软件边界、wake 工具与最小受鉴权话轮/汇总读回，再冻结候选、过门禁并按授权发布/验功能。学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
+下一步冻结同一 source/lock（`f2a95d6`）跑受影响门禁、构建候选，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
 
 ### 已有软件收据（按提交范围解读）
 
 以下记录的是对应日期/提交的实现与验证范围；其中当时的“仍开放”列表不是当前完整清单，以本节上述复核和 `TODOLIST.md` 为准，不继承历史 HEAD/CI 或设备结论。
-
+- [fixed 2026-09-17, commit `f2a95d6`; local code+tests+real PG (Docker PG17) where the seam needs it, no production/device access] P0-04 读一致性 + P0-03 TTS 软件边界 + P2-05 唤醒工具 + P1-05 会话回顾：
+  - 读一致性：`PostgresSessionRuntimeStore.read_transaction` 现为 `transaction(isolation="repeatable_read", readonly=True)`，profile/context/binding fence 共享同一快照（快照由首条 profile 读建立；只读无谓词锁，写侧 CAS 不变）。2 个真实 PG 交错回归在修前源码上失败、修复后通过；session_runtime 全套 47 例、policy chain 全套通过。
+  - TTS P2：`COSYVOICE_WORD_TIMESTAMPS=false` 即纯音频语义——batch 返回完整 PCM + 空词 + `degraded`，单次连接；`test_word_timestamps_disabled_returns_complete_audio_without_word_metadata` 修前抛 `CosyVoiceTimestampError`、修复后通过。
+  - TTS P3：Doubao 流式 `_fallback_used` 单次闸门；`test_livekit_stream_personal_before_audio_fallback_fires_exactly_once`（`max_retry=3`）断言 2 sessions + 1 callback；TTS mock 三套 55 例通过。
+  - P2-05：`_exposure_over_timeline` + 2 个时间线用例 + 去重 fixture 内联（删 ignored 文件 9/9）+ CI wake 显式步骤；`_run_window` 的端点采样循环已删，曝光/暂停全由时间线求交得出。
+  - P1-05：`GET /v1/archive/conversation-history` + 1 个配对/跨主体用例；archive 全套 53 passed / 1 skipped。
+  - 门禁：`ruff check .`、module budget、strict mypy（435 files / 0 errors）通过；带 DSN 全量 `pytest` 5107 passed / 3 skipped，总覆盖率 87.86%，85% 总覆盖与 orchestration 90%、provider protocols 95% 通过；Offline E2E PASS。远端 CI 未跑。仍未验：小程序成员/回顾 UI 与设备链、厂商真实 TTS/厂商、设备矩阵与时延、安全专项。
 - [fixed 2026-09-17, commit `350d62d`; local HTTP+SQLite and real PostgreSQL 17, no production/device access] P0-04 / P1-03 成员追加三处缺陷：
-  - 权限保留：路由原先用 `and role.permissions` 过滤，空权限集合被当成“未指定”而在 `_build_binding` 回落角色默认值；现在逐字携带既有角色的权限集合（含空集合与非空子集）。回归把 owner 的 guardian 权限先收紧为 `[]`、再收紧为单一权限，随后两次追加成员，HTTP→store 的权限集合逐字相等（版本推进为 3、5）。已证明修复前 binding grant 会被扩大，未证明绕过下游同意门。
-  - 并发不丢成员：`IdentityService.supersede_binding` 新增 `expected_binding_id` 比较并设置（先权限检查、再 CAS，失败抛 `BindingVersionConflictError`），路由每次尝试都从新读出的 ACTIVE 版本重算成员列表，并对陈旧视图（CAS 冲突，或并发写入的 `valid_from` 晚于本次时间戳造成的“无活动绑定”）有界重试 3 次，耗尽后 409 `binding_conflict` 且不写版本。回归用屏障让两个并发追加都先读 v1：修复前第二个写入覆盖第一个成员（或 404），修复后两请求均 201、版本 2/3 且三名成员齐全；真实 PG 契约在每设备 advisory lock 下断言恰好一个胜者、一个冲突、被拒尝试不留 `binding.supersede` 审计行，再用胜者 binding_id 重试合入第二名成员。
-  - `family_shared` 保留家庭空间：追加时携带 `manifest.family_space_id`，与既有角色/权限/有效期等非目标字段一起保留；合法 family_shared 绑定新增成员由 409 `family_shared requires a family_space_id` 变为 201，响应与持久化行都保留原 family_space_id。
   - 门禁：`ruff check .`、module budget、`mypy services --strict`（435 files / 0 errors）通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 5101 passed / 3 skipped，总覆盖率 87.77%，85% 总覆盖与 orchestration 90%、provider protocols 95% 门禁通过；远端 CI `35231388322` 整轮 success。仍未验：小程序成员 UI 与设备链、下游同意门是否曾被绕过（未复现）。
 
 The 2026-09-16/17 local work has since been committed (`e5f9d50`, `7c0ef48`, `ec56d9a`, `6ab16b9`, `77fc86a`, `e1878ce`, `e8571d3`, `52241ed`, `a8ce4e1`, `30dea92`, `229ee13`, `3babf17`, `a65b8f2`). The earlier "uncommitted local worktree" wording is historical only; delivery levels stay `code` unless a dated receipt says otherwise.
