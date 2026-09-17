@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，未提交、未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs，`8d184e3` 起审查基线升到 `39e7fa2`）、未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
@@ -139,7 +139,7 @@
 ### [ ] P2-05 补齐唤醒计数与测试可复现性，再采家庭噪声矩阵
 
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
-- **已修（本轮追补，未提交），P2：分子/收据口径一次关干净。** `_wake_lines` 下界换 `window_start`（settle 期 wake 不计入，单测覆盖），收据 `Window` 新增 `exposure_started_monotonic/iso`；`started_monotonic` 保持门前调用时刻（收据 wall 语义不 breaking），report wall 改用 exposure 起点算。旧收据无新字段时回落到原 wall 口径。
+- **已修（本轮追补，已提交），P2：分子/收据口径一次关干净。** `_wake_lines` 下界换 `window_start`（settle 期 wake 不计入，report-wall 单测锁定分母≈1.0），收据 `Window` 新增 `exposure_started_monotonic/iso`；`started_monotonic` 保持门前调用时刻（收据 wall 语义不 breaking），report wall 改用 exposure 起点算。旧收据无新字段时回落到原 wall 口径。
 - **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
 - 可选清理（非 blocker）：去重用例仍保留“有 ignored 文件就对账”的条件分支，严格自包含应删掉该分支只留内联 fixture；改动小，顺手做，不单独立项。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。
