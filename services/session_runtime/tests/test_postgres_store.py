@@ -4273,3 +4273,142 @@ async def test_postgres_close_session_survives_binding_revocation(
             ),
         )
     assert status == "closed"
+
+@pytest.mark.asyncio
+async def test_read_transaction_holds_single_snapshot_across_concurrent_subject_rotation(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """P0-04 read consistency: profile/context reads share one snapshot.
+
+    Contract: every statement inside ``read_transaction`` observes the same
+    committed snapshot, so a subject rotation that commits between the profile
+    read and the context read must not produce a mixed pair (old profile id +
+    new context pointer). A fresh transaction afterwards observes the rotation.
+    Fails on read-committed reads; passes on REPEATABLE READ.
+    """
+
+    store, _bootstrap_dsn = postgres_runtime
+    now = datetime.now(UTC)
+    initial = _signed_unknown_profile(
+        session_id="session-read-snapshot",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-read-snapshot-1",
+        issued_at=now,
+    )
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=SessionRuntimeContext.from_profile(initial, profile_revision=1),
+            profile=initial,
+            event=_profile_event(initial),
+            request_hash=hashlib.sha256(b"read-snapshot-request").hexdigest(),
+            idempotency_key="start-session-read-snapshot",
+        )
+    switched = _next_confirmed_profile(
+        initial,
+        profile_id="rp-read-snapshot-2",
+        issued_at=now + timedelta(seconds=1),
+    )
+    async with store.read_transaction(actor_id="actor-a") as reader:
+        before = await store.current_profile(reader, session_id="session-read-snapshot")
+        assert before is not None
+        assert before.runtime_profile_id == initial.runtime_profile_id
+        async with store.action_transaction(
+            actor_id="actor-a",
+            device_id="device-a",
+            subject_id=switched.active_subject_id,
+        ) as writer:
+            await store.rotate_profile(
+                writer,
+                expected_runtime_profile_id=initial.runtime_profile_id,
+                expected_profile_revision=1,
+                expected_session_epoch=1,
+                profile=switched,
+                event=_profile_event(
+                    switched,
+                    event_type="subject_switched",
+                    event_sequence=2,
+                    generation_id=1,
+                    turn_id=1,
+                    tool_epoch=1,
+                ),
+            )
+        during = await store.current_context(reader, session_id="session-read-snapshot")
+        assert during is not None
+        assert (during.current_runtime_profile_id, during.session_epoch) == (
+            before.runtime_profile_id,
+            before.session_epoch,
+        )
+    async with store.read_transaction(actor_id="actor-a") as fresh:
+        after = await store.current_profile(fresh, session_id="session-read-snapshot")
+    assert after is not None
+    assert after.runtime_profile_id == switched.runtime_profile_id
+
+
+@pytest.mark.asyncio
+async def test_read_transaction_binding_fence_shares_profile_snapshot(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """P0-04 read consistency: the binding fence reads the profile's snapshot.
+
+    A binding revoked between the profile read and the fence check must not
+    flip one ``current()`` call's answer mid-read: the open transaction still
+    reports the binding current, while a fresh transaction observes the
+    revocation. Fails on read-committed reads; passes on REPEATABLE READ.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-read-fence",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-read-fence-1",
+        issued_at=now,
+    )
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=SessionRuntimeContext.from_profile(profile, profile_revision=1),
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"read-fence-request").hexdigest(),
+            idempotency_key="start-session-read-fence",
+        )
+    async with store.read_transaction(actor_id="actor-a") as reader:
+        loaded = await store.current_profile(reader, session_id="session-read-fence")
+        assert loaded is not None
+        admin = await asyncpg.connect(bootstrap_dsn)
+        try:
+            await admin.execute(
+                "UPDATE identity_device_bindings SET status = 'superseded' "
+                "WHERE binding_id = 'binding-a'",
+            )
+        finally:
+            await admin.close()
+        fenced = await store.binding_is_current(
+            reader,
+            device_id="device-a",
+            binding_id="binding-a",
+            binding_version=1,
+            now=datetime.now(UTC),
+        )
+        assert fenced is True
+    async with store.read_transaction(actor_id="actor-a") as fresh:
+        withdrawn = await store.binding_is_current(
+            fresh,
+            device_id="device-a",
+            binding_id="binding-a",
+            binding_version=1,
+            now=datetime.now(UTC),
+        )
+    assert withdrawn is False

@@ -3826,3 +3826,130 @@ async def test_legacy_owner_preview_never_creates_a_relationship_shell_turn(
     assert response.status_code == 200
     assert response.json()["shell_turn_id"] is None
     assert legacy.turns == {}
+
+@pytest.mark.asyncio
+async def test_conversation_history_returns_paired_turns_and_rejects_cross_account(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P1-05: one session's owner turns plus actual-heard replies, owner-scoped.
+
+    A user turn and its actual-heard assistant reply share turn 1; an
+    ineligible owner turn and an unheard assistant event are omitted, never
+    fabricated. A second account's session is invisible to the first account.
+    """
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="history-owner")
+        other = await _register_verified_adult(client, app, username="history-other")
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        other_headers = {"Authorization": f"Bearer {other['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
+        other_session = (
+            await client.post("/v1/sessions", headers=other_headers, json={})
+        ).json()
+        occurred_at = datetime.now(UTC).isoformat()
+        user_event = {
+            "event_id": "history-user-1",
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": occurred_at,
+            "speaker_class": "owner",
+            "source": "funasr.authoritative_final",
+            "turn_id": 1,
+            "generation_id": 1,
+            "tool_epoch": 0,
+            "payload": {"text": "明天南京天气如何？"},
+        }
+        assistant_event = {
+            "event_id": "history-assistant-1",
+            "session_id": session["session_id"],
+            "event_type": "assistant.playout_stopped",
+            "occurred_at": occurred_at,
+            "speaker_class": "assistant",
+            "source": "generation_fence.actual_heard",
+            "turn_id": 1,
+            "generation_id": 1,
+            "tool_epoch": 0,
+            "payload": {"text": "明天有雨。", "actual_heard": True},
+        }
+        other_user = {
+            **user_event,
+            "event_id": "history-other-user-1",
+            "session_id": other_session["session_id"],
+        }
+        for event in (user_event, assistant_event, other_user):
+            response = await client.post(
+                "/v1/archive/session-events", headers=internal, json=event
+            )
+            assert response.status_code == 201, response.text
+        # Omission is a read-path property, not a write rejection: the write
+        # gate stores the raw evidence, and the history exit only surfaces
+        # eligible owner turns plus actual-heard replies. Flip the stored
+        # eligibility bits directly to prove the read path omits them.
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="history-user-ineligible",
+                account_id=owner["user_id"],
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="test",
+                payload={
+                    "text": "这句不应出现。",
+                    "history_eligible": False,
+                    "owner_projection_eligible": False,
+                },
+                session_id=session["session_id"],
+                turn_id=2,
+                generation_id=2,
+            )
+        )
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="history-assistant-unheard",
+                account_id=owner["user_id"],
+                event_type="assistant.playout_stopped",
+                occurred_at=datetime.now(UTC),
+                speaker_class="assistant",
+                source="test",
+                payload={
+                    "text": "这句也不应出现。",
+                    "actual_heard": False,
+                    "history_eligible": True,
+                    "owner_projection_eligible": True,
+                },
+                session_id=session["session_id"],
+                turn_id=2,
+                generation_id=2,
+            )
+        )
+        history = await client.get(
+            "/v1/archive/conversation-history",
+            headers=owner_headers,
+            params={"session_id": session["session_id"]},
+        )
+        assert history.status_code == 200, history.text
+        assert history.json() == {
+            "session_id": session["session_id"],
+            "turns": [
+                {
+                    "turn_id": 1,
+                    "generation_id": 1,
+                    "owner_text": "明天南京天气如何？",
+                    "assistant_text": "明天有雨。",
+                }
+            ],
+        }
+        cross = await client.get(
+            "/v1/archive/conversation-history",
+            headers=owner_headers,
+            params={"session_id": other_session["session_id"]},
+        )
+        assert cross.status_code == 200, cross.text
+        assert cross.json() == {
+            "session_id": other_session["session_id"],
+            "turns": [],
+        }

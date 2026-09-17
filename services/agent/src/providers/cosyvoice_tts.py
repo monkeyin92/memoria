@@ -983,6 +983,13 @@ class CosyVoiceTTS(tts.TTS[Any]):
             if not pcm_buf:
                 raise CosyVoiceFirstAudioTimeoutError()
             if not all_words:
+                if not config.word_timestamps:
+                    await settle_cancel_watcher(cancellation_requested=False)
+                    if not discarded:
+                        await self._pool.release(conn)
+                    return SynthesizeResult(
+                        bytes(pcm_buf), (), task_id, "degraded", discarded
+                    )
                 raise CosyVoiceTimestampError("CosyVoice returned no word timestamps")
             if cancel_event is not None and cancel_event.is_set():
                 await settle_cancel_watcher(cancellation_requested=True)

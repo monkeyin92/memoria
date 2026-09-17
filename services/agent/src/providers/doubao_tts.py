@@ -656,6 +656,7 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         self._fallback_pool = fallback_pool
         self._fence = fence
         self._conn: PooledConnection | None = None
+        self._fallback_used = False
         self._timed_transcript: tuple[TimedString, ...] = ()
         self._timed_transcript_alignment = "pending"
 
@@ -671,6 +672,14 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         replay: list[str] = []
+        # One-shot gate: a framework re-entry of ``_run`` after a fallback must
+        # continue from the already-fallen-back voice instead of restarting from
+        # personal and firing the fallback callback/trace again per re-entry.
+        # The gate lives on the stream, so the personal-voice first attempt runs
+        # exactly once per stream even when the framework retries ``_run``.
+        if self._fallback_used and self._fallback_config is not None:
+            self._config = self._fallback_config
+            self._pool = self._fallback_pool or self._pool
         try:
             await self._run_attempt(
                 output_emitter,
@@ -679,12 +688,18 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 replay=replay,
             )
         except DoubaoBeforeAudioError:
-            if self._fallback_config is None or self._fallback_pool is None:
+            if (
+                self._fallback_used
+                or self._fallback_config is None
+                or self._fallback_pool is None
+            ):
                 raise
             self._tts_instance._activate_fallback_for_fence(
                 self._fence,
                 self._fallback_config,
             )
+            self._fallback_used = True
+            self._config = self._fallback_config
             await self._run_attempt(
                 output_emitter,
                 config=self._fallback_config,

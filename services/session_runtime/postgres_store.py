@@ -760,12 +760,26 @@ class PostgresSessionRuntimeStore:
         *,
         actor_id: str,
     ) -> AsyncIterator[asyncpg.Connection]:
+        """One read-only transaction on a single REPEATABLE READ snapshot.
+
+        Profile, context, and the device-binding fence are three statements
+        that must observe the same committed state: a subject rotation or a
+        binding revocation committing between them must not produce a mixed
+        pair or flip one ``current()`` answer mid-read. The snapshot is
+        established by the first statement (the profile read), so writers
+        stay visible to the next fresh transaction. Read-only transactions
+        never take predicate locks, so this cannot produce serialization
+        failures; writers keep their own CAS fences.
+        """
         connection = await self._connect(
             self._dsn,
             application_name="memoria-session-api",
         )
         try:
-            async with connection.transaction(readonly=True):
+            async with connection.transaction(
+                isolation="repeatable_read",
+                readonly=True,
+            ):
                 await connection.execute(
                     "SELECT set_config('app.session_actor', $1, true)",
                     actor_id,

@@ -173,6 +173,8 @@ jobs:
         run: uv run pytest --import-mode=importlib --cov=services --cov-report=term-missing
         env:
           MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+      - name: Wake matrix tool regression (self-contained, no device)
+        run: uv run pytest --import-mode=importlib --no-cov scripts/tests/test_wake_word_matrix.py
       - name: Coverage gates
         run: |
           uv run coverage report --fail-under=85

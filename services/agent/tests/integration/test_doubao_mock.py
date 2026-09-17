@@ -984,3 +984,51 @@ async def test_personal_voice_failure_before_audio_still_falls_back_once() -> No
     finally:
         await tts.aclose()
         server.stop()
+
+@pytest.mark.asyncio
+async def test_livekit_stream_personal_before_audio_fallback_fires_exactly_once() -> None:
+    """P0-03 P3: stream-level fallback is a one-shot gate, not per re-entry.
+
+    A personal-voice stream whose first attempt fails before audio must fall
+    back to the designed voice exactly once: two provider sessions (personal
+    then baseline) and exactly one fallback callback. Fails while ``_run``
+    re-enters from the personal voice on every framework retry.
+    """
+
+    from livekit.agents import APIConnectOptions
+
+    server = MockDoubaoServer(scenario="slow_once")
+    server.start()
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_stream_fallback_once",
+        profile_id="stream-fallback-once",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    fallback_events: list[tuple[str, str, str]] = []
+    tts.set_voice_fallback_callback(
+        lambda _fence, profile, resource, speaker, _kind: fallback_events.append(
+            (profile, resource, speaker)
+        )
+    )
+    tts.bind_fence(GenerationFence("stream-fallback-once", 1, 1, 0))
+    try:
+        async with tts.stream(
+            conn_options=APIConnectOptions(max_retry=3, retry_interval=0.01)
+        ) as stream:
+            stream.push_text("流式回落只触发一次")
+            stream.end_input()
+            events = [event async for event in stream]
+        assert events
+        assert server.sessions == 2
+        assert server.speakers == [
+            "S_stream_fallback_once",
+            tts._baseline_speaker,  # noqa: SLF001 - assert fallback target, not plumbing
+        ]
+        assert len(fallback_events) == 1
+    finally:
+        await tts.aclose()
+        server.stop()

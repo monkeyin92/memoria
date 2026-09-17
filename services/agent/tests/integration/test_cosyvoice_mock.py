@@ -396,3 +396,36 @@ async def test_stall_after_audio_ends_the_attempt_without_replaying_the_sentence
         await tts.aclose()
     finally:
         srv.stop()
+
+@pytest.mark.asyncio
+async def test_word_timestamps_disabled_returns_complete_audio_without_word_metadata() -> None:
+    """P0-03 P2: with timestamps disabled the batch path degrades, not retries.
+
+    ``COSYVOICE_WORD_TIMESTAMPS=false`` means the caller asked for plain audio:
+    full PCM is still delivered with ``alignment_status="degraded"`` and empty
+    words, on exactly one connection. Fails while the batch path still raises
+    ``CosyVoiceTimestampError`` and re-synthesizes the whole sentence.
+    """
+
+    srv = MockCosyVoiceServer(scenario="empty_ts")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            pool_size=1,
+            word_timestamps=False,
+        )
+        tts = CosyVoiceTTS(cfg)
+        result = await tts.synthesize_stream_text(
+            ["无词时间戳也要完整播完。"],
+            fence=GenerationFence("no-ts-degrade", 1, 1, 0),
+        )
+        assert result.pcm
+        assert result.words == ()
+        assert result.alignment_status == "degraded"
+        assert srv.connections == 1
+        assert len(srv.run_requests) == 1
+        await tts.aclose()
+    finally:
+        srv.stop()

@@ -22,13 +22,24 @@ RECEIPT_CONSOLE = (
     / "outputs/acceptance/run-20260916-p2-05-wake-matrix-1/console.log"
 )
 
-WAKE_EVENT_TEXT = "I (264017) Application: Wake word detected: 茉莉 (state: 3)"
+# Minimal in-repo fixture: the real receipt's wake event (with ``(state:``) and
+# its lagging duplicate (without it), plus the preceding detector line. Only
+# these three lines are needed; the full device receipt stays out of the repo.
+FIXTURE_DETECTOR_TEXT = (
+    "I (264007) CustomWakeWord: Custom wake word detected: "
+    "command_id=1, string= mo li, prob=0.335790"
+)
+FIXTURE_WAKE_EVENT_TEXT = (
+    "I (264017) Application: Wake word detected: 茉莉 (state: 3)"
+)
+FIXTURE_LAGGING_DUPLICATE_TEXT = "I (266207) Application: Wake word detected: 茉莉"
+
+WAKE_EVENT_TEXT = FIXTURE_WAKE_EVENT_TEXT
 IDLE_TEXT = "I (260817) StateMachine: State: listening -> idle"
 CONNECTING_TEXT = "I (264017) StateMachine: State: idle -> connecting"
 DETECTOR_ON_TEXT = (
     "I (266187) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉"
 )
-
 
 class FakePort:
     """A readline script: bytes are returned, Exceptions raised, then b"" forever."""
@@ -185,9 +196,18 @@ def test_window_pauses_while_away_from_idle(tmp_path: Path) -> None:
 
 
 def test_offline_replay_dedups_lagging_duplicate(tmp_path: Path) -> None:
-    raw = RECEIPT_CONSOLE.read_text(encoding="utf-8").splitlines()
-    event_text = raw[627].split("] ", 1)[1]
-    duplicate_text = raw[649].split("] ", 1)[1]
+    if RECEIPT_CONSOLE.exists():
+        raw = RECEIPT_CONSOLE.read_text(encoding="utf-8").splitlines()
+        event_text = raw[627].split("] ", 1)[1]
+        duplicate_text = raw[649].split("] ", 1)[1]
+        detector_text = raw[626].split("] ", 1)[1]
+        assert event_text == FIXTURE_WAKE_EVENT_TEXT
+        assert duplicate_text == FIXTURE_LAGGING_DUPLICATE_TEXT
+        assert detector_text == FIXTURE_DETECTOR_TEXT
+    else:
+        event_text = FIXTURE_WAKE_EVENT_TEXT
+        duplicate_text = FIXTURE_LAGGING_DUPLICATE_TEXT
+        detector_text = FIXTURE_DETECTOR_TEXT
     assert wwm._is_wake_event(event_text)
     assert not wwm._is_wake_event(duplicate_text)
 
@@ -205,7 +225,6 @@ def test_offline_replay_dedups_lagging_duplicate(tmp_path: Path) -> None:
     assert duplicate_only == []  # the lagging duplicate alone counts for 0
     wide = sum(1 for line in reader.snapshot() if wwm.WAKE_MARKER in line.text)
     assert wide == 2  # documents why the wide marker must not be used for trials
-    detector_text = raw[626].split("] ", 1)[1]
     prob_reader = _reader(
         tmp_path,
         (
@@ -363,3 +382,36 @@ def test_human_report_uses_speech_onset(tmp_path: Path, monkeypatch: pytest.Monk
     report = wwm._build_report(receipt)
     assert "真人说话者=是" in report
     assert "开口起算" in report
+
+
+def test_exposure_ignores_busy_middle_between_idle_endpoints() -> None:
+    """P2-05: 1s idle, 8s connecting, 1s idle earns 2s exposure, not 10s."""
+    timeline = [
+        {"monotonic": 1000.0, "iso": "", "text": "", "from": "activating", "to": "idle"},
+        {"monotonic": 1001.0, "iso": "", "text": "", "from": "idle", "to": "connecting"},
+        {"monotonic": 1009.0, "iso": "", "text": "", "from": "connecting", "to": "idle"},
+    ]
+    exposure, paused = wwm._exposure_over_timeline(
+        timeline, window_start=1000.0, window_end=1010.0
+    )
+    assert exposure == pytest.approx(2.0)
+    assert sum(entry["to"] - entry["from"] for entry in paused) == pytest.approx(8.0)
+    assert any("connecting" in entry["reason"] for entry in paused)
+
+
+def test_exposure_splits_at_window_edges_and_handles_zero_exposure() -> None:
+    """Cross-window transitions clip; an all-busy window earns zero exposure."""
+    timeline = [
+        {"monotonic": 1000.0, "iso": "", "text": "", "from": "activating", "to": "idle"},
+        {"monotonic": 1005.0, "iso": "", "text": "", "from": "idle", "to": "speaking"},
+        {"monotonic": 1015.0, "iso": "", "text": "", "from": "speaking", "to": "idle"},
+    ]
+    left, _ = wwm._exposure_over_timeline(timeline, window_start=1000.0, window_end=1010.0)
+    right, _ = wwm._exposure_over_timeline(timeline, window_start=1010.0, window_end=1020.0)
+    assert left == pytest.approx(5.0)
+    assert right == pytest.approx(5.0)
+    busy, paused = wwm._exposure_over_timeline(
+        timeline, window_start=1006.0, window_end=1014.0
+    )
+    assert busy == pytest.approx(0.0)
+    assert len(paused) == 1 and "speaking" in paused[0]["reason"]

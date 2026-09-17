@@ -2483,6 +2483,98 @@ async def conversation_review(
     }
 
 
+def _owner_turn_item(event: EvidenceEvent) -> dict[str, Any] | None:
+    payload = event.payload
+    text = payload.get("text")
+    if not (
+        event.event_type == "speech.utterance_finalized"
+        and event.speaker_class == "owner"
+        and payload.get("history_eligible") is True
+        and payload.get("owner_projection_eligible") is True
+        and isinstance(text, str)
+        and text.strip()
+        and event.session_id is not None
+        and event.turn_id is not None
+        and event.generation_id is not None
+    ):
+        return None
+    return {
+        "event_id": event.event_id,
+        "occurred_at": event.occurred_at.isoformat(),
+        "session_id": event.session_id,
+        "turn_id": event.turn_id,
+        "generation_id": event.generation_id,
+        "speaker_class": "owner",
+        "text": text.strip(),
+    }
+
+
+@router.get("/conversation-history")
+async def conversation_history(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    session_id: Annotated[str, Query(min_length=1, max_length=128)],
+    turn_limit: int = Query(default=20, ge=1, le=50),
+) -> dict[str, Any]:
+    """Read one session's paired turns: owner text plus actual-heard replies.
+
+    Minimal P1-05 review exit: the same authenticated owner scope as the
+    account-wide ``/conversation-review`` (so no cross-account read and no
+    retention-consent long-term save), narrowed to one ``session_id``. Owner
+    turns must be history-eligible; assistant turns must carry actual-heard
+    evidence. Anything else is omitted, never fabricated: a session with no
+    eligible turns returns empty lists, not a generated summary.
+    """
+    require_capability_for_subject(
+        user,
+        "conversation_review",
+        store=_store(request),
+    )
+    bundle = await _archive(request).context(
+        ContextQuery(
+            account_id=user.user_id,
+            speaker_class="owner",
+            session_id=session_id,
+            limit=100,
+        )
+    )
+    scoped = [
+        event for event in bundle.evidence if event.session_id == session_id
+    ]
+    owner_turns = [
+        item
+        for event in scoped
+        if (item := _owner_turn_item(event)) is not None
+    ]
+    assistant_turns = [
+        item
+        for event in scoped
+        if (item := _actual_heard_item(event)) is not None
+    ]
+    by_turn: dict[tuple[int, int], dict[str, Any]] = {}
+    for item in owner_turns:
+        by_turn.setdefault(
+            (int(item["turn_id"]), int(item["generation_id"])),
+            {"turn_id": item["turn_id"], "generation_id": item["generation_id"]},
+        )["owner_text"] = item["text"]
+    for item in assistant_turns:
+        by_turn.setdefault(
+            (int(item["turn_id"]), int(item["generation_id"])),
+            {"turn_id": item["turn_id"], "generation_id": item["generation_id"]},
+        )["assistant_text"] = item["text"]
+    turns = [
+        {
+            "turn_id": key[0],
+            "generation_id": key[1],
+            "owner_text": entry.get("owner_text"),
+            "assistant_text": entry.get("assistant_text"),
+        }
+        for key, entry in sorted(by_turn.items())
+    ][:turn_limit]
+    return {"session_id": session_id, "turns": turns}
+
+
+
 def _search_item(item: Any) -> dict[str, Any]:
     return {
         "item_id": item.item_id,

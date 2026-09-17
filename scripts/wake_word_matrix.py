@@ -266,6 +266,55 @@ class ConsoleReader(threading.Thread):
         return None
 
 
+def _exposure_over_timeline(
+    timeline: list[dict[str, Any]],
+    *,
+    window_start: float,
+    window_end: float,
+) -> tuple[float, list[dict[str, Any]]]:
+    """Intersect the idle/busy state timeline with ``[window_start, window_end)``.
+
+    Only the slices where the newest transition at or before the slice start is
+    ``idle`` count as exposure; every busy slice is returned as a pause entry
+    with its state. Endpoint-state sampling is the bug this replaces: a window
+    whose endpoints are both idle still earns zero exposure for a busy middle.
+    """
+    if window_end <= window_start:
+        return 0.0, []
+    bounds = sorted(
+        {window_start, window_end}
+        | {
+            entry["monotonic"]
+            for entry in timeline
+            if window_start < entry["monotonic"] < window_end
+        }
+    )
+    exposure = 0.0
+    paused: list[dict[str, Any]] = []
+    state: str | None = None
+    ordered = sorted(timeline, key=lambda entry: entry["monotonic"])
+    cursor = 0
+    for index in range(len(bounds) - 1):
+        seg_start, seg_end = bounds[index], bounds[index + 1]
+        while cursor < len(ordered) and ordered[cursor]["monotonic"] <= seg_start:
+            state = ordered[cursor]["to"]
+            cursor += 1
+        if state == "idle":
+            exposure += seg_end - seg_start
+        else:
+            detail = f"state={state}" if state else "state unknown"
+            if state == "speaking":
+                detail += " (device playback; KWS off)"
+            paused.append(
+                {
+                    "from": seg_start,
+                    "to": seg_end,
+                    "reason": f"left idle ({detail}); exposure paused",
+                }
+            )
+    return exposure, paused
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -777,65 +826,24 @@ def _run_window(
         return _invalid("invalid_detector_off", "detector never reported configured")
     evidence = reader.detector_on_evidence()
 
-    wall_end = wall_start + wall_seconds
-    exposure = 0.0
-    paused: list[dict[str, Any]] = []
-    pause_start: float | None = None
-    pause_reason = ""
+    window_start = wall_start
+    wall_end = window_start + wall_seconds
     invalid_reason: str | None = None
-
-    def _close_pause(now: float) -> None:
-        nonlocal pause_start, pause_reason
-        if pause_start is not None:
-            paused.append({"from": pause_start, "to": now, "reason": pause_reason})
-            pause_start = None
-            pause_reason = ""
 
     while time.monotonic() < wall_end and invalid_reason is None:
         state = reader.current_state()
-        if state == "idle":
-            _close_pause(time.monotonic())
-            if play_fn is not None:
-                # Playback happens only while idle (see docstring): the assert
-                # pins that down next to the call it guards.
-                assert reader.current_state() == "idle", "playback only while idle"
-                seg_start = time.monotonic()
-                try:
-                    play_fn()
-                except PlayFailed as exc:
-                    invalid_reason = "invalid_play_failed"
-                    invalid.append(f"window {label} invalid: playback failed ({exc})")
-                    break
-                seg_end = time.monotonic()
-                landed = reader.current_state()
-                if landed == "idle":
-                    exposure += seg_end - seg_start
-                else:
-                    pause_start = seg_start
-                    pause_reason = (
-                        f"left idle during playback (state={landed}); exposure paused"
-                    )
-            else:
-                seg_start = time.monotonic()
-                time.sleep(max(0.0, min(poll_s, wall_end - seg_start)))
-                seg_end = time.monotonic()
-                if reader.current_state() == "idle":
-                    exposure += seg_end - seg_start
-                else:
-                    pause_start = seg_start
-                    pause_reason = (
-                        "left idle during quiet window "
-                        f"(state={reader.current_state()}); exposure paused"
-                    )
+        if state == "idle" and play_fn is not None:
+            # Playback happens only while idle (see docstring): the assert
+            # pins that down next to the call it guards.
+            assert reader.current_state() == "idle", "playback only while idle"
+            try:
+                play_fn()
+            except PlayFailed as exc:
+                invalid_reason = "invalid_play_failed"
+                invalid.append(f"window {label} invalid: playback failed ({exc})")
+                break
         else:
-            detail = f"state={state}" if state else "state unknown"
-            if state == "speaking":
-                detail += " (device playback; KWS off)"
-            if pause_start is None:
-                pause_start = time.monotonic()
-                pause_reason = f"left idle ({detail}); exposure paused"
             time.sleep(max(0.0, min(poll_s, wall_end - time.monotonic())))
-    _close_pause(time.monotonic())
     window_end = time.monotonic()
     if invalid_reason is None and reader.read_errors > baseline_errors:
         invalid_reason = "invalid_serial_gap"
@@ -847,7 +855,15 @@ def _run_window(
     wakes = (
         [] if invalid_reason is not None else _wake_lines(reader, since=wall_start, until=window_end)
     )
-    paused_total = sum(entry["to"] - entry["from"] for entry in paused)
+    # Exposure is the idle slice of the console state timeline inside the
+    # window, not endpoint sampling: a busy middle between two idle endpoints
+    # earns no exposure, and every busy slice is a dated pause entry.
+    exposure, paused = _exposure_over_timeline(
+        reader.state_timeline(),
+        window_start=window_start,
+        window_end=window_end,
+    )
+    idle_s = round(exposure, 3)
     return Window(
         label=label,
         gain=gain,
@@ -855,8 +871,8 @@ def _run_window(
         started_iso=iso_start,
         finished_monotonic=window_end,
         wakes=wakes,
-        effective_exposure_s=round(exposure, 3),
-        idle_s=round(max(0.0, (window_end - wall_start) - paused_total), 3),
+        effective_exposure_s=idle_s,
+        idle_s=idle_s,
         paused=[
             {"from": entry["from"], "to": entry["to"], "reason": entry["reason"]}
             for entry in paused
