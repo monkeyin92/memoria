@@ -786,7 +786,10 @@ class SqliteIdentityStore:
         """True for a one-sided declaration: source confirmed, target never did.
 
         The row stays ``pending``, so it is a declaration of the source
-        endpoint, never verified guardianship.
+        endpoint, never verified guardianship.  This predicate is deliberately
+        scope-free: binding creation calls it while the binding row does not
+        exist yet.  Recipient selection must use the binding-scoped check
+        instead (``IdentityService.declared_guardians``).
         """
 
         self._ready()

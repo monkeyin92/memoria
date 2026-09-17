@@ -578,13 +578,18 @@ BEGIN
     -- plpgsql so the Guardian schema can be installed before Identity; the
     -- name is resolved at execution, and a missing authority means there is no
     -- declaration to honour (fail closed, never fail open).
+    --
+    -- Binding-scoped on purpose (P0-04): every read/enqueue branch that
+    -- treats someone as a declared guardian goes through this one predicate,
+    -- so a third-party self-declaration without a binding can never read the
+    -- subject's crisis evidence or receive its notification.
     IF to_regprocedure(
-        'public.identity_relationship_source_confirmed(text,text,text,timestamptz)'
+        'public.identity_relationship_declared_for_binding(text,text,timestamptz)'
     ) IS NULL THEN
         RETURN FALSE;
     END IF;
-    RETURN identity_relationship_source_confirmed(
-        p_guardian_user_id, p_minor_user_id, 'guardian_of'::text, p_at
+    RETURN identity_relationship_declared_for_binding(
+        p_guardian_user_id, p_minor_user_id, p_at
     );
 END
 $guardian_declared$;
@@ -693,6 +698,21 @@ BEGIN
     ) THEN
         RAISE EXCEPTION
             'guardian notification target is not a declared guardian';
+    END IF;
+    -- P0-04 source constraint: the declaration must be binding-scoped.  The
+    -- declarant has to own an ACTIVE binding naming this subject as primary
+    -- subject (the ``parent_for_child`` + ``subject_draft`` write shape), so
+    -- a third party that merely learned the subject's person id and
+    -- self-accepted a ``guardian_of`` invite can never become a recipient.
+    -- A missing authority fails closed (never fail open).
+    IF to_regprocedure(
+        'public.identity_relationship_declared_for_binding(text,text,timestamptz)'
+    ) IS NULL
+    OR NOT identity_relationship_declared_for_binding(
+        p_guardian_user_id, v_minor_user_id, p_created_at
+    ) THEN
+        RAISE EXCEPTION
+            'guardian notification target has no binding-scoped declaration';
     END IF;
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
@@ -1261,6 +1281,15 @@ BEGIN
         EXECUTE format(
             'GRANT EXECUTE ON FUNCTION %s TO %I',
             'identity_relationship_source_confirmed(text, text, text, timestamptz)',
+            'memoria_guardian_maintenance'
+        );
+    END IF;
+    IF to_regprocedure(
+        'public.identity_relationship_declared_for_binding(text,text,timestamptz)'
+    ) IS NOT NULL THEN
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION %s TO %I',
+            'identity_relationship_declared_for_binding(text, text, timestamptz)',
             'memoria_guardian_maintenance'
         );
     END IF;

@@ -754,6 +754,13 @@ BEGIN
     -- One-sided declaration: the source endpoint confirmed its own side and
     -- the target never did, so the relationship is still pending.  It is
     -- evidence of a declaration, never of verified guardianship.
+    --
+    -- This predicate is deliberately scope-free: binding creation calls it
+    -- while the binding row does not exist yet, so the binding-scope check
+    -- cannot live here (it would be circular).  Callers that select a
+    -- notification recipient must additionally prove the declaration came
+    -- from the binding owner — see ``guardian_enqueue_declared_notification``
+    -- in the Guardian schema and ``IdentityService.declared_guardians``.
     RETURN (SELECT EXISTS (
         SELECT 1 FROM identity_relationships r
         WHERE r.source_person_id = p_source
@@ -764,6 +771,49 @@ BEGIN
           AND r.confirmed_by_target_at IS NULL
           AND r.valid_from <= p_at
           AND (r.valid_until IS NULL OR r.valid_until > p_at)
+    ));
+END
+$$;
+
+-- Binding-scoped declaration authority (P0-04): a ``guardian_of``
+-- declaration only authorizes reaching the guardian when it carries the
+-- binding-issued evidence id AND the declarant owns an ACTIVE binding that
+-- names the subject as primary subject.  A bare third-party invite +
+-- self-accept (arbitrary evidence, no binding) therefore never becomes a
+-- crisis-notification recipient.  Kept separate from
+-- ``identity_relationship_source_confirmed`` because binding creation must
+-- be able to validate its own not-yet-committed declaration.
+CREATE OR REPLACE FUNCTION identity_relationship_declared_for_binding(
+    p_source text, p_target text, p_at timestamptz
+) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET row_security = on AS $$
+BEGIN
+    RETURN (SELECT EXISTS (
+        SELECT 1 FROM identity_relationships r
+        WHERE r.source_person_id = p_source
+          AND r.target_person_id = p_target
+          AND r.relation_type = 'guardian_of'
+          AND r.status = 'pending'
+          AND r.confirmed_by_source_at IS NOT NULL
+          AND r.confirmed_by_target_at IS NULL
+          AND r.valid_from <= p_at
+          AND (r.valid_until IS NULL OR r.valid_until > p_at)
+          AND r.established_evidence_id = 'guardian_declaration_v1:device_binding'
+          AND EXISTS (
+              SELECT 1 FROM identity_device_bindings b
+              WHERE b.status = 'active'
+                AND b.account_owner_person_id = p_source
+                AND b.valid_from <= p_at
+                AND (b.valid_until IS NULL OR b.valid_until > p_at)
+                AND EXISTS (
+                    SELECT 1 FROM identity_device_binding_roles role
+                    WHERE role.binding_id = b.binding_id
+                      AND role.person_id = p_target
+                      AND role.role = 'primary_subject'
+                      AND role.status = 'active'
+                      AND role.ended_at IS NULL
+                )
+          )
     ));
 END
 $$;
@@ -1829,6 +1879,9 @@ REVOKE ALL ON FUNCTION identity_relationship_active(
 REVOKE ALL ON FUNCTION identity_relationship_source_confirmed(
     text, text, text, timestamptz
 ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_relationship_declared_for_binding(
+    text, text, timestamptz
+) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_person_visible(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_relationship_visible(
     text, text, text, text
@@ -2268,6 +2321,18 @@ BEGIN
         EXECUTE format(
             'GRANT EXECUTE ON FUNCTION %s TO %I',
             'identity_relationship_source_confirmed(text, text, text, timestamptz)',
+            'memoria_guardian_maintenance'
+        );
+    END IF;
+    IF to_regprocedure(
+        'public.identity_relationship_declared_for_binding(text,text,timestamptz)'
+    ) IS NOT NULL
+    AND EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_maintenance'
+    ) THEN
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION %s TO %I',
+            'identity_relationship_declared_for_binding(text, text, timestamptz)',
             'memoria_guardian_maintenance'
         );
     END IF;

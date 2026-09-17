@@ -14,6 +14,7 @@ from services.control_api.app.routes import multi_subject as multi_subject_route
 from services.control_api.tests.identity_test_helpers import (
     install_test_identity_authority,
 )
+from services.identity.domain import ModeConstraintError
 from services.session_runtime.profile_service import (
     RUNTIME_PROFILE_PAYLOAD_SCHEMA,
     RuntimeProfileRejected,
@@ -1496,6 +1497,118 @@ async def test_parent_for_child_binding_records_only_a_guardian_declaration(
         assert await app.state.identity_service.declared_guardians(
             subject_person_id=child_id
         ) == (owner["user_id"],)
+
+
+@pytest.mark.asyncio
+async def test_third_party_self_declared_guardian_is_excluded_from_notifications(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """P0-04：知道孩子 person id 不等于获得监护授权。
+
+    A logged-in stranger can still invite ``guardian_of`` to a known person id
+    and accept it themselves — that is a real pending declaration in Identity.
+    It must not, however, make them a declared guardian for the subject, nor
+    earn them the ``guardian`` role on the owner's device binding.
+    """
+
+    app = _env(monkeypatch, tmp_path, "guardian-source-constraint")
+    now = datetime.now(UTC)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "source-constraint-owner")
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="家长",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=now,
+        )
+        token = mint_device_binding_token(
+            device_id="device-source-constraint",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=5),
+            nonce="source-constraint-1",
+        )
+        created = await client.post(
+            "/v1/device-bindings",
+            headers={"Authorization": f"Bearer {owner['access_token']}"},
+            json={
+                "device_claim_token": token,
+                "declared_mode": "parent_for_child",
+                "account_owner_person_id": owner["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "guardian_of",
+                    "subject_draft": {
+                        "display_name": "独立小明",
+                        "age_band": "under_14",
+                    },
+                },
+                "persona_selection": "starlight",
+                "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+        assert await app.state.identity_service.declared_guardians(
+            subject_person_id=child_id
+        ) == (owner["user_id"],)
+
+        stranger = await _register(client, "source-constraint-stranger")
+        await app.state.identity_service.register_person(
+            person_id=stranger["user_id"],
+            display_name="外人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=now,
+        )
+        stranger_headers = {"Authorization": f"Bearer {stranger['access_token']}"}
+        invited = await client.post(
+            "/v1/relationships/invites",
+            headers=stranger_headers,
+            json={
+                "target_person_id": child_id,
+                "relation_type": "guardian_of",
+                "established_evidence_id": "self-asserted-evidence",
+            },
+        )
+        assert invited.status_code == 201, invited.text
+        accepted = await client.post(
+            f"/v1/relationships/{invited.json()['relationship_id']}/accept",
+            headers=stranger_headers,
+            json={},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["status"] == "pending"
+
+        # The declaration exists and is source-confirmed, yet it is not a
+        # binding-scoped declaration, so the notification path never sees it.
+        assert await app.state.identity_service.declared_guardians(
+            subject_person_id=child_id
+        ) == (owner["user_id"],)
+
+        # The stranger also cannot take the guardian role on the owner's
+        # parent_for_child binding.
+        with pytest.raises(ModeConstraintError, match="account owner"):
+            await app.state.identity_service.create_binding(
+                device_id="device-stranger-guardian",
+                declared_mode="parent_for_child",
+                account_owner_person_id=owner["user_id"],
+                primary_subject_ids=(child_id,),
+                roles=((stranger["user_id"], "guardian"),),
+                service_profile_version="parent_for_child-v1",
+                policy_bundle_version="multi-subject-v1",
+                now=now,
+            )
 
 
 @pytest.mark.asyncio

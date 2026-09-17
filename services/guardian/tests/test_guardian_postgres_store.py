@@ -950,6 +950,7 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
             for person_id, category, band, evidence in (
                 ("declared-guardian", "adult", "adult", "verified"),
                 ("undeclared-guardian", "adult", "adult", "verified"),
+                ("self-declared-outsider", "adult", "adult", "verified"),
                 ("declared-ward", "minor", "under_14", "unverified"),
             ):
                 await bootstrap.execute(
@@ -981,6 +982,60 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                     'guardian_of', 'pending', $1,
                     'guardian_declaration_v1:device_binding',
                     $1, NULL, TRUE, FALSE, 0, '[]'::jsonb, FALSE, $1, $1
+                )
+                """,
+                now,
+            )
+            # P0-04: the declaration only authorizes a recipient when it is
+            # binding-scoped — the declarant owns an ACTIVE binding naming the
+            # subject as primary subject.  Seed exactly that binding.
+            await bootstrap.execute(
+                """
+                INSERT INTO identity_device_bindings(
+                    binding_id, device_id, declared_mode, family_space_id,
+                    account_owner_person_id, binding_version, status, reason,
+                    valid_from, valid_until, supersedes_binding_id,
+                    service_profile_version, policy_bundle_version,
+                    consent_snapshot_id, persona_assignment_id, created_at
+                ) VALUES (
+                    'declaration-binding', 'declaration-device',
+                    'parent_for_child', NULL, 'declared-guardian', 1, 'active',
+                    'create', $1, NULL, NULL, 'parent_for_child-v1',
+                    'multi-subject-v1', NULL, 'starlight:v1', $1
+                )
+                """,
+                now,
+            )
+            await bootstrap.execute(
+                """
+                INSERT INTO identity_device_binding_roles(
+                    binding_id, person_id, role, status, permissions_json,
+                    granted_at, ended_at
+                ) VALUES
+                    ('declaration-binding', 'declared-guardian', 'guardian',
+                     'active', '[]'::jsonb, $1, NULL),
+                    ('declaration-binding', 'declared-ward',
+                     'primary_subject', 'active', '[]'::jsonb, $1, NULL)
+                """,
+                now,
+            )
+            # P0-04 negative fixture: this person self-declared the SAME
+            # subject with arbitrary evidence and holds no binding at all.
+            # Their declaration is a real pending one-sided row, so the only
+            # thing that can refuse them is the binding-scope check.
+            await bootstrap.execute(
+                """
+                INSERT INTO identity_relationships(
+                    relationship_id, source_person_id, target_person_id,
+                    relation_type, status, valid_from, established_evidence_id,
+                    confirmed_by_source_at, confirmed_by_target_at,
+                    requires_confirmation, can_delegate, delegation_depth,
+                    permissions_json, auto_suspended, created_at, updated_at
+                ) VALUES (
+                    'declaration-outside', 'self-declared-outsider',
+                    'declared-ward', 'guardian_of', 'pending', $1,
+                    'self-asserted-evidence', $1, NULL, TRUE, FALSE, 0,
+                    '[]'::jsonb, FALSE, $1, $1
                 )
                 """,
                 now,
@@ -1018,6 +1073,23 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                 occurred_at=now,
                 script_version="crisis-transfer-v1",
                 declared_guardian_ids=("undeclared-guardian",),
+            )
+
+        # P0-04: a real one-sided self-declaration with NO binding is also
+        # refused, so learning the subject's person id is not enough to
+        # become a crisis-notification recipient.
+        with pytest.raises(
+            asyncpg.PostgresError, match="no binding-scoped declaration"
+        ):
+            await store.enqueue_crisis_event(
+                crisis_event_id=str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, "outsider-crisis")
+                ),
+                evidence_event_id="outsider-crisis-evidence",
+                minor_user_id="declared-ward",
+                occurred_at=now,
+                script_version="crisis-transfer-v1",
+                declared_guardian_ids=("self-declared-outsider",),
             )
     finally:
         if store is not None:

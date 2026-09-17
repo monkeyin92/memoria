@@ -198,6 +198,9 @@ class InMemoryIdentityStore:
 
         Such a relationship is still ``pending`` and never activates a role on
         its own; callers must name it a declaration rather than verification.
+        Scope-free on purpose: binding creation calls it before the binding
+        exists.  Recipient selection uses the binding-scoped check in
+        ``IdentityService.declared_guardians``.
         """
 
         with self._lock:

@@ -1555,6 +1555,10 @@ class SqliteGuardianStore:
             # caller resolved them from the Identity authority because the
             # subject has no account to confirm a guardian link. They never
             # become an active link and never unlock consent-gated capability.
+            # The caller MUST have resolved them through
+            # ``IdentityService.declared_guardians`` (binding-scoped source
+            # constraint); this store cannot re-validate the Identity side,
+            # so an unresolved id passed here is a caller bug, not authority.
             targets.update(
                 guardian_id
                 for guardian_id in declared_guardian_ids

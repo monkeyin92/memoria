@@ -108,15 +108,23 @@ async def _declare_guardianship(
     *,
     guardian_id: str,
     child_id: str,
+    device_id: str,
     now: datetime,
 ) -> None:
-    """Record the one-sided guardian declaration through the Identity API.
+    """Write the one-sided declaration AND its binding through the app stores.
 
     The subject has no account, so the ``guardian_of`` relationship stays
     pending: the guardian confirms their own side and the target side is never
-    confirmed.  This is the production write shape, not an activated link.  Both
-    account persons are reconciled through ``ensure_account_person`` first, which
-    is the same helper the login/binding routes use.
+    confirmed.  This is the production write shape (``POST /v1/device-bindings``
+    with ``parent_for_child`` + ``subject_draft``), not an activated link, and
+    it is what makes the declaration binding-scoped: P0-04 only accepts a
+    declared guardian whose declaration carries the device-binding evidence id
+    and who owns an ACTIVE binding naming the subject.
+
+    The Session authority's own binding lives in PostgreSQL
+    (``_seed_delegated_binding``); this helper writes the app-side counterpart
+    in the same sqlite Identity store the notification path reads, with the
+    same device_id, so both halves describe one device.
     """
 
     identity = app.state.identity_service
@@ -147,6 +155,26 @@ async def _declare_guardianship(
         relationship_id=proposed.relationship_id,
         person_id=guardian_id,
         now=now,
+    )
+    await identity.create_binding(
+        device_id=device_id,
+        declared_mode="parent_for_child",
+        account_owner_person_id=guardian_id,
+        primary_subject_ids=(child_id,),
+        roles=((guardian_id, "guardian"), (guardian_id, "device_admin")),
+        consent_offer_ids=("offer_minor_voice_session_v1",),
+        service_preferences={"memory_level": "ephemeral"},
+        persona_assignment_id="starlight:v1",
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        actor_person_id=guardian_id,
+        now=now,
+    )
+    # The declaration must now resolve back to this guardian: a declaration
+    # without its binding is exactly the third-party self-declaration P0-04
+    # rejects, and it would silently drop the notification asserted below.
+    assert await identity.declared_guardians(subject_person_id=child_id) == (
+        guardian_id,
     )
 
 
@@ -338,6 +366,7 @@ async def test_real_runtime_child_profile_reaches_both_policy_seams(
             app,
             guardian_id=chain.account_id,
             child_id=chain.child_person_id,
+            device_id="device-real-runtime-chain",
             now=datetime.now(UTC),
         )
 

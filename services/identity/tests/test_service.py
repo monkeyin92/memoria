@@ -1626,6 +1626,161 @@ async def test_expire_relationships_by_valid_until(service: IdentityService) -> 
 
 
 # ---------------------------------------------------------------------------
+# P0-04 声明来源约束：只有绑定范围内的声明才算监护依据
+# ---------------------------------------------------------------------------
+
+
+async def _declare_owner_guardianship(
+    service: IdentityService,
+    *,
+    owner: str,
+    child: str,
+    now: datetime,
+) -> str:
+    """The production declaration: source-confirmed, binding evidence, owner."""
+    proposed = await service.propose_relationship(
+        source_person_id=owner,
+        target_person_id=child,
+        relation_type="guardian_of",
+        established_evidence_id="guardian_declaration_v1:device_binding",
+        actor_person_id=owner,
+        now=now,
+    )
+    await service.confirm_relationship(
+        relationship_id=proposed.relationship_id,
+        person_id=owner,
+        now=now,
+    )
+    return proposed.relationship_id
+
+
+@pytest.mark.asyncio
+async def test_third_party_self_declaration_is_never_a_declared_guardian(
+    service: IdentityService,
+) -> None:
+    """知道孩子的 person id 不足以成为声明监护人。
+
+    The production binding writes the declaration; a stranger who merely
+    invites ``guardian_of`` to a known person id and self-accepts must stay
+    out of the declaration set, and must never take the ``guardian`` role on
+    someone else's ``parent_for_child`` binding.
+    """
+
+    now = _now()
+    owner = await _adult(service, "家长", now)
+    child = await _minor(service, "孩子", now)
+    stranger = await _adult(service, "外人", now)
+
+    stranger_invite = await service.propose_relationship(
+        source_person_id=stranger,
+        target_person_id=child,
+        relation_type="guardian_of",
+        established_evidence_id="self-asserted-evidence",
+        actor_person_id=stranger,
+        now=now,
+    )
+    one_sided = await service.confirm_relationship(
+        relationship_id=stranger_invite.relationship_id,
+        person_id=stranger,
+        now=now,
+    )
+    # The row really is a one-sided declaration; the scope check is what
+    # refuses it, not a missing confirmation.
+    assert one_sided.status == "pending"
+    assert one_sided.confirmed_by_source_at is not None
+    assert one_sided.confirmed_by_target_at is None
+
+    assert await service.declared_guardians(subject_person_id=child) == ()
+
+    await _declare_owner_guardianship(service, owner=owner, child=child, now=now)
+    await service.create_binding(
+        device_id="dev-declared-owner",
+        declared_mode="parent_for_child",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child,),
+        roles=((owner, "guardian"), (owner, "device_admin")),
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        now=now,
+    )
+    # Only the binding-owning declarant resolves; the stranger stays out even
+    # though their pending declaration is still in the store.
+    assert await service.declared_guardians(subject_person_id=child) == (owner,)
+
+    with pytest.raises(ModeConstraintError, match="account owner"):
+        await service.create_binding(
+            device_id="dev-stranger-guardian",
+            declared_mode="parent_for_child",
+            account_owner_person_id=owner,
+            primary_subject_ids=(child,),
+            roles=((stranger, "guardian"),),
+            service_profile_version="parent_for_child-v1",
+            policy_bundle_version="multi-subject-v1",
+            now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_declared_guardian_drops_when_revoked_or_expired(
+    service: IdentityService,
+) -> None:
+    """撤销或过期后不再作为声明监护人通知收件人。"""
+
+    now = _now()
+    owner = await _adult(service, "家长", now)
+    child = await _minor(service, "孩子", now)
+    relationship_id = await _declare_owner_guardianship(
+        service, owner=owner, child=child, now=now
+    )
+    await service.create_binding(
+        device_id="dev-declared-revoke",
+        declared_mode="parent_for_child",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child,),
+        roles=((owner, "guardian"), (owner, "device_admin")),
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        now=now,
+    )
+    assert await service.declared_guardians(subject_person_id=child, now=now) == (
+        owner,
+    )
+
+    await service.revoke_relationship(
+        relationship_id=relationship_id,
+        actor_person_id=owner,
+        evidence_id="evidence-revoke-guardian",
+        now=now,
+    )
+    assert await service.declared_guardians(subject_person_id=child, now=now) == ()
+
+    # A second declaration that expires must drop out on its own.
+    expiring = await service.propose_relationship(
+        source_person_id=owner,
+        target_person_id=child,
+        relation_type="guardian_of",
+        established_evidence_id="guardian_declaration_v1:device_binding",
+        valid_until=now + timedelta(days=1),
+        actor_person_id=owner,
+        now=now,
+    )
+    await service.confirm_relationship(
+        relationship_id=expiring.relationship_id,
+        person_id=owner,
+        now=now,
+    )
+    assert await service.declared_guardians(subject_person_id=child, now=now) == (
+        owner,
+    )
+    assert (
+        await service.declared_guardians(
+            subject_person_id=child, now=now + timedelta(days=2)
+        )
+        == ()
+    )
+
+
+# ---------------------------------------------------------------------------
 # Manifest 序列化与可序列化回放
 # ---------------------------------------------------------------------------
 

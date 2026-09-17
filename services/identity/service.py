@@ -953,32 +953,68 @@ class IdentityService:
         self,
         *,
         subject_person_id: str,
+        now: datetime | None = None,
     ) -> tuple[str, ...]:
         """Guardians whose ``guardian_of`` link to the subject is a declaration only.
 
         The relationship is still ``pending`` because the subject has no
-        account and never confirmed an endpoint.  Callers may use the result
-        for the narrow purpose the declaration actually covers — reaching the
-        guardian who declared responsibility — and must not treat it as
-        verified guardianship, consent, or evidence that the subject agreed to
-        anything.
+        account and never confirmed an endpoint.  A declaration counts only
+        when all of these hold:
+
+        - it carries the binding-issued evidence id
+          (``guardian_declaration_v1:device_binding``), so a bare invite +
+          self-accept with arbitrary evidence never qualifies;
+        - it is inside its own validity window at ``now``;
+        - the declarant is the account owner of an ACTIVE binding that names
+          the subject as primary subject — the one production write shape
+          (``POST /v1/device-bindings`` with ``parent_for_child`` +
+          ``subject_draft``).
+
+        A third party that merely learns the subject's person id therefore
+        cannot self-declare into the crisis-notification recipient set.
+        Callers may use the result for the narrow purpose the declaration
+        actually covers — reaching the guardian who declared responsibility —
+        and must not treat it as verified guardianship, consent, or evidence
+        that the subject agreed to anything.
         """
 
+        timestamp = _now(now)
         relationships = await self._store.list_relationships(
             subject_person_id,
             statuses=("pending",),
             actor_person_id=subject_person_id,
         )
+        candidates = {
+            relationship.source_person_id
+            for relationship in relationships
+            if relationship.relation_type == "guardian_of"
+            and relationship.target_person_id == subject_person_id
+            and relationship.confirmed_by_source_at is not None
+            and relationship.confirmed_by_target_at is None
+            and relationship.valid_from <= timestamp
+            and (
+                relationship.valid_until is None
+                or timestamp < relationship.valid_until
+            )
+            and relationship.established_evidence_id
+            == "guardian_declaration_v1:device_binding"
+        }
+        if not candidates:
+            return ()
+        bindings = await self._store.list_active_bindings_for_person(
+            subject_person_id,
+            timestamp,
+            actor_person_id=subject_person_id,
+        )
         return tuple(
             sorted(
-                {
-                    relationship.source_person_id
-                    for relationship in relationships
-                    if relationship.relation_type == "guardian_of"
-                    and relationship.target_person_id == subject_person_id
-                    and relationship.confirmed_by_source_at is not None
-                    and relationship.confirmed_by_target_at is None
-                }
+                guardian_id
+                for guardian_id in candidates
+                if any(
+                    binding.account_owner_person_id == guardian_id
+                    and subject_person_id in binding.primary_subject_ids
+                    for binding in bindings
+                )
             )
         )
 
@@ -2514,6 +2550,34 @@ class IdentityService:
         if declared_mode == "parent_for_child":
             owner_set = {account_owner_person_id}
             for guardian_id in guardian_ids:
+                # A bare one-sided declaration is only a binding-scoped fact:
+                # it counts when the declarant is the binding's account owner
+                # (the production ``subject_draft`` write shape) OR when the
+                # same guardian holds an ACTIVE two-party ``guardian_of``
+                # relationship to the subject (the account-holder family
+                # shape, e.g. a distinct guardian role alongside the owner).
+                # A pending-only self-declaration from a non-owner stays a
+                # notification-candidate at most — it never satisfies the
+                # binding role.  Without this, any login that learns a
+                # child's person id could self-declare guardian_of and take
+                # the guardian role.
+                if guardian_id != account_owner_person_id:
+                    verified_guardian = False
+                    for subject_id in subjects:
+                        if await self._store.has_active_relationship(
+                            source_person_id=guardian_id,
+                            target_person_id=subject_id,
+                            relation_type="guardian_of",
+                            at=now,
+                        ):
+                            verified_guardian = True
+                            break
+                    if not verified_guardian:
+                        raise ModeConstraintError(
+                            "parent_for_child guardian must be the binding "
+                            f"account owner or hold a verified guardian_of "
+                            f"relationship ({guardian_id})"
+                        )
                 for subject_id in subjects:
                     await _verified(
                         "guardian_of",
