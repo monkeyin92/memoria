@@ -142,7 +142,7 @@ The 2026-09-16/17 local work has since been committed (`e5f9d50`, `7c0ef48`, `ec
 1. 开串口可能复位，先等 `activating→idle` 和心跳再讲话；唤醒词“茉莉”。无人配合或设备未连接时只做离线检查，不自行刷机或播放自动代测。
 2. 同一候选重跑三天天气→续问→播后告别，至少三轮；另测 >45s 长答、B/D 同类长答、临近静默续问，以及已下发部分音频后 provider 失败。每项分别判定功能、时延、终态、听感，不跨 release 累加通过数。
 3. 同时取 Bridge/Edge WS writer/设备接收、解码、播放消费及任务/锁状态，绑定 session/stream/turn/generation/tool fence。保留 supply/prestart/boundary/close_dropped/outside、delivery ledger、指标差分、PCM RMS/削波；缺观测先补观测，不先加预缓冲或改阈值。
-4. 学生危机场景先按 P0-04 的正式 app_confirm 路径确认测试使用人及年龄，核对设备实际取得的签名 profile 与有效监护授权；不手工注入 profile 或绕过声纹/准入门。只由受控成人模拟话术，固定话术逐字交付、终端回执和人工听感、正确主体的通知 outbox/幂等/家长读取同时验；HTTP 文本正确不是设备已说出。通知发送 worker 按用户决定暂缓。
+4. 功能口径（2026-09-17 晚四确定，本阶段只验功能）：能对话、能打断（button/keyword 按签名放行范围，中断后有界退出并回 listening）、长时间对话稳定、每次对话内容汇总可查（双方话轮与汇总以服务端日志/会话记录为准，操作员可读；无可读出口记缺口、不算通过）。不手工注入 profile，不绕声纹/准入门；HTTP 文本正确不是设备已说出，以终端回执与人工听感为准。学生危机场景的设备交付与通知 outbox 链（app_confirm 确认使用人及年龄、固定话术逐字交付、终端回执、outbox 绑定/幂等/家长读取）defer 到安全专项窗口，软件矩阵证据保留；通知发送 worker 按用户决定暂缓。
 
 使用新目录，绑定板上收据（不是本次重新回读的证明）：
 
