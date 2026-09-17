@@ -2,25 +2,26 @@
 
 更新于 2026-09-17。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收；完成过程与旧版本流水账已删除。唯一执行队列见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-2026-09-17 复核文档、源码与提交，并修 P1-01 与 P0-04 的代码、测试与接线：修正真实 exporter 探针的仓库根路径（镜像门禁与覆盖率合并恢复），并给 `guardian_of` 声明加上绑定范围约束（见下）。全部改动在本机既有 Docker PostgreSQL 容器与普通 venv 上实跑（未构建发布候选、未连接生产、未打开串口、未连接设备）。下列生产/板卡状态均为标注日期的既有收据，不是本轮实时健康证明；操作前须重新核验。
+2026-09-17 复核文档、源码与提交，并修 P1-01 与 P0-04 的代码、测试与接线：修正真实 exporter 探针的仓库根路径（镜像门禁与覆盖率合并恢复），给 `guardian_of` 声明加上绑定范围约束，并完成无账号孩子的 person 级 consent 授予/读门/撤销闭环（见下）。全部改动在本机既有 Docker PostgreSQL 容器与普通 venv 上实跑（未构建发布候选、未连接生产、未打开串口、未连接设备）。下列生产/板卡状态均为标注日期的既有收据，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-17
-reviewed_source_commit: b58fa5018f71e74314638d9280509f5ccd238535
+reviewed_source_commit: 77fc86a6cdb9a61079902efcfc546bc44ee4f468
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_b58fa50
+code: committed_through_77fc86a
 wired: existing_python_voice_core_and_signed_runtime_profile_authorities
 enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
 verified: scoped_receipts_only_voice_stability_and_student_device_loop_pending
 guardian_declaration_scope: binding_scoped_owner_only_third_party_excluded
+accountless_person_consent: binding_owner_granted_person_scoped_consent_closed
 production_readiness: ready_at_last_observation_not_refreshed_this_review
 production_readiness_observed_at: 2026-09-16T11:37:57+08:00
 student_safety_loop_verified: false
@@ -63,7 +64,8 @@ device_id: dev_atk_a4cb8fd6095c
 - 语音输出终态（P0-03）：首帧已下发后的 provider 崩溃、停滞（`MEDIA_OUTPUT_GENERATION_TIMEOUT_S`）与硬期限（`APIConnectionError: total-timeout`）三种故障已本地注入验证：`services/agent/tests/unit/test_media_output_partial_failure.py` 断言有界时间内（0.2s 停滞预算内）落地同一终态——一个后继代 `REALTIME_EFFECT_KIND_CANCEL_GENERATION`（设备据此退出 speaking 并 flush，source `output_provider_failed`/`output_timeout`）、交付账终态为 `ReplyDeliveryEvent.ERROR` 而非 `PLAYBACK_ENDED`、`provider_complete=false`、`interaction_phase=listening`、`assistant_speaking=false`，且旧代的迟到 ACK/ENDED 不改变权威 fence、终态与发射计数。这验证的是进程内故障注入；B 的真机表现（桥侧旧总挂钟 20.23s 出错、约 38.6s 后才错误收尾）仍需设备捕获核对。
 - 语音续问（P0-03）：G 的静默预算语义已统一：`owner_silence_remaining_s` 的 `None/0.0/>0` 三态明确，结束已测预算记 `0.0` 而非 `None`；计数器改为 `owner_silence_activity_revision` 并收敛到 `_note_owner_silence_activity`；被受理的 ASR final 与已受理 VAD 一样可作为"已受理主人活动"失效仍在等锁的关闭，但只在仍有其它界时生效、且不刷新预算。`test_accepted_final_can_veto_a_parked_grace_close` 与 `test_ending_a_measured_budget_records_it_as_spent_not_unmeasured` 在 `HEAD` 上失败、当前通过；两条真实入口保护用例两版都通过。仍未做：真机复跑 G 取证、无验证说话人且无其它界时的关闭语义、endpoint/commit 乱序与 watchdog 交接的 10s/60s 完整矩阵、部分音频失败终态、B/D 设备停滞、时延门。
 - 学生安全（P0-04）：`_primary_subject` 不再替孩子确认，`guardian_of` 保持 `pending` 且只记录家长一侧确认（evidence `guardian_declaration_v1:device_binding`）；伪造的 `establish_active_link`（含 `verified_via=wechat_identity`、合成 code hash、365d 到期，并会激活既有 pending link）已从 port 与两个 store 删除。危机通知改由调用方从 Identity 解析声明监护人以 `declared_guardian_ids` 显式传入，PostgreSQL 侧新增 `guardian_enqueue_declared_notification` 在库内复核声明；SQLite 直接插入。这是有意决定：单方声明是通知依据，但不是已验证监护，也不解锁 consent。
-- 声明来源约束（P0-04，2026-09-17，本地代码+测试+真实 PG + authoritative gate）：`b58fa50`。此前任何已登录账号都能对任意已知 person id 发 `guardian_of` 邀请并自己 accept，`declared_guardians` 与 `parent_for_child` 的 guardian 角色都接受该单方行，于是第三方可进入孩子的危机通知收件人集合。现在声明必须同时满足：带设备绑定证据 `guardian_declaration_v1:device_binding`、在有效期内、且声明人是某个 ACTIVE binding 的 `account_owner` 而该 binding 把主体列为 `primary_subject`（即 `POST /v1/device-bindings` 的 `parent_for_child` + `subject_draft` 唯一生产写入形状）。`parent_for_child` 的 guardian 角色另要求声明人就是 binding owner，或持双边 ACTIVE `guardian_of`。存储层 `has_source_confirmed_relationship` 保持无范围语义（建绑定时尚无 binding 行，加范围会形成循环依赖）；绑定范围判断在 `IdentityService.declared_guardians`（服务层，含 validity window）与新增的 PG 授权函数 `identity_relationship_declared_for_binding`——后者被 `guardian_relationship_declared`（危机事件读取策略与通知读取策略共用）与 `guardian_enqueue_declared_notification` 同时调用，授权缺失即 fail closed。回归：身份层第三方自声明排除/撤销/过期三例（内存+SQLite 双参数）、HTTP 层真实 invite+accept 后仍被排除且拿不到 guardian 角色、PG guardian 契约新增绑定范围正例与「无 binding 的真实单方声明」反例。实跑：`services/{identity,guardian,control_api,session_runtime,policy,consent}/tests` 带 `MEMORIA_TEST_POSTGRES_DSN` 全绿，`scripts/tests/run_authoritative_postgres_gate.sh`（init + repeat-upgrade + verify）通过。交付等级为 `code`；通知投递通道仍缺席，未验设备端。
+- 声明来源约束（P0-04，2026-09-17，本地代码+测试+真实 PG + authoritative gate）：`e1878ce`。此前任何已登录账号都能对任意已知 person id 发 `guardian_of` 邀请并自己 accept，`declared_guardians` 与 `parent_for_child` 的 guardian 角色都接受该单方行，于是第三方可进入孩子的危机通知收件人集合。现在声明必须同时满足：带设备绑定证据 `guardian_declaration_v1:device_binding`、在有效期内、且声明人是某个 ACTIVE binding 的 `account_owner` 而该 binding 把主体列为 `primary_subject`（即 `POST /v1/device-bindings` 的 `parent_for_child` + `subject_draft` 唯一生产写入形状）。`parent_for_child` 的 guardian 角色另要求声明人就是 binding owner，或持双边 ACTIVE `guardian_of`。存储层 `has_source_confirmed_relationship` 保持无范围语义（建绑定时尚无 binding 行，加范围会形成循环依赖）；绑定范围判断在 `IdentityService.declared_guardians`（服务层，含 validity window）与新增的 PG 授权函数 `identity_relationship_declared_for_binding`——后者被 `guardian_relationship_declared`（危机事件读取策略与通知读取策略共用）与 `guardian_enqueue_declared_notification` 同时调用，授权缺失即 fail closed。回归：身份层第三方自声明排除/撤销/过期三例（内存+SQLite 双参数）、HTTP 层真实 invite+accept 后仍被排除且拿不到 guardian 角色、PG guardian 契约新增绑定范围正例与「无 binding 的真实单方声明」反例。实跑：`services/{identity,guardian,control_api,session_runtime,policy,consent}/tests` 带 `MEMORIA_TEST_POSTGRES_DSN` 全绿，`scripts/tests/run_authoritative_postgres_gate.sh`（init + repeat-upgrade + verify）通过。交付等级为 `code`；通知投递通道仍缺席，未验设备端。
+- 无账号孩子 consent 闭环（P0-04，2026-09-17，本地代码+测试+真实 PG + authoritative gate）：`77fc86a`。旧链路 consent 强依赖 `guardian_links`，无账号孩子无法创建/确认 link 导致 consent 永久 fail closed。新增 `PersonConsentRecord` 领域实体，在 SQLite 与 PostgreSQL 建立 `guardian_person_consents`（带 FORCE RLS、`guardian_controller_person_consents` 策略与 maintenance 数据治理统计）；提供 `POST/GET/DELETE /v1/guardian/minors/{person_id}/consents`，由活跃 `parent_for_child` 设备绑定拥有者控制；读门 `active_consent` 做 link/person 并集统一解析。端到端回归验证：HTTP 授予 `memory_retention` 后 `/session-policy` 解除 `ephemeral_only` 记忆天花板，撤销后恢复保守态；非拥有者 403；`/response-plan` 补齐 `unknown_safe` 模式下直接 200 且 0 条记忆项泄漏回归。交付等级为 `code`。
 - 记忆召回（P1-06）：固定集 16 例 recall@5 由 0.8125 升到 0.9375、nDCG@10 由 0.734 升到 0.859，`candidate_leakage`/`cross_account_leakage` 仍为 0、`extraction_recall`=1.0、p50≈0.72ms。三处改动：`RecallPlanner` 新增“避开/忌口/不能吃/别吃/注意别/过敏”标记 → “不喜欢/讨厌/不吃/忌口/不要”词表扩展；评测 adapter 改为与生产读路径一致（生产总是先 plan）；规则抽取器新增“家里人叫(她|他)X”别名句式（仅在唯一人物且非角色词时生效，并补了反例）；编译期为人物建立 search document（此前 person 只在 `person_aliases`，没有任何读路径会搜它），确认时随同事件投影提升，未确认人物仍被 confirmed-only 挡在外面。仅剩 `repeated-episode-campus-startup`（跨会话 episode 合并的产品语义未定，不抬分）。人物投影已同步到生产 `postgres_memory_catalog.py`，并补了 DSN 门控契约 `test_postgres_person_alias_is_recallable_and_status_gated`；本轮已用本机 Docker（`/usr/local/bin/docker`，Docker Desktop 29.7.2）起临时 `pgvector/pgvector:0.8.1-pg17-bookworm` 容器（宿主 55432），把全部 DSN 门控契约实跑通过；`scripts/tests/run_authoritative_postgres_gate.sh` 的 init + repeat-upgrade 门禁与带 DSN 的全量 `pytest services/ tests/` 都通过。实跑发现并修掉两处真缺陷（跨 schema 授权的安装顺序依赖、声明监护人被 RLS 拒绝写/读）。
 - ASR 救援边界（P1-02）：`services/agent/tests/integration/test_funasr_rescue_audio_shapes.py` 用**合成** PCM 波形（非真实录音）钉住救援路径的判定边界——静音/室内底噪在本地被门禁拦下且厂商零请求、削波满幅按上行原始字节送判、超长段只送最新尾帧（内容精确比对）、三路并发 + 慢厂商降级为有界 `no_text`、在飞行中的救援发布 `now + 2.5s` 预算。仍未做：真实中文录音语料与 sidecar 的生产启动脚本/Dockerfile/模型摘要入仓（后者只在服务器上，本轮未连生产），故 P1-02 的「仓内输入可重建」仍不成立。
 - 真实 API 路径（P0-04）：`test_accountless_child_profile_reaches_the_device_through_the_real_api` 用真实 HTTP 链（device-binding → session → resolve-subject → app_confirm 切人 → device runtime-profile）取到 account-less 孩子的签名 profile，并用决策路径同一 `verify_runtime_profile_payload` 校验 `active_subject_id/subject_category/age_band/service_mode` 与「仍无 active guardian link」；此前该链只有手工注入。
