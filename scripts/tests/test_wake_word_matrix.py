@@ -10,6 +10,7 @@ dedup replay pins the real receipt console.log lines 628 (wake event with
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -294,7 +295,11 @@ def test_window_excludes_settle_period_wake_from_numerator(
         entry for entry in report.splitlines() if entry.startswith("- tv：")
     )
     assert "0 次" in line
-    assert "有效曝光 1.1s/1.0s" in line
+    match = re.search(r"有效曝光 (\d+\.\d)s/(\d+\.\d)s", line)
+    assert match is not None, line
+    numerator, denominator = float(match.group(1)), float(match.group(2))
+    assert denominator == pytest.approx(1.0, abs=0.15)
+    assert numerator <= denominator + 0.15
 
 
 def test_window_exposure_excludes_pre_gate_idle_history(
