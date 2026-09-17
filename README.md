@@ -25,10 +25,9 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 ## 文档与权威
 
-仓库长期只保留五份文档（2026-09-14 用户明确新增执行清单）：
+仓库长期只保留四份文档（2026-09-14 用户明确新增执行清单，2026-09-17 用户确认删除 `PROJECT_RULES.md`）：
 
 - `README.md`：产品、架构、开发、协议和固件入口。
-- `PROJECT_RULES.md`：长期协作规则、产品约束和工程纪律。
 - `HANDOFF.md`：当前线上状态、发布/回滚/备份和待验收事项。
 - `RESEARCH.md`：外部研究扫描的唯一落地文件；开发在此评估并标记研究状态。
 - `TODOLIST.md`：唯一的优先级执行队列，保存依赖、完成条件与完成标记；后续从最高优先级未阻塞项推进。仍禁止 session 记录、ADR、组件 README、其他平行计划和 release note。

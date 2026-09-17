@@ -6,7 +6,6 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 ALLOWED_DOCUMENTS = {
     "README.md",
-    "PROJECT_RULES.md",
     "HANDOFF.md",
     "RESEARCH.md",
     "TODOLIST.md",
@@ -14,7 +13,7 @@ ALLOWED_DOCUMENTS = {
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
 
 
-def test_repository_has_exactly_five_long_lived_documents() -> None:
+def test_repository_has_exactly_four_long_lived_documents() -> None:
     completed = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,

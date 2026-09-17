@@ -50,7 +50,7 @@ reaches the device media boundary, i.e. it is a receive/queue fact about the
 first packet the device accepted for playback.  This report names it
 `first_received` and never calls it audible: `audible` stays
 `not_measured` until device playback terminal evidence plus operator listening
-back it up (PROJECT_RULES).  A gap above 1.5s is printed as the real number with
+back it up (acceptance rule).  A gap above 1.5s is printed as the real number with
 an explicit marker instead of being hidden as stale.
 
 Device playback metering is reported with its own scope.  The current firmware
@@ -1285,7 +1285,7 @@ def print_receipts_and_close(facts: ServerFacts) -> None:
         key for key, delivery in facts.deliveries.items() if not delivery.has("actual_heard")
     ]
     print("  none" if not missing else "  " + ", ".join(key.label() for key in sorted(missing)))
-    print("  note: actual_heard=True is the delivery ledger's own receipt. PROJECT_RULES requires")
+    print("  note: actual_heard=True is the delivery ledger's own receipt. Acceptance requires")
     print("  device playback terminal evidence plus operator listening before audible is claimed.")
 
     print(
