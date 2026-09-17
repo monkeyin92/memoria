@@ -38,9 +38,9 @@
 ## 当前约束
 
 - 扫描：2026-09-17。现场设备工单与证据只写 `HANDOFF.md`，跨任务优先级见 `TODOLIST.md`。记忆召回（R-20260909-03）另轨：`RecallPlanner` 已有封闭 query rewrite；2026-09-14 本地重跑长程三项 `recall@5=1`、整体 `recall@5=0.8125`。既有 VAD 期预取/事实人格分流已接线，暂不增加平行预取或缓存链。按使用人切换人格与音色见 R-20260911-05，已有实现和剩余验收须分开；服务前期学生 / 后期老年 / 再后年轻人的阶段定位。
-- SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。
+- SKU：ESP-VoCat，默认 `interrupt_assist`。hello 报 simultaneous capture + `aec_mode=fd_low_cost`，`aec_reference_verified=false`。对外 `advertised_duplex_level=none`。`direct_real_device_verified=false`。ATK ES8388 半双工 demo 已退役。百炼 fun-audiochat realtime 的 server_vad/smart_turn 打断文档只强化本仓 `interrupt_assist` 天花板，不得据此打开 `USE_REALTIME_CHAT` 或宣称 barge-in 已验。
 - 唤醒词「茉莉」。播放期 KWS 关；说话中 BOOT / 触摸硬停。DTLN makeup 冻结 `8.0×`。安静环境阶段 4 茉莉 10/10、5 分钟误唤醒 0；电视/家庭噪声仍要记数。
-- 版本核验（2026-09-17 官方 PyPI）：FunASR 上游仍 1.4.15（upload 2026-09-09T04:03:48Z），无 1.4.16+，**不是已知云端/sidecar 钉档**。实时链是 DashScope `fun-asr-realtime` WebSocket，本仓没有 `funasr` 包；仓内 SenseVoice 服务脚本用 `sherpa_onnx`，生产镜像包版本与构建来源待核，见 R-20260910-01。生产 Agent/Bridge 钉档 livekit-agents/openai/silero **1.8.1**（切流时阿里云镜像有 1.8.1 无 1.8.2）；旧「仓内均 1.6.10」基线已过时。上游 PyPI latest 仍 **1.8.2**（agents upload 2026-09-15T18:13:59Z；GitHub release 2026-09-15T19:48:21Z；plugins openai/silero 亦 1.8.2），仅作 R-20260907-01 评估，不自动升 1.8.2。RTC 仍 1.1.18、API 仍 1.2.1。#7064 已随 1.8.0 合并，但本仓显式 `auto_gain_control=True`、未配 NC，默认值变化不直接改变现链路。LiveKit 侧按 dispatch metadata 保持兼容半双工禁打断；设备 Voice Core 侧按协商 `audio_mode` 派生，不能跨运行路径混称为统一开关；默认 preemptive 关闭。VoiceMem 插件仍 0.2.2 / `livekit-agents>=1.6,<1.8`，与生产 1.8.1 及上游 1.8.2 均不兼容，不安装（勿与无关 PyPI 包 `voicemem` 0.2.3 / lang-jiaqi/Voicemem_open 混淆）。
+- 版本核验（2026-09-17 官方 PyPI）：FunASR 上游仍 1.4.15（upload 2026-09-09T04:03:48Z），无 1.4.16+，**不是已知云端/sidecar 钉档**。实时链是 DashScope `fun-asr-realtime` WebSocket，本仓没有 `funasr` 包；仓内 SenseVoice 服务脚本用 `sherpa_onnx`，生产镜像包版本与构建来源待核，见 R-20260910-01。生产 Agent/Bridge 钉档 livekit-agents/openai/silero **1.8.1**（切流时阿里云镜像有 1.8.1 无 1.8.2）；旧「仓内均 1.6.10」基线已过时。上游 PyPI latest 仍 **1.8.2**（agents upload 2026-09-15T18:13:59Z；GitHub release 2026-09-15T19:48:21Z；plugins openai/silero 亦 1.8.2），仅作 R-20260907-01 评估，不自动升 1.8.2。RTC 仍 1.1.18、API 仍 1.2.1。#7064 已随 1.8.0 合并，但本仓显式 `auto_gain_control=True`、未配 NC，默认值变化不直接改变现链路。LiveKit 侧按 dispatch metadata 保持兼容半双工禁打断；设备 Voice Core 侧按协商 `audio_mode` 派生，不能跨运行路径混称为统一开关；默认 preemptive 关闭。VoiceMem 插件仍 0.2.2 / `livekit-agents>=1.6,<1.8`，与生产 1.8.1 及上游 1.8.2 均不兼容，不安装（勿与无关 PyPI 包 `voicemem` 0.2.3 / lang-jiaqi/Voicemem_open 混淆）。ESP-SR 上游仍 **2.5.3**（https://components.espressif.com/components/espressif/esp-sr ），AEC 算法更新停在 2026-04-28，无 9 月 AEC bump；不把 registry 文档当 VoCat barge-in 已验。
 - 合规：拟人化办法已生效；令第25号已生效，声纹仍要单独同意。令第25号/拟人化办法无本周新细则。最高法涉人工智能纠纷意见（法发〔2026〕10号，司法意见非 CAC 新法）加强见 R-20260910-02。大型处理者征求意见截止已过、截至 2026-09-17 仍无定稿；清朗二阶段仍以 2026-09-02 进展稿为执行报道（无 9/10–9/17 新法规），见 R-20260901-08。CAC 备案公告仍以 2026-09-14《生成式人工智能服务已备案信息的公告（2026年7月至8月）》为最新（https://www.cac.gov.cn/2026-09/14/c_1791136833136332.htm）。2026-09-15 CAC 执法典型案例（案例9/10：小程序生成合成未标识 + 未做安全评估责令下线；API 中转对话未评估责令改正）见 R-20260901-08，**执法通报不是新法**。09-16/09-17 无新 CAC 法规，2026-09-15 执法典型案例通报已并入 R-20260901-08。NEW_LAW_IDS（法规/CAC）空。
 
 ## 当前站位（2026-09-12 用户重申，已采纳，不是工单）
@@ -137,8 +137,8 @@
 - 最近更新：2026-09-17
 - 为何现在相关：出货板已是 VoCat（ES7210 + ES8311）。协商 `interrupt_assist` 已切流，AEC residual、真机 barge-in 和 T1–T14 仍未过。现场步骤只写 `HANDOFF.md`。xiaozhi-esp32 #2036（ES7210 MIC3 作 AEC reference，MMR vs MR）仍与现板路径相关，不是已验证 barge-in。
 - 建议下一步：量 AEC residual，真机测打断。未过证不得改 `aec_reference_verified` 或宣传全双工。立创附件 `vocat_xiaozhi_1_1_0.bin` 只作适配参考，不要抄「萌宠全双工」叙事。LiveKit ESP32 指南可作 ES7210 `0x80` / ES8311 `0x30` 初始化参考。
-- 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://livekit.com/blog/esp32-custom-hardware-quickstart ；https://github.com/78/xiaozhi-esp32/issues/2036
-- 开发备注：hello 已报 simultaneous capture / fd_low_cost；Agent barge-in 跟 `audio_mode`。2026-09-11：#2036 仍 open，`updated_at` 仍 2026-07-07，无新活动；不外推为全双工证据。2026-09-14：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z（https://github.com/78/xiaozhi-esp32/issues/2036）；不外推为 VoCat AEC/barge-in 已验。相关 #2140 麦阵讨论不改变 memoria 围栏。2026-09-15：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z；无新 AEC 核验。`full_duplex_verified=false`、`direct_real_device_verified=false`、`aec_reference_verified` 仍 false。2026-09-16：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z（https://github.com/78/xiaozhi-esp32/issues/2036）；不是 VoCat AEC/barge-in 已验。2026-09-17：#2036 仍 open，仍与 ES7210 MIC3 AEC reference 路径相关，无已验证 barge-in。讨论 #2121/#2122（AEC 算力主张）**不是** memoria `aec_reference_verified` 证据。
+- 来源：https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp-vocat/index.html ；https://livekit.com/blog/esp32-custom-hardware-quickstart ；https://github.com/78/xiaozhi-esp32/issues/2036 ；https://components.espressif.com/components/espressif/esp-sr/versions/2.5.3/readme ；https://help.aliyun.com/zh/model-studio/fun-audiochat-realtime-websocket-api
+- 开发备注：hello 已报 simultaneous capture / fd_low_cost；Agent barge-in 跟 `audio_mode`。2026-09-11：#2036 仍 open，`updated_at` 仍 2026-07-07，无新活动；不外推为全双工证据。2026-09-14：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z（https://github.com/78/xiaozhi-esp32/issues/2036）；不外推为 VoCat AEC/barge-in 已验。相关 #2140 麦阵讨论不改变 memoria 围栏。2026-09-15：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z；无新 AEC 核验。`full_duplex_verified=false`、`direct_real_device_verified=false`、`aec_reference_verified` 仍 false。2026-09-16：#2036 仍 open，`updated_at` 仍 2026-07-07T01:52:32Z（https://github.com/78/xiaozhi-esp32/issues/2036）；不是 VoCat AEC/barge-in 已验。2026-09-17：#2036 仍 open，仍与 ES7210 MIC3 AEC reference 路径相关，无已验证 barge-in。讨论 #2121/#2122（AEC 算力主张）**不是** memoria `aec_reference_verified` 证据。ESP-SR 上游仍 **2.5.3**，无 9 月 AEC bump（AEC 算法更新仍是 2026-04-28）。百炼 fun-audiochat realtime 打断文档只强化 `interrupt_assist` 天花板，不打开 `USE_REALTIME_CHAT`。
 
 ### R-20260909-02 XVF3800 硬件 AEC 是更高天花板
 
@@ -234,11 +234,11 @@
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-10
-- 最近更新：2026-09-12
+- 最近更新：2026-09-17
 - 为何现在相关：界面新闻 2026-09-04 报道涂鸦 IFA 推出 Doova：适老独居陪伴机器人，LDS 雷达、4 麦声源定位、跌倒/姿态检测、移动巡航、IoT 中枢、聊天陪伴。
 - 建议下一步：老年陪伴是 Memoria 后期方向（见当前站位），但 Doova 的跌倒检测、移动巡航、IoT 中枢形态任何阶段都不做；其适老交互与子女端叙事留作后期参考。当前阶段不新开适老工单。
-- 来源：https://www.jiemian.com/article/15059778.html ；https://www.itheat.com/view/63447.html
-- 开发备注：2026-09-11 追加次级对比稿（ITHeat 2026-09-09）。2026-09-12 定位重申后由「反定位」改挂「阶段雷达·老年后期」。不复制新 id。
+- 来源：https://www.jiemian.com/article/15059778.html ；https://www.itheat.com/view/63447.html ；https://www.tuya.com/news-details/tuya-smart-unveils-doova-at-ifa-2026-an-ai-home-companion-robot-designed-to-support-independently-living-seniors-Kfx9813ozlbff
+- 开发备注：2026-09-11 追加次级对比稿（ITHeat 2026-09-09）。2026-09-12 定位重申后由「反定位」改挂「阶段雷达·老年后期」。不复制新 id。2026-09-17：补官方 IFA 稿（tuya.com 上条）；不新开 id。
 
 ### R-20260910-04 青心意创 Amoo（IFA 2026）阶段雷达·年轻人潮玩后期
 
@@ -322,11 +322,11 @@
 - 类别：市场定位
 - 状态：待评估
 - 首次写入：2026-09-16
-- 最近更新：2026-09-16
+- 最近更新：2026-09-17
 - 为何现在相关：2026-09-15 京东开启抢先预定；约 65cm 毛绒外形；多摄像头+激光雷达+3D 结构光；主动发起交互、个性化性格养成、AI 家庭摄影师、陪伴式外语对话；心言称 8 月中旬首台量产下线；预定权益含前 1000 名付尾款立减 1500 等（**标价以京东页为准，本扫描未核到明确挂牌价，不要编造价格**）。与 Bubbo 既有「纯反定位」站位一致，现补日历与独立 id。
 - 建议下一步：纯反定位；不对照改 ESP-VoCat SKU/价带；不做毛绒移动/多传感器「在场感」家庭伴侣路线。
-- 来源：https://finance.sina.com.cn/stock/t/2026-09-15/doc-inirwwmw7003664.shtml ；https://tech.china.com/articles/20260915/202609151959901.html
-- 开发备注：与糯宝/二白Mini/Microduck 同类纯反定位，不并入 Amoo 阶段雷达。不对照改当前 ESP-VoCat SKU 或 ¥499–1299 价带。
+- 来源：https://finance.sina.com.cn/stock/t/2026-09-15/doc-inirwwmw7003664.shtml ；https://tech.china.com/articles/20260915/202609151959901.html ；https://news.ikanchai.com/2026/0916/667271.shtml
+- 开发备注：与糯宝/二白Mini/Microduck 同类纯反定位，不并入 Amoo 阶段雷达。不对照改当前 ESP-VoCat SKU 或 ¥499–1299 价带。2026-09-17：09-16 跟进稿仍是京东预定叙事（砍柴网），未见明确挂牌价，不编造价格。
 
 ### R-20260916-02 德志善元 小沐学伴精灵（反定位·小学生作业托管桌面机）
 
