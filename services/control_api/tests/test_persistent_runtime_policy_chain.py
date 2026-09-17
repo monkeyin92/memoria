@@ -40,6 +40,11 @@ from httpx import ASGITransport, AsyncClient
 from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileSignedV2,
 )
+from services.archive.domain import EvidenceEvent
+from services.archive.memory_domain import MemoryClaimReview, MemorySearchQuery
+from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.control_api.app.main import create_app
 from services.control_api.app.subject_verification import ensure_account_person
@@ -1238,3 +1243,569 @@ async def test_real_runtime_concurrent_switches_serialize_and_supersede_old_epoc
                 safety_state="normal",
                 now=datetime.now(UTC),
             )
+
+
+# ---------------------------------------------------------------------------
+# P0-04 category matrix: all four subject categories at both seams, plus the
+# account/subject-key evidence taken from a REAL PostgreSQL memory catalog
+# instead of a catalog double.
+# ---------------------------------------------------------------------------
+
+#: One account-keyed first-person claim, written through the real archive.
+_CATALOG_MEMORY_TEXT = "我在杭州读过书。"
+
+#: Optional JSON dump so a run can be inspected without reading the assertions.
+_MATRIX_DUMP = os.environ.get("P0_04_MATRIX_DUMP")
+
+
+def _dump_matrix(label: str, payload: dict[str, Any]) -> None:
+    if not _MATRIX_DUMP:
+        return
+    with Path(_MATRIX_DUMP).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"label": label, **payload}, ensure_ascii=False))
+        handle.write("\n")
+
+
+@dataclass(frozen=True, slots=True)
+class _CategorySession:
+    """One real session opened for one subject category."""
+
+    account_id: str
+    session_id: str
+    subject_id: str
+    profile: RuntimeProfileSignedV2
+
+
+async def _open_subject_session(
+    client: AsyncClient,
+    app: Any,
+    *,
+    bootstrap_dsn: str,
+    device_id: str,
+    binding_id: str,
+    subject_id: str,
+    declared_mode: str,
+    subject_category: str,
+    age_band: str,
+    capabilities: tuple[str, ...] = ("chat",),
+    switch_to_subject: bool = True,
+) -> _CategorySession:
+    """Bind a device in the real authority, start a session, switch the subject.
+
+    ``switch_to_subject=False`` leaves the authority-issued ``unknown_safe``
+    profile in place: the binding exists, but no subject has been confirmed for
+    this session yet.
+    """
+
+    account_id, headers = await _anonymous_account(client)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_delegated_binding(
+            admin,
+            actor_id=account_id,
+            subject_id=subject_id,
+            device_id=device_id,
+            binding_id=binding_id,
+            declared_mode=declared_mode,
+            subject_category=subject_category,
+            age_band=age_band,
+        )
+    finally:
+        await admin.close()
+
+    created = await client.post(
+        "/v1/sessions",
+        headers={**headers, "Idempotency-Key": f"{binding_id}-session-1"},
+        json={
+            "client": {
+                "platform": "web",
+                "timezone": "Asia/Shanghai",
+                "device_id": device_id,
+                "binding_version": 1,
+            }
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    session_id = str(body["session_id"])
+    profile = RuntimeProfileSignedV2.model_validate(body["runtime_profile"])
+    assert profile.session_epoch == 1
+    if switch_to_subject:
+        runtime_service = app.state.session_runtime_service
+        assert isinstance(runtime_service, PostgresSessionRuntimeService)
+        profile = await runtime_service.switch_subject(
+            SwitchPersistentSubjectCommand(
+                session_id=session_id,
+                actor_id=account_id,
+                subject_id=subject_id,
+                now=datetime.now(UTC),
+                requested_capabilities=capabilities,
+            )
+        )
+        assert profile.active_subject_id == subject_id
+        assert profile.session_epoch == 2
+    else:
+        assert profile.active_subject_id is None
+        assert profile.service_mode.value == "unknown_safe"
+    return _CategorySession(
+        account_id=account_id,
+        session_id=session_id,
+        subject_id=subject_id,
+        profile=profile,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_catalog_withholds_account_memory_from_a_child_subject(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04 category matrix: the account/subject key split on the REAL catalog.
+
+    A catalog double cannot show that a row exists and is withheld anyway.  Here
+    one account-keyed first-person claim is written through the real
+    ``PostgresLifeArchive``/``PostgresMemoryCatalog`` pair, compiled into the
+    real catalog, and the read path is driven with that catalog installed:
+
+    * the row is recallable under the account key (proven directly), so the
+      empty child turns are evidence and not an always-empty path;
+    * the child subject reads nothing even after a real retention consent lifts
+      the ephemeral-only ceiling — the memory scope, not the ceiling, is what
+      keeps the account owner's row away from the child;
+    * the account's own turn, in the same session, does read the row.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    archive = PostgresLifeArchive(bootstrap_dsn)
+    catalog = PostgresMemoryCatalog(bootstrap_dsn, extractor=RuleBasedMemoryExtractor())
+    await archive.initialize()
+    await catalog.initialize()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        session = await _open_subject_session(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id="device-category-catalog",
+            binding_id="binding-category-catalog",
+            subject_id="minor-category-catalog",
+            declared_mode="parent_for_child",
+            subject_category="minor",
+            age_band="under_14",
+            capabilities=("chat", "tutor", "english_practice"),
+        )
+
+        # 1. Write the claim for the LOGIN ACCOUNT through the real archive.
+        memory_event_id = f"category-catalog-{uuid.uuid4()}"
+        await archive.record(
+            EvidenceEvent(
+                event_id=memory_event_id,
+                account_id=session.account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="p0-04-category-matrix",
+                payload={
+                    "text": _CATALOG_MEMORY_TEXT,
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        report = await catalog.compile_pending(limit=1000)
+        assert report.failed_events == 0
+
+        # 2. The owner confirms the claim, the way a real review does: without
+        #    confirmation it stays a candidate and no read path returns it.
+        queue = await catalog.review_queue(account_id=session.account_id)
+        claim = next(item for item in queue if item.source_event_id == memory_event_id)
+        reviewed = await catalog.review(
+            MemoryClaimReview(
+                account_id=session.account_id,
+                claim_id=claim.item_id,
+                action="confirm",
+            )
+        )
+        assert reviewed.status == "confirmed"
+
+        # 3. Only now is the row recallable under the account key.
+        # 2. The row really is recallable under the account key.
+        account_keyed = await catalog.context(
+            MemorySearchQuery(
+                account_id=session.account_id,
+                speaker_class="owner",
+                text=_CATALOG_MEMORY_TEXT,
+                include_candidates=False,
+                limit=8,
+            )
+        )
+        _dump_matrix(
+            "account_keyed_direct",
+            {"items": [item.title for item in account_keyed.items]},
+        )
+        assert account_keyed.items, "the real catalog must recall its own account row"
+        assert "杭州" in json.dumps(
+            [item.title for item in account_keyed.items], ensure_ascii=False
+        ) or "杭州" in json.dumps(
+            [item.snippet for item in account_keyed.items], ensure_ascii=False
+        )
+
+        # 3. The child's turn reads nothing: the minor ceiling is closed.
+        child_turn = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_CATALOG_MEMORY_TEXT,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert child_turn.status_code == 200, child_turn.text
+        _dump_matrix(
+            "child_without_consent",
+            {
+                "grounded_items": child_turn.json()["grounded_items"],
+                "memory_retention": child_turn.json().get("memory_retention"),
+            },
+        )
+        assert child_turn.json()["grounded_items"] == []
+
+        # 4. Lift the ceiling with a real retention consent.  The child still
+        #    reads nothing: the account key is not the child's memory.
+        await _activate_link_and_grant_retention(
+            app,
+            guardian_id=session.account_id,
+            child_id=session.subject_id,
+            now=datetime.now(UTC),
+        )
+        consented_policy = await _session_policy(client, session_id=session.session_id)
+        assert consented_policy.status_code == 200, consented_policy.text
+        _dump_matrix(
+            "child_consented_policy",
+            {"memory_retention": consented_policy.json().get("memory_retention")},
+        )
+        assert "memory_retention" not in consented_policy.json()
+
+        consented_turn = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_CATALOG_MEMORY_TEXT,
+            turn_id=2,
+            generation_id=2,
+        )
+        assert consented_turn.status_code == 200, consented_turn.text
+        _dump_matrix(
+            "child_with_consent",
+            {"grounded_items": consented_turn.json()["grounded_items"]},
+        )
+        assert consented_turn.json()["grounded_items"] == []
+
+        # 5. The account's own turn in the SAME session does read the row, so
+        #    the empty turns above came from the subject split, not from a
+        #    broken catalog or a closed capability gate.
+        runtime_service = app.state.session_runtime_service
+        assert isinstance(runtime_service, PostgresSessionRuntimeService)
+        account_profile = await runtime_service.switch_subject(
+            SwitchPersistentSubjectCommand(
+                session_id=session.session_id,
+                actor_id=session.account_id,
+                subject_id=session.account_id,
+                now=datetime.now(UTC),
+                requested_capabilities=("chat",),
+            )
+        )
+        assert account_profile.active_subject_id == session.account_id
+        assert account_profile.session_epoch == 3
+        owner_turn = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_CATALOG_MEMORY_TEXT,
+            turn_id=3,
+            generation_id=3,
+        )
+        assert owner_turn.status_code == 200, owner_turn.text
+        _dump_matrix(
+            "account_owner_turn",
+            {
+                "subject": account_profile.active_subject_id,
+                "grounded_items": owner_turn.json()["grounded_items"],
+            },
+        )
+        assert owner_turn.json()["grounded_items"], (
+            "the account's own turn must still read its own row"
+        )
+        assert "杭州" in json.dumps(owner_turn.json()["grounded_items"], ensure_ascii=False)
+
+    await catalog.close()
+    await archive.close()
+
+
+#: label, declared_mode, subject_category, age_band, service_mode, capabilities.
+#: The device's declared mode decides which companion mode an adult lands in;
+#: ``parent_for_child`` is the production write shape for a minor subject.
+_CATEGORY_MATRIX: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
+    (
+        "under_14",
+        "parent_for_child",
+        "minor",
+        "under_14",
+        "student_minor",
+        ("chat", "tutor", "english_practice"),
+    ),
+    (
+        "14_17",
+        "parent_for_child",
+        "minor",
+        "14_17",
+        "student_minor",
+        ("chat", "tutor", "english_practice"),
+    ),
+    ("adult", "self_use", "adult", "adult", "adult_companion", ("chat",)),
+)
+
+
+@pytest.mark.asyncio
+async def test_subject_category_matrix_separates_the_four_categories_at_both_seams(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04 category matrix: under_14 / 14_17 / adult / unknown_safe.
+
+    One app instance and one real PostgreSQL authority drive both seams once
+    per category.  What each category must produce, and why it is not the same
+    answer:
+
+    * both minor bands are ``student_minor``: the ephemeral-only ceiling holds,
+      the runtime issues no session capability, and a crisis is routed to the
+      declared guardian;
+    * an adult subject is NOT auto-classified as a minor — no minor ceiling and
+      no minor crisis notification — and yet still does not inherit the login
+      account's memory while the account and the subject differ;
+    * the authority's own ``unknown_safe`` profile stays conversation-only
+      (every capability false, no owner hint) and never notifies a guardian.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for (
+            label,
+            declared_mode,
+            category,
+            age_band,
+            service_mode,
+            capabilities,
+        ) in _CATEGORY_MATRIX:
+            device_id = f"device-category-{label}"
+            session = await _open_subject_session(
+                client,
+                app,
+                bootstrap_dsn=bootstrap_dsn,
+                device_id=device_id,
+                binding_id=f"binding-category-{label}",
+                subject_id=f"subject-category-{label}",
+                declared_mode=declared_mode,
+                subject_category=category,
+                age_band=age_band,
+                capabilities=capabilities,
+            )
+
+            # The authority itself carries the category and the age band into
+            # the signed profile both seams read.
+            assert session.profile.subject_category.value == category
+            assert session.profile.age_band.value == age_band
+            assert session.profile.service_mode.value == service_mode
+
+            if category == "minor":
+                # A real one-sided declaration with its device binding: this is
+                # what makes a crisis notification addressable at all.
+                await _declare_guardianship(
+                    app,
+                    guardian_id=session.account_id,
+                    child_id=session.subject_id,
+                    device_id=device_id,
+                    now=datetime.now(UTC),
+                )
+
+            policy_response = await _session_policy(client, session_id=session.session_id)
+            assert policy_response.status_code == 200, policy_response.text
+            policy = policy_response.json()
+            signed = policy["runtime_profile"]
+            assert verify_runtime_profile_payload(signed, signing_key=signing_key) is True
+            assert signed["subject_category"] == category
+            assert signed["age_band"] == age_band
+            assert signed["service_mode"] == service_mode
+            assert signed["active_subject_id"] == session.subject_id
+
+            crisis_turn = await _response_plan(
+                client,
+                session_id=session.session_id,
+                query=_CRISIS_QUERY,
+                turn_id=1,
+                generation_id=1,
+            )
+            assert crisis_turn.status_code == 200, crisis_turn.text
+            assert crisis_turn.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+
+            memory_turn = await _response_plan(
+                client,
+                session_id=session.session_id,
+                query=_MEMORY_QUERY,
+                turn_id=2,
+                generation_id=2,
+            )
+            assert memory_turn.status_code == 200, memory_turn.text
+
+            notifications = await app.state.guardian_store.guardian_notifications(
+                guardian_user_id=session.account_id
+            )
+            _dump_matrix(
+                label,
+                {
+                    "service_mode": signed["service_mode"],
+                    "interaction_mode": policy["interaction_mode"],
+                    "capabilities": policy["capabilities"],
+                    "memory_retention": policy.get("memory_retention"),
+                    "owner_display_name": policy.get("owner_display_name"),
+                    "companion_style_id": policy.get("companion_style_id"),
+                    "profile_capabilities": list(session.profile.capabilities),
+                    "plan_grounded_items": memory_turn.json()["grounded_items"],
+                    "catalog_queries": len(catalog.queries),
+                    "notifications": [
+                        (item.minor_user_id, item.status) for item in notifications
+                    ],
+                },
+            )
+
+            assert policy["interaction_mode"] == "companion"
+            if category == "minor":
+                # Minor ceiling: with no consent the ceiling closes the memory
+                # capabilities the profile itself never granted either.
+                assert policy["memory_retention"] == "ephemeral_only"
+                assert policy["capabilities"]["private_memory"] is False
+                assert policy["capabilities"]["history"] is False
+                assert policy["capabilities"]["learning"] is False
+                assert policy["owner_projection_eligible"] is False
+                assert session.profile.capabilities == ()
+                # The account owner's display name never crosses to a subject
+                # that is not the account.
+                assert "owner_display_name" not in policy
+                assert memory_turn.json()["grounded_items"] == []
+                # The crisis was routed to the declared guardian for the child,
+                # and nothing else.
+                assert [
+                    (item.minor_user_id, item.status) for item in notifications
+                ] == [(session.subject_id, "pending")]
+            else:
+                # An adult subject is not put under the minor ceiling: the
+                # policy carries no retention override at all ...
+                assert "memory_retention" not in policy
+                # ... it keeps only what the authority issued for it, which is
+                # the conversation capability and not the private archive ...
+                assert list(session.profile.capabilities) == ["chat"]
+                assert policy["capabilities"]["conversation"] is True
+                assert policy["capabilities"]["private_memory"] is False
+                assert policy["capabilities"]["history"] is False
+                # ... it never receives the account owner's own name or memory
+                # while the two are different people ...
+                assert "owner_display_name" not in policy
+                assert memory_turn.json()["grounded_items"] == []
+                # ... and its crisis is NOT reported as a minor crisis.
+                assert notifications == ()
+
+        # 4. The authority's own unknown_safe profile, same app: a device with
+        #    an active binding but no confirmed subject for this session.
+        unknown_device = "device-category-unknown_safe"
+        unknown = await _open_subject_session(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id=unknown_device,
+            binding_id="binding-category-unknown_safe",
+            subject_id="subject-category-unknown_safe",
+            declared_mode="parent_for_child",
+            subject_category="minor",
+            age_band="under_14",
+            switch_to_subject=False,
+        )
+        unknown_policy_response = await _session_policy(
+            client, session_id=unknown.session_id
+        )
+        assert unknown_policy_response.status_code == 200, unknown_policy_response.text
+        unknown_policy = unknown_policy_response.json()
+        assert unknown_policy["interaction_mode"] == "unknown_safe"
+        assert unknown_policy["runtime_profile"]["active_subject_id"] is None
+        # A signed unknown-safe profile is a conversation-only surface: chat
+        # under the DO_NOT_PERSIST obligations, every other capability closed.
+        assert list(unknown.profile.capabilities) == ["chat"]
+        assert [
+            key for key, value in unknown_policy["capabilities"].items() if value
+        ] == ["conversation"]
+        assert unknown_policy["memory_retention"] == "ephemeral_only"
+        _dump_matrix(
+            "unknown_safe_policy",
+            {
+                "interaction_mode": unknown_policy["interaction_mode"],
+                "capabilities": unknown_policy["capabilities"],
+                "profile_capabilities": list(unknown.profile.capabilities),
+                "owner_display_name": unknown_policy.get("owner_display_name"),
+                "companion_style_id": unknown_policy.get("companion_style_id"),
+                "memory_retention": unknown_policy.get("memory_retention"),
+            },
+        )
+        assert "owner_display_name" not in unknown_policy
+        assert unknown_policy["companion_style_id"] is None
+        assert unknown_policy["companion_style_version"] is None
+        assert unknown_policy["companion_style_version"] is None
+
+        unknown_crisis = await _response_plan(
+            client,
+            session_id=unknown.session_id,
+            query=_CRISIS_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert unknown_crisis.status_code == 200, unknown_crisis.text
+        assert unknown_crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        unknown_memory = await _response_plan(
+            client,
+            session_id=unknown.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=2,
+            generation_id=2,
+        )
+        assert unknown_memory.status_code == 200, unknown_memory.text
+        assert unknown_memory.json()["grounded_items"] == []
+        unknown_notifications = await app.state.guardian_store.guardian_notifications(
+            guardian_user_id=unknown.account_id
+        )
+        _dump_matrix(
+            "unknown_safe",
+            {
+                "interaction_mode": unknown_policy["interaction_mode"],
+                "capabilities": unknown_policy["capabilities"],
+                "notifications": [
+                    (item.minor_user_id, item.status) for item in unknown_notifications
+                ],
+                "plan_grounded_items": unknown_memory.json()["grounded_items"],
+            },
+        )
+        assert unknown_notifications == ()
