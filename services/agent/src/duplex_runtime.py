@@ -957,6 +957,17 @@ class DuplexRuntime(
         invalidate_identity_epochs(self)
         self._reset_identity_private_caches()
         clear_identity_private_state(self)
+        # Mirror the orchestrator epoch bump: the rolling conversation context
+        # and the snapshot manager still hold the old subject's turns, summary
+        # and memory/persona capsules, and neither is keyed by the binding.
+        # Without this reset a degraded or rotated epoch would keep generating
+        # from the withdrawn subject's context -- a manager change withdraws
+        # authorization without advancing any fence the snapshots carry (P0-04).
+        self.orchestrator.context.reset_identity()
+        fresh = self.orchestrator.context_snapshots.reset_identity(self.session_id)
+        self.orchestrator.delegation.activate_context_version(
+            self.session_id, fresh.version
+        )
         if install_policy:
             # Keep companion style across epoch rotation so designed TTS can bind.
             self._mode_policy = mode_policy_after_identity_rotation(
@@ -1019,6 +1030,13 @@ class DuplexRuntime(
         self._pending_realtime_request = None
         self._persona_evidence_eligible = False
         self._next_user_prompt_kind = "spontaneous"
+        # The epoch-bound prefetch/warm keys self-invalidate via the bumped
+        # speaker epoch, but holding them retains the old subject's query and
+        # delegated fences in memory -- drop them with everything else.
+        self._interaction_prefetch_epoch = None
+        self._interaction_context_prefetch_key = None
+        self._interaction_warm_epoch = None
+        self._interaction_delegated_fences.clear()
 
     @property
     def mode_policy(self) -> ModePolicy:

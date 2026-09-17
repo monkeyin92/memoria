@@ -14,11 +14,20 @@ from services.agent.src import generation_output_policy as output_policy
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.context_snapshot_manager import (
+    ContextSnapshotDraft,
+    MemoryCapsule,
+    MemoryCapsuleEntry,
+    PersonaCapsule,
+)
 from services.agent.src.response_planner_client import (
     ResponsePlan,
     ResponsePlanFetch,
     ResponseProvenance,
     ResponseVoiceTarget,
+)
+from services.agent.tests.unit.runtime_profile_test_helpers import (
+    personal_voice_profile,
 )
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -1178,3 +1187,105 @@ async def test_llm_node_rejects_plan_inconsistent_with_frozen_mode_policy(
     assert [item async for item in agent.llm_node(llm.ChatContext.empty(), ["tool"], None)] == []
     assert called is False
     await runtime.close()
+
+
+def test_cached_plan_stays_reusable_while_authorizing_profile_current() -> None:
+    """The fence-exact hit remains usable while its profile is still current."""
+    runtime = DuplexRuntime.create(session_id="plan-stamp-match")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    profile = personal_voice_profile("plan-stamp-match")
+    assert runtime.orchestrator.runtime_profiles.apply(profile, runtime.fence) is not None
+    plan = _plan(runtime)
+    agent._cache_response_plan(plan)
+    assert (
+        agent._response_plan_profile_by_fence[plan.fence]
+        == "rp_voice_plan-stamp-match"
+    )
+    assert agent._response_plan_authorized_by_current_profile(plan) is True
+
+
+def test_cached_plan_dropped_once_authority_degraded() -> None:
+    """A withdrawn authorization closes the same-fence retry (P0-04).
+
+    A legal manager change withdraws the session's authorization without
+    advancing any fence the plan cache key carries; the next turn boundary
+    degrades the profile gate instead.  The pre-change plan must then fail
+    closed rather than serve the old subject's grounded items again.
+    """
+    runtime = DuplexRuntime.create(session_id="plan-stamp-degrade")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    profile = personal_voice_profile("plan-stamp-degrade")
+    assert runtime.orchestrator.runtime_profiles.apply(profile, runtime.fence) is not None
+    plan = _plan(runtime)
+    agent._cache_response_plan(plan)
+    assert agent._response_plan_authorized_by_current_profile(plan) is True
+    runtime.orchestrator.runtime_profiles.degrade(runtime.orchestrator.fence)
+    assert agent._response_plan_authorized_by_current_profile(plan) is False
+
+
+def test_plan_cache_evicts_superseded_epochs_on_insert() -> None:
+    """Older-epoch entries can never authorize a future turn; drop them."""
+    runtime = DuplexRuntime.create(session_id="plan-epoch-evict")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    old = _plan(runtime)
+    agent._cache_response_plan(old)
+    assert old.fence in agent._response_plan_by_fence
+    runtime.orchestrator.bump_session_epoch(1)
+    new = _plan(runtime)
+    assert new.fence.session_epoch == 1
+    agent._cache_response_plan(new)
+    assert old.fence not in agent._response_plan_by_fence
+    assert old.fence not in agent._response_plan_profile_by_fence
+    assert new.fence in agent._response_plan_by_fence
+
+
+def test_identity_rotation_resets_snapshots_context_and_prefetch_keys() -> None:
+    """Rotation must not leave the old subject's context behind (P0-04).
+
+    The orchestrator bump resets all three, but the duplex rotation path
+    (profile refresh degrade included) previously kept the snapshot manager's
+    old-subject capsules, the rolling conversation context, and the
+    epoch-bound prefetch keys.
+    """
+    session_id = "rotate-drops-old-subject"
+    runtime = DuplexRuntime.create(session_id=session_id)
+    snapshots = runtime.orchestrator.context_snapshots
+    snapshots.seed_initial(
+        session_id,
+        ContextSnapshotDraft(
+            memory_capsule=MemoryCapsule(
+                entries=(
+                    MemoryCapsuleEntry(
+                        item_id="m1",
+                        kind="memory_claim",
+                        content="old subject secret",
+                    ),
+                )
+            ),
+            persona_capsule=PersonaCapsule(
+                version_id="p1",
+                version_number=1,
+                prompt_fragment="old persona",
+            ),
+            summary="old summary",
+        ),
+    )
+    runtime.orchestrator.context.add_user("old subject turn", speaker_scope="owner")
+    runtime.orchestrator.context.rolling_summary = "old rolling"
+    runtime._interaction_context_prefetch_key = (0, "old query")
+    runtime._interaction_prefetch_epoch = 0
+    runtime._interaction_warm_epoch = 0
+    runtime._interaction_delegated_fences.add(runtime.fence)
+    runtime._rotate_identity_epoch(None, old_fence=runtime.fence, install_policy=False)
+    fresh = snapshots.current(session_id)
+    assert fresh.memory_capsule.entries == ()
+    assert fresh.persona_capsule.prompt_fragment == ""
+    assert fresh.summary == ""
+    assert fresh.recent_committed_turns == ()
+    assert runtime.orchestrator.context.turns == []
+    assert runtime.orchestrator.context.rolling_summary == ""
+    assert runtime.orchestrator.context.business_summary == ""
+    assert runtime._interaction_context_prefetch_key is None
+    assert runtime._interaction_prefetch_epoch is None
+    assert runtime._interaction_warm_epoch is None
+    assert runtime._interaction_delegated_fences == set()

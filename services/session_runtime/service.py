@@ -1390,6 +1390,34 @@ class PostgresSessionRuntimeService:
         if now < profile.issued_at or now >= profile.expires_at:
             raise PersistentSessionDenied("runtime profile is expired")
 
+    async def _load_active_profile_context(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        session_id: str,
+    ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
+        """Load one active profile/context pair inside the caller's transaction.
+
+        The projection/epoch consistency checks live here so the close-only path
+        and the fenced read path apply exactly the same comparison -- on whatever
+        snapshot the caller already holds.
+        """
+        profile = await self._store.current_profile(
+            connection,
+            session_id=session_id,
+        )
+        context = await self._store.current_context(
+            connection,
+            session_id=session_id,
+        )
+        if profile is None or context is None:
+            raise PersistentSessionNotFound(session_id)
+        if profile.runtime_profile_id != context.current_runtime_profile_id:
+            raise PersistentSessionUnavailable("current profile projection is inconsistent")
+        if profile.session_epoch != context.session_epoch:
+            raise PersistentSessionUnavailable("current profile epoch is inconsistent")
+        return profile, context
+
     async def _active_profile_context(
         self,
         *,
@@ -1403,26 +1431,14 @@ class PostgresSessionRuntimeService:
         authority row forever. Callers still have to verify the stored profile
         signature before using this close-only path.
         """
-
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
-                profile = await self._store.current_profile(
-                    connection,
-                    session_id=session_id,
-                )
-                context = await self._store.current_context(
+                return await self._load_active_profile_context(
                     connection,
                     session_id=session_id,
                 )
         except asyncpg.PostgresError as exc:
             raise PersistentSessionUnavailable(str(exc)) from exc
-        if profile is None or context is None:
-            raise PersistentSessionNotFound(session_id)
-        if profile.runtime_profile_id != context.current_runtime_profile_id:
-            raise PersistentSessionUnavailable("current profile projection is inconsistent")
-        if profile.session_epoch != context.session_epoch:
-            raise PersistentSessionUnavailable("current profile epoch is inconsistent")
-        return profile, context
 
     async def current(
         self,
@@ -1431,42 +1447,24 @@ class PostgresSessionRuntimeService:
         session_id: str,
         now: datetime,
     ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
-        profile, context = await self._active_profile_context(
-            actor_id=actor_id,
-            session_id=session_id,
-        )
-        self._require_current_profile(profile, now=now)
-        await self._require_current_binding(
-            actor_id=actor_id,
-            profile=profile,
-            now=now,
-        )
-        return profile, context
+        """Load the usable profile/context pair on a single read snapshot.
 
-    async def _require_current_binding(
-        self,
-        *,
-        actor_id: str,
-        profile: RuntimeProfileSignedV2,
-        now: datetime,
-    ) -> None:
-        """Deny work once the signed profile's binding is no longer the current one.
-
-        The signed profile stays the decision basis for the whole turn, so a
-        legal manager change has to close this read path too.  The WRITE path
-        already refuses the identical state (``action_identity_lock_binding``
-        validates version and status), but this read path only re-checked the
-        profile projection, the session epoch and the TTL -- which left both
-        Agent-facing seams answering for the OLD subject, account-keyed memory
-        read included, until the signed profile TTL expired.
-
-        Deliberately outside ``_active_profile_context``: the close-only path
-        must still be able to close a session whose authorization was withdrawn,
-        otherwise a revoked device could never be cleaned up.
+        Profile, context, TTL and the device-binding fence are all evaluated
+        inside one read-only transaction, so one ``current()`` call costs one
+        connection instead of two -- and the fence authorizes the same snapshot
+        it read the profile from, which narrows the check-then-use window left
+        by the previous two-transaction shape.  The close-only path deliberately
+        stays on ``_active_profile_context`` without the fence: closure is
+        terminal cleanup, not a new authorization, and a withdrawn device must
+        still be closable.
         """
-
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
+                profile, context = await self._load_active_profile_context(
+                    connection,
+                    session_id=session_id,
+                )
+                self._require_current_profile(profile, now=now)
                 still_current = await self._store.binding_is_current(
                     connection,
                     device_id=profile.device_id,
@@ -1478,6 +1476,7 @@ class PostgresSessionRuntimeService:
             raise PersistentSessionUnavailable(str(exc)) from exc
         if not still_current:
             raise PersistentSessionDenied("session binding is no longer active")
+        return profile, context
 
     async def switch_subject(
         self,

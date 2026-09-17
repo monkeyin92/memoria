@@ -616,3 +616,274 @@ async def test_persons_me_and_unbind_flow(
         )
         assert response.status_code == 200
         assert response.json()["bindings"][0]["status"] == "revoked"
+
+
+async def _register_verified_owner(client, app, owner: dict) -> None:
+    await app.state.identity_service.register_person(
+        person_id=owner["user_id"],
+        display_name="家长",
+        timezone="Asia/Shanghai",
+        subject_category="adult",
+        age_band="adult",
+        age_evidence_status="verified",
+        age_evidence_id="fixture-adult-evidence",
+        now=datetime.now(UTC),
+    )
+
+
+async def _bind_parent_child(
+    client, app, owner: dict, device_id: str, nonce: str, child_name: str, age_band: str
+) -> str:
+    now = datetime.now(UTC)
+    token = mint_device_binding_token(
+        device_id=device_id,
+        secret=app.state.settings.device_binding_token_key(),
+        now=now,
+        ttl=timedelta(minutes=5),
+        nonce=nonce,
+    )
+    created = await client.post(
+        "/v1/device-bindings",
+        headers=_headers(owner),
+        json={
+            "device_claim_token": token,
+            "declared_mode": "parent_for_child",
+            "account_owner_person_id": owner["user_id"],
+            "primary_subject": {
+                "person_id": "new",
+                "relationship": "guardian_of",
+                "subject_draft": {"display_name": child_name, "age_band": age_band},
+            },
+            "persona_selection": "starlight",
+            "consent_offer_ids": ["offer_minor_voice_session_v1"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    subjects = created.json()["primary_subject_ids"]
+    assert len(subjects) == 1 and subjects[0] != owner["user_id"]
+    return str(subjects[0])
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_second_child_then_switch_to_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    app = _env(monkeypatch, tmp_path, "binding-members")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "binding-members-owner")
+        await _register_verified_owner(client, app, owner)
+        child1 = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-members",
+            "members-1",
+            "老大",
+            "under_14",
+        )
+        added = await client.post(
+            "/v1/devices/device-members/binding/members",
+            headers=_headers(owner),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "老二", "age_band": "14_17"},
+            },
+        )
+        assert added.status_code == 201, added.text
+        body = added.json()
+        assert body["binding_version"] == 2
+        assert body["status"] == "active"
+        assert len(body["primary_subject_ids"]) == 2
+        assert child1 in body["primary_subject_ids"]
+        child2 = next(p for p in body["primary_subject_ids"] if p != child1)
+        assert child2 != owner["user_id"]
+        assert owner["user_id"] in body["guardian_ids"]
+        assert body["account_owner_id"] == owner["user_id"]
+        child2_person = await app.state.identity_service.get_person(
+            child2, actor_person_id=owner["user_id"]
+        )
+        assert child2_person.subject_category == "minor"
+        assert child2_person.age_band == "14_17"
+        declarations = [
+            relationship
+            for relationship in await app.state.identity_service.list_relationships(
+                person_id=child2
+            )
+            if relationship.relation_type == "guardian_of"
+            and relationship.source_person_id == owner["user_id"]
+        ]
+        assert len(declarations) == 1
+        assert declarations[0].confirmed_by_source_at is not None
+        assert declarations[0].confirmed_by_target_at is None
+        assert (
+            declarations[0].established_evidence_id
+            == "guardian_declaration_v1:device_binding"
+        )
+        resolution = await client.post(
+            "/v1/sessions/resolve-subject",
+            headers=_headers(owner),
+            json={"device_id": "device-members", "environment": {}},
+        )
+        assert resolution.status_code == 200, resolution.text
+        candidate_ids = {
+            candidate["person_id"]
+            for candidate in resolution.json()["candidate_subjects"]
+        }
+        assert child1 in candidate_ids
+        assert child2 in candidate_ids
+        assert resolution.json()["allowed_confirmation_methods"] == ["app_confirm"]
+        profile = await client.get(
+            "/v1/devices/device-members/runtime-profile", headers=_headers(owner)
+        )
+        assert profile.status_code == 200, profile.text
+        switch = await client.post(
+            "/v1/sessions/" + profile.json()["session_id"] + "/active-subject",
+            headers=_headers(owner),
+            json={"person_id": child2, "confirmation_method": "app_confirm"},
+        )
+        assert switch.status_code == 200, switch.text
+        assert switch.json()["active_subject_id"] == child2
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    app = _env(monkeypatch, tmp_path, "binding-members-guard")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "members-guard-owner")
+        stranger = await _register(client, "members-guard-stranger")
+        await _register_verified_owner(client, app, owner)
+        child1 = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-members-guard",
+            "members-guard-1",
+            "老大",
+            "under_14",
+        )
+        device = "/v1/devices/device-members-guard/binding/members"
+        stranger_add = await client.post(
+            device,
+            headers=_headers(stranger),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "老二", "age_band": "under_14"},
+            },
+        )
+        assert stranger_add.status_code == 403, stranger_add.text
+        assert stranger_add.json()["detail"]["code"] == "binding_forbidden"
+        duplicate = await client.post(
+            device, headers=_headers(owner), json={"person_id": child1}
+        )
+        assert duplicate.status_code == 409, duplicate.text
+        assert duplicate.json()["detail"]["code"] == "member_already_present"
+        unknown_person = await client.post(
+            device, headers=_headers(owner), json={"person_id": "person-missing"}
+        )
+        assert unknown_person.status_code == 404, unknown_person.text
+        unknown_device = await client.post(
+            "/v1/devices/device-missing/binding/members",
+            headers=_headers(owner),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "老二", "age_band": "under_14"},
+            },
+        )
+        assert unknown_device.status_code == 404, unknown_device.text
+        missing_draft = await client.post(
+            device, headers=_headers(owner), json={"person_id": "new"}
+        )
+        assert missing_draft.status_code == 422, missing_draft.text
+        await _bind_self(client, app, owner=stranger, device_id="device-self-guard")
+        self_add = await client.post(
+            "/v1/devices/device-self-guard/binding/members",
+            headers=_headers(stranger),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "老二", "age_band": "under_14"},
+            },
+        )
+        assert self_add.status_code == 422, self_add.text
+        assert self_add.json()["detail"]["code"] == "member_not_supported_for_mode"
+        await app.state.identity_service.register_person(
+            person_id="members-guard-adult",
+            display_name="成年人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=datetime.now(UTC),
+        )
+        adult_add = await client.post(
+            device, headers=_headers(owner), json={"person_id": "members-guard-adult"}
+        )
+        assert adult_add.status_code == 422, adult_add.text
+        assert adult_add.json()["detail"]["code"] == "member_age_band_rejected"
+
+
+@pytest.mark.asyncio
+async def test_age_evidence_declaration_owner_self_stranger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    app = _env(monkeypatch, tmp_path, "age-evidence")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "age-evidence-owner")
+        stranger = await _register(client, "age-evidence-stranger")
+        await _register_verified_owner(client, app, owner)
+        child = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-age-evidence",
+            "age-evidence-1",
+            "老大",
+            "under_14",
+        )
+        target = "/v1/persons/" + child + "/age-evidence"
+        corrected = await client.patch(
+            target, headers=_headers(owner), json={"age_band": "14_17"}
+        )
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()["age_band"] == "14_17"
+        assert corrected.json()["subject_category"] == "minor"
+        # A declaration against the owner's own verified adulthood fails closed
+        # into disputed instead of downgrading them to a minor.  This runs
+        # before the self-declaration below changes the owner's own band.
+        disputed = await client.patch(
+            "/v1/persons/" + owner["user_id"] + "/age-evidence",
+            headers=_headers(owner),
+            json={"age_band": "under_14"},
+        )
+        assert disputed.status_code == 200, disputed.text
+        assert disputed.json()["age_evidence_status"] == "disputed"
+        denied = await client.patch(
+            target, headers=_headers(stranger), json={"age_band": "14_17"}
+        )
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["detail"]["code"] == "guardian_binding_owner_required"
+        adult_claim = await client.patch(
+            target, headers=_headers(owner), json={"age_band": "adult"}
+        )
+        assert adult_claim.status_code == 422, adult_claim.text
+        missing = await client.patch(
+            "/v1/persons/person-missing/age-evidence",
+            headers=_headers(owner),
+            json={"age_band": "14_17"},
+        )
+        assert missing.status_code == 404, missing.text
+        # After the disputed downgrade the owner can still self-declare unknown.
+        me_patch = await client.patch(
+            "/v1/persons/" + owner["user_id"] + "/age-evidence",
+            headers=_headers(owner),
+            json={"age_band": "unknown"},
+        )
+        assert me_patch.status_code == 200, me_patch.text

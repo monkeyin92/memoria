@@ -10,10 +10,11 @@ field are rejected with extra=forbid.  All mutations delegate to
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from packages.contracts.generated.python.multi_subject_contracts import (
+    AgeBandValue,
     BindingRoleValue,
     DeviceDeclaredModeValue,
 )
@@ -233,6 +234,87 @@ async def get_my_person(
             detail={"code": "person_not_found"},
         ) from exc
     return person.to_dict()
+
+
+class DeclareAgeEvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    # Declarations can never claim adult or verified evidence: authoritative
+    # adult verification stays behind its own evidence + verifier action.
+    age_band: Literal["unknown", "under_14", "14_17"] = Field()
+
+
+@router.patch("/v1/persons/{person_id}/age-evidence")
+async def declare_person_age_evidence(
+    person_id: str,
+    body: DeclareAgeEvidenceRequest,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    """Correct the age band of a member the caller manages (P1-03 minimal).
+
+    The declarant is the person themselves or the account owner of an ACTIVE
+    ``parent_for_child`` binding naming them as a primary subject -- the same
+    binding-scoped authority as person consent.  A declaration against a
+    verified adult fails closed into disputed inside the service.
+    """
+    identity = _identity(request)
+    try:
+        await identity.get_person(person_id, actor_person_id=user.user_id)
+    except Exception as exc:
+        raise _error(
+            exc,
+            not_found="person_not_found",
+            forbidden="binding_forbidden",
+            conflict="binding_conflict",
+        ) from exc
+    is_self = user.user_id == person_id
+    if not is_self and not await _is_binding_owner_for_subject(
+        request, user_id=user.user_id, subject_person_id=person_id
+    ):
+        raise HTTPException(
+            status_code=403, detail={"code": "guardian_binding_owner_required"}
+        )
+    try:
+        updated = await identity.declare_age_evidence(
+            person_id=person_id,
+            age_band=body.age_band,
+            actor_person_id=user.user_id,
+            now=datetime.now(UTC),
+        )
+    except Exception as exc:
+        raise _error(
+            exc,
+            not_found="person_not_found",
+            forbidden="binding_forbidden",
+            conflict="binding_conflict",
+        ) from exc
+    return updated.to_dict()
+
+
+async def _is_binding_owner_for_subject(
+    request: Request, user_id: str, subject_person_id: str
+) -> bool:
+    """Whether the user owns an ACTIVE parent_for_child binding for the subject.
+
+    Same binding-scoped authority as person-consent grantors
+    (``routes/guardian.py``): the account owner of an ACTIVE
+    ``parent_for_child`` binding naming this subject as a primary subject.
+    """
+    identity = _identity(request)
+    if not isinstance(identity, IdentityService):
+        raise HTTPException(
+            status_code=503, detail={"code": "identity_authority_unavailable"}
+        )
+    manifests = await identity.list_active_manifests_for_person(
+        subject_person_id, actor_person_id=user_id
+    )
+    return any(
+        manifest.declared_mode == "parent_for_child"
+        and manifest.account_owner_id == user_id
+        and subject_person_id in manifest.primary_subject_ids
+        for manifest in manifests
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +580,186 @@ async def unbind_device(
             conflict="binding_conflict",
         ) from exc
     return {"binding_id": binding.binding_id, "status": binding.status}
+
+
+# ---------------------------------------------------------------------------
+# Binding members (P1-03 minimal subject entry)
+# ---------------------------------------------------------------------------
+
+#: The same one-sided declaration evidence as the ``subject_draft`` creation
+#: path (``routes/multi_subject.py``).  The string is the authority-relevant
+#: part: only this evidence id counts as a binding-scoped guardian declaration.
+_MEMBER_GUARDIAN_DECLARATION_EVIDENCE = "guardian_declaration_v1:device_binding"
+
+#: Roles derived by the authority from owner/subject declarations.  They are
+#: re-derived on every version and must not be passed back as extra roles.
+_DERIVED_BINDING_ROLES = frozenset({"account_owner", "primary_subject"})
+
+#: Modes with exactly one primary subject cannot take members.
+_SINGLE_SUBJECT_MODES = frozenset({"self_use", "child_for_parent"})
+
+
+class BindingMemberDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    display_name: str = Field(min_length=1, max_length=128)
+    age_band: AgeBandValue
+
+
+class AddBindingMemberRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    person_id: str = Field(min_length=1, max_length=128)
+    subject_draft: BindingMemberDraft | None = None
+
+    @model_validator(mode="after")
+    def _draft_contract(self) -> AddBindingMemberRequest:
+        if self.person_id == "new" and self.subject_draft is None:
+            raise ValueError("person_id=new requires subject_draft")
+        if self.person_id != "new" and self.subject_draft is not None:
+            raise ValueError("subject_draft is only valid for person_id=new")
+        return self
+
+
+@router.post(
+    "/v1/devices/{device_id}/binding/members",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_binding_member(
+    device_id: str,
+    body: AddBindingMemberRequest,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    """Append one member to the device's ACTIVE binding (new binding version).
+
+    The minimal subject entry P1-03 owes P0-04: an adult owner can add a second
+    ``under_14``/``14_17`` member without a new device claim and without an
+    account for the child.  ``person_id="new"`` registers an unverified minor
+    exactly like the ``subject_draft`` creation path; anything else must be an
+    existing person.  Only the account owner may add members; the service
+    additionally enforces ``binding.manage``.  Existing extra roles are carried
+    over with their permission sets, so adding a member can never widen them.
+    """
+    identity = _identity(request)
+    now = datetime.now(UTC)
+    try:
+        manifest = await identity.get_active_manifest(
+            device_id, now=now, actor_person_id=user.user_id
+        )
+    except Exception as exc:
+        raise _error(
+            exc,
+            not_found="binding_not_found",
+            forbidden="binding_forbidden",
+            conflict="binding_conflict",
+        ) from exc
+    if manifest is None:
+        raise HTTPException(status_code=404, detail={"code": "binding_not_found"})
+    if manifest.declared_mode in _SINGLE_SUBJECT_MODES:
+        raise HTTPException(
+            status_code=422, detail={"code": "member_not_supported_for_mode"}
+        )
+    if manifest.account_owner_id != user.user_id:
+        raise HTTPException(status_code=403, detail={"code": "binding_forbidden"})
+    try:
+        if body.person_id == "new":
+            assert body.subject_draft is not None
+            draft = body.subject_draft
+            category: Literal["unknown", "minor"] = (
+                "minor" if draft.age_band in {"under_14", "14_17"} else "unknown"
+            )
+            subject = await identity.register_person(
+                display_name=draft.display_name,
+                timezone="Asia/Shanghai",
+                subject_category=category,
+                age_band=draft.age_band,
+                age_evidence_status="unverified",
+                actor_person_id=user.user_id,
+                now=now,
+            )
+        else:
+            if body.person_id in manifest.primary_subject_ids:
+                raise HTTPException(
+                    status_code=409, detail={"code": "member_already_present"}
+                )
+            subject = await identity.get_person(
+                body.person_id, actor_person_id=user.user_id
+            )
+        if manifest.declared_mode == "parent_for_child":
+            if subject.subject_category == "adult":
+                raise HTTPException(
+                    status_code=422, detail={"code": "member_age_band_rejected"}
+                )
+            await _ensure_guardian_declaration(
+                identity, owner_id=user.user_id, subject_id=subject.person_id, now=now
+            )
+        carried = tuple(
+            (role.person_id, role.role)
+            for role in manifest.roles
+            if role.role not in _DERIVED_BINDING_ROLES
+        )
+        carried_permissions: dict[tuple[str, BindingRole], frozenset[Permission]] = {
+            (role.person_id, role.role): frozenset(
+                cast("tuple[Permission, ...]", tuple(role.permissions))
+            )
+            for role in manifest.roles
+            if role.role not in _DERIVED_BINDING_ROLES and role.permissions
+        }
+        updated = await identity.supersede_binding(
+            device_id=device_id,
+            declared_mode=manifest.declared_mode,
+            primary_subject_ids=(*manifest.primary_subject_ids, subject.person_id),
+            roles=carried,
+            role_permissions=carried_permissions or None,
+            valid_until=manifest.valid_until,
+            actor_person_id=user.user_id,
+            now=now,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _error(
+            exc,
+            not_found="member_not_found",
+            forbidden="binding_forbidden",
+            conflict="binding_conflict",
+        ) from exc
+    return _manifest_payload(updated)
+
+
+async def _ensure_guardian_declaration(
+    identity: IdentityService, owner_id: str, subject_id: str, now: datetime
+) -> None:
+    """Record the owner's one-sided guardian declaration for a new subject.
+
+    Same shape as the creation path: pending relationship with only the
+    guardian endpoint confirmed.  Skipped when such a declaration already
+    exists, so re-adding a known child is idempotent on the relationship side
+    (the binding version still advances, like every supersede).
+    """
+    existing = await identity.list_relationships(person_id=subject_id)
+    for relationship in existing:
+        if (
+            relationship.relation_type == "guardian_of"
+            and relationship.source_person_id == owner_id
+            and relationship.target_person_id == subject_id
+            and relationship.confirmed_by_source_at is not None
+        ):
+            return
+    proposed = await identity.propose_relationship(
+        source_person_id=owner_id,
+        target_person_id=subject_id,
+        relation_type="guardian_of",
+        established_evidence_id=_MEMBER_GUARDIAN_DECLARATION_EVIDENCE,
+        actor_person_id=owner_id,
+        now=now,
+    )
+    await identity.confirm_relationship(
+        relationship_id=proposed.relationship_id,
+        person_id=owner_id,
+        now=now,
+    )
 
 
 # ---------------------------------------------------------------------------

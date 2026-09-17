@@ -191,6 +191,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         self._context_assembler = ContextAssembler()
         self._llm_text_buf = ""
         self._response_plan_by_fence: dict[GenerationFence, ResponsePlan] = {}
+        # The signed profile that authorized each cached plan, by fence.  A legal
+        # manager change withdraws authorization without advancing any fence the
+        # cache key carries, so fence equality alone would keep serving the old
+        # subject's grounded items on a same-fence retry (P0-04).
+        self._response_plan_profile_by_fence: dict[GenerationFence, str | None] = {}
         self._response_planner_tool_registered = False
         self._context_ready_by_fence: dict[GenerationFence, asyncio.Event] = {}
         self._realtime_delegation_lock = asyncio.Lock()
@@ -849,10 +854,48 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             ),
         )
 
+    def _current_authorizing_profile_id(self) -> str | None:
+        """The ``runtime_profile_id`` currently authorizing this session, if any.
+
+        Defensive lookups: unit-test doubles may not wire the full orchestrator
+        chain, in which case there is no authorizing profile to stamp.
+        """
+        profiles = getattr(getattr(self._runtime, "orchestrator", None), "runtime_profiles", None)
+        current = getattr(profiles, "current", None)
+        profile = getattr(current, "profile", None)
+        profile_id = getattr(profile, "runtime_profile_id", None)
+        return profile_id if isinstance(profile_id, str) and profile_id else None
+
     def _cache_response_plan(self, plan: ResponsePlan) -> None:
         self._response_plan_by_fence[plan.fence] = plan
+        self._response_plan_profile_by_fence[plan.fence] = (
+            self._current_authorizing_profile_id()
+        )
+        # Actively drop superseded identity epochs: an older-epoch entry can
+        # never match a current-fence reuse (epochs advance strictly), and
+        # holding it retains the old subject's grounded items in memory.
+        for fence in tuple(self._response_plan_by_fence):
+            if fence.session_epoch < plan.fence.session_epoch:
+                self._response_plan_by_fence.pop(fence, None)
+                self._response_plan_profile_by_fence.pop(fence, None)
         while len(self._response_plan_by_fence) > 32:
-            self._response_plan_by_fence.pop(next(iter(self._response_plan_by_fence)))
+            oldest = next(iter(self._response_plan_by_fence))
+            self._response_plan_by_fence.pop(oldest)
+            self._response_plan_profile_by_fence.pop(oldest, None)
+
+    def _response_plan_authorized_by_current_profile(self, plan: ResponsePlan) -> bool:
+        """Whether the cached plan's authorizing profile is still current.
+
+        Drop (fail closed) exactly when a stamped profile id is present and a
+        different profile -- or no profile after a degrade -- is current now.
+        Entries cached while authority-less stay reusable on fence match: the
+        local-safe fallback carries no grounded items.  Entries without a stamp
+        (older direct writers) are likewise fenced by exact fence match only.
+        """
+        stamped = self._response_plan_profile_by_fence.get(plan.fence)
+        if stamped is None:
+            return True
+        return stamped == self._current_authorizing_profile_id()
 
     @staticmethod
     def _response_plan_key(fence: GenerationFence) -> GenerationFence:
@@ -1761,6 +1804,17 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.turn_id,
                 fence.generation_id,
             )
+            return
+        if not self._response_plan_authorized_by_current_profile(response_plan):
+            logger.error(
+                "llm request blocked by withdrawn authorizing profile session_id=%s "
+                "turn_id=%s generation_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            self._response_plan_by_fence.pop(fence, None)
+            self._response_plan_profile_by_fence.pop(fence, None)
             return
         if self._runtime.mode_policy_enforced and not self._plan_matches_mode_policy(
             response_plan, policy

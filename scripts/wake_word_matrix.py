@@ -61,6 +61,7 @@ import sys
 import threading
 import time
 import wave
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,10 @@ class Trial:
     finished_monotonic: float
     outcome: str
     latency_s: float | None = None
+    latency_prompt: float | None = None
+    latency_speech_onset: float | None = None
+    speech_onset_monotonic: float | None = None
+    speech_onset_iso: str | None = None
     detector_prob: float | None = None
     wake_line: str | None = None
     notes: list[str] = field(default_factory=list)
@@ -133,6 +138,11 @@ class Window:
     started_iso: str
     finished_monotonic: float
     wakes: list[dict[str, Any]]
+    effective_exposure_s: float = 0.0
+    idle_s: float = 0.0
+    paused: list[dict[str, Any]] = field(default_factory=list)
+    invalid_reason: str | None = None
+    detector_on_evidence: str | None = None
 
 
 class ConsoleReader(threading.Thread):
@@ -208,6 +218,52 @@ class ConsoleReader(threading.Thread):
         if not last.text.rstrip().endswith("-> idle"):
             return False
         return (time.monotonic() - last.monotonic) >= settle_s
+
+    def state_timeline(self) -> list[dict[str, Any]]:
+        """Every StateMachine transition seen so far, oldest first.
+
+        Each entry carries ``monotonic``/``iso``/``text`` plus the parsed
+        ``from``/``to`` states; unparsable lines are skipped, never fatal.
+        """
+        timeline: list[dict[str, Any]] = []
+        for line in self.snapshot():
+            if "StateMachine: State:" not in line.text:
+                continue
+            try:
+                segment = line.text.split("State:", 1)[1]
+                before, _, after = segment.partition("->")
+                from_state = before.strip().split()[0]
+                to_state = after.strip().split()[0]
+            except IndexError:
+                continue
+            timeline.append(
+                {
+                    "monotonic": line.monotonic,
+                    "iso": line.iso,
+                    "text": line.text,
+                    "from": from_state,
+                    "to": to_state,
+                }
+            )
+        return timeline
+
+    def current_state(self) -> str | None:
+        """Newest known device state, or None before any transition is seen."""
+        timeline = self.state_timeline()
+        return timeline[-1]["to"] if timeline else None
+
+    def is_detector_on(self) -> bool:
+        """True once the firmware reports its wake-word detector configured."""
+        return any(
+            "MemoriaWakeWord: configured" in line.text for line in self.snapshot()
+        )
+
+    def detector_on_evidence(self) -> str | None:
+        """Newest detector-configured line, i.e. the detector-on proof."""
+        for line in reversed(self.snapshot()):
+            if "MemoriaWakeWord: configured" in line.text:
+                return line.text
+        return None
 
 
 def _sha256(path: Path) -> str:
@@ -348,22 +404,37 @@ def _apply_output_settings(*, unmute: bool, volume: int | None) -> None:
         )
 
 
-def _restore_output_settings(before: str) -> None:
-    """Put the machine back the way it was found (mute state and volume)."""
-
+def _parse_output_settings(text: str) -> tuple[bool, str]:
+    """Split an ``osascript get volume settings`` line into (muted, volume)."""
     values: dict[str, str] = {}
-    for part in before.split(","):
+    for part in text.split(","):
         key, _, value = part.partition(":")
         values[key.strip()] = value.strip()
-    muted = values.get("output muted", "false").lower() == "true"
-    volume = values.get("output volume", "")
+    return values.get("output muted", "").lower() == "true", values.get("output volume", "")
+
+
+def _is_output_muted(settings: str) -> bool:
+    """True when the recorded output settings say the output is muted."""
+    return _parse_output_settings(settings)[0]
+
+
+def _settings_match(before: str, after: str) -> bool:
+    """True when a re-read after restore agrees with the pre-run snapshot."""
+    return _parse_output_settings(before) == _parse_output_settings(after)
+
+
+def _restore_output_settings(before: str) -> bool:
+    """Put the machine back the way it was found; True if every command ran."""
+    muted, volume = _parse_output_settings(before)
+    ok = True
     if volume.isdigit():
-        subprocess.run(
+        completed = subprocess.run(
             ["osascript", "-e", f"set volume output volume {int(volume)}"],
             check=False,
             capture_output=True,
         )
-    subprocess.run(
+        ok = ok and completed.returncode == 0
+    completed = subprocess.run(
         [
             "osascript",
             "-e",
@@ -372,22 +443,69 @@ def _restore_output_settings(before: str) -> None:
         check=False,
         capture_output=True,
     )
+    return ok and completed.returncode == 0
+
+
+def _verify_output_restored(before: str) -> tuple[bool, str]:
+    """Re-read the output settings and compare them with the pre-run snapshot.
+
+    Returns ``(restored, after)``; ``restored`` is True only when the re-read
+    agrees with ``before``.  Never raises: a failed re-read counts as unrestored.
+    """
+    try:
+        after = _output_settings()
+    except Exception:  # noqa: BLE001 - the receipt records unverified, not a crash
+        return False, ""
+    return _settings_match(before, after), after
+
+
+def _finalize_output_restore(before: str, invalid: list[str]) -> tuple[bool, str]:
+    """Restore the output settings, verify by re-reading, record failures.
+
+    Returns ``(restored, after)`` for the receipt; appends to ``invalid`` when
+    the restore commands failed or the re-read disagrees with ``before``.
+    """
+    try:
+        commands_ok = _restore_output_settings(before)
+    except Exception as exc:  # noqa: BLE001 - restore runs in finally, must not raise
+        invalid.append(f"system output restore command failed ({exc}); run marked invalid")
+        return False, ""
+    restored, after = _verify_output_restored(before)
+    restored = commands_ok and restored
+    if not restored:
+        invalid.append(
+            "system output was not restored "
+            f"(before={before!r} after={after!r}); run marked invalid"
+        )
+    return restored, after
+
+
+class PlayFailed(Exception):
+    """Raised when a stimulus playback exits non-zero (silent rig, no data)."""
 
 
 def _play(path: Path, gain: float) -> float:
     started = time.monotonic()
-    subprocess.run(["afplay", "-v", f"{gain}", str(path)], check=False)
+    completed = subprocess.run(["afplay", "-v", f"{gain}", str(path)], check=False)
+    if completed.returncode != 0:
+        raise PlayFailed(f"afplay exited with {completed.returncode} for {path}")
     return started
 
 
 def _wait_idle(reader: ConsoleReader, *, timeout: float, since: float) -> bool:
-    del since
+    # ``since`` is kept for caller compatibility: standby is a level (the last
+    # transition is into idle, settled), not an edge that must occur after it.
+    _ = since
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if reader.is_idle():
             return True
         time.sleep(0.5)
     return False
+
+
+def _iso_now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def _run_trial(
@@ -400,68 +518,352 @@ def _run_trial(
     idle_timeout_s: float,
     trials: list[Trial],
     human_speaker: bool = False,
+    human_confirm: bool = False,
 ) -> Trial | None:
-    attempt_start = time.monotonic()
-    if not _wait_idle(reader, timeout=idle_timeout_s, since=attempt_start):
-        trials.append(
-            Trial(
-                phase=phase,
-                gain=gain,
-                voice=stimulus.voice,
-                started_monotonic=attempt_start,
-                started_iso=datetime.now().astimezone().isoformat(timespec="milliseconds"),
-                finished_monotonic=time.monotonic(),
-                outcome="invalid_never_idle",
-                notes=["device did not reach standby before this trial"],
-            )
-        )
-        return None
+    """Run one recall attempt; invalid runs are recorded, never a miss.
 
-    started_iso = datetime.now().astimezone().isoformat(timespec="milliseconds")
+    Wake detection uses the wake-event definition (:func:`_is_wake_event`) so
+    the lagging duplicate line (no ``(state:)``) can never count.  Human runs
+    stamp the operator's speech onset (``--human-confirm``) separately from
+    the prompt moment, so both ``latency_prompt`` and ``latency_speech_onset``
+    are recorded.
+    """
+    attempt_start = time.monotonic()
+    baseline_errors = reader.read_errors
+
+    def _record(
+        outcome: str,
+        *,
+        started: float,
+        started_iso: str,
+        onset: float | None,
+        onset_iso: str | None,
+        wake_line: ConsoleLine | None,
+        detector: float | None,
+        notes: list[str],
+    ) -> Trial:
+        prompt_latency = (wake_line.monotonic - started) if wake_line is not None else None
+        onset_latency = (
+            (wake_line.monotonic - onset)
+            if (wake_line is not None and onset is not None)
+            else None
+        )
+        trial = Trial(
+            phase=phase,
+            gain=gain,
+            voice=stimulus.voice,
+            started_monotonic=started,
+            started_iso=started_iso,
+            finished_monotonic=time.monotonic(),
+            outcome=outcome,
+            latency_s=prompt_latency,
+            latency_prompt=prompt_latency,
+            latency_speech_onset=onset_latency,
+            speech_onset_monotonic=onset,
+            speech_onset_iso=onset_iso,
+            detector_prob=detector,
+            wake_line=wake_line.text if wake_line is not None else None,
+            notes=notes,
+        )
+        trials.append(trial)
+        return trial
+
+    if not reader.state_timeline():
+        return _record(
+            "invalid_state_unknown",
+            started=attempt_start,
+            started_iso=_iso_now(),
+            onset=None,
+            onset_iso=None,
+            wake_line=None,
+            detector=None,
+            notes=["no StateMachine transitions seen; device state unknown"],
+        )
+    if not _wait_idle(reader, timeout=idle_timeout_s, since=attempt_start):
+        return _record(
+            "invalid_never_idle",
+            started=attempt_start,
+            started_iso=_iso_now(),
+            onset=None,
+            onset_iso=None,
+            wake_line=None,
+            detector=None,
+            notes=["device did not reach standby before this trial"],
+        )
+
+    started_iso = _iso_now()
+    notes: list[str] = []
+    onset: float | None = None
+    onset_iso: str | None = None
     if human_speaker:
-        print(f"  >>> 请现在说「茉莉」({phase}, 第 {len(trials) + 1} 次)", flush=True)
-        started = time.monotonic()
-        finished = started
+        prompt_at = time.monotonic()
+        started = prompt_at
+        print(f"  >>> 请现在说「{_WAKE_PHRASE}」({phase}, 第 {len(trials) + 1} 次)", flush=True)
+        if human_confirm:
+            try:
+                input("  >>> 在开口说出「茉莉」的瞬间按回车（记录开口时间戳）...")
+            except EOFError:
+                notes.append("human-confirm prompt got EOF; no speech-onset stamp")
+            else:
+                onset = time.monotonic()
+                onset_iso = _iso_now()
+        else:
+            notes.append("no --human-confirm; speech onset not stamped, latency uses prompt")
     else:
-        started = _play(Path(stimulus.path), gain)
-        finished = time.monotonic()
-    wake_line = reader.wait_for(WAKE_MARKER, since=started - 0.05, timeout=wake_timeout_s)
+        try:
+            started = _play(Path(stimulus.path), gain)
+        except PlayFailed as exc:
+            return _record(
+                "invalid_play_failed",
+                started=attempt_start,
+                started_iso=started_iso,
+                onset=None,
+                onset_iso=None,
+                wake_line=None,
+                detector=None,
+                notes=[f"playback failed: {exc}"],
+            )
+    wake_line = _wait_for_wake_event(reader, since=started - 0.05, timeout=wake_timeout_s)
     detector = None
     if wake_line is not None:
-        detector_line = reader.wait_for(DETECTOR_MARKER, since=started - 0.05, timeout=0.5)
-        if detector_line is not None:
-            marker = "prob="
-            if marker in detector_line.text:
-                try:
-                    detector = float(detector_line.text.split(marker, 1)[1].split()[0])
-                except ValueError:
-                    detector = None
-    trial = Trial(
-        phase=phase,
-        gain=gain,
-        voice=stimulus.voice,
-        started_monotonic=started,
+        detector = _detector_prob_before(
+            reader, since=started - 0.05, until=wake_line.monotonic
+        )
+    if reader.read_errors > baseline_errors:
+        return _record(
+            "invalid_serial_gap",
+            started=started,
+            started_iso=started_iso,
+            onset=onset,
+            onset_iso=onset_iso,
+            wake_line=None,
+            detector=None,
+            notes=[
+                f"{reader.read_errors - baseline_errors} console read error(s) "
+                "during this trial; the stream may have gaps"
+            ],
+        )
+    if wake_line is None:
+        if not reader.state_timeline():
+            return _record(
+                "invalid_state_unknown",
+                started=started,
+                started_iso=started_iso,
+                onset=onset,
+                onset_iso=onset_iso,
+                wake_line=None,
+                detector=None,
+                notes=["device state became unknown during this trial"],
+            )
+        return _record(
+            "miss",
+            started=started,
+            started_iso=started_iso,
+            onset=onset,
+            onset_iso=onset_iso,
+            wake_line=None,
+            detector=None,
+            notes=notes,
+        )
+    return _record(
+        "wake",
+        started=started,
         started_iso=started_iso,
-        finished_monotonic=finished,
-        outcome="wake" if wake_line is not None else "miss",
-        latency_s=(wake_line.monotonic - started) if wake_line is not None else None,
-        detector_prob=detector,
-        wake_line=wake_line.text if wake_line is not None else None,
+        onset=onset,
+        onset_iso=onset_iso,
+        wake_line=wake_line,
+        detector=detector,
+        notes=notes,
     )
-    trials.append(trial)
-    return trial
 
 
 def _is_wake_event(text: str) -> bool:
     return WAKE_EVENT_MARKER in text or (WAKE_MARKER in text and "(state:" in text)
 
 
+def _wait_for_wake_event(
+    reader: ConsoleReader, *, since: float, timeout: float
+) -> ConsoleLine | None:
+    """First wake *event* at/after ``since``; lagging duplicates never match."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for line in reader.snapshot(since=since):
+            if _is_wake_event(line.text):
+                return line
+        time.sleep(0.1)
+    return None
+
+
+def _detector_prob_before(reader: ConsoleReader, *, since: float, until: float) -> float | None:
+    """Newest detector probability strictly inside the started..wake interval."""
+    prob: float | None = None
+    for line in reader.snapshot():
+        if since <= line.monotonic <= until and DETECTOR_MARKER in line.text:
+            marker = "prob="
+            if marker in line.text:
+                try:
+                    prob = float(line.text.split(marker, 1)[1].split()[0])
+                except ValueError:
+                    continue
+    return prob
+
+
 def _wake_lines(reader: ConsoleReader, *, since: float, until: float) -> list[dict[str, Any]]:
+    """Wake events in ``[since, until)``: left-closed, right-open.
+
+    Adjacent windows share an edge timestamp, so a closed right edge would let
+    one console line belong to two windows; the half-open interval keeps every
+    wake line attributable to exactly one window.
+    """
     return [
         {"monotonic": line.monotonic, "iso": line.iso, "text": line.text}
         for line in reader.snapshot()
-        if line.monotonic >= since and line.monotonic <= until and _is_wake_event(line.text)
+        if since <= line.monotonic < until and _is_wake_event(line.text)
     ]
+
+
+def _run_window(
+    reader: ConsoleReader,
+    *,
+    label: str,
+    gain: float,
+    wall_seconds: float,
+    idle_timeout_s: float,
+    invalid: list[str],
+    play_fn: Callable[[], float] | None = None,
+    poll_s: float = 0.2,
+) -> Window:
+    """Run one false-wake window; the denominator is idle exposure, not wall time.
+
+    The window opens only behind two gates -- settled standby (``_wait_idle``)
+    and a confirmed detector (``is_detector_on``); otherwise it is returned
+    invalid with no wakes.  Inside, the device state is polled: any stretch
+    away from idle pauses the exposure clock and is recorded in ``paused``
+    with its reason, so a window that spends 133 s wall with 0 s idle reports
+    0 s of exposure instead of a full denominator.
+
+    Speaking time never counts as exposure: while the device itself is
+    playing, its KWS pipeline is off, so audio played then proves nothing
+    about false wakes.  That pause must NOT be "fixed" by enabling KWS during
+    playback just to pad exposure -- the pause is the honest denominator.
+    ``play_fn`` is None for the quiet window (no playback, idle slices only).
+    """
+    wall_start = time.monotonic()
+    iso_start = _iso_now()
+    baseline_errors = reader.read_errors
+    evidence = reader.detector_on_evidence()
+
+    def _invalid(reason: str, note: str) -> Window:
+        invalid.append(f"window {label} invalid: {note}")
+        return Window(
+            label=label,
+            gain=gain,
+            started_monotonic=wall_start,
+            started_iso=iso_start,
+            finished_monotonic=time.monotonic(),
+            wakes=[],
+            effective_exposure_s=0.0,
+            idle_s=0.0,
+            paused=[],
+            invalid_reason=reason,
+            detector_on_evidence=evidence,
+        )
+
+    if not reader.state_timeline():
+        return _invalid("invalid_state_unknown", "no StateMachine transitions; state unknown")
+    if not _wait_idle(reader, timeout=idle_timeout_s, since=wall_start):
+        return _invalid("invalid_never_idle", "device did not reach standby before the window")
+    if not reader.is_detector_on():
+        return _invalid("invalid_detector_off", "detector never reported configured")
+    evidence = reader.detector_on_evidence()
+
+    wall_end = wall_start + wall_seconds
+    exposure = 0.0
+    paused: list[dict[str, Any]] = []
+    pause_start: float | None = None
+    pause_reason = ""
+    invalid_reason: str | None = None
+
+    def _close_pause(now: float) -> None:
+        nonlocal pause_start, pause_reason
+        if pause_start is not None:
+            paused.append({"from": pause_start, "to": now, "reason": pause_reason})
+            pause_start = None
+            pause_reason = ""
+
+    while time.monotonic() < wall_end and invalid_reason is None:
+        state = reader.current_state()
+        if state == "idle":
+            _close_pause(time.monotonic())
+            if play_fn is not None:
+                # Playback happens only while idle (see docstring): the assert
+                # pins that down next to the call it guards.
+                assert reader.current_state() == "idle", "playback only while idle"
+                seg_start = time.monotonic()
+                try:
+                    play_fn()
+                except PlayFailed as exc:
+                    invalid_reason = "invalid_play_failed"
+                    invalid.append(f"window {label} invalid: playback failed ({exc})")
+                    break
+                seg_end = time.monotonic()
+                landed = reader.current_state()
+                if landed == "idle":
+                    exposure += seg_end - seg_start
+                else:
+                    pause_start = seg_start
+                    pause_reason = (
+                        f"left idle during playback (state={landed}); exposure paused"
+                    )
+            else:
+                seg_start = time.monotonic()
+                time.sleep(max(0.0, min(poll_s, wall_end - seg_start)))
+                seg_end = time.monotonic()
+                if reader.current_state() == "idle":
+                    exposure += seg_end - seg_start
+                else:
+                    pause_start = seg_start
+                    pause_reason = (
+                        "left idle during quiet window "
+                        f"(state={reader.current_state()}); exposure paused"
+                    )
+        else:
+            detail = f"state={state}" if state else "state unknown"
+            if state == "speaking":
+                detail += " (device playback; KWS off)"
+            if pause_start is None:
+                pause_start = time.monotonic()
+                pause_reason = f"left idle ({detail}); exposure paused"
+            time.sleep(max(0.0, min(poll_s, wall_end - time.monotonic())))
+    _close_pause(time.monotonic())
+    window_end = time.monotonic()
+    if invalid_reason is None and reader.read_errors > baseline_errors:
+        invalid_reason = "invalid_serial_gap"
+        invalid.append(
+            f"window {label} invalid: "
+            f"{reader.read_errors - baseline_errors} console read error(s); "
+            "the stream may have gaps"
+        )
+    wakes = (
+        [] if invalid_reason is not None else _wake_lines(reader, since=wall_start, until=window_end)
+    )
+    paused_total = sum(entry["to"] - entry["from"] for entry in paused)
+    return Window(
+        label=label,
+        gain=gain,
+        started_monotonic=wall_start,
+        started_iso=iso_start,
+        finished_monotonic=window_end,
+        wakes=wakes,
+        effective_exposure_s=round(exposure, 3),
+        idle_s=round(max(0.0, (window_end - wall_start) - paused_total), 3),
+        paused=[
+            {"from": entry["from"], "to": entry["to"], "reason": entry["reason"]}
+            for entry in paused
+        ],
+        invalid_reason=invalid_reason,
+        detector_on_evidence=evidence,
+    )
 
 
 def _parse_board_identity(reader: ConsoleReader) -> list[str]:
@@ -525,6 +927,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--human-confirm",
+        action="store_true",
+        help=(
+            "with --human-speaker, wait for the operator to press Enter at speech "
+            "onset so the receipt records latency_speech_onset as well as latency_prompt"
+        ),
+    )
+    parser.add_argument(
         "--unmute",
         action="store_true",
         help="unmute the system output for this run and restore the previous setting",
@@ -579,41 +989,95 @@ def main(argv: list[str] | None = None) -> int:
             peak_dbfs=round(peak, 2),
         )
 
-    output_before = _output_settings()
-    _apply_output_settings(unmute=args.unmute, volume=args.output_volume)
-    output_during = _output_settings()
-    ambient_rms, ambient_peak = _record_dbfs(args.ambient_seconds)
-
-    port = serial.Serial(port=None, baudrate=args.baudrate, timeout=0.5, exclusive=True)
-    port.dtr = False
-    port.rts = False
-    port.port = args.port
-    port.open()
-    reader = ConsoleReader(port, out / "console.log")
-    reader.start()
-
     trials: list[Trial] = []
     windows: list[Window] = []
     invalid: list[str] = []
+    output_before = ""
+    output_during = ""
+    output_after = ""
+    output_restored = False
+    output_changed = False
+    playback_blocked = False
+    ambient_rms: float | None = None
+    ambient_peak: float | None = None
+    boot_idle: ConsoleLine | None = None
+    boot_idle_iso: str | None = None
+    warmup_actual_s = 0.0
+    levels_at_mic: dict[str, float | None] = {}
+    level_note = ""
+    trigger_voice = args.run_voice
+    port: Any = None
+    reader: ConsoleReader | None = None
+    reader_started = False
+    port_opened = False
     try:
+        output_before = _output_settings()
+        _apply_output_settings(unmute=args.unmute, volume=args.output_volume)
+        output_changed = True
+        output_during = _output_settings()
+        if _is_output_muted(output_during) and not args.human_speaker:
+            playback_blocked = True
+            invalid.append(
+                "system output is muted during the run; playback stimuli would be "
+                "silent, so playback phases are refused"
+            )
+        ambient_rms, ambient_peak = _record_dbfs(args.ambient_seconds)
+
+        port = serial.Serial(port=None, baudrate=args.baudrate, timeout=0.5, exclusive=True)
+        port.dtr = False
+        port.rts = False
+        port.port = args.port
+        port.open()
+        port_opened = True
+        reader = ConsoleReader(port, out / "console.log")
+        reader.start()
+        reader_started = True
+
         boot_idle = reader.wait_for(IDLE_MARKER, since=time.monotonic(), timeout=args.boot_timeout)
         if boot_idle is None:
             invalid.append("device never reported activating -> idle after the port opened")
-        elif args.warmup_s > 0:
-            # Measured: the same verified audio that wakes the device later does not
-            # wake it in the first ~45 s after standby, so those attempts are not
-            # recall failures and must not be counted as trials.
-            print(f"warming up {args.warmup_s:.0f}s after standby", flush=True)
-            time.sleep(args.warmup_s)
-        # Levels are measured with the same speaker/mic pair used for the matrix.
-        if not args.human_speaker:
-            for gain in sorted({args.gain_near, args.gain_far}, reverse=True):
-                stimuli["wake"].level_at_mic_dbfs = _measure_level_at_mic(
-                    Path(stimuli["wake"].path), gain
-                )
+        else:
+            boot_idle_iso = boot_idle.iso
+            if args.warmup_s > 0:
+                # Measured: the same verified audio that wakes the device later does not
+                # wake it in the first ~45 s after standby, so those attempts are not
+                # recall failures and must not be counted as trials.
+                print(f"warming up {args.warmup_s:.0f}s after standby", flush=True)
+                warmup_mark = time.monotonic()
+                time.sleep(args.warmup_s)
+                warmup_actual_s = round(time.monotonic() - warmup_mark, 3)
+        # Levels are measured with the same speaker/mic pair used for the matrix,
+        # one entry per tier; a human speaker has no playback level (null).
+        if args.human_speaker:
+            levels_at_mic = {"near": None, "far": None, "tv": None, "small_talk": None}
+            level_note = "human speaker: no playback, levels not measured (null)"
+        elif playback_blocked:
+            levels_at_mic = {"near": None, "far": None, "tv": None, "small_talk": None}
+            level_note = "output muted: playback refused, levels not measured (null)"
+        else:
+            levels_at_mic["near"] = _measure_level_at_mic(
+                Path(stimuli["wake"].path), args.gain_near
+            )
+            levels_at_mic["far"] = _measure_level_at_mic(
+                Path(stimuli["wake"].path), args.gain_far
+            )
+            stimuli["wake"].level_at_mic_dbfs = levels_at_mic["far"]
+            levels_at_mic["tv"] = _measure_level_at_mic(
+                Path(stimuli["tv"].path), args.gain_far
+            )
+            stimuli["tv"].level_at_mic_dbfs = levels_at_mic["tv"]
+            levels_at_mic["small_talk"] = _measure_level_at_mic(
+                Path(stimuli["small_talk"].path), args.gain_far
+            )
+            stimuli["small_talk"].level_at_mic_dbfs = levels_at_mic["small_talk"]
+            level_note = "co-located computer-mic proxy, not what the device hears"
 
-        trigger_voice = args.run_voice
-        if not args.skip_probe and not args.human_speaker and boot_idle is not None:
+        if (
+            not args.skip_probe
+            and not args.human_speaker
+            and not playback_blocked
+            and boot_idle is not None
+        ):
             # Positive control: if synthetic TTS cannot trigger the detector at all,
             # recall is not measurable with this rig and must be reported as such.
             for phrase in [item.strip() for item in args.probe_phrases.split(",") if item.strip()]:
@@ -642,6 +1106,7 @@ def main(argv: list[str] | None = None) -> int:
                         idle_timeout_s=args.idle_timeout,
                         trials=trials,
                         human_speaker=args.human_speaker,
+                        human_confirm=args.human_confirm,
                     )
                     if trial is not None and trial.outcome == "wake":
                         trigger_voice = voice
@@ -671,8 +1136,14 @@ def main(argv: list[str] | None = None) -> int:
                     rms_dbfs=round(rms, 2),
                     peak_dbfs=round(peak, 2),
                 )
-        measurable = boot_idle is not None and not any(
-            "not measurable" in reason for reason in invalid
+                if not playback_blocked:
+                    levels_at_mic["near"] = _measure_level_at_mic(target, args.gain_near)
+                    levels_at_mic["far"] = _measure_level_at_mic(target, args.gain_far)
+                    stimuli["wake"].level_at_mic_dbfs = levels_at_mic["far"]
+        measurable = (
+            boot_idle is not None
+            and not playback_blocked
+            and not any("not measurable" in reason for reason in invalid)
         )
 
         if measurable:
@@ -687,46 +1158,72 @@ def main(argv: list[str] | None = None) -> int:
                         idle_timeout_s=args.idle_timeout,
                         trials=trials,
                         human_speaker=args.human_speaker,
+                        human_confirm=args.human_confirm,
                     )
 
         # False wakes: distractors first, then an ambient-only window.  Neither
         # plays the wake phrase, so any wake line here is a false wake.
+        assert reader is not None  # the reader was started above
         for label in ("tv", "small_talk"):
-            window_start = time.monotonic()
-            iso_start = datetime.now().astimezone().isoformat(timespec="milliseconds")
-            deadline = window_start + args.distractor_seconds
-            while time.monotonic() < deadline:
-                _play(Path(stimuli[label].path), args.gain_far)
-            window_end = time.monotonic()
-            windows.append(
-                Window(
-                    label=label,
-                    gain=args.gain_far,
-                    started_monotonic=window_start,
-                    started_iso=iso_start,
-                    finished_monotonic=window_end,
-                    wakes=_wake_lines(reader, since=window_start, until=window_end),
+            if playback_blocked:
+                moment = time.monotonic()
+                windows.append(
+                    Window(
+                        label=label,
+                        gain=args.gain_far,
+                        started_monotonic=moment,
+                        started_iso=_iso_now(),
+                        finished_monotonic=moment,
+                        wakes=[],
+                        invalid_reason="invalid_output_muted",
+                    )
                 )
-            )
+                invalid.append(f"window {label} invalid: output muted, playback refused")
+            else:
+                stimulus_path = Path(stimuli[label].path)
+                windows.append(
+                    _run_window(
+                        reader,
+                        label=label,
+                        gain=args.gain_far,
+                        wall_seconds=args.distractor_seconds,
+                        idle_timeout_s=args.idle_timeout,
+                        invalid=invalid,
+                        play_fn=lambda p=stimulus_path, g=args.gain_far: _play(p, g),
+                    )
+                )
 
-        quiet_start = time.monotonic()
-        iso_quiet = datetime.now().astimezone().isoformat(timespec="milliseconds")
-        time.sleep(args.quiet_seconds)
-        quiet_end = time.monotonic()
         windows.append(
-            Window(
+            _run_window(
+                reader,
                 label="quiet",
                 gain=0.0,
-                started_monotonic=quiet_start,
-                started_iso=iso_quiet,
-                finished_monotonic=quiet_end,
-                wakes=_wake_lines(reader, since=quiet_start, until=quiet_end),
+                wall_seconds=args.quiet_seconds,
+                idle_timeout_s=args.idle_timeout,
+                invalid=invalid,
             )
         )
+        if reader.read_errors > 0:
+            invalid.append(
+                f"invalid_serial_gap: {reader.read_errors} console read error(s) this run; "
+                "affected trials/windows are invalid, not misses"
+            )
     finally:
-        reader.stop()
-        port.close()
-        _restore_output_settings(output_before)
+        if reader_started and reader is not None:
+            try:
+                reader.stop()
+            except Exception as exc:  # noqa: BLE001 - teardown must not mask run errors
+                invalid.append(f"console reader stop failed ({exc})")
+        if port_opened and port is not None:
+            try:
+                port.close()
+            except Exception as exc:  # noqa: BLE001 - teardown must not mask run errors
+                invalid.append(f"serial port close failed ({exc})")
+        if output_changed:
+            output_restored, output_after = _finalize_output_restore(output_before, invalid)
+        else:
+            # The output was never touched, so there is nothing to restore.
+            output_restored, output_after = True, output_before
 
     def _counts(phase: str) -> dict[str, int]:
         selected = [trial for trial in trials if trial.phase == phase]
@@ -737,6 +1234,10 @@ def main(argv: list[str] | None = None) -> int:
             "invalid": sum(1 for trial in selected if trial.outcome.startswith("invalid")),
         }
 
+    board_identity = _parse_board_identity(reader) if reader is not None else []
+    console_total = len(reader.snapshot()) if reader is not None else 0
+    console_errors = reader.read_errors if reader is not None else 0
+    valid_windows = [window for window in windows if window.invalid_reason is None]
     receipt = {
         "schema_version": 1,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -745,7 +1246,7 @@ def main(argv: list[str] | None = None) -> int:
             "port": args.port,
             "baudrate": args.baudrate,
             "session_device_id_last_recorded": "dev_atk_a4cb8fd6095c",
-            "board_identity_read_this_run": _parse_board_identity(reader),
+            "board_identity_read_this_run": board_identity,
             "firmware_receipt": receipt_record,
         },
         "stimulus": {
@@ -761,7 +1262,8 @@ def main(argv: list[str] | None = None) -> int:
         "input_range": {
             "system_output_settings_before_run": output_before,
             "system_output_settings_during_run": output_during,
-            "system_output_restored_after_run": True,
+            "system_output_settings_after_run": output_after,
+            "system_output_restored_after_run": output_restored,
             "gain_near": args.gain_near,
             "gain_far": args.gain_far,
             "gain_units": "afplay -v linear amplitude multiplier",
@@ -770,8 +1272,10 @@ def main(argv: list[str] | None = None) -> int:
                 "distance/angle were not varied or measured; the 'far' condition is a "
                 "playback-gain ladder only"
             ),
-            "ambient_floor_dbfs_at_mic": round(ambient_rms, 2),
-            "ambient_peak_dbfs_at_mic": round(ambient_peak, 2),
+            "levels_at_mic_dbfs": dict(levels_at_mic),
+            "level_note": level_note,
+            "ambient_floor_dbfs_at_mic": round(ambient_rms, 2) if ambient_rms is not None else None,
+            "ambient_peak_dbfs_at_mic": round(ambient_peak, 2) if ambient_peak is not None else None,
         },
         "truth": {
             "wake_stimulus_windows": [
@@ -787,6 +1291,9 @@ def main(argv: list[str] | None = None) -> int:
         },
         "protocol": {
             "warmup_s": args.warmup_s,
+            "warmup_actual_s": warmup_actual_s,
+            "boot_idle_iso": boot_idle_iso,
+            "human_confirm": bool(args.human_confirm),
             "wake_timeout_s": args.wake_timeout,
             "idle_timeout_s": args.idle_timeout,
             "distractor_seconds": args.distractor_seconds,
@@ -814,44 +1321,123 @@ def main(argv: list[str] | None = None) -> int:
             "recall_near": _counts("recall_near"),
             "recall_far": _counts("recall_far"),
             "false_wakes_distractor": sum(
-                len(window.wakes) for window in windows if window.label != "quiet"
+                len(window.wakes) for window in valid_windows if window.label != "quiet"
             ),
             "false_wakes_quiet": sum(
-                len(window.wakes) for window in windows if window.label == "quiet"
+                len(window.wakes) for window in valid_windows if window.label == "quiet"
             ),
+            "windows_invalid": len(windows) - len(valid_windows),
         },
         "trials": [asdict(trial) for trial in trials],
         "windows": [asdict(window) for window in windows],
         "invalid_reasons": invalid,
-        "console_lines": len(reader.snapshot()),
-        "console_read_errors": reader.read_errors,
+        "console_lines": console_total,
+        "console_read_errors": console_errors,
     }
     (out / "receipt.json").write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    near = receipt["counts"]["recall_near"]
-    far = receipt["counts"]["recall_far"]
+    report = _build_report(receipt)
+    (out / "report.md").write_text(report, encoding="utf-8")
+
+    print(report, end="")
+    if invalid and any("never reported" in reason for reason in invalid):
+        print("wake matrix invalid: device never reached standby", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _format_level(value: float | None) -> str:
+    return f"{value:.2f}" if value is not None else "未测"
+
+
+def _build_report(receipt: dict[str, Any]) -> str:
+    """Render report.md purely from the receipt (unit-testable, no hardware)."""
+    stimulus = receipt.get("stimulus", {})
+    human = bool(stimulus.get("human_speaker", False))
+    protocol = receipt.get("protocol", {})
+    input_range = receipt.get("input_range", {})
+    counts = receipt.get("counts", {})
+    near = counts.get("recall_near", {})
+    far = counts.get("recall_far", {})
+    windows = receipt.get("windows", [])
+    trials = receipt.get("trials", [])
+    invalid = receipt.get("invalid_reasons", [])
+    files = stimulus.get("files", {})
+    wake_voice = files.get("wake", {}).get("voice", "?")
+    if human:
+        confirmed = "，开口时刻经回车确认" if protocol.get("human_confirm") else ""
+        stim_line = f"- 刺激：真人说话者=是（操作员按提示说「茉莉」{confirmed}）；合成 TTS=否"
+    else:
+        stim_line = f"- 刺激：合成 TTS（{wake_voice}）经电脑扬声器播放；真人说话者=否"
+    restored = bool(input_range.get("system_output_restored_after_run", False))
+    restore_note = "已恢复" if restored else "恢复失败"
+    ambient = input_range.get("ambient_floor_dbfs_at_mic")
+    ambient_peak = input_range.get("ambient_peak_dbfs_at_mic")
+    levels = input_range.get("levels_at_mic_dbfs", {}) or {}
+    if human:
+        level_line = "- 唤醒刺激电平（麦克风代理）：真人发声，未测量"
+    else:
+        level_line = (
+            "- 唤醒刺激电平（麦克风代理）："
+            f"近 {_format_level(levels.get('near'))} / 远 {_format_level(levels.get('far'))} dBFS；"
+            f"tv {_format_level(levels.get('tv'))} / small_talk "
+            f"{_format_level(levels.get('small_talk'))} dBFS"
+        )
     lines = [
         "# 唤醒矩阵 receipt（设备端）",
         "",
-        f"- 生成时间：{receipt['created_at']}",
-        f"- 刺激：合成 TTS（{stimuli['wake'].voice}）经电脑扬声器播放；真人说话者=否",
-        f"- 输入范围：gain 近={args.gain_near} / 远={args.gain_far}（线性幅度系数）；物理距离未变化、未测量",
-        f"- 系统输出：运行中 {output_during}；运行前 {output_before}（已恢复）",
-        f"- 环境底噪（麦克风代理）：{round(ambient_rms, 2)} dBFS（峰值 {round(ambient_peak, 2)}）",
-        f"- 唤醒刺激电平（麦克风代理）：{stimuli['wake'].level_at_mic_dbfs} dBFS",
+        f"- 生成时间：{receipt.get('created_at', '')}",
+        stim_line,
+        (
+            f"- 输入范围：gain 近={input_range.get('gain_near')} / "
+            f"远={input_range.get('gain_far')}（线性幅度系数）；物理距离未变化、未测量"
+        ),
+        (
+            f"- 系统输出：运行中 {input_range.get('system_output_settings_during_run')}；"
+            f"运行前 {input_range.get('system_output_settings_before_run')}（{restore_note}）"
+        ),
+        f"- 环境底噪（麦克风代理）：{ambient} dBFS（峰值 {ambient_peak}）",
+        level_line,
         "",
         "## 唤醒召回（真唤醒）",
         "",
-        f"- 近距档：{near['wakes']}/{near['trials']} 唤醒，漏唤醒 {near['misses']}，无效 {near['invalid']}",
-        f"- 远距档：{far['wakes']}/{far['trials']} 唤醒，漏唤醒 {far['misses']}，无效 {far['invalid']}",
-        "",
-        "## 误唤醒",
-        "",
+        (
+            f"- 近距档：{near.get('wakes')}/{near.get('trials')} 唤醒，"
+            f"漏唤醒 {near.get('misses')}，无效 {near.get('invalid')}"
+        ),
+        (
+            f"- 远距档：{far.get('wakes')}/{far.get('trials')} 唤醒，"
+            f"漏唤醒 {far.get('misses')}，无效 {far.get('invalid')}"
+        ),
     ]
+    if human:
+        onset_latencies = [
+            trial["latency_speech_onset"]
+            for trial in trials
+            if trial.get("outcome") == "wake" and trial.get("latency_speech_onset") is not None
+        ]
+        if onset_latencies:
+            mean_onset = sum(onset_latencies) / len(onset_latencies)
+            lines.append(
+                f"- 平均延迟（开口起算）：{mean_onset:.2f} s（{len(onset_latencies)} 次真唤醒）"
+            )
+        else:
+            lines.append("- 延迟：本次无开口戳（未用 --human-confirm），仅记录提示时刻延迟")
+    lines += ["", "## 误唤醒", ""]
     for window in windows:
-        lines.append(f"- {window.label}：{len(window.wakes)} 次（gain={window.gain}）")
+        wakes = window.get("wakes", [])
+        wall = window.get("finished_monotonic", 0.0) - window.get("started_monotonic", 0.0)
+        exposure = window.get("effective_exposure_s")
+        exposure_note = f"，有效曝光 {exposure:.1f}s/{wall:.1f}s" if exposure is not None else ""
+        state_note = (
+            f"；无效：{window['invalid_reason']}" if window.get("invalid_reason") else ""
+        )
+        lines.append(
+            f"- {window.get('label')}：{len(wakes)} 次（gain={window.get('gain')}{exposure_note}）"
+            f"{state_note}"
+        )
     if invalid:
         lines += ["", "## 无效项", ""]
         lines += [f"- {reason}" for reason in invalid]
@@ -863,13 +1449,7 @@ def main(argv: list[str] | None = None) -> int:
         "- 板卡身份本次只读到启动横幅（app 版本 + ELF SHA256 前缀）；flash receipt 标记为 read_from_board_this_run=false。",
         "- 该 receipt 不改写 `advertised_duplex_level` 或 `aec_reference_verified`。",
     ]
-    (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    print("\n".join(lines))
-    if invalid and any("never reported" in reason for reason in invalid):
-        print("wake matrix invalid: device never reached standby", file=sys.stderr)
-        return 2
-    return 0
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":
