@@ -243,6 +243,54 @@ def test_window_starts_exposure_only_after_settle_gate_passes(
     assert window.effective_exposure_s <= 1.1
     assert window.effective_exposure_s >= 0.5
 
+
+def test_window_excludes_settle_period_wake_from_numerator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-05: a wake during settle is entry cost, never a counted false wake.
+
+    Fake clock: busy->idle at t=2000.5, gate passes at t=2002.0; a wake event
+    at t=2001.0 (inside the settle wait) must not appear in ``wakes``. The
+    receipt also carries ``exposure_started_monotonic`` so the report wall
+    excludes the gate wait. Fails while ``_wake_lines`` starts at the
+    pre-gate call time.
+    """
+    clock = FakeClock(start=2000.0)
+    monkeypatch.setattr(wwm.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(wwm.time, "sleep", clock.sleep)
+    reader = _reader(
+        tmp_path,
+        (
+            _line(1999.0, CONNECTING_TEXT),
+            _line(2000.5, IDLE_TEXT),
+            _line(2000.5, DETECTOR_ON_TEXT),
+            _line(2001.0, FIXTURE_WAKE_EVENT_TEXT),
+        ),
+    )
+    player_calls: list[float] = []
+
+    def play_once() -> float:
+        player_calls.append(clock.monotonic())
+        clock.sleep(0.05)
+        return clock.monotonic()
+
+    invalid: list[str] = []
+    window = wwm._run_window(
+        reader,
+        label="tv",
+        gain=0.3,
+        wall_seconds=1.0,
+        idle_timeout_s=5.0,
+        invalid=invalid,
+        play_fn=play_once,
+        poll_s=0.05,
+    )
+    assert window.invalid_reason is None
+    assert window.wakes == []
+    assert window.exposure_started_monotonic == pytest.approx(2002.0)
+    assert window.started_monotonic == pytest.approx(2000.0)
+
+
 def test_window_exposure_excludes_pre_gate_idle_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

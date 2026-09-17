@@ -139,7 +139,7 @@
 ### [ ] P2-05 补齐唤醒计数与测试可复现性，再采家庭噪声矩阵
 
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
-- **已修（本轮），P2：入窗起点与等待/曝光分离。** `_run_window` 的 `window_start` 改门通过时刻（`gate_ready_at`），settle 等待是入场成本；新增 2 个 fake-clock 入口测试（settle 耗窗、门前 idle 史不计入），修前窗口起点在门前、曝光多算 ~1.5 s，修复后门后起算。
+- **已修（本轮追补，未提交），P2：分子/收据口径一次关干净。** `_wake_lines` 下界换 `window_start`（settle 期 wake 不计入，单测覆盖），收据 `Window` 新增 `exposure_started_monotonic/iso`；`started_monotonic` 保持门前调用时刻（收据 wall 语义不 breaking），report wall 改用 exposure 起点算。旧收据无新字段时回落到原 wall 口径。
 - **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
 - 可选清理（非 blocker）：去重用例仍保留“有 ignored 文件就对账”的条件分支，严格自包含应删掉该分支只留内联 fixture；改动小，顺手做，不单独立项。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。

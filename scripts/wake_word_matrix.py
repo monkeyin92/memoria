@@ -143,6 +143,8 @@ class Window:
     paused: list[dict[str, Any]] = field(default_factory=list)
     invalid_reason: str | None = None
     detector_on_evidence: str | None = None
+    exposure_started_monotonic: float | None = None
+    exposure_started_iso: str | None = None
 
 
 class ConsoleReader(threading.Thread):
@@ -829,6 +831,7 @@ def _run_window(
     evidence = reader.detector_on_evidence()
 
     gate_ready_at = time.monotonic()
+    exposure_started_iso = _iso_now()
     window_start = gate_ready_at
     wall_end = window_start + wall_seconds
     invalid_reason: str | None = None
@@ -856,11 +859,15 @@ def _run_window(
             "the stream may have gaps"
         )
     wakes = (
-        [] if invalid_reason is not None else _wake_lines(reader, since=wall_start, until=window_end)
+        []
+        if invalid_reason is not None
+        else _wake_lines(reader, since=window_start, until=window_end)
     )
     # Exposure is the idle slice of the console state timeline inside the
     # window, not endpoint sampling: a busy middle between two idle endpoints
     # earns no exposure, and every busy slice is a dated pause entry.
+    # Numerator and denominator share the gate-passage lower bound: a wake
+    # during settle is entry cost, never a counted false wake.
     exposure, paused = _exposure_over_timeline(
         reader.state_timeline(),
         window_start=window_start,
@@ -882,8 +889,9 @@ def _run_window(
         ],
         invalid_reason=invalid_reason,
         detector_on_evidence=evidence,
+        exposure_started_monotonic=window_start,
+        exposure_started_iso=exposure_started_iso,
     )
-
 
 def _parse_board_identity(reader: ConsoleReader) -> list[str]:
     markers = (
@@ -1447,7 +1455,13 @@ def _build_report(receipt: dict[str, Any]) -> str:
     lines += ["", "## 误唤醒", ""]
     for window in windows:
         wakes = window.get("wakes", [])
-        wall = window.get("finished_monotonic", 0.0) - window.get("started_monotonic", 0.0)
+        exposure_start = window.get("exposure_started_monotonic")
+        started = (
+            exposure_start
+            if isinstance(exposure_start, (int, float))
+            else window.get("started_monotonic", 0.0)
+        )
+        wall = window.get("finished_monotonic", 0.0) - started
         exposure = window.get("effective_exposure_s")
         exposure_note = f"，有效曝光 {exposure:.1f}s/{wall:.1f}s" if exposure is not None else ""
         state_note = (
