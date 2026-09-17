@@ -252,6 +252,132 @@ async def test_account_registration_reconciliation_transaction_and_role_boundary
         await _drop_database(database)
 
 
+async def test_concurrent_member_appends_never_overwrite_on_real_pg() -> None:
+    """Two appends derived from version 1: one wins, one conflicts, no loss.
+
+    Real PostgreSQL plus the per-device advisory lock: the compare-and-set
+    expectation rejects the stale derivation instead of letting the second
+    writer replace the first member with its own list.  Retrying with the
+    winner's binding id appends both members, which is what the Control API
+    member route does inside its bounded retry.
+    """
+    database = f"memoria_members_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 9, 17, 6, 0, tzinfo=UTC)
+        owner = (
+            await service.register_person(
+                display_name="家长",
+                timezone="Asia/Shanghai",
+                subject_category="adult",
+                age_band="adult",
+                age_evidence_status="verified",
+                age_evidence_id="evidence-owner",
+                now=now,
+            )
+        ).person_id
+        first = (
+            await service.register_person(
+                display_name="老大",
+                timezone="Asia/Shanghai",
+                subject_category="minor",
+                age_band="under_14",
+                age_evidence_status="unverified",
+                now=now,
+            )
+        ).person_id
+        second = (
+            await service.register_person(
+                display_name="老二",
+                timezone="Asia/Shanghai",
+                subject_category="minor",
+                age_band="14_17",
+                age_evidence_status="unverified",
+                now=now,
+            )
+        ).person_id
+        v1 = await service.create_binding(
+            device_id="dev-pg-members",
+            declared_mode="family_shared",
+            account_owner_person_id=owner,
+            primary_subject_ids=(owner,),
+            family_space_id="family-pg-members",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            now=now,
+        )
+
+        async def append(subject_id: str, minutes: int):
+            return await service.supersede_binding(
+                device_id="dev-pg-members",
+                declared_mode="family_shared",
+                primary_subject_ids=(owner, subject_id),
+                family_space_id="family-pg-members",
+                service_profile_version="family-v1",
+                policy_bundle_version="policy-family-v1",
+                actor_person_id=owner,
+                now=now + timedelta(minutes=minutes),
+                expected_binding_id=v1.binding_id,
+            )
+
+        results = await asyncio.gather(
+            append(first, 1), append(second, 2), return_exceptions=True
+        )
+        wins = [item for item in results if not isinstance(item, BaseException)]
+        losses = [item for item in results if isinstance(item, BaseException)]
+        assert len(wins) == 1, results
+        assert len(losses) == 1, results
+        assert isinstance(losses[0], IdentityConflictError)
+        winner = wins[0]
+        assert winner.binding_version == 2
+        active = await service.get_active_manifest(
+            "dev-pg-members", now=now + timedelta(minutes=3), actor_person_id=owner
+        )
+        assert active is not None
+        assert active.binding_version == 2
+        assert len(active.primary_subject_ids) == 2
+        added = set(active.primary_subject_ids) - {owner}
+        assert added in ({first}, {second}), added
+        versions = await service.list_binding_versions(
+            "dev-pg-members", actor_person_id=owner
+        )
+        assert [item.binding_version for item in versions] == [1, 2]
+        # The rejected attempt leaves no audit row: only the winner advanced
+        # the version, so nothing downstream can read the stale derivation as
+        # an accepted authorization.
+        admin = await asyncpg.connect(dsns["admin"])
+        try:
+            supersedes = await admin.fetchval(
+                "SELECT count(*) FROM identity_audit_events "
+                "WHERE action = 'binding.supersede'"
+            )
+            assert supersedes == 1
+        finally:
+            await admin.close()
+
+        retried = await service.supersede_binding(
+            device_id="dev-pg-members",
+            declared_mode="family_shared",
+            primary_subject_ids=(*active.primary_subject_ids, first if added == {second} else second),
+            family_space_id="family-pg-members",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=4),
+            expected_binding_id=active.binding_id,
+        )
+        assert retried.binding_version == 3
+        assert set(retried.primary_subject_ids) == {owner, first, second}
+        assert retried.family_space_id == "family-pg-members"
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
+
 async def test_schema_roles_rls_and_version_chain() -> None:
     database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
     dsns = await _bootstrap(database)

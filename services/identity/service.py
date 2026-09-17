@@ -44,6 +44,7 @@ from services.identity.domain import (
     BindingManifest,
     BindingReason,
     BindingRole,
+    BindingVersionConflictError,
     CustomPersonaDeleteOutcome,
     CustomPersonaRecord,
     DeviceBinding,
@@ -1134,13 +1135,30 @@ class IdentityService:
         valid_until: datetime | None = None,
         actor_person_id: str,
         now: datetime | None = None,
+        expected_binding_id: str | None = None,
     ) -> BindingManifest:
-        """Issue the next binding version (mode / subject / member change)."""
+        """Issue the next binding version (mode / subject / member change).
+
+        ``expected_binding_id`` is an optional compare-and-set for callers
+        that derived the new field values (subject list, roles, permissions)
+        from a previously read version.  If a concurrent supersede already
+        produced a newer version, this call fails with
+        :class:`BindingVersionConflictError` instead of silently writing the
+        stale derivation over the other writer's fields.  The check runs
+        against the same read whose version is superseded, and the store
+        re-verifies under its per-device lock that the superseded row is still
+        the active one, so a lost update cannot slip between the two.
+        """
         timestamp = _now(now)
         current = await self._require_active_binding(
             device_id, timestamp, actor_person_id=actor_person_id
         )
         await self._require_permission(current, actor_person_id, "binding.manage")
+        if expected_binding_id is not None and current.binding_id != expected_binding_id:
+            raise BindingVersionConflictError(
+                "the active binding changed after it was read; re-read the "
+                "active binding and retry"
+            )
         resolved_owner = account_owner_person_id or current.account_owner_person_id
         resolved_profile = (
             service_profile_version or current.service_profile_version

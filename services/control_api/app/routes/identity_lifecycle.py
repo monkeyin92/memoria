@@ -24,10 +24,12 @@ from services.control_api.app.security import AuthenticatedUser, require_authent
 from services.identity.domain import (
     ALL_RELATION_TYPES,
     BindingRole,
+    BindingVersionConflictError,
     IdentityAccessDeniedError,
     IdentityConflictError,
     IdentityNotFoundError,
     Permission,
+    PersonSubject,
     RelationType,
     TransferLifecycleError,
     validate_manifest_wire,
@@ -598,6 +600,14 @@ _DERIVED_BINDING_ROLES = frozenset({"account_owner", "primary_subject"})
 #: Modes with exactly one primary subject cannot take members.
 _SINGLE_SUBJECT_MODES = frozenset({"self_use", "child_for_parent"})
 
+#: Bounded retries for one member append.  Every attempt derives the new
+#: subject list from a freshly read ACTIVE binding and passes that version as
+#: the compare-and-set expectation, so two concurrent appends cannot silently
+#: drop one of the two members: the loser of the race re-reads the version the
+#: winner wrote and appends to it.  A persistent conflict is reported instead
+#: of being written over the newer version.
+_MEMBER_APPEND_ATTEMPTS = 3
+
 
 class BindingMemberDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -638,94 +648,151 @@ async def add_binding_member(
     account for the child.  ``person_id="new"`` registers an unverified minor
     exactly like the ``subject_draft`` creation path; anything else must be an
     existing person.  Only the account owner may add members; the service
-    additionally enforces ``binding.manage``.  Existing extra roles are carried
-    over with their permission sets, so adding a member can never widen them.
+    additionally enforces ``binding.manage``.  Existing extra roles are
+    carried over with their exact permission sets, including a set tightened
+    to empty, and the family space is preserved, so adding a member never
+    widens or drops what the previous version declared.
     """
     identity = _identity(request)
-    now = datetime.now(UTC)
-    try:
-        manifest = await identity.get_active_manifest(
-            device_id, now=now, actor_person_id=user.user_id
-        )
-    except Exception as exc:
-        raise _error(
-            exc,
-            not_found="binding_not_found",
-            forbidden="binding_forbidden",
-            conflict="binding_conflict",
-        ) from exc
-    if manifest is None:
-        raise HTTPException(status_code=404, detail={"code": "binding_not_found"})
-    if manifest.declared_mode in _SINGLE_SUBJECT_MODES:
-        raise HTTPException(
-            status_code=422, detail={"code": "member_not_supported_for_mode"}
-        )
-    if manifest.account_owner_id != user.user_id:
-        raise HTTPException(status_code=403, detail={"code": "binding_forbidden"})
-    try:
-        if body.person_id == "new":
-            assert body.subject_draft is not None
-            draft = body.subject_draft
-            category: Literal["unknown", "minor"] = (
-                "minor" if draft.age_band in {"under_14", "14_17"} else "unknown"
+    subject: PersonSubject | None = None
+    for attempt in range(_MEMBER_APPEND_ATTEMPTS):
+        # A retry re-reads everything and re-stamps the clock: the replacement
+        # version's ``valid_from`` must not predate the version it supersedes.
+        now = datetime.now(UTC)
+        try:
+            manifest = await identity.get_active_manifest(
+                device_id, now=now, actor_person_id=user.user_id
             )
-            subject = await identity.register_person(
-                display_name=draft.display_name,
-                timezone="Asia/Shanghai",
-                subject_category=category,
-                age_band=draft.age_band,
-                age_evidence_status="unverified",
+        except Exception as exc:
+            raise _error(
+                exc,
+                not_found="binding_not_found",
+                forbidden="binding_forbidden",
+                conflict="binding_conflict",
+            ) from exc
+        if manifest is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "binding_not_found"}
+            )
+        if manifest.declared_mode in _SINGLE_SUBJECT_MODES:
+            raise HTTPException(
+                status_code=422, detail={"code": "member_not_supported_for_mode"}
+            )
+        if manifest.account_owner_id != user.user_id:
+            raise HTTPException(status_code=403, detail={"code": "binding_forbidden"})
+        if subject is None:
+            try:
+                subject = await _resolve_member_subject(
+                    identity, body=body, owner_id=user.user_id, now=now
+                )
+            except Exception as exc:
+                raise _error(
+                    exc,
+                    not_found="member_not_found",
+                    forbidden="binding_forbidden",
+                    conflict="binding_conflict",
+                ) from exc
+        if subject.person_id in manifest.primary_subject_ids:
+            raise HTTPException(
+                status_code=409, detail={"code": "member_already_present"}
+            )
+        try:
+            if manifest.declared_mode == "parent_for_child":
+                if subject.subject_category == "adult":
+                    raise HTTPException(
+                        status_code=422, detail={"code": "member_age_band_rejected"}
+                    )
+                await _ensure_guardian_declaration(
+                    identity,
+                    owner_id=user.user_id,
+                    subject_id=subject.person_id,
+                    now=now,
+                )
+            carried = tuple(
+                (role.person_id, role.role)
+                for role in manifest.roles
+                if role.role not in _DERIVED_BINDING_ROLES
+            )
+            # Empty permission sets are carried explicitly: they are a
+            # deliberate tightening, not a missing override, so they must not
+            # fall back to the role defaults on the next version.
+            carried_permissions: dict[
+                tuple[str, BindingRole], frozenset[Permission]
+            ] = {
+                (role.person_id, role.role): frozenset(
+                    cast("tuple[Permission, ...]", tuple(role.permissions))
+                )
+                for role in manifest.roles
+                if role.role not in _DERIVED_BINDING_ROLES
+            }
+            updated = await identity.supersede_binding(
+                device_id=device_id,
+                declared_mode=manifest.declared_mode,
+                primary_subject_ids=(
+                    *manifest.primary_subject_ids,
+                    subject.person_id,
+                ),
+                roles=carried,
+                role_permissions=carried_permissions or None,
+                family_space_id=manifest.family_space_id,
+                valid_until=manifest.valid_until,
                 actor_person_id=user.user_id,
                 now=now,
+                expected_binding_id=manifest.binding_id,
             )
-        else:
-            if body.person_id in manifest.primary_subject_ids:
-                raise HTTPException(
-                    status_code=409, detail={"code": "member_already_present"}
-                )
-            subject = await identity.get_person(
-                body.person_id, actor_person_id=user.user_id
-            )
-        if manifest.declared_mode == "parent_for_child":
-            if subject.subject_category == "adult":
-                raise HTTPException(
-                    status_code=422, detail={"code": "member_age_band_rejected"}
-                )
-            await _ensure_guardian_declaration(
-                identity, owner_id=user.user_id, subject_id=subject.person_id, now=now
-            )
-        carried = tuple(
-            (role.person_id, role.role)
-            for role in manifest.roles
-            if role.role not in _DERIVED_BINDING_ROLES
-        )
-        carried_permissions: dict[tuple[str, BindingRole], frozenset[Permission]] = {
-            (role.person_id, role.role): frozenset(
-                cast("tuple[Permission, ...]", tuple(role.permissions))
-            )
-            for role in manifest.roles
-            if role.role not in _DERIVED_BINDING_ROLES and role.permissions
-        }
-        updated = await identity.supersede_binding(
-            device_id=device_id,
-            declared_mode=manifest.declared_mode,
-            primary_subject_ids=(*manifest.primary_subject_ids, subject.person_id),
-            roles=carried,
-            role_permissions=carried_permissions or None,
-            valid_until=manifest.valid_until,
-            actor_person_id=user.user_id,
-            now=now,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise _error(
-            exc,
-            not_found="member_not_found",
-            forbidden="binding_forbidden",
-            conflict="binding_conflict",
-        ) from exc
-    return _manifest_payload(updated)
+        except HTTPException:
+            raise
+        except (BindingVersionConflictError, IdentityNotFoundError) as exc:
+            # A stale view surfaces either as a compare-and-set conflict or -
+            # when a concurrent supersede stamped the winner's ``valid_from``
+            # after this attempt's clock - as "no active binding".  Both are
+            # retried against a fresh read; the manifest read above proves this
+            # device was bound moments ago, so a genuine unbind surfaces as a
+            # plain 404 on the next iteration.
+            if attempt + 1 < _MEMBER_APPEND_ATTEMPTS:
+                continue
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "binding_conflict", "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            raise _error(
+                exc,
+                not_found="member_not_found",
+                forbidden="binding_forbidden",
+                conflict="binding_conflict",
+            ) from exc
+        return _manifest_payload(updated)
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "binding_conflict", "message": "binding changed repeatedly"},
+    )
+
+
+async def _resolve_member_subject(
+    identity: IdentityService,
+    *,
+    body: AddBindingMemberRequest,
+    owner_id: str,
+    now: datetime,
+) -> PersonSubject:
+    """Resolve one member request to an existing or freshly drafted person."""
+    if body.person_id != "new":
+        return await identity.get_person(body.person_id, actor_person_id=owner_id)
+    assert body.subject_draft is not None
+    draft = body.subject_draft
+    category: Literal["unknown", "minor"] = (
+        "minor" if draft.age_band in {"under_14", "14_17"} else "unknown"
+    )
+    return await identity.register_person(
+        display_name=draft.display_name,
+        timezone="Asia/Shanghai",
+        subject_category=category,
+        age_band=draft.age_band,
+        age_evidence_status="unverified",
+        actor_person_id=owner_id,
+        now=now,
+    )
 
 
 async def _ensure_guardian_declaration(

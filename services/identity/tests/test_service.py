@@ -14,6 +14,7 @@ from services.identity.domain import (
     ROLE_DEFAULT_PERMISSIONS,
     AgeEvidenceError,
     BindingManifest,
+    BindingVersionConflictError,
     CustomPersonaLimitError,
     DeviceBinding,
     DeviceBindingRole,
@@ -950,6 +951,79 @@ async def test_supersede_keeps_monotonic_versions_and_audit_trail(
     assert v3.binding_version == 3
     assert v3.declared_mode == "self_use"
     assert len(await service.list_binding_versions("dev-versions")) == 3
+
+
+@pytest.mark.asyncio
+async def test_supersede_rejects_a_stale_expected_binding_id(
+    service: IdentityService,
+) -> None:
+    """Compare-and-set: a stale derivation cannot overwrite a newer version.
+
+    Two concurrent appends both derive their subject list from version 1; the
+    loser retries against version 2 instead of silently dropping the winner's
+    member.  The stale attempt must leave no trace: same active subjects, same
+    version history, no extra audit row.
+    """
+    now = _now()
+    owner = await _adult(service, "本人", now)
+    first = await _minor(service, "老大", now)
+    second = await _minor(service, "老二", now)
+    v1 = await service.create_binding(
+        device_id="dev-cas",
+        declared_mode="family_shared",
+        account_owner_person_id=owner,
+        primary_subject_ids=(owner,),
+        family_space_id="family-cas",
+        service_profile_version="family-v1",
+        policy_bundle_version="policy-family-v1",
+        now=now,
+    )
+    v2 = await service.supersede_binding(
+        device_id="dev-cas",
+        declared_mode="family_shared",
+        primary_subject_ids=(owner, first),
+        family_space_id="family-cas",
+        service_profile_version="family-v1",
+        policy_bundle_version="policy-family-v1",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=1),
+        expected_binding_id=v1.binding_id,
+    )
+    assert v2.binding_version == 2
+    with pytest.raises(BindingVersionConflictError, match="changed"):
+        await service.supersede_binding(
+            device_id="dev-cas",
+            declared_mode="family_shared",
+            primary_subject_ids=(owner, second),
+            family_space_id="family-cas",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=2),
+            expected_binding_id=v1.binding_id,
+        )
+    active = await service.get_active_manifest("dev-cas", now=now + timedelta(minutes=3))
+    assert active is not None
+    assert active.binding_version == 2
+    assert set(active.primary_subject_ids) == {owner, first}
+    assert [
+        manifest.binding_version
+        for manifest in await service.list_binding_versions("dev-cas")
+    ] == [1, 2]
+    v3 = await service.supersede_binding(
+        device_id="dev-cas",
+        declared_mode="family_shared",
+        primary_subject_ids=(owner, first, second),
+        family_space_id="family-cas",
+        service_profile_version="family-v1",
+        policy_bundle_version="policy-family-v1",
+        actor_person_id=owner,
+        now=now + timedelta(minutes=4),
+        expected_binding_id=v2.binding_id,
+    )
+    assert v3.binding_version == 3
+    assert set(v3.primary_subject_ids) == {owner, first, second}
+    assert v3.family_space_id == "family-cas"
 
 
 @pytest.mark.asyncio

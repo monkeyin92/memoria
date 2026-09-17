@@ -4,6 +4,7 @@ transfer needs step-up + target acceptance, and role grants cannot widen."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from services.control_api.app.main import create_app
 from services.control_api.tests.identity_test_helpers import (
     install_test_identity_authority,
 )
+from services.identity.domain import BindingVersionConflictError
 
 
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path, name: str):
@@ -84,6 +86,18 @@ async def _bind_self(
 
 def _headers(user: dict) -> dict[str, str]:
     return {"Authorization": f"Bearer {user['access_token']}"}
+
+
+def _guardian_permissions(payload: dict, person_id: str) -> tuple[str, ...]:
+    """The guardian role's permission set inside a manifest payload."""
+    return tuple(
+        sorted(
+            permission
+            for role in payload["roles"]
+            if role["person_id"] == person_id and role["role"] == "guardian"
+            for permission in role["permissions"]
+        )
+    )
 
 
 def _outbox_rows(app) -> list[dict]:
@@ -826,6 +840,312 @@ async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
         )
         assert adult_add.status_code == 422, adult_add.text
         assert adult_add.json()["detail"]["code"] == "member_age_band_rejected"
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_reports_conflict_after_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Losing every race fails closed with an explicit 409, not a partial write.
+
+    Exhausting the bounded retries must surface as a conflict so the caller
+    re-reads; no stale subject list (and no new binding version) is written.
+    """
+    app = _env(monkeypatch, tmp_path, "binding-members-busy")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "members-busy-owner")
+        await _register_verified_owner(client, app, owner)
+        child1 = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-members-busy",
+            "members-busy-1",
+            "老大",
+            "under_14",
+        )
+        identity = app.state.identity_service
+        attempts = 0
+
+        async def always_conflicts(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise BindingVersionConflictError("simulated concurrent writer")
+
+        monkeypatch.setattr(identity, "supersede_binding", always_conflicts)
+        busy = await client.post(
+            "/v1/devices/device-members-busy/binding/members",
+            headers=_headers(owner),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "老二", "age_band": "under_14"},
+            },
+        )
+        assert busy.status_code == 409, busy.text
+        assert busy.json()["detail"]["code"] == "binding_conflict"
+        assert attempts == 3
+        listed = await client.get(
+            "/v1/devices/device-members-busy/bindings", headers=_headers(owner)
+        )
+        assert listed.status_code == 200, listed.text
+        active = next(
+            binding
+            for binding in listed.json()["bindings"]
+            if binding["status"] == "active"
+        )
+        assert active["binding_version"] == 1
+        assert set(active["primary_subject_ids"]) == {child1}
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_preserves_tightened_permissions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A permission set narrowed on the previous version is carried onward.
+
+    Adding a member must never restore the role defaults over a deliberate
+    tightening (the empty set is the strongest form of it), and it must not
+    drop a narrowed non-empty subset either.
+    """
+    app = _env(monkeypatch, tmp_path, "binding-members-perms")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "members-perms-owner")
+        await _register_verified_owner(client, app, owner)
+        child1 = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-members-perms",
+            "members-perms-1",
+            "老大",
+            "under_14",
+        )
+        identity = app.state.identity_service
+        device = "/v1/devices/device-members-perms/binding/members"
+        narrowed_cases = (
+            (frozenset(), ()),
+            (frozenset({"device.status.view"}), ("device.status.view",)),
+        )
+        versions = []
+        for narrowed, expected in narrowed_cases:
+            now = datetime.now(UTC)
+            manifest = await identity.get_active_manifest(
+                "device-members-perms", now=now, actor_person_id=owner["user_id"]
+            )
+            assert manifest is not None
+            tightened = await identity.supersede_binding(
+                device_id="device-members-perms",
+                declared_mode=manifest.declared_mode,
+                primary_subject_ids=manifest.primary_subject_ids,
+                roles=((owner["user_id"], "guardian"),),
+                role_permissions={(owner["user_id"], "guardian"): narrowed},
+                valid_until=manifest.valid_until,
+                actor_person_id=owner["user_id"],
+                now=now,
+            )
+            assert (
+                _guardian_permissions(tightened.to_dict(), owner["user_id"])
+                == expected
+            )
+            added = await client.post(
+                device,
+                headers=_headers(owner),
+                json={
+                    "person_id": "new",
+                    "subject_draft": {
+                        "display_name": "新成员",
+                        "age_band": "under_14",
+                    },
+                },
+            )
+            assert added.status_code == 201, added.text
+            body = added.json()
+            versions.append(body["binding_version"])
+            assert _guardian_permissions(body, owner["user_id"]) == expected
+            assert owner["user_id"] in body["guardian_ids"]
+        assert versions == [3, 5]
+        listed = await client.get(
+            "/v1/devices/device-members-perms/bindings", headers=_headers(owner)
+        )
+        assert listed.status_code == 200, listed.text
+        active = next(
+            binding
+            for binding in listed.json()["bindings"]
+            if binding["status"] == "active"
+        )
+        assert active["binding_version"] == 5
+        assert _guardian_permissions(active, owner["user_id"]) == (
+            "device.status.view",
+        )
+        assert child1 in active["primary_subject_ids"]
+        assert len(active["primary_subject_ids"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_concurrent_appends_keep_every_member(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Two concurrent appends read version 1: neither member may be lost.
+
+    Both requests are held until each has read the same ACTIVE version, which
+    is exactly the interleaving that previously let the second writer overwrite
+    the first member with its own stale subject list.
+    """
+    app = _env(monkeypatch, tmp_path, "binding-members-race")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "members-race-owner")
+        await _register_verified_owner(client, app, owner)
+        child1 = await _bind_parent_child(
+            client,
+            app,
+            owner,
+            "device-members-race",
+            "members-race-1",
+            "老大",
+            "under_14",
+        )
+        identity = app.state.identity_service
+        original = identity.get_active_manifest
+        arrived = 0
+        both_read = asyncio.Event()
+
+        async def gated(*args, **kwargs):
+            nonlocal arrived
+            manifest = await original(*args, **kwargs)
+            if arrived < 2:
+                arrived += 1
+                if arrived == 2:
+                    both_read.set()
+                await both_read.wait()
+            return manifest
+
+        monkeypatch.setattr(identity, "get_active_manifest", gated)
+        device = "/v1/devices/device-members-race/binding/members"
+        responses = await asyncio.gather(
+            client.post(
+                device,
+                headers=_headers(owner),
+                json={
+                    "person_id": "new",
+                    "subject_draft": {"display_name": "老二", "age_band": "under_14"},
+                },
+            ),
+            client.post(
+                device,
+                headers=_headers(owner),
+                json={
+                    "person_id": "new",
+                    "subject_draft": {"display_name": "老三", "age_band": "14_17"},
+                },
+            ),
+        )
+        assert [response.status_code for response in responses] == [201, 201], [
+            response.text for response in responses
+        ]
+        added_ids = {
+            person_id
+            for response in responses
+            for person_id in response.json()["primary_subject_ids"]
+        } - {child1}
+        assert len(added_ids) == 2
+        assert sorted(
+            response.json()["binding_version"] for response in responses
+        ) == [2, 3]
+        listed = await client.get(
+            "/v1/devices/device-members-race/bindings", headers=_headers(owner)
+        )
+        assert listed.status_code == 200, listed.text
+        active = next(
+            binding
+            for binding in listed.json()["bindings"]
+            if binding["status"] == "active"
+        )
+        assert active["binding_version"] == 3
+        assert set(active["primary_subject_ids"]) == {child1, *added_ids}
+        assert {
+            role["person_id"]
+            for role in active["roles"]
+            if role["role"] == "primary_subject"
+        } == {child1, *added_ids}
+
+
+@pytest.mark.asyncio
+async def test_binding_member_add_keeps_family_space(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Appending to a family_shared binding must not drop the family space.
+
+    The append used to rebuild the version without the family space id, so the
+    family_shared mode constraint rejected it with 409.
+    """
+    app = _env(monkeypatch, tmp_path, "binding-members-family")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "members-family-owner")
+        await _register_verified_owner(client, app, owner)
+        now = datetime.now(UTC)
+        token = mint_device_binding_token(
+            device_id="device-members-family",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=5),
+            nonce="members-family-1",
+        )
+        created = await client.post(
+            "/v1/device-bindings",
+            headers=_headers(owner),
+            json={
+                "device_claim_token": token,
+                "declared_mode": "family_shared",
+                "account_owner_person_id": owner["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "family_member_of",
+                    "subject_draft": {
+                        "display_name": "小朋友",
+                        "age_band": "under_14",
+                    },
+                },
+                "persona_selection": "starlight",
+                "service_preferences": {
+                    "memory_level": "family_shared",
+                    "shared_persona_enabled": True,
+                },
+                "consent_offer_ids": ["offer_family_space_v1"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        family_space_id = created.json()["family_space_id"]
+        assert family_space_id
+        added = await client.post(
+            "/v1/devices/device-members-family/binding/members",
+            headers=_headers(owner),
+            json={
+                "person_id": "new",
+                "subject_draft": {"display_name": "奶奶", "age_band": "adult"},
+            },
+        )
+        assert added.status_code == 201, added.text
+        assert added.json()["family_space_id"] == family_space_id
+        listed = await client.get(
+            "/v1/devices/device-members-family/bindings", headers=_headers(owner)
+        )
+        assert listed.status_code == 200, listed.text
+        active = next(
+            binding
+            for binding in listed.json()["bindings"]
+            if binding["status"] == "active"
+        )
+        assert active["binding_version"] == 2
+        assert active["family_space_id"] == family_space_id
+        assert len(active["primary_subject_ids"]) == 2
 
 
 @pytest.mark.asyncio
