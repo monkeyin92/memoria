@@ -11,7 +11,12 @@ import asyncpg
 import pytest
 from services.archive.object_store import ObjectRef
 from services.guardian.corpus import CorpusConsentInactiveError, CorpusSample
-from services.guardian.domain import ConsentRecord
+from services.guardian.domain import (
+    ConsentRecord,
+    GuardianConflictError,
+    GuardianNotFoundError,
+    PersonConsentRecord,
+)
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.tutor.domain import PracticeConflictError, PracticeSession, StudyProgress
 
@@ -1100,3 +1105,262 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
             await store.close()
         await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
         await admin.close()
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL guardian contract",
+)
+async def test_postgres_person_consent_grant_read_revoke_is_subject_scoped() -> None:
+    """P0-04: the person-consent lifecycle must close under FORCE RLS.
+
+    The API role is a real non-superuser/NOBYPASSRLS role.  The grantor's
+    single-record read and revoke must use the trusted subject context; the
+    old implementation set the subject to the grantor and therefore saw no
+    row.  Isolation, replay and the policy read gate are asserted here.
+    """
+
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_person_consent_{uuid.uuid4().hex[:10]}"
+    admin = await asyncpg.connect(admin_dsn)
+    role_created, maintenance_role_created, worker_role_created = False, False, False
+    store: PostgresGuardianStore | None = None
+    try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+        dsn = _postgres_dsn(admin_dsn, database=database)
+        (
+            role_created,
+            maintenance_role_created,
+            worker_role_created,
+        ) = await _ensure_roles(admin, database=database)
+        role_attributes = await admin.fetchrow(
+            """
+            SELECT rolsuper, rolbypassrls FROM pg_roles
+            WHERE rolname = 'memoria_guardian'
+            """
+        )
+        assert role_attributes is not None
+        assert bool(role_attributes["rolsuper"]) is False
+        assert bool(role_attributes["rolbypassrls"]) is False
+
+        store = PostgresGuardianStore(
+            dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian",
+                password="api-role-password",
+            ),
+            bootstrap_dsn=dsn,
+            maintenance_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_maintenance",
+                password="maintenance-role-password",
+            ),
+            worker_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_worker",
+                password="worker-role-password",
+            ),
+        )
+        await store.initialize()
+
+        now = datetime.now(UTC)
+        consent_a = PersonConsentRecord(
+            consent_id=str(uuid.uuid4()),
+            subject_person_id="person-child-a",
+            grantor_person_id="person-parent-a",
+            consent_kind="memory_retention",
+            policy_version="minor-retention-v1",
+            granted_at=now,
+            evidence_event_id="person-consent-a",
+        )
+        consent_b = PersonConsentRecord(
+            consent_id=str(uuid.uuid4()),
+            subject_person_id="person-child-b",
+            grantor_person_id="person-parent-b",
+            consent_kind="memory_retention",
+            policy_version="minor-retention-v1",
+            granted_at=now,
+            evidence_event_id="person-consent-b",
+        )
+        await store.grant_person_consent(consent_a, actor_person_id="person-parent-a")
+        await store.grant_person_consent(consent_b, actor_person_id="person-parent-b")
+
+        # The grantor reads its own single record with the trusted subject
+        # context (the old subject=grantor lookup returned NotFound here).
+        fetched = await store.get_person_consent(
+            consent_id=consent_a.consent_id,
+            actor_person_id="person-parent-a",
+            subject_person_id="person-child-a",
+        )
+        assert fetched == consent_a
+        # The subject itself can read its own row.
+        subject_view = await store.get_person_consent(
+            consent_id=consent_a.consent_id,
+            actor_person_id="person-child-a",
+            subject_person_id="person-child-a",
+        )
+        assert subject_view == consent_a
+
+        # Cross-parent and cross-subject reads stay closed under RLS.
+        with pytest.raises(GuardianNotFoundError):
+            await store.get_person_consent(
+                consent_id=consent_a.consent_id,
+                actor_person_id="person-parent-b",
+                subject_person_id="person-child-a",
+            )
+        with pytest.raises(GuardianNotFoundError):
+            await store.get_person_consent(
+                consent_id=consent_a.consent_id,
+                actor_person_id="person-parent-a",
+                subject_person_id="person-child-b",
+            )
+        assert await store.list_person_consents(
+            subject_person_id="person-child-a",
+            actor_person_id="person-parent-b",
+        ) == ()
+        listed = await store.list_person_consents(
+            subject_person_id="person-child-a",
+            actor_person_id="person-parent-a",
+        )
+        assert [item.consent_id for item in listed] == [consent_a.consent_id]
+
+        # The unioned read gate sees each subject's own consent only.
+        active_a = await store.active_consent(
+            minor_user_id="person-child-a", consent_kind="memory_retention"
+        )
+        assert isinstance(active_a, PersonConsentRecord)
+        assert active_a.consent_id == consent_a.consent_id
+        assert (
+            await store.active_consent(
+                minor_user_id="person-child-a",
+                consent_kind="minor_voice_session",
+            )
+            is None
+        )
+        assert (
+            await store.active_consent(
+                minor_user_id="person-child-b", consent_kind="memory_retention"
+            )
+        ).consent_id == consent_b.consent_id  # type: ignore[union-attr]
+
+        # Wrong grantor/subject revokes are refused before any write.
+        with pytest.raises(GuardianNotFoundError):
+            await store.revoke_person_consent(
+                consent_id=consent_a.consent_id,
+                grantor_person_id="person-parent-b",
+                subject_person_id="person-child-a",
+                revoked_at=now + timedelta(minutes=1),
+                revocation_evidence_event_id="person-consent-a-revoked-by-other",
+            )
+        with pytest.raises(GuardianNotFoundError):
+            await store.revoke_person_consent(
+                consent_id=consent_a.consent_id,
+                grantor_person_id="person-parent-a",
+                subject_person_id="person-child-b",
+                revoked_at=now + timedelta(minutes=1),
+                revocation_evidence_event_id="person-consent-a-wrong-subject",
+            )
+
+        revoked = await store.revoke_person_consent(
+            consent_id=consent_a.consent_id,
+            grantor_person_id="person-parent-a",
+            subject_person_id="person-child-a",
+            revoked_at=now + timedelta(minutes=2),
+            revocation_evidence_event_id="person-consent-a-revoked",
+        )
+        assert revoked.revoked_at == now + timedelta(minutes=2)
+        # The read gate tightened for A and B is untouched.
+        assert (
+            await store.active_consent(
+                minor_user_id="person-child-a", consent_kind="memory_retention"
+            )
+            is None
+        )
+        still_active_b = await store.active_consent(
+            minor_user_id="person-child-b", consent_kind="memory_retention"
+        )
+        assert isinstance(still_active_b, PersonConsentRecord)
+
+        # Same-evidence revoke replays; a different evidence conflicts.
+        replay = await store.revoke_person_consent(
+            consent_id=consent_a.consent_id,
+            grantor_person_id="person-parent-a",
+            subject_person_id="person-child-a",
+            revoked_at=now + timedelta(minutes=5),
+            revocation_evidence_event_id="person-consent-a-revoked",
+        )
+        assert replay.revoked_at == revoked.revoked_at
+        with pytest.raises(GuardianConflictError):
+            await store.revoke_person_consent(
+                consent_id=consent_a.consent_id,
+                grantor_person_id="person-parent-a",
+                subject_person_id="person-child-a",
+                revoked_at=now + timedelta(minutes=6),
+                revocation_evidence_event_id="person-consent-a-revoked-again",
+            )
+
+        # Export/delete/remaining must see real person-consent rows for both
+        # the grantor and the subject, and must not leak across families.
+        exported_grantor_a = await store.export_for_account(
+            account_id="person-parent-a"
+        )
+        assert [
+            str(row["consent_id"])
+            for row in exported_grantor_a["person_consents"]  # type: ignore[union-attr]
+        ] == [consent_a.consent_id]
+        exported_subject_a = await store.export_for_account(
+            account_id="person-child-a"
+        )
+        assert [
+            str(row["consent_id"])
+            for row in exported_subject_a["person_consents"]  # type: ignore[union-attr]
+        ] == [consent_a.consent_id]
+        exported_family_b = await store.export_for_account(
+            account_id="person-parent-b"
+        )
+        assert [
+            str(row["consent_id"])
+            for row in exported_family_b["person_consents"]  # type: ignore[union-attr]
+        ] == [consent_b.consent_id]
+
+        assert await store.remaining_account_rows(account_id="person-parent-a") == {
+            "person_consents": 1
+        }
+        assert await store.remaining_account_rows(account_id="person-child-a") == {
+            "person_consents": 1
+        }
+        deleted_a = await store.delete_for_account(account_id="person-parent-a")
+        assert deleted_a["person_consents"] == 1
+        assert await store.remaining_account_rows(account_id="person-parent-a") == {}
+        assert await store.remaining_account_rows(account_id="person-child-a") == {}
+        # The other family is untouched.
+        assert await store.remaining_account_rows(account_id="person-parent-b") == {
+            "person_consents": 1
+        }
+        assert await store.remaining_account_rows(account_id="person-child-b") == {
+            "person_consents": 1
+        }
+        deleted_b = await store.delete_for_account(account_id="person-parent-b")
+        assert deleted_b["person_consents"] == 1
+        assert await store.remaining_account_rows(account_id="person-parent-b") == {}
+        assert await store.remaining_account_rows(account_id="person-child-b") == {}
+    finally:
+        if store is not None:
+            await store.close()
+        try:
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1",
+                database,
+            )
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database}"')
+        finally:
+            if maintenance_role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian_maintenance")
+            if worker_role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian_worker")
+            if role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian")
+            await admin.close()

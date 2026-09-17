@@ -98,7 +98,17 @@ async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
     assert [item.consent_id for item in listed] == [record.consent_id]
     with pytest.raises(GuardianNotFoundError):
         await store.get_person_consent(
-            consent_id=record.consent_id, actor_person_id="unrelated-person"
+            consent_id=record.consent_id,
+            actor_person_id="unrelated-person",
+            subject_person_id="child-person",
+        )
+    # The trusted subject context cannot be swapped to another child: the
+    # grantor still only sees the record for the subject it granted.
+    with pytest.raises(GuardianNotFoundError):
+        await store.get_person_consent(
+            consent_id=record.consent_id,
+            actor_person_id="adult-owner",
+            subject_person_id="other-child",
         )
 
     # A second active consent for the same kind conflicts.
@@ -111,6 +121,7 @@ async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
     revoked = await store.revoke_person_consent(
         consent_id=record.consent_id,
         grantor_person_id="adult-owner",
+        subject_person_id="child-person",
         revoked_at=NOW + timedelta(minutes=1),
         revocation_evidence_event_id="evidence-revoked",
     )
@@ -125,6 +136,7 @@ async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
     replay = await store.revoke_person_consent(
         consent_id=record.consent_id,
         grantor_person_id="adult-owner",
+        subject_person_id="child-person",
         revoked_at=NOW + timedelta(minutes=2),
         revocation_evidence_event_id="evidence-revoked",
     )
@@ -133,8 +145,82 @@ async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
         await store.revoke_person_consent(
             consent_id=record.consent_id,
             grantor_person_id="adult-owner",
+            subject_person_id="child-person",
             revoked_at=NOW + timedelta(minutes=3),
             revocation_evidence_event_id="evidence-revoked-again",
+        )
+    # A revoke attempted for another subject cannot touch the row.
+    with pytest.raises(GuardianNotFoundError):
+        await store.revoke_person_consent(
+            consent_id=record.consent_id,
+            grantor_person_id="adult-owner",
+            subject_person_id="other-child",
+            revoked_at=NOW + timedelta(minutes=3),
+            revocation_evidence_event_id="evidence-revoked-wrong-subject",
+        )
+
+
+@pytest.mark.asyncio
+async def test_person_consent_grant_replay_returns_the_original_record(
+    tmp_path: Path,
+) -> None:
+    """An idempotent retry must not turn into a conflict over its new clock."""
+
+    store = _store(tmp_path)
+    record = _record()
+    original = await store.grant_person_consent(record, actor_person_id="adult-owner")
+
+    retried = await store.grant_person_consent(
+        _record(granted_at=NOW + timedelta(minutes=5)),
+        actor_person_id="adult-owner",
+    )
+    assert retried == original
+    assert retried.granted_at == NOW
+    assert retried.evidence_event_id == record.evidence_event_id
+
+    # The same deterministic id with a different request payload still
+    # conflicts instead of silently returning the old grant.
+    with pytest.raises(GuardianConflictError):
+        await store.grant_person_consent(
+            _record(
+                kind="minor_voice_session",
+                granted_at=NOW + timedelta(minutes=5),
+            ),
+            actor_person_id="adult-owner",
+        )
+
+
+@pytest.mark.asyncio
+async def test_person_consent_grant_replay_respects_the_retention_span(
+    tmp_path: Path,
+) -> None:
+    """Only corpus consent may expire, so a changed retention span conflicts."""
+
+    store = _store(tmp_path)
+    record = _record(
+        kind="corpus_recording",
+        expires_at=NOW + timedelta(days=2),
+    )
+    original = await store.grant_person_consent(record, actor_person_id="adult-owner")
+
+    retried = await store.grant_person_consent(
+        _record(
+            kind="corpus_recording",
+            granted_at=NOW + timedelta(minutes=5),
+            expires_at=NOW + timedelta(days=2, minutes=5),
+        ),
+        actor_person_id="adult-owner",
+    )
+    assert retried == original
+
+    with pytest.raises(GuardianConflictError):
+        await store.grant_person_consent(
+            _record(
+                kind="corpus_recording",
+                granted_at=NOW + timedelta(minutes=5),
+                expires_at=NOW + timedelta(days=3, minutes=5),
+            ),
+            actor_person_id="adult-owner",
         )
 
 
@@ -236,6 +322,21 @@ async def test_account_governance_covers_person_consents(tmp_path: Path) -> None
         ),
         actor_person_id="adult-owner",
     )
+    first_id = "00000000-0000-0000-0000-000000000101"
+    second_id = "00000000-0000-0000-0000-000000000401"
+
+    owner_export = await store.export_for_account(account_id="adult-owner")
+    assert {row["consent_id"] for row in owner_export["person_consents"]} == {  # type: ignore[union-attr]
+        first_id,
+        second_id,
+    }
+    child_export = await store.export_for_account(account_id="child-person")
+    assert [row["consent_id"] for row in child_export["person_consents"]] == [  # type: ignore[union-attr]
+        first_id
+    ]
+    stranger_export = await store.export_for_account(account_id="stranger")
+    assert stranger_export["person_consents"] == []
+
     assert await store.remaining_account_rows(account_id="adult-owner") == {
         "person_consents": 2
     }
@@ -244,7 +345,104 @@ async def test_account_governance_covers_person_consents(tmp_path: Path) -> None
         == {"person_consents": 1}
     )
 
-    await store.delete_for_account(account_id="adult-owner")
+    deleted = await store.delete_for_account(account_id="adult-owner")
+    assert deleted["person_consents"] == 2
     assert await store.remaining_account_rows(account_id="adult-owner") == {}
     # The subject-keyed row was deleted with its grantor.
     assert await store.remaining_account_rows(account_id="child-person") == {}
+    assert (
+        await store.export_for_account(account_id="child-person")
+    )["person_consents"] == []
+
+@pytest.mark.asyncio
+async def test_person_consent_grant_recovers_after_evidence_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Evidence-first grant: a ledger failure leaves no usable consent.
+
+    The retry reuses the same deterministic consent/evidence ids, and a later
+    replay returns the original record without appending a second grant
+    event.
+    """
+
+    from services.archive.life_archive import LifeArchive
+    from services.guardian.consent import GuardianConsentService
+
+    store = _store(tmp_path)
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    original_record = archive.record
+    attempts = {"count": 0}
+
+    async def flaky_record(event: object) -> object:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("evidence ledger unavailable")
+        return await original_record(event)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(archive, "record", flaky_record)
+    service = GuardianConsentService(store, archive)
+    record = _record(consent_id="00000000-0000-0000-0000-000000000501")
+
+    with pytest.raises(RuntimeError, match="ledger unavailable"):
+        await service.grant_for_person(
+            subject_person_id=record.subject_person_id,
+            grantor_person_id=record.grantor_person_id,
+            consent_kind=record.consent_kind,
+            policy_version=record.policy_version,
+            evidence_event_id=record.evidence_event_id,
+            consent_id=record.consent_id,
+            now=NOW,
+        )
+    assert (
+        await store.active_consent(
+            minor_user_id=record.subject_person_id,
+            consent_kind=record.consent_kind,
+        )
+        is None
+    )
+    assert (
+        await store.list_person_consents(
+            subject_person_id=record.subject_person_id,
+            actor_person_id=record.grantor_person_id,
+        )
+        == ()
+    )
+
+    created = await service.grant_for_person(
+        subject_person_id=record.subject_person_id,
+        grantor_person_id=record.grantor_person_id,
+        consent_kind=record.consent_kind,
+        policy_version=record.policy_version,
+        evidence_event_id=record.evidence_event_id,
+        consent_id=record.consent_id,
+        now=NOW + timedelta(minutes=1),
+    )
+    assert created.consent_id == record.consent_id
+    assert created.evidence_event_id == record.evidence_event_id
+    assert (
+        await store.active_consent(
+            minor_user_id=record.subject_person_id,
+            consent_kind=record.consent_kind,
+        )
+        is not None
+    )
+
+    replay = await service.grant_for_person(
+        subject_person_id=record.subject_person_id,
+        grantor_person_id=record.grantor_person_id,
+        consent_kind=record.consent_kind,
+        policy_version=record.policy_version,
+        evidence_event_id=record.evidence_event_id,
+        consent_id=record.consent_id,
+        now=NOW + timedelta(minutes=5),
+    )
+    assert replay == created
+    events = await archive.evidence_window(
+        account_id=record.subject_person_id,
+        occurred_after=NOW - timedelta(minutes=1),
+        occurred_before=NOW + timedelta(hours=1),
+        event_types=("guardian.person_consent_granted",),
+    )
+    assert len(events) == 1
+    assert events[0].event_id == record.evidence_event_id

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -765,15 +766,94 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
         assert policy_res2.status_code == 200
         assert "memory_retention" not in policy_res2.json()
 
-        # 8. 家长撤销该 consent
+        # 8. Same body + same Idempotency-Key replays the original grant.
+        replay_res = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**owner_headers, "Idempotency-Key": "owner-grant-001"},
+            json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+        )
+        assert replay_res.status_code == 201, replay_res.text
+        assert replay_res.json()["consent_id"] == consent_id
+        assert replay_res.json()["granted_at"] == consent_body["granted_at"]
+        assert replay_res.json()["revoked_at"] is None
+
+        # 9. Same key + different payload still conflicts.
+        conflict_res = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**owner_headers, "Idempotency-Key": "owner-grant-001"},
+            json={"consent_kind": "minor_voice_session", "policy_version": "minor-voice-v1"},
+        )
+        assert conflict_res.status_code == 409
+        assert conflict_res.json()["detail"]["code"] == "guardian_consent_conflict"
+
+        # 10. Concurrent replay of one key/body returns one authorization and
+        # persists one row.
+        concurrent_body = {
+            "consent_kind": "minor_voice_session",
+            "policy_version": "minor-voice-v1",
+        }
+        concurrent_headers = {
+            **owner_headers,
+            "Idempotency-Key": "owner-grant-concurrent-001",
+        }
+        concurrent = await asyncio.gather(
+            client.post(
+                f"/v1/guardian/minors/{child_id}/consents",
+                headers=concurrent_headers,
+                json=concurrent_body,
+            ),
+            client.post(
+                f"/v1/guardian/minors/{child_id}/consents",
+                headers=concurrent_headers,
+                json=concurrent_body,
+            ),
+        )
+        assert [response.status_code for response in concurrent] == [201, 201]
+        concurrent_ids = {response.json()["consent_id"] for response in concurrent}
+        assert len(concurrent_ids) == 1
+        voice_consent_id = concurrent_ids.pop()
+        list_res2 = await client.get(
+            f"/v1/guardian/minors/{child_id}/consents", headers=owner_headers
+        )
+        assert list_res2.status_code == 200
+        assert sorted(item["consent_id"] for item in list_res2.json()["items"]) == sorted(
+            [consent_id, voice_consent_id]
+        )
+
+        # 11. Unbind: the recorded grantor loses the ACTIVE binding but must
+        # keep a revoke entry.
+        unbind_res = await client.post(
+            "/v1/devices/dev-child-person-consent/binding/unbind",
+            headers=owner_headers,
+            json={"reason": "person consent lifecycle test"},
+        )
+        assert unbind_res.status_code == 200, unbind_res.text
+        assert unbind_res.json()["status"] == "revoked"
+
+        # 12. A stranger still cannot revoke after the unbind.
+        stranger_delete = await client.delete(
+            f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
+            headers={**stranger_headers, "Idempotency-Key": "stranger-revoke-001"},
+        )
+        assert stranger_delete.status_code == 404
+
+        # 13. The recorded grantor can revoke its own grant after the unbind.
         revoke_res = await client.delete(
             f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
             headers={**owner_headers, "Idempotency-Key": "owner-revoke-001"},
         )
-        assert revoke_res.status_code == 200
+        assert revoke_res.status_code == 200, revoke_res.text
         assert revoke_res.json()["active"] is False
 
-        # 9. 撤销后，/session-policy 读门重新关闭并回到保守状态
+        # Same-key revoke replay returns the original revocation.
+        revoke_replay = await client.delete(
+            f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
+            headers={**owner_headers, "Idempotency-Key": "owner-revoke-001"},
+        )
+        assert revoke_replay.status_code == 200
+        assert revoke_replay.json()["revoked_at"] == revoke_res.json()["revoked_at"]
+
+        # 14. The policy gate closes again after the revoke.
         policy_res3 = await client.post(
             "/v1/interaction/session-policy",
             headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
@@ -782,3 +862,22 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
         assert policy_res3.status_code == 200
         assert policy_res3.json()["memory_retention"] == "ephemeral_only"
 
+        # 15. Granting still requires an ACTIVE binding after the unbind.
+        after_unbind_grant = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**owner_headers, "Idempotency-Key": "owner-grant-after-unbind-001"},
+            json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+        )
+        assert after_unbind_grant.status_code == 403
+        assert (
+            after_unbind_grant.json()["detail"]["code"]
+            == "guardian_binding_owner_required"
+        )
+
+        # 16. The other grant can also be revoked by its recorded grantor.
+        voice_revoke = await client.delete(
+            f"/v1/guardian/minors/{child_id}/consents/{voice_consent_id}",
+            headers={**owner_headers, "Idempotency-Key": "owner-revoke-voice-001"},
+        )
+        assert voice_revoke.status_code == 200, voice_revoke.text
+        assert voice_revoke.json()["active"] is False

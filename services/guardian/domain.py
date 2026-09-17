@@ -296,6 +296,40 @@ class PersonConsentRecord:
         )
 
 
+def same_person_consent_grant_request(
+    current: PersonConsentRecord,
+    requested: PersonConsentRecord,
+) -> bool:
+    """Whether a retry of the same person-consent grant is being replayed.
+
+    ``granted_at`` (and therefore the absolute ``expires_at``) is recomputed
+    by every HTTP attempt, so an idempotent retry cannot be recognized by full
+    record equality.  The stable request identity is the deterministic consent
+    id plus grantor/subject/kind/policy and the requested retention span; a
+    different payload under the same id still conflicts.
+    """
+
+    current_span = (
+        current.expires_at - current.granted_at
+        if current.expires_at is not None
+        else None
+    )
+    requested_span = (
+        requested.expires_at - requested.granted_at
+        if requested.expires_at is not None
+        else None
+    )
+    return (
+        current.consent_id == requested.consent_id
+        and current.subject_person_id == requested.subject_person_id
+        and current.grantor_person_id == requested.grantor_person_id
+        and current.consent_kind == requested.consent_kind
+        and current.policy_version == requested.policy_version
+        and current.evidence_event_id == requested.evidence_event_id
+        and current_span == requested_span
+    )
+
+
 class GuardianStorePort(Protocol):
     async def create_link(
         self,
@@ -392,7 +426,15 @@ class GuardianStorePort(Protocol):
         *,
         minor_user_id: str,
         consent_kind: ConsentKind,
-    ) -> ConsentRecord | None: ...
+    ) -> ConsentRecord | PersonConsentRecord | None:
+        """Union over link-scoped and person-scoped consent key spaces.
+
+        Implementations return either record type because an account-less
+        subject can never confirm a guardian link; consumers use the common
+        fields (``consent_id``/``consent_kind``/``policy_version``/
+        ``expires_at``) and must not assume a ``link_id`` exists.
+        """
+        ...
 
     # -- person-scoped consents (account-less subjects) ------------------
 
@@ -408,6 +450,7 @@ class GuardianStorePort(Protocol):
         *,
         consent_id: str,
         grantor_person_id: str,
+        subject_person_id: str,
         revoked_at: datetime,
         revocation_evidence_event_id: str,
     ) -> PersonConsentRecord: ...
@@ -417,7 +460,16 @@ class GuardianStorePort(Protocol):
         *,
         consent_id: str,
         actor_person_id: str,
-    ) -> PersonConsentRecord: ...
+        subject_person_id: str,
+    ) -> PersonConsentRecord:
+        """Read one person consent under a trusted subject context.
+
+        ``subject_person_id`` is not derived from the row (the caller must
+        already be authorized for that subject); storage uses it as the
+        subject scope so a grantor context can satisfy FORCE RLS without
+        seeing another subject's rows.
+        """
+        ...
 
     async def list_person_consents(
         self,

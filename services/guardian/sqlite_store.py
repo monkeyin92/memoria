@@ -34,6 +34,7 @@ from services.guardian.domain import (
     PersonConsentRecord,
     Relation,
     VerifiedVia,
+    same_person_consent_grant_request,
 )
 from services.tutor.authority import (
     TutorEvidenceRejected,
@@ -1073,7 +1074,9 @@ class SqliteGuardianStore:
         if row is None:  # pragma: no cover
             raise RuntimeError("person consent disappeared")
         current = self._person_consent(row)
-        if current != record:
+        if current != record and not same_person_consent_grant_request(
+            current, record
+        ):
             raise GuardianConflictError("consent id is immutable")
         return current
 
@@ -1082,16 +1085,17 @@ class SqliteGuardianStore:
         *,
         consent_id: str,
         actor_person_id: str,
+        subject_person_id: str,
     ) -> PersonConsentRecord:
         self._ready()
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM guardian_person_consents
-                WHERE consent_id = ?
+                WHERE consent_id = ? AND subject_person_id = ?
                   AND (grantor_person_id = ? OR subject_person_id = ?)
                 """,
-                (consent_id, actor_person_id, actor_person_id),
+                (consent_id, subject_person_id, actor_person_id, actor_person_id),
             ).fetchone()
         if row is None:
             raise GuardianNotFoundError("guardian person consent not found")
@@ -1121,6 +1125,7 @@ class SqliteGuardianStore:
         *,
         consent_id: str,
         grantor_person_id: str,
+        subject_person_id: str,
         revoked_at: datetime,
         revocation_evidence_event_id: str,
     ) -> PersonConsentRecord:
@@ -1131,22 +1136,24 @@ class SqliteGuardianStore:
                 """
                 UPDATE guardian_person_consents
                 SET revoked_at = ?, revocation_evidence_event_id = ?
-                WHERE consent_id = ? AND revoked_at IS NULL
-                  AND grantor_person_id = ?
+                WHERE consent_id = ? AND subject_person_id = ?
+                  AND revoked_at IS NULL AND grantor_person_id = ?
                 """,
                 (
                     timestamp.isoformat(),
                     revocation_evidence_event_id,
                     consent_id,
+                    subject_person_id,
                     grantor_person_id,
                 ),
             )
             row = connection.execute(
                 """
                 SELECT * FROM guardian_person_consents
-                WHERE consent_id = ? AND grantor_person_id = ?
+                WHERE consent_id = ? AND subject_person_id = ?
+                  AND grantor_person_id = ?
                 """,
-                (consent_id, grantor_person_id),
+                (consent_id, subject_person_id, grantor_person_id),
             ).fetchone()
         if row is None:
             raise GuardianNotFoundError("guardian person consent not found")
@@ -1900,6 +1907,21 @@ class SqliteGuardianStore:
                         link_ids,
                     ).fetchall()
                 ]
+            person_consents = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT consent_id, subject_person_id, grantor_person_id,
+                           consent_kind, policy_version, granted_at, expires_at,
+                           revoked_at, evidence_event_id,
+                           revocation_evidence_event_id
+                    FROM guardian_person_consents
+                    WHERE grantor_person_id = ? OR subject_person_id = ?
+                    ORDER BY granted_at, consent_id
+                    """,
+                    (account_id, account_id),
+                ).fetchall()
+            ]
             practice_sessions = [
                 dict(row)
                 for row in connection.execute(
@@ -1959,6 +1981,7 @@ class SqliteGuardianStore:
         return {
             "links": [dict(row) for row in links],
             "consents": consents,
+            "person_consents": person_consents,
             "tutor_practice_sessions": practice_sessions,
             "tutor_study_progress": dict(progress) if progress is not None else None,
             "crisis_events": crisis_events,

@@ -292,6 +292,31 @@ def _person_consent_payload(record: PersonConsentRecord) -> dict[str, Any]:
     }
 
 
+def _person_grant_body_matches(
+    record: PersonConsentRecord,
+    body: GuardianConsentCreate,
+) -> bool:
+    """Whether a replayed idempotency key carries the same grant request.
+
+    Absolute timestamps are recomputed per attempt, so the request is matched
+    on the grantor/subject/kind/policy identity plus the requested retention
+    span; a different payload under the same key conflicts.
+    """
+
+    if (
+        record.consent_kind != body.consent_kind
+        or record.policy_version != body.policy_version
+    ):
+        return False
+    if body.retention_days is None:
+        return record.expires_at is None
+    return (
+        record.expires_at is not None
+        and record.expires_at - record.granted_at
+        == timedelta(days=body.retention_days)
+    )
+
+
 async def _require_binding_owner_for_subject(
     request: Request,
     *,
@@ -722,6 +747,21 @@ async def grant_person_consent(
         user=user,
         subject_person_id=person_id,
     )
+    consent_id = _idempotency_uuid("guardian-person-consent-record", key)
+    try:
+        replayed = await _store(request).get_person_consent(
+            consent_id=consent_id,
+            actor_person_id=user.user_id,
+            subject_person_id=person_id,
+        )
+    except GuardianNotFoundError:
+        replayed = None
+    if replayed is not None:
+        if _person_grant_body_matches(replayed, body):
+            return _person_consent_payload(replayed)
+        raise HTTPException(
+            status_code=409, detail={"code": "guardian_consent_conflict"}
+        )
     now = _now()
     expires_at = (
         now + timedelta(days=body.retention_days)
@@ -739,7 +779,7 @@ async def grant_person_consent(
             consent_kind=body.consent_kind,
             policy_version=body.policy_version,
             evidence_event_id=event_id,
-            consent_id=_idempotency_uuid("guardian-person-consent-record", key),
+            consent_id=consent_id,
             expires_at=expires_at,
             now=now,
         )
@@ -781,25 +821,27 @@ async def revoke_person_consent(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    """Revoke a person-level consent; only the granting binding owner may."""
+    """Revoke a person-level consent; only its recorded grantor may.
+
+    The revoke path deliberately stays open after an unbind so the grantor
+    always keeps a way to withdraw the authorization it issued.  A manager
+    takeover does not transfer a previous grantor's consent: a different
+    person cannot read or revoke it, and its policy effect lasts until the
+    recorded grantor revokes it or the subject lineage is deleted (P2-03).
+    """
 
     _require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
-    await _require_binding_owner_for_subject(
-        request,
-        user=user,
-        subject_person_id=person_id,
-    )
+    # Deliberately no ACTIVE-binding prerequisite: unbinding must never strand
+    # a consent without a revoke entry.  The person-scoped store still proves
+    # that this actor is the recorded grantor for this subject, so a stranger
+    # gets a 404 and a different signed-in person cannot revoke someone
+    # else's grant.
     try:
-        current = await _store(request).get_person_consent(
-            consent_id=consent_id,
-            actor_person_id=user.user_id,
-        )
-        if current.subject_person_id != person_id:
-            raise GuardianNotFoundError("guardian person consent not found")
         consent = await _consents(request).revoke_for_person(
             consent_id=consent_id,
             grantor_person_id=user.user_id,
+            subject_person_id=person_id,
             evidence_event_id=(
                 f"guardian-person-consent-revoke:"
                 f"{_idempotency_uuid('guardian-person-consent-revoke', key)}"

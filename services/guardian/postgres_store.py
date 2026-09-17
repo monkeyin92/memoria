@@ -34,6 +34,7 @@ from services.guardian.domain import (
     PersonConsentRecord,
     Relation,
     VerifiedVia,
+    same_person_consent_grant_request,
 )
 from services.tutor.authority import (
     TutorEvidenceRejected,
@@ -1005,7 +1006,9 @@ class PostgresGuardianStore:
                     if row is None:  # pragma: no cover
                         raise RuntimeError("guardian person consent disappeared")
                     current = self._person_consent(row)
-                    if current != record:
+                    if current != record and not same_person_consent_grant_request(
+                        current, record
+                    ):
                         raise GuardianConflictError("consent id is immutable")
                     return current
         except asyncpg.UniqueViolationError as exc:
@@ -1020,6 +1023,7 @@ class PostgresGuardianStore:
         *,
         consent_id: str,
         actor_person_id: str,
+        subject_person_id: str,
     ) -> PersonConsentRecord:
         pool = await self._ready_pool()
         async with pool.acquire() as connection:
@@ -1027,15 +1031,16 @@ class PostgresGuardianStore:
                 await self._set_api_context(
                     connection,
                     actor_user_id=actor_person_id,
-                    subject_user_id=actor_person_id,
+                    subject_user_id=subject_person_id,
                 )
                 row = await connection.fetchrow(
                     """
                     SELECT * FROM guardian_person_consents
-                    WHERE consent_id = $1
-                      AND (grantor_person_id = $2 OR subject_person_id = $2)
+                    WHERE consent_id = $1 AND subject_person_id = $2
+                      AND (grantor_person_id = $3 OR subject_person_id = $3)
                     """,
                     _uuid(consent_id, field="consent_id"),
+                    subject_person_id,
                     actor_person_id,
                 )
         if row is None:
@@ -1073,28 +1078,18 @@ class PostgresGuardianStore:
         *,
         consent_id: str,
         grantor_person_id: str,
+        subject_person_id: str,
         revoked_at: datetime,
         revocation_evidence_event_id: str,
     ) -> PersonConsentRecord:
         pool = await self._ready_pool()
+        consent_uuid = _uuid(consent_id, field="consent_id")
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._set_api_context(
-                    connection,
-                    actor_user_id=grantor_person_id,
-                    subject_user_id=grantor_person_id,
-                )
-                current_row = await connection.fetchrow(
-                    """
-                    SELECT * FROM guardian_person_consents
-                    WHERE consent_id = $1 AND grantor_person_id = $2
-                    """,
-                    _uuid(consent_id, field="consent_id"),
-                    grantor_person_id,
-                )
-                if current_row is None:
-                    raise GuardianNotFoundError("guardian person consent not found")
-                subject_person_id = str(current_row["subject_person_id"])
+                # The trusted subject context comes from the caller (already
+                # authorized for this subject); it is what lets a grantor read
+                # and revoke its own row under FORCE RLS without broadening
+                # the policy to the grantor's whole person scope.
                 await self._set_api_context(
                     connection,
                     actor_user_id=grantor_person_id,
@@ -1103,12 +1098,13 @@ class PostgresGuardianStore:
                 row = await connection.fetchrow(
                     """
                     UPDATE guardian_person_consents
-                    SET revoked_at = $3, revocation_evidence_event_id = $4
-                    WHERE consent_id = $1 AND grantor_person_id = $2
-                      AND revoked_at IS NULL
+                    SET revoked_at = $4, revocation_evidence_event_id = $5
+                    WHERE consent_id = $1 AND subject_person_id = $2
+                      AND grantor_person_id = $3 AND revoked_at IS NULL
                     RETURNING *
                     """,
-                    _uuid(consent_id, field="consent_id"),
+                    consent_uuid,
+                    subject_person_id,
                     grantor_person_id,
                     revoked_at,
                     revocation_evidence_event_id,
@@ -1117,12 +1113,14 @@ class PostgresGuardianStore:
                     row = await connection.fetchrow(
                         """
                         SELECT * FROM guardian_person_consents
-                        WHERE consent_id = $1 AND grantor_person_id = $2
+                        WHERE consent_id = $1 AND subject_person_id = $2
+                          AND grantor_person_id = $3
                         """,
-                        _uuid(consent_id, field="consent_id"),
+                        consent_uuid,
+                        subject_person_id,
                         grantor_person_id,
                     )
-                    if row is None:  # pragma: no cover
+                    if row is None:
                         raise GuardianNotFoundError(
                             "guardian person consent not found"
                         )

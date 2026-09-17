@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,6 +44,11 @@ from services.control_api.app.main import create_app
 from services.control_api.app.subject_verification import ensure_account_person
 from services.control_api.tests.test_interaction_api import _MemoryCatalog
 from services.guardian.domain import ConsentRecord
+from services.guardian.postgres_store import PostgresGuardianStore
+from services.guardian.tests.test_guardian_postgres_store import (
+    _ensure_roles,
+    _role_dsn,
+)
 from services.session_runtime.postgres_store import PostgresSessionRuntimeStore
 from services.session_runtime.profile_service import verify_runtime_profile_payload
 from services.session_runtime.service import (
@@ -642,3 +648,169 @@ async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
         assert owner_turn.status_code == 200, owner_turn.text
         assert len(catalog.queries) == 1
         assert owner_turn.json()["grounded_items"]
+
+@pytest.mark.asyncio
+async def test_real_postgres_person_consent_lifts_and_closes_both_policy_seams(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04/P1-01: real-PG person consent drives both Agent-facing seams.
+
+    The account-less subject's consent lives in the NOBYPASSRLS PostgreSQL
+    guardian store (granted and revoked through GuardianConsentService) while
+    the signed profile comes from the real persistent Session Runtime.  Both
+    /v1/interaction/session-policy and /v1/interaction/response-plan must see
+    the same grant and then close again.
+    """
+
+    from services.guardian.consent import GuardianConsentService
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    database = bootstrap_dsn.rstrip("/").rsplit("/", 1)[-1]
+    admin = await asyncpg.connect(bootstrap_dsn)
+    guardian: PostgresGuardianStore | None = None
+    try:
+        await _ensure_roles(admin, database=database)
+    finally:
+        await admin.close()
+    try:
+        guardian = PostgresGuardianStore(
+            dsn=_role_dsn(
+                bootstrap_dsn,
+                database=database,
+                role="memoria_guardian",
+                password="api-role-password",
+            ),
+            bootstrap_dsn=bootstrap_dsn,
+            maintenance_dsn=_role_dsn(
+                bootstrap_dsn,
+                database=database,
+                role="memoria_guardian_maintenance",
+                password="maintenance-role-password",
+            ),
+            worker_dsn=_role_dsn(
+                bootstrap_dsn,
+                database=database,
+                role="memoria_guardian_worker",
+                password="worker-role-password",
+            ),
+        )
+        await guardian.initialize()
+        app.state.guardian_store = guardian
+        consent_service = GuardianConsentService(guardian, app.state.life_archive)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            chain = await _start_session_and_switch_to_child(
+                client,
+                app,
+                bootstrap_dsn=bootstrap_dsn,
+                device_id="device-pg-person-consent",
+                binding_id="binding-pg-person-consent",
+                child_person_id="minor-pg-person-consent",
+            )
+
+            # No consent yet: both seams stay conservative.
+            policy_closed = await _session_policy(
+                client, session_id=chain.session_id
+            )
+            assert policy_closed.status_code == 200, policy_closed.text
+            assert policy_closed.json()["memory_retention"] == "ephemeral_only"
+            memory_closed = await _response_plan(
+                client,
+                session_id=chain.session_id,
+                query=_MEMORY_QUERY,
+                turn_id=1,
+                generation_id=1,
+            )
+            assert memory_closed.status_code == 200, memory_closed.text
+            assert memory_closed.json()["grounded_items"] == []
+            assert catalog.queries == []
+
+            # Grant the person consent in the real PostgreSQL store.
+            now = datetime.now(UTC)
+            consent_id = str(uuid.uuid4())
+            await consent_service.grant_for_person(
+                subject_person_id=chain.child_person_id,
+                grantor_person_id=chain.account_id,
+                consent_kind="memory_retention",
+                policy_version="minor-retention-v1",
+                evidence_event_id="pg-person-consent-grant",
+                consent_id=consent_id,
+                now=now,
+            )
+            assert (
+                await guardian.get_person_consent(
+                    consent_id=consent_id,
+                    actor_person_id=chain.account_id,
+                    subject_person_id=chain.child_person_id,
+                )
+            ).consent_id == consent_id
+
+            policy_open = await _session_policy(
+                client, session_id=chain.session_id
+            )
+            assert policy_open.status_code == 200, policy_open.text
+            assert "memory_retention" not in policy_open.json()
+            memory_open = await _response_plan(
+                client,
+                session_id=chain.session_id,
+                query=_MEMORY_QUERY,
+                turn_id=2,
+                generation_id=2,
+            )
+            # The account-keyed legacy catalog must never answer for another
+            # subject (subject-keyed memory migration is still pending), so
+            # the open retention gate must not leak account memory here.
+            assert memory_open.status_code == 200, memory_open.text
+            assert memory_open.json()["grounded_items"] == []
+            assert catalog.queries == []
+
+            # Revoke in the real PostgreSQL store: both seams close again.
+            await consent_service.revoke_for_person(
+                consent_id=consent_id,
+                grantor_person_id=chain.account_id,
+                subject_person_id=chain.child_person_id,
+                evidence_event_id="pg-person-consent-revoke",
+                now=now + timedelta(minutes=1),
+            )
+            assert (
+                await guardian.active_consent(
+                    minor_user_id=chain.child_person_id,
+                    consent_kind="memory_retention",
+                )
+                is None
+            )
+            policy_closed_again = await _session_policy(
+                client, session_id=chain.session_id
+            )
+            assert policy_closed_again.status_code == 200
+            assert (
+                policy_closed_again.json()["memory_retention"] == "ephemeral_only"
+            )
+            queries_before = len(catalog.queries)
+            memory_closed_again = await _response_plan(
+                client,
+                session_id=chain.session_id,
+                query=_MEMORY_QUERY,
+                turn_id=3,
+                generation_id=3,
+            )
+            assert memory_closed_again.status_code == 200
+            assert memory_closed_again.json()["grounded_items"] == []
+            assert len(catalog.queries) == queries_before
+    finally:
+        if guardian is not None:
+            await guardian.close()
