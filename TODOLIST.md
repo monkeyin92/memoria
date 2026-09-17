@@ -7,7 +7,7 @@
 1. **成员写入边界已修（`350d62d`）**：三个缺陷都有修复前失败的回归，并发项另有真实 PG 契约（见 `HANDOFF.md`）；剩余的是小程序成员 UI 接线与设备链。
 2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
 3. **TTS 软件边界已修（`f2a95d6`，P2/P3）**：`COSYVOICE_WORD_TIMESTAMPS=false` 时 batch 降级为完整音频+空词+`degraded`、单次连接不重试；Doubao 流式回落加单次闸门（`_fallback_used`），框架重入不再逐次重落回调/trace。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
-4. 完成拟发布修复后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+4. 下一步（按序）：先推远端跑 `f2a95d6` 的完整 CI（当前最大证据缺口：远端仍停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
 5. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 6. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
@@ -47,7 +47,7 @@
 ### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
 - 当前候选仍为 LiveKit agents/openai/silero 1.8.1，配套 RTC 1.1.18、API 1.2.1；保留 Python 3.12 与真实锁，不用 --no-deps、不重复同组升级。1.8.2 须另开兼容候选，不以版本说明推断解决 VoCat AEC/卡顿，不混 expressive/DuplexModel、抢跑、user_turn_limit 或 TurnPhase 副作用。
-- Mypy blocker 已修，当前远端 `python`、`agent-image` 已通过，具体 SHA/job 见顶部；不再安排重复修复。全量/delta/source-overlay 已接候选自带 verifier 与真实 OTLP canary，cwd/PYTHONPATH/coverage 传播、运行用户读权限及 COPY/chmod 回归保留。
+- Mypy blocker 已修，上轮（`350d62d`）远端 `python`、`agent-image` 已通过（CI `35231388322`），本轮 `f2a95d6` 远端未跑；不再安排重复修复。全量/delta/source-overlay 已接候选自带 verifier 与真实 OTLP canary，cwd/PYTHONPATH/coverage 传播、运行用户读权限及 COPY/chmod 回归保留。
 - P0 修复完成后冻结同一 source/lock；受影响候选须过 ruff、module budget、strict mypy、协议生成、真实 PG init + repeat-upgrade、pytest、85% 总覆盖/90% orchestration/90% provider protocols、Offline E2E 及 agent/agent-image 门。带真实测试 DSN，不把 DSN-gated 跳过称为全量 CI；不删探针、不降阈值。文档/低风险机械改动只做相称快速检查。
 - 用标准完整构建验收受影响镜像，Agent/Bridge 共用同一产物；依赖变化不能 source overlay。构建期 gate 和非 root 运行用户复验分别留据，CI 镜像成功不等于生产启用。
 - PII 门保留真实 OTLP collector 正例及绕 bootstrap 泄漏反例，同时查属性和原始导出字节；fresh process 覆盖 env 未设置/空值/显式 0。`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`、`LIVEKIT_TELEMETRY_ALLOW_PII` 落实到候选运行态，`PII_REDACTION_ENABLED` 或 InMemory exporter 不能替代。
@@ -86,7 +86,8 @@
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
-- 最小会话回顾出口已修（`f2a95d6`，`code`）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对 Curve（history-eligible owner 文本 + actual-heard assistant 文本），与 `/conversation-review` 同一 owner 鉴权域、无跨主体读、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
+- 最小会话回顾出口已修（`f2a95d6`，`code`）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对话轮（history-eligible owner 文本 + actual-heard assistant 文本），与 `/conversation-review` 同一 owner 鉴权域、无跨主体读、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
+- 已知局限（`f2a95d6` 审查发现，非 blocker）：路由按 `account_id` 取最近 100 条再在内存中按 `session_id` 过滤——`life_archive.context` 的 owner 分支本就不带 session 条件，所以能用；但超过 100 条窗口的老会话会静默返回空，且 PG 侧同分支未逐行核对。真机可查量上去之前改成分页/session 下推或明确上限语义。
 - 只读状态开发可独立进行；完整三端集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
 - 投影带 session/generation fence 和新鲜度，重连/断线/过期显示 offline/unknown；不从字幕、零散 diagnostics 或客户端计时猜态，不增加话轮控制面。
 - 完成条件：微信手机/电脑/开发工具同版本覆盖登录绑定、三态/断线、主体人格切换、样本进度、回顾、权限拒绝与刷新；录音范围门禁通过。0.8.84 仅开发版；体验版、提审、正式发布分别授权和记录。
@@ -138,6 +139,7 @@
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
 - **已修（`f2a95d6`），P2：有效曝光改为时间线求交。** `_exposure_over_timeline` 把窗口与 console 状态时间线逐段求交：仅 idle 段计曝光，busy 段逐段记 dated pause。fake clock 1s idle→8s connecting→1s idle 现得 exposure=2s、paused=8s；另有跨窗口裁剪与零曝光用例。不得为凑曝光开启播放期 KWS。
 - **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
+- 可选清理（非 blocker）：去重用例仍保留“有 ignored 文件就对账”的条件分支，严格自包含应删掉该分支只留内联 fixture；改动小，顺手做，不单独立项。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。
 - 原误唤醒修正保留：带 `(state: N)` 首次行去重后新事件 0，TV=1 是上一试次滞后重复；但 TV 133.038s 内 idle=0、约 92.382s speaking/KWS off，small_talk 124.471s 内 idle≈100.909s，quiet 300.001s 均为日志可见 idle。故不能宣称电视/多人各 2 分钟有效零误唤醒；配置日志不自动证明整个窗口 detector 持续启用。
 - 工具验收：音量/静音、录音和串口错误都在 finally 恢复，恢复结果实读；真人 Markdown/JSON 口径一致，不从人工提示时刻算真实开口延迟。记录实际输入电平、warmup 配置/实际等待、状态与 detector 证据，错误不算 miss 或零误唤醒。
