@@ -31,6 +31,7 @@ from services.guardian.domain import (
     GuardianLink,
     GuardianLinkStatus,
     GuardianNotFoundError,
+    PersonConsentRecord,
     Relation,
     VerifiedVia,
 )
@@ -296,6 +297,25 @@ class PostgresGuardianStore:
         return ConsentRecord(
             consent_id=str(row["consent_id"]),
             link_id=str(row["link_id"]),
+            consent_kind=cast(ConsentKind, str(row["consent_kind"])),
+            policy_version=str(row["policy_version"]),
+            granted_at=cast(datetime, row["granted_at"]),
+            evidence_event_id=str(row["evidence_event_id"]),
+            expires_at=cast(datetime | None, row["expires_at"]),
+            revoked_at=cast(datetime | None, row["revoked_at"]),
+            revocation_evidence_event_id=(
+                str(row["revocation_evidence_event_id"])
+                if row["revocation_evidence_event_id"] is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _person_consent(row: asyncpg.Record) -> PersonConsentRecord:
+        return PersonConsentRecord(
+            consent_id=str(row["consent_id"]),
+            subject_person_id=str(row["subject_person_id"]),
+            grantor_person_id=str(row["grantor_person_id"]),
             consent_kind=cast(ConsentKind, str(row["consent_kind"])),
             policy_version=str(row["policy_version"]),
             granted_at=cast(datetime, row["granted_at"]),
@@ -872,7 +892,17 @@ class PostgresGuardianStore:
         *,
         minor_user_id: str,
         consent_kind: ConsentKind,
-    ) -> ConsentRecord | None:
+    ) -> ConsentRecord | PersonConsentRecord | None:
+        """One read gate over both consent key spaces.
+
+        Link-scoped consents (a minor with an account confirmed a guardian
+        link) and person-scoped consents (an account-less subject whose
+        binding owner granted) are different records, but every caller asks
+        the same question: may this subject's capability run?  Both are
+        unioned here so the policy gate never has to know which key space the
+        authority used.
+        """
+
         pool = await self._ready_pool()
         async with pool.acquire() as connection:
             async with connection.transaction():
@@ -893,7 +923,244 @@ class PostgresGuardianStore:
                     minor_user_id,
                     consent_kind,
                 )
-        return self._consent(row) if row is not None else None
+                if row is not None:
+                    return self._consent(row)
+                person_row = await connection.fetchrow(
+                    """
+                    SELECT * FROM guardian_person_consents
+                    WHERE subject_person_id = $1 AND consent_kind = $2
+                      AND revoked_at IS NULL
+                      AND (expires_at IS NULL OR expires_at > now())
+                    ORDER BY granted_at DESC LIMIT 1
+                    """,
+                    minor_user_id,
+                    consent_kind,
+                )
+        return (
+            self._person_consent(person_row) if person_row is not None else None
+        )
+
+    # -- person-scoped consents (account-less subjects) ------------------
+
+    async def grant_person_consent(
+        self,
+        record: PersonConsentRecord,
+        *,
+        actor_person_id: str,
+    ) -> PersonConsentRecord:
+        if actor_person_id != record.grantor_person_id:
+            raise GuardianAccessDeniedError(
+                "only the granting person may write a person consent"
+            )
+        pool = await self._ready_pool()
+        try:
+            async with pool.acquire() as connection, connection.transaction():
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=record.grantor_person_id,
+                    subject_user_id=record.subject_person_id,
+                )
+                conflicting = await connection.fetchval(
+                    """
+                    SELECT consent_id FROM guardian_person_consents
+                    WHERE subject_person_id = $1 AND consent_kind = $2
+                      AND revoked_at IS NULL
+                      AND (expires_at IS NULL OR expires_at > $3)
+                      AND consent_id <> $4
+                    LIMIT 1
+                    """,
+                    record.subject_person_id,
+                    record.consent_kind,
+                    record.granted_at,
+                    _uuid(record.consent_id, field="consent_id"),
+                )
+                if conflicting is not None:
+                    raise GuardianConflictError(
+                        "an active consent already exists for this capability"
+                    )
+                row = await connection.fetchrow(
+                    """
+                    INSERT INTO guardian_person_consents(
+                        consent_id, subject_person_id, grantor_person_id,
+                        consent_kind, policy_version, granted_at, expires_at,
+                        evidence_event_id
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    ON CONFLICT(consent_id) DO NOTHING
+                    RETURNING *
+                    """,
+                    _uuid(record.consent_id, field="consent_id"),
+                    record.subject_person_id,
+                    record.grantor_person_id,
+                    record.consent_kind,
+                    record.policy_version,
+                    record.granted_at,
+                    record.expires_at,
+                    record.evidence_event_id,
+                )
+                if row is None:
+                    row = await connection.fetchrow(
+                        "SELECT * FROM guardian_person_consents WHERE consent_id = $1",
+                        _uuid(record.consent_id, field="consent_id"),
+                    )
+                    if row is None:  # pragma: no cover
+                        raise RuntimeError("guardian person consent disappeared")
+                    current = self._person_consent(row)
+                    if current != record:
+                        raise GuardianConflictError("consent id is immutable")
+                    return current
+        except asyncpg.UniqueViolationError as exc:
+            raise GuardianConflictError(
+                "an active consent already exists for this capability"
+            ) from exc
+        assert row is not None
+        return self._person_consent(row)
+
+    async def get_person_consent(
+        self,
+        *,
+        consent_id: str,
+        actor_person_id: str,
+    ) -> PersonConsentRecord:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=actor_person_id,
+                    subject_user_id=actor_person_id,
+                )
+                row = await connection.fetchrow(
+                    """
+                    SELECT * FROM guardian_person_consents
+                    WHERE consent_id = $1
+                      AND (grantor_person_id = $2 OR subject_person_id = $2)
+                    """,
+                    _uuid(consent_id, field="consent_id"),
+                    actor_person_id,
+                )
+        if row is None:
+            raise GuardianNotFoundError("guardian person consent not found")
+        return self._person_consent(row)
+
+    async def list_person_consents(
+        self,
+        *,
+        subject_person_id: str,
+        actor_person_id: str,
+    ) -> tuple[PersonConsentRecord, ...]:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=actor_person_id,
+                    subject_user_id=subject_person_id,
+                )
+                rows = await connection.fetch(
+                    """
+                    SELECT * FROM guardian_person_consents
+                    WHERE subject_person_id = $1
+                      AND (grantor_person_id = $2 OR subject_person_id = $2)
+                    ORDER BY granted_at, consent_id
+                    """,
+                    subject_person_id,
+                    actor_person_id,
+                )
+        return tuple(self._person_consent(row) for row in rows)
+
+    async def revoke_person_consent(
+        self,
+        *,
+        consent_id: str,
+        grantor_person_id: str,
+        revoked_at: datetime,
+        revocation_evidence_event_id: str,
+    ) -> PersonConsentRecord:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=grantor_person_id,
+                    subject_user_id=grantor_person_id,
+                )
+                current_row = await connection.fetchrow(
+                    """
+                    SELECT * FROM guardian_person_consents
+                    WHERE consent_id = $1 AND grantor_person_id = $2
+                    """,
+                    _uuid(consent_id, field="consent_id"),
+                    grantor_person_id,
+                )
+                if current_row is None:
+                    raise GuardianNotFoundError("guardian person consent not found")
+                subject_person_id = str(current_row["subject_person_id"])
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=grantor_person_id,
+                    subject_user_id=subject_person_id,
+                )
+                row = await connection.fetchrow(
+                    """
+                    UPDATE guardian_person_consents
+                    SET revoked_at = $3, revocation_evidence_event_id = $4
+                    WHERE consent_id = $1 AND grantor_person_id = $2
+                      AND revoked_at IS NULL
+                    RETURNING *
+                    """,
+                    _uuid(consent_id, field="consent_id"),
+                    grantor_person_id,
+                    revoked_at,
+                    revocation_evidence_event_id,
+                )
+                if row is None:
+                    row = await connection.fetchrow(
+                        """
+                        SELECT * FROM guardian_person_consents
+                        WHERE consent_id = $1 AND grantor_person_id = $2
+                        """,
+                        _uuid(consent_id, field="consent_id"),
+                        grantor_person_id,
+                    )
+                    if row is None:  # pragma: no cover
+                        raise GuardianNotFoundError(
+                            "guardian person consent not found"
+                        )
+                    current = self._person_consent(row)
+                    if (
+                        current.revocation_evidence_event_id
+                        != revocation_evidence_event_id
+                    ):
+                        raise GuardianConflictError("consent was already revoked")
+                    return current
+        return self._person_consent(row)
+
+    async def active_person_consent(
+        self,
+        *,
+        subject_person_id: str,
+        consent_kind: ConsentKind,
+    ) -> PersonConsentRecord | None:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._set_api_context(
+                    connection,
+                    actor_user_id=subject_person_id,
+                    subject_user_id=subject_person_id,
+                )
+                row = await connection.fetchrow(
+                    """
+                    SELECT * FROM guardian_person_consents
+                    WHERE subject_person_id = $1 AND consent_kind = $2
+                      AND revoked_at IS NULL
+                      AND (expires_at IS NULL OR expires_at > now())
+                    ORDER BY granted_at DESC LIMIT 1
+                    """,
+                    subject_person_id,
+                    consent_kind,
+                )
+        return self._person_consent(row) if row is not None else None
 
     async def corpus_sample_by_event(
         self,
@@ -1676,6 +1943,18 @@ class PostgresGuardianStore:
                 """,
                 account_id,
             )
+            person_consents = await connection.fetch(
+                """
+                SELECT consent_id, subject_person_id, grantor_person_id,
+                       consent_kind, policy_version, granted_at, expires_at,
+                       revoked_at, evidence_event_id,
+                       revocation_evidence_event_id
+                FROM guardian_person_consents
+                WHERE grantor_person_id = $1 OR subject_person_id = $1
+                ORDER BY granted_at, consent_id
+                """,
+                account_id,
+            )
         async with maintenance_pool.acquire() as connection:
             row = await connection.fetchval(
                 "SELECT guardian_tutor_account_scope_export($1)",
@@ -1685,6 +1964,7 @@ class PostgresGuardianStore:
         return {
             "links": [dict(row) for row in links],
             "consents": [dict(row) for row in consents],
+            "person_consents": [dict(row) for row in person_consents],
             "tutor_practice_sessions": list(
                 data.get("tutor_practice_sessions") or []
             ),
@@ -1746,6 +2026,13 @@ class PostgresGuardianStore:
                 """,
                 account_id,
             )
+            person_consent_result = await connection.execute(
+                """
+                DELETE FROM guardian_person_consents
+                WHERE grantor_person_id = $1 OR subject_person_id = $1
+                """,
+                account_id,
+            )
             link_result = await connection.execute(
                 """
                 DELETE FROM guardian_links
@@ -1756,6 +2043,7 @@ class PostgresGuardianStore:
         return {
             "links": int(link_result.rsplit(" ", 1)[-1]),
             "consents": int(consent_result.rsplit(" ", 1)[-1]),
+            "person_consents": int(person_consent_result.rsplit(" ", 1)[-1]),
             "tutor_practice_sessions": int(
                 json.loads(tutor_result).get("tutor_practice_sessions") or 0
             ),
@@ -1793,6 +2081,15 @@ class PostgresGuardianStore:
                     SELECT count(*) FROM guardian_consents consent
                     JOIN guardian_links link ON link.link_id = consent.link_id
                     WHERE link.guardian_user_id = $1 OR link.minor_user_id = $1
+                    """,
+                    account_id,
+                )
+            )
+            person_consents = int(
+                await connection.fetchval(
+                    """
+                    SELECT count(*) FROM guardian_person_consents
+                    WHERE grantor_person_id = $1 OR subject_person_id = $1
                     """,
                     account_id,
                 )
@@ -1847,6 +2144,7 @@ class PostgresGuardianStore:
                 "crisis_events": crisis_events,
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,
+                "person_consents": person_consents,
             }.items()
             if value
         }

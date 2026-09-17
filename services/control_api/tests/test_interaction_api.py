@@ -685,6 +685,28 @@ async def test_session_policy_accepts_signed_unknown_safe_as_conversation_only(
             headers={"X-Memoria-Internal-Token": "interaction-policy-token-that-is-long-enough"},
             json={"session_id": session_id},
         )
+        plan_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers={"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"},
+            json={
+                "session_id": session_id,
+                "query": "告诉我关于我的秘密",
+                "utterance_intent": "chat",
+                "fence": {
+                    "session_id": session_id,
+                    "turn_id": 1,
+                    "generation_id": 1,
+                    "tool_epoch": 0,
+                },
+                "speaker_decision": {
+                    "classification": "uncertain",
+                    "reason_code": "unknown_safe_mode",
+                    "model_version": "test",
+                    "profile_id": None,
+                    "template_version": None,
+                },
+            },
+        )
 
     assert response.status_code == 200, response.text
     policy = response.json()
@@ -712,6 +734,13 @@ async def test_session_policy_accepts_signed_unknown_safe_as_conversation_only(
     assert parsed.mode == "unknown_safe"
     assert parsed.runtime_profile is not None
     assert parsed.runtime_profile.profile.runtime_profile_id == profile.runtime_profile_id
+
+    # Direct regression for /response-plan under signed unknown_safe:
+    # Fail-closed, zero grounded items, no private memory leakage.
+    assert plan_response.status_code == 200, plan_response.text
+    plan = plan_response.json()
+    assert plan["grounded_items"] == []
+    assert plan["direct_text"] is None
     assert parsed.allows_conversation() is True
     assert parsed.allows_private_context("owner") is False
     assert parsed.allows_tools("owner") is False

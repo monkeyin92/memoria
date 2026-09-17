@@ -99,6 +99,63 @@ WHERE revocation_evidence_event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_guardian_consents_link_granted
 ON guardian_consents(link_id, granted_at DESC);
 
+-- Person-scoped consents for subjects that have no account at all (the
+-- ``parent_for_child`` + ``subject_draft`` binding shape).  The grantor is the
+-- binding owner; the subject never confirms anything and no guardian link is
+-- manufactured.  A distinct table keeps the two key spaces (link-scoped vs
+-- person-scoped) honest instead of making ``link_id`` nullable.
+CREATE TABLE IF NOT EXISTS guardian_person_consents (
+    consent_id UUID PRIMARY KEY,
+    subject_person_id TEXT NOT NULL CHECK (
+        char_length(subject_person_id) BETWEEN 1 AND 128
+    ),
+    grantor_person_id TEXT NOT NULL CHECK (
+        char_length(grantor_person_id) BETWEEN 1 AND 128
+    ),
+    consent_kind TEXT NOT NULL CHECK (consent_kind IN (
+        'minor_voice_session', 'memory_retention',
+        'weekly_report', 'corpus_recording'
+    )),
+    policy_version TEXT NOT NULL CHECK (
+        char_length(policy_version) BETWEEN 1 AND 64
+    ),
+    granted_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    evidence_event_id TEXT NOT NULL CHECK (
+        char_length(evidence_event_id) BETWEEN 1 AND 128
+    ),
+    revocation_evidence_event_id TEXT CHECK (
+        revocation_evidence_event_id IS NULL
+        OR char_length(revocation_evidence_event_id) BETWEEN 1 AND 128
+    ),
+    CHECK (subject_person_id <> grantor_person_id),
+    CHECK (expires_at IS NULL OR expires_at > granted_at),
+    CHECK (
+        (consent_kind = 'corpus_recording' AND expires_at IS NOT NULL
+            AND expires_at <= granted_at + INTERVAL '30 days')
+        OR (consent_kind <> 'corpus_recording' AND expires_at IS NULL)
+    ),
+    CHECK (
+        (revoked_at IS NULL AND revocation_evidence_event_id IS NULL)
+        OR (revoked_at IS NOT NULL AND revocation_evidence_event_id IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_active_kind
+ON guardian_person_consents(subject_person_id, consent_kind)
+WHERE revoked_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_grant_evidence
+ON guardian_person_consents(evidence_event_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_revoke_evidence
+ON guardian_person_consents(revocation_evidence_event_id)
+WHERE revocation_evidence_event_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_guardian_person_consents_subject
+ON guardian_person_consents(subject_person_id, granted_at DESC);
+
 CREATE TABLE IF NOT EXISTS guardian_corpus_samples (
     sample_id UUID PRIMARY KEY,
     minor_user_id TEXT NOT NULL,
@@ -728,6 +785,7 @@ $notification_enqueue_declared$;
 
 ALTER TABLE guardian_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guardian_person_consents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_corpus_samples ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tutor_practice_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tutor_study_progress ENABLE ROW LEVEL SECURITY;
@@ -737,6 +795,7 @@ ALTER TABLE guardian_crisis_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_links FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents FORCE ROW LEVEL SECURITY;
+ALTER TABLE guardian_person_consents FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_corpus_samples FORCE ROW LEVEL SECURITY;
 ALTER TABLE tutor_practice_sessions FORCE ROW LEVEL SECURITY;
 ALTER TABLE tutor_study_progress FORCE ROW LEVEL SECURITY;
@@ -751,6 +810,7 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_links TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_consents TO memoria_guardian;
+        GRANT SELECT, INSERT, UPDATE ON guardian_person_consents TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE ON guardian_corpus_samples TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_practice_sessions TO memoria_guardian;
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_study_progress TO memoria_guardian;
@@ -764,7 +824,8 @@ BEGIN
         -- role never receives a broad-scope escape hatch.
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_maintenance') THEN
             GRANT SELECT, INSERT, UPDATE, DELETE
-                ON guardian_links, guardian_consents, guardian_corpus_samples,
+                ON guardian_links, guardian_consents, guardian_person_consents,
+                   guardian_corpus_samples,
                    guardian_crisis_events, guardian_notification_outbox
                 TO memoria_guardian_maintenance;
         END IF;
@@ -908,6 +969,42 @@ BEGIN
                       AND link.guardian_user_id = current_setting('memoria.guardian_actor_id', true)
                       AND link.minor_user_id = current_setting('memoria.guardian_subject_id', true)
                 )
+            );
+
+        -- Person-scoped consents carry no link, so visibility is defined by the
+        -- two person keys instead: the subject may always read its own rows
+        -- (that is the policy gate at turn time), and the grantor may read and
+        -- write the rows it granted.  Write requires actor == grantor kept
+        -- separate from subject, so a subject can never grant consent to itself
+        -- through this table.
+        DROP POLICY IF EXISTS guardian_controller_person_consents
+            ON guardian_person_consents;
+        CREATE POLICY guardian_controller_person_consents
+            ON guardian_person_consents
+            TO memoria_guardian, memoria_guardian_maintenance
+            USING (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
+                    AND subject_person_id = current_setting('memoria.guardian_subject_id', true)
+                    AND (
+                        subject_person_id = current_setting('memoria.guardian_actor_id', true)
+                        OR grantor_person_id = current_setting('memoria.guardian_actor_id', true)
+                    )
+                )
+            )
+            WITH CHECK (
+                COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
+                AND subject_person_id = current_setting('memoria.guardian_subject_id', true)
+                AND grantor_person_id = current_setting('memoria.guardian_actor_id', true)
             );
 
         DROP POLICY IF EXISTS guardian_controller_corpus_samples ON guardian_corpus_samples;

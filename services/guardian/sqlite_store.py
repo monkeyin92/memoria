@@ -31,6 +31,7 @@ from services.guardian.domain import (
     GuardianLink,
     GuardianLinkStatus,
     GuardianNotFoundError,
+    PersonConsentRecord,
     Relation,
     VerifiedVia,
 )
@@ -99,6 +100,34 @@ WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_guardian_consents_link
 ON guardian_consents(link_id, granted_at DESC);
+
+CREATE TABLE IF NOT EXISTS guardian_person_consents (
+    consent_id TEXT PRIMARY KEY,
+    subject_person_id TEXT NOT NULL,
+    grantor_person_id TEXT NOT NULL,
+    consent_kind TEXT NOT NULL CHECK (consent_kind IN (
+        'minor_voice_session', 'memory_retention',
+        'weekly_report', 'corpus_recording'
+    )),
+    policy_version TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked_at TEXT,
+    evidence_event_id TEXT NOT NULL UNIQUE,
+    revocation_evidence_event_id TEXT UNIQUE,
+    CHECK (subject_person_id <> grantor_person_id),
+    CHECK (
+        (revoked_at IS NULL AND revocation_evidence_event_id IS NULL)
+        OR (revoked_at IS NOT NULL AND revocation_evidence_event_id IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_guardian_person_consents_active_kind
+ON guardian_person_consents(subject_person_id, consent_kind)
+WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_guardian_person_consents_subject
+ON guardian_person_consents(subject_person_id, granted_at DESC);
 
 CREATE TABLE IF NOT EXISTS guardian_corpus_samples (
     sample_id TEXT PRIMARY KEY,
@@ -436,6 +465,33 @@ class SqliteGuardianStore:
         return ConsentRecord(
             consent_id=str(row["consent_id"]),
             link_id=str(row["link_id"]),
+            consent_kind=cast(ConsentKind, str(row["consent_kind"])),
+            policy_version=str(row["policy_version"]),
+            granted_at=datetime.fromisoformat(str(row["granted_at"])),
+            evidence_event_id=str(row["evidence_event_id"]),
+            expires_at=(
+                datetime.fromisoformat(str(row["expires_at"]))
+                if row["expires_at"] is not None
+                else None
+            ),
+            revoked_at=(
+                datetime.fromisoformat(str(row["revoked_at"]))
+                if row["revoked_at"] is not None
+                else None
+            ),
+            revocation_evidence_event_id=(
+                str(row["revocation_evidence_event_id"])
+                if row["revocation_evidence_event_id"] is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _person_consent(row: sqlite3.Row) -> PersonConsentRecord:
+        return PersonConsentRecord(
+            consent_id=str(row["consent_id"]),
+            subject_person_id=str(row["subject_person_id"]),
+            grantor_person_id=str(row["grantor_person_id"]),
             consent_kind=cast(ConsentKind, str(row["consent_kind"])),
             policy_version=str(row["policy_version"]),
             granted_at=datetime.fromisoformat(str(row["granted_at"])),
@@ -914,7 +970,17 @@ class SqliteGuardianStore:
         *,
         minor_user_id: str,
         consent_kind: ConsentKind,
-    ) -> ConsentRecord | None:
+    ) -> ConsentRecord | PersonConsentRecord | None:
+        """One read gate over both consent key spaces.
+
+        Link-scoped consents (a minor with an account confirmed a guardian
+        link) and person-scoped consents (an account-less subject whose
+        binding owner granted) are different records, but every caller asks
+        the same question: may this subject's capability run?  Both are
+        unioned here so the策略 gate never has to know which key space the
+        authority used.
+        """
+
         self._ready()
         with self._connect() as connection:
             row = connection.execute(
@@ -928,7 +994,188 @@ class SqliteGuardianStore:
                 """,
                 (minor_user_id, consent_kind, datetime.now(UTC).isoformat()),
             ).fetchone()
-        return self._consent(row) if row is not None else None
+            if row is not None:
+                return self._consent(row)
+            person_row = connection.execute(
+                """
+                SELECT * FROM guardian_person_consents
+                WHERE subject_person_id = ? AND consent_kind = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY granted_at DESC LIMIT 1
+                """,
+                (minor_user_id, consent_kind, datetime.now(UTC).isoformat()),
+            ).fetchone()
+        return self._person_consent(person_row) if person_row is not None else None
+
+    async def grant_person_consent(
+        self,
+        record: PersonConsentRecord,
+        *,
+        actor_person_id: str,
+    ) -> PersonConsentRecord:
+        self._ready()
+        if actor_person_id != record.grantor_person_id:
+            raise GuardianAccessDeniedError(
+                "only the granting person may write a person consent"
+            )
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                conflicting = connection.execute(
+                    """
+                    SELECT consent_id FROM guardian_person_consents
+                    WHERE subject_person_id = ? AND consent_kind = ?
+                      AND revoked_at IS NULL
+                      AND (expires_at IS NULL OR expires_at > ?)
+                      AND consent_id <> ?
+                    LIMIT 1
+                    """,
+                    (
+                        record.subject_person_id,
+                        record.consent_kind,
+                        record.granted_at.isoformat(),
+                        record.consent_id,
+                    ),
+                ).fetchone()
+                if conflicting is not None:
+                    raise GuardianConflictError(
+                        "an active consent already exists for this capability"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO guardian_person_consents(
+                        consent_id, subject_person_id, grantor_person_id,
+                        consent_kind, policy_version, granted_at, expires_at,
+                        evidence_event_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(consent_id) DO NOTHING
+                    """,
+                    (
+                        record.consent_id,
+                        record.subject_person_id,
+                        record.grantor_person_id,
+                        record.consent_kind,
+                        record.policy_version,
+                        record.granted_at.isoformat(),
+                        record.expires_at.isoformat() if record.expires_at else None,
+                        record.evidence_event_id,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM guardian_person_consents WHERE consent_id = ?",
+                    (record.consent_id,),
+                ).fetchone()
+        except sqlite3.IntegrityError as exc:
+            raise GuardianConflictError(
+                "an active consent already exists for this capability"
+            ) from exc
+        if row is None:  # pragma: no cover
+            raise RuntimeError("person consent disappeared")
+        current = self._person_consent(row)
+        if current != record:
+            raise GuardianConflictError("consent id is immutable")
+        return current
+
+    async def get_person_consent(
+        self,
+        *,
+        consent_id: str,
+        actor_person_id: str,
+    ) -> PersonConsentRecord:
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_person_consents
+                WHERE consent_id = ?
+                  AND (grantor_person_id = ? OR subject_person_id = ?)
+                """,
+                (consent_id, actor_person_id, actor_person_id),
+            ).fetchone()
+        if row is None:
+            raise GuardianNotFoundError("guardian person consent not found")
+        return self._person_consent(row)
+
+    async def list_person_consents(
+        self,
+        *,
+        subject_person_id: str,
+        actor_person_id: str,
+    ) -> tuple[PersonConsentRecord, ...]:
+        self._ready()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM guardian_person_consents
+                WHERE subject_person_id = ?
+                  AND (grantor_person_id = ? OR subject_person_id = ?)
+                ORDER BY granted_at, consent_id
+                """,
+                (subject_person_id, actor_person_id, actor_person_id),
+            ).fetchall()
+        return tuple(self._person_consent(row) for row in rows)
+
+    async def revoke_person_consent(
+        self,
+        *,
+        consent_id: str,
+        grantor_person_id: str,
+        revoked_at: datetime,
+        revocation_evidence_event_id: str,
+    ) -> PersonConsentRecord:
+        self._ready()
+        timestamp = _timestamp(revoked_at, field="revoked_at")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE guardian_person_consents
+                SET revoked_at = ?, revocation_evidence_event_id = ?
+                WHERE consent_id = ? AND revoked_at IS NULL
+                  AND grantor_person_id = ?
+                """,
+                (
+                    timestamp.isoformat(),
+                    revocation_evidence_event_id,
+                    consent_id,
+                    grantor_person_id,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_person_consents
+                WHERE consent_id = ? AND grantor_person_id = ?
+                """,
+                (consent_id, grantor_person_id),
+            ).fetchone()
+        if row is None:
+            raise GuardianNotFoundError("guardian person consent not found")
+        current = self._person_consent(row)
+        if cursor.rowcount != 1 and (
+            current.revocation_evidence_event_id != revocation_evidence_event_id
+        ):
+            raise GuardianConflictError("consent was already revoked")
+        return current
+
+    async def active_person_consent(
+        self,
+        *,
+        subject_person_id: str,
+        consent_kind: ConsentKind,
+    ) -> PersonConsentRecord | None:
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_person_consents
+                WHERE subject_person_id = ? AND consent_kind = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY granted_at DESC LIMIT 1
+                """,
+                (subject_person_id, consent_kind, datetime.now(UTC).isoformat()),
+            ).fetchone()
+        return self._person_consent(row) if row is not None else None
 
     async def corpus_sample_by_event(
         self,
@@ -1786,9 +2033,17 @@ class SqliteGuardianStore:
                 """,
                 (account_id, account_id),
             ).rowcount
+            person_consent_count = connection.execute(
+                """
+                DELETE FROM guardian_person_consents
+                WHERE grantor_person_id = ? OR subject_person_id = ?
+                """,
+                (account_id, account_id),
+            ).rowcount
         return {
             "links": link_count,
             "consents": consent_count,
+            "person_consents": person_consent_count,
             "tutor_practice_sessions": practice_count,
             "tutor_study_progress": progress_count,
             "crisis_events": crisis_count,
@@ -1865,6 +2120,15 @@ class SqliteGuardianStore:
                     (account_id, account_id, account_id),
                 ).fetchone()[0]
             )
+            person_consents = int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM guardian_person_consents
+                    WHERE grantor_person_id = ? OR subject_person_id = ?
+                    """,
+                    (account_id, account_id),
+                ).fetchone()[0]
+            )
         return {
             key: value
             for key, value in {
@@ -1875,6 +2139,7 @@ class SqliteGuardianStore:
                 "crisis_events": crisis_events,
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,
+                "person_consents": person_consents,
             }.items()
             if value
         }

@@ -618,3 +618,167 @@ def test_unconfigured_subject_capability_fails_closed() -> None:
             store=_SubjectStore("adult"),
         )
     assert exc_info.value.detail["code"] == "subject_capability_unconfigured"
+
+
+@pytest.mark.asyncio
+async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04b: 独立使用人（无账号孩子）的 person 级 consent 授予、策略读门提升与撤销闭环。"""
+
+    from datetime import timedelta
+
+    from services.control_api.app.device_binding_token import mint_device_binding_token
+
+    _configure(monkeypatch, tmp_path)
+    now = datetime.now(UTC)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. 注册合法成人家长并绑定微信身份
+        reg = await client.post("/v1/auth/register", json={"username": "guardian_owner", "password": "safe-password-123"})
+        assert reg.status_code == 201
+        owner = reg.json()
+        owner_id = owner["user_id"]
+        _mark_verified_adult(app, owner_id)
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=owner_id,
+            identities={"wechat_openid": "wx-open-owner"},
+            now=now.isoformat(),
+        )
+        login = await client.post("/v1/auth/login", json={"username": "guardian_owner", "password": "safe-password-123"})
+        owner_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        # 2. 注册 Identity 实体并创建 parent_for_child 绑定，包含独立无账号孩子 draft
+        await app.state.identity_service.register_person(
+            person_id=owner_id,
+            display_name="家长",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-owner-evidence",
+            now=now,
+        )
+        claim_token = mint_device_binding_token(
+            device_id="dev-child-person-consent",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=5),
+            nonce="nonce-person-consent-1",
+        )
+        bind_res = await client.post(
+            "/v1/device-bindings",
+            headers={**owner_headers, "Idempotency-Key": "bind-child-person-001"},
+            json={
+                "device_claim_token": claim_token,
+                "declared_mode": "parent_for_child",
+                "account_owner_person_id": owner_id,
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "guardian_of",
+                    "subject_draft": {
+                        "display_name": "独立小明",
+                        "age_band": "under_14",
+                    },
+                },
+                "persona_selection": "starlight",
+                "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            },
+        )
+        assert bind_res.status_code == 201, bind_res.text
+        child_id = bind_res.json()["primary_subject_ids"][0]
+
+        # 3. 建立会话，并以独立孩子为 active_subject 签发运行时 profile
+        session_res = await client.post("/v1/sessions", headers=owner_headers, json={"session_focus": "tutor_english"})
+        assert session_res.status_code == 200
+        session_id = session_res.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=owner_id,
+            session_id=session_id,
+            active_subject_id=child_id,
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "tutor", "english_practice"),
+        )
+
+        # 4. 未授予记忆留存同意前，/session-policy 读门生效：强制 ephemeral_only
+        policy_res1 = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
+            json={"session_id": session_id},
+        )
+        assert policy_res1.status_code == 200
+        assert policy_res1.json()["memory_retention"] == "ephemeral_only"
+
+        # 5. 非绑定拥有者的第三方陌生人尝试授予该孩子 consent，被 403 拒绝
+        stranger_reg = await client.post("/v1/auth/register", json={"username": "stranger_guardian", "password": "safe-password-123"})
+        stranger_id = stranger_reg.json()["user_id"]
+        _mark_verified_adult(app, stranger_id)
+        app.state.memory_store.bind_external_identities(
+            preferred_user_id=stranger_id,
+            identities={"wechat_openid": "wx-open-stranger"},
+            now=now.isoformat(),
+        )
+        stranger_login = await client.post("/v1/auth/login", json={"username": "stranger_guardian", "password": "safe-password-123"})
+        stranger_headers = {"Authorization": f"Bearer {stranger_login.json()['access_token']}"}
+
+        evil_grant = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**stranger_headers, "Idempotency-Key": "evil-grant-001"},
+            json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+        )
+        assert evil_grant.status_code == 403
+        assert evil_grant.json()["detail"]["code"] == "guardian_binding_owner_required"
+
+        # 6. 合法家长（绑定拥有者）通过 HTTP 真实授予 person 级 memory_retention
+        grant_res = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**owner_headers, "Idempotency-Key": "owner-grant-001"},
+            json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+        )
+        assert grant_res.status_code == 201, grant_res.text
+        consent_body = grant_res.json()
+        assert consent_body["consent_kind"] == "memory_retention"
+        assert consent_body["subject_person_id"] == child_id
+        assert consent_body["grantor_person_id"] == owner_id
+        assert consent_body["basis"] == "binding_owner_declaration"
+        assert consent_body["active"] is True
+        consent_id = consent_body["consent_id"]
+
+        # 列表接口验证
+        list_res = await client.get(f"/v1/guardian/minors/{child_id}/consents", headers=owner_headers)
+        assert list_res.status_code == 200
+        items = list_res.json()["items"]
+        assert len(items) == 1
+        assert items[0]["consent_id"] == consent_id
+
+        # 7. 授予后，/session-policy 读门识别到有效 person 级 consent：天花板解除（不再含 memory_retention: ephemeral_only）
+        policy_res2 = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
+            json={"session_id": session_id},
+        )
+        assert policy_res2.status_code == 200
+        assert "memory_retention" not in policy_res2.json()
+
+        # 8. 家长撤销该 consent
+        revoke_res = await client.delete(
+            f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
+            headers={**owner_headers, "Idempotency-Key": "owner-revoke-001"},
+        )
+        assert revoke_res.status_code == 200
+        assert revoke_res.json()["active"] is False
+
+        # 9. 撤销后，/session-policy 读门重新关闭并回到保守状态
+        policy_res3 = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
+            json={"session_id": session_id},
+        )
+        assert policy_res3.status_code == 200
+        assert policy_res3.json()["memory_retention"] == "ephemeral_only"
+

@@ -46,12 +46,14 @@ from services.guardian.domain import (
     GuardianLink,
     GuardianNotFoundError,
     GuardianStorePort,
+    PersonConsentRecord,
     Relation,
     SubjectCategory,
     SubjectTransitionError,
     validate_subject_transition,
 )
 from services.guardian.weekly_report import WeeklyReportProjector
+from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
 from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
@@ -273,6 +275,58 @@ def _consent_payload(record: ConsentRecord) -> dict[str, Any]:
         "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
         "active": record.active,
     }
+
+
+def _person_consent_payload(record: PersonConsentRecord) -> dict[str, Any]:
+    return {
+        "consent_id": record.consent_id,
+        "subject_person_id": record.subject_person_id,
+        "grantor_person_id": record.grantor_person_id,
+        "consent_kind": record.consent_kind,
+        "policy_version": record.policy_version,
+        "granted_at": record.granted_at.isoformat(),
+        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
+        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
+        "active": record.active,
+        "basis": "binding_owner_declaration",
+    }
+
+
+async def _require_binding_owner_for_subject(
+    request: Request,
+    *,
+    user: AuthenticatedUser,
+    subject_person_id: str,
+) -> None:
+    """Authorize a person-level consent against the device binding.
+
+    The only accepted grantor is the account owner of an ACTIVE
+    ``parent_for_child`` binding that names this subject as its primary
+    subject — the same binding-scoped authority that makes a guardian
+    declaration count.  A subject without such a binding is refused: nobody
+    may grant capabilities over a child they do not actually manage.
+    """
+
+    identity = getattr(request.app.state, "identity_service", None)
+    if not isinstance(identity, IdentityService):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "identity_authority_unavailable"},
+        )
+    manifests = await identity.list_active_manifests_for_person(
+        subject_person_id,
+        actor_person_id=user.user_id,
+    )
+    if not any(
+        manifest.declared_mode == "parent_for_child"
+        and manifest.account_owner_id == user.user_id
+        and subject_person_id in manifest.primary_subject_ids
+        for manifest in manifests
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "guardian_binding_owner_required"},
+        )
 
 
 async def _active_link_or_403(
@@ -640,6 +694,130 @@ async def revoke_consent(
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_consent_conflict"}) from exc
     return _consent_payload(consent)
+
+
+@router.post(
+    "/minors/{person_id}/consents",
+    status_code=status.HTTP_201_CREATED,
+)
+async def grant_person_consent(
+    person_id: str,
+    body: GuardianConsentCreate,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, Any]:
+    """Grant one consent for a subject that has no account of their own.
+
+    The subject was created by an adult's ``parent_for_child`` binding, so no
+    guardian link can ever be confirmed for them.  The binding owner is the
+    grantor; there is no child confirmation and no manufactured link.  The
+    same record is then read by the policy gates through ``active_consent``.
+    """
+
+    _require_wechat_guardian(request, user)
+    key = _require_idempotency_key(idempotency_key)
+    await _require_binding_owner_for_subject(
+        request,
+        user=user,
+        subject_person_id=person_id,
+    )
+    now = _now()
+    expires_at = (
+        now + timedelta(days=body.retention_days)
+        if body.retention_days is not None
+        else None
+    )
+    event_id = (
+        f"guardian-person-consent-grant:"
+        f"{_idempotency_uuid('guardian-person-consent', key)}"
+    )
+    try:
+        consent = await _consents(request).grant_for_person(
+            subject_person_id=person_id,
+            grantor_person_id=user.user_id,
+            consent_kind=body.consent_kind,
+            policy_version=body.policy_version,
+            evidence_event_id=event_id,
+            consent_id=_idempotency_uuid("guardian-person-consent-record", key),
+            expires_at=expires_at,
+            now=now,
+        )
+    except GuardianAccessDeniedError as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "guardian_binding_owner_required"}
+        ) from exc
+    except GuardianConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "guardian_consent_conflict"}
+        ) from exc
+    return _person_consent_payload(consent)
+
+
+@router.get("/minors/{person_id}/consents")
+async def list_person_consents(
+    person_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    _require_wechat_guardian(request, user)
+    await _require_binding_owner_for_subject(
+        request,
+        user=user,
+        subject_person_id=person_id,
+    )
+    records = await _store(request).list_person_consents(
+        subject_person_id=person_id,
+        actor_person_id=user.user_id,
+    )
+    return {"items": [_person_consent_payload(record) for record in records]}
+
+
+@router.delete("/minors/{person_id}/consents/{consent_id}")
+async def revoke_person_consent(
+    person_id: str,
+    consent_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, Any]:
+    """Revoke a person-level consent; only the granting binding owner may."""
+
+    _require_wechat_guardian(request, user)
+    key = _require_idempotency_key(idempotency_key)
+    await _require_binding_owner_for_subject(
+        request,
+        user=user,
+        subject_person_id=person_id,
+    )
+    try:
+        current = await _store(request).get_person_consent(
+            consent_id=consent_id,
+            actor_person_id=user.user_id,
+        )
+        if current.subject_person_id != person_id:
+            raise GuardianNotFoundError("guardian person consent not found")
+        consent = await _consents(request).revoke_for_person(
+            consent_id=consent_id,
+            grantor_person_id=user.user_id,
+            evidence_event_id=(
+                f"guardian-person-consent-revoke:"
+                f"{_idempotency_uuid('guardian-person-consent-revoke', key)}"
+            ),
+        )
+    except GuardianNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail={"code": "guardian_consent_not_found"}
+        ) from exc
+    except GuardianAccessDeniedError as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": "guardian_binding_owner_required"}
+        ) from exc
+    except GuardianConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "guardian_consent_conflict"}
+        ) from exc
+    return _person_consent_payload(consent)
 
 
 @router.get("/minors/{minor_user_id}/summary")

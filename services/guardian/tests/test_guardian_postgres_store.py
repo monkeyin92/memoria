@@ -237,6 +237,7 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
                     [
                         "guardian_links",
                         "guardian_consents",
+                        "guardian_person_consents",
                         "guardian_corpus_samples",
                         "tutor_practice_sessions",
                         "tutor_study_progress",
@@ -282,12 +283,13 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
             }
         finally:
             await connection.close()
-        assert len(forced_tables) == 9
+        assert len(forced_tables) == 10
         assert policy_names == {
             ("guardian_links", "guardian_controller_links"),
             ("guardian_links", "guardian_controller_links_insert"),
             ("guardian_links", "guardian_controller_links_update"),
             ("guardian_consents", "guardian_controller_consents"),
+            ("guardian_person_consents", "guardian_controller_person_consents"),
             ("guardian_corpus_samples", "guardian_controller_corpus_samples"),
             ("tutor_practice_sessions", "guardian_controller_tutor_sessions"),
             ("tutor_study_progress", "guardian_controller_tutor_progress"),
@@ -863,8 +865,10 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
         exported = await store.export_for_account(account_id="actor-a")
         assert len(exported["tutor_practice_sessions"]) == 1
         assert exported["tutor_study_progress"] is not None
+        assert "person_consents" in exported
         deleted = await store.delete_for_account(account_id="actor-a")
         assert deleted["tutor_practice_sessions"] == 1
+        assert "person_consents" in deleted
         assert await store.remaining_account_rows(account_id="actor-a") == {}
     finally:
         if store is not None:

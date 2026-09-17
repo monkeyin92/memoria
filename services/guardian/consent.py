@@ -13,6 +13,7 @@ from services.guardian.domain import (
     ConsentRecord,
     GuardianAccessDeniedError,
     GuardianStorePort,
+    PersonConsentRecord,
 )
 
 ConsentRevocationHook = Callable[[str, ConsentKind], Awaitable[None] | None]
@@ -128,6 +129,116 @@ class GuardianConsentService:
                 supersedes_event_id=revoked.evidence_event_id,
                 payload={
                     "link_id": link.link_id,
+                    "consent_id": revoked.consent_id,
+                    "consent_kind": revoked.consent_kind,
+                    "policy_version": revoked.policy_version,
+                },
+            )
+        )
+        return revoked
+
+    # ------------------------------------------------------------------
+    # Person-scoped consents (subjects with no account)
+    # ------------------------------------------------------------------
+
+    async def grant_for_person(
+        self,
+        *,
+        subject_person_id: str,
+        grantor_person_id: str,
+        consent_kind: ConsentKind,
+        policy_version: str,
+        evidence_event_id: str,
+        expires_at: datetime | None = None,
+        now: datetime | None = None,
+        consent_id: str | None = None,
+    ) -> PersonConsentRecord:
+        """Grant one consent for a subject that has no account.
+
+        The grantor is the owner of the ACTIVE ``parent_for_child`` binding
+        naming the subject; the caller has already checked that binding
+        authority (the route does it against Identity).  Evidence is written
+        first, exactly like the link-scoped grant, so a ledger failure cannot
+        leave a usable consent behind.
+        """
+
+        granted_at = (now or datetime.now(UTC)).astimezone(UTC)
+        record = PersonConsentRecord(
+            consent_id=consent_id or str(uuid.uuid4()),
+            subject_person_id=subject_person_id,
+            grantor_person_id=grantor_person_id,
+            consent_kind=consent_kind,
+            policy_version=policy_version,
+            granted_at=granted_at,
+            evidence_event_id=evidence_event_id,
+            expires_at=expires_at,
+        )
+        await self._archive.record(
+            EvidenceEvent(
+                event_id=evidence_event_id,
+                account_id=subject_person_id,
+                event_type="guardian.person_consent_granted",
+                occurred_at=granted_at,
+                speaker_class="system",
+                source="guardian.consent",
+                payload={
+                    "subject_person_id": subject_person_id,
+                    "grantor_person_id": grantor_person_id,
+                    "consent_id": record.consent_id,
+                    "consent_kind": consent_kind,
+                    "policy_version": policy_version,
+                    "expires_at": (
+                        record.expires_at.isoformat() if record.expires_at else None
+                    ),
+                },
+            )
+        )
+        return await self._store.grant_person_consent(
+            record,
+            actor_person_id=grantor_person_id,
+        )
+
+    async def revoke_for_person(
+        self,
+        *,
+        consent_id: str,
+        grantor_person_id: str,
+        evidence_event_id: str,
+        now: datetime | None = None,
+    ) -> PersonConsentRecord:
+        current = await self._store.get_person_consent(
+            consent_id=consent_id,
+            actor_person_id=grantor_person_id,
+        )
+        if current.grantor_person_id != grantor_person_id:
+            raise GuardianAccessDeniedError(
+                "only the granting person may revoke a person consent"
+            )
+        revoked_at = (now or datetime.now(UTC)).astimezone(UTC)
+        revoked = await self._store.revoke_person_consent(
+            consent_id=consent_id,
+            grantor_person_id=grantor_person_id,
+            revoked_at=revoked_at,
+            revocation_evidence_event_id=evidence_event_id,
+        )
+        if self._on_revoked is not None:
+            result = self._on_revoked(
+                revoked.subject_person_id, revoked.consent_kind
+            )
+            if inspect.isawaitable(result):
+                await result
+        await self._archive.record(
+            EvidenceEvent(
+                event_id=evidence_event_id,
+                account_id=revoked.subject_person_id,
+                event_type="guardian.person_consent_revoked",
+                occurred_at=revoked_at,
+                speaker_class="system",
+                source="guardian.consent",
+                supersedes_event_id=revoked.evidence_event_id,
+                payload={
+                    "subject_person_id": revoked.subject_person_id,
+                    "grantor_person_id": revoked.grantor_person_id,
                     "consent_id": revoked.consent_id,
                     "consent_kind": revoked.consent_kind,
                     "policy_version": revoked.policy_version,

@@ -222,6 +222,80 @@ class ConsentRecord:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PersonConsentRecord:
+    """One person-scoped guardian consent for a subject with no account.
+
+    The adult who owns the ACTIVE ``parent_for_child`` binding naming the
+    subject is the grantor; the subject never confirms anything and no
+    guardian link is manufactured.  This is a distinct record type from
+    ``ConsentRecord`` so a link-scoped consent can never be confused with a
+    binding-scoped one, and so the read gate can union both without making
+    a ``link_id`` mandatory.
+    """
+
+    consent_id: str
+    subject_person_id: str
+    grantor_person_id: str
+    consent_kind: ConsentKind
+    policy_version: str
+    granted_at: datetime
+    evidence_event_id: str
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    revocation_evidence_event_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for field in (
+            "consent_id",
+            "subject_person_id",
+            "grantor_person_id",
+            "policy_version",
+            "evidence_event_id",
+        ):
+            maximum = 64 if field == "policy_version" else 128
+            object.__setattr__(
+                self,
+                field,
+                _bounded(getattr(self, field), field=field, maximum=maximum),
+            )
+        if self.subject_person_id == self.grantor_person_id:
+            raise ValueError("person consent requires a distinct grantor and subject")
+        object.__setattr__(self, "granted_at", _utc(self.granted_at, field="granted_at"))
+        if self.expires_at is not None:
+            object.__setattr__(self, "expires_at", _utc(self.expires_at, field="expires_at"))
+            if self.expires_at <= self.granted_at:
+                raise ValueError("consent expiry must follow its grant")
+        if self.consent_kind == "corpus_recording":
+            if self.expires_at is None:
+                raise ValueError("corpus recording consent requires an expiry")
+            if self.expires_at - self.granted_at > timedelta(days=30):
+                raise ValueError("corpus recording consent cannot exceed 30 days")
+        elif self.expires_at is not None:
+            raise ValueError("only corpus recording consent may expire")
+        if self.revoked_at is not None:
+            object.__setattr__(self, "revoked_at", _utc(self.revoked_at, field="revoked_at"))
+            if self.revocation_evidence_event_id is None:
+                raise ValueError("revoked consent requires revocation evidence")
+        if self.revocation_evidence_event_id is not None:
+            object.__setattr__(
+                self,
+                "revocation_evidence_event_id",
+                _bounded(
+                    self.revocation_evidence_event_id,
+                    field="revocation_evidence_event_id",
+                ),
+            )
+            if self.revoked_at is None:
+                raise ValueError("revocation evidence requires revoked_at")
+
+    @property
+    def active(self) -> bool:
+        return self.revoked_at is None and (
+            self.expires_at is None or self.expires_at > datetime.now(UTC)
+        )
+
+
 class GuardianStorePort(Protocol):
     async def create_link(
         self,
@@ -319,6 +393,45 @@ class GuardianStorePort(Protocol):
         minor_user_id: str,
         consent_kind: ConsentKind,
     ) -> ConsentRecord | None: ...
+
+    # -- person-scoped consents (account-less subjects) ------------------
+
+    async def grant_person_consent(
+        self,
+        record: PersonConsentRecord,
+        *,
+        actor_person_id: str,
+    ) -> PersonConsentRecord: ...
+
+    async def revoke_person_consent(
+        self,
+        *,
+        consent_id: str,
+        grantor_person_id: str,
+        revoked_at: datetime,
+        revocation_evidence_event_id: str,
+    ) -> PersonConsentRecord: ...
+
+    async def get_person_consent(
+        self,
+        *,
+        consent_id: str,
+        actor_person_id: str,
+    ) -> PersonConsentRecord: ...
+
+    async def list_person_consents(
+        self,
+        *,
+        subject_person_id: str,
+        actor_person_id: str,
+    ) -> tuple[PersonConsentRecord, ...]: ...
+
+    async def active_person_consent(
+        self,
+        *,
+        subject_person_id: str,
+        consent_kind: ConsentKind,
+    ) -> PersonConsentRecord | None: ...
 
     async def export_for_account(self, *, account_id: str) -> dict[str, object]: ...
 
