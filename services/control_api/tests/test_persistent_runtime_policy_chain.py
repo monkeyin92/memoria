@@ -1915,3 +1915,381 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
         assert unknown_crisis_events == ()
         assert unknown_notifications == ()
         assert unknown_memory.json()["grounded_items"] == []
+
+
+@pytest.mark.asyncio
+async def test_both_policy_seams_reject_a_diverged_runtime_projection(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04 matrix: profile-session mismatch at BOTH seams, not just one.
+
+    The session-policy seam's mismatch cases are unit-tested against a fake
+    authority, and the response-plan seam had no mismatch case at all.  The
+    guard itself (`_current_persistent_runtime_profile`) compares nine fields of
+    the signed profile against the authority's own session projection, so the
+    only way to reach it is a projection that really diverges — which is exactly
+    the condition it exists for (a rebind/manager change or a partial write that
+    advanced the session row without re-issuing the profile).
+
+    The divergence is therefore forced on the authority's projection row while
+    the stored signed profile is left alone, and both seams must refuse to
+    decide: 503 `session_runtime_profile_binding_mismatch`, with the child's
+    policy (and any memory read) withheld.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+        profile_ttl=timedelta(minutes=30),
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        chain = await _start_session_and_switch_to_child(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id="device-mismatch-both-seams",
+            binding_id="binding-mismatch-both-seams",
+            child_person_id="minor-mismatch-both-seams",
+        )
+        await _declare_guardianship(
+            app,
+            guardian_id=chain.account_id,
+            child_id=chain.child_person_id,
+            device_id="device-mismatch-both-seams",
+            now=datetime.now(UTC),
+        )
+
+        # 1. Both seams answer the child's policy while the projection is intact.
+        healthy = await _session_policy(client, session_id=chain.session_id)
+        assert healthy.status_code == 200, healthy.text
+        assert healthy.json()["runtime_profile"]["active_subject_id"] == (
+            chain.child_person_id
+        )
+
+        # 2. Force the divergence: the authority's projection row advances the
+        #    binding version while the stored signed profile is untouched.
+        admin = await asyncpg.connect(bootstrap_dsn)
+        try:
+            updated = await admin.fetchval(
+                """
+                UPDATE session_runtime_contexts
+                SET binding_version = binding_version + 1
+                WHERE session_id = $1
+                RETURNING binding_version
+                """,
+                chain.session_id,
+            )
+        finally:
+            await admin.close()
+        assert updated == chain.child_profile.binding_version + 1
+
+        queries_before = len(catalog.queries)
+        policy_mismatch = await _session_policy(client, session_id=chain.session_id)
+        plan_mismatch = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        _dump_matrix(
+            "projection_mismatch",
+            {
+                "policy_status": policy_mismatch.status_code,
+                "policy_code": policy_mismatch.json()
+                .get("detail", {})
+                .get("code", policy_mismatch.text[:120]),
+                "plan_status": plan_mismatch.status_code,
+                "plan_code": plan_mismatch.json()
+                .get("detail", {})
+                .get("code", plan_mismatch.text[:120]),
+                "catalog_queries_delta": len(catalog.queries) - queries_before,
+            },
+        )
+
+        assert policy_mismatch.status_code == 503, policy_mismatch.text
+        assert (
+            policy_mismatch.json()["detail"]["code"]
+            == "session_runtime_profile_binding_mismatch"
+        ), policy_mismatch.text
+        # /response-plan deliberately does NOT share that 503: an authority read
+        # failure (which a mismatch is) must still let the turn answer, because
+        # the crisis reply has to be deliverable.  What it must not do is decide
+        # anything about a subject it could not read, so the conservative
+        # profile is the whole contract here.
+        assert plan_mismatch.status_code == 200, plan_mismatch.text
+        plan_body = plan_mismatch.json()
+        assert plan_body["grounded_items"] == []
+        assert plan_body.get("memory_retention") in (None, "ephemeral_only")
+        _dump_matrix(
+            "projection_mismatch_plan",
+            {
+                "grounded_items": plan_body["grounded_items"],
+                "memory_retention": plan_body.get("memory_retention"),
+                "direct_text": plan_body.get("direct_text"),
+            },
+        )
+        # Neither seam may reach a memory read, and the crisis fixed reply is
+        # still delivered verbatim without being routed as a minor crisis.
+        assert len(catalog.queries) == queries_before
+        crisis_mismatch = await _response_plan(
+            client,
+            session_id=chain.session_id,
+            query=_CRISIS_QUERY,
+            turn_id=2,
+            generation_id=2,
+        )
+        assert crisis_mismatch.status_code == 200, crisis_mismatch.text
+        assert crisis_mismatch.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert await _crisis_evidence_events(app, account_id=chain.child_person_id) == ()
+        assert await _crisis_evidence_events(app, account_id=chain.account_id) == ()
+        assert len(catalog.queries) == queries_before
+
+
+
+
+@pytest.mark.asyncio
+async def test_legal_manager_change_does_not_yet_close_the_agent_facing_seams(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04 OPEN DEFECT (characterization): the seams survive a manager change.
+
+    Characterization test, NOT a guarantee.  It pins today's behaviour so the
+    gap is measured instead of assumed, and so a future fix has a failing case
+    to flip.
+
+    What it shows: once a device's ACTIVE binding is superseded by an owner that
+    is NOT the session's account, `/v1/interaction/session-policy` and
+    `/v1/interaction/response-plan` keep answering for the OLD session — same
+    active subject, same capabilities, and for a self-owned account turn still a
+    real account-keyed memory read.  The read path only re-checks the profile
+    projection, epoch and TTL (`PostgresSessionRuntimeService.current`), and
+    nothing in `interaction.py` consults the binding or device trust, so the
+    authorization basis can be withdrawn while the Agent-facing policy keeps
+    being granted until the profile TTL expires.
+
+    The invariant that DOES hold today and must not regress is asserted too: no
+    other person's subject is ever substituted, and the crisis fixed reply is
+    never suppressed.  Deliberately NOT fixed here: deciding whether the
+    advisory seams must re-validate the binding (and what a legitimate rebind
+    should then return) is a product/security decision with real blast radius.
+    """
+
+    store, bootstrap_dsn = postgres_runtime
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    signing_key = app.state.settings.runtime_profile_signing_key()
+    app.state.session_runtime_service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=signing_key,
+        profile_ttl=timedelta(minutes=30),
+    )
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+
+    device_id = "device-manager-change"
+    binding_id = "binding-manager-change"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # A self-owned adult session: the strongest form of the question, because
+        # this is the shape whose seams DO allow an account-keyed memory read.
+        session = await _open_subject_session(
+            client,
+            app,
+            bootstrap_dsn=bootstrap_dsn,
+            device_id=device_id,
+            binding_id=binding_id,
+            subject_id="subject-manager-change",
+            declared_mode="self_use",
+            subject_category="adult",
+            age_band="adult",
+            switch_to_account=True,
+        )
+        assert session.active_subject_id == session.account_id
+        assert session.profile.service_mode.value == "adult_companion"
+
+        before_policy = await _session_policy(client, session_id=session.session_id)
+        assert before_policy.status_code == 200, before_policy.text
+        queries_before = len(catalog.queries)
+        before_turn = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=1,
+            generation_id=1,
+        )
+        assert before_turn.status_code == 200, before_turn.text
+        reads_before = len(catalog.queries) - queries_before
+
+        # The manager change on the authority plane.  Only ``status`` and
+        # ``valid_until`` are mutable on a binding row (the schema guard rejects
+        # the rest), the take-over needs a new binding VERSION (unique key is
+        # device_id + binding_version), and the app-side identity HTTP routes
+        # write the local SQLite plane — so a supersede that the Runtime
+        # authority can observe is applied here.
+        now = datetime.now(UTC)
+        admin = await asyncpg.connect(bootstrap_dsn)
+        try:
+            superseded = await admin.fetchval(
+                """
+                UPDATE identity_device_bindings
+                SET status = 'superseded'
+                WHERE binding_id = $1
+                RETURNING status
+                """,
+                binding_id,
+            )
+            await admin.execute(
+                """
+                INSERT INTO identity_persons (
+                    person_id, display_name, subject_category, age_band,
+                    age_evidence_status, locale, timezone, status,
+                    created_at, updated_at
+                ) VALUES ($1, $1, 'adult', 'adult', 'verified', 'zh-CN',
+                          'Asia/Shanghai', 'active', $2, $2)
+                """,
+                "manager-b",
+                now,
+            )
+            await admin.execute(
+                """
+                INSERT INTO identity_device_bindings (
+                    binding_id, device_id, declared_mode, family_space_id,
+                    account_owner_person_id, binding_version, status, reason,
+                    valid_from, valid_until, supersedes_binding_id,
+                    service_profile_version, policy_bundle_version,
+                    consent_snapshot_id, persona_assignment_id, created_at
+                ) VALUES ($1, $2, 'parent_for_child', $3, $4, 2, 'active',
+                          'supersede', $5, NULL, $6, 'delegated-v1',
+                          'multi-subject-v2', NULL, 'starlight:v1', $5)
+                """,
+                "binding-manager-change-b",
+                device_id,
+                f"family-{device_id}",
+                "manager-b",
+                now,
+                binding_id,
+            )
+        finally:
+            await admin.close()
+        assert superseded == "superseded"
+
+        queries_before_change = len(catalog.queries)
+        after_policy = await _session_policy(client, session_id=session.session_id)
+        after_turn = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_MEMORY_QUERY,
+            turn_id=2,
+            generation_id=2,
+        )
+        crisis_after = await _response_plan(
+            client,
+            session_id=session.session_id,
+            query=_CRISIS_QUERY,
+            turn_id=3,
+            generation_id=3,
+        )
+        # The authority read path itself, deliberately probed on its own: if this
+        # succeeds after the take-over, the seams above are downstream of a read
+        # path that never re-validated the binding.
+        runtime_service = app.state.session_runtime_service
+        assert isinstance(runtime_service, PostgresSessionRuntimeService)
+        try:
+            await runtime_service.current(
+                actor_id=session.account_id,
+                session_id=session.session_id,
+                now=datetime.now(UTC),
+            )
+        except Exception as exc:  # noqa: BLE001 - the outcome itself is the observation
+            current_after = type(exc).__name__
+        else:
+            current_after = "ok"
+        # ... and the WRITE path of the SAME authority, for the asymmetry.  A
+        # superseded binding is expected to fail the switch's own binding lock;
+        # if it does, the read path is the only place missing the check.
+        try:
+            await runtime_service.switch_subject(
+                SwitchPersistentSubjectCommand(
+                    session_id=session.session_id,
+                    actor_id=session.account_id,
+                    subject_id=session.account_id,
+                    now=datetime.now(UTC),
+                    requested_capabilities=("chat",),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - the outcome itself is the observation
+            switch_after = type(exc).__name__
+        else:
+            switch_after = "ok"
+        reads_after_change = len(catalog.queries) - queries_before_change
+        _dump_matrix(
+            "manager_change_self_owned",
+            {
+                "reads_before_change": reads_before,
+                "policy_status_after": after_policy.status_code,
+                "policy_subject_after": after_policy.json()
+                .get("runtime_profile", {})
+                .get("active_subject_id"),
+                "policy_is_the_account": after_policy.json()
+                .get("runtime_profile", {})
+                .get("active_subject_id")
+                == session.account_id,
+                "policy_conversation_after": after_policy.json()
+                .get("capabilities", {})
+                .get("conversation"),
+                "policy_owner_display_name_after": after_policy.json().get(
+                    "owner_display_name"
+                ),
+                "plan_status_after": after_turn.status_code,
+                "plan_grounded_items_after": len(
+                    after_turn.json().get("grounded_items", [])
+                )
+                if after_turn.status_code == 200
+                else None,
+                "account_keyed_reads_after_change": reads_after_change,
+                "crisis_status_after": crisis_after.status_code,
+                "crisis_is_fixed_reply": crisis_after.json().get("direct_text")
+                == CRISIS_SUPPORT_REPLY
+                if crisis_after.status_code == 200
+                else None,
+                "authority_current_after": current_after,
+                "authority_switch_after": switch_after,
+            },
+        )
+
+        # Baseline: this shape really does read the account's own memory, so the
+        # "still reading after the change" observation below is not a no-op.
+        assert reads_before == 1
+        assert before_turn.json()["grounded_items"]
+
+        # Invariants that hold today and must survive any fix.
+        assert crisis_after.status_code == 200, crisis_after.text
+        assert crisis_after.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert (
+            after_policy.json()["runtime_profile"]["active_subject_id"]
+            in (session.account_id, None)
+        ), "no other person's subject may be substituted"
+
+        # The open defect, pinned: the withdrawn session is still authorised.
+        assert after_policy.status_code == 200, after_policy.text
+        assert (
+            after_policy.json()["runtime_profile"]["active_subject_id"]
+            == session.account_id
+        )
+        assert after_policy.json()["capabilities"]["conversation"] is True
+        assert reads_after_change == 1, (
+            "OPEN DEFECT: after the binding was superseded by another owner the "
+            "seam still reads the account-keyed memory; this assertion is the "
+            "one a fix must flip to 0 (and the seam should fail closed instead)"
+        )
