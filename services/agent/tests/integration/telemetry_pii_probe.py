@@ -46,7 +46,7 @@ from services.agent.tests.integration.telemetry_pii_emitter import (
 CAPTURE_ENV = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
 ALLOW_PII_ENV = "LIVEKIT_TELEMETRY_ALLOW_PII"
 EMITTER_MODULE = "services.agent.tests.integration.telemetry_pii_emitter"
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 @dataclass(frozen=True, slots=True)
