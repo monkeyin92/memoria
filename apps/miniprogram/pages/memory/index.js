@@ -115,6 +115,7 @@ Page({
   },
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 1 }); }
     const authenticated = api.hasAuthenticatedSession();
     this.setData({ authenticated });
     if (!authenticated) {
@@ -257,6 +258,10 @@ Page({
 
   openArchive() {
     wx.navigateTo({ url: "/pages/digital-self/index" });
+  },
+
+  goCompanion() {
+    wx.switchTab({ url: "/pages/companion/index" });
   },
 
   async loginForReview() {

@@ -1,130 +1,71 @@
-.home-hero {
-  margin-top: 12rpx;
-  padding: 46rpx 44rpx 0;
-  border-radius: 52rpx;
-  background: #172f43;
-  color: #fff;
+.home-hero-main {
+  align-items: flex-start;
+  margin-top: 16rpx;
 }
 
-.home-hero-offline {
-  background: #243848;
+.home-hero-copy {
+  flex: 1;
+  min-width: 0;
 }
 
-.hero-top {
+.home-hero-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  position: relative;
-  z-index: 1;
-}
-
-.device-place {
-  color: #d0dce5;
-  font-size: 24rpx;
-}
-
-.home-hero .pill {
-  background: #2d4a54;
-  color: #c4e3d3;
-}
-
-.home-hero .pill-amber {
-  background: #4a3d2d;
-  color: #f0d7b0;
-}
-
-.hero-heading {
-  display: block;
-  margin: 22rpx 0 18rpx;
-  font-size: 44rpx;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.hero-caption {
-  display: block;
-  color: #c3d5e1;
-  font-size: 24rpx;
-  line-height: 1.75;
-}
-
-.hero-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  position: relative;
-  z-index: 1;
+  gap: 24rpx;
   min-height: 102rpx;
-  margin-top: 36rpx;
+  margin-top: 28rpx;
+  padding-top: 24rpx;
   border-top: 1rpx solid rgba(255, 255, 255, 0.14);
   color: #c3d5e1;
   font-size: 24rpx;
 }
 
-.hero-link {
-  color: #edf8fc;
-  font-size: 24rpx;
-}
-
-.next-action {
+.home-todo-head {
   display: flex;
   align-items: center;
   gap: 20rpx;
-  min-height: 166rpx;
-  margin-top: 28rpx;
-  padding: 32rpx;
-  border-radius: 34rpx;
-  background: #e0ecec;
 }
 
-.next-action-copy {
+.home-todo-copy {
   flex: 1;
+  min-width: 0;
 }
 
-.next-action-title {
-  display: block;
-  font-size: 28rpx;
-  font-weight: 600;
+.home-todo-copy .count-badge {
+  margin-left: 12rpx;
+  vertical-align: 2rpx;
 }
 
-.next-action-meta {
-  display: block;
-  margin-top: 6rpx;
-  color: #536b72;
-  font-size: 24rpx;
+.home-todo-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: #eef1f5;
+  color: #596a78;
+  transition: transform 250ms;
 }
 
-.recap-preview {
-  padding-bottom: 32rpx;
-  border-bottom: 1rpx solid #dfe6ea;
+.home-todo-chevron.is-open {
+  transform: rotate(180deg);
 }
 
-.recap-meta {
+.home-todo-body .caption {
+  margin-top: 16rpx;
+}
+
+.home-recap-meta {
   display: flex;
   align-items: center;
   gap: 18rpx;
   margin-bottom: 18rpx;
+}
+
+.home-recap-time {
   color: #596a78;
-  font-size: 24rpx;
-}
-
-.recap-title {
-  display: block;
-  font-size: 34rpx;
-  font-weight: 600;
-  line-height: 1.6;
-}
-
-.recap-body {
-  display: block;
-  margin: 16rpx 0;
-  color: #596a78;
-  font-size: 26rpx;
-  line-height: 1.8;
-}
-
-.recap-read {
-  display: block;
-  color: #326e70;
   font-size: 24rpx;
 }

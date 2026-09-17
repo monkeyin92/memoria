@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "监护与成长小结",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }

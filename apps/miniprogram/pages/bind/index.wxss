@@ -1,30 +1,47 @@
-.mode-card {
-  padding-top: 36rpx;
+.back-row {
+  padding: 8rpx 0 4rpx;
 }
 
-.mode-card-head {
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 88rpx;
+  color: #326e70;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.page-head {
+  padding: 12rpx 0 4rpx;
+}
+
+.bind-mode-list {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 16rpx;
+  flex-direction: column;
+  margin-top: 28rpx;
 }
 
-.mode-card-title {
-  font-size: 36rpx;
+.bind-mode-list .choice-card {
+  align-items: flex-start;
+}
+
+.choice-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.choice-title {
+  display: block;
+  font-size: 30rpx;
   font-weight: 600;
 }
 
-.mode-card-tagline {
-  color: #326e70;
-  font-size: 24rpx;
-}
-
-.mode-card-desc {
+.choice-desc {
   display: block;
-  margin-top: 14rpx;
+  margin-top: 8rpx;
   color: #596a78;
-  font-size: 26rpx;
-  line-height: 1.7;
+  font-size: 24rpx;
+  line-height: 1.6;
 }
 
 .mode-footnote,
@@ -34,6 +51,32 @@
   color: #596a78;
   font-size: 22rpx;
   line-height: 1.65;
+}
+
+.field {
+  margin-bottom: 12rpx;
+}
+
+.readonly-chip {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-height: 88rpx;
+  padding: 16rpx 24rpx;
+  border-radius: 20rpx;
+  background: #e9eef2;
+}
+
+.readonly-code {
+  color: #192f41;
+  font-size: 28rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+}
+
+.readonly-hint {
+  color: #596a78;
+  font-size: 24rpx;
 }
 
 .picker-row {
@@ -63,37 +106,8 @@
   flex: 1;
 }
 
-.notice-card {
-  box-sizing: border-box;
-  margin-top: 28rpx;
-  padding: 26rpx 28rpx;
-  border-radius: 26rpx;
-  background: #f3ede2;
-}
-
-.notice-title {
-  display: block;
-  color: #855524;
-  font-size: 27rpx;
-  font-weight: 600;
-}
-
-.notice-copy {
-  display: block;
-  margin-top: 10rpx;
-  color: #855524;
-  font-size: 24rpx;
-  line-height: 1.65;
-}
-
-.form-back-button {
-  flex: 0 0 220rpx;
-  margin-top: 28rpx;
-}
-
-.form-next-button {
-  flex: 1;
-  margin-top: 28rpx;
+.bind-nav {
+  margin-top: 32rpx;
 }
 
 .offer-row {
@@ -125,6 +139,11 @@
   border-color: #172f43;
 }
 
+.offer-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .offer-label {
   display: block;
   font-size: 27rpx;
@@ -150,12 +169,24 @@
   opacity: 0.62;
 }
 
-.submit-button {
-  margin-top: 32rpx;
+.notice-copy {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  line-height: 1.65;
+}
+
+.done-card {
+  text-align: center;
+}
+
+.done-card face-badge {
+  margin: 8rpx auto 0;
 }
 
 .done-badge {
   display: inline-flex;
+  margin-top: 20rpx;
   padding: 8rpx 24rpx;
   border-radius: 999rpx;
   background: #e8f1ee;
@@ -177,4 +208,9 @@
   color: #596a78;
   font-size: 23rpx;
   line-height: 1.65;
+  text-align: left;
+}
+
+.done-card .form-note {
+  text-align: left;
 }

@@ -1,0 +1,14 @@
+<view class="mem-tabbar">
+  <view
+    class="mem-tab {{index === selected ? 'mem-tab-on' : ''}}"
+    wx:for="{{tabs}}"
+    wx:key="pagePath"
+    wx:for-index="index"
+    data-index="{{index}}"
+    bindtap="onTapTab"
+  >
+    <view class="mem-tab-indicator" wx:if="{{index === selected}}"></view>
+    <view class="mem-tab-icon"><rich-text nodes="{{item.icon}}"></rich-text></view>
+    <text class="mem-tab-text">{{item.text}}</text>
+  </view>
+</view>

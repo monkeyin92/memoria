@@ -14,6 +14,7 @@ Page({
   },
 
   async onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 2 }); }
     if (!(await requireLogin({ reason: "edit_profile", redirect: "/pages/companion/index" }))) {
       return;
     }

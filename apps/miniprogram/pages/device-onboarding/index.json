@@ -1,5 +1,8 @@
 {
-  "navigationBarTitleText": "首次启用机器人",
+  "navigationBarTitleText": "配网引导",
   "enablePullDownRefresh": false,
-  "backgroundTextStyle": "dark"
+  "backgroundTextStyle": "dark",
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }

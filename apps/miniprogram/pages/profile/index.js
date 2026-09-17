@@ -360,6 +360,9 @@ Page({
   },
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 4 });
+    }
     const authenticated = api.hasAuthenticatedSession();
     const identity = api.currentIdentity();
     if (identity && identity.user_id !== this.data.deviceBindingAccountId) {

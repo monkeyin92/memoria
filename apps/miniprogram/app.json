@@ -20,9 +20,10 @@
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
-    "color": "#6a7a86",
-    "selectedColor": "#326e70",
-    "backgroundColor": "#f9fbfc",
+    "custom": true,
+    "color": "#93a1ab",
+    "selectedColor": "#172f43",
+    "backgroundColor": "#ffffff",
     "borderStyle": "white",
     "list": [
       {
@@ -30,12 +31,16 @@
         "text": "首页"
       },
       {
-        "pagePath": "pages/device/index",
-        "text": "设备"
-      },
-      {
         "pagePath": "pages/memory/index",
         "text": "回顾"
+      },
+      {
+        "pagePath": "pages/companion/index",
+        "text": "伙伴"
+      },
+      {
+        "pagePath": "pages/device/index",
+        "text": "设备"
       },
       {
         "pagePath": "pages/profile/index",

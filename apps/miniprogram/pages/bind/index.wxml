@@ -1,40 +1,59 @@
 <view class="page-shell">
-  <text class="eyebrow">首次绑定</text>
-  <text class="page-title">让这台机器人陪你</text>
-  <text class="page-subtitle">先选择主要想陪谁，再给这位使用者起个备注；首页的当前使用者会显示这条备注。</text>
+  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
+  <view class="page-head">
+    <text class="page-title">绑定设备</text>
+    <block wx:if="{{step === 'mode'}}"><text class="page-subtitle">第 1 步 · 选择绑定方式</text></block>
+    <block wx:elif="{{step === 'form'}}"><text class="page-subtitle">第 2 步 · 填写使用者信息</text></block>
+    <block wx:elif="{{step === 'review'}}"><text class="page-subtitle">第 4 步 · 确认授权并提交</text></block>
+    <block wx:elif="{{step === 'done'}}"><text class="page-subtitle">第 5 步 · 完成</text></block>
+    <block wx:else><text class="page-subtitle">绑定前先确认服务端认领</text></block>
+  </view>
+  <view class="dots">
+    <view class="dot {{step === 'mode' ? 'dot-now' : (step === 'form' || step === 'review' || step === 'done' ? 'dot-done' : '')}}"></view>
+    <view class="dot {{step === 'form' ? 'dot-now' : (step === 'review' || step === 'done' ? 'dot-done' : '')}}"></view>
+    <view class="dot {{step === 'review' || step === 'done' ? 'dot-done' : ''}}"></view>
+    <view class="dot {{step === 'review' ? 'dot-now' : (step === 'done' ? 'dot-done' : '')}}"></view>
+    <view class="dot {{step === 'done' ? 'dot-done' : ''}}"></view>
+  </view>
 
   <block wx:if="{{step === 'loading'}}">
-    <view class="card">
-      <text class="settings-title">正在确认认领</text>
-      <text class="setting-desc">绑定页只接受启用流程确认过的 claim，不在这里重新识别设备。</text>
+    <view class="l2-card">
+      <text class="l2-card-title">正在确认认领</text>
+      <text class="l2-card-sub">绑定页只接受启用流程确认过的 claim，不在这里重新识别设备。</text>
       <text class="loading-text">正在读取服务端认领状态…</text>
     </view>
   </block>
 
   <block wx:if="{{step === 'error'}}">
-    <view class="card">
-      <text class="settings-title">无法继续绑定</text>
-      <text class="setting-desc">{{error}}</text>
-      <button class="secondary-button" bindtap="openDevicePage">返回设备管理</button>
+    <view class="l2-card">
+      <text class="l2-card-title">无法继续绑定</text>
+      <text class="l2-card-sub">{{error}}</text>
+      <button class="secondary-button empty-button" bindtap="openDevicePage">返回设备管理</button>
     </view>
   </block>
 
-  <!-- 步骤 2：四分流 -->
+  <!-- 步骤 1：绑定方式二选一 -->
   <block wx:if="{{step === 'mode'}}">
-    <view wx:for="{{modeCards}}" wx:key="id" class="card mode-card" data-mode="{{item.id}}" bindtap="chooseMode">
-      <view class="mode-card-head">
-        <text class="mode-card-title">{{item.title}}</text>
-        <text class="mode-card-tagline">{{item.tagline}}</text>
+    <view class="bind-mode-list">
+      <view wx:for="{{modeCards}}" wx:key="id" class="choice-card" data-mode="{{item.id}}" bindtap="chooseMode">
+        <view class="choice-radio"></view>
+        <view class="choice-copy">
+          <text class="choice-title">{{item.title}}</text>
+          <text class="choice-desc">{{item.tagline}}</text>
+        </view>
       </view>
-      <text class="mode-card-desc">{{item.description}}</text>
     </view>
     <text class="mode-footnote">四种场景会建立不同的主体档案、关系与记忆空间；后续都可以在“设备与成员”中修改。</text>
   </block>
 
-  <!-- 步骤 3：按场景采集最小必要信息 -->
+  <!-- 步骤 2：设备编号只读 + 使用者备注 -->
   <block wx:if="{{step === 'form'}}">
-    <view class="card">
-      <text class="settings-title">{{modeMeta.title}} · 基本信息</text>
+    <view class="l2-card">
+      <text class="l2-card-title">{{modeMeta.title}} · 基本信息</text>
+      <view class="field">
+        <text class="field-label">设备编号</text>
+        <view class="readonly-chip"><text class="readonly-code">{{claim.device_id || claimId}}</text><text class="readonly-hint">扫码自动获取，无需填写</text></view>
+      </view>
 
       <!-- A. 给孩子使用 -->
       <block wx:if="{{declaredMode === 'parent_for_child'}}">
@@ -83,7 +102,7 @@
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以服务端验证为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。</text>
+        <text class="form-note">首页「当前使用者」会显示这条备注，不是微信昵称。年龄以服务端验证为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注。</text>
       </block>
 
       <!-- C. 给父母使用 -->
@@ -100,7 +119,7 @@
         <picker range="{{adminVisibilityOptions}}" range-key="label" value="{{form.adminVisibilityIndex}}" data-key="adminVisibilityIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">子女可见范围</text><text class="picker-value">{{adminVisibilityOptions[form.adminVisibilityIndex].label}}</text></view>
         </picker>
-        <view class="notice-card parent-acceptance-notice">
+        <view class="notice notice-warn parent-acceptance-notice">
           <text class="notice-title">服务与数据规则需要父母本人确认</text>
           <text class="notice-copy">绑定完成后，请让父母本人在设备上确认接受；在此之前你不会代替父母开启人生记录等能力。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
         </view>
@@ -123,18 +142,19 @@
         <view class="picker-row"><text class="picker-label">选择人格</text><text class="picker-value">{{personaOptions[personaIndex].name}}</text></view>
       </picker>
 
-      <view class="button-row">
-        <button class="secondary-button form-back-button" bindtap="backToMode">返回</button>
-        <button class="primary-button form-next-button" bindtap="goToReview">下一步</button>
+      <view class="button-row bind-nav">
+        <button class="secondary-button" bindtap="backToMode">上一步</button>
+        <button class="primary-button" bindtap="goToReview">下一步</button>
       </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
     </view>
   </block>
 
-  <!-- 步骤 4：确认授权与提交 -->
+  <!-- 步骤 3/4：协议勾选与汇总确认 -->
   <block wx:if="{{step === 'review'}}">
-    <view class="card">
-      <text class="settings-title">确认一下</text>
+    <view class="l2-card">
+      <text class="l2-card-title">确认一下</text>
+      <text class="l2-card-sub">第 3 步勾选授权，第 4 步核对信息后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
       <view class="summary-row"><text class="summary-key">陪伴人格</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
@@ -152,15 +172,18 @@
       </view>
       <text class="form-note">敏感能力（声音复刻、数字自我、传承、原始音频等）只有明确勾选才会申请；数字自我、声音复刻与传承默认不勾选。</text>
 
-      <button class="primary-button submit-button" loading="{{submitting}}" bindtap="submitBinding">提交绑定</button>
-      <button class="secondary-button form-back-button" bindtap="backToForm">返回修改</button>
+      <view class="button-row bind-nav">
+        <button class="secondary-button" bindtap="backToForm">上一步</button>
+        <button class="primary-button" loading="{{submitting}}" bindtap="submitBinding">提交绑定</button>
+      </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
     </view>
   </block>
 
-  <!-- 步骤 5：绑定完成 -->
+  <!-- 步骤 5：完成徽章 -->
   <block wx:if="{{step === 'done'}}">
-    <view class="card done-card">
+    <view class="l2-card done-card">
+      <face-badge role="starlight" size="lg"></face-badge>
       <text class="done-badge">已提交初始化</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
@@ -168,8 +191,9 @@
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
       <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它对着设备说几句话完成主人声纹；手机不录音。</text>
       <view class="button-row">
-        <button class="primary-button form-next-button" bindtap="continueActivation">继续等待激活</button>
+        <button class="primary-button" bindtap="continueActivation">继续等待激活</button>
       </view>
+      <button class="secondary-button empty-button" bindtap="openDevicePage">返回设备管理</button>
       <text class="form-note">说话人登记只用于区分当前是谁在说话，不是声音复刻；设备端完成后状态由服务端记录。</text>
     </view>
   </block>

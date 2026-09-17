@@ -1,1 +1,46 @@
-/* Shared porcelain styles live in app.wxss. */
+.back-row {
+  padding: 8rpx 0 4rpx;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 88rpx;
+  color: #326e70;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.page-head {
+  padding: 12rpx 0 4rpx;
+}
+
+.auth-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.auth-card-head .l2-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.l2-card .setting-desc {
+  margin-top: 12rpx;
+  line-height: 1.7;
+}
+
+.auth-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #dfe6ea;
+}
+
+.auth-card-foot .primary-button {
+  width: auto;
+  flex: 1;
+}

@@ -1,1 +1,105 @@
-/* Shared porcelain styles live in app.wxss. */
+.back-row {
+  padding: 8rpx 0 4rpx;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 88rpx;
+  color: #326e70;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.page-head {
+  padding: 12rpx 0 4rpx;
+}
+
+.ds-hero {
+  display: flex;
+  align-items: center;
+  gap: 32rpx;
+  margin-top: 28rpx;
+  padding: 40rpx 36rpx;
+}
+
+.ds-hero face-badge {
+  flex: none;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(61, 90, 128, 0.18);
+}
+
+.ds-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.ds-num {
+  display: block;
+  color: #22344d;
+  font-size: 68rpx;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ds-sub {
+  display: block;
+  margin-top: 12rpx;
+  color: #5c6b76;
+  font-size: 24rpx;
+}
+
+.dim-row {
+  padding: 24rpx 0;
+}
+
+.dim-row + .dim-row {
+  border-top: 1rpx solid #dfe6ea;
+}
+
+.dim-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20rpx;
+  margin-bottom: 16rpx;
+}
+
+.dim-name {
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.dim-meta {
+  flex: none;
+  color: #93a1ab;
+  font-size: 24rpx;
+}
+
+.fold-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.fold-title {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.fold-chevron {
+  color: #93a1ab;
+  transition: transform 250ms;
+}
+
+.fold-chevron-open {
+  transform: rotate(180deg);
+}
+
+.fold-summary {
+  display: block;
+  padding: 16rpx 0;
+  color: #5c6b76;
+  font-size: 26rpx;
+}

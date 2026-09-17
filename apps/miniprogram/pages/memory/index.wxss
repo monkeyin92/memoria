@@ -1,50 +1,61 @@
-.segments {
-  display: flex;
-  gap: 8rpx;
-  margin: 8rpx 0 32rpx;
-  padding: 8rpx;
-  border-radius: 26rpx;
-  background: #e7edf1;
+.memory-summarize {
+  margin-top: 28rpx;
 }
 
-.segment {
+.memory-day {
+  margin-top: 20rpx;
+}
+
+.memory-day-copy {
   flex: 1;
-  min-height: 88rpx;
-  padding: 16rpx 12rpx;
-  border-radius: 20rpx;
-  color: #596a78;
-  font-size: 26rpx;
-  text-align: center;
-  line-height: 88rpx;
+  min-width: 0;
 }
 
-.segment-on {
-  background: #fff;
-  color: #192f41;
-  font-weight: 600;
+.memory-day-selected {
+  box-shadow: inset 0 0 0 2rpx #326e70;
 }
 
-.timeline-item {
-  margin-bottom: 24rpx;
+.memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 16rpx;
 }
 
-.timeline-time {
-  display: block;
-  margin-bottom: 12rpx;
-  color: #596a78;
+.memory-tag {
   font-size: 22rpx;
 }
 
-.day-selected {
-  box-shadow: inset 0 0 0 2rpx #172f43;
+.memory-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin: 28rpx 0 8rpx;
 }
 
-.recap-title {
-  display: block;
-  margin: 16rpx 0 10rpx;
-  font-size: 32rpx;
-  font-weight: 600;
-  line-height: 1.5;
+.memory-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.memory-empty .l2-card-title {
+  margin-top: 24rpx;
+  text-align: center;
+}
+
+.memory-empty .l2-card-sub {
+  text-align: center;
+}
+
+.memory-empty .button-row {
+  justify-content: center;
+}
+
+.memory-empty .button-row button {
+  flex: none;
+  min-width: 320rpx;
 }
 
 .recap-body {
@@ -52,46 +63,4 @@
   color: #596a78;
   font-size: 26rpx;
   line-height: 1.8;
-}
-
-.topic-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12rpx;
-  margin-top: 20rpx;
-}
-
-.topic-tag {
-  padding: 6rpx 16rpx;
-  border-radius: 12rpx;
-  background: #f0f4f6;
-  color: #62747e;
-  font-size: 22rpx;
-}
-
-.filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16rpx;
-  margin-bottom: 24rpx;
-}
-
-.filter-chip {
-  min-height: 72rpx;
-  padding: 12rpx 28rpx;
-  border: 1rpx solid #cedae1;
-  border-radius: 46rpx;
-  color: #596a78;
-  font-size: 24rpx;
-  line-height: 48rpx;
-}
-
-.filter-on {
-  background: #e1edeb;
-  border-color: #b4d1cd;
-  color: #2d6669;
-}
-
-.memory-card {
-  margin-top: 20rpx;
 }

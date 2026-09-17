@@ -1,3 +1,47 @@
+.companion-shell .role-flow {
+  padding-bottom: 20rpx;
+}
+
+.companion-current {
+  align-self: flex-start;
+  margin-bottom: 16rpx;
+}
+
+.companion-face {
+  display: flex;
+  justify-content: center;
+  margin: 8rpx 0 20rpx;
+}
+
+.companion-desc {
+  display: block;
+  margin-top: 10rpx;
+  color: #5c6b76;
+  font-size: 26rpx;
+  line-height: 1.65;
+}
+
+.companion-tone {
+  display: block;
+  margin-top: 8rpx;
+  color: #93a1ab;
+  font-size: 24rpx;
+}
+
+.companion-actions {
+  margin-top: 24rpx;
+}
+
+.companion-voice {
+  margin-top: 20rpx;
+  padding-top: 8rpx;
+  padding-bottom: 8rpx;
+}
+
+.companion-voice .setting-row + .setting-row {
+  border-top: 1rpx solid #dfe6ea;
+}
+
 .choice-radio-on {
   border-color: #172f43;
   background: #172f43;

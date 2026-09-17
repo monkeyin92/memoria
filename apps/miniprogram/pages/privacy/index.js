@@ -9,6 +9,8 @@ Page({
     acting: false,
     error: "",
     consent: null,
+    memoryOn: true,
+    voiceOn: true,
   },
 
   onLoad() {
@@ -102,8 +104,40 @@ Page({
     }
   },
 
-  async revoke() {
+  onRawAudioSwitch(event) {
+    const on = !!(event && event.detail && event.detail.value);
+    if (on && !this.data.consent) this.grant();
+    if (!on && this.data.consent) this.revoke();
+  },
+
+  onMemorySwitch(event) {
+    this.setData({ memoryOn: !!(event && event.detail && event.detail.value) });
+  },
+
+  onVoiceSwitch(event) {
+    this.setData({ voiceOn: !!(event && event.detail && event.detail.value) });
+  },
+
+  revokeMemoryTip() {
+    wx.showModal({
+      title: "撤回记忆档案授权",
+      content: "撤回后将删除已归档的记忆内容，删除范围与完成时间会以书面回执告知。",
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
+  revokeVoiceTip() {
+    wx.showModal({
+      title: "撤回声音样本授权",
+      content: "撤回后将删除已保存的声音样本，删除范围与完成时间会以书面回执告知。",
+      showCancel: false,
+      confirmText: "知道了",
+    });
+  },
+
     // 配置动作：同上，fail-closed 且不按本地年龄放开。
+  async revoke() {
     const seam = configActionGate("raw_audio_consent");
     if (!seam.allowed) {
       this.setData({ error: seam.message });

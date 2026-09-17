@@ -1,5 +1,8 @@
 {
   "navigationBarTitleText": "设备",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark"
+  "backgroundTextStyle": "dark",
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }

@@ -93,6 +93,11 @@ Page({
     this.refresh().finally(() => wx.stopPullDownRefresh());
   },
 
+  /* 纯展示：非 tab 页经导航返回。 */
+  goBack() {
+    wx.navigateBack({ delta: 1 });
+  },
+
   _enterGuestState() {
     this.setData({
       authenticated: false,

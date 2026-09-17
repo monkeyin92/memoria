@@ -2,30 +2,147 @@
   padding-bottom: 100rpx;
 }
 
+.back-row {
+  padding: 8rpx 0 4rpx;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 88rpx;
+  color: #326e70;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.page-head {
+  padding: 12rpx 0 4rpx;
+}
+
+.ob-steps-card {
+  margin-top: 24rpx;
+}
+
+.stepper {
+  margin-top: 28rpx;
+}
+
+.step-item {
+  display: flex;
+  gap: 24rpx;
+  position: relative;
+  padding-bottom: 44rpx;
+}
+
+.step-item::before {
+  content: '';
+  position: absolute;
+  left: 26rpx;
+  top: 56rpx;
+  bottom: 4rpx;
+  width: 4rpx;
+  border-radius: 2rpx;
+  background: #dfe6ea;
+}
+
+.step-item:last-child {
+  padding-bottom: 0;
+}
+
+.step-item:last-child::before {
+  display: none;
+}
+
+.step-item.done::before {
+  background: #326e70;
+}
+
+.step-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 56rpx;
+  height: 56rpx;
+  border: 4rpx solid #dfe6ea;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #93a1ab;
+  font-size: 24rpx;
+  font-weight: 600;
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+.step-item.done .step-node {
+  border-color: #326e70;
+  background: #326e70;
+  color: #ffffff;
+}
+
+.step-item.current .step-node {
+  border-color: #172f43;
+  background: #172f43;
+  color: #ffffff;
+  box-shadow: 0 0 0 10rpx #e3edec;
+}
+
+.step-num {
+  line-height: 1;
+}
+
+.step-check {
+  width: 28rpx;
+  height: 28rpx;
+}
+
+.step-check svg {
+  width: 100%;
+  height: 100%;
+}
+
+.step-main {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4rpx;
+}
+
+.step-title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.step-item.todo .step-title {
+  color: #93a1ab;
+  font-weight: 500;
+}
+
+.step-desc {
+  display: block;
+  margin-top: 8rpx;
+  color: #5c6b76;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.step-item.todo .step-desc {
+  color: #93a1ab;
+}
+
+.step-title .pill {
+  margin-left: 12rpx;
+  vertical-align: 2rpx;
+}
+
 .onboarding-button {
   width: 100%;
   margin-top: 24rpx;
 }
 
-.notice-card {
-  box-sizing: border-box;
-  margin-top: 24rpx;
-  padding: 24rpx 26rpx;
-  border-radius: 24rpx;
-  background: #f3ede2;
-}
-
-.notice-title {
-  display: block;
-  color: #855524;
-  font-size: 25rpx;
-  font-weight: 600;
-}
-
 .notice-copy {
   display: block;
   margin-top: 8rpx;
-  color: #855524;
   font-size: 23rpx;
   line-height: 1.65;
 }
@@ -75,7 +192,7 @@
 }
 
 .wifi-selected {
-  background: #e8f0ef;
+  background: #e8f1ee;
 }
 
 .wifi-copy {
@@ -202,6 +319,10 @@
   letter-spacing: 4rpx;
 }
 
+.done-card {
+  text-align: center;
+}
+
 .done-title {
   display: block;
   margin-top: 20rpx;
@@ -216,6 +337,7 @@
   color: #596a78;
   font-size: 24rpx;
   line-height: 1.7;
+  text-align: left;
 }
 
 .onboarding-error {

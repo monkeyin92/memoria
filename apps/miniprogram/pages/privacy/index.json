@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "隐私与数据"
+  "navigationBarTitleText": "隐私授权",
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }

@@ -5,6 +5,11 @@
   margin-bottom: 8rpx;
 }
 
+.account-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .account-lede {
   margin: 4rpx 0 0;
 }
@@ -37,23 +42,14 @@
   padding-bottom: 20rpx;
 }
 
-.modal-mask {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-end;
-  background: rgba(25, 47, 65, 0.35);
+/* 永久注销：居中弹窗复用全局 .modal-wrap / .modal-card，只补输入框间距 */
+.modal-card .field-input {
+  margin-top: 24rpx;
 }
 
-.modal-card {
-  width: 100%;
-  padding: 40rpx 46rpx 60rpx;
-  border-radius: 36rpx 36rpx 0 0;
-  background: #fff;
+.foot-link {
+  display: block;
+  text-align: center;
 }
 
 .enrollment-progress {

@@ -1,0 +1,31 @@
+.mem-tabbar {
+  display: flex;
+  box-sizing: border-box;
+  padding: 8rpx 12rpx calc(12rpx + env(safe-area-inset-bottom));
+  background: #ffffff;
+  box-shadow: 0 -1px 6px rgba(23, 47, 67, 0.08);
+}
+.mem-tab {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  min-width: 128rpx;
+  padding: 10rpx 0 6rpx;
+  color: #93a1ab;
+}
+.mem-tab-indicator {
+  position: absolute;
+  top: 0;
+  width: 32rpx;
+  height: 8rpx;
+  border-radius: 999rpx;
+  background: #326e70;
+}
+.mem-tab-icon { width: 48rpx; height: 48rpx; }
+.mem-tab-icon rich-text { width: 100%; height: 100%; display: block; }
+.mem-tab-text { font-size: 20rpx; line-height: 1.3; }
+.mem-tab-on { color: #172f43; font-weight: 600; }

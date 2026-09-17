@@ -1,12 +1,59 @@
 <view class="page-shell onboarding-page">
-  <text class="eyebrow">{{mode === 'reprovision' ? '重新配网' : '首次启用'}}</text>
-  <text class="page-title">{{stateLabel}}</text>
-  <text class="page-subtitle">{{mode === 'reprovision' ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
+  <view class="back-row"><navigator class="back-link" url="/pages/device/index" open-type="switchTab">‹ 设备</navigator></view>
+  <view class="page-head">
+    <text class="page-title">配网引导</text>
+    <text class="page-subtitle">跟着亮起的步骤走就好</text>
+  </view>
+  <text class="caption">{{mode === 'reprovision' ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
 
-  <view wx:if="{{state === 'prepare'}}" class="card">
-    <text class="settings-title">先准备好机器人</text>
-    <text class="setting-desc">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
-    <view class="notice-card">
+  <view class="l2-card ob-steps-card">
+    <text class="l2-card-title">{{stateLabel}}</text>
+    <view class="stepper">
+      <view class="step-item {{(state === 'prepare' || state === 'scan') ? 'current' : 'done'}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'prepare' || state === 'scan'}}" class="step-num">1</view>
+          <view wx:else class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+        </view>
+        <view class="step-main"><text class="step-title">扫码确认身份</text><text class="step-desc">镜头对准设备底部的码</text></view>
+      </view>
+      <view class="step-item {{(state === 'device_verified' || state === 'ble') ? 'current' : ((state === 'prepare' || state === 'scan') ? 'todo' : 'done')}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'device_verified' || state === 'ble'}}" class="step-num">2</view>
+          <view wx:elif="{{state === 'prepare' || state === 'scan'}}" class="step-num">2</view>
+          <view wx:else class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+        </view>
+        <view class="step-main"><text class="step-title">BLE 安全连接</text><text class="step-desc">已和设备握上手</text></view>
+      </view>
+      <view class="step-item {{(state === 'wifi' || state === 'progress') ? 'current' : ((state === 'claim' || state === 'initialize' || state === 'activation' || state === 'complete') ? 'done' : 'todo')}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'wifi' || state === 'progress'}}" class="step-num">3</view>
+          <view wx:elif="{{state === 'claim' || state === 'initialize' || state === 'activation' || state === 'complete'}}" class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+          <view wx:else class="step-num">3</view>
+        </view>
+        <view class="step-main"><text class="step-title">写入 Wi-Fi <text wx:if="{{state === 'wifi' || state === 'progress'}}" class="pill pill-teal">进行中</text></text><text class="step-desc">正在写入，大约需要 30 秒</text></view>
+      </view>
+      <view class="step-item {{(state === 'claim' || state === 'initialize') ? 'current' : ((state === 'activation' || state === 'complete') ? 'done' : 'todo')}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'claim' || state === 'initialize'}}" class="step-num">4</view>
+          <view wx:elif="{{state === 'activation' || state === 'complete'}}" class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+          <view wx:else class="step-num">4</view>
+        </view>
+        <view class="step-main"><text class="step-title">设备认领</text><text class="step-desc">确认这台设备属于你</text></view>
+      </view>
+      <view class="step-item {{state === 'activation' ? 'current' : (state === 'complete' ? 'done' : 'todo')}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'complete'}}" class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+          <view wx:else class="step-num">5</view>
+        </view>
+        <view class="step-main"><text class="step-title">激活完成</text><text class="step-desc">灯亮起来，就可以打招呼了</text></view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{state === 'prepare'}}" class="l2-card">
+    <text class="l2-card-title">先准备好机器人</text>
+    <text class="l2-card-sub">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
+    <view class="notice notice-warn">
       <text class="notice-title">安全提醒</text>
       <text class="notice-copy">二维码只启动短期启用会话，不代表设备所有权。Wi‑Fi 密码只在本页内存和机器人安全配网会话中短暂存在。</text>
     </view>
@@ -14,15 +61,15 @@
     <button class="secondary-button onboarding-button" bindtap="openDevicePage">返回设备管理</button>
   </view>
 
-  <view wx:if="{{state === 'scan'}}" class="card">
-    <text class="settings-title">扫描机器人二维码</text>
-    <text class="setting-desc">请扫描屏幕上的 Memoria 设备二维码。扫码结果不会保存；只会原样提交到服务端进行识别和签名校验。</text>
+  <view wx:if="{{state === 'scan'}}" class="l2-card">
+    <text class="l2-card-title">扫描机器人二维码</text>
+    <text class="l2-card-sub">请扫描屏幕上的 Memoria 设备二维码。扫码结果不会保存；只会原样提交到服务端进行识别和签名校验。</text>
     <button class="primary-button onboarding-button" loading="{{scanning || busy}}" disabled="{{scanning || busy}}" bindtap="scanQr">扫描二维码</button>
     <text class="form-note">二维码失效、设备已绑定或协议版本不兼容时，会在这里给出可操作提示。</text>
   </view>
 
-  <view wx:if="{{state === 'device_verified'}}" class="card">
-    <text class="settings-title">已确认这台设备</text>
+  <view wx:if="{{state === 'device_verified'}}" class="l2-card">
+    <text class="l2-card-title">已确认这台设备</text>
     <view wx:if="{{device}}" class="summary-list">
       <view class="summary-row"><text class="summary-key">设备型号</text><text class="summary-value">{{device.model}}</text></view>
       <view class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
@@ -34,8 +81,8 @@
     <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
   </view>
 
-  <view wx:if="{{state === 'ble'}}" class="card">
-    <text class="settings-title">连接附近机器人</text>
+  <view wx:if="{{state === 'ble'}}" class="l2-card">
+    <text class="l2-card-title">连接附近机器人</text>
     <view class="flow-status-list">
       <text class="flow-status">正在打开蓝牙</text>
       <text class="flow-status">正在寻找屏幕上的机器人</text>
@@ -45,9 +92,9 @@
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryBle">重新连接</button>
   </view>
 
-  <view wx:if="{{state === 'wifi'}}" class="card">
-    <text class="settings-title">选择家庭 Wi‑Fi</text>
-    <text class="setting-desc">优先使用机器人通过 BLE 扫描到的 2.4 GHz 网络；手机当前连接的 Wi‑Fi 只作默认选中提示。</text>
+  <view wx:if="{{state === 'wifi'}}" class="l2-card">
+    <text class="l2-card-title">选择家庭 Wi‑Fi</text>
+    <text class="l2-card-sub">优先使用机器人通过 BLE 扫描到的 2.4 GHz 网络；手机当前连接的 Wi‑Fi 只作默认选中提示。</text>
     <view wx:if="{{connectedWifi}}" class="wifi-hint">手机当前连接：{{connectedWifi}}</view>
     <view wx:if="{{wifiNetworks.length > 0}}" class="wifi-list">
       <view wx:for="{{wifiNetworks}}" wx:key="ssid" class="wifi-row {{selectedSsid === item.ssid ? 'wifi-selected' : ''}}" data-ssid="{{item.ssid}}" bindtap="onWifiNetworkTap">
@@ -64,8 +111,8 @@
     <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="submitWifi">安全发送给机器人</button>
   </view>
 
-  <view wx:if="{{state === 'progress'}}" class="card">
-    <text class="settings-title">机器人正在联网</text>
+  <view wx:if="{{state === 'progress'}}" class="l2-card">
+    <text class="l2-card-title">机器人正在联网</text>
     <view class="progress-list">
       <view wx:for="{{progressRows}}" wx:key="key" class="progress-row {{item.done ? 'progress-done' : ''}} {{item.active ? 'progress-active' : ''}}">
         <view class="progress-dot"><text wx:if="{{item.done}}">✓</text></view>
@@ -77,9 +124,9 @@
     <button wx:if="{{progressIndex >= 6}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
   </view>
 
-  <view wx:if="{{state === 'claim'}}" class="card">
-    <text class="settings-title">认领设备</text>
-    <text class="setting-desc">设备已完成在线证明。认领后当前账号获得一次性初始化窗口，设备归属不会因为清除 Wi‑Fi 自动转移。</text>
+  <view wx:if="{{state === 'claim'}}" class="l2-card">
+    <text class="l2-card-title">认领设备</text>
+    <text class="l2-card-sub">设备已完成在线证明。认领后当前账号获得一次性初始化窗口，设备归属不会因为清除 Wi‑Fi 自动转移。</text>
     <view wx:if="{{device}}" class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
     <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">认领状态</text><text class="summary-value">{{claim.status}}</text></view>
     <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">有效期</text><text class="summary-value">{{claim.expires_at}}</text></view>
@@ -87,15 +134,15 @@
     <button wx:if="{{claim}}" class="primary-button onboarding-button" bindtap="continueInitialize">开始首次初始化</button>
   </view>
 
-  <view wx:if="{{state === 'initialize'}}" class="card">
-    <text class="settings-title">首次初始化</text>
-    <text class="setting-desc">接下来选择给孩子、自己、父母或家庭使用。绑定页已经通过服务端确认 claim_id，不会再次扫码或输入设备码。</text>
+  <view wx:if="{{state === 'initialize'}}" class="l2-card">
+    <text class="l2-card-title">首次初始化</text>
+    <text class="l2-card-sub">接下来选择给孩子、自己、父母或家庭使用。绑定页已经通过服务端确认 claim_id，不会再次扫码或输入设备码。</text>
     <button class="primary-button onboarding-button" bindtap="continueInitialize">进入使用方式设置</button>
   </view>
 
-  <view wx:if="{{state === 'activation'}}" class="card">
-    <text class="settings-title">等待机器人激活</text>
-    <text class="setting-desc">绑定清单和 Activation Manifest 已交给设备链路；只有机器人回传 device_acknowledged 或 ready_for_conversation，才会显示完成。</text>
+  <view wx:if="{{state === 'activation'}}" class="l2-card">
+    <text class="l2-card-title">等待机器人激活</text>
+    <text class="l2-card-sub">绑定清单和 Activation Manifest 已交给设备链路；只有机器人回传 device_acknowledged 或 ready_for_conversation，才会显示完成。</text>
     <view class="activation-badge">{{activationLabel}}</view>
     <view wx:if="{{activation}}" class="summary-list">
       <view wx:if="{{activation.firmware_version}}" class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{activation.firmware_version}}</text></view>
@@ -108,7 +155,7 @@
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新激活状态</button>
   </view>
 
-  <view wx:if="{{state === 'complete'}}" class="card done-card">
+  <view wx:if="{{state === 'complete'}}" class="l2-card done-card">
     <text class="done-badge">READY</text>
     <text class="done-title">机器人可以开始对话了</text>
     <text class="done-note">设备已就绪。请唤醒机器人，按提示说几句话完成主人声纹；第一个完成设置的人就是管理员，之后可在「我的」里重新录制。</text>
@@ -116,5 +163,6 @@
   </view>
 
   <text wx:if="{{error}}" class="error-text onboarding-error">{{error}}</text>
+  <text class="privacy-note">Wi-Fi 密码只经过加密蓝牙通道，不经过服务器。</text>
   <button wx:if="{{state !== 'complete'}}" class="cancel-link" bindtap="cancelFlow">取消本次启用</button>
 </view>

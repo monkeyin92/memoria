@@ -6,10 +6,36 @@
   margin-bottom: 12rpx;
 }
 
-.portrait-pills {
+/* L1 hero 胶囊行：复用全局 .pill，只补间距 */
+.hero-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8rpx;
+  gap: 12rpx;
+  margin-top: 20rpx;
+}
+
+/* L2 音量卡：复用全局 l2-card / slider，只补数字与刻度 */
+.volume-num {
+  flex-shrink: 0;
+  color: #172f43;
+  font-size: 40rpx;
+  font-weight: 600;
+}
+
+.slider-scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8rpx;
+  color: #93a1ab;
+  font-size: 22rpx;
+}
+
+/* L3 行内数值：唤醒词当前值 */
+.row-value {
+  flex-shrink: 0;
+  color: #5c6b76;
+  font-size: 26rpx;
 }
 
 .alias-edit {
@@ -36,4 +62,32 @@
   flex: 1;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+/* 唤醒词底部抽屉选项：复用全局 .sheet / .sheet-grab / .sheet-title / .sheet-sub */
+.sheet-opt {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  min-height: 112rpx;
+  margin-top: 16rpx;
+  padding: 20rpx 24rpx;
+  border: 2rpx solid #dfe6ea;
+  border-radius: 28rpx;
+  background: #fff;
+}
+
+.sheet-opt.on {
+  border-color: #326e70;
+  background: #e3edec;
+}
+
+.sheet-opt .opt-check {
+  display: none;
+  flex-shrink: 0;
+  color: #326e70;
+}
+
+.sheet-opt.on .opt-check {
+  display: block;
 }

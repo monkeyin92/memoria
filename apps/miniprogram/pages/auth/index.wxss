@@ -1,25 +1,60 @@
-.auth-page {
-  display: flex;
-  min-height: 100vh;
-  box-sizing: border-box;
-  flex-direction: column;
-  justify-content: center;
+.auth-wrap {
+  padding-top: 40rpx;
 }
 
-.auth-copy {
-  text-align: center;
+.auth-hero {
+  margin-top: 24rpx;
 }
 
 .auth-copy-line {
   display: block;
 }
 
+.auth-hero .eyebrow {
+  color: #9fc4c2;
+  font-size: 22rpx;
+  letter-spacing: 4rpx;
+}
+
 .auth-copy .page-title {
-  font-size: 46rpx;
+  margin-top: 12rpx;
+  color: #ffffff;
+  font-family: "Songti SC", "Noto Serif SC", "STSong", serif;
+  font-size: 60rpx;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: pre-line;
+}
+
+.auth-hero face-badge {
+  display: flex;
+  margin: 32rpx auto 4rpx;
+}
+
+.auth-points {
+  margin: 28rpx 0 4rpx;
+}
+
+.auth-point {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 10rpx 0;
+}
+
+.auth-point .inline-icon {
+  flex: none;
+  color: #326e70;
+}
+
+.auth-point-text {
+  color: #5c6b76;
+  font-size: 26rpx;
+  line-height: 1.6;
 }
 
 .auth-card {
-  margin-top: 32rpx;
+  margin-top: 24rpx;
 }
 
 .auth-intro,
@@ -49,12 +84,23 @@
   margin-top: 12rpx;
 }
 
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  margin-bottom: 12rpx;
+  padding: 24rpx;
+  border-radius: 32rpx;
+  background: #f4f6f8;
+}
+
 .avatar-button {
   display: flex;
-  width: 152rpx;
-  height: 152rpx;
-  min-height: 152rpx;
-  margin: 28rpx auto 0;
+  width: 120rpx;
+  height: 120rpx;
+  min-height: 120rpx;
+  flex: none;
+  margin: 0;
   padding: 0;
   align-items: center;
   justify-content: center;
@@ -62,7 +108,7 @@
   border: 2rpx solid #c9d5dd;
   border-radius: 50%;
   color: #326e70;
-  background: #f4f6f8;
+  background: #ffffff;
   font-size: 24rpx;
 }
 
@@ -76,9 +122,22 @@
   line-height: 1.35;
 }
 
-.field-help {
-  margin-top: 14rpx;
-  text-align: center;
+.auth-user-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-user-name {
+  display: block;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.auth-user-sub {
+  display: block;
+  margin-top: 6rpx;
+  color: #93a1ab;
+  font-size: 24rpx;
 }
 
 .consent-row {
@@ -114,6 +173,6 @@
 }
 
 .login-note {
-  margin-top: 20rpx;
+  margin-top: 16rpx;
   text-align: center;
 }

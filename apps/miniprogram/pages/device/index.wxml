@@ -1,7 +1,6 @@
 <view class="page-shell">
-  <text class="page-title">设备</text>
-
   <view wx:if="{{!authenticated}}">
+    <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
     <view class="notice">登录后即可查看你的设备。</view>
     <button class="primary-button empty-button" bindtap="retryBindingSync">登录后查看设备</button>
@@ -19,6 +18,7 @@
     </view>
 
     <view wx:elif="{{needsBindingChoice}}">
+      <text class="page-title">设备</text>
       <text class="page-lede">设备信息已从账号找到。选择你要查看的设备。</text>
       <view
         wx:for="{{bindingChoices}}"
@@ -46,14 +46,23 @@
     <block wx:else>
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
 
-      <view class="device-header">
-        <text class="page-title">{{devicePlaceName}}</text>
-        <view class="portrait-pills">
+      <!-- L1 情感层：设备状态卡 -->
+      <view class="mem-hero">
+        <text class="mem-hero-eyebrow">设备 · {{bindingModeLabel}}</text>
+        <view class="mem-hero-row">
+          <view class="row-copy">
+            <text class="mem-hero-title">{{devicePlaceName}}</text>
+            <text class="mem-hero-sub">{{onlineLabel}} · {{currentUserLabel}}正在使用</text>
+          </view>
+          <face-badge wx:if="{{profile && profile.persona && profile.persona.persona_id}}" role="{{profile.persona.persona_id}}" size="sm"></face-badge>
+          <face-badge wx:else role="starlight" size="sm"></face-badge>
+        </view>
+        <view class="hero-pills">
           <view class="pill {{online ? '' : 'pill-amber'}}">
             <view class="pill-dot"></view>
             <text>{{online ? '在线' : '离线'}}</text>
           </view>
-          <view class="pill pill-neutral">{{bindingModeLabel}}</view>
+          <view class="pill pill-teal">{{bindingModeLabel}}</view>
         </view>
       </view>
 
@@ -62,6 +71,7 @@
         <text>请检查电源和家庭 Wi-Fi。绑定关系仍在，无需重新认领。</text>
       </view>
 
+      <!-- 双 stat 小卡 -->
       <view class="two-stats">
         <view class="two-stats-cell">
           <text class="two-stats-value">{{onlineLabel}}</text>
@@ -73,22 +83,40 @@
         </view>
       </view>
 
-      <view class="section-head">
-        <text class="section-head-title">常用设置</text>
-      </view>
-      <view class="list">
-        <view wx:if="{{settings}}" class="setting-control">
-          <view class="setting-row">
-            <text class="setting-name">设备音量</text>
-            <text class="setting-desc">{{settings.volume_limit}}%</text>
+      <!-- L2 功能层：音量 -->
+      <view class="l2-card" wx:if="{{settings}}">
+        <view class="setting-row">
+          <view class="row-copy">
+            <text class="l2-card-title">设备音量</text>
+            <text class="l2-card-sub">在机器人上说话的声音大小</text>
           </view>
-          <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#326e70" block-color="#172f43" />
+          <text class="volume-num">{{settings.volume_limit}}%</text>
         </view>
+        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#326e70" block-color="#172f43" />
+        <view class="slider-scale"><text>安静</text><text>响亮</text></view>
+      </view>
+
+      <!-- L3 信息层：角色与声音 / 唤醒词 / 网络 -->
+      <view class="list">
         <view class="list-row" bindtap="openCompanion">
+          <view class="row-icon">
+            <svg viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 15a5.5 5.5 0 0 1 11 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </view>
           <view class="row-copy">
             <text class="row-title">角色与声音</text>
             <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
           </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" bindtap="openWakeSheet">
+          <view class="row-icon">
+            <svg viewBox="0 0 18 18" fill="none"><path d="M3 7v4h3l4 3.5v-11L6 7H3z" fill="currentColor"/><path d="M12.5 5.5a4.5 4.5 0 0 1 0 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </view>
+          <view class="row-copy">
+            <text class="row-title">唤醒词</text>
+            <text class="row-meta">叫它一声，它就应你</text>
+          </view>
+          <text class="row-value">{{wakeWordLabel}}</text>
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" bindtap="{{online ? '' : 'showConnectionHelp'}}">
@@ -153,9 +181,13 @@
       <view wx:if="{{settings}}" class="card">
         <text class="setting-name">唤醒词</text>
         <text class="setting-desc">保存后会在线同步到设备。重启后生效，请保持设备在线。</text>
-        <picker wx:if="{{wakeWordOptions.length > 0}}" range="{{wakeWordOptions}}" range-key="label" value="{{wakeWordIndex}}" bindchange="selectWakeWord" disabled="{{settingsSaving}}">
-          <view class="choice-card">{{wakeWordLabel}}</view>
-        </picker>
+        <view class="list-row" bindtap="openWakeSheet">
+          <view class="row-copy">
+            <text class="row-title">当前唤醒词</text>
+            <text class="row-meta">{{wakeWordLabel}}</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
         <text wx:if="{{wakeWordNote}}" class="caption">{{wakeWordNote}}</text>
         <text class="field-label">自定义唤醒词</text>
         <input class="field-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
@@ -166,9 +198,41 @@
         <text wx:if="{{settingsError}}" class="error-text">{{settingsError}}</text>
       </view>
 
+      <!-- 唤醒词底部抽屉：选项单选 + 确认回写 -->
+      <view wx:if="{{wakeSheetVisible}}" class="sheet-mask" bindtap="closeWakeSheet"></view>
+      <view wx:if="{{wakeSheetVisible}}" class="sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">唤醒词</text>
+        <text class="sheet-sub">叫它一声，它就应你</text>
+        <view
+          wx:for="{{wakeWordOptions}}"
+          wx:key="id"
+          class="sheet-opt {{wakeSheetIndex === index ? 'on' : ''}}"
+          data-index="{{index}}"
+          bindtap="pickWakeSheetOption"
+        >
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">{{item.label}}</text>
+            <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <button class="primary-button" style="margin-top: 16rpx;" loading="{{settingsSaving}}" bindtap="confirmWakeSheet">确认</button>
+      </view>
+
+      <!-- 设备信息诊断折叠面板 -->
       <view class="fold">
-        <text class="fold-summary">设备信息与诊断</text>
-        <view class="diagnostic">
+        <view class="list-row" bindtap="toggleDiag">
+          <view class="row-icon">
+            <svg viewBox="0 0 18 18" fill="none"><rect x="2.5" y="2.5" width="13" height="13" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M6 9h6M9 6v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </view>
+          <view class="row-copy">
+            <text class="row-title">设备信息与诊断</text>
+          </view>
+          <text class="row-chevron">{{diagExpanded ? '﹀' : '›'}}</text>
+        </view>
+        <view wx:if="{{diagExpanded}}" class="diagnostic">
           <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
           <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{binding.binding_id}}</text></view>
           <view wx:if="{{binding.binding_version}}" class="summary-row"><text class="summary-key">版本</text><text class="summary-value">v{{binding.binding_version}}</text></view>

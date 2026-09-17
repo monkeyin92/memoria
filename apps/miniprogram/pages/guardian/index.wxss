@@ -15,6 +15,14 @@
   letter-spacing: 10rpx;
 }
 
+/* 成长小结卡头：标题 + 不含对话原文胶囊 */
+.kept-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: 112rpx 1fr 44rpx;

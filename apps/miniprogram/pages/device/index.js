@@ -166,6 +166,9 @@ Page({
     bargeInOptions: ALL_BARGE_IN_OPTIONS,
     bargeInChecked: {},
     allowedAudioModesLabel: "",
+    wakeSheetVisible: false,
+    wakeSheetIndex: 0,
+    diagExpanded: false,
   },
 
   onLoad() {
@@ -176,6 +179,9 @@ Page({
   },
 
   async onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ selected: 3 });
+    }
     const authenticated = api.hasAuthenticatedSession();
     this.setData({ authenticated });
     if (!authenticated) {
@@ -801,5 +807,26 @@ Page({
     } finally {
       this.setData({ settingsSaving: false });
     }
+  },
+
+  /* 纯 UI 状态：唤醒词底部抽屉与诊断折叠面板，不触碰设置业务逻辑。 */
+  openWakeSheet() {
+    this.setData({ wakeSheetVisible: true, wakeSheetIndex: this.data.wakeWordIndex || 0 });
+  },
+  closeWakeSheet() {
+    this.setData({ wakeSheetVisible: false });
+  },
+  pickWakeSheetOption(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isInteger(index)) return;
+    this.setData({ wakeSheetIndex: index });
+  },
+  async confirmWakeSheet() {
+    const index = this.data.wakeSheetIndex || 0;
+    this.setData({ wakeSheetVisible: false });
+    await this.selectWakeWord({ detail: { value: String(index) } });
+  },
+  toggleDiag() {
+    this.setData({ diagExpanded: !this.data.diagExpanded });
   },
 });

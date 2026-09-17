@@ -1,5 +1,8 @@
 {
-  "navigationBarTitleText": "我的记忆档案",
+  "navigationBarTitleText": "记忆档案",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark"
+  "backgroundTextStyle": "dark",
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }

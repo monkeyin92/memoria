@@ -46,6 +46,7 @@ function emptyDashboard() {
     personaVoice: companion.voiceName,
     personaSummary: companion.description,
     devicePlaceName: "我的设备",
+    heroRoleId: defaultCompanionId,
     pageLede: formatDateLabel(),
     heroTitle: "给今天，留一点回味。",
     heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
@@ -74,6 +75,7 @@ Page({
     greeting: `${greetingFor()}，朋友`,
     authenticated: false,
     ...emptyDashboard(),
+    todoExpanded: true,
   },
 
   onLoad() {
@@ -84,6 +86,7 @@ Page({
   },
 
   onShow() {
+    if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 0 }); }
     const authenticated = api.hasAuthenticatedSession();
     const identity = api.currentIdentity();
     const name = identity?.display_name || "朋友";
@@ -97,6 +100,10 @@ Page({
       return;
     }
     this.loadHome();
+  },
+
+  toggleTodo() {
+    this.setData({ todoExpanded: !this.data.todoExpanded });
   },
 
   onUnload() {
@@ -325,6 +332,7 @@ Page({
       personaName,
       personaVoice,
       personaSummary,
+      heroRoleId: companion.id,
       devicePlaceName: devicePlaceName(binding, personaName),
       pageLede: formatDateLabel(),
       heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",

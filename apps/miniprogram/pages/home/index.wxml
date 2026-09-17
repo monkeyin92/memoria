@@ -2,17 +2,25 @@
   <view wx:if="{{!authenticated}}">
     <text class="page-title">你好，欢迎来到 Memoria</text>
     <text class="page-lede">把设备连好，再慢慢留下日常。</text>
-    <view class="home-hero">
-      <text class="hero-heading">记住哪些事，由你决定。</text>
-      <text class="hero-caption">在设备上记录，在这里确认与整理。</text>
-      <view class="hero-bottom">
+    <view class="mem-hero" data-role="starlight">
+      <view class="mem-hero-row">
+        <view class="pill"><view class="pill-dot"></view><text>欢迎加入</text></view>
+      </view>
+      <view class="mem-hero-row home-hero-main">
+        <view class="home-hero-copy">
+          <text class="mem-hero-title">记住哪些事，由你决定。</text>
+          <text class="mem-hero-sub">在设备上记录，在这里确认与整理。</text>
+        </view>
+        <face-badge role="starlight" size="md" breathe="{{true}}"></face-badge>
+      </view>
+      <view class="home-hero-foot">
         <text>登录后查看设备和今天记下的内容</text>
       </view>
     </view>
     <view class="stack" style="margin-top: 46rpx;">
       <button class="primary-button" bindtap="loginFromHome">微信登录，找回我的设备</button>
     </view>
-    <text class="privacy-note">对话在设备上完成。手机用来连接、确认和整理，不录音。</text>
+    <text class="privacy-note">对话在设备上完成，数据加密传输与存储于云端。手机用来连接、确认和整理，不录音。</text>
   </view>
 
   <block wx:else>
@@ -56,28 +64,45 @@
     </view>
 
     <block wx:else>
-      <view class="home-hero {{online ? '' : 'home-hero-offline'}}">
-        <view class="hero-top">
-          <text class="device-place">{{devicePlaceName}}</text>
+      <view class="mem-hero" data-role="{{heroRoleId}}">
+        <view class="mem-hero-row">
           <view class="pill {{online ? '' : 'pill-amber'}}">
             <view class="pill-dot"></view>
             <text>{{online ? '设备在线' : '暂时离线'}}</text>
           </view>
+          <text class="mem-hero-eyebrow">{{devicePlaceName}}</text>
         </view>
-        <text class="hero-heading">{{heroTitle}}</text>
-        <text class="hero-caption">{{heroCaption}}</text>
-        <view class="hero-bottom">
+        <view class="mem-hero-row home-hero-main">
+          <view class="home-hero-copy">
+            <text class="mem-hero-title">{{heroTitle}}</text>
+            <text class="mem-hero-sub">{{personaName}} · {{personaVoice}}在陪你</text>
+            <text class="mem-hero-sub">{{heroCaption}}</text>
+          </view>
+          <face-badge role="{{heroRoleId}}" size="md" breathe="{{true}}"></face-badge>
+        </view>
+        <view class="home-hero-foot">
           <text>{{heroFoot}}</text>
-          <text class="hero-link" bindtap="openDevice">{{online ? '管理设备' : '检查连接'}} ›</text>
+          <text class="mem-hero-link" bindtap="openDevice">{{online ? '管理设备' : '检查连接'}} ›</text>
         </view>
       </view>
 
-      <view wx:if="{{pendingCount}}" class="next-action" bindtap="openPendingMemory">
-        <view class="next-action-copy">
-          <text class="next-action-title">{{pendingCount}} 条内容，等你确认</text>
-          <text class="next-action-meta">确认后才会加入记忆档案</text>
+      <view wx:if="{{pendingCount}}" class="l2-card home-todo">
+        <view class="home-todo-head" bindtap="toggleTodo">
+          <view class="home-todo-copy">
+            <text class="l2-card-title">待确认的记忆 <text class="count-badge">{{pendingCount}}</text></text>
+            <text class="l2-card-sub">{{pendingCount}} 条内容，等你确认</text>
+          </view>
+          <view class="home-todo-chevron {{todoExpanded ? 'is-open' : ''}}">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </view>
         </view>
-        <text class="row-chevron">›</text>
+        <view wx:if="{{todoExpanded}}" class="home-todo-body">
+          <text class="caption">确认后才会加入记忆档案</text>
+          <view class="button-row">
+            <button class="secondary-button btn-sm" bindtap="openPendingMemory">确认记住</button>
+            <button class="secondary-button secondary-button-ghost btn-sm" bindtap="openMemory">看看回顾</button>
+          </view>
+        </view>
       </view>
       <view wx:else class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
 
@@ -85,18 +110,18 @@
         <text class="section-head-title">最近的回顾</text>
         <text class="text-button" bindtap="openMemory">全部 ›</text>
       </view>
-      <view wx:if="{{todayTitle}}" class="recap-preview" bindtap="openMemory">
-        <view class="recap-meta">
-          <text>{{todayMeta}}</text>
+      <view wx:if="{{todayTitle}}" class="l2-card home-recap" bindtap="openMemory">
+        <view class="home-recap-meta">
+          <text class="home-recap-time">{{todayMeta}}</text>
           <text class="pill pill-neutral">AI 整理</text>
         </view>
-        <text class="recap-title">{{todayTitle}}</text>
-        <text class="recap-body">{{todayOverview}}</text>
-        <text class="recap-read">打开这段回顾 ›</text>
+        <text class="l2-card-title">{{todayTitle}}</text>
+        <text class="l2-card-sub">{{todayOverview}}</text>
+        <text class="section-link">打开这段回顾 ›</text>
       </view>
       <view wx:else class="notice">今天还没有可回顾的内容。在设备旁唤醒「茉莉」后，再回来查看。</view>
     </block>
 
-    <text class="privacy-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。</text>
+    <text class="privacy-note">在设备上使用，手机不录音。对话由人工智能生成，会明确标识。数据加密传输与存储于云端。</text>
   </block>
 </view>

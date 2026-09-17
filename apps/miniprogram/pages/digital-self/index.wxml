@@ -1,25 +1,35 @@
 <view class="page-shell">
-  <text class="page-title">我的记忆档案</text>
-  <text class="page-lede">只保留你确认过的事。这里展示服务端状态，不会把手机上的临时操作当成事实。</text>
-  <text wx:if="{{error}}" class="error-text">{{error}}</text>
-
-  <view class="card">
-    <text class="setting-name">档案状态</text>
-    <text class="setting-desc">{{persona && persona.enabled ? '已启用记忆档案' : '尚未启用，或还没有可展示的材料'}}</text>
+  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
+  <view class="page-head">
+    <text class="page-title">记忆档案</text>
+    <text class="page-subtitle">被记住的，都是被允许的</text>
   </view>
 
-  <view class="card">
-    <text class="section-head-title">已确认的内容</text>
+  <view class="role-tint-card ds-hero" data-role="starlight">
+    <face-badge role="starlight" size="lg"></face-badge>
+    <view class="ds-copy">
+      <text class="ds-num">{{dimensions.length}}</text>
+      <text class="ds-sub">档案累计 · 版本 {{versions.length}}</text>
+      <text class="ds-sub">{{persona && persona.enabled ? '已启用记忆档案' : '尚未启用，或还没有可展示的材料'}}</text>
+    </view>
+  </view>
+
+  <text wx:if="{{error}}" class="error-text">{{error}}</text>
+
+  <view class="l2-card">
+    <text class="l2-card-title">已确认的内容</text>
+    <text class="l2-card-sub">只保留你确认过的事</text>
     <block wx:if="{{loading}}">
       <text class="loading-text">正在读取记忆档案…</text>
     </block>
     <block wx:elif="{{dimensions.length}}">
-      <view wx:for="{{dimensions}}" wx:key="key" class="list-row">
-        <view class="row-copy">
-          <text class="row-title">{{item.key}}</text>
-          <text class="row-meta">状态：{{item.status}} · 已采纳 {{item.adopted_sources.length || 0}} 条来源</text>
+      <view wx:for="{{dimensions}}" wx:key="key" class="dim-row">
+        <view class="dim-head">
+          <text class="dim-name">{{item.key}}</text>
+          <text class="dim-meta">已采纳 {{item.adopted_sources.length}} 条来源</text>
         </view>
-        <text class="row-meta">{{item.version_readiness.status}}</text>
+        <view class="progress-track"><view class="progress-fill" style="width: {{item.adopted_sources.length}}%"></view></view>
+        <text class="row-meta">状态：{{item.status}} · {{item.version_readiness.status}}</text>
       </view>
     </block>
     <block wx:else>
@@ -30,9 +40,16 @@
     </block>
   </view>
 
-  <view class="fold" bindtap="toggleEngineering">
+  <view class="l2-card">
+    <view class="fold-head" bindtap="toggleEngineering">
+      <text class="fold-title">技术状态与版本</text>
+      <view class="inline-icon fold-chevron {{showEngineering ? 'fold-chevron-open' : ''}}"><svg viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+    </view>
     <text class="fold-summary">{{showEngineering ? '收起技术状态' : '查看技术状态'}}</text>
     <block wx:if="{{showEngineering}}">
+      <view class="summary-row"><text class="summary-key">存储位置</text><text class="summary-value">云端</text></view>
+      <view class="summary-row"><text class="summary-key">加密</text><text class="summary-value">已开启</text></view>
+      <view class="summary-row"><text class="summary-key">档案版本</text><text class="summary-value">{{versions.length ? versions[0].version_number : '—'}}</text></view>
       <block wx:if="{{versions.length}}">
         <view wx:for="{{versions}}" wx:key="version_id" class="summary-row">
           <text class="summary-key">版本 {{item.version_number || '—'}}</text>

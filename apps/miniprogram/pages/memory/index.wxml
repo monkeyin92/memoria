@@ -8,28 +8,36 @@
   </view>
 
   <block wx:else>
-    <view class="segments">
-      <view class="segment {{memoryTab === 'reviews' ? 'segment-on' : ''}}" bindtap="showReviews">日常回顾</view>
-      <view class="segment {{memoryTab === 'memories' ? 'segment-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>
+    <view class="seg">
+      <view class="seg-item {{memoryTab === 'reviews' ? 'seg-item-on' : ''}}" bindtap="showReviews">日常回顾</view>
+      <view class="seg-item {{memoryTab === 'memories' ? 'seg-item-on' : ''}}" bindtap="showMemories">记住的事{{pendingCount ? ' · ' + pendingCount : ''}}</view>
     </view>
 
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
     <view wx:if="{{loading}}" class="card"><text class="loading-text">正在读取回顾…</text></view>
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
-      <button class="primary-button" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
-      <view wx:if="{{!days.length}}" class="empty-block">
-        <text class="empty-title">还没有可回顾的内容</text>
-        <text class="empty-copy">在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。</text>
+      <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
+      <view wx:if="{{!days.length}}" class="l2-card memory-empty">
+        <face-badge role="mianmian" size="xl" breathe="{{true}}"></face-badge>
+        <text class="l2-card-title">还没有可回顾的内容</text>
+        <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
+        <text class="caption">在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。</text>
+        <view class="button-row">
+          <button class="secondary-button btn-sm" bindtap="goCompanion">去和伙伴聊聊</button>
+        </view>
       </view>
-      <view wx:for="{{days}}" wx:key="date" class="timeline-item">
+      <view wx:for="{{days}}" wx:key="date" class="memory-day">
         <text class="timeline-time">{{item.date}}</text>
-        <view class="card {{selectedDate === item.date ? 'day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
-          <text class="pill pill-neutral">AI 整理</text>
-          <text class="recap-title">{{item.title}}</text>
-          <text class="recap-body">{{item.overview}}</text>
-          <view class="topic-tags">
-            <text wx:for="{{item.highlights}}" wx:for-item="tag" wx:key="*this" class="topic-tag">{{tag}}</text>
+        <view class="timeline-card {{selectedDate === item.date ? 'memory-day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
+          <view class="timeline-dot"></view>
+          <view class="memory-day-copy">
+            <text class="pill pill-neutral">AI 整理</text>
+            <text class="l2-card-title">{{item.title}}</text>
+            <text class="l2-card-sub">{{item.overview}}</text>
+            <view class="memory-tags">
+              <text wx:for="{{item.highlights}}" wx:for-item="tag" wx:key="*this" class="pill pill-neutral memory-tag">{{tag}}</text>
+            </view>
           </view>
         </view>
       </view>
@@ -47,25 +55,29 @@
     </block>
 
     <block wx:else>
-      <view class="filter-bar">
-        <view class="filter-chip {{memoryFilter === 'all' ? 'filter-on' : ''}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
-        <view class="filter-chip {{memoryFilter === 'pending' ? 'filter-on' : ''}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
-        <view class="filter-chip {{memoryFilter === 'confirmed' ? 'filter-on' : ''}}" data-filter="confirmed" bindtap="setMemoryFilter">已确认的记忆</view>
+      <view class="memory-chips">
+        <view class="pill {{memoryFilter === 'all' ? 'pill-teal' : 'pill-neutral'}}" data-filter="all" bindtap="setMemoryFilter">全部</view>
+        <view class="pill {{memoryFilter === 'pending' ? 'pill-teal' : 'pill-neutral'}}" data-filter="pending" bindtap="setMemoryFilter">待你确认的记忆 {{pendingCount}}</view>
+        <view class="pill {{memoryFilter === 'confirmed' ? 'pill-teal' : 'pill-neutral'}}" data-filter="confirmed" bindtap="setMemoryFilter">已确认的记忆</view>
       </view>
 
       <block wx:if="{{visibleMemories.length}}">
-        <view wx:for="{{visibleMemories}}" wx:key="id" class="card memory-card">
-          <text class="pill {{item.pending ? 'pill-amber' : ''}}">{{item.pending ? '待你确认' : '你已确认'}}</text>
-          <text class="recap-title">{{item.title}}</text>
-          <text class="recap-body">{{item.body}}</text>
+        <view wx:for="{{visibleMemories}}" wx:key="id" class="l2-card">
+          <text class="pill {{item.pending ? 'pill-amber' : 'pill-teal'}}">{{item.pending ? '待你确认' : '你已确认'}}</text>
+          <text class="l2-card-title">{{item.title}}</text>
+          <text class="l2-card-sub">{{item.body}}</text>
           <view wx:if="{{item.pending}}" class="button-row">
-            <button class="secondary-button" data-claim-id="{{item.id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认记住</button>
+            <button class="secondary-button btn-sm" data-claim-id="{{item.id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认记住</button>
           </view>
         </view>
       </block>
-      <view wx:else class="empty-block">
-        <text class="empty-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
-        <text class="empty-copy">需要时再来看看，一切由你决定。</text>
+      <view wx:else class="l2-card memory-empty">
+        <face-badge role="mianmian" size="xl" breathe="{{true}}"></face-badge>
+        <text class="l2-card-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
+        <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
+        <view class="button-row">
+          <button class="secondary-button btn-sm" bindtap="openArchive">查看我的记忆档案</button>
+        </view>
       </view>
       <view class="list-row" bindtap="openArchive">
         <view class="row-copy">

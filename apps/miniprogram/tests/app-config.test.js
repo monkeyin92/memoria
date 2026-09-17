@@ -40,11 +40,13 @@ test("home is the first tab and stays a status board without in-app chat", () =>
     appConfig.tabBar?.list?.map((item) => [item.pagePath, item.text]),
     [
       ["pages/home/index", "首页"],
-      ["pages/device/index", "设备"],
       ["pages/memory/index", "回顾"],
+      ["pages/companion/index", "伙伴"],
+      ["pages/device/index", "设备"],
       ["pages/profile/index", "我的"],
     ],
   );
+  assert.equal(appConfig.tabBar?.custom, true);
   const deviceTemplate = fs.readFileSync(
     path.join(root, "pages/device/index.wxml"),
     "utf8",

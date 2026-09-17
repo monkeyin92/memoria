@@ -1,10 +1,28 @@
-<view class="page-shell auth-page">
-  <view class="auth-copy">
-    <text class="eyebrow auth-copy-line">家庭桌面档案终端</text>
-    <text class="page-title auth-copy-line">微信登录 Memoria</text>
+<view class="page-shell auth-wrap">
+  <view class="mem-hero auth-hero" data-role="starlight">
+    <view class="auth-copy">
+      <text class="eyebrow auth-copy-line">家庭桌面陪伴终端</text>
+      <text class="page-title auth-copy-line">先打个招呼，&#10;再慢慢认识。</text>
+    </view>
+    <face-badge role="starlight" size="lg"></face-badge>
   </view>
 
-  <view class="card auth-card">
+  <view class="auth-points">
+    <view class="auth-point">
+      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <text class="auth-point-text">对话经云端安全处理，只为你服务</text>
+    </view>
+    <view class="auth-point">
+      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <text class="auth-point-text">记忆档案由你掌控，随时查看</text>
+    </view>
+    <view class="auth-point">
+      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <text class="auth-point-text">支持导出与删除，删除可证明</text>
+    </view>
+  </view>
+
+  <view class="l2-card auth-card">
     <text class="auth-intro">{{reasonHint}}</text>
     <view class="compliance-notice">
       <text class="compliance-line">连接设备、查看回顾、管理资料。对话在设备上完成，手机不录音。</text>
@@ -12,16 +30,22 @@
       <text class="compliance-line">声纹属于敏感生物识别信息，只在设备端采集。</text>
     </view>
 
-    <button
-      class="avatar-button"
-      open-type="chooseAvatar"
-      bindchooseavatar="onChooseAvatar"
-      disabled="{{loading}}"
-      aria-label="选择微信头像"
-    >
-      <image wx:if="{{avatarPath}}" class="avatar-preview" src="{{avatarPath}}" mode="aspectFill" />
-      <view wx:else class="avatar-placeholder">选择头像</view>
-    </button>
+    <view class="auth-user">
+      <button
+        class="avatar-button"
+        open-type="chooseAvatar"
+        bindchooseavatar="onChooseAvatar"
+        disabled="{{loading}}"
+        aria-label="选择微信头像"
+      >
+        <image wx:if="{{avatarPath}}" class="avatar-preview" src="{{avatarPath}}" mode="aspectFill" />
+        <view wx:else class="avatar-placeholder">选择头像</view>
+      </button>
+      <view class="auth-user-copy">
+        <text class="auth-user-name">微信用户</text>
+        <text class="auth-user-sub">头像与昵称，登录后再完善</text>
+      </view>
+    </view>
     <text class="field-help">头像可选，登录成功后会安全保存到 Memoria。</text>
 
     <text class="field-label">怎么称呼你？{{needsSalutation ? ' *' : ''}}</text>
@@ -55,5 +79,6 @@
       aria-label="授权手机号并使用微信登录"
     >授权手机号并登录</button>
     <text class="login-note">已登录过的微信会自动恢复；首次登录需要手机号用于账号绑定，不会公开展示。</text>
+    <text class="login-note">登录仅用于绑定家庭设备，不会同步任何对话内容</text>
   </view>
 </view>

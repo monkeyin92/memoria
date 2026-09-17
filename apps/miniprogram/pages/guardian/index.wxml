@@ -1,21 +1,33 @@
 <view class="page-shell">
-  <text class="page-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
-  <text class="page-lede">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
+  <view class="nav-back" bindtap="goBack"><text>‹ 我的</text></view>
+
+  <!-- L1 情感层 -->
+  <view class="mem-hero">
+    <text class="mem-hero-eyebrow">家庭监护 · 只看趋势</text>
+    <view class="mem-hero-row">
+      <view class="row-copy">
+        <text class="mem-hero-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
+        <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
+      </view>
+      <face-badge role="starlight" size="sm"></face-badge>
+    </view>
+  </view>
 
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
   <block wx:if="{{role === 'minor'}}">
-    <view class="card">
-      <text class="setting-name">你会知道分享了什么</text>
-      <text class="setting-desc">每周成长小结只包含情绪趋势、学习时长和话题分布，不包含具体对话。原始语音默认不保存。</text>
+    <view class="l2-card">
+      <text class="l2-card-title">你会知道分享了什么</text>
+      <text class="l2-card-sub">每周成长小结只包含情绪趋势、学习时长和话题分布，不包含具体对话。原始语音默认不保存。</text>
     </view>
     <view wx:if="{{!pendingLinks.length}}" class="empty-block">
       <text class="empty-title">暂无待确认绑定</text>
       <text class="empty-copy">请让爸爸妈妈打开「我的」，复制账号编号后发起邀请。</text>
     </view>
-    <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card">
-      <text class="setting-name">{{item.relation}}正在请求绑定</text>
-      <text class="setting-desc">账号：{{item.displayName}} · {{item.statusLabel}}</text>
+    <view wx:for="{{pendingLinks}}" wx:key="linkId" class="l2-card">
+      <text class="l2-card-title">{{item.relation}}正在请求绑定</text>
+      <text class="l2-card-sub">账号：{{item.displayName}} · {{item.statusLabel}}</text>
+      <text class="field-label">绑定码</text>
       <input class="field-input" type="number" maxlength="8" value="{{bindingCode}}" placeholder="输入 8 位绑定码" bindinput="onBindingCode" />
       <picker range="{{birthBands}}" range-key="label" value="{{birthBandIndex}}" bindchange="onBirthBand">
         <view class="picker-row"><text class="picker-label">年龄段</text><text class="picker-value">{{birthBands[birthBandIndex].label}}</text></view>
@@ -25,10 +37,12 @@
   </block>
 
   <block wx:elif="{{role === 'guardian'}}">
-    <view class="card">
-      <text class="setting-name">邀请一个孩子账号</text>
-      <text class="setting-desc">打开孩子手机上的「我的」，复制「账号编号」后填在这里。生成的 8 位码由孩子本人确认。</text>
-      <input class="field-input" value="{{minorUserId}}" placeholder="孩子账号编号" bindinput="onMinorUserId" />
+    <!-- L2 功能层：绑定卡 -->
+    <view class="l2-card">
+      <text class="l2-card-title">绑定家人的设备</text>
+      <text class="l2-card-sub">打开家人的「我的」，复制「账号编号」后填在这里。生成的 8 位码由家人本人确认。</text>
+      <text class="field-label">家人账号编号</text>
+      <input class="field-input" value="{{minorUserId}}" placeholder="家人账号编号" bindinput="onMinorUserId" />
       <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId}}" bindtap="createLink">生成绑定码</button>
       <view wx:if="{{createdBindingCode}}" class="binding-result">
         <text class="caption">请告诉{{createdMinorName}}这个绑定码</text>
@@ -39,19 +53,20 @@
 
     <block wx:if="{{pendingLinks.length}}">
       <view class="section-head">
-        <text class="section-head-title">等待孩子确认</text>
+        <text class="section-head-title">等待家人确认</text>
       </view>
-      <view wx:for="{{pendingLinks}}" wx:key="linkId" class="card">
-        <text class="setting-name">{{item.displayName}}</text>
-        <text class="setting-desc">{{item.statusLabel}}</text>
+      <view wx:for="{{pendingLinks}}" wx:key="linkId" class="l2-card">
+        <text class="l2-card-title">{{item.displayName}}</text>
+        <text class="l2-card-sub">{{item.statusLabel}}</text>
       </view>
     </block>
 
+    <!-- L3 信息层：分项授权开关行 -->
     <view wx:if="{{activeLinks.length}}" class="section-head">
       <text class="section-head-title">分项授权</text>
     </view>
     <view wx:if="{{activeLinks.length}}">
-      <view wx:for="{{activeLinks}}" wx:key="linkId" class="card">
+      <view wx:for="{{activeLinks}}" wx:key="linkId" class="l2-card">
         <view class="list-row" data-minor-id="{{item.minorUserId}}" bindtap="selectMinor">
           <view class="row-copy">
             <text class="row-title">{{item.displayName}}</text>
@@ -60,31 +75,37 @@
           <text class="row-chevron">查看小结 ›</text>
         </view>
         <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="setting-row">
-          <view>
+          <view class="row-copy">
             <text class="setting-name">{{consent.label}}</text>
             <text class="setting-desc">{{consent.description}}</text>
           </view>
-          <button
-            class="secondary-button"
-            loading="{{working}}"
+          <switch
+            checked="{{consent.active}}"
+            color="#326e70"
+            disabled="{{working}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
             data-policy-version="{{consent.policyVersion}}"
             data-consent-id="{{consent.consentId}}"
             data-active="{{consent.active}}"
-            bindtap="toggleConsent"
-          >{{consent.active ? '已开启 · 关闭' : '开启'}}</button>
+            bindchange="toggleConsent"
+          />
         </view>
       </view>
     </view>
 
+    <!-- L2 功能层：成长小结卡（情绪 / 话题分布条，不含对话原文） -->
     <view class="section-head">
       <text class="section-head-title">成长小结</text>
     </view>
-    <view wx:if="{{summaryState === 'loading'}}" class="card"><text class="loading-text">正在整理最近一周…</text></view>
-    <view wx:elif="{{summaryState === 'unauthorized'}}" class="card"><text class="empty-copy">请先完成绑定并开启“每周成长小结”。</text></view>
-    <view wx:elif="{{summaryState === 'empty'}}" class="card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
-    <view wx:elif="{{summaryState === 'ready'}}" class="card">
+    <view wx:if="{{summaryState === 'loading'}}" class="l2-card"><text class="loading-text">正在整理最近一周…</text></view>
+    <view wx:elif="{{summaryState === 'unauthorized'}}" class="l2-card"><text class="empty-copy">请先完成绑定并开启“每周成长小结”。</text></view>
+    <view wx:elif="{{summaryState === 'empty'}}" class="l2-card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
+    <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
+      <view class="kept-head">
+        <text class="l2-card-title">家人的成长小结 · 本周</text>
+        <text class="pill pill-teal">不含对话原文</text>
+      </view>
       <text class="caption">{{summary.periodLabel}}</text>
       <view class="summary-row"><text class="summary-key">学习陪伴</text><text class="summary-value">{{summary.studyDurationLabel}}</text></view>
       <text class="group-label">情绪趋势</text>
@@ -100,9 +121,9 @@
       <view class="section-head">
         <text class="section-head-title">需要及时关注</text>
       </view>
-      <view wx:for="{{notifications}}" wx:key="notification_id" class="card">
-        <text class="setting-name">{{item.minor_display_name}}</text>
-        <text class="setting-desc">{{item.message}}</text>
+      <view wx:for="{{notifications}}" wx:key="notification_id" class="l2-card">
+        <text class="l2-card-title">{{item.minor_display_name}}</text>
+        <text class="l2-card-sub">{{item.message}}</text>
         <text class="caption">{{item.occurred_at}} · {{item.delivery_status}}</text>
       </view>
     </block>

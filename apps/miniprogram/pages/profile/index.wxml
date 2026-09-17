@@ -16,19 +16,27 @@
   </view>
 
   <block wx:else>
-    <view class="account">
-      <image wx:if="{{profile.avatar_url}}" class="user-avatar" src="{{profile.avatar_url}}" mode="aspectFill" />
-      <view wx:else class="hero-initial" aria-hidden="true">
-        <text class="hero-initial-text">{{profileInitial}}</text>
-      </view>
-      <view class="account-copy">
-        <text class="page-title">{{profile.display_name || '新朋友'}}</text>
-        <text class="page-lede account-lede">微信已登录</text>
+    <!-- L1 情感层：头像行（FaceBadge + 昵称首字） -->
+    <view class="l2-card account-card">
+      <view class="account">
+        <image wx:if="{{profile.avatar_url}}" class="user-avatar" src="{{profile.avatar_url}}" mode="aspectFill" />
+        <view wx:else class="hero-initial" aria-hidden="true">
+          <text class="hero-initial-text">{{profileInitial}}</text>
+        </view>
+        <view class="account-copy">
+          <text class="page-title">{{profile.display_name || '新朋友'}}</text>
+          <text class="page-lede account-lede">微信已登录</text>
+        </view>
+        <face-badge role="{{profile.companion_id}}" size="sm"></face-badge>
       </view>
     </view>
 
+    <!-- L2 功能层：入口列表 -->
     <view class="list">
       <view class="list-row" bindtap="openCompanion">
+        <view class="row-icon">
+          <svg viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 15a5.5 5.5 0 0 1 11 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </view>
         <view class="row-copy">
           <text class="row-title">{{personaHeadline}}</text>
           <text class="row-meta">人格与声音。下次唤醒才会换成对应声音</text>
@@ -39,6 +47,9 @@
 
     <view class="list">
       <view class="list-row" bindtap="openDevice">
+        <view class="row-icon">
+          <svg viewBox="0 0 18 18" fill="none"><rect x="3" y="2.5" width="12" height="13" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="12.5" r="1.2" fill="currentColor"/></svg>
+        </view>
         <view class="row-copy">
           <text class="row-title">我的设备</text>
           <text class="row-meta">{{deviceBindingDetail}}</text>
@@ -67,6 +78,9 @@
         bindtap="retryDeviceBindingSync"
       >重新同步设备</button>
       <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
+        <view class="row-icon">
+          <svg viewBox="0 0 18 18" fill="none"><path d="M9 2.5l6 2.5v4c0 3.5-2.5 5.8-6 6.5-3.5-.7-6-3-6-6.5v-4l6-2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </view>
         <view class="row-copy">
             <text class="row-title">家庭与监护</text>
             <text class="row-meta">成长小结与监护授权</text>
@@ -74,6 +88,9 @@
         <text class="row-chevron">›</text>
       </view>
       <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
+        <view class="row-icon">
+          <svg viewBox="0 0 18 18" fill="none"><path d="M4 2.5h8L14.5 5v10.5h-10v-13z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.5 8h5M6.5 11h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </view>
         <view class="row-copy">
           <text class="row-title">我的记忆档案</text>
           <text class="row-meta">只保留你确认的事</text>
@@ -99,6 +116,9 @@
         <switch checked="{{profile.reject_non_owner_voice}}" data-key="reject_non_owner_voice" bindchange="onSwitch" color="#326e70" />
       </view>
       <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
+        <view class="row-icon">
+          <svg viewBox="0 0 18 18" fill="none"><rect x="3" y="7" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5"/></svg>
+        </view>
         <view class="row-copy">
           <text class="row-title">隐私与数据</text>
           <text class="row-meta">授权、声音样本、导出与删除</text>
@@ -114,9 +134,10 @@
       </view>
     </view>
 
-    <view wx:if="{{customPersonaActive}}" class="card">
-      <text class="setting-name">自定义人格与声音</text>
-      <text class="setting-desc">对话只在机器人上进行。自定义人格用你写的名字说话，并在声音就绪后用你的声音。</text>
+    <!-- L2 功能层：声音复刻卡 -->
+    <view wx:if="{{customPersonaActive}}" class="l2-card">
+      <text class="l2-card-title">自定义人格与声音</text>
+      <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话，并在声音就绪后用你的声音。</text>
       <text class="field-label">人格名字</text>
       <input class="field-input" value="{{customPersonaName}}" maxlength="16" placeholder="例如：小黑" placeholder-class="field-placeholder" bindinput="onCustomPersonaName" />
       <text class="field-label">人格描述</text>
@@ -167,18 +188,19 @@
     <view wx:if="{{isMinor}}" class="notice">每周会给监护人一份成长小结，不含对话原文。</view>
     <view wx:if="{{profileUnavailableReason}}" class="notice notice-warn">{{profileUnavailableReason}}</view>
 
-    <text class="foot-link" bindtap="openDeleteModal">注销账号</text>
+    <text class="foot-link danger-link" bindtap="openDeleteModal">永久注销</text>
     <text class="privacy-note">{{complianceCopy.positioning}} {{complianceCopy.aiDisclosure}} {{complianceCopy.trainingDefaultOff}}</text>
 
-    <view wx:if="{{showDelete}}" class="modal-mask" bindtap="closeDeleteModal">
+    <!-- 居中弹窗二次确认：完整输入确认文本才可注销 -->
+    <view wx:if="{{showDelete}}" class="modal-wrap" bindtap="closeDeleteModal">
       <view class="modal-card" catchtap="noop">
-        <text class="page-title">注销账号</text>
-        <text class="page-lede">注销将永久删除账号及全部数据，且不可恢复。请完整输入「{{deleteConfirmText}}」确认。</text>
+        <text class="modal-title">注销账号</text>
+        <text class="modal-desc">注销将永久删除账号及全部数据，且不可恢复。请完整输入「{{deleteConfirmText}}」确认。</text>
         <input class="field-input" value="{{deleteConfirmation}}" placeholder="{{deleteConfirmText}}" placeholder-class="field-placeholder" bindinput="onDeleteConfirmation" />
         <text wx:if="{{deleteError}}" class="error-text">{{deleteError}}</text>
         <view class="button-row">
           <button class="secondary-button" bindtap="closeDeleteModal">取消</button>
-          <button class="danger-button" loading="{{deleting}}" bindtap="confirmDelete">永久注销</button>
+          <button class="danger-button" loading="{{deleting}}" disabled="{{deleteConfirmation !== deleteConfirmText}}" bindtap="confirmDelete">永久注销</button>
         </view>
       </view>
     </view>

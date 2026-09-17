@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "绑定设备"
+  "navigationBarTitleText": "绑定设备",
+  "usingComponents": {
+    "face-badge": "/components/face-badge/index"
+  }
 }
