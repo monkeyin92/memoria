@@ -1,64 +1,61 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-16（第四轮），审查基线 `ca9dae1`。本文件只保留未完成事项；完成后把仍有效的运行结论归入 `HANDOFF.md`，并删除任务/子项，不积累完成记录或另建归档。已有编号不复用；生产、设备、回滚与原始证据以 `HANDOFF.md` 为准。
+更新于 2026-09-17（第五轮，复核 2026-09-16 提交与证据），审查基线 `cb9fe6560d725b01fdacff6766db1eb08d360447`；本地与远端 `main` 已核对一致。本文件只保留未完成事项及其必要证据边界；完成后把仍有效的运行结论归入 `HANDOFF.md`，并删除任务/子项，不积累完成记录或另建归档。已有编号不复用；生产、设备、回滚与原始证据以 `HANDOFF.md` 中带日期的收据为准，不把旧文档状态当成当前验收。
 
 ## 下一步与执行边界
 
-1. P0-04 的代码侧证据与数据主体错配已改；真实 PostgreSQL/RLS 契约、repeat-upgrade 门禁和带 DSN 全量测试已通过；签名 profile 进 `/response-plan` 与 `/session-policy` 的真实 persistent Session Runtime 链也已在本地真实 PG 上验证（3 例含区分度对照）。下一步只剩授权设备 admission 与主体切换的真机验收，须设备窗口。
-2. P0-03 的 TTS budget、静默语义与部分音频失败终态已完成本地语义和故障注入回归；先补 `synthesize_stream_text` 的停滞/部分音频 retry 语义，再在同一冻结候选上做 G/B/D 真机窗口、退出 speaking 时序与时延门复跑。
-3. P1-01 的三条 Agent 构建路径、镜像内 artifact gate、候选解析器和 CI `agent-image` 已通过；剩余是真实 exporter 的 PII 检查、生产授权切流以及当前候选的回滚演练。
-4. WAL 保留策略另列 P1-08，不能随“自动备份暂缓”一起搁置；先测现状，生产删除/重启/启用定时任务须另获授权。
+1. 先处理 P1-01 当前发布阻塞：`ea05ab9` 的真实 exporter 探针算错仓库根目录，最新 CI 的 `agent-image` 导入失败，`python` 又在 coverage 合并阶段失败。修路径并补无 editable 安装、带 coverage 的回归，再重建候选；不能沿用旧镜像/旧 CI 成功或跳过新门禁。
+2. 同时推进 P0-04 软件闭环：约束谁可声明监护关系，明确无账号孩子的 person 级 consent 授予/撤销路径，补两条策略 API 的负例与并发矩阵，再接 P1-03 的最小 app_confirm/年龄资料入口。已有真实 PG 签名链测试不代表这些问题已解决，绝非只剩真机验收。
+3. P0-03 通用 batch retry 已在 `3e0b738` 实现，不再重复开发；补下面的时间戳关闭/流式 fallback 边界和 G 的软件矩阵。完成拟发布 slice 后冻结同一候选，按授权构建、切流与回滚验证，再复跑 G/B/D、退出 speaking 时序、时延和学生设备链。P2-05 先修计数工具，下一设备窗口再采数。
+4. WAL 保留策略仍单列 P1-08，可独立只读测量；生产删除/重启/启用定时任务须另获授权，不能随自动备份暂缓一起搁置。
 
-本次整理新增一个 DSN 门控测试文件并在本机 Docker 容器（`pgvector/pgvector:0.8.1-pg17-bookworm`，宿主 55439）实跑；未部署、未刷机、未改生产数据、未连接设备。复核所依据的本机 Docker/PG 验证收据已存在。最新 CI `35092363159` 的 changes、agent-image、agent、python、firmware 通过，miniprogram、media-edge-image、media-edge 跳过；本地/CI 通过不等于真实设备或生产 `enabled/verified`。最新已记录 Agent/Bridge 运行 `d96d4c2`、板卡 `d1ad38f`，不能把 HEAD 的 `code` 记成线上 `enabled/verified`。
+本轮范围：审查 `c055004`（persistent Runtime 链）、`3e0b738`（TTS retry）、`ea05ab9`（真实 exporter）、`f405a92`（唤醒工具）、`cb9fe65`（文档）及关联实现；只更新本清单，未改业务代码、部署、刷机或访问生产/设备，原始验收收据不改写。本地定向复核：release 脚本 18 项、TTS 50 项、真实 PG persistent Runtime 链 3 项通过；另用现有 mock/本地 HTTP 探针复现下面的 TTS 与监护声明问题。
+
+最新 CI `35116668250`（HEAD=`cb9fe65`，2026-09-16 23:47 CST 结束）整体失败：changes、agent 通过；agent-image 失败；python 的 5062 项断言通过、2 项跳过，但 coverage 合并报错退出 3，后续 Coverage gates/Offline E2E 未执行；firmware、miniprogram、media-edge-image、media-edge 跳过。旧 `35092363159` 对应 `28a41ee`，不代表本次 HEAD。最新已记录 Agent/Bridge 为 `d96d4c2`、板卡为 `d1ad38f`，本轮未刷新在线状态；HEAD 的 `code/wired` 不能记成生产 `enabled/verified`。`HANDOFF.md` 的 `ca9dae1`/未提交测试与镜像已通过等头部表述已滞后，须在下一次交接/发布前同步，不能回改历史收据。
 
 ## P0：发布前必须闭环的安全与语音问题
 
 ### [ ] P0-04 修正当前使用人的监护授权与学生安全闭环
 
-- 前提：成人管理账号可创建独立 `under_14/14_17` 使用人，不要求孩子另建登录账号。以当前使用人及合法监护关系决定策略，成人学生不自动视为未成年人；最小 app_confirm/年龄资料入口优先，不重建已有多主体权威。
-- 审查发现——关系确认不实：`routes/multi_subject.py::_primary_subject` 替新建孩子调用 `confirm_relationship(person_id=child)`，写出孩子确认时间和 actor=child 的审计；随后 `establish_active_link` 在未校验微信身份的路径标 `verified_via=wechat_identity`，以合成 code hash/365d 到期建立 active link，缺少相应建立/确认事件。SQLite 探针可复现；这不是实际完成双边或微信验证。
-- 已修（2026-09-16，本地代码+测试）：`_primary_subject` 只写家长自己一侧的确认，关系保持 `pending`/`confirmed_by_target_at=NULL`，evidence id 明确为 `guardian_declaration_v1:device_binding`；`establish_active_link` 已从 port 与 SQLite/PostgreSQL store 删除（它还会顺带激活既有 pending link、绕过孩子确认）。Identity 新增 `has_source_confirmed_relationship` + `declared_guardians`，`parent_for_child` 的 guardian 角色可基于该声明建 binding，但声明不会被升级为已验证监护。危机通知由调用方从 Identity 解析声明监护人以 `declared_guardian_ids` 显式传入，PostgreSQL 侧由 `guardian_enqueue_declared_notification` 在库内复核声明后才入队；这是有意决定（声明是通知依据，不是已验证监护或同意），已记入本项。
-- 待修：把该决定与"有效同意"的边界写进面向产品的说明；通知 outbox 目前仍是声明/激活两种依据并存，等 app_confirm 入口落地后复评是否需要收窄。
-- 审查发现——数据主体错配：`interaction.py::response_plan` 用 active subject 类别，却以 `account_id` 查 `memory_retention` 并读账号记忆；`session_policy` 又按账号类别判断。已有孩子 consent 不生效，且同一会话可出现 response-plan 不读记忆、policy 却允许 private_memory/history 的矛盾。先明确记忆的真实数据归属，统一类别、consent、读写和 policy；不能只替换一个 ID 而将家长私有记忆交给孩子。
-- 已修（2026-09-16，本地代码+测试）：唯一 ID 是当前使用人。`_subject_memory_retention_allowed` 用同一 person id 同时提供类别与 consent 查询；`session_policy` 改按签名 RuntimeProfile 的 active subject 判定上限并把 `owner_display_name` 限定在账号本人当轮；`response_plan` 在 subject≠account 时不再走账号键的旧档案记忆读（该表把第一人称 claim 全部存成 `subject_key="self"`，换键会把账号主人自己的记忆喂给使用人），并补了 subject≠account 的回归测试。真正的 subject 键记忆在 `services/memory_scope`，把会话记忆迁到该权威仍是后续工作。
-- 已修（2026-09-16）：当前使用人权威配置存在但读取失败/过期时记日志并保持保守能力门（不回落账号资料、不猜 minor、不通知家长），保留公开固定安全回复；离线无该权威的部署仍按"账号即使用人"处理。
-- 测试缺口：真实 API→签名 profile 一段已补——`test_accountless_child_profile_reaches_the_device_through_the_real_api` 走真实 HTTP 链（device-binding → session → resolve-subject → app_confirm 切人 → device runtime-profile），对拿到的签名 profile 用与决策路径相同的 `verify_runtime_profile_payload` 校验，并断言 `active_subject_id/subject_category/age_band/service_mode` 都是孩子且仍无 active guardian link。
-- 已补（2026-09-16 第四轮，本地代码+测试+真实 PG 实跑）：签名 profile 进两条策略入口已用**真实 persistent Session Runtime**验证。`services/control_api/tests/test_persistent_runtime_policy_chain.py`（DSN 门控，3 例）把 `PostgresSessionRuntimeService` 接到真实 PostgreSQL 17.8 容器，经真实绑定 → `/v1/sessions` → 权威 `switch_subject` 取到 account-less 孩子的签名 profile，再驱动 `/v1/interaction/session-policy` 与 `/v1/interaction/response-plan`（不再用 `_attach_signed_runtime_profile`）：两条入口读到同一 `runtime_profile_id`、`session_epoch=2`、`active_subject_id=child`、`minor/under_14/student_minor`，签名由 `verify_runtime_profile_payload` 复核；`owner_display_name` 不跨主体；无同意时 `/session-policy` 落 `memory_retention=ephemeral_only` 且能力门全 False；旧 epoch 的 profile 在权威里判 stale；crisis 话术逐字交付，通知只绑孩子与声明监护人（`declared_guardian_count=1`，`active_link` 仍为 None）。**有区分度**：把 `_account_keyed_memory_is_subject_scoped` 临时改成恒真后，已授予 retention 同意的孩子那一轮会真的拿到账号主人的记忆（`我在杭州读过书。`）并失败，还原后 3/3 通过。回归：`services/session_runtime/tests/test_postgres_store.py` + 本文件 46 项通过；`test_student_safety_loop`/`test_interaction_api`/`test_multi_subject_api` 带 DSN 全通过。边界：本地链路的账号/监护声明平面仍是 SQLite（绑定与主体权威在 PG），设备 admission 与真机听感未验。
-- 同期已验：新 guardian 写路径的 PostgreSQL/RLS 契约（`test_declared_guardianship_is_one_sided_and_never_verified`、`test_parent_for_child_still_requires_a_relationship_for_the_guardian_role`、`test_declared_guardian_notification_requires_the_identity_declaration`）**已在真实 PostgreSQL 17.8（pgvector/pgvector:0.8.1-pg17-bookworm 临时容器，宿主 55432）实跑通过**，`scripts/tests/run_authoritative_postgres_gate.sh` 的 init + repeat-upgrade 门禁也在同一批次通过，全量 `pytest services/ tests/` 带 `MEMORIA_TEST_POSTGRES_DSN` 通过。实跑暴露并已修掉两处真问题：① 跨 schema EXECUTE 授权只在"Identity 先装"这一种顺序下生效，guardian 侧单边 conditional grant 在反序时静默漏授权（现由 identity 侧补一条带 pg_roles 保护的 grant，两种顺序都成立）；② 声明监护人没有 active link，导致危机事件与通知 outbox 的 RLS 拒绝写入/读出（现新增 maintenance-owned 的 `guardian_relationship_declared` 包装 + 收件人判定与危机事件读策略的声明分支）。
-- 完成条件：adult 管理账号下 under_14/14_17/adult/unknown 矩阵、换合法管理账号、切人/改年龄与旧缓存/旧 generation 并发、无同意/撤销/无权限均通过；类别、同意、通知与数据作用域一致。零同意可建 HTTP session 不直接等同真实设备越权，须验证实际设备 admission/受限能力门。
-- 设备验收：先走正式 app_confirm 确认测试使用人及年龄，核对设备实际取得的签名 profile 与有效监护授权；不手工注入 profile、不把成人代讲当作孩子身份证据、不绕过声纹/准入门。受控成人模拟危机，固定话术逐字交付+终端回执+人工听感；通知 outbox 绑定正确孩子及有效监护授权、重放幂等、家长作用域可读、原文不外泄。通知失败不得吞公开回复。发送 worker/外部投递按用户 2026-09-14 决定暂缓，不把 outbox 称为已送达。
-- 入口：`services/control_api/app/routes/{multi_subject,interaction,guardian}.py`、`services/identity/service.py`、`services/guardian/{sqlite_store,postgres_store}.py`、`services/control_api/tests/test_student_safety_loop.py`、`services/control_api/tests/test_persistent_runtime_policy_chain.py`。
+- 前提：成人管理账号可创建独立 `under_14/14_17` 使用人，不要求孩子另建登录账号；以当前使用人及合法监护关系决定策略，成人学生不自动视为未成年人。最小 app_confirm/年龄资料入口优先，不重建多主体权威。
+- 已有代码边界（`e5f9d50`/`c055004`）：不再替孩子确认关系或伪造微信 active link；`guardian_of` 仅家长一侧确认、仍为 pending。两条策略入口按签名 profile 的 active subject 判类别，subject≠account 时禁止读取账号键旧档案，`owner_display_name` 不串人；配置了主体权威却读取失败时保持保守门与公开固定回复。声明通知不等于验证监护或有效 consent；真正的 subject 键记忆在 `services/memory_scope`，会话记忆迁移尚未完成。
+- 证据边界：真实 HTTP device-binding → session → app_confirm → device runtime-profile 已有测试；本轮重跑 `test_persistent_runtime_policy_chain.py`，真实 PostgreSQL 的 persistent Runtime → `/session-policy`、`/response-plan` 3/3 通过。账号/监护 store 仍用 SQLite，memory catalog 是替身；旧 epoch 仅在 Runtime authority 中判 stale，不能外推两条 HTTP 入口的并发隔离。此前 PostgreSQL/RLS、init + repeat-upgrade 收据仍有效，但不是本轮全栈/设备验收。
+- 已闭环（`b58fa50`，声明来源约束）：`guardian_of` 声明只有带设备绑定证据（`guardian_declaration_v1:device_binding`）且声明人是某个 ACTIVE binding 的 `account_owner`、该 binding 把主体列为 `primary_subject` 时才算数；`parent_for_child` 的 guardian 角色还必须是 binding owner 或持有效双边 `guardian_of`。第三方 invite+self-accept 仍会留下 pending 行，但不再进入 `declared_guardians`、不能取得 guardian 角色、也不会成为危机通知收件人；撤销/过期后自动退出。存储层 `has_source_confirmed_relationship` 保持无范围语义（建绑定时尚无 binding 行），绑定范围判断在 `IdentityService.declared_guardians` 与 PG `identity_relationship_declared_for_binding`（通知入队与危机读取策略共用）。
+- 本轮发现（consent 写入链未闭环）：`_subject_memory_retention_allowed` 按 `active_subject_id`（person id）读 consent，但 `/v1/guardian/links` 要求 `minor_user_id` 有账号 profile，confirm 又要求孩子账号本人登录。account-less 孩子没有该写入路径。新 PG 测试第 3 例的 `_activate_link_and_grant_retention` 直接向 store 写 `minor_user_id=child_person_id` 与 consent，只证明读门/账号记忆隔离，不能证明真实 API 可授予同意；现状是保守拒绝，不是已证明越权读记忆。
+- 下一步：明确无账号孩子的 person 级 consent 授予人、证据和撤销/过期规则，统一 guardian store/API、策略读门与 outbox 中 person/user 两种键的边界；沿用现有权威，不补造孩子确认或 active link。补真实 HTTP 授予→两个策略入口→撤销/过期的闭环；若产品决定暂不提供该授权，明确维持哪些保守限制，不宣称 consent 问题已全修。
+- 软件验收矩阵：两条策略 API 都覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、无同意/撤销/过期/无权限、换合法管理账号；切人/改年龄与旧 epoch/旧 generation/旧缓存并发不得串人。`unknown_safe` 当前由 retention fail-closed 保守处理，但 `/response-plan` 缺直接回归。使用真实 subject/account 键 catalog 补隔离证据，不把 catalog 替身或一次手工变异当作完整数据链验收。
+- 入口前置：先接 P1-03 的最小使用人/年龄资料与 app_confirm 控制入口，完整人格/音色后做。零同意可建 HTTP session 不直接等同设备越权，须另验设备实际 admission 与受限能力门。
+- 设备验收：在授权窗口走正式 app_confirm 确认使用人及年龄，核设备取得的签名 profile 与有效监护授权；不手工注入 profile、不把成人代讲当孩子身份证据、不绕声纹/准入门。受控成人模拟危机，固定话术逐字交付、终端回执与人工听感齐全；outbox 绑正确孩子和获授权收件人、重放幂等、家长作用域可读、原文不外泄，通知失败不吞公开回复。发送 worker/外部投递按 2026-09-14 决定暂缓，不把 outbox 称为送达。
+- 完成条件：类别、有效同意、通知与数据作用域在上述软件矩阵和真实设备链一致，分别记录 code/wired/enabled/verified。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/identity/service.py`、`services/guardian/{sqlite_store,postgres_store}.py`、`test_student_safety_loop.py`、`test_persistent_runtime_policy_chain.py`。
 
 ### [ ] P0-03 收口 TTS、续问竞态、设备停滞与真实时延
 
-- 当前证据：2026-09-16 H 同会话天气→续问→播后告别成功，F 的 48.28s 九天天气完整听完；但 B/D 设备停滞、G 续问丢失、H 时延越线，整体稳定性未通过。不沿用跨 release 累计轮数，不以原始笔记中的“约 55s 阈值”或“告别 3/5”作为结论。
-- TTS 语义与回归测试：流式/批式的首包、停滞、硬期限与超时分类语义已统一到共享的 `GenerationBudget`（`services/agent/src/providers/generation_budget.py`），Doubao 与 CosyVoice 两条 provider 的 stream/batch 四条路径都走同一决策点，`cosyvoice_tts.py` 的绝对挂钟已随之改掉（结论与用例名见 `HANDOFF.md`）。
-- 已定义并修（2026-09-16 第四轮，本地代码+测试）：`GenerationBudget` 同址新增重试规则（`BeforeAudioError`/`AlignmentRetryError` 标记 + `retry_allowed`/`retry_may_change_voice`，未知错误 fail closed），两条 provider 的 `synthesize_stream_text` 共用同一决策；音频前失败可重试且可回落设计音色；音频已存在只缺时间戳时可重试但必须保持同音色——修掉了 CosyVoice 克隆音色在此路径被换成设计音色的缺陷；音频后的停滞、供应商错误、PCM 连续性失败与时间戳失败一律终态，最多两次尝试且失败尝试的缓冲被丢弃，部分音频不会被整句重放。用例：`test_clone_missing_timestamps_retries_without_changing_voice`（旧行为下第二次请求音色变成 baseline，失败）、`test_stall_after_audio_ends_the_attempt_without_replaying_the_sentence`（mock 新增 `stall_after_pcm`，仅 1 次连接）、`test_personal_voice_stall_after_audio_is_terminal_without_voice_change`（1 个 session、音色不变）、`test_personal_voice_failure_before_audio_still_falls_back_once`（2 个 session、第二次换设计音色）、`services/agent/tests/unit/test_generation_budget.py`。回归：Doubao/CosyVoice mock 套件与 `voice_profile` 全通过。
-- G 部分修（2026-09-16 第二轮，本地代码+测试）：已按"先统一语义"处理。`owner_silence_remaining_s` 现在只有三种含义（`None` 未测量 / `0.0` 已耗尽 / `>0` 暂停剩余），结束已测预算一律记 `0.0`（原分支会记 `None`，使下一次装表白送一个满窗口）；计数器改名 `owner_silence_activity_revision` 并收敛到单一入口 `_note_owner_silence_activity`；被受理的 ASR final 现在与已受理 VAD 一样属于"已受理主人活动"，可失效仍在等 `standby_lock` 的 `owner_silence_timeout` 关闭，但只在仍有其它界（绝对说话看门狗或未到期 grace）时生效，不会让会话失去所有界，也不刷新静默预算（无验证说话人时不得靠文本延长会话）。
-- 已证有区分度：`test_accepted_final_can_veto_a_parked_grace_close`（final 先于迟到 VAD 的 G 顺序：grace 关闭停在锁上时到达的 final 必须否决关闭）与 `test_ending_a_measured_budget_records_it_as_spent_not_unmeasured` 在 `HEAD` 上失败、在当前分支通过；`test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace` 与 `test_accepted_final_cannot_hold_an_unbounded_session_open` 是两版都通过的保护用例（真实入口 `on_speech_segment` / `accept_asr_result`）。
-- G 仍待做：没有真机捕获就不宣称"续问不再丢失"。剩余是"无验证说话人、且没有其它界时的 owner_silence_timeout"产品语义（当前保守关闭，未改），以及 endpoint/commit 乱序、watchdog 交接在真实 10s/60s 配置下的完整矩阵；需在冻结候选上按 `HANDOFF.md` 的 device window 复跑 G 并记录终态。
-- EOU/告别语义边界：EOU sidecar 或 `END_SESSION` 分类只能生成 `END_CANDIDATE`/clock fact，不能成为第二个话轮控制面；关闭动作仍须经过当前使用人的 subject capability。guest 只能停止公开播放或等待超时，不能被语义分类直接授予关会话能力；`TurnPhase` 保持 shadow，不改成生产副作用。
-- 部分音频失败终态：已补本地故障注入回归（`services/agent/tests/unit/test_media_output_partial_failure.py`，见 `HANDOFF.md`）：首帧已下发后 provider 崩溃/停滞/硬期限，都在有界时间内落到同一终态——一个后继代的 CANCEL_GENERATION（设备据此退出 speaking 并 flush）、交付账记 ERROR 而非 playback_completed、`provider_complete=false`、权威相位回 listening，且旧代的迟到 ACK/ENDED 不能复活该代。仍未闭环：这些结论只覆盖进程内注入，B 的真实表现（旧总挂钟 20.23s 出错、约 38.6s 后才错误收尾）来自设备捕获，需在冻结候选上按 `HANDOFF.md` 的 device window 重跑并核对桥/Edge 侧终态与设备实际退出 speaking 的时序。
-- B/D 独立定位：57.46s/58.88s 是桥侧音频长度，不是设备运行到该时长才卡住；两次 1.5–1.6s 先有 366/412ms supply wait，数秒内 speaking/控制台停滞，D 没有同类 TTS 错误。补同 fence 的 Bridge→Edge WS writer→设备接收/解码/播放及任务/锁证据；drop=0 不证明收齐，不预设根因或先实现 pre-roll。
-- 时延门：H ACK→正文 1.969s 未过 <1.5s；设备 VAD end→首帧 4.557s（A 第二问 3.748s）。拆分 ASR finalize、查询、TTS 与播放，不用网络首帧冒充精确可闻延迟；保留明确 1–16 天天气/完整地名与预算、单次 ACK、防重复和代际隔离，不通过第二提示、加长静默或放宽门禁遮掩。
-- 完成条件：冻结并启用同一候选后，三轮天气→续问→播后告别、>45s 长答、B/D 同类长答、临近静默与部分下发后故障分别取得完整捕获、fence/终态和操作员听感；有效输入才进入告别可靠性统计。ACK→正文满足门槛，失败能有界退出；缺测项如实 pending。
-- 同场补验待机+五表情照片及点屏/摇晃/短拍/BOOT 不回归，步骤见 `HANDOFF.md`。Exact DAC/AEC/播放期 voice 权限另在 P1-07，不能把本项通过写成全双工。
-- 入口：`services/agent/src/providers/doubao_tts.py`、`voice_core/media_session_{standby,output_stream}.py`、`test_doubao_mock.py`、`test_media_standby_races.py`、固件 PlaybackSupplyMeter、`scripts/voice_session_{capture,report}.py`。
+- 当前设备证据：2026-09-16 H 同会话天气→续问→播后告别成功，F 的 48.28s 九天天气完整听完；但 B/D 停滞、G 续问丢失、H 时延越线，整体稳定性未通过。不跨 release 累计轮数，不把原笔记的约 55s 阈值或告别 3/5 当作结论。
+- 已有软件基线（`7c0ef48`/`3e0b738`）：Doubao/CosyVoice × stream/batch 共用 `GenerationBudget` 的首包、进展续期、停滞与硬上限；batch retry 已明确为音频前可重试/回落、已有音频仅缺词时间戳时最多同音色重试一次，其余音频后失败终态、丢弃失败缓冲。本轮 generation budget + 两 provider mock 50 项通过；已核当前 LiveKit 在 pushed_duration>0 后不重试流式输出，未发现整句重放的该项回归。不能把 batch 的最多两次扩写成所有流式尝试也最多两次。
+- 本轮发现（P2，条件性）：`COSYVOICE_WORD_TIMESTAMPS=false` 时 batch 仍强制要求 `all_words`，完整音频但无词会抛 `CosyVoiceTimestampError`，随后以同一关闭配置再合成一次。本地 `empty_ts` mock 复现 2 次 run request、两个 flag 均为 False，最终异常；真实厂商/现网是否使用该配置未验。先明确不支持时启动即拒绝还是允许无对齐音频降级，再让重试遵守该配置，补 mock 尊重 flag 的用例；不能用重复整句合成补不存在的时间戳。
+- 本轮发现（P3，流式回落放大）：Doubao `_run` 每次被框架重入都从个人音色再回落设计音色，缺少 CosyVoice 的一次性闸门。本地连续音频前超时、`max_retry=2` 时实测 6 个 provider session、同 fence 回落回调/trace 各 3 次。后续收口 stream 级回落次数与总体尝试预算，补框架级重试用例；这是额外请求/时延，未证明账本重复或音频后重放。
+- G 已有本地修复：`owner_silence_remaining_s` 为 `None` 未测量 / `0.0` 已耗尽 / `>0` 暂停剩余；结束已测预算不再白送满窗口。受理 ASR final/VAD 可否决等锁的迟到关闭，但仅在另有绝对说话看门狗或未到期 grace 时成立，不刷新静默预算。相关区分度与保护用例见 `HANDOFF.md`，不再把修复前失败写成当前 HEAD 失败。
+- G 待闭环：明确无验证说话人且无其它界时的 owner_silence_timeout 语义（现保守关闭）；补 endpoint/commit 乱序、watchdog 交接在真实 10s/60s 配置下的矩阵，再在冻结候选捕获 G 终态。没有真机捕获不宣称续问不再丢失。
+- EOU/告别边界：sidecar/END_SESSION 只能生成 END_CANDIDATE/clock fact，关闭仍经当前使用人的 subject capability；guest 只能停止公开播放或等待超时，不能由分类授予关会话能力。TurnPhase 保持 shadow，不造第二话轮控制面。
+- 部分音频失败：本地 `test_media_output_partial_failure.py` 已验首帧后崩溃/停滞/硬期限有界落到后继代 CANCEL_GENERATION、交付 ERROR、provider_complete=false、权威 listening，旧代 ACK/ENDED 不复活。仍须同候选捕获 Bridge/Edge 终态与设备实际退出 speaking 的时序；历史 B 是旧总挂钟 20.23s 出错、约 38.6s 后才收尾，进程内回归不能代替设备闭环。
+- B/D 独立定位：57.46s/58.88s 是桥侧音频长度，不是设备运行到该时长才卡住；两次 1.5–1.6s 先有 366/412ms supply wait，数秒内 speaking/控制台停滞，D 无同类 TTS 错误。补同 fence 的 Bridge→Edge WS writer→设备接收/解码/播放及任务/锁证据；drop=0 不证明收齐，不预设根因或先实现 pre-roll。
+- 时延门：H ACK→正文 1.969s 未过 <1.5s；设备 VAD end→首帧 4.557s（A 第二问 3.748s）。拆 ASR finalize、查询、TTS 与播放，不用网络首帧冒充精确可闻延迟；保留明确 1–16 天天气/完整地名、预算、单次 ACK、防重复和代际隔离，不加第二提示、延长静默或放宽门禁遮掩。
+- 完成条件：同一冻结且已启用候选上，三轮天气→续问→播后告别、>45s 长答、B/D 同类长答、临近静默与部分下发后故障均有完整捕获、fence/终态及操作员听感；有效输入才计告别可靠性。ACK→正文达标、失败有界退出，缺测如实 pending。
+- 同场补验待机+五表情照片及点屏/摇晃/短拍/BOOT 不回归，按 `HANDOFF.md` 的 device window 执行。Exact DAC/AEC/播放期 voice 权限另在 P1-07，本项通过不等于全双工。入口：`providers/{generation_budget,doubao_tts,cosyvoice_tts}.py`、`voice_core/media_session_{standby,output_stream}.py`、provider mock/standby race 测试、固件 PlaybackSupplyMeter、`scripts/voice_session_{capture,report}.py`。
 
 ## P1：发布门禁、运行保障与学生产品闭环
 
-### [ ] P1-01 接好制品/隐私门禁，完成当前 1.8.1 候选发布与回滚验收
+### [ ] P1-01 修复最新制品门禁失败，完成 1.8.1 候选发布与回滚验收
 
-- 当前锁为 LiveKit agents/openai/silero 1.8.1；运行镜像是 delta 构建。不要重复做同组升级，也不要因研究文档旧基线再推 1.8.2。保留 Python 3.12 与真实锁约束，不使用 --no-deps；不混入 expressive/DuplexModel、抢跑、user_turn_limit 或 TurnPhase 有副作用策略。
-- 审查发现并已修：`verify_agent_release_artifact.py` 已接入标准 Agent 构建路径；`resolve_target_images.py` 现在要求显式候选身份，并拒绝缺省、旧镜像覆盖、缺服务和服务不一致。剩余不是接线，而是生产候选的真实 exporter、切流与回滚证据。
-- 版本判断：当前仍按 LiveKit agents/openai/silero `1.8.1` 候选验收。官方 `1.8.2` 的 run-loop/tracing/transcript 改进不能证明能解决 VoCat AEC、全双工或设备卡顿；若以后评估 `1.8.2`，必须另开完整兼容性候选，agents/openai/silero 同组验证，并固定核对 RTC `1.1.18`、API `1.2.1`、完整镜像和 exporter，不能用 agent-only overlay 偷换版本。
-- 已接（2026-09-16，本地代码+测试+CI）：三条 Agent 镜像路径（`infra/Dockerfile.agent` 全量、`scripts/delta_build_images.sh` delta 模板、`infra/Dockerfile.agent-source-overlay` 组件覆盖）都 COPY 并 `RUN /app/.venv/bin/python -m scripts.verify_agent_release_artifact`（源码覆盖自带候选的 verifier，不信任 base 镜像副本）；`deploy_agent_component.sh` 把 `resolve_target_images.py` 随候选上传并校验 sha256，在写回滚点之后、切流之前用"有效 stack tag + release commit + 预期 candidate tag/image + 真实 override 链"解析目标镜像，失败即停止且不触碰在线栈。`resolve_target_images.py` 现在必须显式给出候选身份，缺省/无效 tag/缺服务/服务不一致/仍解析到 stack 镜像分别返回 2 或 1，并保留 stack tag 与 candidate tag 的区别。CI 增加 `agent-image` job（构建镜像并重跑 verifier）与显式采集 `scripts/tests` 的两个门禁测试文件（此前 9 项定向测试不在 `testpaths` 内，默认任何 pytest 运行都不会收集）。
-- 构建验收：从冻结 source/lock 标准完整构建实际受影响的镜像，Agent/Bridge 共用同一产物；依赖变化不能 source overlay。核 fresh process 的 env 未设置/空值/显式 0、入口加载和真实 exporter，无内容/PII 泄漏；不能用只改 Compose 声明或外部测试环境代替候选运行态。
-- 已验（2026-09-16，本机 Docker Desktop 29.7.2）：`docker build -f infra/Dockerfile.agent` 全量构建成功，构建期 `RUN … -m scripts.verify_agent_release_artifact` 通过（版本锁/隐私默认值+canary+反例/SDK 兼容三项）；再以 `docker run --rm --network none --entrypoint /app/.venv/bin/python memoria-agent:… -m scripts.verify_agent_release_artifact` 对**已构建镜像**按运行用户离线复跑通过（exit 0），即 CI `agent-image` job 的同一组命令。`resolve_target_images.py` 也在真实 `docker-compose.production.yml`（env_file 仅指向本地临时 stub）+ 真实 override 链上演练：live+candidate → 两个服务都解析到候选、exit 0；只给 live（缺候选 override）→ exit 1 并明确报“仍解析到 stack 镜像”；不给候选身份 → exit 2；**旧镜像 override 后置覆盖候选** → exit 1。构建暴露并已修：`COPY` 保留宿主文件模式，umask 077 的检出会把源文件与 gate 脚本带成 0600，非 root 运行用户（65532）读不到 → 现三条构建路径都显式 `--chmod=0644` 并在 COPY 之后统一 `chmod -R u=rwX,go=rX`，镜像不再依赖构建者 umask。仍未验：在**本次候选镜像**内跑真实 exporter 探针（第四轮起构建期会跑，但尚无该候选构建收据）、以及切流/回滚演练需要生产授权与目标主机。
-- PII exporter 验收边界：LiveKit 内容采集开关在 SDK import 时读取；未设置或空值仍可能采集内容，fresh process 启动时必须显式设置 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=0` 或 `LIVEKIT_TELEMETRY_ALLOW_PII=0`，再用真实 exporter 验证内容属性消失。仓库里的 `PII_REDACTION_ENABLED` 不是该 SDK 开关，不能把配置分类或 `InMemorySpanExporter` 结果当作生产门禁。
-- 已补真实 exporter 门禁（2026-09-16 第四轮，本地代码+测试）：新增 `services/agent/tests/integration/telemetry_pii_probe.py`（无 pytest 依赖，可在镜像内直接 `python -m services.agent.tests.integration.telemetry_pii_probe`）与薄封装 `test_telemetry_pii_real_exporter.py`：每个用例起**全新解释器**，装真实 OTLP/HTTP exporter 打到本机回环采集器，再用 SDK 自己的 gated 写入点写 canary，最后同时断言**解析后的属性**与**落线的原始字节**。实测到的双开关语义（非文档推断）：`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` 在 import 时读取，未设置/空值都是"开"；`LIVEKIT_TELEMETRY_ALLOW_PII` 决定内容能否到达 exporter，未设置时默认开、由 bootstrap 强制为 0；只打开 capture 时 bootstrap 仍关掉第二个开关，内容不到达导出器（纵深防御）。5 例：未设置→无 canary、空值→无 canary、capture=1 但 PII 开关未设→仍无 canary、显式同时开两个开关→canary 出现（正例，证明非空转）、跳过 bootstrap→canary 出现（反回归）。该探针已接入 `scripts/verify_agent_release_artifact.py`（新增 `_check_real_exporter_privacy`），三条 Agent 构建路径都 `COPY services`，所以镜像构建期与 CI `agent-image` 都会跑真实 OTLP 导出这一环；verifier 的 `scripts/tests` 用例已同步通过。
-- 发布验收：先完成本次拟发布 slice 的 P0 修复与回归；以现有本地 1.8.1 部署收据为历史基线，重新读取真实容器、env、override、当前/紧邻回滚和远端收据，记录跳过/重试边界。按授权切流，provider/LiveKit、12 个具名 readiness、外部路由、设备和延迟复核，再实际验证回滚路径；只保留当前+一个可运行回滚及必要依赖底座。
-- 完成条件：`code/wired/enabled/verified` 分层有日期与证据；不以定向测试或 CI `agent-image` success 代替真实 exporter、生产切流与回滚验收。
+- 当前候选仍为 LiveKit agents/openai/silero 1.8.1，配套 RTC 1.1.18、API 1.2.1；保留 Python 3.12 与真实锁，不用 --no-deps、不重复同组升级。1.8.2 若要评估须另开完整兼容候选，不能以 run-loop/tracing/transcript 改进推断解决 VoCat AEC/卡顿，也不混 expressive/DuplexModel、抢跑、user_turn_limit 或 TurnPhase 副作用。
+- 已有接线（`ec56d9a`/`ea05ab9`）：全量 Dockerfile、delta 模板、source-overlay 都执行候选自带 `verify_agent_release_artifact`；部署前按显式候选身份+真实 override 链解析 Agent/Bridge 镜像，缺候选、旧 override 覆盖等会拒绝。真实 OTLP/HTTP exporter 的 5 种 fresh-process canary 正反例已实现并接进 verifier；剩余不是新增 exporter，而是修复并验收这条实际运行链。
+- 当前阻塞一（P1，镜像可复现）：`services/agent/tests/integration/telemetry_pii_probe.py:49` 的 `Path(__file__).resolve().parents[3]` 指向 `/app/services`，`run_case` 又以它作 cwd/PYTHONPATH。未安装项目本身的镜像在 5 个 emitter 子进程中全部报 `ModuleNotFoundError: No module named services`；CI `35116668250` 的 agent-image job `104863778509` 在构建期 gate 失败，镜像内运行用户复验未执行。本地 editable `.pth` 能掩盖导入错误，脚本单测绿不代表镜像绿。
+- 当前阻塞二（同探针的 coverage 上下文）：python job `104863778746` 在 5062 passed 后报 `Can't combine statement coverage data with branch data`，退出 3。子进程切到 services 后漏读根目录 `pyproject.toml` 的 branch=true，继承的 pytest-cov 环境产生 statement 数据。本轮只跑 exporter 5 例即复现同错误；仅在进程内改正 `_REPO_ROOT` 的对照 5/5 且退出 0，显式绝对 `--cov-config` 的另一对照也通过。对照只定位根因，未修改源码/CI，不能当作正式 85%/90% coverage 门已过。
+- 下一步：修仓库根路径（此布局应为 `parents[4]`），把 cwd/PYTHONPATH 与 coverage 配置传播作为回归条件；在无 editable/未安装项目的环境验证包导入，在正式带 coverage 命令下验证数据能合并。不得以删探针、CI 加 --no-cov 或降低 coverage 阈值绕过。重跑 agent-image 与 python 的实际门禁，后者还须执行 Coverage gates/Offline E2E。
+- 构建验收：先冻结本次拟发布 source/lock 和 P0 slice，标准完整构建实际受影响镜像；Agent/Bridge 共用同一产物，依赖变化不能 source overlay。验证构建期 gate 与非 root 运行用户离线复验，保持三条构建路径的 COPY/chmod 权限保障；旧成功镜像收据早于本次 exporter 提交，只能作历史基线。
+- PII 验收：保留真实 OTLP collector 收到 span 的正例与故意绕 bootstrap 的泄漏反例，并同时查属性和原始导出字节。核 fresh process 的 env 未设置/空值/显式 0 与入口加载；SDK import-time 开关 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`、`LIVEKIT_TELEMETRY_ALLOW_PII` 必须落实到候选运行态，`PII_REDACTION_ENABLED` 或 InMemorySpanExporter 不可替代。
+- 发布验收：以上门禁与拟发布 P0 回归通过后，重新读取真实容器、env、override、当前/紧邻回滚与远端收据，再按明确授权切流；复核 provider/LiveKit、12 个具名 readiness、外部路由、设备/时延并实际演练回滚。只保留当前+一个可运行回滚及必要依赖底座，不自动清理生产。
+- 交接与完成条件：同步 `HANDOFF.md` 的 reviewed_source_commit、已提交范围与当前 gate 状态，保留带日期的历史 enabled/verified，原始收据不改。code/wired/enabled/verified 分层有证据，构建、真实 exporter、生产切流与回滚各自过门，不以 18 项脚本测试或旧 CI success 替代。
 
 ### [ ] P1-08 为仍增长的 WAL 确定独立保留策略
 
@@ -71,7 +68,7 @@
 - 先读生产启动脚本、Dockerfile、包/模型/词表摘要、基础镜像与输入语言，核对实际消费者；将真实构建输入纳入仓库，保留独立镜像。DashScope 模型服务版本不是 FunASR Python 包版本；仓内 sherpa-onnx 实现不支持“升级 FunASR 即修 sidecar”的推断。
 - 仅在实际使用 FunASR 且确有对应修复时做旧/新 A/B；否则核真实后端，不向主 Agent 添无用依赖或顺手改 NumPy/设备 VAD。
 - 完成条件：仓内输入可重建；真实中文 PCM 短句、长段/尾字、静音、低 RMS、削波、并发/失败降级通过。分报 vendor_error/vendor_silent/gating/low_rms、救援耗时与 2.5s 超时行为；有收益且无回归才另行切流。
-- 本轮已补（本地，合成波形，非真实录音）：`services/agent/tests/integration/test_funasr_rescue_audio_shapes.py` 覆盖静音与室内底噪被本地门禁拦下（`rescue_total{outcome="skipped"}` + `empty_transcript{class="low_rms"}` 且厂商零请求）、削波满幅信号按上行原始字节送判、超长段只把最新尾帧（内容精确比对）送去救援、三路并发 + 慢/失败厂商降级为有界 `no_text` 且不抛不卡、以及在飞行中的救援发布 `now + 2.5s` 预算（默认 `SENSEVOICE_TIMEOUT_S=2.5`）。仓内既有的 `test_funasr_empty_accounting.py` 覆盖四个分桶判定。
+- 已有回归（2026-09-16，本地合成波形，非真实录音）：`services/agent/tests/integration/test_funasr_rescue_audio_shapes.py` 覆盖静音与室内底噪被本地门禁拦下（`rescue_total{outcome="skipped"}` + `empty_transcript{class="low_rms"}` 且厂商零请求）、削波满幅信号按上行原始字节送判、超长段只把最新尾帧（内容精确比对）送去救援、三路并发 + 慢/失败厂商降级为有界 `no_text` 且不抛不卡、以及在飞行中的救援发布 `now + 2.5s` 预算（默认 `SENSEVOICE_TIMEOUT_S=2.5`）。仓内既有的 `test_funasr_empty_accounting.py` 覆盖四个分桶判定。
 - 仍未完成：真实中文录音语料（短句/尾字听感、低 RMS 真实底噪）与生产启动脚本/Dockerfile/模型/词表摘要纳入仓库——后者按原记录只存在于服务器 `/opt/memoria/sidecars/sensevoice-asr/`，本轮未连接生产故无法取得；DashScope 模型服务版本与 FunASR Python 包版本仍未核对，不做"升级即修"的推断。
 - 入口：`funasr_stt.py`、`funasr_empty_accounting.py`、`providers/sensevoice.py`、`scripts/run_sensevoice_asr.py` 及 ASR 契约/救援测试。
 
@@ -99,10 +96,10 @@
 
 ### [ ] P1-06 修复三类召回遗漏与人物抽取
 
-- 可本地并行。基线 recall@5=0.8125（13/16）、nDCG@10≈0.734；Fix后本轮 recall@5=0.9375（15/16）、nDCG@10≈0.859，`candidate_leakage`/`cross_account_leakage` 仍为 0、`extraction_recall`=1.0、p50≈0.72ms（见 `HANDOFF.md` 的三处改动）。仅剩 `repeated-episode-campus-startup`，它卡在下面的产品语义，不靠放宽判据抬分。
+- 可本地并行。基线 recall@5=0.8125（13/16）、nDCG@10≈0.734；已有修复后的固定集 recall@5=0.9375（15/16）、nDCG@10≈0.859，`candidate_leakage`/`cross_account_leakage` 仍为 0、`extraction_recall`=1.0、p50≈0.72ms（见 `HANDOFF.md` 的三处改动）。仅剩 `repeated-episode-campus-startup`，它卡在下面的产品语义，不靠放宽判据抬分。
 - 待定语义：review 确认证据/claim 是否同时提升其 person/episode/knowledge；跨会话 episode 是否合并。现有逐事件 document 不能满足“同 episode 含两条 source_event_ids”的判据，先定产品写入语义，不能绕过判据抬分。
-- 已修（本轮）：① 忌口转述——`RecallPlanner` 封闭词表新增“避开/忌口/不能吃/别吃/注意别/过敏”标记 → “不喜欢/讨厌/不吃/忌口/不要”扩展，并让评测 adapter 与生产读路径一致（生产**总是**先 plan，之前 13 个无 clock 的用例根本没走 planner）；② 别名——规则抽取器新增“家里人/大家/别人…叫(她|他)X”封闭句式，只在唯一人物且非角色词时挂为该人的 alias；③ 人物不可召回——person 之前只存在于 `person_aliases`，没有任何读路径会搜它，因此“阿梅是谁？”永远召不回该人物；本轮在编译期为人物建立 search document（title=display_name、body=关系+全部 alias、kind=person/memory_kind=relationship、sensitivity=personal），确认时随同事件投影一起提升，未确认人物仍被 confirmed-only 的 `context` 挡住。
-- 人物投影已同步到生产路径：`postgres_memory_catalog.py::_write_extraction` 现在也写同名 search document（PG schema 的 kind 无枚举约束、`memory_kind=relationship`、`sensitivity=personal` 均合法，确认时的同事件状态传播已由 `memory_search_document_sources` 覆盖），并补了 DSN 门控契约 `test_postgres_person_alias_is_recallable_and_status_gated`；真实 PostgreSQL 与最新 CI `python` job 已通过。仍未验：真实 Qwen 抽取器（非规则）是否覆盖该别名句式；固定集之外的未见改写集尚未报告 recall/nDCG。
+- 已有修复（2026-09-16）：① 忌口转述——`RecallPlanner` 封闭词表新增“避开/忌口/不能吃/别吃/注意别/过敏”标记 → “不喜欢/讨厌/不吃/忌口/不要”扩展，并让评测 adapter 与生产读路径一致（生产**总是**先 plan，之前 13 个无 clock 的用例根本没走 planner）；② 别名——规则抽取器新增“家里人/大家/别人…叫(她|他)X”封闭句式，只在唯一人物且非角色词时挂为该人的 alias；③ 人物不可召回——person 之前只存在于 `person_aliases`，没有任何读路径会搜它，因此“阿梅是谁？”永远召不回该人物；现已在编译期为人物建立 search document（title=display_name、body=关系+全部 alias、kind=person/memory_kind=relationship、sensitivity=personal），确认时随同事件投影一起提升，未确认人物仍被 confirmed-only 的 `context` 挡住。
+- 人物投影已同步到生产路径：`postgres_memory_catalog.py::_write_extraction` 现在也写同名 search document（PG schema 的 kind 无枚举约束、`memory_kind=relationship`、`sensitivity=personal` 均合法，确认时的同事件状态传播已由 `memory_search_document_sources` 覆盖），并补了 DSN 门控契约 `test_postgres_person_alias_is_recallable_and_status_gated`；此前真实 PostgreSQL 与旧 CI 的 `python` job 已通过；当前 HEAD 的 CI 状态见顶部。仍未验：真实 Qwen 抽取器（非规则）是否覆盖该别名句式；固定集之外的未见改写集尚未报告 recall/nDCG。
 - 完成条件：三项命中正确证据，原长程召回不退步、隔离/候选泄漏为 0；固定集与未见改写集分别报 recall/nDCG，验证实际 ResponsePlannerClient 超时/catalog 限额，设备追问另取 Actual Heard。未消费 MemoryContextClient 的 0.3s 不是现网保证；不引入新向量库/平行记忆服务。
 - 入口：`scripts/evaluate_memory.py`、`services/archive/{recall_planner,memory_extractor}.py` 与 `evaluation/memory_eval_zh_v1.json`；现有诊断见 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`。
 
@@ -138,15 +135,16 @@
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行，不伪造 Actual Heard/commit；预定义长稳窗口并保留内存/连接/延迟趋势。先补测量/注入，不顺手改断线产品行为；假设备不能代替 P1-07。
 - SiphonAI 只借鉴协议公开化、conformance harness、20 ms 热路径和掉线保会话的工程做法；不引入 `siphon-rs`/`forge-media`，不替换 Go Media Edge，不把 PSTN 入线带入当前范围。
 
-### [ ] P2-05 补齐“茉莉”家庭噪声唤醒计数
+### [ ] P2-05 修正唤醒计数边界，再补“茉莉”家庭噪声矩阵
 
-- 当前有效事实：安静环境阶段 4 已有“茉莉”10/10、5 分钟误唤醒为 0（历史真人证据，不跨版本累加）；电视人声与家庭噪声仍没有可比较的漏唤醒/误唤醒 receipt，不能据此宣传家庭场景召回率。
-- 已验（2026-09-16 设备窗口，本机外放+麦克风，receipt `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/`）：合成 TTS（Tingting，0.25 s/0.4 s 前后静音垫）**可以**唤醒本板——此前“TTS 唤不醒”的结论来自未加静音垫的渲染。本机另有两个坑已定位并写进工具：系统输出默认 `muted`（会产出“0 召回”假证据）、`Flo/Eddy/Grandma` 等音色静默渲染 ~11 ms 空文件（刺激必须先校验时长/电平）。矩阵：近档（gain 1.0）4/8、远档（gain 0.3）8/8；**前 4 次漏唤醒全部落在开机待机后约 42–50 s 内**，此后 **12/12** 全部命中（含远档 8/8），因此这 4 次是开机预热效应而不是清醒设备的召回失败；本次数据也不支持“更大声更差”。唤醒时延（刺激起点→唤醒行）中位 1.445 s、范围 1.35–1.52 s（刺激 = 0.25 s 前导静音 + ≈0.56 s 语音 + 0.4 s 尾静音，即语音结束后约 0.4–0.6 s 触发）。
-- 误唤醒（按唤醒行 `(state: N)` 从原始串口日志重算，排除每次唤醒的第二条重复行）：合成电视人声 2 分钟 0 次、多人说话 2 分钟 0 次、静默 5 分钟 0 次。原始 receipt 里电视窗口的“1”是上一个试次唤醒的滞后重复行跨窗口边界所致，不是真实误唤醒。
-- 工具与窗口规则：新增 `scripts/wake_word_matrix.py`（刺激校验、输出音量/静音记录与恢复、逐试次待机门、`--warmup-s` 预热门、`--human-speaker` 真人模式、只按设备终端日志计数并生成 receipt）。设备窗口新规则：`activating -> idle` 之后至少等 45–50 s 再开始计数。
-- 仍未做：真实电视/家庭噪声音源（本次是 TTS 模拟）、物理距离与角度变化（本次只有播放增益阶梯）、真人说话者对照（TTS 音色影响未知）；候选/固件身份本次只读到启动横幅（app 2.4.2、ELF 前缀 `da6ebdd16`），flash receipt 仍标记为非本轮读取。
-- 工作：在冻结候选和固定固件上补齐上述剩余条件，记录真唤醒召回、误唤醒、响应延迟和触发时上下文。只有数据证明必要时才调整 WakeNet threshold 或词形；不开启播放期 KWS，不把目录切词当成 WakeNet 证据。
-- 完成条件：receipt 含原始输入范围、真值、候选/固件身份和可复核计数；该项不改写 `advertised_duplex_level=none` 或 `aec_reference_verified`。
+- 历史安静真人阶段有“茉莉”10/10、5 分钟零误唤醒，不跨版本累加。本轮只离线复核 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}`；未连接设备、未改原始收据。
+- 可确认的 2026-09-16 设备事实：Tingting 合成 TTS（前后静音垫 0.25s/0.4s）能唤醒该板；原始矩阵 gain 1.0 为 4/8、gain 0.3 为 8/8，合计 12/16。gain 是播放增益，不是测得的近/远物理距离。成功试次刺激开始→终端唤醒行中位 1.445s，包含前导静音与采集时序，不当作精确声学处理延迟。
+- 修正因果结论：首次 activating→idle 为 23:18:58.330 CST，前四个漏唤醒刺激在此后约 7.35/17.54/27.71/37.98s；首个成功唤醒在约 49.59s，之后 12/12 是事后子集，不可据此剔除原始失败。单次开机、先高增益后低增益不足证明固定 45–50s 预热，也不能排除召回/音源/顺序因素。工具默认 60s 等待只是暂定实验参数；后续多次冷启动、固定刺激、交错/随机增益次序对照，分别报告冷启动和预先定义的稳态窗口。
+- 修正误唤醒分母：按带 `(state: N)` 的首次唤醒行去重后，新事件确为 0；原 receipt 的 TV=1 是上次试次的滞后重复行。但 TV 窗口 23:23:11.464 起共约 133.038s，日志状态为 connecting/listening/speaking，idle 为 0s；其中约 92.382s 在 speaking，固件禁用播放期 KWS。small_talk 共约 124.471s，仅约 100.909s idle；quiet 约 300.001s 均为日志可见 idle。故不能宣称 TV/多人各 2 分钟有效零误唤醒；静默窗口的已观察零事件可保留，但不替代完整 detector-on 证据。
+- 工具必修：`scripts/wake_word_matrix.py:694` 后的干扰/静默窗口没有待机门，也未累计检测器启用时长，上一会话会污染分母。每窗先确认 idle+detector-on，状态离开时暂停有效暴露计时并记录原因，去重与窗口边界统一；串口断流/播放失败/状态未知标 invalid，不算漏唤醒或零误唤醒。先用 fake console/播放器覆盖边界与断流，再开设备窗口。不得为凑曝光开启播放期 KWS。
+- 工具可靠性：音量/静音修改后的录音、串口打开也须纳入 finally 恢复；恢复成功须实读核对，不能无条件写 true。真人模式的 Markdown 与 JSON 应一致，真人延迟不从人工提示时刻冒充实际开口计；记录各档实测输入电平、warmup 配置及实际等待，保留静音输出/空音频校验。
+- 剩余设备矩阵：真实电视/家庭噪声音源（现为 TTS 模拟）、物理距离/角度、真人说话者对照；固定候选/固件/settings 并记录窗口状态、真值、输入范围、召回/误唤醒/时延。既有日志只读到 app 2.4.2、ELF 前缀 da6ebdd16，flash receipt 不是该轮回读；日志明确 detector=MultiNet，先核真实检测器/模型及阈值权威，不继续笼统写调整 WakeNet threshold。
+- 完成条件：修工具后用预定义协议取得可比较 receipt，原始分母、有效暴露时长、候选/固件身份和未测边界可复核；数据证明必要后才调检测阈值/词形。该项不改写 advertised_duplex_level=none 或 aec_reference_verified。
 
 ## 暂缓，不自动扩张范围
 
