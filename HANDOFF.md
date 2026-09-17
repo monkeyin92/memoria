@@ -55,28 +55,34 @@ device_id: dev_atk_a4cb8fd6095c
 
 ## 最新候选与审查边界
 
-审查基线 `d191ef1`（2026-09-17 18:26:24 CST），上轮修复提交 `350d62d`（CI `35231388322` 于 2026-09-17 22:17:21 CST 完成 success：`python` 的 Ruff/模块预算/strict mypy/可复现协议与契约/authoritative PG gate/pytest/覆盖率/Offline E2E 与 `agent-image`、`miniprogram` 实跑，agent/media-edge/firmware 跳过）；本轮 `f2a95d6` 只跑本地全门禁（Ruff、模块预算、strict mypy 435 files、带 DSN 全量 pytest 5107 passed / 3 skipped、覆盖率 87.86%、85/90/95 通过、Offline E2E PASS），远端 CI 未跑。最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。python 中真实 PG gate（上轮 CI）、pytest、覆盖率和 Offline E2E 已执行，provider smoke 使用 `OFFLINE_MOCK=true`，不算真实厂商验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
+审查基线 `d191ef1`（2026-09-17 18:26:24 CST），上轮修复提交 `350d62d`（CI `35231388322` 于 2026-09-17 22:17:21 CST 完成 success：`python` 的 Ruff/模块预算/strict mypy/可复现协议与契约/authoritative PG gate/pytest/覆盖率/Offline E2E 与 `agent-image`、`miniprogram` 实跑，agent/media-edge/firmware 跳过）；`f2a95d6` 与其后两笔整改（`27a16cf`、 numerator 追补）只跑本地门禁，远端 CI 未跑。最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。python 中真实 PG gate（上轮 CI）、pytest、覆盖率和 Offline E2E 已执行，provider smoke 使用 `OFFLINE_MOCK=true`，不算真实厂商验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
 
 本轮仍开放的审查项：
 
 - P0-04 / P1-03：成员追加的三处缺陷已修（`350d62d`，见下方收据）。同一轮仍未证明的是下游同意门是否曾被绕过——本地只证明了 binding grant 扩大，没有复现越权读取。
 - P0-04 读一致性已修（`f2a95d6`）：`read_transaction` 固定 `REPEATABLE READ` 只读；真实 PG 交错回归各 1 例（读间旋转混对、读间撤销翻转），修前源码上失败、修复后通过。不标已泄漏。
-- P0-03 TTS 软件边界已修（`f2a95d6`）：无时间戳降级 1 例、流式单次回落 1 例，修前失败、修复后通过。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。
-- P2-05 工具已修（`f2a95d6`）：曝光时间线 2 例、会话回顾 1 例同上；去重用例内联 fixture 后删 ignored 文件仍 9/9；CI 新增 wake 显式步骤。设备矩阵未采。
-- 修复轮回归：带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 为 5107 passed / 3 skipped、覆盖率 87.86%（85/90/95 门禁通过）。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，不是本轮结论。
+- P0-03 TTS（`27a16cf` 修正 `f2a95d6` 收据）：无时间戳降级 1 例 + 取消优先 1 例通过；`f2a95d6` 的 `slow_once` 回落测试收据作废（未触发重入、改前已通过），已由 `slow` 持续首包失败真回归替代（personal 1 次、callback/trace 各 1 次、总 5 sessions；修前 personal 4 次）。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。
+- P2-05 工具（`f2a95d6` + `27a16cf` + numerator 追补）：曝光时间线 2 例、入窗起点 2 例、settle-wake 排除 1 例；去重用例内联 fixture 后删 ignored 文件仍通过；CI 新增 wake 显式步骤。分子/分母/report wall 全口径为门后起算，`started_monotonic` 保持门前（收据不 breaking）。设备矩阵未采。
+- P1-05（收据修正）：回顾出口 1 例通过，带事件 id 与 approximate；撤回“无跨主体读”——只证 account 隔离，同账号切主体/subject 围栏/临时读回待验。
+- 修复轮回归（本地）：受影响套件 121 passed / 1 skipped，PG 两套 59 passed；Ruff、模块预算、strict mypy（435 files）通过；文档预算通过。全量 pytest 与覆盖率门禁未在本轮重跑，不替发布背书。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，不是本轮结论。
 
-下一步冻结同一 source/lock（`f2a95d6`）跑受影响门禁、构建候选，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
+下一步先推远端跑整改后完整 CI，通过后再冻结同一 source/lock、按 P1-01 跑受影响门禁、构建候选，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
 
 ### 已有软件收据（按提交范围解读）
 
-以下记录的是对应日期/提交的实现与验证范围；其中当时的“仍开放”列表不是当前完整清单，以本节上述复核和 `TODOLIST.md` 为准，不继承历史 HEAD/CI 或设备结论。
 - [fixed 2026-09-17, commit `f2a95d6`; local code+tests+real PG (Docker PG17) where the seam needs it, no production/device access] P0-04 读一致性 + P0-03 TTS 软件边界 + P2-05 唤醒工具 + P1-05 会话回顾：
   - 读一致性：`PostgresSessionRuntimeStore.read_transaction` 现为 `transaction(isolation="repeatable_read", readonly=True)`，profile/context/binding fence 共享同一快照（快照由首条 profile 读建立；只读无谓词锁，写侧 CAS 不变）。2 个真实 PG 交错回归在修前源码上失败、修复后通过；session_runtime 全套 47 例、policy chain 全套通过。
   - TTS P2：`COSYVOICE_WORD_TIMESTAMPS=false` 即纯音频语义——batch 返回完整 PCM + 空词 + `degraded`，单次连接；`test_word_timestamps_disabled_returns_complete_audio_without_word_metadata` 修前抛 `CosyVoiceTimestampError`、修复后通过。
-  - TTS P3：Doubao 流式 `_fallback_used` 单次闸门；`test_livekit_stream_personal_before_audio_fallback_fires_exactly_once`（`max_retry=3`）断言 2 sessions + 1 callback；TTS mock 三套 55 例通过。
+  - TTS P3（收据已作废，见下条）：`test_livekit_stream_personal_before_audio_fallback_fires_exactly_once` 用 `slow_once` 未触发框架重入、改前已通过，不算修前失败。
   - P2-05：`_exposure_over_timeline` + 2 个时间线用例 + 去重 fixture 内联（删 ignored 文件 9/9）+ CI wake 显式步骤；`_run_window` 的端点采样循环已删，曝光/暂停全由时间线求交得出。
   - P1-05：`GET /v1/archive/conversation-history` + 1 个配对/跨主体用例；archive 全套 53 passed / 1 skipped。
   - 门禁：`ruff check .`、module budget、strict mypy（435 files / 0 errors）通过；带 DSN 全量 `pytest` 5107 passed / 3 skipped，总覆盖率 87.86%，85% 总覆盖与 orchestration 90%、provider protocols 95% 通过；Offline E2E PASS。远端 CI 未跑。仍未验：小程序成员/回顾 UI 与设备链、厂商真实 TTS/厂商、设备矩阵与时延、安全专项。
+- [fixed 2026-09-18, commits `27a16cf` + numerator 追补; local code+tests, real PG only for untouched-path rerun, no production/device access] advisory 整改：
+  - Doubao 真重入：`slow` 持续首包失败 + `max_retry=3`，personal 仅 1 次、callback/trace 各 1 次、总 5 sessions；修前 provider（`f2a95d6~1` 文本比对 + 临时旧文件实跑，tree 未动）personal 被试 4 次。旧 `slow_once` 测试收据作废。
+  - CosyVoice 取消优先：降级分支并入取消优先收尾；trace 回调置 cancel 的回归确定性覆盖（旧分支返回 `discarded=False` + 连接释放）。
+  - P2-05 全口径：`window_start = gate_ready_at`，`_wake_lines` 下界同口径，收据新增 `exposure_started_*`（`started_monotonic` 不动），report wall 取 exposure 起点（旧收据回落原口径）；fake-clock 证明修前多算 ~1.5 s/settle wake 计入，修复后排除。
+  - P1-05：话轮带 `owner_event_id`/`assistant_event_id`/`assistant_approximate`；撤回跨主体收据，同账号切主体/subject 围栏/临时读回待验。
+  - 门禁（本地）：Ruff、模块预算、strict mypy 435 files、文档预算通过；受影响 121 passed / 1 skipped；PG 两套 59 passed。全量 pytest/覆盖率未重跑。
 - [fixed 2026-09-17, commit `350d62d`; local HTTP+SQLite and real PostgreSQL 17, no production/device access] P0-04 / P1-03 成员追加三处缺陷：
   - 门禁：`ruff check .`、module budget、`mypy services --strict`（435 files / 0 errors）通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 5101 passed / 3 skipped，总覆盖率 87.77%，85% 总覆盖与 orchestration 90%、provider protocols 95% 门禁通过；远端 CI `35231388322` 整轮 success。仍未验：小程序成员 UI 与设备链、下游同意门是否曾被绕过（未复现）。
 
