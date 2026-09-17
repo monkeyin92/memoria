@@ -1,34 +1,31 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-17（晚三），审查基线 `9c04a35`（P0-04 类别矩阵 + 真实 catalog 隔离 + 错绑补齐；另记一个未修的换管理账号 P0 缺陷）。本文件只保留未完成事项及其必要证据边界；完成后把仍有效的运行结论归入 `HANDOFF.md`，并删除任务/子项，不积累完成记录或另建归档。已有编号不复用；生产、设备、回滚与原始证据以 `HANDOFF.md` 中带日期的收据为准，不把旧文档状态当成当前验收。
+更新于 2026-09-17（成员写入边界修复）。修复提交 `350d62d`；本轮完成 P0-04/P1-03 的成员追加修复（空权限被恢复、并发新增丢成员、`family_shared` 丢家庭空间）及回归，未部署、未连接生产或设备。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
-1. P0-04 person-consent lifecycle fixed locally (2026-09-17, a8ce4e1, code+tests+real PG): trusted subject context for the grantor single read/revoke, unbind-proof grantor revoke, idempotent grant replay and SQLite export; P1-01 Mypy blocker cleared. The real-PG matrix for authority unavailable/expired, concurrent switches and a foreign manager is covered by four tests in `test_persistent_runtime_policy_chain.py` (30dea92); the under_14/14_17/adult/unknown_safe category matrix at both seams is covered by `test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distinct` plus `test_real_catalog_withholds_account_memory_from_a_child_subject`, which drives the account/subject-key split with a real `PostgresLifeArchive` + `PostgresMemoryCatalog` pair instead of a catalog double (a65b8f2); the profile-session mismatch cell is covered at BOTH seams by `test_both_policy_seams_reject_a_diverged_runtime_projection` (9c04a35); and the legal-manager change that was the last open defect of this file is now closed on the read path by `test_legal_manager_change_closes_the_agent_facing_seams` (f67a134), which covers a new turn, a verbatim retry of the pre-change turn and `/context-prefetch` with a positive control. Still open: device admission stays the final P0-04 gate. Closed 2026-09-17 (late round, 092dcf4): agent-side old-cache replay (plan stamp + epoch eviction + rotation reset of snapshots/context/prefetch), single-snapshot read fence, the P1-03 control-side minimal entry (member-add + age-evidence routes), and the P2-05 wake-tool repair; full local gate re-verified on 092dcf4 (5095 passed / 3 skipped, 87.83%).
-2. Evidence split is now explicit: the real-PG store contract, the real persistent-Runtime/HTTP policy seams and the real-catalog subject-key isolation form one chain, and the SQLite HTTP case covers unbind plus concurrent replay. None of it is device acceptance; the device chain remains open under P0-04.
-3. P0-03 通用 batch retry 已在 `3e0b738` 实现，不再重复开发；补下面的时间戳关闭/流式 fallback 边界和 G 的软件矩阵。完成拟发布 slice 后冻结同一候选，按授权构建、切流与回滚验证，再复跑 G/B/D、退出 speaking 时序、时延和学生设备链。P2-05 先修计数工具，下一设备窗口再采数。
-4. WAL 保留策略仍单列 P1-08，可独立只读测量；生产删除/重启/启用定时任务须另获授权，不能随自动备份暂缓一起搁置。
+1. **成员写入边界已修（`350d62d`）**：三个缺陷都有修复前失败的回归，并发项另有真实 PG 契约（见 `HANDOFF.md`）；剩余的是小程序成员 UI 接线与设备链。
+2. **接着补 P0-04 的 Runtime 读一致性契约**：定义 profile/context/binding 的一致性与授权生效点，补真实 PG 读间交错测试；需要稳定快照时落实隔离或单语句读取。
+3. 可并行完成 P0-03 剩余 TTS/续问软件边界、P2-05 唤醒计数与自包含测试，以及 P1-05 的最小会话内容/汇总只读出口。后者是下一设备功能窗口的前置，不必等待完整三端 UI。
+4. 完成拟发布修复后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+5. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
+6. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the full python CI locally on the frozen slice and add the four real-PG authority/mismatch/manager/concurrency matrix tests; no production, device, flash or deployment access. Local CI-equivalent receipt (all steps of the CI `python` job, HEAD 5526c39): `ruff check .`, module budget, `uv run --frozen mypy services --strict` 0 errors (435 files), media proto reproducible, multi-subject contracts in sync, `scripts/tests/run_authoritative_postgres_gate.sh` (init + repeat-upgrade) pass, `scripts/media_runtime_smoke.py` + `scripts/media_runtime_replay.py` pass, full `uv run pytest --import-mode=importlib --cov=services --cov-report=term-missing` with `MEMORIA_TEST_POSTGRES_DSN` against the local Docker `pgvector/pgvector:0.8.1-pg17-bookworm` container (host 55439): coverage 87.80% (85% gate), orchestration 90% gate and provider-protocol 90% gate all pass, Offline E2E `scripts/run_e2e.py --profile offline` PASS, provider smoke skipped with `OFFLINE_MOCK=true`. Finding: without the DSN env the same command drops to 81.96% and the 85% gate fails — DSN-gated tests must never run skipped under CI parity claims. CI on GitHub has still not rerun for this slice (gh unavailable locally); pushing and a fresh CI run remain before `python` job success can be recorded.
+当前证据：CI `35231388322`（`350d62d`）2026-09-17 22:17:21 CST 完成 success，`python`（Ruff、模块预算、strict mypy、协议/契约可复现、authoritative PG gate、pytest、覆盖率、Offline E2E）、`agent-image`、`miniprogram` 实跑通过，agent/media-edge/firmware 跳过；provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
 
-2026-09-17（晚二）本地 python 门复跑（本轮提交 `a65b8f2`，本机 Docker + 普通 venv，未接生产/设备）：`ruff check .`、module budget（3 项）、`uv run --frozen mypy services --strict`（435 files，0 errors）、media proto 可复现（`git diff --exit-code` 无输出）、multi-subject contracts in sync、`scripts/tests/run_authoritative_postgres_gate.sh`（init + repeat-upgrade）、`scripts/media_runtime_smoke.py`、`scripts/media_runtime_replay.py`、`packages/proto` 的 `buf lint` 全部通过；带 `MEMORIA_TEST_POSTGRES_DSN`（`memoria-pgv`，宿主 55439）跑 CI 同款全量 `uv run pytest --import-mode=importlib --cov=services --cov-report=term-missing`：**5084 passed / 3 skipped**，coverage **87.81%**（≥85%）、orchestration 90%、provider protocols 95% 三门通过；Offline E2E PASS；`provider_smoke_test.py` 因缺 `DASHSCOPE_API_KEY`/`DOUBAO_TTS_AUTH` SKIP。`test_persistent_runtime_policy_chain.py` 单文件 10/10 通过（含本轮新增 2 例，观测收据可用 `P0_04_MATRIX_DUMP` 输出）。GitHub CI 仍未重跑，故 `python` job 的 success 仍不能记录。
-
-最新 CI `35184070037`（HEAD=`52241ed`，2026-09-17 13:02:31 CST 结束）整体失败：changes、agent、agent-image 通过；python 在 Mypy 步骤失败，后续 PostgreSQL init/repeat-upgrade、pytest、Coverage gates、Offline E2E 均未执行；firmware、miniprogram、media-edge-image、media-edge 跳过。不能继承上一轮全量测试数量或旧 CI success。最新已记录 Agent/Bridge 为 `d96d4c2`、板卡为 `d1ad38f`，本轮未刷新在线状态；HEAD 的 `code/wired` 不能记成生产 `enabled/verified`。`HANDOFF.md` 的 person consent `closed`、“只剩设备”及旧未提交/制品待验表述须在下次交接前与本轮缺口、CI 对齐，不回改历史收据。 [2026-09-17 fix round: the Mypy-step blocker is fixed locally; the full python CI steps were then rerun locally on 5526c39 and passed (see the round receipt above); a fresh GitHub CI run still has not been observed for this slice.]
+本轮回归：三个成员缺陷的用例在修复前源码上全部失败（以 stash 复核），修复后通过；identity/control_api 成员、多主体与文档约束套件在真实 PG（本机 Docker PG17）下全绿；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 为 **5101 passed / 3 skipped**，覆盖率 87.77%，85/90/95 门禁通过。唤醒 7 例仍依赖本机历史日志（P2-05），Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍待定位（P2-04）；两者不是本轮结论。生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 
 ## P0：发布前必须闭环的安全与语音问题
 
 ### [ ] P0-04 修正当前使用人的监护授权与学生安全闭环
 
-- 前提：成人管理账号可创建独立 `under_14/14_17` 使用人，不要求孩子另建登录账号；以当前使用人及合法监护关系决定策略，成人学生不自动视为未成年人。最小 app_confirm/年龄资料入口优先，不重建多主体权威。
-- 已有代码边界（`e5f9d50`/`c055004`）：不再替孩子确认关系或伪造微信 active link；`guardian_of` 仅家长一侧确认、仍为 pending。两条策略入口按签名 profile 的 active subject 判类别，subject≠account 时禁止读取账号键旧档案，`owner_display_name` 不串人；配置了主体权威却读取失败时保持保守门与公开固定回复。声明通知不等于验证监护或有效 consent；真正的 subject 键记忆在 `services/memory_scope`，会话记忆迁移尚未完成。
-- 证据边界：真实 HTTP device-binding → session → app_confirm → device runtime-profile 已有测试；本轮重跑 `test_persistent_runtime_policy_chain.py`，真实 PostgreSQL 的 persistent Runtime → `/session-policy`、`/response-plan` 3/3 通过。账号/监护 store 仍用 SQLite，memory catalog 是替身；旧 epoch 仅在 Runtime authority 中判 stale，不能外推两条 HTTP 入口的并发隔离。此前 PostgreSQL/RLS、init + repeat-upgrade 收据仍有效，但不是本轮全栈/设备验收。 [2026-09-17（晚二）：catalog 替身已有一条真实例外——`test_real_catalog_withholds_account_memory_from_a_child_subject` 用真实 `PostgresLifeArchive` + `PostgresMemoryCatalog`，账号键行经 compile 与 review confirm 后可被直接召回，却在真实 retention 同意解除 ceiling 后仍不发给非账号主体；账号/监护 store 仍是 SQLite，设备 admission 仍未验。]
-- 已有声明基线（`e1878ce`）：`declared_guardians`/PG 通知授权只接受有效期内、带 `guardian_declaration_v1:device_binding` 且有 ACTIVE binding 的 owner→primary subject 单方声明；第三方 invite+self-accept 不再进入声明集合或取得 guardian 角色。保留这些约束与负例，不把声明升级为已验证监护或 consent。该修复已归 `HANDOFF.md`，不再作为待开发项。
-- person consent 实现存在但未闭环（`77fc86a`）：新增 `PersonConsentRecord`、两种 store、`POST/GET/DELETE /v1/guardian/minors/{person_id}/consents` 及统一 `active_consent` 读门。新 HTTP 授予/撤销回归使用 SQLite，并手工注入签名 profile；真实 PG 测试只补了该表的 RLS/治理清单，没有覆盖家长的单条读取与撤销。不能据此将 `accountless_person_consent` 标成 closed。 [2026-09-17 fix round: closed locally under real PostgreSQL (grant -> grantor single read -> revoke -> active_consent tightening, cross-child/cross-parent denial, revoke replay, export/delete/remaining counts) plus the SQLite HTTP case for unbind, idempotent payload conflict and concurrent replay. 2026-09-17 (late round): the category/authority/manager-change software matrix is closed on the real PG authority by `test_persistent_runtime_policy_chain.py`; device admission is the remaining gate.]
-- 软件验收矩阵：两条策略 API 都覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、无同意/撤销/过期/无权限、换合法管理账号；切人/改年龄与旧 epoch/旧 generation/旧缓存并发不得串人。使用真实 subject/account 键 catalog 补隔离证据，不把 catalog 替身或一次手工变异当作完整数据链验收。 [2026-09-17 (this round): the real-PG persistent-Runtime chain now also covers authority unavailable (service missing → policy seam 503 fail-closed, response-plan offline profile; real dead-DSN store → policy 503 + conservative response-plan with the crisis fixed reply verbatim and zero memory reads), real profile TTL expiry (both seams close, close_session still applied), foreign-account manager denial plus stale profile id 403 `action_profile_forged` and stale epoch 409 `action_fence_stale` at the action seam, and concurrent switch serialization (strictly increasing unique epochs, final authority = last epoch, superseded epoch decide denied stale). The category matrix is closed as well: both minor bands land in `student_minor` with the ephemeral-only ceiling, no session capability, one `guardian.crisis_event` and a pending notification bound to the declared guardian; both legal adult shapes (an adult family member on a `family_shared` binding, and the device's self-owned `adult_companion` account) produce NO minor-crisis evidence, while the self-owned turn keeps its own display name and does read its own memory as the positive control; the signed `unknown_safe` profile stays conversation-only and records no crisis evidence. Account/subject-key isolation is proven with a real archive+catalog: an account-keyed claim (compiled and confirmed through review) is recallable under the account key directly, is still withheld from the child after a real retention consent provably lifts the ceiling, and is served to the account's own turn in the same session. Remaining: device admission only (agent-side replay closed by 092dcf4: plan stamp + epoch eviction + rotation reset).]
-- 软件验收矩阵（续，2026-09-17 晚二）：profile-session 错绑现在两条入口都覆盖，且两条入口的语义不同才是正确的——`/session-policy` 必须 503 `session_runtime_profile_binding_mismatch`（不能决定就不要决定），`/response-plan` 保持**有界保守的 200**（crisis 固定话术仍必须能交付），实测零记忆读取、`grounded_items=[]`、无 memory_retention 授予、两条入口都不记 crisis 证据。此前 14_17 在两条策略入口都没有覆盖、response-plan 没有任何错绑用例，均已补齐。Remaining 修正为：设备 admission（旧缓存跨切人重放已由 f67a134 + 092dcf4 关闭：服务端缓存重围栏、Agent 侧 plan 盖章 + epoch 驱逐 + 轮换重置；换管理账号 P0 缺陷已闭）。 [2026-09-17 晚三，f67a134：换管理账号 P0 缺陷已闭，Remaining 再修正为「旧缓存重放中已覆盖的那部分不再开放，设备 admission 仍是最终门」——读路径新增窄 `SECURITY DEFINER` 谓词 `action_identity_binding_is_current`（`LANGUAGE sql STABLE`，固定 search_path，`row_security = on`，无锁子句，以 Identity owner 创建，REVOKE FROM PUBLIC 后仅授 `memoria_session_api`），在 `current()` 内紧邻 `_require_current_profile` 应用；**故意不放进** `_active_profile_context`，因为 `close_session` 走那条路径，close-only 必须仍能关闭。同一轮还关掉两条仍可承载旧主体记忆的入口：`/v1/interaction/context-prefetch` 此前完全跳过主体作用域（无权威读，且调 `_companion_items` 未传 `account_keyed_memory_readable`，默认 True——即使没有换管理账号，非账号主体的回合也会读到账号键记忆），现在与 `/response-plan` 共用同一个 `_resolve_subject_memory_scope` 解析器，避免两条 seam 再次分叉；`/response-plan` 的缓存命中现在先重过围栏，因为缓存键是 generation fence，而换管理账号不会改变它（加宽 key 修不了），被拒条目直接丢弃而不是保留。契约侧：新函数进入 `_REQUIRED_FUNCTIONS`（集合相等）以及 `_verify_runtime_roles` 校验的 `_SESSION_API_FUNCTION_SIGNATURES` 读角色 EXECUTE 授权，回答不了该问题的部署一律 503，不会返回 True。真实 PG 观测：`current()` 抛 `PersistentSessionDenied`、policy 503、response-plan 保守 200 且 crisis 固定话术逐字交付、新回合/逐字重放旧回合/`context-prefetch` 三者账号键读取均为 0、无主体替换、无 crisis 证据、`close_session` 仍 applied。两条新断言都用「临时解除守卫后预期断言必须失败」验证过非平凡（也由此发现一次通过的假象其实是插入成了死代码、围栏仍生效，不是测试太弱）。本地门禁：authoritative PG init + repeat-upgrade、`ruff check .`、module budget、`mypy services --strict`（435 files，0 errors）、真实 PG 套件 `services/session_runtime` 90/90 与 `services/control_api` 677/677。仍开放：设备 admission（P0-04 最终门）；P1-03 控制侧最小入口已由 092dcf4 补齐（成员追加 + 年龄申报），仅剩小程序 UI 接线。]
-- 入口前置：先接 P1-03 的最小使用人/年龄资料与 app_confirm 控制入口，完整人格/音色后做。零同意可建 HTTP session 不直接等同设备越权，须另验设备实际 admission 与受限能力门。
-- 设备验收（2026-09-17 晚四改为功能口径：本阶段只验功能，危机演练-device 证明 defer 到安全专项窗口，软件矩阵证据保留）：同一候选上能对话（天气→续问→播后告别至少三轮）、能打断（button/keyword 按签名放行范围，中断后有界退出并回 listening）、长时间对话稳定（>45s 长答、B/D 同类长答不重现停滞）、每次对话内容汇总可查（双方话轮与汇总以服务端日志/会话记录为准，操作员可读；无可读出口则记缺口、不算通过）。不手工注入 profile、不绕声纹/准入门；HTTP 文本正确不是设备已说出，以终端回执与人工听感为准。发送 worker/外部投递按 2026-09-14 决定暂缓，不把 outbox 称为送达。
-- 完成条件：类别、有效同意、通知与数据作用域在上述软件矩阵和真实设备链一致，分别记录 code/wired/enabled/verified。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/identity/service.py`、`services/guardian/{sqlite_store,postgres_store}.py`、`test_student_safety_loop.py`、`test_persistent_runtime_policy_chain.py`。
+- 既有基线：person-consent 授予/读/撤销/解绑后撤销/幂等/导出，真实 PG 的类别、权威失效、profile-session 错绑、合法管理人变化围栏，以及真实 catalog 的账号/主体键隔离已有软件收据；Agent plan stamp、旧 epoch 驱逐和轮换清理已实现。保留这些回归，不重复开发，也不据此声称“软件全闭、只剩设备”。声明监护关系仍是 binding-scoped owner 单侧 pending，不等于 verified guardian、consent 或外部通知送达。
+- **成员写入缺陷已修（`350d62d`）。** 空权限被恢复为角色默认值、并发新增丢成员两项在 `routes/identity_lifecycle.py` 与 `services/identity/service.py` 修复：追加逐字携带既有角色的权限集合（含空集合），`supersede_binding` 新增 `expected_binding_id` 比较并设置，路由对陈旧视图有界重试且每次都从新版本重算列表。真实 PG 契约证明同一版本的并发追加只有一个胜者、被拒尝试不留审计/版本行，带新版本重试后两名成员都在；仍未证明的是下游同意门是否曾被绕过（未复现）。
+- **读一致性仍待证，不标已泄漏。** `current()` 已共用一个只读事务，但 `PostgresSessionRuntimeStore.read_transaction` 未指定 isolation；本机既有 PG17 测试库实读默认 `read committed`，无角色/库级 isolation override。同事务多条 SELECT 不足以证明文档所称“单快照”。先定义 profile/context/binding 的一致性及授权生效点，补在两次读取之间切主体/撤绑定的真实 PG 交错测试；需要稳定快照时落实对应隔离或单语句读取，保留最终 action fence。close-only 在失效后仍可关闭，不误加使用权门；未复现跨主体泄漏，不把这个缺口写成既成泄漏。
+- 软件完成条件：两条策略入口覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、无同意/撤销/过期/无权限、合法管理账号更换；切人/改年龄与旧 epoch/generation/缓存并发不得串人。`session-policy` 不能决定时 503，`response-plan` 保留有界保守 200 和固定安全回复、零私密记忆；真实 subject/account catalog、Agent 缓存与新成员写入负例均须过门。
+- 控制入口及产品链：成人管理账号可建独立 under_14/14_17 使用人，不要求孩子登录账号；成员写入已随 `350d62d` 修复，接下来接最小年龄资料/app_confirm UI。成人学生不自动视为未成年人，零同意可创建 HTTP session 不等于设备准入已验；会话记忆迁入现有 subject 键 `services/memory_scope` 仍需 P1-06/P2-01 配合。
+- 当前设备窗口只验顶部四类功能，不手工注入 profile、不绕声纹/准入门；HTTP 文本正确不是设备已说出。安全专项随后再核 app_confirm 身份/年龄→有效同意→准入/受限能力→固定话术真实交付→outbox 绑定/幂等/家长读回；发送 worker/外部投递暂缓。
+- 完成条件：软件矩阵与真实设备链一致，分别记录 `code/wired/enabled/verified`。`student_safety_loop_verified=false` 保持到安全专项也通过，不能由功能窗口代填。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/identity/service.py`、`services/session_runtime/{service,postgres_store}.py`、`services/guardian/`、`test_student_safety_loop.py`、`test_persistent_runtime_policy_chain.py`。
 
 ### [ ] P0-03 收口 TTS、续问竞态、设备停滞与真实时延
 
@@ -47,16 +44,15 @@ Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the fu
 
 ## P1：发布门禁、运行保障与学生产品闭环
 
-### [ ] P1-01 修复当前类型门禁失败，完成 1.8.1 候选发布与回滚验收
+### [ ] P1-01 冻结修复候选，完成发布与回滚验收
 
-- 当前候选仍为 LiveKit agents/openai/silero 1.8.1，配套 RTC 1.1.18、API 1.2.1；保留 Python 3.12 与真实锁，不用 --no-deps、不重复同组升级。1.8.2 若要评估须另开完整兼容候选，不能以 run-loop/tracing/transcript 改进推断解决 VoCat AEC/卡顿，也不混 expressive/DuplexModel、抢跑、user_turn_limit 或 TurnPhase 副作用。
-- 已有制品基线（`ec56d9a`/`ea05ab9`/`e8571d3`）：全量、delta、source-overlay 都接入候选自带 verifier 与真实 OTLP canary；repo root 已修为 `parents[4]`，新增 cwd/PYTHONPATH/coverage 环境传播回归。最新 CI 的 agent-image job `105082261608` 已完成构建期及运行用户复验；旧导入/coverage 混合错误不再列为当前阻塞。这只证明该 CI 候选，不证明生产切流/回滚或完整 python 门通过。
-- Blocker cleared locally (2026-09-17, a8ce4e1): `GuardianStorePort.active_consent` now returns `ConsentRecord | PersonConsentRecord | None`; both adapters and every consumer were re-reviewed (no `link_id`-only caller; callers use `is None` or the common fields), and `uv run --frozen mypy services --strict` is clean on 435 files. The full python CI was then rerun locally on 5526c39 with the real-PG DSN: coverage 87.80% (85% gate), orchestration 90%, provider-protocol 90% gates and Offline E2E all pass (see the round receipt above); a fresh GitHub CI run for this slice is still pending.
-- 软件门禁：与 P0-04 修复冻结为同一 source slice，重跑完整 python CI，实际执行真实 PG init + repeat-upgrade、pytest、85% 总覆盖/90% orchestration/90% provider protocols 门和 Offline E2E；并保持 agent/agent-image 成功。定向 exporter 7/7 无合并错误不等于全量 coverage 过门，不删探针、不在 CI 加 --no-cov、不降阈值。
-- 构建验收：完成拟发布 P0 slice 后重新冻结 source/lock，标准完整构建实际受影响镜像；Agent/Bridge 共用同一产物，依赖变化不能 source overlay。保持构建期 gate、非 root 运行用户复验及三条构建路径的 COPY/chmod 保障；当前 HEAD 的 CI 镜像不能替代后续修复候选，也未刷新生产制品。
-- PII 验收：保留真实 OTLP collector 收到 span 的正例与故意绕 bootstrap 的泄漏反例，并同时查属性和原始导出字节。核 fresh process 的 env 未设置/空值/显式 0 与入口加载；SDK import-time 开关 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`、`LIVEKIT_TELEMETRY_ALLOW_PII` 必须落实到候选运行态，`PII_REDACTION_ENABLED` 或 InMemorySpanExporter 不可替代。
-- 发布验收：以上门禁与拟发布 P0 回归通过后，重新读取真实容器、env、override、当前/紧邻回滚与远端收据，再按明确授权切流；复核 provider/LiveKit、12 个具名 readiness、外部路由、设备/时延并实际演练回滚。只保留当前+一个可运行回滚及必要依赖底座，不自动清理生产。
-- 交接与完成条件：同步 `HANDOFF.md` 的 reviewed_source_commit、当前 gate 与 consent 实际闭环范围，清理仍写“未提交”“只剩真机”的过期摘要；保留带日期的历史 enabled/verified，原始收据不改。code/wired/enabled/verified 分层有证据，构建、真实 exporter、生产切流与回滚各自过门，不以 18 项脚本测试或旧 CI success 替代。
+- 当前候选仍为 LiveKit agents/openai/silero 1.8.1，配套 RTC 1.1.18、API 1.2.1；保留 Python 3.12 与真实锁，不用 --no-deps、不重复同组升级。1.8.2 须另开兼容候选，不以版本说明推断解决 VoCat AEC/卡顿，不混 expressive/DuplexModel、抢跑、user_turn_limit 或 TurnPhase 副作用。
+- Mypy blocker 已修，当前远端 `python`、`agent-image` 已通过，具体 SHA/job 见顶部；不再安排重复修复。全量/delta/source-overlay 已接候选自带 verifier 与真实 OTLP canary，cwd/PYTHONPATH/coverage 传播、运行用户读权限及 COPY/chmod 回归保留。
+- P0 修复完成后冻结同一 source/lock；受影响候选须过 ruff、module budget、strict mypy、协议生成、真实 PG init + repeat-upgrade、pytest、85% 总覆盖/90% orchestration/90% provider protocols、Offline E2E 及 agent/agent-image 门。带真实测试 DSN，不把 DSN-gated 跳过称为全量 CI；不删探针、不降阈值。文档/低风险机械改动只做相称快速检查。
+- 用标准完整构建验收受影响镜像，Agent/Bridge 共用同一产物；依赖变化不能 source overlay。构建期 gate 和非 root 运行用户复验分别留据，CI 镜像成功不等于生产启用。
+- PII 门保留真实 OTLP collector 正例及绕 bootstrap 泄漏反例，同时查属性和原始导出字节；fresh process 覆盖 env 未设置/空值/显式 0。`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`、`LIVEKIT_TELEMETRY_ALLOW_PII` 落实到候选运行态，`PII_REDACTION_ENABLED` 或 InMemory exporter 不能替代。
+- 门禁通过后重新读取真实容器/env/override、当前与紧邻回滚及远端收据，按明确授权切流；复核 provider/LiveKit、12 个具名 readiness、外部路由、设备/时延，并实际演练回滚。只保留当前+一个可运行回滚及必要依赖底座，清理生产另授权。
+- 完成条件：同一候选的构建、真实 exporter、切流、回滚、设备验收分项有证据，`HANDOFF.md` 当前摘要和 `code/wired/enabled/verified` 一致；历史收据保留，不继承旧 success 或健康容器作为设备通过。
 
 ### [ ] P1-08 为仍增长的 WAL 确定独立保留策略
 
@@ -66,19 +62,19 @@ Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the fu
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 
-- ASR 主链按 `RESEARCH.md` 的现行边界使用云服务商 FunASR，不跟进本地 FunASR PyPI 升级。救援 sidecar 另核真实启动脚本、Dockerfile、模型/词表摘要、基础镜像与消费者；将缺失的构建输入纳入仓库，保留独立镜像，不把云模型版本等同 Python 包版本。
+- ASR 主链使用云服务商 FunASR，不跟进本地 FunASR PyPI 升级。救援 sidecar 另核真实启动脚本、Dockerfile、模型/词表摘要、基础镜像与消费者；将缺失的构建输入纳入仓库，保留独立镜像，不把云模型版本等同 Python 包版本。
 - 仓内 sherpa-onnx 实现不支持“升级 FunASR 即修 sidecar”的推断；只针对实际后端与已证实问题做旧/新 A/B，不向主 Agent 添无用依赖或顺手改 NumPy/设备 VAD。
 - 完成条件：仓内输入可重建；真实中文 PCM 短句、长段/尾字、静音、低 RMS、削波、并发/失败降级通过。分报 vendor_error/vendor_silent/gating/low_rms、救援耗时与 2.5s 超时行为；有收益且无回归才另行切流。
 - 已有回归（2026-09-16，本地合成波形，非真实录音）：`services/agent/tests/integration/test_funasr_rescue_audio_shapes.py` 覆盖静音与室内底噪被本地门禁拦下（`rescue_total{outcome="skipped"}` + `empty_transcript{class="low_rms"}` 且厂商零请求）、削波满幅信号按上行原始字节送判、超长段只把最新尾帧（内容精确比对）送去救援、三路并发 + 慢/失败厂商降级为有界 `no_text` 且不抛不卡、以及在飞行中的救援发布 `now + 2.5s` 预算（默认 `SENSEVOICE_TIMEOUT_S=2.5`）。仓内既有的 `test_funasr_empty_accounting.py` 覆盖四个分桶判定。
 - 仍未完成：真实中文录音语料（短句/尾字听感、低 RMS 真实底噪）与生产启动脚本/Dockerfile/模型/词表摘要纳入仓库——后者按原记录只存在于服务器 `/opt/memoria/sidecars/sensevoice-asr/`，本轮未连接生产故无法取得；待核的是有效云模型标识、接口与救援后端，不新开本地 FunASR 包版本跟进。
 - 入口：`funasr_stt.py`、`funasr_empty_accounting.py`、`providers/sensevoice.py`、`scripts/run_sensevoice_asr.py` 及 ASR 契约/救援测试。
 
-### [ ] P1-03 按使用人切人格/音色：补控制入口与真实切换
+### [ ] P1-03 修稳成员入口，再接按使用人切人格/音色
 
-- 最小“手动确认使用人及年龄”入口先供 P0-04；完整人格/音色验收依赖 P0-04，避免循环依赖。先核线上 Control 路由/schema，不能把 9 月 11 日失效通知 overlay 当成最新全量后端。
-- 小程序接已有设备/成员、分配/取消分配/邀请 API，先以 app_confirm 闭环。`allowed_confirmation_methods` 只广告 `app_confirm` 的不一致已修：`resolve_subject` 现在只返回写接口真正接受的方法，`test_advertised_subject_confirmation_methods_match_the_write_api` 同时断言广告集合、`app_confirm` 被接受与 `voice_question` 仍被 422 拒绝；不把客户端 flag 当身份证据。剩余：小程序端接已有设备/成员与邀请闭环仍待做（控制侧 092dcf4 已备好：`POST /v1/devices/{id}/binding/members` + `PATCH /v1/persons/{id}/age-evidence`，第二孩子可建、可候选、可 app_confirm 切换均有 HTTP 测试；客户端只认 app_confirm 的门控已核对无误，无需改客户端鉴权逻辑，只缺成员/邀请/分配 UI 接线）。
-- 完成条件：同一 binding 两个 subject 得到不同人格/音色；切换推进版本、签名失效、next_safe_point 重协商，旧上下文/音频不串人；取消回落默认。内置只读、自定义创建即冻结、克隆未就绪回落设计音色，均获真 PG 与设备实听。
-- 入口：`routes/{persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`services/voice_profile/`、`apps/miniprogram/pages/device/`；不再造设备人格引擎。
+- 最小成员/年龄/app_confirm UI 先供 P0-04，完整人格/音色设备验收随后；不把依赖写成循环。成员追加、年龄申报已有 HTTP 路由，选人接口对外声明与写入口均只接受 app_confirm 的一致性已有回归；控制端三项写入缺陷（空权限被恢复、并发丢成员、`family_shared` 丢家庭空间）已随 `350d62d` 修复并留回归，剩余是 UI 接线。
+- 小程序接设备/成员、年龄资料、分配/取消分配/邀请与 app_confirm；先核实际线上 Control 路由/schema，9 月 11 日的两文件 overlay 不代表当前全量后端。客户端 flag、自报姓名或 voice_question 不作身份证据。
+- 完成条件：同 binding 两个 subject 得到不同人格/音色；切换推进版本、签名失效、next_safe_point 重协商，旧上下文/音频不串人；取消回落默认。内置只读、自定义创建即冻结、克隆未 ready 回落设计音色；PG 与设备实听分别验证。
+- 入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`services/voice_profile/`、`apps/miniprogram/pages/device/`；不另造人格引擎或身份权威。
 
 ### [ ] P1-04 自定义声音：样本上传到设备出声
 
@@ -90,19 +86,19 @@ Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the fu
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
-- 只读状态开发可独立进行；集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
+- 最小会话回顾出口是下一功能设备窗口的前置：先核实际日志/会话记录的可读查询入口，按 session/subject 查询双方话轮、可追溯汇总及交付状态；缺失时补最小受鉴权只读出口，不把原始日志或模型生成文本冒充已听到。跨主体拒读，无 retention 同意按策略仅临时读回，不默默长期保存。
+- 只读状态开发可独立进行；完整三端集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
 - 投影带 session/generation fence 和新鲜度，重连/断线/过期显示 offline/unknown；不从字幕、零散 diagnostics 或客户端计时猜态，不增加话轮控制面。
 - 完成条件：微信手机/电脑/开发工具同版本覆盖登录绑定、三态/断线、主体人格切换、样本进度、回顾、权限拒绝与刷新；录音范围门禁通过。0.8.84 仅开发版；体验版、提审、正式发布分别授权和记录。
 - 入口：`services/media_edge/{bridge_runtime_events,session_shadow}.go`、`routes/device_control.py`、`apps/miniprogram/`。
 
-### [ ] P1-06 修复三类召回遗漏与人物抽取
+### [ ] P1-06 定义跨会话记忆语义，补未见召回评测
 
-- 可本地并行。基线 recall@5=0.8125（13/16）、nDCG@10≈0.734；已有修复后的固定集 recall@5=0.9375（15/16）、nDCG@10≈0.859，`candidate_leakage`/`cross_account_leakage` 仍为 0、`extraction_recall`=1.0、p50≈0.72ms（见 `HANDOFF.md` 的三处改动）。仅剩 `repeated-episode-campus-startup`，它卡在下面的产品语义，不靠放宽判据抬分。
-- 待定语义：review 确认证据/claim 是否同时提升其 person/episode/knowledge；跨会话 episode 是否合并。现有逐事件 document 不能满足“同 episode 含两条 source_event_ids”的判据，先定产品写入语义，不能绕过判据抬分。
-- 已有修复（2026-09-16）：① 忌口转述——`RecallPlanner` 封闭词表新增“避开/忌口/不能吃/别吃/注意别/过敏”标记 → “不喜欢/讨厌/不吃/忌口/不要”扩展，并让评测 adapter 与生产读路径一致（生产**总是**先 plan，之前 13 个无 clock 的用例根本没走 planner）；② 别名——规则抽取器新增“家里人/大家/别人…叫(她|他)X”封闭句式，只在唯一人物且非角色词时挂为该人的 alias；③ 人物不可召回——person 之前只存在于 `person_aliases`，没有任何读路径会搜它，因此“阿梅是谁？”永远召不回该人物；现已在编译期为人物建立 search document（title=display_name、body=关系+全部 alias、kind=person/memory_kind=relationship、sensitivity=personal），确认时随同事件投影一起提升，未确认人物仍被 confirmed-only 的 `context` 挡住。
-- 人物投影已同步到生产路径：`postgres_memory_catalog.py::_write_extraction` 现在也写同名 search document（PG schema 的 kind 无枚举约束、`memory_kind=relationship`、`sensitivity=personal` 均合法，确认时的同事件状态传播已由 `memory_search_document_sources` 覆盖），并补了 DSN 门控契约 `test_postgres_person_alias_is_recallable_and_status_gated`；此前真实 PostgreSQL 与旧 CI 的 `python` job 已通过；当前 HEAD 的 CI 状态见顶部。仍未验：真实 Qwen 抽取器（非规则）是否覆盖该别名句式；固定集之外的未见改写集尚未报告 recall/nDCG。
-- 完成条件：三项命中正确证据，原长程召回不退步、隔离/候选泄漏为 0；固定集与未见改写集分别报 recall/nDCG，验证实际 ResponsePlannerClient 超时/catalog 限额，设备追问另取 Actual Heard。未消费 MemoryContextClient 的 0.3s 不是现网保证；不引入新向量库/平行记忆服务。
-- 入口：`scripts/evaluate_memory.py`、`services/archive/{recall_planner,memory_extractor}.py` 与 `evaluation/memory_eval_zh_v1.json`；现有诊断见 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`。
+- 可本地并行。既有固定集修复后 recall@5=0.9375（15/16）、nDCG@10≈0.859，candidate/cross_account leakage 为 0、extraction_recall=1.0、p50≈0.72ms；仍缺 `repeated-episode-campus-startup`。忌口转述、别名与可召回人物投影的既有修复归 `HANDOFF.md`，不重复开发。
+- 先定产品语义：review 确认证据/claim 是否同时提升 person/episode/knowledge，跨 session episode 如何合并及撤销；现有逐事件 document 不满足同 episode 含两条 source_event_ids 的判据，不能靠放宽判据抬分。汇总与未来采访式回忆录复用 EvidenceEvent/claim/source 引用，区分用户原话、已确认事实和 AI 推断；未确认内容不进入 confirmed-only 召回。
+- 已有真实 PG 人物投影/状态门契约，仍需真实 Qwen 抽取器（非规则）对别名句式的证据，以及固定集外未见改写集。会话记忆按当前 person/subject 键迁入既有 `services/memory_scope`，覆盖切人、撤销/删除和旧缓存，不建平行存储。
+- 完成条件：遗漏项命中正确证据、原长程召回不退步、隔离/候选泄漏为 0；固定与未见集分别报 recall/nDCG，验证实际 ResponsePlannerClient 超时/catalog 限额。设备追问另取 Actual Heard；未消费 MemoryContextClient 的 0.3s 不是现网保证。
+- 入口：`scripts/evaluate_memory.py`、`services/archive/{recall_planner,memory_extractor,postgres_memory_catalog}.py`、`evaluation/memory_eval_zh_v1.json`；既有诊断 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`。
 
 ### [ ] P1-07 AEC 与播放期语音打断：独立受控实验
 
@@ -133,19 +129,27 @@ Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the fu
 
 - 复用现有 Edge/Voice Core 契约和 offline harness。覆盖 WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发与资源泄漏；查清入队控制/error 帧在 read-loop 关闭 lane 后丢失的通用路径。watermark 4002 局部修复不等于整体闭环。
 - WSS 1005/TLS、BMI270 I2C 是已有孤立观察，未证明为播放卡死根因；Edge 旧 Go/Trivy 风险需重扫当前候选再判，不以旧报告宣称当前受影响。
+- 本轮测试退出出现 `interaction-delegation-start` pending task：先区分 fixture 未关闭与运行态 shutdown 未等待，用可取消/可 await 的最小回归定位，不能先判为生产泄漏。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行，不伪造 Actual Heard/commit；预定义长稳窗口并保留内存/连接/延迟趋势。先补测量/注入，不顺手改断线产品行为；假设备不能代替 P1-07。
 - SiphonAI 只借鉴协议公开化、conformance harness、20 ms 热路径和掉线保会话的工程做法；不引入 `siphon-rs`/`forge-media`，不替换 Go Media Edge，不把 PSTN 入线带入当前范围。
 
-### [ ] P2-05 修正唤醒计数边界，再补“茉莉”家庭噪声矩阵
+### [ ] P2-05 补齐唤醒计数与测试可复现性，再采家庭噪声矩阵
 
-- 历史安静真人阶段有“茉莉”10/10、5 分钟零误唤醒，不跨版本累加。以下沿用上轮对 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 的离线复核，本轮未重采设备数据、未改原始收据。
-- 可确认的 2026-09-16 设备事实：Tingting 合成 TTS（前后静音垫 0.25s/0.4s）能唤醒该板；原始矩阵 gain 1.0 为 4/8、gain 0.3 为 8/8，合计 12/16。gain 是播放增益，不是测得的近/远物理距离。成功试次刺激开始→终端唤醒行中位 1.445s，包含前导静音与采集时序，不当作精确声学处理延迟。
-- 修正因果结论：首次 activating→idle 为 23:18:58.330 CST，前四个漏唤醒刺激在此后约 7.35/17.54/27.71/37.98s；首个成功唤醒在约 49.59s，之后 12/12 是事后子集，不可据此剔除原始失败。单次开机、先高增益后低增益不足证明固定 45–50s 预热，也不能排除召回/音源/顺序因素。工具默认 60s 等待只是暂定实验参数；后续多次冷启动、固定刺激、交错/随机增益次序对照，分别报告冷启动和预先定义的稳态窗口。
-- 修正误唤醒分母：按带 `(state: N)` 的首次唤醒行去重后，新事件确为 0；原 receipt 的 TV=1 是上次试次的滞后重复行。但 TV 窗口 23:23:11.464 起共约 133.038s，日志状态为 connecting/listening/speaking，idle 为 0s；其中约 92.382s 在 speaking，固件禁用播放期 KWS。small_talk 共约 124.471s，仅约 100.909s idle；quiet 约 300.001s 均为日志可见 idle。故不能宣称 TV/多人各 2 分钟有效零误唤醒；静默窗口的已观察零事件可保留，但不替代完整 detector-on 证据。
-- 工具已修（092dcf4，7 个离线测试全过，原始收据未动）：`scripts/wake_word_matrix.py` 的干扰/静默窗口原先没有待机门，也未累计检测器启用时长，上一会话会污染分母。每窗先确认 idle+detector-on，状态离开时暂停有效暴露计时并记录原因，去重与窗口边界统一；串口断流/播放失败/状态未知标 invalid，不算漏唤醒或零误唤醒。先用 fake console/播放器覆盖边界与断流，再开设备窗口。不得为凑曝光开启播放期 KWS。
-- 工具可靠性：音量/静音修改后的录音、串口打开也须纳入 finally 恢复；恢复成功须实读核对，不能无条件写 true。真人模式的 Markdown 与 JSON 应一致，真人延迟不从人工提示时刻冒充实际开口计；记录各档实测输入电平、warmup 配置及实际等待，保留静音输出/空音频校验。
-- 剩余设备矩阵：真实电视/家庭噪声音源（现为 TTS 模拟）、物理距离/角度、真人说话者对照；固定候选/固件/settings 并记录窗口状态、真值、输入范围、召回/误唤醒/时延。既有日志只读到 app 2.4.2、ELF 前缀 da6ebdd16，flash receipt 不是该轮回读；日志明确 detector=MultiNet，先核真实检测器/模型及阈值权威，不继续笼统写调整 WakeNet threshold。
-- 完成条件：修工具后用预定义协议取得可比较 receipt，原始分母、有效暴露时长、候选/固件身份和未测边界可复核；数据证明必要后才调检测阈值/词形。该项不改写 advertised_duplex_level=none 或 aec_reference_verified。
+- 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
+- **已复现，P2：有效曝光被高估。** `_run_window` 在一次 play_fn 或 quiet 轮询的首尾都是 idle 时累计整段时间，漏掉中间 busy。fake clock 输入 1s idle→8s connecting→1s idle，输出 exposure=10s、idle=10s、paused=[]，输入时间线仅有 2s idle。按状态时间线逐段与窗口/有效检测区间求交，不用端点猜全程；补完整 idle→busy→idle、跨窗口、等待入窗和零曝光用例，保留真实分母/暂停原因。不得为凑曝光开启播放期 KWS。
+- **已复现，P2：离线测试依赖未入库日志，且常规 CI 未收集。** `scripts/tests/test_wake_word_matrix.py` 固定读取 ignored outputs 的 console.log 第 627/628/650 行；模拟该文件不存在即 FileNotFoundError。只提取必要、匿名、最小日志 fixture 入库（不把整份设备收据搬入）；pytest testpaths 仅 services/tests，CI 的 scripts 步骤也未列 wake 文件，须显式纳入合适 job 并确保改测试会触发该 job。干净检出无 outputs 也应能跑完工具回归。
+- 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。
+- 原误唤醒修正保留：带 `(state: N)` 首次行去重后新事件 0，TV=1 是上一试次滞后重复；但 TV 133.038s 内 idle=0、约 92.382s speaking/KWS off，small_talk 124.471s 内 idle≈100.909s，quiet 300.001s 均为日志可见 idle。故不能宣称电视/多人各 2 分钟有效零误唤醒；配置日志不自动证明整个窗口 detector 持续启用。
+- 工具验收：音量/静音、录音和串口错误都在 finally 恢复，恢复结果实读；真人 Markdown/JSON 口径一致，不从人工提示时刻算真实开口延迟。记录实际输入电平、warmup 配置/实际等待、状态与 detector 证据，错误不算 miss 或零误唤醒。
+- 设备矩阵：固定候选/固件/settings 后采真实电视/家庭音源、物理距离/角度和真人对照；保留真值、原始/有效曝光、召回/误唤醒/时延。旧日志只读到 app 2.4.2、ELF 前缀 da6ebdd16，flash receipt 不替本轮回读；日志 detector=MultiNet，先核模型与阈值权威，不笼统调 WakeNet。
+- 完成条件：自包含回归与 CI 收集先过，再用预定义协议取得可比较的设备 receipt；有数据才调检测阈值/词形。不改 `advertised_duplex_level=none` 或 aec_reference_verified。
+
+### [ ] P2-06 用可回放任务评测陪伴连续性与回顾质量
+
+- 来自 R-20260917-01 的本项目推导，不是竞品已证实效果；依赖 P0-03/P0-04 基线，复用 P1-03 的人设连续性、P1-05 的可读回顾及 P1-06 的证据记忆。当前只增强学生线，不新增康养/移动控制产品。
+- 先给既有 offline harness 增加小型场景集：学习挫败后的情绪承接与自主解题引导、隔次继续上次计划、本人/获授权管理人查看范围内回顾；交叉 under_14/14_17 与 retention 允许/拒绝，至少有切人、撤销、模型超时负例。多轮任务走真实主体/同意门，不绕门靠固定 profile 抬分。
+- 逐场景记录任务是否接续、引用是否支持记忆断言、无依据回忆/越权读取次数、回顾可读性和失败降级；延迟与 Actual Heard 复用现有量表，离线生成不计真机成功。保留匿名输入、期待行为、失败样例，固定集与未见集分报，人工盲评关怀感与帮助性，不先承诺改善百分比。
+- 完成条件：形成可重复 baseline 与一次同条件对照，主体/撤销隔离和编造事实零回归，汇总能追溯到话轮/证据；观察到收益再扩大场景。访谈式人生故事只复用证据模型留给后期，不新开老人 UI、医疗判断或主动通知外发。
 
 ## 暂缓，不自动扩张范围
 
@@ -153,4 +157,11 @@ Scope of this round (2026-09-17 continuation, code commit 30dea92): rerun the fu
 - 家长通知发送 worker/外部渠道：仅保留 outbox/readback 验收，不宣称通知已送达；启用需另定授权和渠道。
 - EOU 新模型、DuplexModel、expressive/抢跑：现有语音基线与收益假设明确后再评估；TurnPhase 仍 shadow，不新增控制权威。
 - ESP-IDF/ESP-SR/upstream 整体升级：有现板修复或安全依据才立项，仍须固定 upstream、clean overlay build 和身份区保护。
-- 老年人故事册/人物复刻、年轻人潮玩、最终外形保留阶段方向；`RESEARCH.md` 最新 `R-20260917-01` 诺恩智伴仅属老年后期市场雷达，当前不转工程项、不改变 ESP-VoCat SKU/价带。研究收件箱继续追加或加强活条目，不恢复开发已删除的旧板；当前学生线未闭环前不扩张。
+- 老年人故事册/人物复刻、年轻人潮玩、最终外形仍是后续阶段，不改变 ESP-VoCat SKU/价带。外部研究的已评估结论只维护在本清单，不恢复独立研究收件箱或历史旧板。
+
+## 研究转化与重评条件：R-20260917-01
+
+- 结论（2026-09-17）：诺恩智伴保留为老年后期市场雷达；其对当前项目的启发是验证可完成的陪伴任务、可查回顾和证据记忆，而非堆叠康养功能。上述建议已落到 P1-05/P1-06/P2-06；不把竞品的营销报道直接当产品需求或性能证据。
+- 来源：[新浪财经转载中关村在线，2026-09-02](https://finance.sina.com.cn/roll/2026-09-02/doc-iniqmmyy2899674.shtml)、[天极网，2026-09-02](https://news.yesky.com/hotnews/140/370140.shtml)，本轮已读取。前者报道语音陪护、健康监测/预警与移动取物，后者还提及采访式聊天生成人生回忆录及教育产品三端互通；这些均是报道中的产品宣称。尚无本轮独立验证的实际交付、效果评测、公开零售价或央视原始报道；下订/签约不等于家庭长期可用，不用于改价带。
+- 取舍：当前不做移动/抓取、疾病风险筛查、健康监测、用药建议、学校 SaaS 或老人照护工作流；家长读回仍须按现有角色/同意控制，不借“三端互通”放开孩子全部内容。ASR 继续云服务商 FunASR，救援后端按 P1-02 单独验证，不跟本地 FunASR PyPI。
+- 重评触发：学生功能与安全链闭环、有明确老人试点需求和用户授权，且获得一手规格/演示、真实交付/维护成本与隐私证据后再评估老年阶段。价格未知时明确未知，不拿签约金额倒推；Doova/HUA-H/安安等历史雷达不恢复成当前开发工单。

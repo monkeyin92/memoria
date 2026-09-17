@@ -7,13 +7,12 @@ ROOT = Path(__file__).parents[1]
 ALLOWED_DOCUMENTS = {
     "README.md",
     "HANDOFF.md",
-    "RESEARCH.md",
     "TODOLIST.md",
 }
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
 
 
-def test_repository_has_exactly_four_long_lived_documents() -> None:
+def test_repository_has_exactly_three_long_lived_documents() -> None:
     completed = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
@@ -29,6 +28,8 @@ def test_repository_has_exactly_four_long_lived_documents() -> None:
         path
         for path in repository_files
         if Path(path).suffix.lower() in DOCUMENT_SUFFIXES
+        # The index still lists deletions until they are staged.
+        and (ROOT / path).is_file()
     }
 
     assert documents == ALLOWED_DOCUMENTS
