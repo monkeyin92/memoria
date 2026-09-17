@@ -2568,6 +2568,33 @@ async def conversation_history(
             "generation_id": key[1],
             "owner_text": entry.get("owner_text"),
             "assistant_text": entry.get("assistant_text"),
+            "owner_event_id": next(
+                (
+                    item["event_id"]
+                    for item in owner_turns
+                    if int(item["turn_id"]) == key[0]
+                    and int(item["generation_id"]) == key[1]
+                ),
+                None,
+            ),
+            "assistant_event_id": next(
+                (
+                    item["event_id"]
+                    for item in assistant_turns
+                    if int(item["turn_id"]) == key[0]
+                    and int(item["generation_id"]) == key[1]
+                ),
+                None,
+            ),
+            "assistant_approximate": next(
+                (
+                    item["approximate"]
+                    for item in assistant_turns
+                    if int(item["turn_id"]) == key[0]
+                    and int(item["generation_id"]) == key[1]
+                ),
+                None,
+            ),
         }
         for key, entry in sorted(by_turn.items())
     ][:turn_limit]

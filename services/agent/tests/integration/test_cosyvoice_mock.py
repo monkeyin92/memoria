@@ -429,3 +429,43 @@ async def test_word_timestamps_disabled_returns_complete_audio_without_word_meta
         await tts.aclose()
     finally:
         srv.stop()
+
+@pytest.mark.asyncio
+async def test_word_timestamps_disabled_honors_cancel_before_returning_degraded_audio() -> None:
+    """P0-03 P2: cancel wins over the no-timestamp degrade path.
+
+    With ``word_timestamps=False`` and complete but wordless audio, a cancel
+    arriving before the result is returned must discard (``discarded=True``),
+    never release the connection for reuse, and never report success. Fails
+    while the degrade early-return settles the watcher as not-cancelled and
+    releases the connection.
+    """
+    import asyncio
+
+    srv = MockCosyVoiceServer(scenario="empty_ts")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            pool_size=1,
+            word_timestamps=False,
+        )
+        tts = CosyVoiceTTS(cfg)
+        cancel = asyncio.Event()
+        tts.set_trace_callback(
+            lambda name, status, detail: (
+                cancel.set() if name == "cosyvoice_task_finished" else None
+            )
+        )
+        result = await tts.synthesize_stream_text(
+            ["取消优先于降级返回。"],
+            fence=GenerationFence("no-ts-cancel", 1, 1, 0),
+            cancel_event=cancel,
+        )
+        assert result.discarded is True
+        assert tts.pool.discarded_count >= 1
+        assert tts.pool.available_approx == 0
+        await tts.aclose()
+    finally:
+        srv.stop()

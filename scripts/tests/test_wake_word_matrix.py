@@ -195,6 +195,103 @@ def test_window_pauses_while_away_from_idle(tmp_path: Path) -> None:
     assert any("connecting" in entry["reason"] for entry in window.paused)
 
 
+def test_window_starts_exposure_only_after_settle_gate_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-05: settle waiting is entry cost, never TV exposure.
+
+    Fake clock: a busy->idle transition at t=2000.5 needs a 1.5 s settle wait,
+    so the gate passes at t=2002.0 and the 1.0 s exposure window covers only
+    post-gate idle. Pre-fix, ``window_start`` is the pre-gate call time and
+    the pre-gate idle/settle slice inflates exposure. Post-fix the pre-gate
+    slices earn nothing: playbacks only run post-gate and exposure is ~1.0 s.
+    """
+    clock = FakeClock(start=2000.0)
+    monkeypatch.setattr(wwm.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(wwm.time, "sleep", clock.sleep)
+    reader = _reader(
+        tmp_path,
+        (
+            _line(1999.0, CONNECTING_TEXT),
+            _line(2000.5, IDLE_TEXT),
+            _line(2000.5, DETECTOR_ON_TEXT),
+        ),
+    )
+    player_calls: list[float] = []
+
+    def play_once() -> float:
+        player_calls.append(clock.monotonic())
+        clock.sleep(0.05)
+        return clock.monotonic()
+
+    invalid: list[str] = []
+    window = wwm._run_window(
+        reader,
+        label="tv",
+        gain=0.3,
+        wall_seconds=1.0,
+        idle_timeout_s=5.0,
+        invalid=invalid,
+        play_fn=play_once,
+        poll_s=0.05,
+    )
+    assert window.invalid_reason is None
+    assert player_calls, "gate passed: playback ran post-gate"
+    assert all(call >= 2002.0 - 1e-6 for call in player_calls)
+    # Pre-gate slices (1999-2002, busy then settling) are entry cost: post-fix
+    # exposure is ~1.0 s; pre-fix it counted ~2.5 s (all fake-idle or settled).
+    assert window.effective_exposure_s <= 1.1
+    assert window.effective_exposure_s >= 0.5
+
+def test_window_exposure_excludes_pre_gate_idle_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-05: pre-gate idle history is not stimulus exposure either.
+
+    The gate may pass instantly on a long-settled idle line; exposure must
+    still start at gate passage, so hours of pre-call idle history cannot
+    inflate one short window. A fake clock pins the gate delay and the
+    exposure slice apart.
+    """
+    clock = FakeClock(start=2000.0)
+    monkeypatch.setattr(wwm.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(wwm.time, "sleep", clock.sleep)
+    reader = _reader(
+        tmp_path,
+        (
+            _line(1000.0, IDLE_TEXT),
+            _line(1000.0, DETECTOR_ON_TEXT),
+            _line(2000.0, CONNECTING_TEXT),
+            _line(2000.5, IDLE_TEXT),
+        ),
+    )
+    player_calls: list[float] = []
+
+    def play_once() -> float:
+        player_calls.append(clock.monotonic())
+        clock.sleep(0.05)
+        return clock.monotonic()
+
+    invalid: list[str] = []
+    window = wwm._run_window(
+        reader,
+        label="tv",
+        gain=0.3,
+        wall_seconds=1.0,
+        idle_timeout_s=5.0,
+        invalid=invalid,
+        play_fn=play_once,
+        poll_s=0.05,
+    )
+    assert window.invalid_reason is None
+    assert player_calls, "gate passed: playback ran inside the exposure window"
+    # Pre-gate busy slice (2000.0-2000.5) and the settle wait are entry cost:
+    # post-fix exposure is ~1.0 s, pre-fix it would be ~2.5 s.
+    assert window.effective_exposure_s <= 1.1
+    assert window.effective_exposure_s >= 0.5
+    assert all(entry["from"] >= 2002.0 - 1e-6 for entry in window.paused)
+
+
 def test_offline_replay_dedups_lagging_duplicate(tmp_path: Path) -> None:
     if RECEIPT_CONSOLE.exists():
         raw = RECEIPT_CONSOLE.read_text(encoding="utf-8").splitlines()

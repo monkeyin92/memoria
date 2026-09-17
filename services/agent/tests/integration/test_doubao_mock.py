@@ -986,18 +986,22 @@ async def test_personal_voice_failure_before_audio_still_falls_back_once() -> No
         server.stop()
 
 @pytest.mark.asyncio
-async def test_livekit_stream_personal_before_audio_fallback_fires_exactly_once() -> None:
-    """P0-03 P3: stream-level fallback is a one-shot gate, not per re-entry.
+async def test_livekit_stream_personal_fallback_fires_once_under_sustained_first_audio_failure() -> None:
+    """P0-03 P3: stream-level fallback is a one-shot gate under framework retry.
 
-    A personal-voice stream whose first attempt fails before audio must fall
-    back to the designed voice exactly once: two provider sessions (personal
-    then baseline) and exactly one fallback callback. Fails while ``_run``
-    re-enters from the personal voice on every framework retry.
+    Every attempt fails before audio (``slow`` stalls all sessions), so the
+    LiveKit framework re-enters ``_run`` up to ``max_retry`` times. The
+    personal voice must be attempted exactly once, the fallback callback and
+    its ``personal_voice_fallback`` trace exactly once, and the total provider
+    sessions bounded by one personal attempt plus one baseline attempt per
+    framework retry. Fails while ``_run`` re-enters from the personal voice
+    on every framework retry (personal attempted per re-entry, callback/trace
+    fired per re-entry).
     """
 
     from livekit.agents import APIConnectOptions
 
-    server = MockDoubaoServer(scenario="slow_once")
+    server = MockDoubaoServer(scenario="slow")
     server.start()
     tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
     tts.apply_voice_profile(
@@ -1014,21 +1018,32 @@ async def test_livekit_stream_personal_before_audio_fallback_fires_exactly_once(
             (profile, resource, speaker)
         )
     )
+    traces: list[tuple[str, str, dict[str, object] | None]] = []
+    tts.set_trace_callback(
+        lambda name, status, detail: traces.append((name, status, detail))
+    )
     tts.bind_fence(GenerationFence("stream-fallback-once", 1, 1, 0))
     try:
-        async with tts.stream(
+        stream = tts.stream(
             conn_options=APIConnectOptions(max_retry=3, retry_interval=0.01)
-        ) as stream:
-            stream.push_text("流式回落只触发一次")
-            stream.end_input()
-            events = [event async for event in stream]
-        assert events
-        assert server.sessions == 2
-        assert server.speakers == [
-            "S_stream_fallback_once",
-            tts._baseline_speaker,  # noqa: SLF001 - assert fallback target, not plumbing
+        )
+        stream.push_text("持续首包失败只回落一次")
+        stream.end_input()
+        with pytest.raises(APIConnectionError, match="first-audio-timeout"):
+            async for _ in stream:
+                pass
+        await stream.aclose()
+        personal_sessions = [
+            speaker for speaker in server.speakers if speaker == "S_stream_fallback_once"
         ]
+        assert len(personal_sessions) == 1
         assert len(fallback_events) == 1
+        assert (
+            sum(1 for name, _, _ in traces if name == "personal_voice_fallback") == 1
+        )
+        # Total budget: one personal attempt, then at most one baseline attempt
+        # per framework retry (initial run + max_retry re-entries).
+        assert server.sessions == 1 + (1 + 3)
     finally:
         await tts.aclose()
         server.stop()

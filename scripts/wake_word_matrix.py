@@ -786,10 +786,12 @@ def _run_window(
 
     The window opens only behind two gates -- settled standby (``_wait_idle``)
     and a confirmed detector (``is_detector_on``); otherwise it is returned
-    invalid with no wakes.  Inside, the device state is polled: any stretch
-    away from idle pauses the exposure clock and is recorded in ``paused``
-    with its reason, so a window that spends 133 s wall with 0 s idle reports
-    0 s of exposure instead of a full denominator.
+    invalid with no wakes.  The exposure window starts when the gates pass,
+    not when the call began: settle waiting is entry cost, never counted
+    exposure or stimulus/detection time.  Inside, the device state is polled:
+    any stretch away from idle pauses the exposure clock and is recorded in
+    ``paused`` with its reason, so a window that spends 133 s wall with 0 s
+    idle reports 0 s of exposure instead of a full denominator.
 
     Speaking time never counts as exposure: while the device itself is
     playing, its KWS pipeline is off, so audio played then proves nothing
@@ -826,7 +828,8 @@ def _run_window(
         return _invalid("invalid_detector_off", "detector never reported configured")
     evidence = reader.detector_on_evidence()
 
-    window_start = wall_start
+    gate_ready_at = time.monotonic()
+    window_start = gate_ready_at
     wall_end = window_start + wall_seconds
     invalid_reason: str | None = None
 

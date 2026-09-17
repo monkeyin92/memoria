@@ -1,19 +1,21 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-17（读一致性/TTS 软件边界/唤醒工具/会话回顾）。修复提交 `f2a95d6`（在 `350d62d` 之上）；本轮完成 P0-04 读一致性契约、P0-03 两个 TTS 软件缺口、P2-05 唤醒计数与自包含测试、P1-05 最小会话只读出口及本地全门禁，未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，未提交、未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
 1. **成员写入边界已修（`350d62d`）**：三个缺陷都有修复前失败的回归，并发项另有真实 PG 契约（见 `HANDOFF.md`）；剩余的是小程序成员 UI 接线与设备链。
 2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
-3. **TTS 软件边界已修（`f2a95d6`，P2/P3）**：`COSYVOICE_WORD_TIMESTAMPS=false` 时 batch 降级为完整音频+空词+`degraded`、单次连接不重试；Doubao 流式回落加单次闸门（`_fallback_used`），框架重入不再逐次重落回调/trace。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
-4. 下一步（按序）：先推远端跑 `f2a95d6` 的完整 CI（当前最大证据缺口：远端仍停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
-5. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
-6. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
+3. **TTS 软件边界整改中（P2 已修，P3 重列待办转真回归）**：`COSYVOICE_WORD_TIMESTAMPS=false` 降级已补取消优先收尾；Doubao `slow_once` 旧测试收据作废，改用 `slow` 持续首包失败真回归（personal 仅 1 次、callback/trace 各 1 次、总预算 1+4）。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
+4. **P2-05 入窗起点已修、P1-05 收据已撤回**：曝光窗口从门通过时起算（settle 等待是入场成本）；回顾出口补 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，撤回“无跨主体读”，同账号切主体/subject 围栏/临时读回待验。
+5. 下一步（按序）：先推远端跑本轮整改后的完整 CI（当前最大证据缺口：远端仍停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+6. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
+7. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-当前证据：远端 CI 仍是 `35231388322`（`350d62d`）2026-09-17 22:17:21 CST success；本轮 `f2a95d6` 只跑了本地全门禁（Ruff、模块预算、strict mypy 435 files、带 `MEMORIA_TEST_POSTGRES_DSN` 全量 pytest **5107 passed / 3 skipped**、覆盖率 87.86%、85/90/95 门禁通过、Offline E2E PASS），远端 CI 未跑，不替发布背书。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
+当前证据：远端 CI 仍是 `35231388322`（`350d62d`）2026-09-17 22:17:21 CST success；`f2a95d6` 与本轮整改均只跑本地门禁，远端 CI 未跑，不替发布背书。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
 
-本轮回归：新增 2 个读快照交错用例、1 个无时间戳降级用例、1 个流式单次回落用例、2 个曝光时间线用例、1 个会话回顾用例，修前源码上分别失败（读间混对/409 式翻转、整句重试、回落多发、曝光 10s 计 2s 应得、空话轮），修复后通过；wake 去重用例已内联 3 行 fixture，本地删 ignored console.log 仍 9/9 通过；CI 新增 wake 显式步骤。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
+本轮整改（advisory 驱动，未提交）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算（修前 2.5 s、修复后 ~1.0 s，修前首个 playback 在门前）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
+上一轮（`f2a95d6`）回归：2 个读快照交错、1 个无时间戳降级、2 个曝光时间线、1 个会话回顾在修前失败、修复后通过；wake 去重用例内联 3 行 fixture（删 ignored 文件 9/9）；CI 新增 wake 显式步骤。`f2a95d6` 的流式单次回落用例收据作废（`slow_once` 未触发重入，改前已通过），已由本轮真回归替代。
 
 ## P0：发布前必须闭环的安全与语音问题
 
@@ -31,8 +33,8 @@
 
 - 当前设备证据：2026-09-16 H 同会话天气→续问→播后告别成功，F 的 48.28s 九天天气完整听完；但 B/D 停滞、G 续问丢失、H 时延越线，整体稳定性未通过。不跨 release 累计轮数，不把原笔记的约 55s 阈值或告别 3/5 当作结论。
 - 已有软件基线（`7c0ef48`/`3e0b738`）：Doubao/CosyVoice × stream/batch 共用 `GenerationBudget` 的首包、进展续期、停滞与硬上限；batch retry 已明确为音频前可重试/回落、已有音频仅缺词时间戳时最多同音色重试一次，其余音频后失败终态、丢弃失败缓冲。上轮 generation budget + 两 provider mock 50 项通过；当时核到 LiveKit 在 pushed_duration>0 后不重试流式输出，未发现整句重放的该项回归，本轮未重跑。不能把 batch 的最多两次扩写成所有流式尝试也最多两次。
-- 缺口已修（P2，`f2a95d6`）：`COSYVOICE_WORD_TIMESTAMPS=false` 即“只要纯音频”——batch 返回完整 PCM、空词、`alignment_status="degraded"`，单次连接不重试。真实厂商/现网是否使用该配置仍未验；仍不能用重复整句合成补不存在的时间戳。
-- 缺口已修（P3，`f2a95d6`）：Doubao 流式加单次闸门（`_fallback_used`），框架重入续用已回落音色、不再逐次重发回落回调/trace；`max_retry=3` 下实测 2 个 provider session + 1 次回调。这是额外请求/时延，未证明账本重复或音频后重放。
+- 缺口已修（P2，本轮补取消优先）：`COSYVOICE_WORD_TIMESTAMPS=false` 即“只要纯音频”——batch 返回完整 PCM、空词、`alignment_status="degraded"`，单次连接不重试；降级路径与正常路径共用取消优先收尾（cancel 先判，`discarded=True`、连接丢弃不复用）。真实厂商/现网是否使用该配置仍未验；仍不能用重复整句合成补不存在的时间戳。
+- P3 重列为待办（上一轮收据作废）：`f2a95d6` 的 `test_livekit_stream_personal_before_audio_fallback_fires_exactly_once` 用 `slow_once`——第二次 baseline 已成功，根本没触发框架对 `_run` 的重入，且改代码前也已通过，不算“修前失败”。`_fallback_used` 闸门代码保留，但收据撤回。本轮改用持续首包失败（`slow` 阻塞全部 session）真回归：`max_retry=3` 下 personal 仅 1 次、callback/trace 各 1 次、总 session 预算 1 personal + 4 baseline；修前 personal 被试 4 次，修复后通过。
 - G 已有本地修复：`owner_silence_remaining_s` 为 `None` 未测量 / `0.0` 已耗尽 / `>0` 暂停剩余；结束已测预算不再白送满窗口。受理 ASR final/VAD 可否决等锁的迟到关闭，但仅在另有绝对说话看门狗或未到期 grace 时成立，不刷新静默预算。相关区分度与保护用例见 `HANDOFF.md`，不再把修复前失败写成当前 HEAD 失败。
 - G 待闭环：明确无验证说话人且无其它界时的 owner_silence_timeout 语义（现保守关闭）；补 endpoint/commit 乱序、watchdog 交接在真实 10s/60s 配置下的矩阵，再在冻结候选捕获 G 终态。没有真机捕获不宣称续问不再丢失。
 - EOU/告别边界：sidecar/END_SESSION 只能生成 END_CANDIDATE/clock fact，关闭仍经当前使用人的 subject capability；guest 只能停止公开播放或等待超时，不能由分类授予关会话能力。TurnPhase 保持 shadow，不造第二话轮控制面。
@@ -86,8 +88,8 @@
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
-- 最小会话回顾出口已修（`f2a95d6`，`code`）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对话轮（history-eligible owner 文本 + actual-heard assistant 文本），与 `/conversation-review` 同一 owner 鉴权域、无跨主体读、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
-- 已知局限（`f2a95d6` 审查发现，非 blocker）：路由按 `account_id` 取最近 100 条再在内存中按 `session_id` 过滤——`life_archive.context` 的 owner 分支本就不带 session 条件，所以能用；但超过 100 条窗口的老会话会静默返回空，且 PG 侧同分支未逐行核对。真机可查量上去之前改成分页/session 下推或明确上限语义。
+- 最小会话回顾出口已修（`f2a95d6`，`code`，本轮补可追溯字段）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对话轮（history-eligible owner 文本 + actual-heard assistant 文本），每轮带 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，与 `/conversation-review` 同一 owner 鉴权域、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。**撤回“无跨主体读”收据**：现有回归只建两个成人账号、只证 account 隔离；同账号切主体、subject 围栏、无 retention 临时读回仍待验（见下）。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
+- 待验（P1-05）：同账号切主体后旧主体话轮是否可见、subject 围栏、minor 无 retention 时的临时读回语义；输出是“已听到”近似交付记录（`approximate` 默认 true），不是精确交付状态。
 - 只读状态开发可独立进行；完整三端集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
 - 投影带 session/generation fence 和新鲜度，重连/断线/过期显示 offline/unknown；不从字幕、零散 diagnostics 或客户端计时猜态，不增加话轮控制面。
 - 完成条件：微信手机/电脑/开发工具同版本覆盖登录绑定、三态/断线、主体人格切换、样本进度、回顾、权限拒绝与刷新；录音范围门禁通过。0.8.84 仅开发版；体验版、提审、正式发布分别授权和记录。
@@ -137,7 +139,7 @@
 ### [ ] P2-05 补齐唤醒计数与测试可复现性，再采家庭噪声矩阵
 
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
-- **已修（`f2a95d6`），P2：有效曝光改为时间线求交。** `_exposure_over_timeline` 把窗口与 console 状态时间线逐段求交：仅 idle 段计曝光，busy 段逐段记 dated pause。fake clock 1s idle→8s connecting→1s idle 现得 exposure=2s、paused=8s；另有跨窗口裁剪与零曝光用例。不得为凑曝光开启播放期 KWS。
+- **已修（本轮），P2：入窗起点与等待/曝光分离。** `_run_window` 的 `window_start` 改门通过时刻（`gate_ready_at`），settle 等待是入场成本；新增 2 个 fake-clock 入口测试（settle 耗窗、门前 idle 史不计入），修前窗口起点在门前、曝光多算 ~1.5 s，修复后门后起算。
 - **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
 - 可选清理（非 blocker）：去重用例仍保留“有 ignored 文件就对账”的条件分支，严格自包含应删掉该分支只留内联 fixture；改动小，顺手做，不单独立项。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。

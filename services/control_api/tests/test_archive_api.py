@@ -3832,11 +3832,15 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """P1-05: one session's owner turns plus actual-heard replies, owner-scoped.
+    """P1-05: one account-scoped session's paired turns, traceable to evidence.
 
     A user turn and its actual-heard assistant reply share turn 1; an
     ineligible owner turn and an unheard assistant event are omitted, never
-    fabricated. A second account's session is invisible to the first account.
+    fabricated. Each turn carries its source event ids and the assistant
+    approximate-delivery flag. A second account's session is invisible to the
+    first account (account isolation only -- NOT a subject-fence proof: same-
+    account subject switching and retention-scoped temporary readback are
+    still open, see TODOLIST P1-05).
     """
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -3940,6 +3944,9 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
                     "generation_id": 1,
                     "owner_text": "明天南京天气如何？",
                     "assistant_text": "明天有雨。",
+                    "owner_event_id": "history-user-1",
+                    "assistant_event_id": "history-assistant-1",
+                    "assistant_approximate": True,
                 }
             ],
         }

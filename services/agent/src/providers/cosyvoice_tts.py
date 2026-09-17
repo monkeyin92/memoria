@@ -982,25 +982,27 @@ class CosyVoiceTTS(tts.TTS[Any]):
 
             if not pcm_buf:
                 raise CosyVoiceFirstAudioTimeoutError()
-            if not all_words:
-                if not config.word_timestamps:
-                    await settle_cancel_watcher(cancellation_requested=False)
-                    if not discarded:
-                        await self._pool.release(conn)
-                    return SynthesizeResult(
-                        bytes(pcm_buf), (), task_id, "degraded", discarded
-                    )
+            degrade_without_timestamps = not all_words and not config.word_timestamps
+            if not all_words and not degrade_without_timestamps:
                 raise CosyVoiceTimestampError("CosyVoice returned no word timestamps")
             if cancel_event is not None and cancel_event.is_set():
                 await settle_cancel_watcher(cancellation_requested=True)
                 return SynthesizeResult(
-                    bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
+                    bytes(pcm_buf),
+                    tuple(all_words),
+                    task_id,
+                    alignment_status if all_words else "degraded",
+                    True,
                 )
             await settle_cancel_watcher(cancellation_requested=False)
             if not discarded:
                 await self._pool.release(conn)
             return SynthesizeResult(
-                bytes(pcm_buf), tuple(all_words), task_id, alignment_status, discarded
+                bytes(pcm_buf),
+                tuple(all_words),
+                task_id,
+                alignment_status if all_words else "degraded",
+                discarded,
             )
         except asyncio.CancelledError:
             await self._pool.discard(conn, reason="cancel")
