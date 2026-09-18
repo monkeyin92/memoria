@@ -476,12 +476,12 @@ class PostgresLifeArchive:
                 """
                 INSERT INTO archive_evidence_events (
                     event_id, account_id, session_id, turn_id, generation_id,
-                    event_type, schema_version, occurred_at, speaker_identity_id,
-                    speaker_class, source, consent_grant_id, payload,
-                    content_sha256, supersedes_event_id
+                    event_type, schema_version, occurred_at, subject_id,
+                    speaker_identity_id, speaker_class, source, consent_grant_id,
+                    payload, content_sha256, supersedes_event_id
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                    $13::jsonb, $14, $15
+                    $13, $14::jsonb, $15, $16
                 )
                 ON CONFLICT (event_id) DO NOTHING
                 RETURNING recorded_at
@@ -494,6 +494,7 @@ class PostgresLifeArchive:
                 event.event_type,
                 event.schema_version,
                 event.occurred_at,
+                event.subject_id,
                 event.speaker_identity_id,
                 event.speaker_class,
                 event.source,
@@ -740,6 +741,7 @@ class PostgresLifeArchive:
             session_id=row["session_id"],
             turn_id=row["turn_id"],
             generation_id=row["generation_id"],
+            subject_id=row["subject_id"],
             speaker_identity_id=row["speaker_identity_id"],
             consent_grant_id=row["consent_grant_id"],
             schema_version=int(row["schema_version"]),

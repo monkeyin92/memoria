@@ -39,6 +39,10 @@ class EvidenceEvent:
     session_id: str | None = None
     turn_id: int | None = None
     generation_id: int | None = None
+    #: The subject speaking this event (the device's confirmed user).  Person-level
+    #: retention and read fences are keyed to this column; None means the writer
+    #: had no confirmed subject, not "the account owner".
+    subject_id: str | None = None
     speaker_identity_id: str | None = None
     consent_grant_id: str | None = None
     schema_version: int = 1
@@ -67,6 +71,7 @@ class EvidenceEvent:
             "source": self.source,
             "speaker_class": self.speaker_class,
             "speaker_identity_id": self.speaker_identity_id,
+            "subject_id": self.subject_id,
             "supersedes_event_id": self.supersedes_event_id,
             "turn_id": self.turn_id,
         }

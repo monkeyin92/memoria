@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS evidence_events (
     schema_version INTEGER NOT NULL CHECK (schema_version > 0),
     occurred_at TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
+    subject_id TEXT,
     speaker_identity_id TEXT,
     speaker_class TEXT NOT NULL CHECK (
         speaker_class IN ('owner', 'guest', 'uncertain', 'assistant', 'system')
@@ -178,6 +179,16 @@ class LifeArchive:
                         DEFAULT 'account_lifetime'
                         """
                     )
+                evidence_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(evidence_events)")
+                }
+                if "subject_id" not in evidence_columns:
+                    # P2-03: existing ledgers gain the subject column; rows written
+                    # before it stay NULL (unknown speaker), never the owner.
+                    connection.execute(
+                        "ALTER TABLE evidence_events ADD COLUMN subject_id TEXT"
+                    )
             self._initialized = True
 
     def _connect(self) -> sqlite3.Connection:
@@ -315,9 +326,10 @@ class LifeArchive:
                 INSERT INTO evidence_events (
                     event_id, account_id, session_id, turn_id, generation_id,
                     event_type, schema_version, occurred_at, recorded_at,
-                    speaker_identity_id, speaker_class, source, consent_grant_id,
-                    payload_json, content_sha256, supersedes_event_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    subject_id, speaker_identity_id, speaker_class, source,
+                    consent_grant_id, payload_json, content_sha256,
+                    supersedes_event_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.event_id,
@@ -329,6 +341,7 @@ class LifeArchive:
                     event.schema_version,
                     event.occurred_at.isoformat(),
                     recorded_text,
+                    event.subject_id,
                     event.speaker_identity_id,
                     event.speaker_class,
                     event.source,
@@ -743,6 +756,7 @@ class LifeArchive:
             session_id=row["session_id"],
             turn_id=row["turn_id"],
             generation_id=row["generation_id"],
+            subject_id=row["subject_id"],
             speaker_identity_id=row["speaker_identity_id"],
             consent_grant_id=row["consent_grant_id"],
             schema_version=int(row["schema_version"]),

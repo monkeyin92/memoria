@@ -1756,6 +1756,16 @@ async def append_session_event(
         field: values.pop(field) for field in AGENT_MEMORY_WRITE_FENCE_FIELDS
     }
     values["account_id"] = account_id
+    # P2-03: the confirmed speaker subject is written onto the evidence row
+    # itself. It used to be consumed only as a fence input, which left every
+    # read exit unable to fence by subject or scope retention to the speaker.
+    # An absent/blank claim stores None (unknown speaker), never the account.
+    claimed_subject = memory_write_fence.get("active_subject_id")
+    values["subject_id"] = (
+        claimed_subject.strip()
+        if isinstance(claimed_subject, str) and claimed_subject.strip()
+        else None
+    )
     payload = dict(values["payload"])
     reason_code = payload.get("speaker_reason_code") or payload.get("reason_code")
     if not isinstance(reason_code, str):

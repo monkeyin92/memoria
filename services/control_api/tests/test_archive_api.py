@@ -755,6 +755,9 @@ async def test_agent_memory_write_fence_is_accepted_and_canonicalized_for_projec
     )
     assert response.status_code == 201
     assert archived is not None
+    # P2-03: 说话主体落在证据行上（此前只当 fence 输入被丢弃），
+    # 这是后续按主体围栏与按说话主体 retention 的唯一输入。
+    assert archived.subject_id == identity["user_id"]
     candidate = archived.payload["memory_capture_candidate_v1"]
     assert candidate == {
         "active_subject_id": identity["user_id"],

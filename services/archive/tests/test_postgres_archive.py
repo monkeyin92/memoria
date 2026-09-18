@@ -43,6 +43,8 @@ async def test_postgres_archive_matches_the_idempotent_public_contract() -> None
         occurred_at=datetime(2026, 7, 19, 9, 0, tzinfo=UTC),
         speaker_class="owner",
         source="contract-test",
+        # P2-03: 说话主体往返必须保持（同一列同时服务读写与后续围栏）。
+        subject_id="postgres-contract-child",
         payload={"text": "PostgreSQL 合同测试"},
     )
 

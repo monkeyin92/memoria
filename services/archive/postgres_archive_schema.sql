@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS archive_evidence_events (
     schema_version INTEGER NOT NULL CHECK (schema_version > 0),
     occurred_at TIMESTAMPTZ NOT NULL,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    subject_id TEXT,
     speaker_identity_id TEXT,
     speaker_class TEXT NOT NULL CHECK (
         speaker_class IN ('owner', 'guest', 'uncertain', 'assistant', 'system')
@@ -33,6 +34,9 @@ CREATE TABLE IF NOT EXISTS archive_evidence_events (
 
 CREATE INDEX IF NOT EXISTS idx_archive_evidence_account_occurred
 ON archive_evidence_events(account_id, occurred_at DESC, event_id DESC);
+
+ALTER TABLE archive_evidence_events
+ADD COLUMN IF NOT EXISTS subject_id TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_archive_evidence_payload_gin
 ON archive_evidence_events USING GIN(payload);
