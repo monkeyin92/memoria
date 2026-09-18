@@ -29,6 +29,9 @@ from services.archive.memory_evaluation import (
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 
 DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
+UNSEEN_DATASET = (
+    Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
+)
 
 
 class PerfectAdapter:
@@ -327,3 +330,32 @@ def test_source_account_attribution_exposes_cross_account_and_mixed_results() ->
 def test_adapter_protocol_remains_structural() -> None:
     adapter: MemoryEvaluationAdapter = PerfectAdapter()
     assert adapter.name == "perfect"
+
+
+@pytest.mark.asyncio
+async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
+    """P1-06: the unseen paraphrase set is reported separately, ceiling included.
+
+    Two of its five queries miss under the rule extractor and are recorded here
+    as the current ceiling rather than tuned away: the avoidance paraphrase
+    ("外卖该避开什么") and the comfort paraphrase ("我最近有点撑不住了") do not
+    match the planner's existing markers. Any change to either behaviour shows
+    up as a metric move in this test.
+    """
+    dataset = load_memory_evaluation_dataset(UNSEEN_DATASET)
+
+    assert dataset.version == "memory-eval-zh-v1-unseen"
+    assert {case.scenario for case in dataset.cases} == {
+        "cross_session_followup",
+        "paraphrase",
+        "comfort_recall",
+        "cross_account_isolation",
+    }
+    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+
+    assert report.metrics.recall_at_5 == pytest.approx(0.6)
+    assert report.metrics.ndcg_at_10 == pytest.approx(0.6)
+    assert report.metrics.extraction_recall == pytest.approx(1.0)
+    assert report.metrics.source_attribution_accuracy == pytest.approx(1.0)
+    assert report.metrics.candidate_leakage == 0
+    assert report.metrics.cross_account_leakage == 0

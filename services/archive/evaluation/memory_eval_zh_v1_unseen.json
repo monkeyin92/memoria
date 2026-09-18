@@ -1,0 +1,204 @@
+{
+  "version": "memory-eval-zh-v1-unseen",
+  "cases": [
+    {
+      "case_id": "unseen-cross-session-suzhou-embroidery",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "unseen-cross-001",
+          "account_id": "eval-owner-a",
+          "text": "打算秋天去苏州学做苏绣。",
+          "occurred_at": "2026-08-02T20:00:00+08:00",
+          "session_id": "unseen-cross-session-a"
+        },
+        {
+          "event_id": "unseen-cross-002",
+          "account_id": "eval-owner-a",
+          "text": "这周把家里的书架整理了一遍。",
+          "occurred_at": "2026-08-09T18:00:00+08:00",
+          "session_id": "unseen-cross-session-b"
+        }
+      ],
+      "reviews": [
+        { "source_event_id": "unseen-cross-001", "action": "confirm" },
+        { "source_event_id": "unseen-cross-002", "action": "confirm" }
+      ],
+      "expected_memories": [
+        {
+          "key": "suzhou-embroidery-plan",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["苏州", "苏绣"],
+          "source_event_ids": ["unseen-cross-001"]
+        },
+        {
+          "key": "bookshelf-tidying",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["书架"],
+          "source_event_ids": ["unseen-cross-002"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "unseen-cross-query",
+          "account_id": "eval-owner-a",
+          "text": "最近我们说过什么打算？",
+          "mode": "context",
+          "now": "2026-08-10T15:00:00+08:00",
+          "relevance": {
+            "suzhou-embroidery-plan": 3,
+            "bookshelf-tidying": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "unseen-paraphrase-spicy-avoidance",
+      "scenario": "paraphrase",
+      "evidence": [
+        {
+          "event_id": "unseen-paraphrase-001",
+          "account_id": "eval-owner-a",
+          "text": "我胃不太好，辣的都吃不了。",
+          "occurred_at": "2026-08-03T12:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        { "source_event_id": "unseen-paraphrase-001", "action": "confirm" }
+      ],
+      "expected_memories": [
+        {
+          "key": "avoid-spicy",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["辣"],
+          "source_event_ids": ["unseen-paraphrase-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "unseen-paraphrase-query",
+          "account_id": "eval-owner-a",
+          "text": "帮我看看外卖该避开什么？",
+          "mode": "context",
+          "relevance": { "avoid-spicy": 3 }
+        }
+      ]
+    },
+    {
+      "case_id": "unseen-comfort-late-overtime",
+      "scenario": "comfort_recall",
+      "evidence": [
+        {
+          "event_id": "unseen-comfort-001",
+          "account_id": "eval-owner-a",
+          "text": "昨天加班到十一点，回家路上特别想哭。",
+          "occurred_at": "2026-08-05T21:00:00+08:00",
+          "session_id": "unseen-comfort-session-a"
+        },
+        {
+          "event_id": "unseen-comfort-002",
+          "account_id": "eval-owner-a",
+          "text": "我住在青岛。",
+          "occurred_at": "2026-08-01T09:00:00+08:00",
+          "session_id": "unseen-comfort-session-b"
+        }
+      ],
+      "reviews": [
+        { "source_event_id": "unseen-comfort-001", "action": "confirm" },
+        { "source_event_id": "unseen-comfort-002", "action": "confirm" }
+      ],
+      "expected_memories": [
+        {
+          "key": "overtime-low-mood",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["加班", "想哭"],
+          "source_event_ids": ["unseen-comfort-001"]
+        },
+        {
+          "key": "lives-in-qingdao",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["青岛"],
+          "source_event_ids": ["unseen-comfort-002"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "unseen-comfort-query",
+          "account_id": "eval-owner-a",
+          "text": "我最近有点撑不住了，你还记得什么吗？",
+          "mode": "context",
+          "relevance": {
+            "overtime-low-mood": 3,
+            "lives-in-qingdao": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "unseen-cross-account-private-trip",
+      "scenario": "cross_account_isolation",
+      "evidence": [
+        {
+          "event_id": "unseen-isolation-a",
+          "account_id": "eval-owner-a",
+          "text": "我私下的旅行计划是去敦煌。",
+          "occurred_at": "2026-08-06T09:00:00+08:00"
+        },
+        {
+          "event_id": "unseen-isolation-b",
+          "account_id": "eval-owner-b",
+          "text": "我私下的旅行计划是去武夷山。",
+          "occurred_at": "2026-08-06T09:05:00+08:00"
+        }
+      ],
+      "reviews": [
+        { "source_event_id": "unseen-isolation-a", "action": "confirm" },
+        { "source_event_id": "unseen-isolation-b", "action": "confirm" }
+      ],
+      "expected_memories": [
+        {
+          "key": "owner-a-dunhuang",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["敦煌"],
+          "source_event_ids": ["unseen-isolation-a"]
+        },
+        {
+          "key": "owner-b-wuyishan",
+          "account_id": "eval-owner-b",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["武夷山"],
+          "source_event_ids": ["unseen-isolation-b"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "unseen-isolation-owner-a",
+          "account_id": "eval-owner-a",
+          "text": "我私下的旅行计划是哪里？",
+          "mode": "context",
+          "relevance": { "owner-a-dunhuang": 3 }
+        },
+        {
+          "query_id": "unseen-isolation-owner-b",
+          "account_id": "eval-owner-b",
+          "text": "我私下的旅行计划是哪里？",
+          "mode": "context",
+          "relevance": { "owner-b-wuyishan": 3 }
+        }
+      ]
+    }
+  ]
+}
