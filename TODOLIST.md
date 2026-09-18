@@ -119,8 +119,11 @@
 
 ### [ ] P2-01 统一现有记忆预取与 token 预算
 
-- 依赖 P1-06。已有 snapshot→ResponsePlannerClient.prefetch_context→context-prefetch；追清未消费 MemoryContextClient 后决定接入或删除，不另建预取/缓存链。
-- 完成条件：按 subject/session/fence 隔离并拒迟到缓存，memory-token 硬预算可观测/可裁剪，persona 与当轮情绪分开；超时可空降级、召回不退步、热路径延迟有前后对照。入口 `agent.py/duplex_runtime.py/routes/interaction.py`。
+- 依赖 P1-06（episode 语义已定）。已有 `snapshot→ResponsePlannerClient.prefetch_context→context-prefetch`；追清未消费 MemoryContextClient 后决定接入或删除，不另建预取/缓存链。
+- **已决并落地（`948938c`，code）**：`MemoryContextClient` **删除**——生产零构造点（`agent.py` 显式丢弃且有用例固定“legacy 客户端被忽略”），其 session 键缓存正是禁止的第二条链，且 prefetch 产出的 memory_capsule 会被 plan 冻结的胶囊覆盖（唯一读 `snapshot.memory_capsule` 的 `context_assembler.py` 读到的是冻结版本）。删除范围含 4 个 `memory_context_*` 配置、`memory_read_token`、生产 capability 校验分支、部署样例与两处 env 生成脚本；Control API 侧 `memory_read` 路由未动（Agent 不再消费）。
+- **记忆 token 硬预算已落地**：快照冻结处 `MEMORY_CAPSULE_MAX_CHARS=1200`，先留完整条目、再截断溢出条目、其余整条丢弃；persona 风格不计入也不被截断；指标 `context_memory_chars`/`context_memory_trimmed_total` 可观测，超限记日志。实测 32×240 字条目 → 5 条/1200 字、裁剪 27 条，单次裁剪成本 ~1.0µs（冻结在实时路径之外）。用例：截断+丢弃+计数、预算内不动。
+- 隔离与拒迟到（本轮按代码核对）：请求带 `session_id` + speaker decision，响应必须回同 `speaker_class`（`response_planner_client.py` 校验）；非 owner 草稿在 `scope_context_snapshot_draft` 中清空 memory/persona 胶囊；迟到由 `_schedule_context_snapshot_prepare` 的 epoch 守卫与 `context_snapshot_for_fence` 版本校验拒绝；persona 与当轮情绪在 assembler 中分属 `persona_trait(use_as=style)` 与 `delivery_instruction`。
+- 仍未完成：热路径端到端时延的前后对照（需设备/真实链路；离线只有快照尺寸与构建耗时指标）、召回不退步的回归基线（P1-06 未见集）。入口 `agent.py/duplex_runtime.py/routes/interaction.py`。
 
 ### [ ] P2-02 多成员声纹与不依赖小程序的选人
 
