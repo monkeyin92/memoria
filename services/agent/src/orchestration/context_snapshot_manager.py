@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Final, Literal
 
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -57,6 +58,36 @@ class ContextSnapshotDraft:
     tool_permission: bool = False
     speaker_class: SnapshotSpeakerClass = "uncertain"
     summary: str = ""
+
+
+logger = logging.getLogger(__name__)
+
+#: Hard ceiling on the memory evidence text carried into one prompt.  The
+#: Control API bounds every plan it issues; this is the Agent's own ceiling so a
+#: planner change cannot silently inflate the prompt, and so the budget is
+#: observable where the capsule is frozen.  Trimming is deterministic (tail of
+#: the list) and persona style is never trimmed as memory.
+MEMORY_CAPSULE_MAX_CHARS: Final[int] = 1_200
+
+
+def _bounded_memory_capsule(capsule: MemoryCapsule) -> tuple[MemoryCapsule, int]:
+    """Trim memory entries to the prompt budget; return the capsule and the cut count."""
+    kept: list[MemoryCapsuleEntry] = []
+    used = 0
+    trimmed = 0
+    for entry in capsule.entries:
+        remaining = MEMORY_CAPSULE_MAX_CHARS - used
+        if remaining <= 0:
+            trimmed += 1
+            continue
+        if len(entry.content) > remaining:
+            kept.append(replace(entry, content=entry.content[:remaining]))
+            used += remaining
+            trimmed += 1
+            continue
+        kept.append(entry)
+        used += len(entry.content)
+    return MemoryCapsule(entries=tuple(kept)), trimmed
 
 
 def scope_context_snapshot_draft(draft: ContextSnapshotDraft) -> ContextSnapshotDraft:
@@ -281,9 +312,21 @@ class ContextSnapshotManager:
             raise ValueError("context snapshot version must be non-negative")
         draft = scope_context_snapshot_draft(draft)
         recent = draft.recent_committed_turns[-self.max_recent_turns :]
+        memory_capsule, memory_trimmed = _bounded_memory_capsule(draft.memory_capsule)
+        self.metrics.set_context_memory_chars(
+            sum(len(entry.content) for entry in memory_capsule.entries)
+        )
+        if memory_trimmed:
+            self.metrics.inc_context_memory_trimmed(memory_trimmed)
+            logger.info(
+                "context_memory_budget trimmed=%s kept=%s cap=%s",
+                memory_trimmed,
+                len(memory_capsule.entries),
+                MEMORY_CAPSULE_MAX_CHARS,
+            )
         snapshot = ContextSnapshot(
             recent_committed_turns=recent,
-            memory_capsule=draft.memory_capsule,
+            memory_capsule=memory_capsule,
             persona_capsule=draft.persona_capsule,
             relationship_policy=draft.relationship_policy,
             tool_permission=draft.tool_permission,

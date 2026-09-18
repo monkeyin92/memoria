@@ -38,7 +38,6 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.listener_cue_playback == "main_track"
     assert s.listener_cue_aec_validated is False
     assert s.persona_enabled is False
-    assert s.memory_context_enabled is False
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8
@@ -452,20 +451,6 @@ def test_production_persona_requires_internal_auth_even_without_archive_sink(
         AgentSettings()
 
 
-def test_production_memory_context_requires_internal_auth_even_without_archive_sink(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
-    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
-    monkeypatch.setenv("MEMORIA_MEMORY_CONTEXT_ENABLED", "true")
-    monkeypatch.delenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", raising=False)
-    monkeypatch.delenv("MEMORIA_MEMORY_READ_TOKEN", raising=False)
-
-    with pytest.raises(ValidationError, match="memory context"):
-        AgentSettings()
-
-
 def test_production_voice_profile_requires_internal_auth_even_without_archive_sink(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -486,11 +471,11 @@ def test_production_plaintext_internal_url_is_limited_to_local_docker_dns(
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
-    monkeypatch.setenv("MEMORIA_MEMORY_CONTEXT_ENABLED", "true")
-    monkeypatch.setenv("MEMORIA_MEMORY_READ_TOKEN", "memory-read-material-that-is-long-enough")
+    monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
+    monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", "voice-resolution-material-that-is-long-enough")
     monkeypatch.setenv(
-        "MEMORIA_MEMORY_CONTEXT_URL",
-        "http://memory.internal.example/v1/archive/session-context",
+        "MEMORIA_VOICE_PROFILE_URL",
+        "http://voice.internal.example/v1/voices/session-resolution",
     )
 
     with pytest.raises(ValidationError, match="HTTPS or local Docker DNS"):
@@ -527,10 +512,10 @@ def test_production_enabled_capabilities_require_independent_tokens(
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
-    monkeypatch.setenv("MEMORIA_MEMORY_CONTEXT_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_PERSONA_ENABLED", "true")
-    monkeypatch.setenv("MEMORIA_MEMORY_READ_TOKEN", shared)
+    monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_PERSONA_READ_TOKEN", shared)
+    monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", shared)
 
     with pytest.raises(ValidationError, match="capability tokens must be independent"):
         AgentSettings()

@@ -237,7 +237,6 @@ def split_env(
     media_edge = {key: value for key, value in values.items() if key in media_edge_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
-        ("MEMORIA_MEMORY_READ_TOKEN", "MEMORIA_MEMORY_CONTEXT_ENABLED", False),
         ("MEMORIA_PERSONA_READ_TOKEN", "MEMORIA_PERSONA_ENABLED", False),
         ("MEMORIA_VOICE_RESOLUTION_TOKEN", "MEMORIA_VOICE_PROFILE_ENABLED", False),
     )

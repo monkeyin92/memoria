@@ -7,7 +7,9 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.context_snapshot_manager import (
+    MEMORY_CAPSULE_MAX_CHARS,
     ContextConflict,
     ContextSnapshot,
     ContextSnapshotDraft,
@@ -312,3 +314,87 @@ async def test_runtime_turn_commit_does_not_wait_for_slow_snapshot_builder() -> 
     assert runtime.orchestrator.context_version_for_fence(second) == 0
     release.set()
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_capsule_is_trimmed_to_the_prompt_budget_and_observed() -> None:
+    """P2-01: the memory prompt has a hard ceiling, and the cut is observable.
+
+    The capsules come from the planner, but the Agent freezes them: one entry
+    past the budget is truncated, later entries are dropped, persona style is
+    never treated as memory, and the metrics report what actually entered.
+    """
+    metrics = MetricsRegistry()
+    manager = ContextSnapshotManager(metrics=metrics)
+    manager.initialize("session-budget")
+    entries = (
+        MemoryCapsuleEntry(
+            item_id="item-1",
+            kind="episode",
+            content="一" * 900,
+            source_refs=("event-1",),
+        ),
+        MemoryCapsuleEntry(
+            item_id="item-2",
+            kind="episode",
+            content="二" * 900,
+            source_refs=("event-2",),
+        ),
+        MemoryCapsuleEntry(item_id="item-3", kind="claim", content="三" * 50),
+    )
+
+    pending = await manager.prepare_next(
+        "session-budget",
+        base_version=0,
+        committed_events=(),
+        draft=ContextSnapshotDraft(
+            memory_capsule=MemoryCapsule(entries=entries),
+            persona_capsule=PersonaCapsule(
+                version_id="persona-v1",
+                version_number=1,
+                prompt_fragment="x" * 400,
+            ),
+            speaker_class="owner",
+        ),
+    )
+
+    snapshot = pending.candidate
+    # 先保留完整条目，再截断溢出的那一条，剩余的整条丢弃——不静默放大预算。
+    assert [entry.item_id for entry in snapshot.memory_capsule.entries] == [
+        "item-1",
+        "item-2",
+    ]
+    assert len(snapshot.memory_capsule.entries[0].content) == 900
+    assert len(snapshot.memory_capsule.entries[1].content) == (
+        MEMORY_CAPSULE_MAX_CHARS - 900
+    )
+    assert snapshot.memory_capsule.entries[0].source_refs == ("event-1",)
+    # 人格风格不计入记忆预算，也不被截断。
+    assert snapshot.persona_capsule.prompt_fragment == "x" * 400
+    assert metrics.get("context_memory_chars") == MEMORY_CAPSULE_MAX_CHARS
+    assert metrics.get("context_memory_trimmed_total") == 2
+
+
+@pytest.mark.asyncio
+async def test_memory_capsule_within_budget_is_untouched() -> None:
+    metrics = MetricsRegistry()
+    manager = ContextSnapshotManager(metrics=metrics)
+    manager.initialize("session-small")
+    entries = (
+        MemoryCapsuleEntry(item_id="item-1", kind="claim", content="短"),
+        MemoryCapsuleEntry(item_id="item-2", kind="claim", content="也很短"),
+    )
+
+    pending = await manager.prepare_next(
+        "session-small",
+        base_version=0,
+        committed_events=(),
+        draft=ContextSnapshotDraft(
+            memory_capsule=MemoryCapsule(entries=entries),
+            speaker_class="owner",
+        ),
+    )
+
+    assert pending.candidate.memory_capsule.entries == entries
+    assert metrics.get("context_memory_chars") == 4
+    assert metrics.get("context_memory_trimmed_total") == 0

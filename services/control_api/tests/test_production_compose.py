@@ -728,7 +728,6 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_VOICE_CLEANUP_TOKEN": "voice-cleanup-token",
             "MEMORIA_INTERACTION_POLICY_TOKEN": "interaction-policy-token",
             "MEMORIA_PERSONA_ENABLED": "false",
-            "MEMORIA_MEMORY_CONTEXT_ENABLED": "false",
             "MEMORIA_VOICE_PROFILE_ENABLED": "false",
             "DASHSCOPE_API_KEY": "dashscope",
             "TTS_PROVIDER": "doubao",

@@ -288,7 +288,6 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert control["TTS_PROVIDER"] == "doubao"
     assert agent["TTS_PROVIDER"] == "doubao"
     assert agent["MEMORIA_ARCHIVE_SINK_ENABLED"] == "true"
-    assert agent["MEMORIA_MEMORY_CONTEXT_ENABLED"] == "true"
     assert agent["MEMORIA_PERSONA_ENABLED"] == "true"
     assert agent["MEMORIA_VOICE_PROFILE_ENABLED"] == "true"
     assert agent["ENDPOINTING_MIN_DELAY_S"] == "1.50"

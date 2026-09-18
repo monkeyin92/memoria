@@ -466,10 +466,6 @@ class AgentSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_AGENT_HEARTBEAT_TOKEN",
     )
-    memory_read_token: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_MEMORY_READ_TOKEN",
-    )
     persona_read_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_PERSONA_READ_TOKEN",
@@ -545,32 +541,6 @@ class AgentSettings(BaseSettings):
         le=300.0,
         alias="MEMORIA_PERSONA_CACHE_TTL_S",
     )
-    memory_context_enabled: bool = Field(
-        default=False,
-        alias="MEMORIA_MEMORY_CONTEXT_ENABLED",
-    )
-    memory_context_url: str = Field(
-        default="http://control-api:8000/v1/archive/session-context",
-        alias="MEMORIA_MEMORY_CONTEXT_URL",
-    )
-    memory_context_timeout_s: float = Field(
-        default=0.3,
-        ge=0.05,
-        le=2.0,
-        alias="MEMORIA_MEMORY_CONTEXT_TIMEOUT_S",
-    )
-    memory_context_cache_ttl_s: float = Field(
-        default=60.0,
-        ge=1.0,
-        le=300.0,
-        alias="MEMORIA_MEMORY_CONTEXT_CACHE_TTL_S",
-    )
-    memory_context_limit: int = Field(
-        default=8,
-        ge=1,
-        le=20,
-        alias="MEMORIA_MEMORY_CONTEXT_LIMIT",
-    )
     voice_profile_enabled: bool = Field(
         default=False,
         alias="MEMORIA_VOICE_PROFILE_ENABLED",
@@ -621,7 +591,6 @@ class AgentSettings(BaseSettings):
         capability: Literal[
             "archive_write",
             "agent_heartbeat",
-            "memory_read",
             "persona_read",
             "voice_resolution",
             "interaction_policy",
@@ -631,7 +600,6 @@ class AgentSettings(BaseSettings):
         configured = {
             "archive_write": self.archive_write_token,
             "agent_heartbeat": self.agent_heartbeat_token,
-            "memory_read": self.memory_read_token,
             "persona_read": self.persona_read_token,
             "voice_resolution": self.voice_resolution_token,
             "interaction_policy": self.interaction_policy_token,
@@ -772,13 +740,6 @@ class AgentSettings(BaseSettings):
                 if not _secure_internal_url(self.persona_capsule_url):
                     raise ValueError("production persona URL requires HTTPS or local Docker DNS")
                 capability_tokens.append(persona_token)
-            if self.memory_context_enabled:
-                memory_token = self.internal_token("memory_read")
-                if len(memory_token) < 32:
-                    raise ValueError("production memory context requires a scoped read token")
-                if not _secure_internal_url(self.memory_context_url):
-                    raise ValueError("production memory URL requires HTTPS or local Docker DNS")
-                capability_tokens.append(memory_token)
             if self.voice_profile_enabled:
                 voice_token = self.internal_token("voice_resolution")
                 if len(voice_token) < 32:

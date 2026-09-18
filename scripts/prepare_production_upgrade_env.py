@@ -394,8 +394,6 @@ def prepare(
             "MEMORIA_ARCHIVE_SPOOL_MAX_BYTES": "8388608",
             "MEMORIA_PERSONA_ENABLED": "true",
             "MEMORIA_PERSONA_CAPSULE_URL": ("http://control-api:8000/v1/persona/session-capsule"),
-            "MEMORIA_MEMORY_CONTEXT_ENABLED": "true",
-            "MEMORIA_MEMORY_CONTEXT_URL": ("http://control-api:8000/v1/archive/session-context"),
             "MEMORIA_VOICE_PROFILE_ENABLED": "true",
             "MEMORIA_VOICE_PROFILE_URL": ("http://control-api:8000/v1/voices/session-resolution"),
             "LIVEKIT_ADAPTIVE_INTERRUPTION": "false",

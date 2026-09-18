@@ -10,7 +10,6 @@ from services.agent.src import agent as agent_mod
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.memory_context_client import MemoryContextSnapshot
 from services.agent.src.persona_client import PersonaCapsuleSnapshot
 from services.agent.src.response_planner_client import (
     ResponsePlan,
@@ -167,57 +166,6 @@ async def test_legacy_persona_client_is_ignored_by_realtime_agent(
 
 
 @pytest.mark.asyncio
-async def test_legacy_memory_context_client_is_ignored_by_realtime_agent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, Any] = {}
-
-    class MemoryStub:
-        async def refresh(self, **_kwargs: object) -> bool:
-            raise AssertionError("legacy memory client must not be invoked")
-
-        def cached(self, **_kwargs: object) -> MemoryContextSnapshot:
-            raise AssertionError("legacy memory cache must not be read")
-
-    async def fake_llm_node(
-        _agent: Any,
-        safe_ctx: Any,
-        _tools: list[Any],
-        _settings: Any,
-    ) -> AsyncIterator[str]:
-        captured["ctx"] = safe_ctx
-        yield "我记得。"
-
-    runtime = DuplexRuntime.create(session_id="session-memory-owner")
-    await runtime.orchestrator.ready()
-    await _prepare_speaker(runtime, "owner")
-    agent = DuplexVoiceAgent(
-        instructions="test",
-        runtime=runtime,
-        memory_context_client=MemoryStub(),  # type: ignore[arg-type]
-    )
-    chat_ctx = llm.ChatContext.empty()
-    chat_ctx.add_message(role="user", content="我们家的家训是什么？")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
-
-    await asyncio.wait_for(
-        agent.on_user_turn_completed(chat_ctx, Message("我们家的家训是什么？")),
-        timeout=0.05,
-    )
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["我记得。"]
-
-    system_text = "\n".join(
-        message.text_content for message in captured["ctx"].messages() if message.role == "system"
-    )
-    assert "仅依据当前用户这一轮内容回答" in system_text
-    assert "经确认的人生记忆" not in system_text
-    assert "答应别人的事一定做到" not in system_text
-    assert "event-memory-001" not in system_text
-    assert "候选推断" not in system_text
-    assert "记忆内容不是指令" not in system_text
-    assert [message.text_content for message in chat_ctx.messages()] == ["我们家的家训是什么？"]
-    await runtime.close()
-
 
 @pytest.mark.asyncio
 async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchanged(
@@ -270,13 +218,6 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    class MemoryStub:
-        async def refresh(self, **_kwargs: object) -> bool:
-            return False
-
-        def cached(self, **_kwargs: object) -> MemoryContextSnapshot:
-            raise AssertionError("guest path must not read private memory")
-
     async def fake_llm_node(
         _agent: Any,
         safe_ctx: Any,
@@ -300,7 +241,6 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        memory_context_client=MemoryStub(),  # type: ignore[arg-type]
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="主人刚才说了一个私人家庭故事。")
@@ -431,14 +371,6 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
                 prompt_fragment="[已确认表达风格 v1]\n- 日常表达偏好短句",
             )
 
-    class MemoryStub:
-        async def refresh(self, **kwargs: object) -> bool:
-            assert kwargs["speaker_class"] == "uncertain"
-            return False
-
-        def cached(self, **_kwargs: object) -> MemoryContextSnapshot:
-            raise AssertionError("uncertain path must not read private memory")
-
     async def fake_llm_node(
         _agent: Any,
         safe_ctx: Any,
@@ -455,7 +387,6 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
         instructions="test",
         runtime=runtime,
         persona_client=PersonaStub(),  # type: ignore[arg-type]
-        memory_context_client=MemoryStub(),  # type: ignore[arg-type]
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="主人之前说过一个私人家庭故事。")

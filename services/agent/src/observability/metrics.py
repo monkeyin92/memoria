@@ -114,6 +114,18 @@ class MetricsRegistry:
             raise ValueError("context snapshot size must be non-negative")
         self._set("context_snapshot_size_chars", float(size_chars))
 
+    def set_context_memory_chars(self, chars: int) -> None:
+        """Memory evidence characters actually frozen into the snapshot capsule."""
+        if chars < 0:
+            raise ValueError("memory capsule size must be non-negative")
+        self._set("context_memory_chars", float(chars))
+
+    def inc_context_memory_trimmed(self, count: int) -> None:
+        """Entries truncated or dropped to stay inside the memory prompt budget."""
+        if count <= 0:
+            raise ValueError("trimmed memory count must be positive")
+        self._inc("context_memory_trimmed_total", amount=float(count))
+
     def inc_context_snapshot_build_failed(self, reason: str) -> None:
         self._inc("context_snapshot_build_failed_total", {"reason": reason})
 
