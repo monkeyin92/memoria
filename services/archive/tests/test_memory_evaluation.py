@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.memory_domain import ExtractionUsage, MemoryExtraction
+from services.archive.memory_domain import (
+    ExtractedClaim,
+    ExtractedTimeline,
+    ExtractionUsage,
+    MemoryExtraction,
+)
 from services.archive.memory_evaluation import (
     CatalogMemoryEvaluationAdapter,
     EvaluationItem,
@@ -209,6 +214,93 @@ async def test_catalog_adapter_reports_long_horizon_scenario_scores() -> None:
     assert metrics.cross_session_recall_at_5 == 1
     assert metrics.paraphrase_followup_recall_at_5 == 1
     assert metrics.comfort_recall_at_5 == 1
+
+
+class CanonicalKeyExtractor:
+    """The production shape: the extractor states the shared episode key.
+
+    The lexical categoriser files the two statements under different domains;
+    only an explicit canonical key (the Qwen path's contract) can join them.
+    """
+
+    version = "canonical-key-eval-test-v1"
+
+    async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+        text = str(event.payload["text"])
+        domain = "work_experience" if "失败" in text else "daily_life"
+        return MemoryExtraction(
+            claims=(
+                ExtractedClaim(
+                    domain_category=domain,
+                    subject_key="self",
+                    predicate=domain,
+                    value=text,
+                    confidence=0.8,
+                ),
+            ),
+            timeline=(
+                ExtractedTimeline(
+                    title=text,
+                    domain_category=domain,
+                    event_start=event.occurred_at,
+                    event_end=None,
+                    canonical_key="campus-delivery-startup",
+                ),
+            ),
+            extractor_version=self.version,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor() -> None:
+    """P1-06: keep the fixed set visible to CI, with its honest ceiling.
+
+    The rule extractor cannot produce canonical episode keys, so the
+    cross-session episode case stays at its measured score; pinning the
+    numbers makes any change to either the pipeline or the dataset fail here
+    instead of silently drifting in a hand-run script.
+    """
+    dataset = load_memory_evaluation_dataset(DATASET)
+
+    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+
+    assert report.metrics.recall_at_5 == pytest.approx(0.9375)
+    assert report.metrics.ndcg_at_10 == pytest.approx(0.8590438584406034)
+    assert report.metrics.source_attribution_accuracy == pytest.approx(0.95)
+    assert report.metrics.candidate_leakage == 0
+    assert report.metrics.cross_account_leakage == 0
+
+
+@pytest.mark.asyncio
+async def test_repeated_episode_case_passes_when_extraction_states_the_key() -> None:
+    """P1-06 acceptance: one episode carrying both statements, and it is recalled.
+
+    This is the case the rule extractor structurally cannot pass; with the
+    extractor that states the shared key the query must reach one episode whose
+    sources are exactly the two statements.
+    """
+    dataset = load_memory_evaluation_dataset(DATASET)
+    case = next(
+        value
+        for value in dataset.cases
+        if value.case_id == "repeated-episode-campus-startup"
+    )
+
+    observation = await CatalogMemoryEvaluationAdapter(CanonicalKeyExtractor()).observe(case)
+    metrics = calculate_memory_metrics(
+        MemoryEvaluationDataset(version=dataset.version, cases=(case,)),
+        (observation,),
+    )
+
+    assert metrics.recall_at_5 == 1
+    assert metrics.source_attribution_accuracy == 1
+    episode_sources = {
+        tuple(sorted(item.source_event_ids))
+        for query in observation.query_results
+        for item in query.items
+        if item.kind == "episode"
+    }
+    assert ("eval-repeat-001", "eval-repeat-002") in episode_sources
 
 
 def test_source_account_attribution_exposes_cross_account_and_mixed_results() -> None:

@@ -77,13 +77,17 @@ class EpisodeConsolidator:
 
     @staticmethod
     def _score(candidate: EpisodeCandidate, episode: ExistingEpisode) -> float:
+        candidate_key = _canonical_value(candidate.fallback_key)
+        episode_key = _canonical_value(episode.consolidation_key)
+        # An explicit canonical key is the extractor stating "this is the same
+        # real-world episode". That statement outranks the lexical domain guess,
+        # so one key merges across domains; the episode keeps the domain it was
+        # first seen under (the projection preserves it).
+        if candidate_key and episode_key and candidate_key == episode_key:
+            return 1.0
         if candidate.domain_category != episode.domain_category:
             return 0.0
 
-        candidate_key = _canonical_value(candidate.fallback_key)
-        episode_key = _canonical_value(episode.consolidation_key)
-        if candidate_key and episode_key and candidate_key == episode_key:
-            return 1.0
         if (
             candidate.entity_ids
             and episode.entity_ids
@@ -112,7 +116,18 @@ class EpisodeConsolidator:
 
 
 def _canonical_value(value: str) -> str:
-    return value.removeprefix("canonical:") if value.startswith("canonical:") else ""
+    """The episode identity carried by an explicit canonical key.
+
+    ``EpisodeCandidate.fallback_key`` encodes ``canonical:<domain>:<key>``; the
+    identity is the extractor's ``<key>``, not the domain it was first filed
+    under, so the same key matches across domains.
+    """
+    if not value.startswith("canonical:"):
+        return ""
+    parts = value.split(":", 2)
+    if len(parts) != 3:
+        return ""
+    return parts[2]
 
 
 def _session_scope(value: str) -> str:

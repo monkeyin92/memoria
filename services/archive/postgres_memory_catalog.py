@@ -999,7 +999,9 @@ class PostgresMemoryCatalog:
             SELECT episode_id, consolidation_key, title, domain_category,
                    event_start, event_end, entity_ids
             FROM life_episodes
-            WHERE account_id = $1 AND domain_category = $2 AND status != 'retracted'
+            WHERE account_id = $1
+              AND (domain_category = $2 OR consolidation_key LIKE 'canonical:%')
+              AND status != 'retracted'
             ORDER BY observed_at DESC, episode_id
             LIMIT 200
             """,

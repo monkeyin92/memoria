@@ -11,13 +11,47 @@ import pytest
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import (
     CompileReport,
+    ExtractedClaim,
+    ExtractedTimeline,
     MemoryClaimReview,
     MemoryEmbeddingUnavailableError,
+    MemoryExtraction,
     MemorySearchQuery,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+
+
+class _DomainDriftCanonicalExtractor:
+    """One real episode the lexical categoriser files under two domains."""
+
+    version = "pg-canonical-domain-drift-test-v1"
+
+    async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+        text = str(event.payload["text"])
+        domain = "work_experience" if "失败" in text else "daily_life"
+        return MemoryExtraction(
+            claims=(
+                ExtractedClaim(
+                    domain_category=domain,
+                    subject_key="self",
+                    predicate=domain,
+                    value=text,
+                    confidence=0.8,
+                ),
+            ),
+            timeline=(
+                ExtractedTimeline(
+                    title=text,
+                    domain_category=domain,
+                    event_start=event.occurred_at,
+                    event_end=None,
+                    canonical_key="campus-delivery-startup",
+                ),
+            ),
+            extractor_version=self.version,
+        )
 
 
 class SemanticEmbedderStub:
@@ -411,6 +445,104 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         await connection.close()
         await upgraded_catalog.close()
         await old_catalog.close()
+        await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL episode identity contract",
+)
+async def test_postgres_one_canonical_key_merges_across_domains() -> None:
+    """P1-06: the shared canonical key is the episode identity in PostgreSQL too.
+
+    The candidate query filters by ``domain_category``, so the cross-domain
+    identity rule needs both the SQL fix (canonical rows are always candidates)
+    and the scoring rule to hold on the production store.
+    """
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    suffix = uuid.uuid4().hex[:10]
+    account_id = f"pg-episode-{suffix}"
+    archive = PostgresLifeArchive(dsn)
+    catalog = PostgresMemoryCatalog(dsn, extractor=_DomainDriftCanonicalExtractor())
+    await archive.initialize()
+    await catalog.initialize()
+    connection = await asyncpg.connect(dsn)
+    try:
+        for event_id, session_id, occurred_at, text in (
+            (
+                f"pg-episode-start-{suffix}",
+                "pg-episode-session-a",
+                datetime(2026, 7, 12, 2, 0, tzinfo=UTC),
+                "大学时我和老王做过校园外卖创业。",
+            ),
+            (
+                f"pg-episode-outcome-{suffix}",
+                "pg-episode-session-b",
+                datetime(2026, 7, 20, 2, 0, tzinfo=UTC),
+                "那次校园外卖项目后来失败了，让我很重视现金流。",
+            ),
+        ):
+            await archive.record(
+                EvidenceEvent(
+                    event_id=event_id,
+                    account_id=account_id,
+                    session_id=session_id,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=occurred_at,
+                    speaker_class="owner",
+                    source="pg-episode-contract-test",
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
+                )
+            )
+
+        await catalog.compile_pending(limit=1000)
+        queue = await catalog.review_queue(account_id=account_id)
+        items = {item.source_event_id: item for item in queue}
+        for event_id in (
+            f"pg-episode-start-{suffix}",
+            f"pg-episode-outcome-{suffix}",
+        ):
+            await catalog.review(
+                MemoryClaimReview(
+                    account_id=account_id,
+                    claim_id=items[event_id].item_id,
+                    action="confirm",
+                )
+            )
+
+        memories = await catalog.context(
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                kinds=("episode",),
+            )
+        )
+
+        assert len(memories.items) == 1
+        assert set(memories.items[0].source_event_ids) == {
+            f"pg-episode-start-{suffix}",
+            f"pg-episode-outcome-{suffix}",
+        }
+        assert "校园外卖创业" in memories.items[0].snippet
+    finally:
+        await connection.execute(
+            "DELETE FROM episode_evidence WHERE account_id = $1", account_id
+        )
+        await connection.execute(
+            "DELETE FROM timeline_entries WHERE account_id = $1", account_id
+        )
+        await connection.execute("DELETE FROM life_episodes WHERE account_id = $1", account_id)
+        await connection.execute(
+            "DELETE FROM archive_evidence_events WHERE account_id = $1", account_id
+        )
+        await connection.close()
+        await catalog.close()
         await archive.close()
 
 

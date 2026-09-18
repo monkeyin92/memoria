@@ -1135,7 +1135,9 @@ class MemoryCatalog:
             SELECT episode_id, consolidation_key, title, domain_category,
                    event_start, event_end, entity_ids_json
             FROM life_episodes
-            WHERE account_id = ? AND domain_category = ? AND status != 'retracted'
+            WHERE account_id = ?
+              AND (domain_category = ? OR consolidation_key LIKE 'canonical:%')
+              AND status != 'retracted'
             ORDER BY observed_at DESC, episode_id
             LIMIT 200
             """,

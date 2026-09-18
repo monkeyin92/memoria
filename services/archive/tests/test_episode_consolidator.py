@@ -120,6 +120,74 @@ def test_canonical_keys_are_scoped_by_domain_category() -> None:
     assert work.fallback_key != life.fallback_key
 
 
+def test_one_canonical_key_merges_across_domain_categories() -> None:
+    """P1-06: an explicit shared key is the episode identity, not the domain.
+
+    The extractor states "same real-world episode"; the lexical category guess
+    is what differs here (the two statements were filed as ``daily_life`` and
+    ``work_experience``), and it must not split one episode in two.
+    """
+    start = datetime(2026, 7, 12, 2, tzinfo=UTC)
+    existing = ExistingEpisode(
+        episode_id="episode-campus-startup",
+        consolidation_key="canonical:daily_life:campusdeliverystartup",
+        title="大学时我和老王做过校园外卖创业。",
+        domain_category="daily_life",
+        event_start=start,
+        event_end=None,
+        entity_ids=(),
+    )
+    candidate = EpisodeCandidate(
+        account_id="episode-account",
+        source_event_id="candidate-source",
+        session_id="new-session",
+        title="那次校园外卖项目后来失败了，让我很重视现金流。",
+        domain_category="work_experience",
+        event_start=start + timedelta(days=8),
+        event_end=None,
+        canonical_key="campus-delivery-startup",
+        entity_ids=(),
+        salience=0.7,
+        sensitivity="personal",
+    )
+
+    selected = EpisodeConsolidator().choose(candidate, (existing,))
+
+    assert selected == existing
+    # The episode keeps the domain it was first seen under; only the identity
+    # crosses domains.
+    assert selected.domain_category == "daily_life"
+
+
+def test_different_canonical_keys_still_never_merge_across_domains() -> None:
+    """The loosening is scoped to one shared key, not to canonical rows at all."""
+    start = datetime(2026, 7, 12, 2, tzinfo=UTC)
+    existing = ExistingEpisode(
+        episode_id="episode-other",
+        consolidation_key="canonical:daily_life:someotherstory",
+        title="搬去南京生活。",
+        domain_category="daily_life",
+        event_start=start,
+        event_end=None,
+        entity_ids=(),
+    )
+    candidate = EpisodeCandidate(
+        account_id="episode-account",
+        source_event_id="candidate-source",
+        session_id="new-session",
+        title="那段校园外卖创业让我重视现金流。",
+        domain_category="work_experience",
+        event_start=start + timedelta(days=8),
+        event_end=None,
+        canonical_key="campus-delivery-startup",
+        entity_ids=(),
+        salience=0.7,
+        sensitivity="personal",
+    )
+
+    assert EpisodeConsolidator().choose(candidate, (existing,)) is None
+
+
 def test_similar_titles_do_not_merge_distinct_events_with_distant_time_and_entities() -> None:
     existing = ExistingEpisode(
         episode_id="episode-2013",
@@ -251,6 +319,121 @@ async def _record(
             },
         )
     )
+
+
+class CanonicalEpisodeExtractorWithDomainDrift:
+    """One real episode the lexical categoriser files under two domains.
+
+    This is the P1-06 failure shape: the two statements share an explicit
+    canonical key, but the rule-style word lists would put the start under one
+    domain and the outcome under another.
+    """
+
+    version = "canonical-episode-domain-drift-test-v1"
+
+    async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+        text = str(event.payload["text"])
+        domain = "work_experience" if "失败" in text else "daily_life"
+        return MemoryExtraction(
+            claims=(
+                ExtractedClaim(
+                    domain_category=domain,
+                    subject_key="self",
+                    predicate=domain,
+                    value=text,
+                    confidence=0.8,
+                ),
+            ),
+            timeline=(
+                ExtractedTimeline(
+                    title=text,
+                    domain_category=domain,
+                    event_start=event.occurred_at,
+                    event_end=None,
+                    canonical_key="campus-delivery-startup",
+                ),
+            ),
+            extractor_version=self.version,
+        )
+
+
+@pytest.mark.asyncio
+async def test_one_canonical_key_returns_one_episode_with_both_statements(
+    tmp_path: Path,
+) -> None:
+    """P1-06 regression: a shared canonical key must survive domain drift.
+
+    The two statements are eight days and two sessions apart and are filed
+    under different domains; the shared key is the extractor's own statement
+    that they are one episode, so the projection must carry both source event
+    ids and both texts.
+    """
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await archive.record(
+        EvidenceEvent(
+            event_id="drift-source-start",
+            account_id="episode-account",
+            session_id="drift-session-a",
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime(2026, 7, 12, 2, 0, tzinfo=UTC),
+            speaker_class="owner",
+            source="episode-test",
+            payload={
+                "text": "大学时我和老王做过校园外卖创业。",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+            },
+        )
+    )
+    await archive.record(
+        EvidenceEvent(
+            event_id="drift-source-outcome",
+            account_id="episode-account",
+            session_id="drift-session-b",
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime(2026, 7, 20, 2, 0, tzinfo=UTC),
+            speaker_class="owner",
+            source="episode-test",
+            payload={
+                "text": "那次校园外卖项目后来失败了，让我很重视现金流。",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+            },
+        )
+    )
+    catalog = MemoryCatalog.sqlite(
+        path, extractor=CanonicalEpisodeExtractorWithDomainDrift()
+    )
+    await catalog.compile_pending()
+    queue = await catalog.review_queue(account_id="episode-account")
+    items = {item.source_event_id: item for item in queue}
+    for source_event_id in ("drift-source-start", "drift-source-outcome"):
+        await catalog.review(
+            MemoryClaimReview(
+                account_id="episode-account",
+                claim_id=items[source_event_id].item_id,
+                action="confirm",
+            )
+        )
+
+    memories = await catalog.context(
+        MemorySearchQuery(
+            account_id="episode-account",
+            speaker_class="owner",
+            kinds=("episode",),
+        )
+    )
+
+    assert len(memories.items) == 1
+    assert set(memories.items[0].source_event_ids) == {
+        "drift-source-start",
+        "drift-source-outcome",
+    }
+    assert "校园外卖创业" in memories.items[0].snippet
+    assert "重视现金流" in memories.items[0].snippet
 
 
 @pytest.mark.asyncio
