@@ -331,7 +331,18 @@ test("profile sensitive entry flags come only from the runtime profile capabilit
       assert.equal(state.digitalSelfEntryAllowed, false);
       assert.equal(state.rawVoiceEntryAllowed, false);
       assert.equal(state.hasRuntimeProfile, true);
+      // 内置人格不得被当成自定义人格 id 交给克隆接口。
+      assert.equal(state.customPersonaId, "");
 
+      api.getRuntimeProfile = async () => ({
+        valid: true,
+        degraded: false,
+        capabilities: [contracts.Capability.VoiceCloneUse],
+        persona: { persona_id: "cu_0123456789abcdef0123456789abcd", version: 1 },
+        session_id: "ses_gate",
+        session_epoch: 1,
+        runtime_profile_id: "rp_gate_custom",
+      });
       // 非法 profile：全部入口关闭且给出可解释原因。
       api.getRuntimeProfile = async () => ({ valid: false, capabilities: [] });
       const denied = await page.loadRuntimeCapabilities();
@@ -341,6 +352,55 @@ test("profile sensitive entry flags come only from the runtime profile capabilit
       assert.equal(denied.rawVoiceEntryAllowed, false);
       assert.ok(denied.profileUnavailableReason.length > 0);
       assert.equal(now > 0, true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("profile derives a custom persona id only from a cu_ runtime persona", async () => {
+  await withWx(async () => {
+    binding.saveBindingManifest(
+      canonicalManifest({
+        binding_id: "bd_cu",
+        device_id: "dev_cu",
+        declared_mode: "self_use",
+        binding_version: 1,
+      }),
+    );
+    const definition = loadPage("../pages/profile/index");
+    const page = instantiate(definition);
+    const restore = stubApi({
+      getRuntimeProfile: async () => ({
+        valid: true,
+        degraded: false,
+        capabilities: [contracts.Capability.VoiceCloneUse],
+        persona: { persona_id: "cu_0123456789abcdef0123456789abcd", version: 1 },
+        session_id: "ses_cu",
+        session_epoch: 1,
+        runtime_profile_id: "rp_cu",
+      }),
+      currentIdentity: () => ({ user_id: "person_owner" }),
+      getProfile: async () => ({ subject_category: "adult" }),
+      isAuthEpochCurrent: () => true,
+    });
+    try {
+      const state = await page.loadRuntimeCapabilities();
+      assert.equal(state.customPersonaId, "cu_0123456789abcdef0123456789abcd");
+      assert.equal(state.voiceCloneAllowed, true);
+
+      // 内置人格不是自定义人格：不得把它的 id 当成 custom_persona_id。
+      api.getRuntimeProfile = async () => ({
+        valid: true,
+        degraded: false,
+        capabilities: [contracts.Capability.VoiceCloneUse],
+        persona: { persona_id: "starlight", version: 1 },
+        session_id: "ses_cu",
+        session_epoch: 1,
+        runtime_profile_id: "rp_cu_builtin",
+      });
+      const builtin = await page.loadRuntimeCapabilities();
+      assert.equal(builtin.customPersonaId, "");
     } finally {
       restore();
     }
