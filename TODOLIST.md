@@ -89,8 +89,8 @@
 
 ### [ ] P1-05 补权威会话状态，再做小程序三端验收
 
-- 最小会话回顾出口已修（`f2a95d6`，`code`，本轮补可追溯字段）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对话轮（history-eligible owner 文本 + actual-heard assistant 文本），每轮带 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，与 `/conversation-review` 同一 owner 鉴权域、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。**撤回“无跨主体读”收据**：现有回归只建两个成人账号、只证 account 隔离；同账号切主体、subject 围栏、无 retention 临时读回仍待验（见下）。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
-- 待验（P1-05）：同账号切主体后旧主体话轮是否可见、subject 围栏、minor 无 retention 时的临时读回语义；输出是“已听到”近似交付记录（`approximate` 默认 true），不是精确交付状态。
+- 最小会话回顾出口已修（`f2a95d6`，`code`，本轮补可追溯字段）：`GET /v1/archive/conversation-history?session_id=&turn_limit=` 返回一会话的配对话轮（history-eligible owner 文本 + actual-heard assistant 文本），每轮带 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，与 `/conversation-review` 同一 owner 鉴权域、无 retention 同意长期保存；无 eligible 话轮返回空列表、不编造汇总。**撤回“无跨主体读”收据**：现有回归只建两个成人账号、只证 account 隔离；同账号切主体、subject 围栏、无 retention 临时读回本轮已实测（见下一条，结论是可见/无围栏/无临时读回）。完整三端集成与 Edge→Control 只读出口仍待 P1-03/04 同一候选。
+- 待验项本轮已实测（本地 HTTP+SQLite 探针，无生产/设备）：① 同账号切主体后旧主体话轮**可见**——读路径范围是 `account_id`+`session_id`，同一 session 内两段话轮（模拟两位使用人）原样返回；② **subject 围栏不存在且当前数据层无法实现**：`EvidenceEvent` 无 subject 字段，Agent 的 `active_subject_id` 只作为 memory-write fence 输入被消费、不落库，`speaker_identity_id` 对本路径恒为 NULL；③ minor 无 retention 时**没有临时读回**：无 guardian consent 时连 voice session 都拿不到（403 `guardian_consent_required`/`minor_voice_session`），会话内文本在 `retention_allowed=False` 时被剥离且 `history_eligible=False`，回顾出口只会返回空列表。**由此暴露的缺口**：孩子作为 **subject**（非账户）在家人账号设备上说话时，事件按 owner 账户的 `subject_category`（成年）落库并可被 owner 回顾——subject 谱系缺失的直接后果，归 P2-03；补上之前不得宣称“家长读回已按同意/角色控制”。输出仍是“已听到”近似交付记录（`approximate` 默认 true），不是精确交付状态。
 - 只读状态开发可独立进行；完整三端集成使用 P1-03/04 同一候选。以 Python→Edge 的 assistant_state.phase 为源，补缺失的 Edge→Control 受鉴权只读出口，不把连接在线猜成 listening/idle。
 - 投影带 session/generation fence 和新鲜度，重连/断线/过期显示 offline/unknown；不从字幕、零散 diagnostics 或客户端计时猜态，不增加话轮控制面。
 - 完成条件：微信手机/电脑/开发工具同版本覆盖登录绑定、三态/断线、主体人格切换、样本进度、回顾、权限拒绝与刷新；录音范围门禁通过。0.8.84 仅开发版；体验版、提审、正式发布分别授权和记录。
@@ -125,7 +125,7 @@
 
 ### [ ] P2-03 可证明删除与导出证据链
 
-- 依赖 P0-04；备份处置衔接 P1-08，不等待启用异地副本。先核现有删除/撤销/导出，再补缺失的 subject 谱系与离线核验回执，复用 Archive/EvidenceEvent/consent 权威。
+- 依赖 P0-04；备份处置衔接 P1-08，不等待启用异地副本。先核现有删除/撤销/导出，再补缺失的 subject 谱系与离线核验回执，复用 Archive/EvidenceEvent/consent 权威。**P1-05 实测的具体缺口**：会话证据行不带 subject（`active_subject_id` 仅作 fence 输入、`speaker_identity_id` 对该路径恒空），孩子作为 subject 在家人账户设备上的话轮按 owner 账户的 `subject_category` 落库并可被 owner 回顾；谱系落地时需同时给读路径加主体围栏与按说话主体的 retention 天花板。
 - 完成条件：PG、MinIO、投影/缓存、音色/声纹范围一致，重试幂等、回执可查询、导出有 AI/授权标识；对保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本。若发现实际越权/撤销失效，具体缺陷立即提 P0。
 - 导出细则：用户语音与模型回复的混合导出必须显式标记“AI 生成”，元数据写入服务提供者与内容编号；TTS/合成音频核对 `aigc_watermark`/`aigc_metadata`。声纹、原始 WAV、特征不默认长期保存；家庭邀请不升级为声纹登录权限。
 
