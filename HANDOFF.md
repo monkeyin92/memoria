@@ -59,6 +59,7 @@ device_id: dev_atk_a4cb8fd6095c
 
 本轮仍开放的审查项：
 
+- P1-03 人格投影即时生效（`6f9bcc4`，远端 CI `35304857728` success：Pytest 5110 passed/2 skipped、覆盖率 88.11%、orchestration 90%、provider protocols 95%、wake 12 passed、Offline E2E PASS，Ruff/mypy/模块预算/协议与 PG gate 通过；本地另有真实 PG 用例，无生产/设备访问）：控制端 `ensure_profile` 过去会把 TTL 内、签名仍有效的缓存 profile 原样返回，人格写入要等最长 5 分钟 `profile_ttl` 或下一次自然人脸轮换才可见。现在已签发 profile 的人格快照必须等于授权当前的解析值（subject override 优先、binding default 兜底），不等则在保留 `active_subject_id`/`actor_id` 的前提下推进 `session_epoch+1` 重签，旧 profile 随即 stale。回归：内存控制 `test_persona_write_reaches_the_next_profile_read`（修前第二次读取仍是 `starlight:v1`，修后 starlight→taoxi→starlight 且主体与会话不变）与真实 PG 路由用例 `test_real_pg_control_routes_share_start_current_resolve_and_switch_authority` 扩展（临时禁用检查时 `assert 'taoxi:v1' == 'starlight:v1'` 失败）。仍未验：运行中会话的 `next_safe_point` 主动重协商（写入只在下一次 profile 读取/协商生效；主动投影需要 device→session 映射）、小程序分配 UI 与设备实听。
 - P0-04 / P1-03：成员追加的三处缺陷已修（`350d62d`，见下方收据）。同一轮仍未证明的是下游同意门是否曾被绕过——本地只证明了 binding grant 扩大，没有复现越权读取。
 - P0-04 读一致性已修（`f2a95d6`）：`read_transaction` 固定 `REPEATABLE READ` 只读；真实 PG 交错回归各 1 例（读间旋转混对、读间撤销翻转），修前源码上失败、修复后通过。不标已泄漏。
 - P0-03 TTS（`27a16cf` 修正 `f2a95d6` 收据）：无时间戳降级 1 例 + 取消优先 1 例通过；`f2a95d6` 的 `slow_once` 回落测试收据作废（未触发重入、改前已通过），已由 `slow` 持续首包失败真回归替代（personal 1 次、callback/trace 各 1 次、总 5 sessions；修前 personal 4 次）。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。

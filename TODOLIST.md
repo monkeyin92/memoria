@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs、`768993b` 唤醒严格自包含、`b668960`/`87262d3` 收据 docs；审查基线 `b668960`）、未部署、未连接生产或设备；冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit 1.8.1 组）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）；受影响门禁即远端 CI `35298356748`（`768993b`）python 全量已覆盖。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯；P1-03 人格投影即时生效 `6f9bcc4`）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs、`768993b` 唤醒严格自包含、`b668960`/`87262d3` 收据 docs、`6f9bcc4` 人格投影；审查基线 `b668960`）、未部署、未连接生产或设备；冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit 1.8.1 组）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）；`768993b` 与 `6f9bcc4` 分别由远端 CI `35298356748`、`35304857728` 全量覆盖（见下方当前证据）。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
@@ -12,7 +12,7 @@
 6. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 7. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-当前证据：远端 CI `35298356748`（`768993b`，2026-09-18 10:11–10:22 CST）success——Ruff/module budget/strict mypy（435 files）/可复现协议与契约/authoritative PG gate/pytest 5109 passed/2 skipped/覆盖率 88.11%/wake 12 passed/Offline E2E PASS/agent-image success；provider smoke `OFFLINE_MOCK=true` 不算真实厂商验收；media-edge/media-edge-image/agent/firmware/miniprogram 按 filter skip。`35296113073`（`264e2d3`）python 唯一失败已解释：docs-budget 撞非常驻 `RESEARCH.md`，随 `3d7db99` 移除。
+当前证据：远端 CI `35304857728`（`6f9bcc4`，2026-09-18 11:53–12:04 CST）success——Pytest 5110 passed/2 skipped、总覆盖率 88.11%（门 85%）、orchestration 90%、provider protocols 95%、wake 12 passed、Offline E2E PASS；Ruff/模块预算/strict mypy/协议与契约可复现/authoritative PG gate/agent-image 通过；provider smoke 仍 `OFFLINE_MOCK=true`，media-edge/media-edge-image/agent/firmware/miniprogram 按 filter skip。上一轮远端 CI `35298356748`（`768993b`，2026-09-18 10:11–10:22 CST）success——Ruff/module budget/strict mypy（435 files）/可复现协议与契约/authoritative PG gate/pytest 5109 passed/2 skipped/覆盖率 88.11%/wake 12 passed/Offline E2E PASS/agent-image success；`35296113073`（`264e2d3`）python 唯一失败已解释：docs-budget 撞非常驻 `RESEARCH.md`，随 `3d7db99` 移除。
 
 本轮整改（advisory 驱动，已提交 `27a16cf`/`0d200c6`/`39e7fa2` docs）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算，分子/收据 wall 同口径（修前多算 ~1.5 s 且 settle wake 计入，修复后排除，report wall 回归锁定分母≈1.0）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 上一轮（`f2a95d6`）回归：2 个读快照交错、1 个无时间戳降级、2 个曝光时间线、1 个会话回顾在修前失败、修复后通过；wake 去重用例内联 3 行 fixture（删 ignored 文件 9/9）；CI 新增 wake 显式步骤。`f2a95d6` 的流式单次回落用例收据作废（`slow_once` 未触发重入，改前已通过），已由本轮真回归替代。
@@ -75,6 +75,7 @@
 
 - 最小成员/年龄/app_confirm UI 先供 P0-04，完整人格/音色设备验收随后；不把依赖写成循环。成员追加、年龄申报已有 HTTP 路由，选人接口对外声明与写入口均只接受 app_confirm 的一致性已有回归；控制端三项写入缺陷（空权限被恢复、并发丢成员、`family_shared` 丢家庭空间）已随 `350d62d` 修复并留回归，剩余是 UI 接线。
 - 小程序接设备/成员、年龄资料、分配/取消分配/邀请与 app_confirm；先核实际线上 Control 路由/schema，9 月 11 日的两文件 overlay 不代表当前全量后端。客户端 flag、自报姓名或 voice_question 不作身份证据。
+- 控制端人格投影本轮补齐（`6f9bcc4`，code，本地代码+测试+真实 PG）：`ensure_profile` 不再直接返回 TTL 内但人格已过期的缓存 profile——已签发 profile 的人格快照必须等于授权当前解析值（subject override → binding default），否则保留已确认主体与 actor、推进 epoch+1 重签（内存控制 1 例 API 回归 starlight→taoxi→starlight 全程保持 `active_subject_id`/`speaker_state`；PG 控制在真实 PG 路由用例中同样断言，禁用检查时残留 `taoxi:v1` 会失败）。旧 profile 因此进入 stale，决策与旧上下文不再被接受。仍未接：运行中会话的 `next_safe_point` 主动重协商（写入只在下一次 profile 读取/协商生效；主动投影需要 device→session 映射，Control 目前没有），以及小程序的分配/取消分配 UI 与设备实听。
 - 完成条件：同 binding 两个 subject 得到不同人格/音色；切换推进版本、签名失效、next_safe_point 重协商，旧上下文/音频不串人；取消回落默认。内置只读、自定义创建即冻结、克隆未 ready 回落设计音色；PG 与设备实听分别验证。
 - 入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`services/voice_profile/`、`apps/miniprogram/pages/device/`；不另造人格引擎或身份权威。
 
