@@ -100,10 +100,13 @@
 ### [ ] P1-06 定义跨会话记忆语义，补未见召回评测
 
 - 可本地并行。既有固定集修复后 recall@5=0.9375（15/16）、nDCG@10≈0.859，candidate/cross_account leakage 为 0、extraction_recall=1.0、p50≈0.72ms；仍缺 `repeated-episode-campus-startup`。忌口转述、别名与可召回人物投影的既有修复归 `HANDOFF.md`，不重复开发。
-- 先定产品语义：review 确认证据/claim 是否同时提升 person/episode/knowledge，跨 session episode 如何合并及撤销；现有逐事件 document 不满足同 episode 含两条 source_event_ids 的判据，不能靠放宽判据抬分。汇总与未来采访式回忆录复用 EvidenceEvent/claim/source 引用，区分用户原话、已确认事实和 AI 推断；未确认内容不进入 confirmed-only 召回。
-- 已有真实 PG 人物投影/状态门契约，仍需真实 Qwen 抽取器（非规则）对别名句式的证据，以及固定集外未见改写集。会话记忆按当前 person/subject 键迁入既有 `services/memory_scope`，覆盖切人、撤销/删除和旧缓存，不建平行存储。
+- 产品语义已定（`b79307f`，code；远端 CI `35310179722` success：Pytest 5116 passed/2 skipped、覆盖率 88.13%、orchestration 90%、provider protocols 95%；新增 6 例含 PG 契约含在内）：**抽取器显式给出的 `canonical_key` 就是 episode 身份，独立于词表 `domain_category`**——同一 key 跨 domain 合并，episode 保留首见 domain；不同 key 仍严格不合并（domain 硬门、实体互斥、阈值 0.62 全部保留）。理由：key 是抽取器对“同一现实事件”的显式断言，domain 只是词表猜测。实现：`_canonical_value` 只取 key 本身、`_score` 先比 canonical 再判 domain、SQLite/PG 候选查询在 domain 过滤外同时纳入 canonical 行。
+- 该用例此前**结构性不可过**（非标题相似度问题）：跨会话无 key 时打分上限 = 0.55×1.0 + 0.15×0.4 = **0.61 < 0.62**，且候选 SQL 按 domain 过滤使第二段证据根本取不到第一段的 episode。规则抽取器从不产出 canonical_key（`qwen_memory_extractor.py` 是唯一产出者），所以固定集必须用真实抽取器跑：`scripts/evaluate_memory.py --extractor configured` 现在用生产装配（Qwen + 规则回落），未配置 `DASHSCOPE_API_KEY`/未关 `OFFLINE_MOCK` 时**显式退出**而不是静默按规则打分。
+- 回归（修前红、修后绿）：`test_one_canonical_key_merges_across_domain_categories`、`test_different_canonical_keys_still_never_merge_across_domains`、`test_one_canonical_key_returns_one_episode_with_both_statements`（SQLite e2e 双来源）、`test_repeated_episode_case_passes_when_extraction_states_the_key`（该用例判据）、PG 同款 `test_postgres_one_canonical_key_merges_across_domains`；另 `test_fixed_dataset_metrics_are_pinned_for_the_rule_extractor` 钉住规则路径固定集指标（0.9375/0.859/0.95）防判据被悄悄放松。规则路径指标未变，证明没有放宽判据。
+- 先定产品语义：review 确认证据/claim 是否同时提升 person/episode/knowledge，跨 session episode 如何合并及撤销（合并语义本轮已定）；汇总与未来采访式回忆录复用 EvidenceEvent/claim/source 引用，区分用户原话、已确认事实和 AI 推断；未确认内容不进入 confirmed-only 召回。
+- 已有真实 PG 人物投影/状态门契约，仍需真实 Qwen 抽取器（非规则）对别名句式的证据，以及固定集外未见改写集；需要密钥与预算，属外部条件。会话记忆按当前 person/subject 键迁入既有 `services/memory_scope`，覆盖切人、撤销/删除和旧缓存，不建平行存储。
+- 入口：`scripts/evaluate_memory.py`、`services/archive/{recall_planner,memory_extractor,postgres_memory_catalog}.py`、`evaluation/memory_eval_zh_v1.json`；既有诊断 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md` **第 3 条已过期**：多来源 episode 的写入/投影能力早已存在（`episode_evidence` 累加 + `_refresh_episode_projection`），缺的是抽取侧产出 key 与 domain 身份语义。
 - 完成条件：遗漏项命中正确证据、原长程召回不退步、隔离/候选泄漏为 0；固定与未见集分别报 recall/nDCG，验证实际 ResponsePlannerClient 超时/catalog 限额。设备追问另取 Actual Heard；未消费 MemoryContextClient 的 0.3s 不是现网保证。
-- 入口：`scripts/evaluate_memory.py`、`services/archive/{recall_planner,memory_extractor,postgres_memory_catalog}.py`、`evaluation/memory_eval_zh_v1.json`；既有诊断 `outputs/acceptance/run-20260915-p0-04-student-safety-loop/memory-eval/P1-06-diagnosis.md`。
 
 ### [ ] P1-07 AEC 与播放期语音打断：独立受控实验
 
