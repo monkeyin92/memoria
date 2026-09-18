@@ -1022,6 +1022,14 @@ function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confi
 }
 
 /*
+ * 账号的人格目录（P1-03/P1-04）：只读的内置目录 + 账号自己的 cu_ 自建人格。
+ * 只用于展示与选择；提交分配时只给 persona_id，版本由服务端决定。
+ */
+function listPersonas() {
+  return rawRequest("/v1/personas");
+}
+
+/*
  * 按使用人分配人格（P1-03）。写入口只有服务端，客户端只转发并回读，
  * 不推断可用人格、不本地缓存分配结果；写入后服务端在下一次设备同步
  * 就按新人格签发 Runtime Profile。
@@ -1175,6 +1183,7 @@ module.exports = {
   listPersonaAssignments,
   setPersonaAssignment,
   clearPersonaAssignment,
+  listPersonas,
   requireRuntimeCapability,
   clearRuntimeProfileMemory,
 };

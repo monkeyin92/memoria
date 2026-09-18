@@ -27,6 +27,7 @@ let personaPayload = () => ({
   assignments: [],
   binding_default: "starlight:v1",
 });
+let personasPayload = () => ({ custom_personas: [], builtin: [] });
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -159,6 +160,10 @@ global.wx = {
             ? { assignment_id: `${options.data.persona_selection}:v1`, persona_id: options.data.persona_selection }
             : { removed: true, effective: "starlight:v1" },
       });
+      return;
+    }
+    if (pathname === "/v1/personas") {
+      options.success({ statusCode: 200, data: personasPayload() });
       return;
     }
     options.success(nextRequestResult);
@@ -882,6 +887,16 @@ test("empty barge-in selection is blocked and voice kind follows AEC evidence", 
 test("persona assignment follows the subject override and the binding default", async () => {
   personaCalls.length = 0;
   personaFailure = false;
+  personasPayload = () => ({
+    custom_personas: [
+      {
+        persona_id: "cu_0123456789abcdef0123456789abcd",
+        display_name: "奶奶的伙伴",
+        persona_version: 1,
+      },
+    ],
+    builtin: [],
+  });
   personaPayload = () => ({
     assignments: [
       {
@@ -889,6 +904,13 @@ test("persona assignment follows the subject override and the binding default", 
         subject_id: "person_child",
         assignment_id: "taoxi:v1",
         persona_id: "taoxi",
+        persona_version: 1,
+      },
+      {
+        binding_id: "bd_1",
+        subject_id: "person_parent",
+        assignment_id: "cu_0123456789abcdef0123456789abcd:v1",
+        persona_id: "cu_0123456789abcdef0123456789abcd",
         persona_version: 1,
       },
     ],
@@ -914,19 +936,28 @@ test("persona assignment follows the subject override and the binding default", 
     page.data.personaRows.map((row) => [row.person_id, row.persona_id, row.is_override]),
     [
       ["person_child", "taoxi", true],
-      ["person_parent", "starlight", false],
+      ["person_parent", "cu_0123456789abcdef0123456789abcd", true],
     ],
   );
+  assert.equal(
+    page.data.personaRows[1].persona_name,
+    "奶奶的伙伴",
+    "自建人格显示名必须来自目录，不能裸 id",
+  );
+  assert.deepEqual(
+    page.data.personaOptions.map((item) => item.id).slice(-1),
+    ["cu_0123456789abcdef0123456789abcd"],
+  );
 
-  page.openPersonaSheet({ currentTarget: { dataset: { personId: "person_parent" } } });
+  page.openPersonaSheet({ currentTarget: { dataset: { personId: "person_child" } } });
   assert.equal(page.data.personaSheetVisible, true);
-  assert.equal(page.data.personaSheetSelection, "starlight");
+  assert.equal(page.data.personaSheetSelection, "taoxi");
   page.pickPersonaOption({ currentTarget: { dataset: { personaId: "xuanmo" } } });
   await page.confirmPersonaAssignment();
   assert.deepEqual(personaCalls.at(-2), {
     method: "PUT",
     deviceId: "dev_1",
-    personId: "person_parent",
+    personId: "person_child",
     data: { persona_selection: "xuanmo" },
   });
   assert.equal(personaCalls.at(-1).method, "GET", "写入后必须回读服务端分配");

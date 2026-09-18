@@ -44,6 +44,10 @@ function stubApi(overrides) {
 function authStubs(state, { restore = "succeed" } = {}) {
   return {
     hasAuthenticatedSession: () => state.authenticated,
+    // 设备页加载会并行读取人格分配与人格目录；本文件只测绑定恢复，
+    // 因此给出空结果，避免落到真实 rawRequest（该 harness 没有 wx.request）。
+    listPersonaAssignments: async () => ({ assignments: [], binding_default: "starlight:v1" }),
+    listPersonas: async () => ({ custom_personas: [], builtin: [] }),
     currentIdentity: () => (state.authenticated ? state.identity : null),
     currentAuthEpoch: () => state.authEpoch,
     isAuthEpochCurrent: (epoch) =>

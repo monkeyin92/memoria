@@ -83,7 +83,9 @@ function personaSubjects(binding) {
 }
 
 // 分配结果只用于展示：override 优先、binding 默认兜底，与服务端同一顺序。
-function personaRows(binding, payload) {
+// 显示名来自同一份目录（内置 + 自建），未知 id 原样显示，不猜名字。
+function personaRows(binding, payload, options) {
+  const labels = new Map((options || []).map((item) => [item.id, item.label]));
   const overrides = new Map(
     (Array.isArray(payload?.assignments) ? payload.assignments : [])
       .filter((item) => item && typeof item.subject_id === "string")
@@ -102,25 +104,41 @@ function personaRows(binding, payload) {
         ? override.assignment_id
         : bindingDefault;
     const personaId = assignmentId.split(":v")[0];
-    const companion = companions.find((item) => item.id === personaId) || null;
     return {
       person_id: subject.person_id,
       role_label: subject.role_label,
       assignment_id: assignmentId,
       persona_id: personaId,
-      persona_name: companion ? companion.name : personaId || "未设置",
+      persona_name: labels.get(personaId) || personaId || "未设置",
       is_override: Boolean(override),
       source_label: override ? "已单独分配" : "跟随设备默认",
     };
   });
 }
 
-function personaOptionItems() {
-  return companions.map((companion) => ({
-    id: companion.id,
-    label: companion.name,
-    note: companion.tagline,
-  }));
+// 人格选择器目录：内置伙伴在前，账号自建人格在后并显式标注。
+function personaOptionItems(personas) {
+  const custom = Array.isArray(personas?.custom_personas) ? personas.custom_personas : [];
+  return [
+    ...companions.map((companion) => ({
+      id: companion.id,
+      label: companion.name,
+      note: companion.tagline,
+    })),
+    ...custom
+      .filter(
+        (item) =>
+          item &&
+          typeof item.persona_id === "string" &&
+          typeof item.display_name === "string" &&
+          item.display_name,
+      )
+      .map((item) => ({
+        id: item.persona_id,
+        label: item.display_name,
+        note: "账号自建人格",
+      })),
+  ];
 }
 
 function roleLabels(roles) {
@@ -379,7 +397,7 @@ Page({
       return;
     }
     try {
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
@@ -387,6 +405,7 @@ Page({
           api.getDeviceDiagnostics(binding.device_id),
           api.getWakeWordCatalog(),
           api.listPersonaAssignments(binding.device_id),
+          api.listPersonas(),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -451,6 +470,9 @@ Page({
       const subjectAliasLabel = readSubjectLabel(binding);
       const speakerLabel = currentUserLabel(profile, candidates);
       const companion = companionById(profile?.persona?.persona_id);
+      const personaOptions = personaOptionItems(
+        personasResult.status === "fulfilled" ? personasResult.value : null,
+      );
       this.setData({
         hasBinding: true,
         authenticated: true,
@@ -479,7 +501,14 @@ Page({
         currentUserLabelConfirmed: Boolean(speakerLabel),
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
-        personaRows: personaRows(binding, personaAssignmentsResult.status === "fulfilled" ? personaAssignmentsResult.value : null),
+        personaRows: personaRows(
+          binding,
+          personaAssignmentsResult.status === "fulfilled"
+            ? personaAssignmentsResult.value
+            : null,
+          personaOptions,
+        ),
+        personaOptions,
         devicePlaceName: devicePlaceName(binding, companion.name),
         personaName: companion.name,
         personaVoice: companion.voiceName,
@@ -704,7 +733,6 @@ Page({
     const row = (this.data.personaRows || []).find((item) => item.person_id === personId);
     if (!row) return;
     this.setData({
-      personaOptions: personaOptionItems(),
       personaSheetVisible: true,
       personaSheetSubjectId: row.person_id,
       personaSheetSubjectLabel: row.role_label,
@@ -771,7 +799,7 @@ Page({
     try {
       const payload = await api.listPersonaAssignments(deviceId);
       this.setData({
-        personaRows: personaRows(this.data.binding, payload),
+        personaRows: personaRows(this.data.binding, payload, this.data.personaOptions),
         personaAssignmentError: "",
       });
     } catch (error) {
