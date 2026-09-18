@@ -2,7 +2,7 @@
 
 更新于 2026-09-18（advisory 整改，`b668960`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）与收据 docs（`b668960`）；未部署、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。冻结候选 `memoria-agent:b668960`（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit agents/openai/silero 1.8.1 + RTC 1.1.18/API 1.2.1）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
+本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）与收据 docs（`b668960`/`87262d3`）；未部署、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit agents/openai/silero 1.8.1 + RTC 1.1.18/API 1.2.1）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
@@ -66,7 +66,7 @@ device_id: dev_atk_a4cb8fd6095c
 - P1-05（收据修正）：回顾出口 1 例通过，带事件 id 与 approximate；撤回“无跨主体读”——只证 account 隔离，同账号切主体/subject 围栏/临时读回待验。
 - 修复轮回归（远端 `35298356748`，`768993b`）：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS，Ruff/模块预算/strict mypy（435 files）/authoritative PG gate/agent-image 通过；provider smoke 仍 `OFFLINE_MOCK=true`。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，本地 agent 全套加 `-W error::RuntimeWarning` 未复现（见 P2-04），不是本轮结论。
 
-下一步以冻结候选 `memoria-agent:b668960`（`sha256:927d…`）按 P1-01 跑设备验收，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
+下一步以冻结候选 `memoria-agent:b668960`（`sha256:927d…`，未启用）等人确认启用后再按 P1-01 跑设备 live 验收（本轮仅 preflight-only：receipt 合法、`usbmodem101` 可见、`serial_opened=False`）；生产切流与回滚另获授权。学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
 
 ### 已有软件收据（按提交范围解读）
 

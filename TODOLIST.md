@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs、`768993b` 唤醒严格自包含、`b668960` 收据 docs；`8d184e3` 起审查基线升到 `768993b`）、未部署、未连接生产或设备；冻结候选 `memoria-agent:b668960`（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit 1.8.1 组）；受影响门禁即远端 CI `35298356748`（`768993b`）python 全量已覆盖。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs、`768993b` 唤醒严格自包含、`b668960`/`87262d3` 收据 docs；审查基线 `b668960`）、未部署、未连接生产或设备；冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit 1.8.1 组）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）；受影响门禁即远端 CI `35298356748`（`768993b`）python 全量已覆盖。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
@@ -8,7 +8,7 @@
 2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
 3. **TTS 软件边界整改中（P2 已修，P3 重列待办转真回归）**：`COSYVOICE_WORD_TIMESTAMPS=false` 降级已补取消优先收尾；Doubao `slow_once` 旧测试收据作废，改用 `slow` 持续首包失败真回归（personal 仅 1 次、callback/trace 各 1 次、总预算 1+4）。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
 4. **P2-05 入窗起点已修、P1-05 收据已撤回**：曝光窗口从门通过时起算（settle 等待是入场成本）；回顾出口补 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，撤回“无跨主体读”，同账号切主体/subject 围栏/临时读回待验。
-5. 下一步（按序）：远端 CI 已在 `768993b` 通过完整 python 门，冻结候选 `memoria-agent:b668960`（`sha256:927d…`）已构建验收；按 P1-01 跑设备验收，生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+5. 下一步（按序）：远端 CI 已在 `768993b` 通过完整 python 门，冻结候选 `memoria-agent:b668960`（`sha256:927d…`）仅本地构建验收、未启用；设备 live 窗口等人确认启用候选后再采（先只做 preflight-only：receipt 合法、`usbmodem101` 可见、`serial_opened=False` 已验证）。生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
 6. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 7. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
