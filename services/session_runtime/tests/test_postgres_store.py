@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
@@ -2673,6 +2674,10 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
         }
 
         class IdentityView:
+            #: Rows the assignment authority reports for the binding; the test
+            #: keeps this in step with ``identity_persona_assignments``.
+            persona_overrides: tuple[object, ...] = ()
+
             async def get_active_manifest(
                 self,
                 device_id: str,
@@ -2683,8 +2688,21 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
             async def get_person(self, person_id: str) -> PersonSubject:
                 return people[person_id]
 
+            async def list_persona_assignments(
+                self,
+                *,
+                binding_id: str,
+                actor_person_id: str | None = None,
+            ) -> tuple[object, ...]:
+                return tuple(
+                    item
+                    for item in self.persona_overrides
+                    if item.binding_id == binding_id  # type: ignore[attr-defined]
+                )
+
+        view = IdentityView()
         app.state.multi_subject_runtime = PostgresMultiSubjectRuntimeControl(
-            identity=IdentityView(),  # type: ignore[arg-type]
+            identity=view,  # type: ignore[arg-type]
             sessions=service,
         )
         admin = await asyncpg.connect(bootstrap_dsn)
@@ -2714,6 +2732,13 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
             )
         finally:
             await admin.close()
+        view.persona_overrides = (
+            SimpleNamespace(
+                binding_id=manifest.binding_id,
+                subject_id=parent_id,
+                assignment_id="taoxi:v1",
+            ),
+        )
 
         headers = {
             "Authorization": f"Bearer {identity_response.json()['access_token']}",
@@ -2793,6 +2818,34 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
             params={"session_id": initial.session_id},
         )
         assert stranger.status_code == 403
+
+        # P1-03: a persona write reaches the next profile read, not the next
+        # profile TTL.  Dropping the override re-resolves to the binding
+        # default while the session keeps its confirmed subject and epoch.
+        admin = await asyncpg.connect(bootstrap_dsn)
+        try:
+            await admin.execute(
+                """
+                DELETE FROM identity_persona_assignments
+                WHERE binding_id = $1 AND subject_id = $2
+                """,
+                manifest.binding_id,
+                parent_id,
+            )
+        finally:
+            await admin.close()
+        view.persona_overrides = ()
+        reissued = await client.get(
+            f"/v1/devices/{manifest.device_id}/runtime-profile",
+            headers=headers,
+            params={"session_id": initial.session_id},
+        )
+        assert reissued.status_code == 200, reissued.text
+        reissued_profile = RuntimeProfileSignedV2.model_validate(reissued.json())
+        assert reissued_profile.persona_assignment_id == "starlight:v1"
+        assert reissued_profile.persona.persona_id == "starlight"
+        assert reissued_profile.active_subject_id == parent_id
+        assert reissued_profile.session_epoch == switched_profile.session_epoch + 1
 
 
 @pytest.mark.asyncio

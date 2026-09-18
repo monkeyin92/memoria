@@ -105,6 +105,60 @@ async def _bind_self(
     assert response.status_code == 201
 
 
+async def _bind_family(
+    client: AsyncClient,
+    app,
+    *,
+    owner: dict,
+    device_id: str,
+    nonce: str,
+) -> str:
+    """Bind one device to a verified adult owner and a minor subject."""
+    now = datetime.now(UTC)
+    await app.state.identity_service.register_person(
+        person_id=owner["user_id"],
+        display_name="家长",
+        timezone="Asia/Shanghai",
+        subject_category="adult",
+        age_band="adult",
+        age_evidence_status="verified",
+        age_evidence_id="fixture-adult-evidence",
+        now=now,
+    )
+    token = mint_device_binding_token(
+        device_id=device_id,
+        secret=app.state.settings.device_binding_token_key(),
+        now=now,
+        ttl=timedelta(minutes=5),
+        nonce=nonce,
+    )
+    response = await client.post(
+        "/v1/device-bindings",
+        headers=_auth(owner),
+        json={
+            "device_claim_token": token,
+            "declared_mode": "family_shared",
+            "account_owner_person_id": owner["user_id"],
+            "primary_subject": {
+                "person_id": "new",
+                "relationship": "family_member_of",
+                "subject_draft": {
+                    "display_name": "小朋友",
+                    "age_band": "under_14",
+                },
+            },
+            "persona_selection": "starlight",
+            "service_preferences": {
+                "memory_level": "family_shared",
+                "shared_persona_enabled": True,
+            },
+            "consent_offer_ids": ["offer_family_space_v1"],
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["primary_subject_ids"][0]
+
+
 def _path(device_id: str, person_id: str | None = None) -> str:
     base = f"/v1/devices/{device_id}/persona-assignments"
     return base if person_id is None else f"{base}/{person_id}"
@@ -272,3 +326,77 @@ async def test_non_member_cannot_read_or_write(
         )
         assert write.status_code == 403
         assert write.json()["detail"]["code"] == "subject_not_binding_member"
+
+
+@pytest.mark.asyncio
+async def test_persona_write_reaches_the_next_profile_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """P1-03: the next profile read carries the write, not the profile TTL.
+
+    A profile inside its TTL is otherwise handed back exactly as issued, so a
+    freshly pinned persona would only reach the device at the next natural
+    rotation.  The rotation must keep the confirmed subject and its session.
+    """
+    app = _env(monkeypatch, tmp_path, "persona-assign-immediate")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "immediate-owner")
+        child_id = await _bind_family(
+            client,
+            app,
+            owner=owner,
+            device_id="dev-immediate",
+            nonce="nonce-immediate",
+        )
+        headers = _auth(owner)
+        first = await client.get(
+            "/v1/devices/dev-immediate/runtime-profile", headers=headers
+        )
+        assert first.status_code == 200
+        assert first.json()["persona_assignment_id"] == "starlight:v1"
+        session_id = first.json()["session_id"]
+
+        confirmed = await client.post(
+            f"/v1/sessions/{session_id}/active-subject",
+            headers=headers,
+            json={"person_id": child_id, "confirmation_method": "app_confirm"},
+        )
+        assert confirmed.status_code == 200
+        assert confirmed.json()["active_subject_id"] == child_id
+        assert confirmed.json()["persona_assignment_id"] == "starlight:v1"
+
+        pinned = await client.put(
+            _path("dev-immediate", child_id),
+            headers=headers,
+            json={"persona_selection": "taoxi"},
+        )
+        assert pinned.status_code == 200
+        assert pinned.json()["assignment_id"] == "taoxi:v1"
+
+        second = await client.get(
+            "/v1/devices/dev-immediate/runtime-profile", headers=headers
+        )
+        assert second.status_code == 200
+        assert second.json()["persona_assignment_id"] == "taoxi:v1"
+        assert second.json()["persona"]["persona_id"] == "taoxi"
+        # The subject confirmation and its session survive the rotation.
+        assert second.json()["session_id"] == session_id
+        assert second.json()["active_subject_id"] == child_id
+        assert second.json()["speaker_state"] == "confirmed"
+        assert second.json()["session_epoch"] == confirmed.json()["session_epoch"] + 1
+
+        removed = await client.delete(_path("dev-immediate", child_id), headers=headers)
+        assert removed.status_code == 200
+        assert removed.json()["removed"] is True
+
+        third = await client.get(
+            "/v1/devices/dev-immediate/runtime-profile", headers=headers
+        )
+        assert third.status_code == 200
+        assert third.json()["persona_assignment_id"] == "starlight:v1"
+        assert third.json()["persona"]["persona_id"] == "starlight"
+        assert third.json()["active_subject_id"] == child_id
+        assert third.json()["session_epoch"] == second.json()["session_epoch"] + 1

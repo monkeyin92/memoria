@@ -68,6 +68,25 @@ def _canonical_runtime_profile_id() -> str:
     return f"rp_{uuid.uuid4()}"
 
 
+def _persona_assignment_for(
+    *,
+    binding_default: str | None,
+    overrides: dict[str, str],
+    subject_id: str | None,
+) -> str:
+    """Resolve the assignment for one subject: override first, default second.
+
+    The Session runtime resolves a persona from a locked binding with this
+    exact order and nowhere else, so a facade that compares an issued profile
+    against the assignment authority must not invent a second one.
+    """
+    if subject_id is not None:
+        override = overrides.get(subject_id)
+        if override is not None:
+            return override
+    return binding_default or _DEFAULT_PERSONA_ASSIGNMENT_ID
+
+
 class SubjectNotBindingMemberError(IdentityAccessDeniedError):
     """The requested active subject has no role in the device binding."""
 
@@ -196,7 +215,24 @@ class MultiSubjectRuntimeControl:
                 and self.profiles.verify(current, now=now)
             )
             if current_valid and not multiple_speakers and not offline:
-                return current
+                if self._persona_snapshot_is_current(manifest, current):
+                    return current
+                # A persona write is not a binding change (it does not bump
+                # ``binding_version``), so a profile still inside its TTL would
+                # keep reporting the superseded assignment.  Rotate the profile
+                # while holding the confirmed subject, so the write reaches the
+                # next read instead of the next natural rotation.
+                return self.profiles.switch_subject(
+                    SwitchSubjectCommand(
+                        session_id=resolved_session_id,
+                        actor_id=current.actor_id,
+                        candidates=(),
+                        requested_capabilities=_REQUESTED_CAPABILITIES,
+                        now=now,
+                        relationship_roles=self._roles(manifest, current.actor_id),
+                        app_claimed_subject_id=current.active_subject_id,
+                    )
+                )
             return self.profiles.switch_subject(
                 SwitchSubjectCommand(
                     session_id=resolved_session_id,
@@ -499,6 +535,26 @@ class MultiSubjectRuntimeControl:
                 subject_id=record.subject_id,
             )
 
+    def _persona_snapshot_is_current(
+        self,
+        manifest: BindingManifest,
+        current: RuntimeProfile,
+    ) -> bool:
+        """Whether an issued profile still carries the authoritative persona.
+
+        ``_refresh_authority`` re-reads the binding default and every subject
+        override on each call, so the in-memory authority already holds the
+        current answer for this profile's subject.
+        """
+        resolved = self.authority.persona(
+            binding_id=manifest.binding_id,
+            subject_id=current.active_subject_id,
+        )
+        return (
+            resolved is not None
+            and resolved.assignment_id == current.persona_assignment_id
+        )
+
     @staticmethod
     def _subject_facts(person: PersonSubject) -> SubjectFacts:
         revision = max(1, int(person.updated_at.timestamp() * 1_000_000))
@@ -640,7 +696,52 @@ class PostgresMultiSubjectRuntimeControl:
                     requested_capabilities=_REQUESTED_CAPABILITIES,
                 )
             )
+        if not await self._persona_snapshot_is_current(
+            manifest,
+            current=current,
+            actor_id=actor_id,
+        ):
+            # Same rule as the in-memory control: a persona write does not bump
+            # ``binding_version``, so rotate the stored profile with the subject
+            # it already holds instead of reporting the superseded assignment
+            # until the profile TTL lapses.  The rotation re-locks the binding,
+            # which is what re-reads the overrides.
+            return await self.sessions.switch_subject(
+                SwitchPersistentSubjectCommand(
+                    session_id=resolved_session_id,
+                    actor_id=current.actor_id,
+                    subject_id=current.active_subject_id,
+                    now=now,
+                    requested_capabilities=_REQUESTED_CAPABILITIES,
+                )
+            )
         return current
+
+    async def _persona_snapshot_is_current(
+        self,
+        manifest: BindingManifest,
+        *,
+        current: RuntimeProfileSignedV2,
+        actor_id: str,
+    ) -> bool:
+        """Whether a stored profile still matches the assignment authority.
+
+        Overrides are read through the requester's binding visibility (the
+        same rows the API exposes to a binding member) and the binding default
+        comes from the manifest, so no second resolution order is invented.
+        """
+        records = await self.identity.list_persona_assignments(
+            binding_id=manifest.binding_id,
+            actor_person_id=actor_id,
+        )
+        expected = _persona_assignment_for(
+            binding_default=manifest.persona_assignment_id,
+            overrides={
+                record.subject_id: record.assignment_id for record in records
+            },
+            subject_id=current.active_subject_id,
+        )
+        return expected == current.persona_assignment_id
 
     async def resolve_subject(
         self,
