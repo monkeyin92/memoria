@@ -148,6 +148,23 @@
           </view>
           <text class="row-chevron">›</text>
         </view>
+        <block wx:if="{{personaRows.length > 0}}">
+          <view
+            wx:for="{{personaRows}}"
+            wx:key="person_id"
+            class="list-row"
+            data-person-id="{{item.person_id}}"
+            bindtap="openPersonaSheet"
+          >
+            <view class="row-copy">
+              <text class="row-title">{{item.persona_name}}</text>
+              <text class="row-meta">{{item.role_label}} · {{item.source_label}}</text>
+            </view>
+            <text class="row-chevron">›</text>
+          </view>
+          <text class="caption">人格按使用人分配；取消分配后跟随设备默认人格。分配会在下一次设备同步时生效。</text>
+          <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
+        </block>
         <view class="list-row" bindtap="openOnboarding">
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>
@@ -219,6 +236,30 @@
           <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </view>
         <button class="primary-button" style="margin-top: 16rpx;" loading="{{settingsSaving}}" bindtap="confirmWakeSheet">确认</button>
+      </view>
+
+      <!-- 人格分配底部抽屉：按使用人选择内置人格或恢复默认 -->
+      <view wx:if="{{personaSheetVisible}}" class="sheet-mask" bindtap="closePersonaSheet"></view>
+      <view wx:if="{{personaSheetVisible}}" class="sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">选择人格</text>
+        <text class="sheet-sub">{{personaSheetSubjectLabel}} · 分配后下一次设备同步生效</text>
+        <view
+          wx:for="{{personaOptions}}"
+          wx:key="id"
+          class="sheet-opt {{personaSheetSelection === item.id ? 'on' : ''}}"
+          data-persona-id="{{item.id}}"
+          bindtap="pickPersonaOption"
+        >
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">{{item.label}}</text>
+            <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <button class="primary-button" style="margin-top: 16rpx;" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
+        <button class="text-button" style="margin-top: 8rpx;" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
       </view>
 
       <!-- 设备信息诊断折叠面板 -->

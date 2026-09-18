@@ -7,7 +7,7 @@ const {
   degradationFor,
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
-const { companionById, defaultCompanionId } = require("../../utils/companions");
+const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const {
   devicePlaceName,
   deviceStatusSummary,
@@ -67,6 +67,60 @@ function selectableWakeWordOptions(items) {
       label: item.display,
       note: item.note || "",
     }));
+}
+
+// 可分配人格的使用人：绑定里作为主要使用者/家庭成员的角色，按角色顺序去重。
+// 归属与权限不在这里推导，只列举服务端已经写进 BindingManifest 的主体。
+function personaSubjects(binding) {
+  const subjects = [];
+  for (const role of binding?.roles || []) {
+    if (!role || typeof role.person_id !== "string" || role.status === "superseded") continue;
+    if (role.role !== "primary_subject" && role.role !== "member") continue;
+    if (subjects.some((item) => item.person_id === role.person_id)) continue;
+    subjects.push({ person_id: role.person_id, role_label: ROLE_LABELS[role.role] });
+  }
+  return subjects;
+}
+
+// 分配结果只用于展示：override 优先、binding 默认兜底，与服务端同一顺序。
+function personaRows(binding, payload) {
+  const overrides = new Map(
+    (Array.isArray(payload?.assignments) ? payload.assignments : [])
+      .filter((item) => item && typeof item.subject_id === "string")
+      .map((item) => [item.subject_id, item]),
+  );
+  const bindingDefault =
+    typeof payload?.binding_default === "string" && payload.binding_default
+      ? payload.binding_default
+      : typeof binding?.persona_assignment_id === "string"
+        ? binding.persona_assignment_id
+        : "";
+  return personaSubjects(binding).map((subject) => {
+    const override = overrides.get(subject.person_id);
+    const assignmentId =
+      typeof override?.assignment_id === "string" && override.assignment_id
+        ? override.assignment_id
+        : bindingDefault;
+    const personaId = assignmentId.split(":v")[0];
+    const companion = companions.find((item) => item.id === personaId) || null;
+    return {
+      person_id: subject.person_id,
+      role_label: subject.role_label,
+      assignment_id: assignmentId,
+      persona_id: personaId,
+      persona_name: companion ? companion.name : personaId || "未设置",
+      is_override: Boolean(override),
+      source_label: override ? "已单独分配" : "跟随设备默认",
+    };
+  });
+}
+
+function personaOptionItems() {
+  return companions.map((companion) => ({
+    id: companion.id,
+    label: companion.name,
+    note: companion.tagline,
+  }));
 }
 
 function roleLabels(roles) {
@@ -135,6 +189,14 @@ Page({
     currentUserLabel: "",
     subjectAliasLabel: "",
     subjectAliasDraft: "",
+    personaRows: [],
+    personaOptions: [],
+    personaSheetVisible: false,
+    personaSheetSubjectId: "",
+    personaSheetSubjectLabel: "",
+    personaSheetSelection: "",
+    personaSaving: false,
+    personaAssignmentError: "",
     activation: null,
     onlineLabel: "状态待同步",
     firmwareVersion: "未读取",
@@ -317,13 +379,14 @@ Page({
       return;
     }
     try {
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult] =
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
           api.getDeviceSettings(binding.device_id),
           api.getDeviceDiagnostics(binding.device_id),
           api.getWakeWordCatalog(),
+          api.listPersonaAssignments(binding.device_id),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -416,6 +479,7 @@ Page({
         currentUserLabelConfirmed: Boolean(speakerLabel),
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
+        personaRows: personaRows(binding, personaAssignmentsResult.status === "fulfilled" ? personaAssignmentsResult.value : null),
         devicePlaceName: devicePlaceName(binding, companion.name),
         personaName: companion.name,
         personaVoice: companion.voiceName,
@@ -635,10 +699,91 @@ Page({
     }
   },
 
+  openPersonaSheet(event) {
+    const personId = event.currentTarget.dataset.personId;
+    const row = (this.data.personaRows || []).find((item) => item.person_id === personId);
+    if (!row) return;
+    this.setData({
+      personaOptions: personaOptionItems(),
+      personaSheetVisible: true,
+      personaSheetSubjectId: row.person_id,
+      personaSheetSubjectLabel: row.role_label,
+      personaSheetSelection: row.persona_id,
+      personaAssignmentError: "",
+    });
+  },
+
+  closePersonaSheet() {
+    if (this.data.personaSaving) return;
+    this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+  },
+
+  pickPersonaOption(event) {
+    const personaId = event.currentTarget.dataset.personaId;
+    if (!personaId) return;
+    this.setData({ personaSheetSelection: personaId, personaAssignmentError: "" });
+  },
+
+  async confirmPersonaAssignment() {
+    const { binding, personaSheetSubjectId, personaSheetSelection, personaSaving } = this.data;
+    if (personaSaving || !binding?.device_id) return;
+    if (!personaSheetSubjectId || !personaSheetSelection) return;
+    this.setData({ personaSaving: true, personaAssignmentError: "" });
+    try {
+      await api.setPersonaAssignment(
+        binding.device_id,
+        personaSheetSubjectId,
+        personaSheetSelection,
+      );
+      await this.reloadPersonaAssignments(binding.device_id);
+      this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+      wx.showToast({ title: "已分配人格", icon: "success" });
+    } catch (error) {
+      this.setData({
+        personaAssignmentError: error?.message || "分配失败，请稍后重试。",
+      });
+    } finally {
+      this.setData({ personaSaving: false });
+    }
+  },
+
+  async clearPersonaAssignment(event) {
+    const binding = this.data.binding;
+    const personId =
+      event?.currentTarget?.dataset?.personId || this.data.personaSheetSubjectId;
+    if (this.data.personaSaving || !binding?.device_id || !personId) return;
+    this.setData({ personaSaving: true, personaAssignmentError: "" });
+    try {
+      await api.clearPersonaAssignment(binding.device_id, personId);
+      await this.reloadPersonaAssignments(binding.device_id);
+      this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+      wx.showToast({ title: "已恢复设备默认人格", icon: "success" });
+    } catch (error) {
+      this.setData({
+        personaAssignmentError: error?.message || "取消分配失败，请稍后重试。",
+      });
+    } finally {
+      this.setData({ personaSaving: false });
+    }
+  },
+
+  async reloadPersonaAssignments(deviceId) {
+    try {
+      const payload = await api.listPersonaAssignments(deviceId);
+      this.setData({
+        personaRows: personaRows(this.data.binding, payload),
+        personaAssignmentError: "",
+      });
+    } catch (error) {
+      this.setData({
+        personaAssignmentError: error?.message || "人格分配读取失败。",
+      });
+    }
+  },
+
   onSubjectAliasInput(event) {
     this.setData({ subjectAliasDraft: event.detail.value, error: "" });
   },
-
   saveSubjectAlias() {
     const binding = this.data.binding;
     if (!binding?.binding_id || !binding?.device_id) return;

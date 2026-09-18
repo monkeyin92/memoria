@@ -1022,6 +1022,41 @@ function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confi
 }
 
 /*
+ * 按使用人分配人格（P1-03）。写入口只有服务端，客户端只转发并回读，
+ * 不推断可用人格、不本地缓存分配结果；写入后服务端在下一次设备同步
+ * 就按新人格签发 Runtime Profile。
+ */
+function listPersonaAssignments(deviceId) {
+  const manifest = readBindingManifest();
+  if (!manifest || manifest.device_id !== deviceId) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法读取人格分配。", { status: 403 }));
+  }
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/persona-assignments`);
+}
+
+function setPersonaAssignment(deviceId, personId, personaSelection) {
+  const manifest = readBindingManifest();
+  if (!manifest || manifest.device_id !== deviceId) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法分配人格。", { status: 403 }));
+  }
+  return rawRequest(
+    `/v1/devices/${encodeURIComponent(deviceId)}/persona-assignments/${encodeURIComponent(personId)}`,
+    { method: "PUT", data: { persona_selection: personaSelection } },
+  );
+}
+
+function clearPersonaAssignment(deviceId, personId) {
+  const manifest = readBindingManifest();
+  if (!manifest || manifest.device_id !== deviceId) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法取消人格分配。", { status: 403 }));
+  }
+  return rawRequest(
+    `/v1/devices/${encodeURIComponent(deviceId)}/persona-assignments/${encodeURIComponent(personId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/*
  * 敏感入口的统一能力门禁（D-07）：只有当前设备取得有效 Runtime Profile
  * 且 capabilities 包含目标能力时才放行；Profile 不可用时返回可解释拒绝。
  * 所有敏感页面（数字分身/成长小结/原始语音/私人回顾）必须经此门禁。
@@ -1137,6 +1172,9 @@ module.exports = {
   resolveSessionSubject,
   getRuntimeProfile,
   setActiveSubject,
+  listPersonaAssignments,
+  setPersonaAssignment,
+  clearPersonaAssignment,
   requireRuntimeCapability,
   clearRuntimeProfileMemory,
 };

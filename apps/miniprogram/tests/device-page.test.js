@@ -21,6 +21,12 @@ let settingsPayload = null;
 let diagnosticsPayload = null;
 let settingsPatchResult = null;
 const settingsPatchCalls = [];
+const personaCalls = [];
+let personaFailure = false;
+let personaPayload = () => ({
+  assignments: [],
+  binding_default: "starlight:v1",
+});
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -126,6 +132,33 @@ global.wx = {
         return;
       }
       options.success({ statusCode: 200, data: switchProfilePayload || profilePayload });
+      return;
+    }
+    const personaMatch = pathname.match(
+      /^\/v1\/devices\/([^/]+)\/persona-assignments(?:\/([^/]+))?$/,
+    );
+    if (personaMatch) {
+      personaCalls.push({
+        method: options.method || "GET",
+        deviceId: decodeURIComponent(personaMatch[1]),
+        personId: personaMatch[2] ? decodeURIComponent(personaMatch[2]) : null,
+        data: options.data || null,
+      });
+      if (personaFailure) {
+        options.fail({ errMsg: "request:fail" });
+        return;
+      }
+      if ((options.method || "GET") === "GET") {
+        options.success({ statusCode: 200, data: personaPayload() });
+        return;
+      }
+      options.success({
+        statusCode: 200,
+        data:
+          options.method === "PUT"
+            ? { assignment_id: `${options.data.persona_selection}:v1`, persona_id: options.data.persona_selection }
+            : { removed: true, effective: "starlight:v1" },
+      });
       return;
     }
     options.success(nextRequestResult);
@@ -844,4 +877,95 @@ test("empty barge-in selection is blocked and voice kind follows AEC evidence", 
   assert.equal(settingsPatchCalls.length, 1);
   assert.deepEqual(settingsPatchCalls[0].changes, { allowed_barge_in: ["button"] });
   assert.deepEqual(page.data.bargeInChecked, { button: true });
+});
+
+test("persona assignment follows the subject override and the binding default", async () => {
+  personaCalls.length = 0;
+  personaFailure = false;
+  personaPayload = () => ({
+    assignments: [
+      {
+        binding_id: "bd_1",
+        subject_id: "person_child",
+        assignment_id: "taoxi:v1",
+        persona_id: "taoxi",
+        persona_version: 1,
+      },
+    ],
+    binding_default: "starlight:v1",
+  });
+  const manifest = familyManifest();
+  binding.saveBindingManifest({
+    ...manifest,
+    member_ids: ["person_child", "person_parent"],
+    roles: [
+      { person_id: "person_owner", role: "device_admin", permissions: [] },
+      { person_id: "person_child", role: "primary_subject", permissions: [] },
+      { person_id: "person_parent", role: "member", permissions: [] },
+    ],
+  });
+  profilePayload = wireProfile({ runtime_profile_id: "rp_pa", session_id: "ses_pa", session_epoch: 1 });
+  nextRequestResult = null;
+
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+
+  assert.deepEqual(
+    page.data.personaRows.map((row) => [row.person_id, row.persona_id, row.is_override]),
+    [
+      ["person_child", "taoxi", true],
+      ["person_parent", "starlight", false],
+    ],
+  );
+
+  page.openPersonaSheet({ currentTarget: { dataset: { personId: "person_parent" } } });
+  assert.equal(page.data.personaSheetVisible, true);
+  assert.equal(page.data.personaSheetSelection, "starlight");
+  page.pickPersonaOption({ currentTarget: { dataset: { personaId: "xuanmo" } } });
+  await page.confirmPersonaAssignment();
+  assert.deepEqual(personaCalls.at(-2), {
+    method: "PUT",
+    deviceId: "dev_1",
+    personId: "person_parent",
+    data: { persona_selection: "xuanmo" },
+  });
+  assert.equal(personaCalls.at(-1).method, "GET", "写入后必须回读服务端分配");
+  assert.equal(page.data.personaSheetVisible, false);
+
+  await page.clearPersonaAssignment({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.deepEqual(personaCalls.at(-2), {
+    method: "DELETE",
+    deviceId: "dev_1",
+    personId: "person_child",
+    data: null,
+  });
+});
+
+test("persona assignment failure keeps the sheet open and reports the error", async () => {
+  personaCalls.length = 0;
+  personaFailure = true;
+  personaPayload = () => ({ assignments: [], binding_default: "starlight:v1" });
+  binding.saveBindingManifest({
+    ...familyManifest(),
+    roles: [
+      { person_id: "person_owner", role: "device_admin", permissions: [] },
+      { person_id: "person_child", role: "primary_subject", permissions: [] },
+    ],
+  });
+  profilePayload = wireProfile({ runtime_profile_id: "rp_pf", session_id: "ses_pf", session_epoch: 1 });
+  nextRequestResult = null;
+
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  page.openPersonaSheet({ currentTarget: { dataset: { personId: "person_child" } } });
+  page.pickPersonaOption({ currentTarget: { dataset: { personaId: "axu" } } });
+  await page.confirmPersonaAssignment();
+
+  assert.equal(page.data.personaSheetVisible, true, "失败时不得假装已分配");
+  assert.ok(page.data.personaAssignmentError);
+  assert.equal(
+    personaCalls.filter((call) => call.method === "PUT").length,
+    1,
+  );
+  personaFailure = false;
 });
