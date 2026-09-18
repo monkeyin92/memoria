@@ -109,6 +109,7 @@ from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
 from services.agent.src.runtime_provenance import (
     GenerationVoiceSnapshot as GenerationVoiceSnapshot,
 )
+from services.agent.src.runtime_shutdown import DuplexRuntimeShutdownMixin
 from services.agent.src.runtime_speaker import (
     PLAYBACK_INPUT_BLOCK_MIN_WORDS,
     DuplexSpeakerMixin,
@@ -162,12 +163,9 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
             await self.pool.discard_active_connection(fence)
 
 
-async def _closed_noop() -> None:
-    """Placeholder task returned when a closed runtime refuses to schedule work."""
-
-
 @dataclass
 class DuplexRuntime(
+    DuplexRuntimeShutdownMixin,
     DuplexSpeakerMixin,
     DuplexRuntimeProvenanceMixin,
     DuplexRuntimeEmotionMixin,
@@ -1610,11 +1608,8 @@ class DuplexRuntime(
         durable: bool = False,
     ) -> asyncio.Task[Any]:
         if self._closed:
-            # close() is terminal: a late callback must not schedule work that
-            # nothing will ever drain, so the coroutine is closed unstarted.
-            coroutine.close()
-            logger.info("duplex runtime refused background task after close: %s", name)
-            return asyncio.get_running_loop().create_task(_closed_noop(), name=name)
+            # close() is terminal: never schedule work nothing can drain.
+            return self.refuse_after_close(coroutine, name)
         task: asyncio.Task[Any] = asyncio.create_task(coroutine, name=name)
         tasks = self._durable_tasks if durable else self._background_tasks
         tasks.add(task)
@@ -4236,9 +4231,8 @@ class DuplexRuntime(
             self._unsubscribers.append(_unsub)
 
     async def close(self) -> None:
-        if self._closed:
+        if self.begin_close():
             return
-        self._closed = True
         self.cancel_listener_cue()
         self._set_interruption_min_words = None
         for unsub in self._unsubscribers:
@@ -4257,27 +4251,12 @@ class DuplexRuntime(
         # a bounded drain window. ArchiveSink persists a task before a timeout
         # cancellation can propagate.
         self._evidence_publisher = None
-        durable_tasks = tuple(self._durable_tasks)
-        if durable_tasks:
-            _, pending = await asyncio.wait(
-                durable_tasks,
-                timeout=self._evidence_drain_timeout_s,
-            )
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-        for task in tuple(self._background_tasks):
-            task.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        await self.drain_durable_tasks()
+        await self.drain_background_tasks()
         await self.orchestrator.close()
         # Closing the orchestrator can still run callbacks that hand work back
-        # to this runtime; drain once more so close() leaves nothing behind.
-        for task in tuple(self._background_tasks):
-            task.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        # to this runtime; drain again so close() leaves nothing behind.
+        await self.drain_background_tasks()
         if self._durable_task_errors:
             raise RuntimeError("one or more durable evidence tasks failed") from (
                 self._durable_task_errors[0]
