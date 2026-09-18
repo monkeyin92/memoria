@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs，`8d184e3` 起审查基线升到 `39e7fa2`）、未部署、未构建发布候选、未连接生产或设备；远端 CI 已推本提交待 python 收据（此前停在 `350d62d`；`264e2d3` 的 python 失败唯一原因是 docs-budget 撞非常驻收件箱，已随 `3d7db99` 移除）。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs、`768993b` 唤醒严格自包含；`8d184e3` 起审查基线升到 `39e7fa2`）、未部署、未构建发布候选、未连接生产或设备；远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
@@ -8,11 +8,11 @@
 2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
 3. **TTS 软件边界整改中（P2 已修，P3 重列待办转真回归）**：`COSYVOICE_WORD_TIMESTAMPS=false` 降级已补取消优先收尾；Doubao `slow_once` 旧测试收据作废，改用 `slow` 持续首包失败真回归（personal 仅 1 次、callback/trace 各 1 次、总预算 1+4）。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
 4. **P2-05 入窗起点已修、P1-05 收据已撤回**：曝光窗口从门通过时起算（settle 等待是入场成本）；回顾出口补 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，撤回“无跨主体读”，同账号切主体/subject 围栏/临时读回待验。
-5. 下一步（按序）：本提交已推远端跑整改+唤醒收尾后的完整 CI，待 python 非 skip 收据（此前远端停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+5. 下一步（按序）：远端 CI 已在 `768993b` 通过完整 python 门；冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
 6. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 7. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-当前证据：`35296113073`（`264e2d3`）python 失败唯一原因是 docs-budget（`RESEARCH.md` 非常驻，已在 `3d7db99` 折叠进本清单并移除）；`3d7db99` 纯文档提交远端全 skip；本提交改 `scripts/tests/test_wake_word_matrix.py` 触发 python 全量，已推待收据。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
+当前证据：远端 CI `35298356748`（`768993b`，2026-09-18 10:11–10:22 CST）success——Ruff/module budget/strict mypy（435 files）/可复现协议与契约/authoritative PG gate/pytest 5109 passed/2 skipped/覆盖率 88.11%/wake 12 passed/Offline E2E PASS/agent-image success；provider smoke `OFFLINE_MOCK=true` 不算真实厂商验收；media-edge/media-edge-image/agent/firmware/miniprogram 按 filter skip。`35296113073`（`264e2d3`）python 唯一失败已解释：docs-budget 撞非常驻 `RESEARCH.md`，随 `3d7db99` 移除。
 
 本轮整改（advisory 驱动，已提交 `27a16cf`/`0d200c6`/`39e7fa2` docs）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算，分子/收据 wall 同口径（修前多算 ~1.5 s 且 settle wake 计入，修复后排除，report wall 回归锁定分母≈1.0）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 上一轮（`f2a95d6`）回归：2 个读快照交错、1 个无时间戳降级、2 个曝光时间线、1 个会话回顾在修前失败、修复后通过；wake 去重用例内联 3 行 fixture（删 ignored 文件 9/9）；CI 新增 wake 显式步骤。`f2a95d6` 的流式单次回落用例收据作废（`slow_once` 未触发重入，改前已通过），已由本轮真回归替代。

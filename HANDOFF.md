@@ -1,22 +1,22 @@
 # Memoria 当前交接
 
-更新于 2026-09-18（advisory 整改，`39e7fa2`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+更新于 2026-09-18（advisory 整改，`768993b`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据；未部署、未构建发布候选、未连接生产或设备。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
+本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）；未部署、未构建发布候选、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-18
-reviewed_source_commit: 39e7fa2
+reviewed_source_commit: 768993b
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_39e7fa2
+code: committed_through_768993b
 wired: existing_python_voice_core_and_signed_runtime_profile_authorities
 enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
 verified: scoped_receipts_only_read_snapshot_tts_wake_history_fixed_device_pending
@@ -55,18 +55,18 @@ device_id: dev_atk_a4cb8fd6095c
 
 ## 最新候选与审查边界
 
-审查基线 `d191ef1`（2026-09-17 18:26:24 CST），上轮修复提交 `350d62d`（CI `35231388322` 于 2026-09-17 22:17:21 CST 完成 success：`python` 的 Ruff/模块预算/strict mypy/可复现协议与契约/authoritative PG gate/pytest/覆盖率/Offline E2E 与 `agent-image`、`miniprogram` 实跑，agent/media-edge/firmware 跳过）；`f2a95d6` 与其后两笔整改（`27a16cf`、 numerator 追补）只跑本地门禁，远端 CI 未跑。最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。python 中真实 PG gate（上轮 CI）、pytest、覆盖率和 Offline E2E 已执行，provider smoke 使用 `OFFLINE_MOCK=true`，不算真实厂商验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
+审查基线 `768993b`（2026-09-18 10:22 CST，远端 CI `35298356748` success：`python` 的 Ruff/模块预算/strict mypy（435 files）/可复现协议与契约/authoritative PG gate/pytest 5109 passed/2 skipped/覆盖率 88.11%/wake 12 passed/Offline E2E PASS 与 `agent-image` 实跑，provider smoke `OFFLINE_MOCK=true`，agent/media-edge/media-edge-image/firmware/miniprogram 按 filter skip）；`35296113073`（`264e2d3`）python 唯一失败是 docs-budget 撞非常驻 `RESEARCH.md`（已随 `3d7db99` 折叠进 TODOLIST 并移除）。上轮修复 `350d62d`（CI `35231388322`）收据保留；`f2a95d6` 与整改的远端收据现为本轮 `35298356748`，不再写“远端未跑”。最近功能提交为 `092dcf4`；`fd0290a` 已把下一设备窗口限定为功能验收。旧 Mypy 失败和“gh 不可用、待观察 CI”不再是当前状态；没有这些候选已上线的证据。
 
 本轮仍开放的审查项：
 
 - P0-04 / P1-03：成员追加的三处缺陷已修（`350d62d`，见下方收据）。同一轮仍未证明的是下游同意门是否曾被绕过——本地只证明了 binding grant 扩大，没有复现越权读取。
 - P0-04 读一致性已修（`f2a95d6`）：`read_transaction` 固定 `REPEATABLE READ` 只读；真实 PG 交错回归各 1 例（读间旋转混对、读间撤销翻转），修前源码上失败、修复后通过。不标已泄漏。
 - P0-03 TTS（`27a16cf` 修正 `f2a95d6` 收据）：无时间戳降级 1 例 + 取消优先 1 例通过；`f2a95d6` 的 `slow_once` 回落测试收据作废（未触发重入、改前已通过），已由 `slow` 持续首包失败真回归替代（personal 1 次、callback/trace 各 1 次、总 5 sessions；修前 personal 4 次）。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。
-- P2-05 工具（`f2a95d6` + `27a16cf` + numerator 追补）：曝光时间线 2 例、入窗起点 2 例、settle-wake 排除 1 例；去重用例内联 fixture 后删 ignored 文件仍通过；CI 新增 wake 显式步骤。分子/分母/report wall 全口径为门后起算，`started_monotonic` 保持门前（收据不 breaking）。设备矩阵未采。
+- P2-05 工具（`f2a95d6` + `27a16cf` + numerator 追补 + `768993b` 严格自包含）：曝光时间线 2 例、入窗起点 2 例、settle-wake 排除 1 例；去重用例内联 fixture 且不再读 ignored receipt（`RECEIPT_CONSOLE` 与对账分支已删）；CI 新增 wake 显式步骤，远端 12 passed。分子/分母/report wall 全口径为门后起算，`started_monotonic` 保持门前（收据不 breaking）。设备矩阵未采。
 - P1-05（收据修正）：回顾出口 1 例通过，带事件 id 与 approximate；撤回“无跨主体读”——只证 account 隔离，同账号切主体/subject 围栏/临时读回待验。
-- 修复轮回归（本地）：受影响套件 121 passed / 1 skipped，PG 两套 59 passed；Ruff、模块预算、strict mypy（435 files）通过；文档预算通过。全量 pytest 与覆盖率门禁未在本轮重跑，不替发布背书。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，不是本轮结论。
+- 修复轮回归（远端 `35298356748`，`768993b`）：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS，Ruff/模块预算/strict mypy（435 files）/authoritative PG gate/agent-image 通过；provider smoke 仍 `OFFLINE_MOCK=true`。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，本地 agent 全套加 `-W error::RuntimeWarning` 未复现（见 P2-04），不是本轮结论。
 
-下一步先推远端跑整改后完整 CI，通过后再冻结同一 source/lock、按 P1-01 跑受影响门禁、构建候选，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
+下一步冻结同一 source/lock（`768993b`）、按 P1-01 跑受影响门禁、构建候选，按授权发布/验功能；学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
 
 ### 已有软件收据（按提交范围解读）
 
