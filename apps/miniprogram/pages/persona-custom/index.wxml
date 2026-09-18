@@ -1,0 +1,74 @@
+<view class="page-shell">
+  <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
+  <view class="page-head">
+    <text class="page-title">自定义人格</text>
+    <text class="page-subtitle">创建即冻结，改内容要新建一个</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="card">
+    <text class="caption">正在读取自定义人格…</text>
+  </view>
+
+  <block wx:else>
+    <view class="card">
+      <text class="setting-name">创建自定义人格</text>
+      <text class="setting-desc">名字和描述只是起点；创建后这套设置就冻结为 v1，改内容要新建一个。对话仍然只发生在机器人上。</text>
+
+      <text class="field-label">人格名字</text>
+      <input class="field-input" value="{{name}}" maxlength="16" placeholder="例如：小北" placeholder-class="field-placeholder" bindinput="onNameInput" />
+
+      <text class="field-label">你希望它怎么说话</text>
+      <textarea class="field-textarea" value="{{freeText}}" maxlength="420" placeholder="用几句话描述说话方式、关心的方式。" placeholder-class="field-placeholder" bindinput="onFreeTextInput" auto-height />
+      <button class="secondary-button empty-button" loading="{{structuring}}" disabled="{{structuring}}" bindtap="structure">让 AI 帮我整理</button>
+      <text wx:if="{{draftId}}" class="caption">整理结果编号 {{draftId}}（仅用于重试，不落库）。</text>
+
+      <view wx:for="{{textFields}}" wx:key="key">
+        <text class="field-label">{{item.label}}</text>
+        <input class="field-input" value="{{fields[item.key]}}" maxlength="{{item.maxlength}}" placeholder="{{item.placeholder}}" placeholder-class="field-placeholder" data-field="{{item.key}}" bindinput="onTextFieldInput" />
+      </view>
+
+      <view wx:for="{{enumFields}}" wx:key="key">
+        <text class="field-label">{{item.label}}</text>
+        <picker mode="selector" range="{{item.options}}" range-key="label" value="{{item.index}}" data-field="{{item.key}}" bindchange="onEnumChange">
+          <view class="picker-row">
+            <text class="picker-value">{{item.options[item.index].label}}</text>
+            <text class="row-chevron">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <text class="field-label">语速（0.90 - 1.10）</text>
+      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" bindchange="onRateChange" />
+
+      <text class="field-label">没有克隆声音时用谁的音色</text>
+      <picker mode="selector" range="{{voiceOptions}}" range-key="name" value="{{voiceIndex}}" bindchange="onVoiceChange">
+        <view class="picker-row">
+          <text class="picker-value">{{voiceOptions[voiceIndex].name}}</text>
+          <text class="row-chevron">›</text>
+        </view>
+      </picker>
+
+      <button class="primary-button empty-button" loading="{{acting}}" disabled="{{acting}}" bindtap="create">创建并冻结</button>
+      <text wx:if="{{notice}}" class="setting-desc">{{notice}}</text>
+      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+      <text wx:if="{{loadingError}}" class="error-text">{{loadingError}}</text>
+    </view>
+
+    <view class="list">
+      <view class="list-row">
+        <view class="row-copy">
+          <text class="row-title">我的人格</text>
+          <text class="row-meta">这些名字是账号级的，可分配给同账号下任意绑定的使用人。</text>
+        </view>
+      </view>
+      <view wx:for="{{personas}}" wx:key="persona_id" class="list-row">
+        <view class="row-copy">
+          <text class="row-title">{{item.display_name}}</text>
+          <text class="row-meta">{{item.persona_id}} · v{{item.persona_version}} · 回落 {{item.fallback_designed_voice}}</text>
+        </view>
+        <button class="text-button" data-persona-id="{{item.persona_id}}" disabled="{{acting}}" bindtap="remove">删除</button>
+      </view>
+      <text wx:if="{{personas.length === 0}}" class="caption">还没有自定义人格。</text>
+    </view>
+  </block>
+</view>

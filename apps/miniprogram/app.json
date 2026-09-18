@@ -5,6 +5,7 @@
     "pages/memory/index",
     "pages/profile/index",
     "pages/companion/index",
+    "pages/persona-custom/index",
     "pages/guardian/index",
     "pages/auth/index",
     "pages/digital-self/index",

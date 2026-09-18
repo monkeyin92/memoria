@@ -1022,6 +1022,36 @@ function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confi
 }
 
 /*
+ * 自定义人格（P1-03/P1-04）：账号级不可变 cu_ 人格，创建即冻结 v1。
+ * `/v1/personas/structuring` 是纯函数（不落库），离线/未接入时返回 503，
+ * 客户端回落到按同一受控字段手填后再 `POST /v1/personas`。
+ */
+function structureCustomPersona(freeText) {
+  return rawRequest("/v1/personas/structuring", {
+    method: "POST",
+    data: { free_text: freeText },
+  });
+}
+
+function createCustomPersona({ displayName, structured, fallbackDesignedVoice = "starlight" }) {
+  return rawRequest("/v1/personas", {
+    method: "POST",
+    data: {
+      display_name: displayName,
+      structured,
+      fallback_designed_voice: fallbackDesignedVoice,
+    },
+  });
+}
+
+function deleteCustomPersona(personaId, { confirm = false } = {}) {
+  const query = confirm ? "?confirm=true" : "";
+  return rawRequest(`/v1/personas/${encodeURIComponent(personaId)}${query}`, {
+    method: "DELETE",
+  });
+}
+
+/*
  * 账号的人格目录（P1-03/P1-04）：只读的内置目录 + 账号自己的 cu_ 自建人格。
  * 只用于展示与选择；提交分配时只给 persona_id，版本由服务端决定。
  */
@@ -1184,6 +1214,9 @@ module.exports = {
   setPersonaAssignment,
   clearPersonaAssignment,
   listPersonas,
+  structureCustomPersona,
+  createCustomPersona,
+  deleteCustomPersona,
   requireRuntimeCapability,
   clearRuntimeProfileMemory,
 };
