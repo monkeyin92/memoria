@@ -133,7 +133,9 @@
 
 ### [ ] P2-03 可证明删除与导出证据链
 
-- 依赖 P0-04；备份处置衔接 P1-08，不等待启用异地副本。先核现有删除/撤销/导出，再补缺失的 subject 谱系与离线核验回执，复用 Archive/EvidenceEvent/consent 权威。**P1-05 实测的具体缺口**：会话证据行不带 subject（`active_subject_id` 仅作 fence 输入、`speaker_identity_id` 对该路径恒空），孩子作为 subject 在家人账户设备上的话轮按 owner 账户的 `subject_category` 落库并可被 owner 回顾；谱系落地时需同时给读路径加主体围栏与按说话主体的 retention 天花板。
+- 依赖 P0-04；备份处置衔接 P1-08，不等待启用异地副本。先核现有删除/撤销/导出，再补缺失的 subject 谱系与离线核验回执，复用 Archive/EvidenceEvent/consent 权威。
+- **第①步已落地（`504e868`，code；远端 CI `35317165398` success：Pytest 5116 passed/2 skipped、覆盖率 88%、orchestration 90%、provider protocols 95%）**：证据行（SQLite `evidence_events` / PG `archive_evidence_events`）新增 `subject_id`，写入侧把 memory-write fence 的 `active_subject_id` 落库（空值存 None，绝不回填成账户）；`EvidenceEvent` 纳入幂等指纹；两侧都是幂等前向迁移（PG `ADD COLUMN IF NOT EXISTS`、SQLite `PRAGMA+ALTER`），切片契约测试保持相等。回归：路由级断言证据行 subject_id、PG 合同事件往返相等。
+- **第②③步未做**：读出口（`/conversation-review`、`/conversation-history`、catalog 投影、timeline、session-context、guardian summary、两种导出）目前仍只按 `account_id`(+session/speaker) 过滤，需加主体围栏；retention 天花板在写入主路径仍取**账户** `subject_category`（`routes/archive.py:1739-1752`），需改成按说话主体判定；另 `account_deletions` 回执表**无 HTTP 查询出口**（`get_account_deletion` 无 route），导出需补 AI/授权标识。**P1-05 实测的具体缺口**：会话证据行不带 subject（`active_subject_id` 仅作 fence 输入、`speaker_identity_id` 对该路径恒空），孩子作为 subject 在家人账户设备上的话轮按 owner 账户的 `subject_category` 落库并可被 owner 回顾；谱系落地时需同时给读路径加主体围栏与按说话主体的 retention 天花板。
 - 完成条件：PG、MinIO、投影/缓存、音色/声纹范围一致，重试幂等、回执可查询、导出有 AI/授权标识；对保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本。若发现实际越权/撤销失效，具体缺陷立即提 P0。
 - 导出细则：用户语音与模型回复的混合导出必须显式标记“AI 生成”，元数据写入服务提供者与内容编号；TTS/合成音频核对 `aigc_watermark`/`aigc_metadata`。声纹、原始 WAV、特征不默认长期保存；家庭邀请不升级为声纹登录权限。
 
