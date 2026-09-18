@@ -162,6 +162,10 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
             await self.pool.discard_active_connection(fence)
 
 
+async def _closed_noop() -> None:
+    """Placeholder task returned when a closed runtime refuses to schedule work."""
+
+
 @dataclass
 class DuplexRuntime(
     DuplexSpeakerMixin,
@@ -289,6 +293,7 @@ class DuplexRuntime(
     _playback_started_ns: int | None = None
     # After control yield, accept chat turns even if LiveKit omits speech anchors.
     CONTROL_RESTORE_SPEECH_EPOCH_GRACE_MS: int = 20_000
+    _closed: bool = False
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _durable_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _durable_task_errors: list[BaseException] = field(default_factory=list)
@@ -1604,6 +1609,12 @@ class DuplexRuntime(
         name: str,
         durable: bool = False,
     ) -> asyncio.Task[Any]:
+        if self._closed:
+            # close() is terminal: a late callback must not schedule work that
+            # nothing will ever drain, so the coroutine is closed unstarted.
+            coroutine.close()
+            logger.info("duplex runtime refused background task after close: %s", name)
+            return asyncio.get_running_loop().create_task(_closed_noop(), name=name)
         task: asyncio.Task[Any] = asyncio.create_task(coroutine, name=name)
         tasks = self._durable_tasks if durable else self._background_tasks
         tasks.add(task)
@@ -4225,6 +4236,9 @@ class DuplexRuntime(
             self._unsubscribers.append(_unsub)
 
     async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.cancel_listener_cue()
         self._set_interruption_min_words = None
         for unsub in self._unsubscribers:
@@ -4258,6 +4272,12 @@ class DuplexRuntime(
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self.orchestrator.close()
+        # Closing the orchestrator can still run callbacks that hand work back
+        # to this runtime; drain once more so close() leaves nothing behind.
+        for task in tuple(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
         if self._durable_task_errors:
             raise RuntimeError("one or more durable evidence tasks failed") from (
                 self._durable_task_errors[0]

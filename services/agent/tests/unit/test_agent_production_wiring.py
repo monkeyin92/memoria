@@ -2032,6 +2032,80 @@ async def test_live_lookup_does_not_start_when_generation_voice_cannot_bind() ->
 
 
 @pytest.mark.asyncio
+async def test_runtime_close_is_terminal_and_leaves_no_delegation_task() -> None:
+    """P2-04: close() must drain what the close path itself can schedule.
+
+    The pending ``interaction-delegation-start`` task seen at test exit came
+    from work scheduled while the runtime was shutting down. close() is now
+    terminal (a late callback is refused instead of leaked) and it drains the
+    background set once more after the orchestrator finished closing.
+    """
+    runtime = DuplexRuntime.create(session_id="close-terminal")
+    bind_owner_policy(
+        runtime,
+        policy_version="test-policy",
+        private_context=False,
+        owner_evidence=False,
+        tools=False,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+
+    async def starter(_text: str, _fence: GenerationFence) -> None:
+        await asyncio.sleep(30)
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
+            return ResponsePlanFetch(
+                _plan_for_fence(fence, instructions="先查天气再回答。"),
+                "ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    runtime.set_delegation_starter(starter)
+    await agent._prepare_committed_turn(
+        text="今天南京天气怎么样",
+        speaker=SimpleNamespace(classification="owner"),
+        input_modality="audio",
+    )
+
+    await runtime.close()
+    await asyncio.sleep(0)
+
+    leaked = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task()
+        and task.get_name() == "interaction-delegation-start"
+        and not task.done()
+    ]
+    assert leaked == [], "close() 不得留下委托任务"
+
+    # 关闭后再调度不会启动新工作，也不会留下未回收的任务。
+    refused = runtime._spawn(_never_finishes(), name="after-close")
+    await asyncio.sleep(0)
+    assert refused.done()
+    await runtime.close()
+
+
+async def _never_finishes() -> None:
+    await asyncio.sleep(30)
+
+
+@pytest.mark.asyncio
 async def test_live_lookup_starts_on_the_bound_generation() -> None:
     runtime = DuplexRuntime.create(session_id="lookup-voice-ok")
     bind_owner_policy(
