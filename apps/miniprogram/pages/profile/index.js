@@ -1,7 +1,6 @@
 const api = require("../../utils/api");
 const compliance = require("../../utils/compliance");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
-const { encodeCustomPersona, parseCustomPersona } = require("../../utils/custom-persona");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
@@ -19,6 +18,14 @@ const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
 
 // 声音复刻进度轮询节奏：服务端接管后每 2 秒读一次档案状态。
 const VOICE_CLONE_POLL_INTERVAL_MS = 2000;
+
+// 只有服务端会把自定义人格写进 Runtime Profile 的 persona；非 cu_ 前缀表示
+// 内置人格，克隆声音时不该带 custom_persona_id。
+function customPersonaIdFor(profile) {
+  const personaId = profile?.persona?.persona_id;
+  if (typeof personaId !== "string" || !personaId.startsWith("cu_")) return "";
+  return personaId;
+}
 
 function mediaTypeForPath(filePath) {
   const lower = String(filePath || "").toLowerCase();
@@ -333,9 +340,8 @@ Page({
     speakerEnrollmentProfileCount: 0,
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
-    customPersonaActive: false,
-    customPersonaName: "",
-    customPersonaText: "",
+    customPersonaId: "",
+    customPersonaLabel: "",
     voiceCloneAllowed: false,
     voiceCloneStatusLabel: "还没有自定义声音样本。",
     voiceCloneEnrollment: null,
@@ -450,9 +456,8 @@ Page({
       speakerEnrollmentProfileCount: 0,
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
-      customPersonaActive: false,
-      customPersonaName: "",
-      customPersonaText: "",
+      customPersonaId: "",
+      customPersonaLabel: "",
       voiceCloneAllowed: false,
       voiceCloneStatusLabel: "还没有自定义声音样本。",
       voiceCloneEnrollment: null,
@@ -619,12 +624,14 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const custom = parseCustomPersona(profile.bio);
       const [capabilityState, speakerState, voiceCloneState] = await Promise.all([
         this.loadRuntimeCapabilities(),
         this.loadSpeakerEnrollmentStatus(),
         this.loadVoiceCloneStatus(),
       ]);
+      const customPersonaState = capabilityState.customPersonaId
+        ? await this.loadCustomPersonaLabel(capabilityState.customPersonaId)
+        : { customPersonaId: "", customPersonaLabel: "" };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const speakerHint = {
         active: "已允许用于识别本人，可随时在设备上重新录制",
@@ -637,10 +644,9 @@ Page({
         profile,
         profileInitial: profileInitialFor(profile.display_name),
         isMinor: profile.subject_category === "minor",
-        customPersonaActive: custom.active,
-        customPersonaName: custom.name,
-        customPersonaText: custom.text,
-        personaHeadline: `${custom.active ? custom.name || companion.name : companion.name}，你的日常角色`,
+        customPersonaId: customPersonaState.customPersonaId,
+        customPersonaLabel: customPersonaState.customPersonaLabel,
+        personaHeadline: `${companion.name}，你的日常角色`,
         accountId: identity.user_id,
         speakerEnrollmentHint: speakerHint,
         ...capabilityState,
@@ -720,6 +726,7 @@ Page({
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         voiceCloneAllowed: false,
+        customPersonaId: "",
         profileUnavailableReason: reasonByState[this.data.deviceBindingState] ||
           "设备绑定状态不完整，无法取得 Runtime Profile。",
       };
@@ -736,6 +743,7 @@ Page({
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
           voiceCloneAllowed: false,
+          customPersonaId: "",
           profileUnavailableReason: "能力状态正在刷新，请稍后重试。",
         };
       }
@@ -748,6 +756,7 @@ Page({
           guardianEntryAllowed: false,
           rawVoiceEntryAllowed: false,
           voiceCloneAllowed: false,
+          customPersonaId: "",
           profileUnavailableReason: "服务端返回的 Runtime Profile 校验失败，敏感能力已关闭。",
         };
       }
@@ -760,6 +769,7 @@ Page({
         guardianEntryAllowed: capabilities.includes(contracts.Capability.GuardianSummaryView),
         rawVoiceEntryAllowed: capabilities.includes(contracts.Capability.RawAudioRetention),
         voiceCloneAllowed: capabilities.includes(contracts.Capability.VoiceCloneUse),
+        customPersonaId: customPersonaIdFor(profile),
         profileUnavailableReason: "",
       };
       this._lastCapabilityState = state;
@@ -773,6 +783,7 @@ Page({
         guardianEntryAllowed: false,
         rawVoiceEntryAllowed: false,
         voiceCloneAllowed: false,
+        customPersonaId: "",
         profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
       };
     }
@@ -860,44 +871,30 @@ Page({
       ...this.data.profile,
       companion_id: companionId,
     };
-    if (parseCustomPersona(nextProfile.bio).active) {
-      nextProfile.bio = "";
-    }
-    this.setData({
-      profile: nextProfile,
-      customPersonaActive: false,
-    });
+    this.setData({ profile: nextProfile });
     await this.saveProfile();
   },
 
-  chooseCustomPersona() {
-    this.setData({ customPersonaActive: true });
+  // 自定义人格是账号级的不可变记录（cu_*），只在专门的页面里创建/删除；
+  // 这里只负责显示当前分配给它的人。
+  openCustomPersona() {
+    wx.navigateTo({ url: "/pages/persona-custom/index" });
   },
 
-  onCustomPersonaName(event) {
-    this.setData({ customPersonaName: event.detail.value });
-  },
-
-  onCustomPersonaText(event) {
-    this.setData({ customPersonaText: event.detail.value });
-  },
-
-  async saveCustomPersona() {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    const encoded = encodeCustomPersona({
-      name: this.data.customPersonaName,
-      text: this.data.customPersonaText,
-    });
-    if (!encoded) {
-      wx.showToast({ title: "请填写名字和人格描述", icon: "none" });
-      return;
+  async loadCustomPersonaLabel(personaId) {
+    const authEpoch = api.currentAuthEpoch();
+    try {
+      const payload = await api.listPersonas();
+      if (!api.isAuthEpochCurrent(authEpoch)) return { customPersonaId: "", customPersonaLabel: "" };
+      const record = (payload?.custom_personas || []).find(
+        (item) => item.persona_id === personaId,
+      );
+      if (!record) return { customPersonaId: "", customPersonaLabel: "" };
+      return { customPersonaId: record.persona_id, customPersonaLabel: record.display_name };
+    } catch {
+      // 目录读取失败只影响展示：不提交 custom_persona_id，避免把未知 id 交给服务端。
+      return { customPersonaId: "", customPersonaLabel: "" };
     }
-    this.setData({
-      customPersonaActive: true,
-      "profile.bio": encoded,
-      "profile.companion_id": this.data.profile.companion_id || defaultCompanionId,
-    });
-    await this.saveProfile();
   },
 
   async saveProfile() {
@@ -910,13 +907,9 @@ Page({
       const profile = await api.updateProfile(identity.user_id, this.data.profile);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const merged = { ...this.data.profile, ...profile };
-      const custom = parseCustomPersona(merged.bio);
       this.setData({
         profile: merged,
         profileInitial: profileInitialFor(merged.display_name),
-        customPersonaActive: custom.active,
-        customPersonaName: custom.name || this.data.customPersonaName,
-        customPersonaText: custom.text || this.data.customPersonaText,
       });
       wx.showToast({ title: "已保存", icon: "success" });
     } catch (error) {
@@ -1185,6 +1178,7 @@ Page({
         sampleRate,
         enrollmentKey: `miniprogram-${Date.now()}`,
         readyForDevice: true,
+        customPersonaId: this.data.customPersonaId,
       });
       const voiceCloneState = await this.loadVoiceCloneStatus();
       this._applyVoiceCloneState(voiceCloneState);

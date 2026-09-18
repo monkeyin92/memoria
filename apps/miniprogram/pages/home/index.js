@@ -1,7 +1,6 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
-const { parseCustomPersona } = require("../../utils/custom-persona");
 const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
 const {
   currentUserSummary,
@@ -300,12 +299,14 @@ Page({
         ? diagnosticsResult.value
         : null;
     const summary = deviceStatusSummary(activation, runtime, diagnostics);
-    const custom = parseCustomPersona(profile?.bio);
     const companion = companionById(profile?.companion_id);
-    const personaName = custom.active ? custom.name : companion.name;
-    const personaVoice = custom.active ? "你提供的声音样本" : companion.voiceName;
-    const personaSummary = custom.active
-      ? custom.text
+    // 设备当前分配给使用人的自定义人格（cu_*）优先于账号级内置人格；
+    // 名字来自账号目录，读不到时退回内置人格而不是猜一个名字。
+    const custom = await this._resolveCustomPersona(runtime);
+    const personaName = custom ? custom.display_name : companion.name;
+    const personaVoice = custom ? "你提供的声音样本" : companion.voiceName;
+    const personaSummary = custom
+      ? custom.style_description || companion.description || companion.tagline
       : companion.description || companion.tagline;
     const failures = [activationResult, runtimeResult].filter(
       (result) => result.status === "rejected",
@@ -346,6 +347,22 @@ Page({
       todayOverview: today.todayOverview || "",
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
+  },
+
+  // 只有设备签发的 Runtime Profile 会声明实际使用的人格；自定义人格还要在
+  // 账号目录里存在才展示，避免把未知 id 当成名字显示。
+  async _resolveCustomPersona(runtime) {
+    const personaId = runtime?.persona?.persona_id;
+    if (typeof personaId !== "string" || !personaId.startsWith("cu_")) return null;
+    try {
+      const payload = await api.listPersonas();
+      const record = (payload?.custom_personas || []).find(
+        (item) => item.persona_id === personaId,
+      );
+      return record || null;
+    } catch {
+      return null;
+    }
   },
 
   async _loadToday(identity) {

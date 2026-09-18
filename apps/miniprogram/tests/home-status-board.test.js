@@ -4,24 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.join(__dirname, "..");
-const {
-  encodeCustomPersona,
-  parseCustomPersona,
-} = require("../utils/custom-persona");
 const { greetingFor } = require("../utils/greeting");
 const { currentUserSummary, deviceStatusSummary } = require("../utils/device-status");
-
-test("custom persona round-trips through the profile bio marker", () => {
-  const encoded = encodeCustomPersona({ name: "小黑", text: "说话短一点，陪我散步。" });
-  assert.match(encoded, /\[memoria\.custom_persona\.v1\]/);
-  assert.deepEqual(parseCustomPersona(encoded), {
-    active: true,
-    name: "小黑",
-    text: "说话短一点，陪我散步。",
-  });
-  assert.equal(parseCustomPersona("喜欢散步").active, false);
-  assert.equal(encodeCustomPersona({ name: "", text: "x" }), "");
-});
 
 test("home greeting bands do not invent a room or a master title", () => {
   assert.equal(greetingFor(new Date(2026, 8, 5, 7)), "早上好");
@@ -95,19 +79,13 @@ test("device wake word copy tells users it syncs then restarts", () => {
   assert.match(template, /此刻是谁在用/);
 });
 
-test("profile supports catalog and custom persona plus voice sample", () => {
+test("profile keeps the voice-sample entry points and never promises an evaluation", () => {
   const template = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/profile/index.js"), "utf8");
-  assert.match(template, /人格与声音/);
   assert.match(template, /自定义人格与声音/);
   assert.match(template, /对着麦克风录/);
   assert.match(template, /上传音频/);
-  assert.match(script, /encodeCustomPersona/);
-  assert.match(script, /enrollVoiceClone/);
-  assert.match(script, /getRecorderManager/);
-  assert.match(script, /readyForDevice:\s*true/);
-  assert.match(script, /readyVoiceForDevice/);
-  assert.match(script, /正在生成自定义声音，大约一分钟/);
-  assert.doesNotMatch(script, /等待服务端评估/);
-  assert.doesNotMatch(template, /评估通过前/);
+  // 消费者路径不得承诺人工 A/B 评估：那是实验室路径的准入方式。
+  assert.doesNotMatch(script, /评估/);
+  assert.doesNotMatch(template, /评估/);
 });

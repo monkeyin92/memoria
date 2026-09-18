@@ -414,6 +414,7 @@ function enrollVoiceClone({
   sampleRate = 16000,
   enrollmentKey,
   readyForDevice = true,
+  customPersonaId = "",
 }) {
   const data = {
     audio_base64: audioBase64,
@@ -422,6 +423,8 @@ function enrollVoiceClone({
     sample_rate: sampleRate,
     ready_for_device: Boolean(readyForDevice),
     ...(enrollmentKey ? { enrollment_key: enrollmentKey } : {}),
+    // 只提交服务端已确认属于本账号的自定义人格 id；留空表示账号本人的声音。
+    ...(customPersonaId ? { custom_persona_id: customPersonaId } : {}),
   };
   return rawRequest("/v1/voices/enrollments", {
     method: "POST",
@@ -429,7 +432,12 @@ function enrollVoiceClone({
     data,
   }).catch((error) => {
     if (!readyForDevice || error?.status !== 422) throw error;
-    const { ready_for_device: _ignored, ...legacy } = data;
+    // 旧服务端连 ready_for_device 都不认：自定义人格字段同样不可用。
+    const {
+      ready_for_device: _ignored,
+      custom_persona_id: _ignoredPersona,
+      ...legacy
+    } = data;
     return rawRequest("/v1/voices/enrollments", {
       method: "POST",
       timeout: 120000,

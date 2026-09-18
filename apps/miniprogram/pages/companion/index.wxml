@@ -6,19 +6,19 @@
     <view
       wx:for="{{companions}}"
       wx:key="id"
-      class="role-card {{!customPersonaActive && profile.companion_id === item.id ? 'role-card-selected' : ''}}"
+      class="role-card {{profile.companion_id === item.id ? 'role-card-selected' : ''}}"
       data-role="{{item.id}}"
     >
-      <view wx:if="{{!customPersonaActive && profile.companion_id === item.id}}" class="pill pill-teal companion-current">当前伙伴</view>
+      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal companion-current">当前伙伴</view>
       <view class="companion-face">
-        <face-badge role="{{item.id}}" size="lg" breathe="{{!customPersonaActive && profile.companion_id === item.id}}"></face-badge>
+        <face-badge role="{{item.id}}" size="lg" breathe="{{profile.companion_id === item.id}}"></face-badge>
       </view>
       <text class="role-card-name">{{item.name}}</text>
       <text class="role-card-tagline">{{item.tagline}} · {{item.voiceName}}</text>
       <text class="companion-desc">{{item.description}}</text>
       <text class="companion-tone">{{item.tone}}</text>
       <view class="button-row companion-actions">
-        <button wx:if="{{!customPersonaActive && profile.companion_id === item.id}}" class="secondary-button btn-sm" disabled="true">✓ 已选择</button>
+        <button wx:if="{{profile.companion_id === item.id}}" class="secondary-button btn-sm" disabled="true">✓ 已选择</button>
         <button wx:else class="primary-button btn-sm" data-id="{{item.id}}" bindtap="chooseCompanion">选TA陪伴</button>
       </view>
     </view>
@@ -37,9 +37,9 @@
         <text class="row-title">角色默认声音</text>
         <text class="row-meta">{{currentTone}}</text>
       </view>
-      <view class="pill {{!customPersonaActive ? 'pill-teal' : 'pill-neutral'}}">{{!customPersonaActive ? '使用中' : '可选'}}</view>
+      <view class="pill pill-teal">使用中</view>
     </view>
-    <view class="setting-row" bindtap="chooseCustomPersona">
+    <view class="setting-row" bindtap="openVoiceClone">
       <view class="row-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </view>
@@ -47,7 +47,7 @@
         <text class="row-title">我的自定义声音</text>
         <text class="row-meta">需要单独同意与可用声音样本，在「我的」里录制或上传</text>
       </view>
-      <view class="pill {{customPersonaActive ? 'pill-teal' : 'pill-neutral'}}">{{customPersonaActive ? '使用中' : '未开始'}}</view>
+      <text class="row-chevron">›</text>
     </view>
   </view>
 

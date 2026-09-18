@@ -481,6 +481,49 @@ test("progress 缺失时不显示百分比", async () => {
   });
 });
 
+test("声音克隆绑定到设备当前分配的自定义人格，且只在目录里存在时才提交", async () => {
+  await withWx(async () => {
+    storage = {};
+    const seen = [];
+    const harness = installPageTimeoutHarness();
+    const stubs = stubApi(
+      apiStubs({
+        grantVoiceCloneConsent: async () => ({}),
+        enrollVoiceClone: async (request) => {
+          seen.push(request);
+          return { status: "enrolling" };
+        },
+        listPersonas: async () => ({
+          custom_personas: [
+            {
+              persona_id: "cu_0123456789abcdef0123456789abcd",
+              display_name: "小北",
+            },
+          ],
+          builtin: [],
+        }),
+      }),
+    );
+    try {
+      const page = newPage();
+      page.setData({ customPersonaId: "cu_0123456789abcdef0123456789abcd" });
+      await page.uploadVoiceSample();
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].readyForDevice, true);
+      assert.equal(seen[0].customPersonaId, "cu_0123456789abcdef0123456789abcd");
+
+      // 未分配自定义人格时不得凭空带一个 id，克隆归属于账号本人的声音。
+      page.setData({ customPersonaId: "" });
+      await page.uploadVoiceSample();
+      assert.equal(seen.length, 2);
+      assert.equal(seen[1].customPersonaId, "");
+    } finally {
+      stubs();
+      harness.restore();
+    }
+  });
+});
+
 test("422 拒绝时把服务端 detail 显示给用户", async () => {
   await withWx(async () => {
     storage = {};

@@ -135,14 +135,17 @@
     </view>
 
     <!-- L2 功能层：声音复刻卡 -->
-    <view wx:if="{{customPersonaActive}}" class="l2-card">
+    <view wx:if="{{voiceCloneAllowed}}" class="l2-card">
       <text class="l2-card-title">自定义人格与声音</text>
       <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话，并在声音就绪后用你的声音。</text>
-      <text class="field-label">人格名字</text>
-      <input class="field-input" value="{{customPersonaName}}" maxlength="16" placeholder="例如：小黑" placeholder-class="field-placeholder" bindinput="onCustomPersonaName" />
-      <text class="field-label">人格描述</text>
-      <textarea class="field-textarea" value="{{customPersonaText}}" maxlength="420" placeholder="用几句话写出它怎么说话、怎么陪你。" placeholder-class="field-placeholder" bindinput="onCustomPersonaText" auto-height />
-      <button class="secondary-button empty-button" loading="{{saving}}" bindtap="saveCustomPersona">保存自定义人格</button>
+      <view class="list-row" bindtap="openCustomPersona">
+        <view class="row-copy">
+          <text class="row-title">{{customPersonaLabel || '还没有分配到自定义人格'}}</text>
+          <text class="row-meta">创建 / 删除 / 分配给使用人</text>
+        </view>
+        <text class="row-chevron">›</text>
+      </view>
+      <text class="setting-desc">{{customPersonaId ? '这段声音会绑给这个自定义人格。' : '没有自定义人格时，克隆的声音用在你账号本人的声音上。'}}</text>
       <text class="setting-desc">{{voiceCloneStatusLabel}}</text>
       <view wx:if="{{voiceCloneEnrollment}}" class="enrollment-progress">
         <view class="enrollment-head">
