@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs，`8d184e3` 起审查基线升到 `39e7fa2`）、未部署、未构建发布候选、未连接生产或设备、远端 CI 未跑。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
+更新于 2026-09-18（advisory 整改：Doubao 真重入回归、CosyVoice 取消优先、入窗曝光起点、回顾可追溯）。本轮在 `f2a95d6` 之上改代码+测试，已提交（`27a16cf`/`0d200c6`/`39e7fa2` docs，`8d184e3` 起审查基线升到 `39e7fa2`）、未部署、未构建发布候选、未连接生产或设备；远端 CI 已推本提交待 python 收据（此前停在 `350d62d`；`264e2d3` 的 python 失败唯一原因是 docs-budget 撞非常驻收件箱，已随 `3d7db99` 移除）。本文件只保留未完成事项、必要基线、依赖与验收条件；完成后把仍有效的运行结论归入 `HANDOFF.md` 并移出队列，不积累修复流水账。已有编号不复用。
 
 ## 下一步与执行边界
 
@@ -8,11 +8,11 @@
 2. **读一致性已修（`f2a95d6`）**：`read_transaction` 固定 `REPEATABLE READ` 只读事务，profile/context/binding 三次读取共享同一快照；真实 PG 交错回归证明读间旋转/撤销不污染当次 `current()`、下一次新鲜事务可见。close-only 仍无 fence、可关闭；最终 action fence 保留；未复现跨主体泄漏，不标已泄漏。
 3. **TTS 软件边界整改中（P2 已修，P3 重列待办转真回归）**：`COSYVOICE_WORD_TIMESTAMPS=false` 降级已补取消优先收尾；Doubao `slow_once` 旧测试收据作废，改用 `slow` 持续首包失败真回归（personal 仅 1 次、callback/trace 各 1 次、总预算 1+4）。G 续问矩阵、EOU/告别、部分音频设备终态、B/D 定位、时延门仍待设备链。
 4. **P2-05 入窗起点已修、P1-05 收据已撤回**：曝光窗口从门通过时起算（settle 等待是入场成本）；回顾出口补 `owner_event_id`/`assistant_event_id`/`assistant_approximate`，撤回“无跨主体读”，同账号切主体/subject 围栏/临时读回待验。
-5. 下一步（按序）：先推远端跑本轮整改后的完整 CI（当前最大证据缺口：远端仍停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
+5. 下一步（按序）：本提交已推远端跑整改+唤醒收尾后的完整 CI，待 python 非 skip 收据（此前远端停在 `350d62d`）；通过后再冻结同一 source/lock，按 P1-01 跑受影响门禁、构建候选；生产切流与回滚另获授权。旧 CI 通过不替新改动背书。
 6. 下一设备窗口仍按 `fd0290a` 的**功能口径**：天气→续问→播后告别至少三轮、签名允许的 button/keyword 打断、>45s 与 B/D 同类长答、双方话轮与汇总可查。学生危机设备演练留到安全专项窗口；功能通过不等于学生安全或全双工验收。
 7. 再接 P1-03/04 的成员、人格与声音完整 UI/设备链，推进 P1-06 的证据记忆和 P2-06 的陪伴效果评测。P1-08 WAL 可独立只读测量；删除、重启、定时任务不在本轮授权内。
 
-当前证据：远端 CI 仍是 `35231388322`（`350d62d`）2026-09-17 22:17:21 CST success；`f2a95d6` 与本轮整改均只跑本地门禁，远端 CI 未跑，不替发布背书。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
+当前证据：`35296113073`（`264e2d3`）python 失败唯一原因是 docs-budget（`RESEARCH.md` 非常驻，已在 `3d7db99` 折叠进本清单并移除）；`3d7db99` 纯文档提交远端全 skip；本提交改 `scripts/tests/test_wake_word_matrix.py` 触发 python 全量，已推待收据。provider smoke 仍为 `OFFLINE_MOCK=true`，不算真实厂商验收。
 
 本轮整改（advisory 驱动，已提交 `27a16cf`/`0d200c6`/`39e7fa2` docs）：Doubao 真重入回归改用 `slow` 持续首包失败（修前 personal 被试 4 次、修复后 personal 1 次/callback 1 次/trace 1 次/总 5 sessions）；CosyVoice 降级补取消优先收尾（trace 回调置 cancel 可确定性复现旧错）；入窗曝光起点改门通过起算，分子/收据 wall 同口径（修前多算 ~1.5 s 且 settle wake 计入，修复后排除，report wall 回归锁定分母≈1.0）；回顾出口补事件 id 与 approximate 字段并撤回跨主体收据。`interaction-delegation-start` pending 提示仍待定位（P2-04）；生产 Agent/Bridge `d96d4c2`、板卡 `d1ad38f` 仍只是 `HANDOFF.md` 带日期的最后记录，本轮未刷新在线状态。
 上一轮（`f2a95d6`）回归：2 个读快照交错、1 个无时间戳降级、2 个曝光时间线、1 个会话回顾在修前失败、修复后通过；wake 去重用例内联 3 行 fixture（删 ignored 文件 9/9）；CI 新增 wake 显式步骤。`f2a95d6` 的流式单次回落用例收据作废（`slow_once` 未触发重入，改前已通过），已由本轮真回归替代。
@@ -140,8 +140,7 @@
 
 - 092dcf4 已加入待机/detector-on 门、去重、半开窗口与错误 invalid 分类，但本轮发现下列缺口；不能继续写“工具全修、只剩采数”。原始 `outputs/acceptance/run-20260916-p2-05-wake-matrix-1/{receipt.json,analysis.json,console.log}` 不改写，本轮未重采设备。
 - **已修（本轮追补，已提交），P2：分子/收据口径一次关干净。** `_wake_lines` 下界换 `window_start`（settle 期 wake 不计入，report-wall 单测锁定分母≈1.0），收据 `Window` 新增 `exposure_started_monotonic/iso`；`started_monotonic` 保持门前调用时刻（收据 wall 语义不 breaking），report wall 改用 exposure 起点算。旧收据无新字段时回落到原 wall 口径。
-- **已修（`f2a95d6`），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），有 ignored receipt 时与其逐行对账、无则独立通过（本地删文件实测 9/9）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
-- 可选清理（非 blocker）：去重用例仍保留“有 ignored 文件就对账”的条件分支，严格自包含应删掉该分支只留内联 fixture；改动小，顺手做，不单独立项。
+- **已修（`f2a95d6`，本轮收尾为严格自包含），P2：测试自包含 + CI 显式采集。** 去重用例内联 3 行最小 fixture（detector/wake event/lagging duplicate），不再读 ignored receipt（`RECEIPT_CONSOLE` 与对账分支已删）；CI `python` job 新增 wake 显式步骤（默认 pytest 仍不收集 `scripts/`）。本轮未重采设备。
 - 原设备证据边界：gain 1.0 为 4/8、gain 0.3 为 8/8，共 12/16；gain 不是测得距离。四次失败均在已进入 idle 后，单次冷启动及先高后低顺序不足证明固定 45–50s 预热；不能只取后 12/12。60s 默认等待仅实验参数，多次冷启动/随机或交错增益，对冷启动与预定义稳态分报。成功刺激起点→唤醒行中位 1.445s 含前导静音与采集时序，不当精确声学延迟。
 - 原误唤醒修正保留：带 `(state: N)` 首次行去重后新事件 0，TV=1 是上一试次滞后重复；但 TV 133.038s 内 idle=0、约 92.382s speaking/KWS off，small_talk 124.471s 内 idle≈100.909s，quiet 300.001s 均为日志可见 idle。故不能宣称电视/多人各 2 分钟有效零误唤醒；配置日志不自动证明整个窗口 detector 持续启用。
 - 工具验收：音量/静音、录音和串口错误都在 finally 恢复，恢复结果实读；真人 Markdown/JSON 口径一致，不从人工提示时刻算真实开口延迟。记录实际输入电平、warmup 配置/实际等待、状态与 detector 证据，错误不算 miss 或零误唤醒。

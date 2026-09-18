@@ -3,9 +3,7 @@
 The public seams under test are the window gate/exposure accounting, the
 wake-event dedup rule, the invalid (never miss/never false-wake) outcomes and
 the report rendering.  Everything runs against an unstarted ConsoleReader fed
-with hand-built lines, so no serial port, speaker or device is touched.  The
-dedup replay pins the real receipt console.log lines 628 (wake event with
-``(state:``) and 650 (lagging duplicate without it); the file is only read.
+with hand-built lines, so no serial port, speaker or device is touched.
 """
 
 from __future__ import annotations
@@ -17,11 +15,6 @@ from pathlib import Path
 
 import pytest
 from scripts import wake_word_matrix as wwm
-
-RECEIPT_CONSOLE = (
-    Path(__file__).resolve().parents[2]
-    / "outputs/acceptance/run-20260916-p2-05-wake-matrix-1/console.log"
-)
 
 # Minimal in-repo fixture: the real receipt's wake event (with ``(state:``) and
 # its lagging duplicate (without it), plus the preceding detector line. Only
@@ -352,18 +345,9 @@ def test_window_exposure_excludes_pre_gate_idle_history(
 
 
 def test_offline_replay_dedups_lagging_duplicate(tmp_path: Path) -> None:
-    if RECEIPT_CONSOLE.exists():
-        raw = RECEIPT_CONSOLE.read_text(encoding="utf-8").splitlines()
-        event_text = raw[627].split("] ", 1)[1]
-        duplicate_text = raw[649].split("] ", 1)[1]
-        detector_text = raw[626].split("] ", 1)[1]
-        assert event_text == FIXTURE_WAKE_EVENT_TEXT
-        assert duplicate_text == FIXTURE_LAGGING_DUPLICATE_TEXT
-        assert detector_text == FIXTURE_DETECTOR_TEXT
-    else:
-        event_text = FIXTURE_WAKE_EVENT_TEXT
-        duplicate_text = FIXTURE_LAGGING_DUPLICATE_TEXT
-        detector_text = FIXTURE_DETECTOR_TEXT
+    event_text = FIXTURE_WAKE_EVENT_TEXT
+    duplicate_text = FIXTURE_LAGGING_DUPLICATE_TEXT
+    detector_text = FIXTURE_DETECTOR_TEXT
     assert wwm._is_wake_event(event_text)
     assert not wwm._is_wake_event(duplicate_text)
 
