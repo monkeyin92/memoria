@@ -389,6 +389,7 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 撤回原因：`services/media_edge/device_ws_uplink.go:111 ignoreForbiddenBarge` 在被触发时**必然**打印 `media edge ignored barge from a forbidden source session=… source=…`，而三次采集（`run-20260920-f2-barge-window`、`run-20260920-f2-barge-counter`、`run-20260920-rewake-after-standby`）的 `edge.log` 中该行为 **0**；即我制造的“播放中重放唤醒词”**没有**产生被忽略的禁止源 barge（设备把它当成合法新话轮/新会话）。故原先“语音打断路径通过”的说法不成立。
 - 修复契约（代码自证）：`ignoreForbiddenBarge` 只对**签名设备设置 `DeviceSettings.AllowedBargeIn` 未允许的源**生效——`handleVAD`（源 `voice`，仅当 `vad.start` 且 `playbackActive`）、`handleKeyword`（源 `keyword`，与播放无关）、`handleButtonStop`（源 `button`）；被忽略时帧**从不转发**、助手保持话语权、**不发 session error**（epoch/序号/形状违规仍关通道）。`button` 还额外 `clearPlaybackActive("device_button_stop", …)`。
 - 计数证据不可得：Edge 的 `/metrics` 只在**私有监听** `:8081` 暴露，明文请求（含正确头 `X-Memoria-Edge-Control-Token`）返回 **400**（HTTPS/mTLS 监听），故本轮**无计数增量证据**，只有上述日志为判据。
+- 第三次尝试（`run-20260920-f2-barge-counter`，播放中打断）同样**未**出现 `ignored barge` 行；该轮 barge 结束后 `speaking -> listening`（距 barge 结束 0.00s），随后 20s 内追问**未被接受**，设备无 error 行。故本轮既未复现禁止源 barge，也未取得“打断后会话继续服务”的正向证据，结论维持**未验证**。
 - 待办（复现所需）：读取该设备的签名 `allowed_barge_in`（`services/media_edge/device_ws_auth.go:118`），据此构造会话内、被禁止源的 barge；`button` 源只能在设备上产生（触摸面板/触摸按键，`firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_esp_vocat.cc` + `touch_button_sensor.h`，固件 `MemoriaProtocol::SendButtonStop`），**需要人到设备旁**或另建非生产 edge 复现。
 
 ## 2026-09-20 待命后再唤醒回归（原始症状）与设备侧异常
