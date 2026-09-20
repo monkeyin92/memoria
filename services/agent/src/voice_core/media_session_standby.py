@@ -297,7 +297,16 @@ class MediaSessionStandbyMixin:
             and context.runtime.current_speaker_class == "owner"
             and context.runtime.current_speaker_authority_verified
         )
-        if owner_verified:
+        # 2026-09-20 product contract (F1, user): an accepted user turn refills
+        # the whole follow-up window even when speaker authority cannot verify
+        # the owner -- the device has no enrollment yet, and the timeout is
+        # about "did anyone speak to us", not about attributing content.
+        # Refreshing only for a verified owner drained a single window across a
+        # conversation: the reply finished with ~4s left and the session went
+        # to standby before the next question.  Assistant-initiated speech (a
+        # missed-hearing nudge) never reaches this branch, so the assistant
+        # still cannot extend its own window.
+        if owner_verified or (accepted and refresh_owner_budget):
             context.owner_silence_remaining_s = self.owner_silence_timeout_s
             context.owner_silence_grace_used = False
         if accepted:

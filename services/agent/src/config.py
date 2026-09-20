@@ -176,7 +176,7 @@ class AgentSettings(BaseSettings):
         ),
     )
     media_owner_silence_timeout_s: float = Field(
-        default=10.0,
+        default=30.0,
         ge=1.0,
         le=300.0,
         alias="MEDIA_OWNER_SILENCE_TIMEOUT_S",

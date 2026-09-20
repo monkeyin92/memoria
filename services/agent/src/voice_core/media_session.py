@@ -101,7 +101,7 @@ class MediaVoiceCoreRegistry(
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
     # Disabled for direct library construction; the production bridge wires
-    # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (10s by default).
+    # AgentSettings.MEDIA_OWNER_SILENCE_TIMEOUT_S (30s by default).
     owner_silence_timeout_s: float = 0.0
     # Hard upper bound for one device utterance when Edge never emits VAD end.
     # Keep direct/library construction fail-safe by defaulting to disabled;

@@ -148,7 +148,10 @@ async def test_inflight_prepare_gets_one_bounded_grace_then_finishes() -> None:
         release.set()
         fence, reason = await asyncio.wait_for(task, 1)
         assert fence is not None and reason is None
-        assert context.owner_silence_remaining_s == 0  # no owner authority was proved
+        # An accepted turn is owner activity for the timeout, whether or not
+        # speaker authority could verify the owner (2026-09-20 product
+        # contract): the follow-up window is refilled, not left at the residue.
+        assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
@@ -627,8 +630,12 @@ async def test_vad_without_grace_preserves_the_unspent_silence_budget() -> None:
         remaining = context.owner_silence_remaining_s
         await registry.on_speech_segment(session, _vad(identity, start=960))
         assert context.owner_silence_remaining_s == remaining
+        # A bare VAD edge preserves the unspent budget (asserted above), but the
+        # accepted turn it was admitted for refills the whole window
+        # (2026-09-20 product contract): a conversation must not drain one
+        # window turn by turn.
         registry._finish_owner_silence_turn(context, accepted=True)
-        assert context.owner_silence_remaining_s == remaining
+        assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
     finally:
         await registry._finalize_session(identity.session_id)
 
@@ -999,13 +1006,18 @@ async def test_explicit_conversation_end_stands_by_without_lockup() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("verified", "closes_after_playback"), [(True, False), (False, True)])
-async def test_post_playback_budget_after_a_spent_grace_follows_owner_authority(
+@pytest.mark.parametrize("verified", [True, False])
+async def test_post_playback_budget_after_a_spent_grace_is_refilled_for_an_accepted_turn(
     monkeypatch: Any,
     verified: bool,
-    closes_after_playback: bool,
 ) -> None:
-    """Only a verified owner restores the window once the grace was spent."""
+    """An accepted turn refills the window after a spent grace, verified or not.
+
+    2026-09-20 product contract: the follow-up window belongs to the
+    conversation, not to speaker authority.  Without an enrollment the
+    unverified branch used to keep ``0.0`` and the session stood by the moment
+    the reply finished playing, so a multi-turn conversation was impossible.
+    """
 
     registry, context, provider, runtime, identity = await _device_registry("post-playback-budget")
     registry._arm_owner_silence_timer(context, reset=True)
@@ -1025,20 +1037,12 @@ async def test_post_playback_budget_after_a_spent_grace_follows_owner_authority(
 
     registry._finish_owner_silence_turn(context, accepted=True)
     assert context.owner_silence_grace_deadline is None
-    if verified:
-        assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
-        assert context.owner_silence_grace_used is False
-    else:
-        assert context.owner_silence_remaining_s == 0.0
+    assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
+    assert context.owner_silence_grace_used is False
 
     registry._sync_owner_silence_phase(context, "listening")
-    if closes_after_playback:
-        await asyncio.wait_for(context.owner_silence_task, 1)
-        assert context.standby_requested
-        assert context.standby_reason == "owner_silence_timeout"
-    else:
-        assert context.owner_silence_task is not None
-        assert not context.standby_requested
+    assert context.owner_silence_task is not None
+    assert not context.standby_requested
     await registry._finalize_session(identity.session_id)
 
 

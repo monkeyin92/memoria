@@ -340,11 +340,15 @@ async def test_prepare_retries_succeed_once_without_extending_tail(
         assert case.context.turn_commit_retry_task is None
         assert case.context.turn_endpoint_tail_deadline is None
         assert handle.cancelled()
-        if verified_owner:
-            assert case.context.owner_silence_remaining_s == case.registry.owner_silence_timeout_s
-            assert not case.context.owner_silence_grace_used
-        else:
-            assert 0 <= case.context.owner_silence_remaining_s <= _BUDGET
+        # The accepted turn refills the follow-up window with or without
+        # speaker authority (2026-09-20 product contract); the retries before it
+        # are not owner activity and are still bounded by the seeded budget
+        # inside the loop above.
+        assert (
+            case.context.owner_silence_remaining_s
+            == case.registry.owner_silence_timeout_s
+        )
+        assert not case.context.owner_silence_grace_used
         assert case.registry.metrics.get(
             "voice_turn_prepare_retry_total", {"status": "attempt"},
         ) == success_on_call - 1
