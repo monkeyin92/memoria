@@ -402,3 +402,10 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 回归（跑在新发布镜像上，独立路径）：21:48:24 `activating->idle` → +50s 预热 → 21:49:22 一次唤醒成功 → 21:49:24 会话开启 → 21:49:28 欢迎语结束 → 21:49:30 播放“再见”后**同秒** `listening->idle` → **21:49:34 立即再唤醒成功**（`Wake word detected` 21:49:33.846）→ 21:49:36 **新会话开启**。结论：原报告症状“待命后再唤醒被拒”**未复现**；本轮无 `barge_source_forbidden`/error。收据 `outputs/acceptance/run-20260920-rewake-after-standby/`（脚本被操作者提前停止，最终 RESULTS 行未打印，证据为上列控制台时间线）。
 - **设备侧异常（与刺激无关，发生于空闲期）**：① `BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT` 慢性持续（IMU 读失败，短时可 ~10 条/秒）；② 端口复位后两次 `abort() was called at PC 0x4038acd6 on core 0` → `rst:0xc (RTC_SW_CPU_RST)`，每次约 12s 后再起，随后 `MemoriaEspVocat: BMI270 initialized` 并恢复正常运行。两次 abort 均发生在**尚未播放任何刺激**的空闲窗口内，因此不能归因于本轮 F1/F2 测试；需按硬件/固件路径单独排查（刷写需另行授权）。
 - 仍未覆盖：**设备本地按键**触发的 `button.stop` 撤销播放窗口（需人手按压）；+3s/+5s 极短续问格未单独取值。
+
+## 2026-09-20 删除范围：已闭合部分与已知缺口（结论）
+
+- 已闭合（有收据）：可删域按 saga 9 步推进，`verified_empty` 覆盖 `_delete_order` 内且含 `account_id` 列的表；本轮补齐 guardian 的 `tutor_practice_evidence`/`tutor_commit_outbox`（删除/计数/导出 + RLS 前置 policy + 最小授权，提交 `6e853ef`；测试含真 PG 的"另一主体行不受影响"与幂等断言）。
+- **已知合规缺口（明确记录；不做封存实现）**：① 明文残留——`memory_records.payload`、`memory_shared_proposals.content` 明文且不可就地改写，追加 tombstone **不构成擦除**；② 不可归属面四处——`memory_outbox`（无主体列）、`session_runtime_events`（`actor_id` 可空且无 subject 列）、`session_runtime_outbox`（无 subject 列）、`policy_receipts_v2.subject_id IS NULL`；③ append-only/零 DELETE 域（`memory_records`/`memory_status_events`/`memory_shared_votes`、`session_runtime_profiles`/`events`/`profile_receipts`、`policy_receipts_v2`）**无法物理删除**，且在不加迁移的前提下**无法形成可信封存标记**（`memory_status_events.status='revoked'` 非单调、后续合法事件可恢复可见性，故不能据此判 `verified_sealed`）。
+- **表述纪律**：不得对上述域使用"封存/已擦除"表述；`verified_empty` 与删除收据只证明"可删域无残留"，**不证明"已擦除"**。若未来定义合规要求（留存期限、合规接受者、主体哈希/去标识方案），再走"各域新增独立封存登记 + 读口 join + 计数口"的最小迁移路径（届时需同时定义消费者与审计留存）。
+- 未开工专项：identity（`identity_delete_guard` 依赖的 GUC 全仓从未设置、SQLite 无 delete/remaining 实现）、device_fleet/onboarding（无 person 列，须经 `identity_device_bindings.account_owner_person_id` 解析归属）。
