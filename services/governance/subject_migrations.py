@@ -35,6 +35,7 @@ from typing import Any
 from services.digital_self.migrations import account_projection as _digital_self
 from services.identity.migrations import durable_subject as _durable_subject
 from services.memory_scope.migrations import legacy_archive as _memory_scope
+from services.persona import subject_projection as _persona_projection
 from services.persona.migrations import account_projection as _persona
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "MigrationTargets",
     "apply",
     "plan",
+    "read",
     "rollback",
     "status",
 ]
@@ -63,6 +65,9 @@ ROLLBACK_CONFIRMATION = "rollback-account-subject-migration"
 #: Hard cap for one status read; the operator reads the journals directly when
 #: they need a longer history.
 _STATUS_RUN_LIMIT = 20
+
+#: Default page size for one subject read.
+_SUBJECT_READ_LIMIT = 50
 
 
 class MigrationError(RuntimeError):
@@ -105,6 +110,7 @@ class _Seam:
     receipt_table: str
     quarantine_table: str | None
     plan: Callable[..., dict[str, Any]]
+    read: Callable[[MigrationTargets, str, int], dict[str, Any]]
     apply: Callable[..., dict[str, Any]]
     rollback: Callable[..., dict[str, Any]]
     journal_db: Callable[[MigrationTargets], Path]
@@ -255,6 +261,34 @@ def _memory_scope_rollback(
     )
 
 
+def _durable_read(
+    targets: MigrationTargets, subject_id: str, limit: int
+) -> dict[str, Any]:
+    return _durable_subject.read_subject(
+        targets.control, targets.identity, subject_id=subject_id, limit=limit
+    )
+
+
+def _digital_self_read(
+    targets: MigrationTargets, subject_id: str, limit: int
+) -> dict[str, Any]:
+    return _digital_self.read_subject(targets.control, subject_id, limit=limit)
+
+
+def _persona_read(
+    targets: MigrationTargets, subject_id: str, limit: int
+) -> dict[str, Any]:
+    return _persona_projection.read_subject(targets.control, subject_id, limit=limit)
+
+
+def _memory_scope_read(
+    targets: MigrationTargets, subject_id: str, limit: int
+) -> dict[str, Any]:
+    return _memory_scope.read_subject(
+        _archive_journal(targets), subject_id, limit=limit
+    )
+
+
 _SEAMS: dict[str, _Seam] = {
     "durable_subject": _Seam(
         name="durable_subject",
@@ -263,6 +297,7 @@ _SEAMS: dict[str, _Seam] = {
         receipt_table="durable_subject_row_receipts",
         quarantine_table=None,
         plan=_durable_plan,
+        read=_durable_read,
         apply=_durable_apply,
         rollback=_durable_rollback,
         journal_db=_control_journal,
@@ -275,6 +310,7 @@ _SEAMS: dict[str, _Seam] = {
         receipt_table="digital_self_projection_receipts",
         quarantine_table="digital_self_projection_quarantine",
         plan=_digital_self_plan,
+        read=_digital_self_read,
         apply=_digital_self_apply,
         rollback=_digital_self_rollback,
         journal_db=_control_journal,
@@ -287,6 +323,7 @@ _SEAMS: dict[str, _Seam] = {
         receipt_table="persona_projection_receipts",
         quarantine_table="persona_projection_quarantine",
         plan=_persona_plan,
+        read=_persona_read,
         apply=_persona_apply,
         rollback=_persona_rollback,
         journal_db=_control_journal,
@@ -299,6 +336,7 @@ _SEAMS: dict[str, _Seam] = {
         receipt_table="legacy_archive_row_receipts",
         quarantine_table=None,
         plan=_memory_scope_plan,
+        read=_memory_scope_read,
         apply=_memory_scope_apply,
         rollback=_memory_scope_rollback,
         journal_db=_archive_journal,
@@ -346,6 +384,33 @@ def plan(
     report["migration"] = seam.name
     report["scope"] = seam.scope
     report["dry_run"] = True
+    return report
+
+
+def read(
+    migration: str,
+    targets: MigrationTargets,
+    *,
+    subject_id: str,
+    limit: int = _SUBJECT_READ_LIMIT,
+) -> dict[str, Any]:
+    """Read one subject's migrated rows (read-only; nothing here writes).
+
+    The read path of the four seams: an operator asks what one subject owns
+    after the migration, and every seam answers from its own target rows.  A
+    subject that was never migrated answers with zero rows -- there is no
+    fallback to the account-keyed source.
+    """
+
+    seam = _seam(migration)
+    if limit < 1:
+        raise MigrationError("limit must be positive")
+    if not subject_id.strip():
+        raise MigrationError("read requires a subject_id")
+    report = dict(seam.read(targets, subject_id, limit))
+    report["migration"] = seam.name
+    report["scope"] = seam.scope
+    report["read_only"] = True
     return report
 
 

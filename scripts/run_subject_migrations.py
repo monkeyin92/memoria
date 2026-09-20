@@ -13,6 +13,8 @@ Examples::
     uv run python scripts/run_subject_migrations.py apply --migration persona \\
         --expect-manifest-sha256 <sha256> --confirm apply-account-subject-migration
     uv run python scripts/run_subject_migrations.py status --migration persona
+    uv run python scripts/run_subject_migrations.py read --migration persona \\
+        --subject <subject-id>
     uv run python scripts/run_subject_migrations.py rollback --migration persona \\
         --migration-id <id> --confirm rollback-account-subject-migration
 
@@ -39,6 +41,7 @@ from services.governance.subject_migrations import (
     MigrationTargets,
     apply,
     plan,
+    read,
     rollback,
     status,
 )
@@ -130,6 +133,17 @@ def _parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="read the stored receipts")
     add_common(status_parser)
     status_parser.add_argument("--run-limit", type=int, default=20)
+
+    read_parser = subparsers.add_parser(
+        "read", help="read one subject's migrated rows (read-only)"
+    )
+    add_common(read_parser)
+    read_parser.add_argument(
+        "--subject",
+        required=True,
+        help="the subject whose migrated rows are read back",
+    )
+    read_parser.add_argument("--limit", type=int, default=50)
     return parser
 
 
@@ -181,6 +195,13 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.command == "status":
         return status(args.migration, targets, run_limit=args.run_limit)
+    if args.command == "read":
+        return read(
+            args.migration,
+            targets,
+            subject_id=args.subject,
+            limit=args.limit,
+        )
     raise MigrationError(f"unsupported command: {args.command}")
 
 

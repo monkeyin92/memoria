@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from services.persona.subject_projection import PROJECTED_TABLES
+
 PersonaOutcome = Literal[
     "mapped", "refreshed", "omitted", "quarantined", "already_projected"
 ]
@@ -42,14 +44,7 @@ _VERSION = "persona_versions"
 _EVENT = "evidence_events"
 _SOURCE_TABLES = (_TRAIT, _EVIDENCE, _OBSERVATION, _STYLE, _CONSENT, _VERSION)
 
-_PROJECTED = {
-    _TRAIT: "persona_subject_traits",
-    _EVIDENCE: "persona_subject_evidence",
-    _OBSERVATION: "persona_subject_observation_receipts",
-    _STYLE: "persona_subject_style_stats",
-    _CONSENT: "persona_subject_learning_consents",
-    _VERSION: "persona_subject_versions",
-}
+_PROJECTED = dict(PROJECTED_TABLES)
 
 _MIGRATIONS = "persona_projection_migrations"
 _RECEIPTS = "persona_projection_receipts"

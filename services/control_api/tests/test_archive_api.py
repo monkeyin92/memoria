@@ -4477,3 +4477,128 @@ async def test_archive_deletion_request_status_ignores_another_accounts_query(
         borrowed.text,
         account_ids=(owner["user_id"], other["user_id"]),
     )
+
+
+@pytest.mark.asyncio
+async def test_operator_deletion_receipt_answers_after_the_owner_sessions_are_gone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P2-03: the receipt stays queryable once the owner can no longer sign in."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "receipt-owner", "password": "safe-passphrase"},
+            )
+        ).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        completed = await client.post(
+            "/v1/archive/deletion-requests",
+            headers=owner_headers,
+            json={"password": "safe-passphrase", "confirmation": "永久删除我的全部数据"},
+        )
+        request_id = completed.json()["request_id"]
+        fenced = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+        unauthorised = await client.get(f"/v1/archive/deletion-receipts/{request_id}")
+        unknown = await client.get(
+            "/v1/archive/deletion-receipts/00000000-0000-4000-8000-000000000000",
+            headers=internal,
+        )
+        receipt = await client.get(
+            f"/v1/archive/deletion-receipts/{request_id}", headers=internal
+        )
+        completed_only = await client.get(
+            "/v1/archive/deletion-receipts",
+            headers=internal,
+            params={"status": "completed"},
+        )
+        pending_only = await client.get(
+            "/v1/archive/deletion-receipts",
+            headers=internal,
+            params={"status": "deleting"},
+        )
+
+    assert completed.status_code == 200
+    assert fenced.status_code == 401
+    assert unauthorised.status_code == 401
+    assert unknown.status_code == 404
+    assert receipt.status_code == 200
+    body = receipt.json()
+    assert body["request_id"] == request_id
+    assert body["status"] == "completed"
+    assert body["step"] == "completed"
+    assert body["progress"] == {}
+    assert isinstance(body["deleted_counts"], dict)
+    assert body["last_error"] is None
+    # A finalized receipt has no account reference left, and never a raw id.
+    assert body["account_ref"] is None
+    assert owner["user_id"] not in receipt.text
+    assert (
+        hashlib.sha256(owner["user_id"].encode("utf-8")).hexdigest()[:16]
+        not in receipt.text
+    )
+    assert [item["request_id"] for item in completed_only.json()["items"]] == [request_id]
+    assert completed_only.json()["count"] == 1
+    assert pending_only.json() == {"items": [], "count": 0}
+
+
+@pytest.mark.asyncio
+async def test_operator_deletion_receipt_reports_a_pending_run_with_an_audit_hash(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A stuck saga stays diagnosable: status, step, progress and last error."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    now = datetime.now(UTC).isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "receipt-pending", "password": "safe-passphrase"},
+            )
+        ).json()
+        row = app.state.memory_store.begin_account_deletion(
+            user_id=owner["user_id"], started_at=now
+        )
+        app.state.memory_store.update_account_deletion(
+            user_id=owner["user_id"],
+            request_id=row["request_id"],
+            step="archive.objects",
+            updated_at=now,
+            progress={"archive.objects": 3},
+            last_error="RuntimeError",
+        )
+        pending = await client.get(
+            "/v1/archive/deletion-receipts",
+            headers=internal,
+            params={"status": "deleting"},
+        )
+        receipt = await client.get(
+            f"/v1/archive/deletion-receipts/{row['request_id']}", headers=internal
+        )
+        rejected = await client.get(
+            "/v1/archive/deletion-receipts",
+            headers=internal,
+            params={"status": "paused"},
+        )
+
+    assert pending.json()["count"] == 1
+    item = pending.json()["items"][0]
+    assert item["status"] == "deleting"
+    assert item["step"] == "archive.objects"
+    assert item["progress"] == {"archive.objects": 3}
+    assert item["last_error"] == "RuntimeError"
+    assert item["account_ref"] == hashlib.sha256(
+        owner["user_id"].encode("utf-8")
+    ).hexdigest()[:16]
+    assert receipt.json() == item
+    assert owner["user_id"] not in receipt.text
+    assert rejected.status_code == 422

@@ -23,6 +23,7 @@ from services.governance.subject_migrations import (
     MigrationTargets,
     apply,
     plan,
+    read,
     rollback,
     status,
 )
@@ -214,6 +215,48 @@ def test_status_refuses_a_missing_journal_database(tmp_path: Path) -> None:
     targets = MigrationTargets(control=tmp_path / "absent.sqlite3")
     with pytest.raises(MigrationError, match="does not exist"):
         status("durable_subject", targets)
+
+
+def test_read_is_read_only_and_needs_a_subject(tmp_path: Path) -> None:
+    targets = _bare_world(tmp_path)
+    before = _journal_snapshot(targets.control)
+
+    for name in MIGRATION_NAMES:
+        report = read(name, targets, subject_id="nobody")
+        assert report["migration"] == name
+        assert report["read_only"] is True
+        assert report["scope"]
+
+    with pytest.raises(MigrationError, match="subject_id"):
+        read("persona", targets, subject_id="   ")
+    with pytest.raises(MigrationError, match="limit"):
+        read("persona", targets, subject_id="nobody", limit=0)
+
+    assert _journal_snapshot(targets.control) == before
+
+
+def test_read_answers_one_subject_after_an_apply(tmp_path: Path) -> None:
+    targets = _healthy_persona_world(tmp_path)
+    approved = plan("persona", targets)["manifest_sha256"]
+    apply(
+        "persona",
+        targets,
+        expected_manifest_sha256=str(approved),
+        confirmation=APPLY_CONFIRMATION,
+    )
+    subjects = _target_subjects(targets.control, _PERSONA_TRAITS)
+    assert subjects
+
+    report = read("persona", targets, subject_id=subjects[0])
+    assert report["projection_present"] is True
+    assert report["tables"]["persona_subject_traits"]["count"] == 1
+    assert report["tables"]["persona_subject_versions"]["count"] == 1
+    assert report["read_only"] is True
+
+    foreign = read("persona", targets, subject_id="someone-else")
+    assert foreign["projection_present"] is True
+    assert foreign["tables"]["persona_subject_traits"]["count"] == 0
+    assert foreign["tables"]["persona_subject_versions"]["count"] == 0
 
 
 def test_control_api_never_imports_the_migration_seams() -> None:

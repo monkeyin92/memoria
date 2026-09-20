@@ -4,27 +4,33 @@
 
 本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）与收据 docs（`b668960`/`87262d3`）；未部署、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit agents/openai/silero 1.8.1 + RTC 1.1.18/API 1.2.1）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
-本轮提交（上一提交 `1e6d730`）：主体隔离批次 + 四个 account→subject SQLite 迁移接缝与 operator 执行入口（`scripts/run_subject_migrations.py`）。已完成 code 与本地/权威 PostgreSQL 回归，但**未接入产品读路径、未 enabled、未部署**，也未连接生产或设备。它覆盖 P0-04/P1-05/P2-03 的 `EvidenceEvent.subject_id`、主体读出口、按主体 retention、subject-scoped partial export 与四迁移接缝；本记录不能据此宣称发布、真机验收或真实机器人对话。
+本轮提交（`1e6d730` 之后两次）：先提交主体隔离批次 + 四个 account→subject SQLite 迁移接缝（`00dc059`），再补上四迁移的按 subject 只读出口、persona 会话胶囊的主体读路径与 `account_deletions` 的 operator 回执出口。已完成 code 与本地/权威 PostgreSQL 回归，但**未 enabled、未部署、未接入设备 live 链**，也未连接生产或设备。它覆盖 P0-04/P1-05/P2-03 的 `EvidenceEvent.subject_id`、主体读出口、按主体 retention、subject-scoped partial export、四迁移接缝与回执可查询；本记录不能据此宣称发布、真机验收或真实机器人对话。
 本轮主体批次验证收据：`303 passed, 1 skipped`；PostgreSQL raw-voice contract、Ruff、`mypy services --strict`、module budget、`git diff --check`、authoritative PostgreSQL init/repeat-upgrade/contract gate 均通过。临时 PG 仅用于本轮隔离回归，生产/既有 `memoria-pgv` 未触碰。
-提交前门禁复核另修三处：`_schedule_persona_observation` 只接受账号本人主体（不同主体的已授权话轮不再教会账号人格）；growth 控制面回执（学习任务/决策回顾/反馈）落认证账号的 `subject_id`，否则会从主体读出口与导出里消失；9 个旧用例改为显式声明主体或已验证成人账户，导出用例改为断言这些回执仍在本人导出内。affected 域（control_api/archive/governance/identity/persona/digital_self/memory_scope）全绿，Ruff/module budget/strict mypy（446 files）通过。
+提交前门禁复核另修三处：`_schedule_persona_observation` 只接受账号本人主体（不同主体的已授权话轮不再教会账号人格）；growth 控制面回执（学习任务/决策回顾/反馈）落认证账号的 `subject_id`，否则会从主体读出口与导出里消失；9 个旧用例改为显式声明主体或已验证成人账户，导出用例改为断言这些回执仍在本人导出内。affected 域（control_api/archive/governance/identity/persona/digital_self/memory_scope + tests）`1640 passed, 1 skipped`，Ruff/module budget/strict mypy（447 files）通过。
+本轮读路径与回执收据（code，本地；无生产/设备访问）：
+- 四迁移各新增按 subject 的只读出口：`durable_subject.read_subject`（in-place 证据行 + 收据）、`digital_self/persona.read_subject`（投影行，persona 另有 `read_active_version`）、`memory_scope.read_subject`（`memory_records`/`memory_status_events`，scope=legacy_archive）。全部只读、不建 schema，缺库/缺表/无投影返回空而不是回落账号键。经 `services/governance/subject_migrations.read` 与 CLI `run_subject_migrations.py read --migration … --subject …` 暴露，`list/plan/status/read` 均只读。
+- persona 投影读放在产品侧 `services/persona/subject_projection.py`（表名映射由迁移模块导入，两侧不会漂移），Control API 仍不导入任何迁移接缝（守卫用例继续通过）。会话胶囊按会话解析出的当前主体取人格：主体不是账号本人时只读该主体的投影，无投影或权威不可用时返回空胶囊，绝不回落账号人格；账号本人路径不变。
+- 胶囊渲染抽成共享纯函数 `persona_capsule_from_snapshot`，SQLite/PostgreSQL 两个引擎与新读路径共用同一算法。
+- `account_deletions` 回执新增 operator 出口 `GET /v1/archive/deletion-receipts[/{request_id}]`（archive 内部 token，注销会话终止后仍可查），返回 status/step/progress/deleted_counts/last_error 与短审计哈希 `account_ref`，不返回账号 id；本人 GET 语义不变。
+- 仍未做：删除范围验证（MinIO/provider/音色声纹）、读路径的 PG 侧对等与小程序读口、其余 owner 控制面写入者（skills/self_model/self_preview）的 subject 归因。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-18
-reviewed_source_commit: 1e6d730_plus_this_round_subject_scope_batch
-current_worktree: subject_scope_batch_and_four_migrations_committed_this_round
+reviewed_source_commit: subject_scope_batch_00dc059_plus_read_paths_this_round
+current_worktree: clean_after_migration_read_paths_and_receipt_round
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_previous_plus_subject_scope_batch_and_four_migrations
-wired: subject_scoped_read_exits_in_application_code_migrations_not_wired
+code: committed_through_subject_scope_batch_and_migration_read_paths
+wired: subject_scoped_read_exits_plus_migration_read_paths_and_persona_capsule_subject_read
 enabled: false_for_current_head
-verified: local_and_authoritative_postgres_regression_for_subject_scope_and_four_migrations
+verified: local_and_authoritative_postgres_regression_for_subject_scope_migrations_read_paths_and_receipts
 guardian_declaration_scope: binding_scoped_owner_only_third_party_excluded
 accountless_person_consent: person_scoped_grant_read_revoke_replay_unbind_revoke_and_export_verified_device_pending
 production_readiness: ready_at_last_observation_not_refreshed_this_review
@@ -69,7 +75,7 @@ device_id: dev_atk_a4cb8fd6095c
 - P2-03 主体隔离批次与四迁移（第①步 `504e868`；②/③步与四迁移随本轮提交）：`EvidenceEvent.subject_id` 已通过 `504e868` 落地并有远端 CI `35317165398`、SQLite+真实 PG 回归；本轮进一步把 timeline/search、session context、conversation review/history、life timeline、people、review queue/review、guardian summary/export 与 catalog episode/claim/person/document/review cascade 接入 subject lineage，并提交四个 account→subject SQLite 迁移接缝（durable subject、digital self、persona、memory scope）与唯一 operator 执行入口 `scripts/run_subject_migrations.py`（plan/apply/rollback/status，双围栏；应用启动不执行）。
   - 读取时重新校验 minor retention，撤回后拒绝读回；父子事件主体不一致返回 `409 parent_subject_mismatch`，无法证明旧数据主体归属则省略不猜。
   - subject-scoped partial export 已使用 `format_version=2`、`scope.partial=true`、字段白名单、`content_id`、`service_provider`、`ai_generated`、`manifest_sha256` 与 `omitted_sections`；guardian export 仍是治理 metadata-only，不是逐字内容导出。
-  - 仍未做：四迁移接入产品读路径、`account_deletions` 回执的独立 HTTP 查询出口、备份/provider 删除验证，以及生产、设备和真实机器人对话验收。
+  - 仍未做：删除范围验证（备份/MinIO/provider/音色声纹）、读路径的 PG 侧对等与小程序读口、其余 owner 控制面写入者的 subject 归因，以及生产、设备和真实机器人对话验收。
 - P2-06 陪伴场景评测首片（`18d36ff`，远端 CI `35315844422` success：Pytest 5116 passed/2 skipped、覆盖率≥85%、orchestration 90%、provider protocols 95%；本地 companionship 用例与 Ruff/strict mypy 通过）：`services/companionship/evaluation.py` 用离线 SQLite ASGI 走真实门（绑定→会话→app_confirm 切人→权威签名 profile→策略/监护同意），固定集 5 例：under_14/14_17 无同意 ⇒ 轮廓无会话能力且无私密记忆能力、成人自用 adult_companion、切人后旧 profile 决策被拒、记忆保留同意授予→撤回。基线 5/5、gate_violations 0、unauthorized_recall 0、p50≈284ms；CLI `scripts/evaluate_companionship.py --dataset … --output …`。仍未验：模型措辞关怀度、回顾可读性评分、超时负例、设备准入。
 - P1-06 未见改写集与基线（`c48fcf9`，本地 archive 全套与 Ruff/strict mypy 通过）：新增 4 例未见集（跨会话计划、忌口转述、安慰式回忆、跨账号隔离），固定与未见分报；规则路径基线 recall@5=0.6/nDCG@10=0.6/extraction_recall=1.0/source_attribution=1.0/leakage=0，两条未命中按现状记录为天花板（未调参），用例钉住基线。仍未验：真实 Qwen 抽取器下的两组指标（需密钥）。
 - P2-01 记忆预取与 token 预算（`948938c`，本地全量 pytest 通过、Ruff/strict mypy 434 files/模块预算通过，无生产/设备访问）：① 删除未接入的 `MemoryContextClient` 链（生产零构造点 + 专测“被忽略”；prefetch 产出会被 plan 冻结胶囊覆盖），含配置/令牌/部署样例/env 脚本与相关断言；② 记忆胶囊在快照冻结处加 `MEMORY_CAPSULE_MAX_CHARS=1200` 硬预算：整条优先、溢出条目截断、其余丢弃，persona 不计入；指标 `context_memory_chars`/`context_memory_trimmed_total`，实测算例 32×240 字 → 5 条/1200 字、裁剪 27 条、单次约 1.0µs；③ 核对隔离：请求带 session + speaker decision、响应校验同 `speaker_class`、非 owner 草稿清空胶囊、迟到由 epoch/版本守卫拒绝、persona 与当轮情绪分属两处。仍未验：真实链路端到端时延前后对照与未见集召回基线。

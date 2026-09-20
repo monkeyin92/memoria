@@ -21,6 +21,37 @@ class ExternalIdentityConflictError(ValueError):
     pass
 
 
+#: Deletion receipt columns shared by the operator reads.
+_DELETION_RECEIPT_COLUMNS = (
+    "user_id, request_id, status, step, started_at, updated_at, completed_at, "
+    "progress_json, last_error, deleted_counts_json"
+)
+_DELETION_STATUSES = frozenset({"deleting", "completed"})
+_DELETION_RECEIPT_LIMIT = 500
+
+
+def _deletion_receipt(row: Mapping[str, Any]) -> dict[str, Any]:
+    """One receipt row with an audit hash instead of the account id."""
+
+    user_id = row["user_id"]
+    return {
+        "account_ref": (
+            None
+            if user_id is None
+            else hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
+        ),
+        "request_id": str(row["request_id"]),
+        "status": str(row["status"]),
+        "step": str(row["step"]),
+        "started_at": row["started_at"],
+        "updated_at": row["updated_at"],
+        "completed_at": row["completed_at"],
+        "progress": json.loads(str(row["progress_json"])),
+        "deleted_counts": json.loads(str(row["deleted_counts_json"])),
+        "last_error": row["last_error"],
+    }
+
+
 class AccountStoreMixin:
     """Accounts, external identities, avatars, and account deletion."""
 
@@ -355,6 +386,49 @@ class AccountStoreMixin:
         result["progress"] = json.loads(str(result.pop("progress_json")))
         result["deleted_counts"] = json.loads(str(result.pop("deleted_counts_json")))
         return result
+
+    def get_account_deletion_receipt(self, *, request_id: str) -> dict[str, Any] | None:
+        """One deletion receipt by request id (operator read).
+
+        The lookup is not scoped to a session, so it still answers after the
+        deletion journey terminated the account's sessions.  The account id
+        itself is never released: the row carries the same short audit hash the
+        archive logs use, and it is absent once the row was finalized.
+        """
+
+        with self._connection() as connection:
+            row = connection.execute(
+                f"SELECT {_DELETION_RECEIPT_COLUMNS} FROM account_deletions "
+                "WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        return None if row is None else _deletion_receipt(row)
+
+    def list_account_deletion_receipts(
+        self,
+        *,
+        status_filter: str | None = None,
+        limit: int = 50,
+    ) -> tuple[dict[str, Any], ...]:
+        """Deletion receipts, newest first, optionally filtered by status."""
+
+        if status_filter is not None and status_filter not in _DELETION_STATUSES:
+            raise ValueError("unsupported deletion status filter")
+        if not 1 <= limit <= _DELETION_RECEIPT_LIMIT:
+            raise ValueError(
+                f"deletion receipt limit must be between 1 and {_DELETION_RECEIPT_LIMIT}"
+            )
+        clause = "" if status_filter is None else "WHERE status = ?"
+        params: tuple[Any, ...] = (
+            (limit,) if status_filter is None else (status_filter, limit)
+        )
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"SELECT {_DELETION_RECEIPT_COLUMNS} FROM account_deletions {clause} "
+                "ORDER BY updated_at DESC, request_id LIMIT ?",
+                params,
+            ).fetchall()
+        return tuple(_deletion_receipt(row) for row in rows)
 
     def begin_account_deletion(self, *, user_id: str, started_at: str) -> dict[str, Any]:
         with self._connection() as connection:

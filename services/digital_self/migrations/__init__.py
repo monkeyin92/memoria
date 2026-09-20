@@ -5,6 +5,7 @@ from services.digital_self.migrations.account_projection import (
     apply,
     dry_run,
     plan,
+    read_subject,
     rollback,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "apply",
     "dry_run",
     "plan",
+    "read_subject",
     "rollback",
 ]

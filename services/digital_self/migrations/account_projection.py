@@ -2369,3 +2369,74 @@ def rollback(
         }
     finally:
         connection.close()
+
+
+_SUBJECT_READ_LIMIT = 50
+_SUBJECT_READ_ORDER = {
+    _PROJECTED_VERSION_TABLE: "version_number DESC, version_id",
+    _PROJECTED_AUDIT_TABLE: "occurred_at DESC, event_id",
+}
+
+
+def read_subject(
+    db_path: str | Path,
+    subject_id: str,
+    *,
+    limit: int = _SUBJECT_READ_LIMIT,
+) -> dict[str, Any]:
+    """Read one subject's projected Digital Self rows (read-only).
+
+    The read path of the projection: it never creates a schema and never falls
+    back to the account-keyed registry, so a subject without projected rows
+    answers with zero rows instead of the account's versions.
+    """
+
+    subject = subject_id.strip()
+    if not subject:
+        raise DigitalSelfProjectionError("read_subject requires a subject_id")
+    if limit < 1:
+        raise DigitalSelfProjectionError("read_subject limit must be positive")
+    path = Path(db_path).expanduser()
+    report: dict[str, Any] = {
+        "scope": _SCOPE,
+        "db_path": str(path),
+        "subject_id": subject,
+        "projection_present": False,
+        "tables": {},
+        "truncated": False,
+    }
+    if not path.exists():
+        return {**report, "reason": "database_missing"}
+    connection = _connect_read_only(path)
+    try:
+        if not _table_exists(connection, "main", _PROJECTED_VERSION_TABLE):
+            return {**report, "reason": "projection_missing"}
+        report["projection_present"] = True
+        tables: dict[str, Any] = {}
+        truncated = False
+        for table, columns in (
+            (_PROJECTED_VERSION_TABLE, _PROJECTED_VERSION_COLUMNS),
+            (_PROJECTED_AUDIT_TABLE, _PROJECTED_AUDIT_COLUMNS),
+        ):
+            if not _table_exists(connection, "main", table):
+                tables[table] = {"count": 0, "rows": []}
+                continue
+            total = int(
+                connection.execute(
+                    f"SELECT count(*) FROM {_quote_identifier(table)} WHERE subject_id = ?",
+                    (subject,),
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT {', '.join(_quote_identifier(column) for column in columns)} "
+                f"FROM {_quote_identifier(table)} WHERE subject_id = ? "
+                f"ORDER BY {_SUBJECT_READ_ORDER[table]} LIMIT ?",
+                (subject, limit),
+            ).fetchall()
+            tables[table] = {"count": total, "rows": [dict(row) for row in rows]}
+            truncated = truncated or total > len(rows)
+        report["tables"] = tables
+        report["truncated"] = truncated
+        return report
+    finally:
+        connection.close()

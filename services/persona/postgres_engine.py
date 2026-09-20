@@ -17,7 +17,6 @@ from services.common.evidence_policy import contribution_for, prompt_weight_for
 from services.persona.domain import (
     ObservationResult,
     PersonaCapsule,
-    PersonaCapsuleEntry,
     PersonaConsent,
     PersonaEvidence,
     PersonaRequest,
@@ -28,6 +27,7 @@ from services.persona.domain import (
     PersonaVersion,
     require_persona_counterexample,
 )
+from services.persona.engine import persona_capsule_from_snapshot
 from services.persona.rules import (
     CATEGORY_ORDER,
     EXCLUSIVE_STYLE_CATEGORIES,
@@ -36,7 +36,6 @@ from services.persona.rules import (
     PersonaExtractor,
     RuleBasedPersonaExtractor,
     exclusive_auto_promote_target,
-    safe_confirmed_style_description,
     should_auto_promote,
     trusted_uncertain_profile,
 )
@@ -847,85 +846,14 @@ class PostgresPersonaEngine:
         snapshot = row["snapshot"]
         if isinstance(snapshot, str):
             snapshot = json.loads(snapshot)
-        if confirmed_style_only:
-            safe_snapshot: list[dict[str, Any]] = []
-            for item in snapshot:
-                description = safe_confirmed_style_description(str(item.get("description") or ""))
-                if description is None:
-                    continue
-                safe_snapshot.append(
-                    {
-                        **item,
-                        "description": description,
-                        "context": "",
-                        "counterexample": "",
-                        "source_event_ids": [],
-                    }
-                )
-            snapshot = safe_snapshot
-        ranked = sorted(snapshot, key=lambda item: self._capsule_rank(item, request.topic))
-        prefix = (
-            f"[已确认表达风格 v{row['version_number']}] "
-            "仅调整表达方式，不推断或透露账户主人的身份、经历、价值观和决定。"
-            if confirmed_style_only
-            else f"[人格胶囊 v{row['version_number']}] "
-            "仅在自然且相关时参考，不机械复读口头禅；不得声称你就是账户主人。"
-        )
-        lines = [prefix]
-        entries: list[PersonaCapsuleEntry] = []
-        for item in ranked:
-            line = f"- {item['description']}"
-            if item["context"] and item["context"] != "conversation":
-                line += f"（适用：{item['context']}）"
-            if item["counterexample"]:
-                line += f"（例外：{item['counterexample']}）"
-            if len("\n".join((*lines, line))) > request.max_chars:
-                continue
-            lines.append(line)
-            entries.append(
-                PersonaCapsuleEntry(
-                    trait_id=str(item["trait_id"]),
-                    category=cast(PersonaTraitCategory, item["category"]),
-                    description=str(item["description"]),
-                    context=str(item["context"]),
-                    counterexample=str(item["counterexample"]),
-                    confidence=float(item["confidence"]),
-                    source_event_ids=tuple(str(value) for value in item["source_event_ids"]),
-                )
-            )
-        if not entries:
-            return PersonaCapsule()
-        return PersonaCapsule(
+        return persona_capsule_from_snapshot(
+            snapshot,
             version_id=str(row["version_id"]),
             version_number=int(row["version_number"]),
-            entries=tuple(entries),
-            prompt_fragment="\n".join(lines),
-            delivery_rate=self._delivery_rate(entries),
+            topic=request.topic,
+            max_chars=request.max_chars,
+            confirmed_style_only=confirmed_style_only,
         )
-
-    @staticmethod
-    def _capsule_rank(item: dict[str, Any], topic: str) -> tuple[int, int, str]:
-        description = str(item["description"])
-        context = str(item["context"])
-        compact = re.sub(r"\s+", "", topic)
-        tokens = {compact}
-        tokens.update(compact[index : index + 2] for index in range(max(0, len(compact) - 1)))
-        relevant = bool(
-            topic and any(token in description or token in context for token in tokens if token)
-        )
-        category = str(item["category"])
-        return (0 if relevant else 1, CATEGORY_ORDER[category], str(item["trait_id"]))
-
-    @staticmethod
-    def _delivery_rate(entries: list[PersonaCapsuleEntry]) -> float:
-        descriptions = " ".join(
-            item.description for item in entries if item.category == "speech_rate"
-        )
-        if "偏从容" in descriptions:
-            return 0.95
-        if "偏快" in descriptions:
-            return 1.05
-        return 1.0
 
     async def traits(self, *, account_id: str) -> tuple[PersonaTrait, ...]:
         if not account_id.strip():

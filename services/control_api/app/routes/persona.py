@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import logging
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -13,17 +15,26 @@ from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
+from services.control_api.app.routes.interaction import (
+    _resolve_subject_memory_scope,
+    _SubjectMemoryScope,
+)
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
     require_authenticated_user,
 )
 from services.persona.domain import (
+    PersonaCapsule,
     PersonaCounterexampleRequiredError,
     PersonaEnginePort,
     PersonaRequest,
     PersonaReview,
 )
+from services.persona.engine import persona_capsule_from_snapshot
+from services.persona.subject_projection import read_active_version
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/persona", tags=["persona"])
 
@@ -242,6 +253,63 @@ class SessionCapsuleCreate(BaseModel):
     max_chars: int = Field(default=1200, ge=160, le=4000)
 
 
+async def _subject_capsule(
+    request: Request,
+    *,
+    scope: _SubjectMemoryScope,
+    body: SessionCapsuleCreate,
+    account_id: str,
+    confirmed_style_only: bool,
+) -> PersonaCapsule:
+    """The capsule of the session's current subject, never of another person.
+
+    The account-keyed learner answers only while the current subject *is* the
+    account, and only while the session profile authority is the authority.
+    A different subject is served from its own projected persona; a subject
+    without a live projection, and an authority that cannot answer at all, get
+    an empty capsule -- the account owner's traits are a different person's
+    data.
+    """
+
+    if scope.subject_authority == "unavailable":
+        # A configured authority that cannot answer must not hand the account
+        # owner's persona to whoever is in front of the device.
+        return PersonaCapsule()
+    if scope.subject_id == account_id:
+        return await _engine(request).capsule(
+            PersonaRequest(
+                account_id=account_id,
+                speaker_class=body.speaker_class,
+                topic=body.topic,
+                enabled=body.enabled,
+                max_chars=body.max_chars,
+                confirmed_style_only=confirmed_style_only,
+            )
+        )
+    settings = cast(ControlSettings, request.app.state.settings)
+    try:
+        projected = read_active_version(
+            settings.memoria_db_path,
+            scope.subject_id,
+        )
+    except ValueError:
+        logger.exception(
+            "persona subject projection unreadable subject_hash=%s",
+            hashlib.sha256(scope.subject_id.encode("utf-8")).hexdigest()[:16],
+        )
+        return PersonaCapsule()
+    if projected is None:
+        return PersonaCapsule()
+    return persona_capsule_from_snapshot(
+        projected["snapshot"],
+        version_id=str(projected["version_id"]),
+        version_number=int(projected["version_number"]),
+        topic=body.topic,
+        max_chars=body.max_chars,
+        confirmed_style_only=confirmed_style_only,
+    )
+
+
 @router.post("/session-capsule")
 async def session_capsule(
     body: SessionCapsuleCreate,
@@ -249,7 +317,6 @@ async def session_capsule(
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
-    engine = _engine(request)
     account_id = str(session["user_id"])
     trusted_interaction = ModePolicy.trusted_context(
         FrozenMode.from_session(session),
@@ -270,15 +337,17 @@ async def session_capsule(
         capabilities["persona_low_sensitivity"]
         and _store(request).get_account(user_id=account_id) is not None
     )
-    capsule = await engine.capsule(
-        PersonaRequest(
-            account_id=account_id,
-            speaker_class=body.speaker_class,
-            topic=body.topic,
-            enabled=body.enabled,
-            max_chars=body.max_chars,
-            confirmed_style_only=confirmed_style_only,
-        )
+    scope = await _resolve_subject_memory_scope(
+        request,
+        session_id=body.session_id,
+        account_id=account_id,
+    )
+    capsule = await _subject_capsule(
+        request,
+        scope=scope,
+        body=body,
+        account_id=account_id,
+        confirmed_style_only=confirmed_style_only,
     )
     return {
         "interaction": trusted_interaction,

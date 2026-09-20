@@ -2906,3 +2906,84 @@ def rollback(
         }
     finally:
         connection.close()
+
+
+_SUBJECT_READ_LIMIT = 50
+
+
+def read_subject(
+    target_path: str | Path,
+    subject_id: str,
+    *,
+    limit: int = _SUBJECT_READ_LIMIT,
+) -> dict[str, Any]:
+    """Read the legacy-archive records one subject received (read-only).
+
+    The read path of the migration: the rows are the same ``memory_records``
+    and ``memory_status_events`` the Memory Scope store serves, decoded by the
+    migration's own decoders, so operator and store cannot disagree on the
+    shape.  A missing database or an un-migrated target answers with zero rows
+    instead of being created or falling back to the legacy Archive tables.
+    """
+
+    subject = subject_id.strip()
+    if not subject:
+        raise LegacyArchiveMigrationError("read_subject requires a subject_id")
+    if limit < 1:
+        raise LegacyArchiveMigrationError("read_subject limit must be positive")
+    path = Path(target_path).expanduser()
+    report: dict[str, Any] = {
+        "scope": _MEMORY_SCOPE,
+        "target_path": str(path),
+        "subject_id": subject,
+        "target_present": False,
+        "records": {"count": 0, "rows": []},
+        "status_events": {"count": 0, "rows": []},
+        "truncated": False,
+    }
+    if not path.exists():
+        return {**report, "reason": "database_missing"}
+    connection = _connect_read_only(path)
+    try:
+        if not _table_exists(connection, "main", _TARGET_TABLES[0]):
+            return {**report, "reason": "target_missing"}
+        report["target_present"] = True
+        total = int(
+            connection.execute(
+                "SELECT count(*) FROM memory_records WHERE scope = ? AND subject_id = ?",
+                (_MEMORY_SCOPE, subject),
+            ).fetchone()[0]
+        )
+        rows = connection.execute(
+            "SELECT * FROM memory_records WHERE scope = ? AND subject_id = ? "
+            "ORDER BY created_at DESC, record_id LIMIT ?",
+            (_MEMORY_SCOPE, subject, limit),
+        ).fetchall()
+        records = [_record_from_target_row(row) for row in rows]
+        report["records"] = {"count": total, "rows": records}
+        truncated = total > len(records)
+        record_ids = [str(record["record_id"]) for record in records]
+        if record_ids and _table_exists(connection, "main", _TARGET_TABLES[1]):
+            placeholders = ", ".join("?" for _ in record_ids)
+            events_total = int(
+                connection.execute(
+                    "SELECT count(*) FROM memory_status_events "
+                    f"WHERE record_id IN ({placeholders})",
+                    tuple(record_ids),
+                ).fetchone()[0]
+            )
+            events = connection.execute(
+                "SELECT * FROM memory_status_events "
+                f"WHERE record_id IN ({placeholders}) "
+                "ORDER BY created_at, event_id LIMIT ?",
+                (*record_ids, limit),
+            ).fetchall()
+            report["status_events"] = {
+                "count": events_total,
+                "rows": [_status_event_from_target_row(row) for row in events],
+            }
+            truncated = truncated or events_total > len(events)
+        report["truncated"] = truncated
+        return report
+    finally:
+        connection.close()

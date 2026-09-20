@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-20｜主体隔离批次与四个 account→subject 迁移随本轮提交（上一提交 `1e6d730`，`origin/main` 同步到本轮）。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。
+更新于 2026-09-20｜主体隔离批次与四个 account→subject 迁移已提交（`1e6d730` 之后），本轮随后补上四迁移的按 subject 只读出口、persona 会话胶囊的主体读路径与 `account_deletions` 的 operator 回执出口。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。
 
 ## 当前边界（不得越界宣称）
 
@@ -10,15 +10,15 @@ frozen_candidate: memoria-agent:b668960  # 仅本地构建验收，未启用
 direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
-subject_scope_batch: code=已提交本轮 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
-account_to_subject_migrations: code=四项已提交本轮（含 operator 执行入口）/ wired=未接入产品读路径 / enabled=未启用 / verified=本地专测
+subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
+account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=persona 会话胶囊按当前主体读投影、账号本人回落现表 / enabled=未启用 / verified=本地专测与真实 PG 契约
 ```
 
 这里的“通过”仅代表本地、SQLite 或临时 PostgreSQL 证据，不等于远端 CI、生产、设备或真实机器人对话验收。
 
 ## 下一步与执行边界
 
-1. 先完成 P2-03：为四个迁移建立显式 operator 执行入口，切换产品读路径，补 `account_deletions` HTTP 查询出口；禁止应用启动时自动执行。
+1. P2-03 的 operator 执行入口、四迁移按 subject 只读出口、persona 会话胶囊主体读路径与 `account_deletions` operator 回执出口已落地；剩余为删除范围验证（备份/MinIO/provider/音色声纹）、读路径的 PG 侧对等与小程序读口，以及生产/设备验收。
 2. 随后冻结同一候选并进入设备 live 窗口。当前只允许 preflight-only；开始需要机器人、串口或人工听感前先通知用户。
 3. 生产切流、回滚演练和制品清理须另获授权；设备功能通过不等于学生安全或全双工通过。
 4. P1-08 WAL 可独立只读测量；删除、重启、定时任务、自动备份和异地副本不在当前授权内。
@@ -99,7 +99,7 @@ account_to_subject_migrations: code=四项已提交本轮（含 operator 执行�
 
 ### [ ] P2-03 可证明删除与导出证据链
 
-- 待完成：四迁移产物接入产品读路径并切换主体读取；`account_deletions` 回执的独立 HTTP 查询出口；备份、MinIO、provider、音色/声纹删除验证；生产、设备与真实机器人对话验收。
+- 待完成：备份、MinIO、provider、音色/声纹删除验证；四迁移与投影读路径的 PG 侧对等、小程序与其余读口切换；生产、设备与真实机器人对话验收。
 - 安全约束：不得默认 `account_id == subject_id`；必须有 Control 注册、active Identity person、owner evidence 和一致事件 subject；child/member 只接受唯一 lineage，foreign/inactive/ambiguous/NULL/mixed subject fail closed；源表与 `snapshot_json` 保持字节不变；rollback 只移除本 migration 行。
 - 完成条件：PG、MinIO、投影/缓存和 provider 范围一致，重试幂等、回执可查询、导出标记 AI/授权/服务提供者；保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本。
 

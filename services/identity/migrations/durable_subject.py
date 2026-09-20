@@ -1522,10 +1522,112 @@ def rollback(
         connection.close()
 
 
+_SUBJECT_READ_LIMIT = 50
+
+
+def read_subject(
+    control_path: str | Path,
+    identity_path: str | Path | None = None,
+    *,
+    subject_id: str,
+    limit: int = _SUBJECT_READ_LIMIT,
+) -> dict[str, Any]:
+    """Read what one subject owns after the in-place attribution (read-only).
+
+    The migration rewrites ``subject_id`` on the evidence rows themselves, so
+    the read path answers from those rows: every evidence table that carries
+    the subject plus the receipts the journal wrote for it.  A missing database
+    or journal answers with zero rows, and a row whose ``subject_id`` is NULL or
+    another subject is never reported for this one.
+    """
+
+    subject = subject_id.strip()
+    if not subject:
+        raise DurableSubjectMigrationError("read_subject requires a subject_id")
+    if limit < 1:
+        raise DurableSubjectMigrationError("read_subject limit must be positive")
+    control = Path(control_path).expanduser()
+    report: dict[str, Any] = {
+        "scope": "durable_subject",
+        "control_path": str(control),
+        "identity_path": (
+            str(Path(identity_path).expanduser()) if identity_path is not None else None
+        ),
+        "subject_id": subject,
+        "journal_present": False,
+        "tables": {},
+        "receipts": {"total": 0, "by_outcome": {}, "rows": []},
+        "truncated": False,
+    }
+    if not control.exists():
+        return {**report, "reason": "database_missing"}
+    connection, _ = _connect(control, identity_path, read_only=True)
+    try:
+        try:
+            source_tables = _source_tables(connection)
+        except DurableSubjectMigrationError:
+            return {**report, "reason": "no_evidence_source"}
+        tables: dict[str, Any] = {}
+        truncated = False
+        for info in source_tables:
+            table = _quote_identifier(info.name)
+            total = int(
+                connection.execute(
+                    f"SELECT count(*) FROM {table} WHERE subject_id = ?",
+                    (subject,),
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"SELECT event_id, account_id FROM {table} WHERE subject_id = ? "
+                "ORDER BY event_id LIMIT ?",
+                (subject, limit),
+            ).fetchall()
+            tables[info.name] = {
+                "count": total,
+                "rows": [
+                    {
+                        "event_id": str(row["event_id"]),
+                        "account_id": str(row["account_id"]),
+                    }
+                    for row in rows
+                ],
+            }
+            truncated = truncated or total > len(rows)
+        report["tables"] = tables
+        report["truncated"] = truncated
+        if not _table_exists(connection, "main", _RECEIPT_TABLE):
+            return report
+        report["journal_present"] = _table_exists(connection, "main", _MIGRATION_TABLE)
+        by_outcome = {
+            str(row["outcome"]): int(row["n"])
+            for row in connection.execute(
+                f"SELECT outcome, count(*) AS n FROM {_quote_identifier(_RECEIPT_TABLE)} "
+                "WHERE after_subject = ? GROUP BY outcome",
+                (subject,),
+            ).fetchall()
+        }
+        receipts = connection.execute(
+            "SELECT migration_id, table_name, source_row_id, outcome, before_subject, "
+            f"after_subject, reason, recorded_at FROM {_quote_identifier(_RECEIPT_TABLE)} "
+            "WHERE after_subject = ? "
+            "ORDER BY recorded_at DESC, table_name, source_row_id LIMIT ?",
+            (subject, limit),
+        ).fetchall()
+        report["receipts"] = {
+            "total": sum(by_outcome.values()),
+            "by_outcome": by_outcome,
+            "rows": [dict(row) for row in receipts],
+        }
+        return report
+    finally:
+        connection.close()
+
+
 __all__ = [
     "DurableSubjectMigrationError",
     "apply",
     "dry_run",
     "plan",
+    "read_subject",
     "rollback",
 ]

@@ -3087,6 +3087,58 @@ async def get_archive_deletion(
     )
 
 
+@router.get("/deletion-receipts")
+async def list_archive_deletion_receipts(
+    request: Request,
+    _: Annotated[None, Depends(_require_archive_write_token)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> JSONResponse:
+    """Operator read of the deletion receipts (no session required).
+
+    The owner-facing ``GET /v1/archive/deletion-requests`` cannot answer once a
+    deletion started, because its first step terminates the account's sessions.
+    This exit is the audited alternative: it needs the archive internal token
+    and returns receipts without any account id.
+    """
+
+    try:
+        receipts = await asyncio.to_thread(
+            _store(request).list_account_deletion_receipts,
+            status_filter=status_filter,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(
+        content={"items": list(receipts), "count": len(receipts)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/deletion-receipts/{request_id}")
+async def get_archive_deletion_receipt(
+    request_id: str,
+    request: Request,
+    _: Annotated[None, Depends(_require_archive_write_token)],
+) -> JSONResponse:
+    """Operator read of one deletion receipt by request id."""
+
+    receipt = await asyncio.to_thread(
+        _store(request).get_account_deletion_receipt,
+        request_id=request_id,
+    )
+    if receipt is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "deletion_receipt_not_found"},
+        )
+    return JSONResponse(
+        content=receipt,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.post("/deletion-requests")
 async def delete_archive(
     body: ArchiveDeletionBody,

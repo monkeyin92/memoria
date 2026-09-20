@@ -52,6 +52,9 @@ outputs/
 
 # Local mascot cutout backups (opaque masters)
 
+# Local agent tooling state (not a repository document)
+.commandcode/
+
 # Docker volumes
 postgres-data/
 redis-data/
