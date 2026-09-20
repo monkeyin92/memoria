@@ -117,8 +117,13 @@ type DeviceConnection struct {
 	// candidate and gated on the "voice" allowlist source. Ordinary
 	// listening VAD is never gated.
 	playbackActive bool
-	acoustic       *DeviceAcousticProfile
-	ledger         *devicePlaybackLedger
+	// playbackFence is the fence whose receipts opened that window.  Only an
+	// authoritative end for the same fence may revoke it: a cancel for a stale
+	// generation (the device logs those) must not unblock a genuine barge-in,
+	// and a local button stop for the live fence must not leave the window open.
+	playbackFence deviceFence
+	acoustic      *DeviceAcousticProfile
+	ledger        *devicePlaybackLedger
 
 	controlLimiter *deviceTokenBucket
 	audioLimiter   *deviceTokenBucket
@@ -380,6 +385,33 @@ func (c *DeviceConnection) isPlaybackActive() bool {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	return c.playbackActive
+}
+
+// clearPlaybackActive revokes the playback window when an authoritative event
+// ends it for the fence that opened it: a forwarded device button stop, or a
+// cancelled generation.
+//
+// The device flushes playback locally on a button stop and then never sends
+// `playback.ended` (its receipt identity is revoked), so this flag used to stay
+// true.  The next session's first utterance was then judged as a barge during
+// playback and refused (2026-09-20 device window: `barge_source_forbidden` and
+// a user-visible session error right after a re-wake).  The fence comparison
+// keeps the fail-closed side intact: a cancel for a stale generation leaves the
+// live window open, and the flag is never cleared on a new wake.
+func (c *DeviceConnection) clearPlaybackActive(reason string, fence deviceFence) {
+	c.stateMu.Lock()
+	cleared := c.playbackActive && c.playbackFence == fence
+	if cleared {
+		c.playbackActive = false
+		c.playbackFence = deviceFence{}
+	}
+	c.stateMu.Unlock()
+	if cleared {
+		log.Printf(
+			"media edge cleared playback window session=%s device=%s epoch=%d reason=%s generation=%d",
+			c.sessionID, c.deviceID, c.epoch, reason, fence.GenerationID,
+		)
+	}
 }
 
 func (c *DeviceConnection) closeReasonValue() string {

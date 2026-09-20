@@ -247,6 +247,9 @@ func (c *DeviceConnection) handleButtonStop(envelope deviceControlEnvelope, runt
 		c.sendSessionError("stop_rejected", true)
 		return false
 	}
+	// The device flushed playback locally to produce this stop, so its
+	// rendering window is over even though no `playback.ended` follows.
+	c.clearPlaybackActive("device_button_stop", event.ExpectedFence)
 	return true
 }
 
@@ -297,6 +300,10 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	c.stateMu.Lock()
 	c.playbackActive = envelope.Type == "playback.started" ||
 		envelope.Type == "playback.progress"
+	c.playbackFence = deviceFence{}
+	if c.playbackActive {
+		c.playbackFence = receipt.Fence
+	}
 	c.stateMu.Unlock()
 	if runtime == nil {
 		return true

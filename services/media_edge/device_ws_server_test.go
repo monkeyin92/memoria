@@ -974,8 +974,17 @@ func TestDeviceWSSUplinkSampleGapCloses(t *testing.T) {
 	if err := connection.WriteMessage(websocket.BinaryMessage, gapped); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-		t.Fatal("sample-gap connection stayed open")
+	// The gap must close the lane.  A diagnostic session.error frame can arrive
+	// before the close is observed (it does under -race), so read until the
+	// connection actually fails instead of assuming the first read errors.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, _, err := readDeviceMessage(connection, time.Until(deadline)); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sample-gap connection stayed open")
+		}
 	}
 	if env.server.metrics.uplinkGapSamples.Load() != 4680 {
 		t.Fatalf("gap samples = %d, want 4680", env.server.metrics.uplinkGapSamples.Load())
