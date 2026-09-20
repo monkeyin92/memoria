@@ -390,3 +390,9 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 设备控制台（+08:00）：21:46:29 一次唤醒成功 → 21:46:32 `connecting->listening` → 21:46:34–35 欢迎语 → 21:46:38 提问 → 21:46:39.561 `listening->speaking`（作答）→ **21:46:42 播放打断** → 21:46:42.506 `speaking->listening` → 21:46:42.971 `listening->speaking` → 21:46:48.597 `speaking->listening`；21:46:58 追问 → 21:47:02 `listening->speaking`、21:47:04 结束、21:47:08 再起一轮。
 - **判据**：语音打断后**会话存活**、随后追问仍被接受；串口无 `barge_source_forbidden`、无 `retryable`、无 session error/closed（仅无关的 BMI2 I2C 传感器超时）。旧行为（打断终止整段会话并报错）未复现。结论：**F2 的“禁止源 barge 只拒绝交接话语权”在设备上按预期工作**（设备端状态证据，非人工听感）。
 - 局限：修复新增的忽略计数是 Prometheus 指标，本次采集的日志里没有出现（未抓取 metrics 端点），故仅有行为证据；**“播放窗口只由设备本地 flush 的 `button.stop` 撤销”这条仍需按压设备按键复验**。
+
+## 2026-09-20 待命后再唤醒回归（原始症状）与设备侧异常
+
+- 回归（跑在新发布镜像上，独立路径）：21:48:24 `activating->idle` → +50s 预热 → 21:49:22 一次唤醒成功 → 21:49:24 会话开启 → 21:49:28 欢迎语结束 → 21:49:30 播放“再见”后**同秒** `listening->idle` → **21:49:34 立即再唤醒成功**（`Wake word detected` 21:49:33.846）→ 21:49:36 **新会话开启**。结论：原报告症状“待命后再唤醒被拒”**未复现**；本轮无 `barge_source_forbidden`/error。收据 `outputs/acceptance/run-20260920-rewake-after-standby/`（脚本被操作者提前停止，最终 RESULTS 行未打印，证据为上列控制台时间线）。
+- **设备侧异常（与刺激无关，发生于空闲期）**：① `BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT` 慢性持续（IMU 读失败，短时可 ~10 条/秒）；② 端口复位后两次 `abort() was called at PC 0x4038acd6 on core 0` → `rst:0xc (RTC_SW_CPU_RST)`，每次约 12s 后再起，随后 `MemoriaEspVocat: BMI270 initialized` 并恢复正常运行。两次 abort 均发生在**尚未播放任何刺激**的空闲窗口内，因此不能归因于本轮 F1/F2 测试；需按硬件/固件路径单独排查（刷写需另行授权）。
+- 仍未覆盖：**设备本地按键**触发的 `button.stop` 撤销播放窗口（需人手按压）；+3s/+5s 极短续问格未单独取值。
