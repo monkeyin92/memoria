@@ -91,7 +91,16 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	}
 
 	// The same connection still serves an allowed source: button.stop with the
-	// button source reaches the runtime.
+	// button source reaches the runtime, and it is the authoritative end of the
+	// playback window (the device flushed locally, so no playback.ended follows).
+	serverConn := env.server.connectionBySession("session_1")
+	if serverConn == nil {
+		t.Fatal("server connection not registered")
+	}
+	serverConn.stateMu.Lock()
+	serverConn.playbackActive = true
+	serverConn.playbackFence = deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0, SessionEpoch: 1}
+	serverConn.stateMu.Unlock()
 	writeDeviceJSON(t, connection, deviceButtonStop{
 		deviceEventBase: deviceEventBase{
 			Type: "button.stop", Version: 2, StreamEpoch: 18,
@@ -101,8 +110,14 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	})
 	waitUntil(t, 3*time.Second, func() bool {
 		core.mu.Lock()
-		defer core.mu.Unlock()
-		return len(core.stops) == 1
+		stops := len(core.stops)
+		core.mu.Unlock()
+		if stops != 1 {
+			return false
+		}
+		serverConn.stateMu.Lock()
+		defer serverConn.stateMu.Unlock()
+		return !serverConn.playbackActive
 	})
 
 	// The signed-ticket boundary rejects an invalid mixed none+active-source
