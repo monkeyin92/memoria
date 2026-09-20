@@ -373,3 +373,12 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 模拟音频验收（电脑扬声器放合成 TTS + 麦克风收音，`scripts/wake_word_matrix.py`，`uv run --with pyserial`，`--trials 1 --warmup-s 50 --unmute --output-volume 80`）：近距档 1/1、远距档 1/1 唤醒，tv/small_talk/quiet 误唤醒 0；设备控制台同批证据为 `Wake word detected: 茉莉 (state: 3) -> idle->connecting -> connecting->listening -> listening->speaking -> speaking->listening`，即唤醒、开会话、机器人出声应答并回到待听，且运行在本轮新发布的 agent/media-edge 上。运行后系统音量已还原（31/muted=true）。
 - 未验证边界：F1 的"播后重新给足 30s 窗口"与 F2 的"禁止源 barge 只拒交接、不清播放窗口"**尚未**在设备上做行为复验，需要问答+打断序列。`outputs/design/auto-audio-20260915/auto_audio_session.py` 在本机被自身自检挡住：①live 门禁受 ffmpeg 8 的 WAV 缓冲影响（文件约 10s 才刷到 256KB，默认 10s 窗口刚好失败；`--ffmpeg-start-timeout-s 25` 可绕过）；②`blocked_reference_match`——三块归一化波形相关（NCC≥0.20）在本机扬声器→麦克风路径不成立，而同一录音的播放段电平（峰值 -1.34 dBFS、margin 36 dB）证明链路本身可用。该判据调整前，问答扫频需人工说话或修工具。
 - 发布工具缺口（P1-01 输入）：`deploy_agent_component.sh` 只支持"服务器上薄镜像"，依赖输入变更即拒绝，且无预构建镜像入口；全量制品清单（5 角色）不含 media-edge，也没有对应的切流脚本。建议补 `--target-image` 预构建路径（校验 revision/arch/role 后复用其门禁与回滚）。
+
+## 2026-09-20 设备窗口复验（F1，跑在新发布的 agent/media-edge 上）
+
+- 方法：电脑扬声器放合成 TTS，唤醒复用已验刺激 `outputs/acceptance/run-20260920-wake-matrix-v3/stimuli/wake.wav`，问句按 `say`+`afconvert`+0.25s 前导/0.4s 尾随静音重建；输出 80% 且 readback 验证（结束还原 31/muted=true）。串口与服务端日志由 `scripts/voice_session_capture.py --server-logs` 采集成 `outputs/acceptance/run-20260920-f1-device-window-v2/`（ignored）。
+- 设备控制台时间线（+08:00）：21:38:26 standby → +52s 一次唤醒成功（`Wake word detected: 茉莉`）→ `idle->connecting->listening` → 欢迎语 `listening->speaking->listening`（21:39:22–25）→ 续问答对三轮（21:39:34 / 21:39:38 / 21:40:16 进入 speaking）→ 播放“再见”后**同一秒** `speaking->idle`（21:40:21.609）。
+- **F1 判据**：应答结束后 **8.2s 与 11.0s** 的续问仍被接受（会话未待命）；旧语义只沿用剩余预算（本例 ~4.4s）时这两格会失败。明确告别立即待命。结论：**F1 在设备上按预期工作**（设备端状态证据，非人工听感）。
+- 负向核查：串口无 `barge_source_forbidden`、无 session error、无 retryable；唯一 error 为无关的 BMI2 I2C 传感器超时。
+- 未覆盖：F2 打断语义（禁止源 barge 只拒交接；播放窗口只由设备本地 flush 的 `button.stop` 撤销）需要**按压设备按键**产生真实打断，脚本无法替代；“待命后立即再唤醒不弹错”与 +3s/+5s 极短格本轮未单独取值（脚本实际延迟为 +6.8/+8.2/+11s）。
+- 本机工具结论：`auto_audio_session.py` 的参考匹配在本机是边缘值（三块 NCC 0.11–0.28，含空段的那块低于 0.20 阈值），且 ffmpeg 8 约每 8s 才整块落盘（`-flush_packets`/`-avioflags direct` 均无效，live 门禁需 `--ffmpeg-start-timeout-s 25`）。因此本机问答扫频改用“设备控制台为时间源”的方式，未放宽工具判据。
