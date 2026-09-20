@@ -252,6 +252,25 @@ func readDeviceMessage(connection *websocket.Conn, timeout time.Duration) (int, 
 	return connection.ReadMessage()
 }
 
+// readUntilClosed reads frames until the connection actually fails.
+//
+// A refused control frame queues a diagnostic session.error that can be read
+// before the close is observed -- non-deterministically, and reliably under
+// -race -- so asserting on the first read alone reports "stayed open" for a
+// connection that did close.
+func readUntilClosed(t *testing.T, connection *websocket.Conn, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, _, err := readDeviceMessage(connection, time.Until(deadline)); err != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("connection stayed open")
+		}
+	}
+}
+
 func deviceReadAccepted(t *testing.T, connection *websocket.Conn) deviceSessionAccepted {
 	t.Helper()
 	messageType, payload, err := readDeviceMessage(connection, 3*time.Second)
@@ -974,18 +993,8 @@ func TestDeviceWSSUplinkSampleGapCloses(t *testing.T) {
 	if err := connection.WriteMessage(websocket.BinaryMessage, gapped); err != nil {
 		t.Fatal(err)
 	}
-	// The gap must close the lane.  A diagnostic session.error frame can arrive
-	// before the close is observed (it does under -race), so read until the
-	// connection actually fails instead of assuming the first read errors.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, _, err := readDeviceMessage(connection, time.Until(deadline)); err != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("sample-gap connection stayed open")
-		}
-	}
+	// The gap must close the lane.
+	readUntilClosed(t, connection, 3*time.Second)
 	if env.server.metrics.uplinkGapSamples.Load() != 4680 {
 		t.Fatalf("gap samples = %d, want 4680", env.server.metrics.uplinkGapSamples.Load())
 	}
@@ -1021,9 +1030,7 @@ func TestDeviceWSSUplinkInitialClockMustStartAtZero(t *testing.T) {
 			if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-				t.Fatal("nonzero initial uplink clock stayed connected")
-			}
+			readUntilClosed(t, connection, 3*time.Second)
 		})
 	}
 }
@@ -1034,9 +1041,7 @@ func TestDeviceWSSFirstFrameMustBeHello(t *testing.T) {
 	if err := connection.WriteMessage(websocket.BinaryMessage, []byte{0x01, 0x02}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-		t.Fatal("non-hello first frame stayed open")
-	}
+	readUntilClosed(t, connection, 3*time.Second)
 }
 
 func TestDeviceWSSRequiresV2ProtocolHeaderBeforeConsumingTicket(t *testing.T) {
