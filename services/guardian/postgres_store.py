@@ -1967,6 +1967,10 @@ class PostgresGuardianStore:
                 data.get("tutor_practice_sessions") or []
             ),
             "tutor_study_progress": data.get("tutor_study_progress"),
+            "tutor_practice_evidence": list(
+                data.get("tutor_practice_evidence") or []
+            ),
+            "tutor_commit_outbox": list(data.get("tutor_commit_outbox") or []),
             "crisis_events": [dict(row) for row in crisis_events],
             "guardian_notifications": [dict(row) for row in notifications],
             "corpus_samples": [dict(row) for row in corpus_samples],
@@ -2047,6 +2051,12 @@ class PostgresGuardianStore:
             ),
             "tutor_study_progress": int(
                 json.loads(tutor_result).get("tutor_study_progress") or 0
+            ),
+            "tutor_practice_evidence": int(
+                json.loads(tutor_result).get("tutor_practice_evidence") or 0
+            ),
+            "tutor_commit_outbox": int(
+                json.loads(tutor_result).get("tutor_commit_outbox") or 0
             ),
             "crisis_events": int(crisis_result.rsplit(" ", 1)[-1]),
             "guardian_notifications": int(notification_result.rsplit(" ", 1)[-1]),
@@ -2132,6 +2142,12 @@ class PostgresGuardianStore:
         study_progress = int(
             json.loads(tutor_result).get("tutor_study_progress") or 0
         )
+        practice_evidence = int(
+            json.loads(tutor_result).get("tutor_practice_evidence") or 0
+        )
+        commit_outbox = int(
+            json.loads(tutor_result).get("tutor_commit_outbox") or 0
+        )
         return {
             key: value
             for key, value in {
@@ -2139,6 +2155,8 @@ class PostgresGuardianStore:
                 "consents": consents,
                 "tutor_practice_sessions": practice_sessions,
                 "tutor_study_progress": study_progress,
+                "tutor_practice_evidence": practice_evidence,
+                "tutor_commit_outbox": commit_outbox,
                 "crisis_events": crisis_events,
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,

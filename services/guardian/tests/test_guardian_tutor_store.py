@@ -212,6 +212,102 @@ async def test_legacy_account_rows_are_quarantined_and_still_account_exportable(
     assert await store.remaining_account_rows(account_id="legacy-account") == {}
 
 
+def _seed_account_scope_rows(path: Path) -> None:
+    """Insert tutor evidence/outbox rows for two keyed accounts."""
+
+    with sqlite3.connect(path) as connection:
+        for event_id, subject_id, actor_id in (
+            ("evidence-subject-match", "actor-a", "actor-other"),
+            ("evidence-actor-match", "subject-other", "actor-a"),
+            ("evidence-bystander", "subject-other", "actor-b"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO tutor_practice_evidence(
+                    event_id, assessment_id, kind, subject_id, actor_id,
+                    envelope_json, envelope_sha256, commit_sha256,
+                    outcome, skill_key, session_id, session_revision, created_at
+                ) VALUES (
+                    ?, NULL, 'tutor.practice_turn_recorded', ?, ?, '{}', ?, ?,
+                    NULL, NULL, ?, 0, ?
+                )
+                """,
+                (
+                    event_id,
+                    subject_id,
+                    actor_id,
+                    "a" * 64,
+                    "a" * 64,
+                    f"session-{event_id}",
+                    NOW.isoformat(),
+                ),
+            )
+        for event_id, subject_id, actor_id in (
+            ("outbox-subject-match", "actor-a", "actor-other"),
+            ("outbox-bystander", "subject-other", "actor-b"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO tutor_commit_outbox(
+                    event_id, kind, subject_id, actor_id, archive_payload_json,
+                    status, created_at
+                ) VALUES (?, 'tutor.practice_turn_recorded', ?, ?, '{}', 'pending', ?)
+                """,
+                (event_id, subject_id, actor_id, NOW.isoformat()),
+            )
+
+
+@pytest.mark.asyncio
+async def test_account_deletion_covers_tutor_evidence_and_commit_outbox(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "account-scope.sqlite3"
+    store = SqliteGuardianStore(path)
+    store.initialize()
+    _seed_account_scope_rows(path)
+
+    # Both key columns count: one subject-keyed and one actor-keyed row.
+    assert await store.remaining_account_rows(account_id="actor-a") == {
+        "tutor_practice_evidence": 2,
+        "tutor_commit_outbox": 1,
+    }
+    exported = await store.export_for_account(account_id="actor-a")
+    assert {row["event_id"] for row in exported["tutor_practice_evidence"]} == {
+        "evidence-subject-match",
+        "evidence-actor-match",
+    }
+    assert [row["event_id"] for row in exported["tutor_commit_outbox"]] == [
+        "outbox-subject-match"
+    ]
+
+    deleted = await store.delete_for_account(account_id="actor-a")
+    assert deleted["tutor_practice_evidence"] == 2
+    assert deleted["tutor_commit_outbox"] == 1
+    assert await store.remaining_account_rows(account_id="actor-a") == {}
+    # The other account's rows are untouched by the account-scoped delete.
+    assert await store.remaining_account_rows(account_id="actor-b") == {
+        "tutor_practice_evidence": 1,
+        "tutor_commit_outbox": 1,
+    }
+    with sqlite3.connect(path) as connection:
+        surviving_events = {
+            str(row[0])
+            for row in connection.execute("SELECT event_id FROM tutor_practice_evidence")
+        }
+        surviving_outbox = {
+            str(row[0])
+            for row in connection.execute("SELECT event_id FROM tutor_commit_outbox")
+        }
+    assert surviving_events == {"evidence-bystander"}
+    assert surviving_outbox == {"outbox-bystander"}
+
+    # Repeating the deletion stays safe and deletes nothing else.
+    again = await store.delete_for_account(account_id="actor-a")
+    assert again["tutor_practice_evidence"] == 0
+    assert again["tutor_commit_outbox"] == 0
+    assert await store.remaining_account_rows(account_id="actor-a") == {}
+
+
 def test_authority_column_triggers_reject_null_or_blank_new_rows(
     tmp_path: Path,
 ) -> None:

@@ -789,6 +789,51 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
             )
             """
         )
+        # Evidence rows and a bystander account's rows: the account-scoped
+        # governance functions must cover both tutor tables under either key
+        # column and must never reach another account's rows.
+        await admin_db.execute(
+            """
+            INSERT INTO tutor_practice_evidence(
+                event_id, assessment_id, kind, subject_id, actor_id,
+                envelope_json, envelope_sha256, commit_sha256,
+                outcome, skill_key, session_id, session_revision, created_at
+            ) VALUES
+                (
+                    'tutor-pg-evidence-a', NULL, 'tutor.practice_turn_recorded',
+                    'subject-a', 'actor-a', '{}'::jsonb, $1, $1,
+                    NULL, NULL, 'session-pg-a', 0, now()
+                ),
+                (
+                    'tutor-pg-evidence-subject', NULL,
+                    'tutor.practice_turn_recorded',
+                    'actor-a', 'actor-other', '{}'::jsonb, $1, $1,
+                    NULL, NULL, 'session-pg-subject', 0, now()
+                ),
+                (
+                    'tutor-pg-evidence-b', NULL, 'tutor.practice_turn_recorded',
+                    'subject-b', 'actor-b', '{}'::jsonb, $1, $1,
+                    NULL, NULL, 'session-pg-b', 0, now()
+                )
+            """,
+            "a" * 64,
+        )
+        await admin_db.execute(
+            """
+            INSERT INTO tutor_commit_outbox(
+                event_id, kind, subject_id, actor_id,
+                archive_payload_json, status, created_at
+            ) VALUES
+                (
+                    'tutor-pg-outbox-subject', 'tutor.practice_turn_recorded',
+                    'actor-a', 'actor-other', '{"k":3}'::jsonb, 'delivered', now()
+                ),
+                (
+                    'tutor-pg-outbox-b', 'tutor.practice_turn_recorded',
+                    'subject-b', 'actor-b', '{"k":2}'::jsonb, 'delivered', now()
+                )
+            """
+        )
         worker = await asyncpg.connect(
             _role_dsn(
                 admin_dsn,
@@ -853,6 +898,16 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
                 "SELECT count(*) FROM tutor_practice_sessions"
             )
             assert direct == 0
+            # The new account-scope reads/grants do not widen direct access:
+            # without the scope flag the maintenance role sees nothing.
+            evidence_direct = await maintenance.fetchval(
+                "SELECT count(*) FROM tutor_practice_evidence"
+            )
+            outbox_direct = await maintenance.fetchval(
+                "SELECT count(*) FROM tutor_commit_outbox"
+            )
+            assert evidence_direct == 0
+            assert outbox_direct == 0
             worker_direct = await worker.fetchval(
                 "SELECT count(*) FROM tutor_commit_outbox"
             )
@@ -871,9 +926,29 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
         assert len(exported["tutor_practice_sessions"]) == 1
         assert exported["tutor_study_progress"] is not None
         assert "person_consents" in exported
+        assert {row["event_id"] for row in exported["tutor_practice_evidence"]} == {
+            "tutor-pg-evidence-a",
+            "tutor-pg-evidence-subject",
+        }
+        assert {row["event_id"] for row in exported["tutor_commit_outbox"]} == {
+            "tutor-pg-evict",
+            "tutor-pg-outbox-subject",
+        }
         deleted = await store.delete_for_account(account_id="actor-a")
         assert deleted["tutor_practice_sessions"] == 1
+        assert deleted["tutor_practice_evidence"] == 2
+        assert deleted["tutor_commit_outbox"] == 2
         assert "person_consents" in deleted
+        assert await store.remaining_account_rows(account_id="actor-a") == {}
+        # The deletion is physical, account scoped, and idempotent: the
+        # bystander account keeps its own evidence and outbox rows.
+        assert await store.remaining_account_rows(account_id="actor-b") == {
+            "tutor_practice_evidence": 1,
+            "tutor_commit_outbox": 1,
+        }
+        again = await store.delete_for_account(account_id="actor-a")
+        assert again["tutor_practice_evidence"] == 0
+        assert again["tutor_commit_outbox"] == 0
         assert await store.remaining_account_rows(account_id="actor-a") == {}
     finally:
         if store is not None:

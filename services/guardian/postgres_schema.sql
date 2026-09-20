@@ -483,7 +483,25 @@ BEGIN
                 ORDER BY subject_id IS NULL, subject_id
                 LIMIT 1
             ) row
-        )
+        ),
+        'tutor_practice_evidence', COALESCE((
+            SELECT jsonb_agg(to_jsonb(row))
+            FROM (
+                SELECT * FROM tutor_practice_evidence
+                WHERE subject_id = target_account_id
+                   OR actor_id = target_account_id
+                ORDER BY created_at, event_id
+            ) row
+        ), '[]'::jsonb),
+        'tutor_commit_outbox', COALESCE((
+            SELECT jsonb_agg(to_jsonb(row))
+            FROM (
+                SELECT * FROM tutor_commit_outbox
+                WHERE subject_id = target_account_id
+                   OR actor_id = target_account_id
+                ORDER BY created_at, event_id
+            ) row
+        ), '[]'::jsonb)
     ) INTO result;
     RETURN result;
 END
@@ -507,10 +525,20 @@ BEGIN
         DELETE FROM tutor_study_progress
         WHERE account_id = target_account_id OR actor_id = target_account_id
         RETURNING 1
+    ), removed_evidence AS (
+        DELETE FROM tutor_practice_evidence
+        WHERE subject_id = target_account_id OR actor_id = target_account_id
+        RETURNING 1
+    ), removed_outbox AS (
+        DELETE FROM tutor_commit_outbox
+        WHERE subject_id = target_account_id OR actor_id = target_account_id
+        RETURNING 1
     )
     SELECT jsonb_build_object(
         'tutor_practice_sessions', (SELECT count(*) FROM removed_sessions),
-        'tutor_study_progress', (SELECT count(*) FROM removed_progress)
+        'tutor_study_progress', (SELECT count(*) FROM removed_progress),
+        'tutor_practice_evidence', (SELECT count(*) FROM removed_evidence),
+        'tutor_commit_outbox', (SELECT count(*) FROM removed_outbox)
     ) INTO deleted;
     RETURN deleted;
 END
@@ -533,6 +561,14 @@ BEGIN
         'tutor_study_progress', (
             SELECT count(*) FROM tutor_study_progress
             WHERE account_id = target_account_id OR actor_id = target_account_id
+        ),
+        'tutor_practice_evidence', (
+            SELECT count(*) FROM tutor_practice_evidence
+            WHERE subject_id = target_account_id OR actor_id = target_account_id
+        ),
+        'tutor_commit_outbox', (
+            SELECT count(*) FROM tutor_commit_outbox
+            WHERE subject_id = target_account_id OR actor_id = target_account_id
         )
     ) INTO result;
     RETURN result;
@@ -1120,7 +1156,7 @@ BEGIN
 
         DROP POLICY IF EXISTS guardian_controller_tutor_evidence ON tutor_practice_evidence;
         CREATE POLICY guardian_controller_tutor_evidence ON tutor_practice_evidence
-            TO memoria_guardian
+            TO memoria_guardian, memoria_guardian_maintenance
             USING (
                 (
                     current_user = 'memoria_guardian_maintenance'
@@ -1310,6 +1346,11 @@ BEGIN
             GRANT USAGE ON SCHEMA public TO memoria_guardian_maintenance;
             GRANT SELECT, INSERT, UPDATE, DELETE
                 ON tutor_practice_sessions, tutor_study_progress
+                TO memoria_guardian_maintenance;
+            -- The account-scope functions only read and physically delete
+            -- these rows; no maintenance port writes them.
+            GRANT SELECT, DELETE
+                ON tutor_practice_evidence, tutor_commit_outbox
                 TO memoria_guardian_maintenance;
             REVOKE EXECUTE ON FUNCTION guardian_relationship_declared(TEXT, TEXT, TIMESTAMPTZ)
                 FROM PUBLIC;

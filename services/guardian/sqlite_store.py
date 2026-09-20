@@ -1942,6 +1942,28 @@ class SqliteGuardianStore:
                 """,
                 (account_id, account_id),
             ).fetchone()
+            practice_evidence = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM tutor_practice_evidence
+                    WHERE subject_id = ? OR actor_id = ?
+                    ORDER BY created_at, event_id
+                    """,
+                    (account_id, account_id),
+                ).fetchall()
+            ]
+            commit_outbox = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM tutor_commit_outbox
+                    WHERE subject_id = ? OR actor_id = ?
+                    ORDER BY created_at, event_id
+                    """,
+                    (account_id, account_id),
+                ).fetchall()
+            ]
             crisis_events = [
                 dict(row)
                 for row in connection.execute(
@@ -1984,6 +2006,8 @@ class SqliteGuardianStore:
             "person_consents": person_consents,
             "tutor_practice_sessions": practice_sessions,
             "tutor_study_progress": dict(progress) if progress is not None else None,
+            "tutor_practice_evidence": practice_evidence,
+            "tutor_commit_outbox": commit_outbox,
             "crisis_events": crisis_events,
             "guardian_notifications": notifications,
             "corpus_samples": corpus_samples,
@@ -2004,6 +2028,20 @@ class SqliteGuardianStore:
                 """
                 DELETE FROM tutor_study_progress
                 WHERE account_id = ? OR actor_id = ?
+                """,
+                (account_id, account_id),
+            ).rowcount
+            evidence_count = connection.execute(
+                """
+                DELETE FROM tutor_practice_evidence
+                WHERE subject_id = ? OR actor_id = ?
+                """,
+                (account_id, account_id),
+            ).rowcount
+            outbox_count = connection.execute(
+                """
+                DELETE FROM tutor_commit_outbox
+                WHERE subject_id = ? OR actor_id = ?
                 """,
                 (account_id, account_id),
             ).rowcount
@@ -2069,6 +2107,8 @@ class SqliteGuardianStore:
             "person_consents": person_consent_count,
             "tutor_practice_sessions": practice_count,
             "tutor_study_progress": progress_count,
+            "tutor_practice_evidence": evidence_count,
+            "tutor_commit_outbox": outbox_count,
             "crisis_events": crisis_count,
             "guardian_notifications": notification_count,
             "corpus_samples": corpus_count,
@@ -2110,6 +2150,24 @@ class SqliteGuardianStore:
                     """
                     SELECT count(*) FROM tutor_study_progress
                     WHERE account_id = ? OR actor_id = ?
+                    """,
+                    (account_id, account_id),
+                ).fetchone()[0]
+            )
+            practice_evidence = int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM tutor_practice_evidence
+                    WHERE subject_id = ? OR actor_id = ?
+                    """,
+                    (account_id, account_id),
+                ).fetchone()[0]
+            )
+            commit_outbox = int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM tutor_commit_outbox
+                    WHERE subject_id = ? OR actor_id = ?
                     """,
                     (account_id, account_id),
                 ).fetchone()[0]
@@ -2159,6 +2217,8 @@ class SqliteGuardianStore:
                 "consents": consents,
                 "tutor_practice_sessions": practice_sessions,
                 "tutor_study_progress": study_progress,
+                "tutor_practice_evidence": practice_evidence,
+                "tutor_commit_outbox": commit_outbox,
                 "crisis_events": crisis_events,
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,
