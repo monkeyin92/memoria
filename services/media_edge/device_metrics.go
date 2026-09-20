@@ -27,6 +27,7 @@ type deviceMetricCounters struct {
 	leaseRejected     atomic.Uint64
 	helloRejected     atomic.Uint64
 	controlRejected   atomic.Uint64
+	bargeIgnored      atomic.Uint64
 	helloV1Total      atomic.Uint64
 	helloV2Total      atomic.Uint64
 	authRejected      atomic.Uint64
@@ -120,6 +121,7 @@ func (s *DeviceWSServer) writeDeviceMetrics(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "device_message_oversize_rejected_total %d\n", counters.oversizeRejected.Load())
 	_, _ = fmt.Fprintf(w, "device_message_rate_rejected_total %d\n", counters.rateRejected.Load())
 	_, _ = fmt.Fprintf(w, "device_control_rejected_total %d\n", counters.controlRejected.Load())
+	_, _ = fmt.Fprintf(w, "device_barge_ignored_total %d\n", counters.bargeIgnored.Load())
 	_, _ = fmt.Fprintf(w, "device_opus_errors_total %d\n", counters.opusErrors.Load())
 	_, _ = fmt.Fprintf(w, "device_runtime_errors_total %d\n", counters.runtimeErrors.Load())
 	_, _ = fmt.Fprintf(w, "device_playback_ack_lag_ms %d\n", ackLagMS)

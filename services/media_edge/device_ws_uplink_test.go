@@ -60,8 +60,10 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 		t.Fatalf("generation 1 did not become active: payload=%s err=%v", payload, err)
 	}
 
-	// keyword.detected without the keyword source is rejected and the
-	// control violation closes the connection without forwarding.
+	// keyword.detected without the keyword source is ignored: the barge is not
+	// forwarded, but the conversation stays open.  A terminal session error
+	// here (the behaviour before 2026-09-20) killed the whole session and the
+	// device showed "错误: 设备媒体会话被服务端终止" after a re-wake.
 	writeDeviceJSON(t, connection, deviceKeywordEvent{
 		deviceEventBase: deviceEventBase{
 			Type: "keyword.detected", Version: 2, StreamEpoch: 18,
@@ -69,7 +71,7 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 		},
 		KeywordID: "kw_1", Confidence: 0.9,
 		Evidence: deviceInterruptionEvidence{
-			DetectedSample: 160, Source: "keyword", DurationMS: 20,
+			DetectedSample: 160, Source: "local_kws", DurationMS: 20,
 			AECMode: "fd_low_cost", AECVerified: true,
 			VADProbability: 0.9, NearEndRMS: 0.1, FarEndRMS: 0.01,
 			SpeakerClass: "owner",
@@ -77,42 +79,31 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0, SessionEpoch: 1},
 	})
 	waitUntil(t, 3*time.Second, func() bool {
-		core.mu.Lock()
-		keywords := len(core.keywords)
-		core.mu.Unlock()
-		return keywords == 0 && env.server.Leases.ActiveCount() == 0
+		return env.server.metrics.bargeIgnored.Load() == 1
 	})
-
-	// Reconnect with a fresh epoch; button.stop IS allowed with the button
-	// source and reaches the runtime.
-	reconnect := env.dialReconnect(t, 19, "ticket_b")
-	writeDeviceJSON(t, reconnect, deviceV2HelloWithEpoch(19))
-	deviceReadAccepted(t, reconnect)
-	env.mu.Lock()
-	coreB := env.cores["session_1"]
-	env.mu.Unlock()
-	coreB.mu.Lock()
-	coreB.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
-	coreB.mu.Unlock()
-	coreB.inject(deviceGenerationEvent(
-		"session_1", 19, 1, 1, 1,
-		mediav1.GenerationAction_GENERATION_ACTION_START,
-	))
-	if _, payload, err := readDeviceMessage(reconnect, 3*time.Second); err != nil ||
-		!strings.Contains(string(payload), "generation.started") {
-		t.Fatalf("reconnect generation did not start: payload=%s err=%v", payload, err)
+	core.mu.Lock()
+	forwardedKeywords := len(core.keywords)
+	core.mu.Unlock()
+	if forwardedKeywords != 0 {
+		t.Fatalf("forbidden keyword barge was forwarded: %v", core.keywords)
 	}
-	writeDeviceJSON(t, reconnect, deviceButtonStop{
+	if env.server.Leases.ActiveCount() == 0 {
+		t.Fatal("forbidden keyword barge closed the session")
+	}
+
+	// The same connection still serves an allowed source: button.stop with the
+	// button source reaches the runtime.
+	writeDeviceJSON(t, connection, deviceButtonStop{
 		deviceEventBase: deviceEventBase{
-			Type: "button.stop", Version: 2, StreamEpoch: 19,
+			Type: "button.stop", Version: 2, StreamEpoch: 18,
 			ControlSequence: 2, DeviceMonotonicMS: 2,
 		},
 		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0, SessionEpoch: 1},
 	})
 	waitUntil(t, 3*time.Second, func() bool {
-		coreB.mu.Lock()
-		defer coreB.mu.Unlock()
-		return len(coreB.stops) == 1
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		return len(core.stops) == 1
 	})
 
 	// The signed-ticket boundary rejects an invalid mixed none+active-source
@@ -225,14 +216,32 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 	waitUntil(t, 3*time.Second, playbackState)
 
 	// A VAD start during playback is a barge candidate; without the voice
-	// source it is rejected and the control violation closes the connection
-	// without forwarding.
+	// source it is ignored -- not forwarded, and the conversation stays open.
+	// Closing the session here was the 2026-09-20 re-wake defect: the device
+	// showed "错误: 设备媒体会话被服务端终止" and reconnected.
 	sendVAD(5, true)
 	waitUntil(t, 3*time.Second, func() bool {
+		return env.server.metrics.bargeIgnored.Load() == 1
+	})
+	core.mu.Lock()
+	vadAfterBarge := len(core.vad)
+	core.mu.Unlock()
+	if vadAfterBarge != 1 {
+		t.Fatalf("forbidden voice barge was forwarded: %d VAD events", vadAfterBarge)
+	}
+	if env.server.Leases.ActiveCount() == 0 {
+		t.Fatal("forbidden voice barge closed the session")
+	}
+
+	// Playback ends, the floor is the owner's again, and the next VAD start is
+	// forwarded: the ignored frame did not poison the session.
+	sendPlayback("playback.ended", 6, 2)
+	waitUntil(t, 3*time.Second, func() bool { return !playbackState() })
+	sendVAD(7, true)
+	waitUntil(t, 3*time.Second, func() bool {
 		core.mu.Lock()
-		vad := len(core.vad)
-		core.mu.Unlock()
-		return vad == 1 && env.server.Leases.ActiveCount() == 0
+		defer core.mu.Unlock()
+		return len(core.vad) == 2
 	})
 }
 

@@ -8,6 +8,7 @@ package mediaedge
 import (
 	"encoding/base64"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -97,6 +98,25 @@ func (c *DeviceConnection) acceptControlSequence(sequence uint64) bool {
 	return true
 }
 
+// ignoreForbiddenBarge drops a barge request whose source the signed device
+// settings do not allow, without ending the conversation.
+//
+// A forbidden barge is a refusal to hand over the floor, not a protocol
+// violation: the frame is never forwarded, so the assistant keeps the floor
+// and Voice Core never sees the attempt.  Sending a terminal session error
+// here (the behaviour before 2026-09-20) killed the whole session: a re-wake
+// whose VAD start landed during playback ended with "错误: 设备媒体会话被服务端终止"
+// on the device and a WebSocket reconnect.  Epoch, sequence and shape
+// violations still close the lane.
+func (c *DeviceConnection) ignoreForbiddenBarge(source string) {
+	c.server.metrics.controlRejected.Add(1)
+	c.server.metrics.bargeIgnored.Add(1)
+	log.Printf(
+		"media edge ignored barge from a forbidden source session=%s device=%s epoch=%d source=%s",
+		c.sessionID, c.deviceID, c.epoch, source,
+	)
+}
+
 func (c *DeviceConnection) handleVAD(envelope deviceControlEnvelope, runtime *VoiceCoreMediaRuntime) bool {
 	if err := requireVersion(envelope.Version, 2); err != nil {
 		c.server.metrics.controlRejected.Add(1)
@@ -129,9 +149,8 @@ func (c *DeviceConnection) handleVAD(envelope deviceControlEnvelope, runtime *Vo
 	start := envelope.Type == "vad.start"
 	if start && c.isPlaybackActive() &&
 		!bargeInSourceAllowed(c.claims.DeviceSettings.AllowedBargeIn, "voice") {
-		c.server.metrics.controlRejected.Add(1)
-		c.sendSessionError("barge_source_forbidden", false)
-		return false
+		c.ignoreForbiddenBarge("voice")
+		return true
 	}
 	if err := runtime.SendVAD(
 		event.SamplePosition, event.VoicedEndSample,
@@ -167,9 +186,8 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 		return false
 	}
 	if !bargeInSourceAllowed(c.claims.DeviceSettings.AllowedBargeIn, "keyword") {
-		c.server.metrics.controlRejected.Add(1)
-		c.sendSessionError("barge_source_forbidden", false)
-		return false
+		c.ignoreForbiddenBarge("keyword")
+		return true
 	}
 	if runtime == nil {
 		return true
@@ -213,9 +231,8 @@ func (c *DeviceConnection) handleButtonStop(envelope deviceControlEnvelope, runt
 		return false
 	}
 	if !bargeInSourceAllowed(c.claims.DeviceSettings.AllowedBargeIn, "button") {
-		c.server.metrics.controlRejected.Add(1)
-		c.sendSessionError("barge_source_forbidden", false)
-		return false
+		c.ignoreForbiddenBarge("button")
+		return true
 	}
 	if runtime == nil {
 		return true
