@@ -383,3 +383,10 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 未覆盖：F2 打断语义（禁止源 barge 只拒交接；播放窗口只由设备本地 flush 的 `button.stop` 撤销）需要**按压设备按键**产生真实打断，脚本无法替代；“待命后立即再唤醒不弹错”与 +3s/+5s 极短格本轮未单独取值（脚本实际延迟为 +6.8/+8.2/+11s）。
 - 本机工具结论：`auto_audio_session.py` 的参考匹配在本机是边缘值（三块 NCC 0.11–0.28，含空段的那块低于 0.20 阈值），且 ffmpeg 8 约每 8s 才整块落盘（`-flush_packets`/`-avioflags direct` 均无效，live 门禁需 `--ffmpeg-start-timeout-s 25`）。因此本机问答扫频改用“设备控制台为时间源”的方式，未放宽工具判据。
 - 自检匹配器诊断（一次性、无代码改动，2026-09-20）：用更长且无明显重复音节的 selftest 文本（`--selftest-text "请确认扬声器到麦克风的通路工作正常一二三四五六七八"`，参考 5.90s、录音 20.40s）复算工具判据，结果仍为 `blocked_reference_match`（fail-closed 保持）。逐块读数（工具规定 ±150ms 窗口内）：chunk0=0.249（通过）、chunk1=0.407 残差 -0.148s、**chunk2=0.144（低于 0.20）残差 -0.147s**（无约束峰值 0.267 落在窗口外 -0.17s）。两块残差稳定在 ≈ -0.15s，属**固定时序偏移**而非随机噪声；不改 NCC/skew 阈值、不改匹配器。结论：本机问答扫频继续走“设备控制台为时间源”的独立路径；匹配器若修，需附该时序偏移的回归样本，并保留唯一候选/每块 NCC/拟合残差证据。
+
+## 2026-09-20 F2 语音打断设备复验（独立路径，新发布镜像上）
+
+- 方法：`scripts/voice_session_capture.py --server-logs` 采集（`outputs/acceptance/run-20260920-f2-barge-window/`，ignored）；电脑扬声器播放：唤醒（复用已验 `stimuli/wake.wav`）→ 提问 → **设备 `speaking` 期间再次播放唤醒词**（语音打断）→ 再追问一次。输出 80%（readback 验证；结束还原 31/muted=true）。
+- 设备控制台（+08:00）：21:46:29 一次唤醒成功 → 21:46:32 `connecting->listening` → 21:46:34–35 欢迎语 → 21:46:38 提问 → 21:46:39.561 `listening->speaking`（作答）→ **21:46:42 播放打断** → 21:46:42.506 `speaking->listening` → 21:46:42.971 `listening->speaking` → 21:46:48.597 `speaking->listening`；21:46:58 追问 → 21:47:02 `listening->speaking`、21:47:04 结束、21:47:08 再起一轮。
+- **判据**：语音打断后**会话存活**、随后追问仍被接受；串口无 `barge_source_forbidden`、无 `retryable`、无 session error/closed（仅无关的 BMI2 I2C 传感器超时）。旧行为（打断终止整段会话并报错）未复现。结论：**F2 的“禁止源 barge 只拒绝交接话语权”在设备上按预期工作**（设备端状态证据，非人工听感）。
+- 局限：修复新增的忽略计数是 Prometheus 指标，本次采集的日志里没有出现（未抓取 metrics 端点），故仅有行为证据；**“播放窗口只由设备本地 flush 的 `button.stop` 撤销”这条仍需按压设备按键复验**。
