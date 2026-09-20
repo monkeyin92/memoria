@@ -66,6 +66,10 @@ data/
 !services/miniprogram_gateway/tests/fixtures/**
 !tests/e2e/fixtures/**
 
+# The audio-acceptance tool keeps a recorded-turns log and regenerates its own fixtures
+!scripts/auto_audio/fixtures/**
+scripts/auto_audio/selfcheck/
+
 # CosyVoice design previews (binary); registry JSON is committed for deploy
 infra/voices/previews/
 
