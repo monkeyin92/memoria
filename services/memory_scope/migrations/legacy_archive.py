@@ -9,6 +9,16 @@ The migration is fail-closed. account_id is never used as subject_id. A
 projection row is migrated only when every source event in its lineage exists,
 belongs to the same account, has one non-null subject, and the four Memory
 Scope authority fields are explicitly provable.
+
+Runs are incremental. The row receipts written by earlier runs decide which
+source rows are already in the target, so a later run writes only the rows the
+target does not have yet. Every fence is scoped to those receipts: a
+receipt-covered source row that changed, a target record that no longer matches
+its receipt, or a status chain that grew after the fact is refused, while
+unrelated new Archive rows and unrelated target rows neither block an apply nor
+a rollback. The target tables ``memory_records``/``memory_status_events`` are
+created with the schema of ``services.memory_scope.sqlite_store``, so a
+database first created by this seam stays usable by the real adapter.
 """
 
 from __future__ import annotations
@@ -131,6 +141,23 @@ class _AuthorityResult:
 
 
 @dataclass(frozen=True, slots=True)
+class _ReceiptState:
+    """One row receipt of an earlier run plus the status of its migration."""
+
+    migration_id: str
+    migration_status: str
+    table: str
+    row_id: str
+    record_id: str
+    outcome: str
+    before_row_digest: str
+    record_digest: str
+    status_event_digest: str
+    status_chain_digest: str
+    source_snapshot_digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class _PlanEntry:
     table: str
     row_id: str
@@ -155,6 +182,16 @@ class _PlanEntry:
     status_event: dict[str, Any] | None
     record_digest: str | None
     status_event_digest: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RunPlan:
+    """The receipt-scoped split of the Archive inventory for one run."""
+
+    rows: tuple[dict[str, Any], ...]
+    pending: tuple[_PlanEntry, ...]
+    already_migrated: tuple[dict[str, Any], ...]
+    covering_migration_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1508,6 +1545,180 @@ def _target_digest_with_entries(
     )
 
 
+def _read_receipts(
+    connection: sqlite3.Connection | None,
+) -> dict[tuple[str, str], _ReceiptState]:
+    """Read the row receipts that fence an incremental run.
+
+    Receipts are the only authority on "this source row is already in the
+    target".  A receipt without its migration row, two receipts for one source
+    row, or a migration status this seam cannot interpret is a torn target and
+    must be investigated instead of migrated around.
+    """
+
+    if connection is None or not _table_exists(connection, "main", _RECEIPT_TABLE):
+        return {}
+    _validate_support_schema(connection)
+    rows = connection.execute(
+        f"SELECT r.*, m.status AS migration_status "
+        f"FROM {_quote_identifier(_RECEIPT_TABLE)} AS r "
+        f"LEFT JOIN {_quote_identifier(_MIGRATION_TABLE)} AS m "
+        "ON m.migration_id = r.migration_id"
+    ).fetchall()
+    receipts: dict[tuple[str, str], _ReceiptState] = {}
+    for row in rows:
+        migration_id = str(row["migration_id"])
+        status = _normalise_text(row["migration_status"])
+        if status is None:
+            raise LegacyArchiveMigrationError(
+                f"row receipt {migration_id} has no migration row"
+            )
+        if status not in ("applied", "rolled_back"):
+            raise LegacyArchiveMigrationError(
+                f"row receipt {migration_id} has unsupported migration status: {status}"
+            )
+        key = (str(row["table_name"]), str(row["source_row_id"]))
+        if key in receipts:
+            raise LegacyArchiveMigrationError(
+                f"duplicate row receipts for {key[0]}:{key[1]}"
+            )
+        receipts[key] = _ReceiptState(
+            migration_id=migration_id,
+            migration_status=status,
+            table=key[0],
+            row_id=key[1],
+            record_id=str(row["record_id"]),
+            outcome=str(row["outcome"]),
+            before_row_digest=str(row["before_row_digest"]),
+            record_digest=str(row["record_digest"]),
+            status_event_digest=str(row["status_event_digest"]),
+            status_chain_digest=str(row["status_chain_digest"]),
+            source_snapshot_digest=str(row["source_snapshot_digest"]),
+        )
+    return receipts
+
+
+def _receipts_for_migration(
+    connection: sqlite3.Connection, migration_id: str
+) -> tuple[_ReceiptState, ...]:
+    receipts = [
+        receipt
+        for receipt in _read_receipts(connection).values()
+        if receipt.migration_id == migration_id
+    ]
+    return tuple(sorted(receipts, key=lambda item: (item.table, item.row_id)))
+
+
+def _verify_receipts_against_source(
+    state: _ArchiveState, receipts: Iterable[_ReceiptState]
+) -> None:
+    """Fence the receipt-covered source rows of one migration."""
+
+    current = {_raw_key(row): row.row_digest for row in state.projection_rows}
+    for receipt in receipts:
+        digest = current.get((receipt.table, receipt.row_id))
+        if digest is None:
+            raise LegacyArchiveMigrationError(
+                f"migrated source row is missing from the Archive: "
+                f"{receipt.table}:{receipt.row_id}"
+            )
+        if digest != receipt.before_row_digest:
+            raise LegacyArchiveMigrationError(
+                f"migrated source row drifted since it was migrated: "
+                f"{receipt.table}:{receipt.row_id}"
+            )
+
+
+def _verify_receipts_against_target(
+    connection: sqlite3.Connection, receipts: Iterable[_ReceiptState]
+) -> None:
+    """Fence the migrated target rows and status chains of one migration."""
+
+    for receipt in receipts:
+        if receipt.outcome != "migrated":
+            continue
+        row = connection.execute(
+            "SELECT * FROM memory_records WHERE record_id = ?", (receipt.record_id,)
+        ).fetchone()
+        if row is None:
+            raise LegacyArchiveMigrationError(
+                f"migrated target record is missing: {receipt.record_id}"
+            )
+        if _sha256(_record_from_target_row(row)) != receipt.record_digest:
+            raise LegacyArchiveMigrationError(
+                f"migrated target record drifted: {receipt.record_id}"
+            )
+        if _status_chain_digest(connection, receipt.record_id) != receipt.status_chain_digest:
+            raise LegacyArchiveMigrationError(
+                f"migrated status chain drifted: {receipt.record_id}"
+            )
+
+
+def _run_plan(
+    state: _ArchiveState, target_connection: sqlite3.Connection | None
+) -> _RunPlan:
+    """Split the Archive inventory into rows to write and rows already written.
+
+    The split is fenced by the earlier runs' row receipts: an already-migrated
+    row whose receipt no longer matches the Archive (row digest, classification
+    or owning migration) is refused instead of being written a second time.
+    """
+
+    receipts = _read_receipts(target_connection)
+    pending: list[_PlanEntry] = []
+    already_migrated: list[dict[str, Any]] = []
+    covering: list[str] = []
+    for projection in sorted(state.projection_rows, key=_raw_key):
+        entry = _plan_entry(state, projection)
+        receipt = receipts.get((entry.table, entry.row_id))
+        if receipt is None:
+            pending.append(entry)
+            continue
+        if receipt.migration_status == "rolled_back":
+            raise LegacyArchiveMigrationError(
+                f"source row belongs to rolled-back migration "
+                f"{receipt.migration_id} and cannot be reactivated: "
+                f"{entry.table}:{entry.row_id}"
+            )
+        if receipt.before_row_digest != entry.row_digest:
+            raise LegacyArchiveMigrationError(
+                f"source row drifted since it was migrated: {entry.table}:{entry.row_id}"
+            )
+        if (
+            receipt.outcome != entry.outcome
+            or receipt.source_snapshot_digest != entry.source_snapshot_digest
+            or receipt.record_digest != (entry.record_digest or "")
+        ):
+            raise LegacyArchiveMigrationError(
+                f"source row no longer classifies like its receipt: "
+                f"{entry.table}:{entry.row_id}"
+            )
+        already_migrated.append(
+            {
+                "table": entry.table,
+                "source_row_id": entry.row_id,
+                "before_row_digest": entry.row_digest,
+                "outcome": entry.outcome,
+                "record_id": entry.record_id,
+                "record_digest": receipt.record_digest,
+                "migration_id": receipt.migration_id,
+            }
+        )
+        covering.append(receipt.migration_id)
+    return _RunPlan(
+        rows=tuple(_entry_dict(entry) for entry in pending),
+        pending=tuple(pending),
+        already_migrated=tuple(already_migrated),
+        covering_migration_ids=_unique(covering),
+    )
+
+
+# Byte-for-byte the ``memory_records``/``memory_status_events`` fragment of
+# ``services.memory_scope.sqlite_store`` (same columns, defaults, constraints,
+# indexes and append-only triggers).  A target created here must behave exactly
+# like one created by the real adapter, so the schema is copied instead of
+# re-derived; ``memory_type`` is validated by the planner, not by a CHECK the
+# adapter does not have.
 _TARGET_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS memory_records (
     record_id TEXT PRIMARY KEY,
@@ -1519,12 +1730,14 @@ CREATE TABLE IF NOT EXISTS memory_records (
     source_evidence_ids TEXT NOT NULL DEFAULT '[]',
     policy_receipt_id TEXT NOT NULL DEFAULT '' CHECK (length(policy_receipt_id) BETWEEN 1 AND 128),
     promotion_receipt_id TEXT NOT NULL DEFAULT '' CHECK (length(promotion_receipt_id) BETWEEN 0 AND 128),
-    promotion_fence_context_hash TEXT NOT NULL DEFAULT '' CHECK (length(promotion_fence_context_hash) BETWEEN 0 AND 128),
+    promotion_fence_context_hash TEXT NOT NULL DEFAULT ''
+        CHECK (length(promotion_fence_context_hash) BETWEEN 0 AND 128),
     approval_evidence_refs TEXT NOT NULL DEFAULT '[]',
     consent_snapshot_id TEXT NOT NULL DEFAULT '' CHECK (length(consent_snapshot_id) BETWEEN 1 AND 128),
-    memory_type TEXT NOT NULL CHECK (memory_type IN ('semantic', 'episodic', 'procedural', 'relationship')),
+    memory_type TEXT NOT NULL DEFAULT 'semantic',
     confidence REAL NOT NULL DEFAULT 0.5 CHECK (confidence >= 0.0 AND confidence <= 1.0),
-    retention TEXT NOT NULL DEFAULT 'indefinite' CHECK (retention IN ('session_only', 'ttl', 'indefinite')),
+    retention TEXT NOT NULL DEFAULT 'indefinite'
+        CHECK (retention IN ('session_only', 'ttl', 'indefinite')),
     retention_expires_at TEXT,
     payload TEXT NOT NULL DEFAULT '{{}}',
     created_by_actor_id TEXT NOT NULL DEFAULT '' CHECK (length(created_by_actor_id) BETWEEN 1 AND 128),
@@ -1532,8 +1745,13 @@ CREATE TABLE IF NOT EXISTS memory_records (
     shared_proposal_id TEXT,
     CHECK (scope <> 'family_shared' OR family_space_id IS NOT NULL)
 );
-CREATE INDEX IF NOT EXISTS idx_legacy_archive_memory_records_subject
+CREATE INDEX IF NOT EXISTS idx_memory_records_subject
 ON memory_records(subject_id, scope, created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_records_family
+ON memory_records(family_space_id, scope, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_records_shared_proposal
+ON memory_records(shared_proposal_id) WHERE shared_proposal_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS memory_status_events (
     event_id TEXT PRIMARY KEY,
     record_id TEXT NOT NULL REFERENCES memory_records(record_id),
@@ -1541,24 +1759,28 @@ CREATE TABLE IF NOT EXISTS memory_status_events (
     reason_code TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_legacy_archive_memory_status_events_record
+CREATE INDEX IF NOT EXISTS idx_memory_status_events_record
 ON memory_status_events(record_id, created_at);
-CREATE TRIGGER IF NOT EXISTS trg_legacy_archive_memory_records_no_update
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_records_no_update
 BEFORE UPDATE ON memory_records
 BEGIN
     SELECT RAISE(ABORT, 'memory_records is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS trg_legacy_archive_memory_records_no_delete
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_records_no_delete
 BEFORE DELETE ON memory_records
 BEGIN
     SELECT RAISE(ABORT, 'memory_records is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS trg_legacy_archive_memory_status_events_no_update
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_status_events_no_update
 BEFORE UPDATE ON memory_status_events
 BEGIN
     SELECT RAISE(ABORT, 'memory_status_events is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS trg_legacy_archive_memory_status_events_no_delete
+
+CREATE TRIGGER IF NOT EXISTS trg_memory_status_events_no_delete
 BEFORE DELETE ON memory_status_events
 BEGIN
     SELECT RAISE(ABORT, 'memory_status_events is append-only');
@@ -1749,11 +1971,9 @@ def _build_report_on_connections(
 ) -> dict[str, Any]:
     state = _read_archive(source_connection, "main")
     target_digest_before = _target_digest(target_connection)
-    entries = tuple(
-        _plan_entry(state, projection)
-        for projection in sorted(state.projection_rows, key=_raw_key)
-    )
-    rows = [_entry_dict(entry) for entry in entries]
+    run = _run_plan(state, target_connection)
+    entries = run.pending
+    rows = list(run.rows)
     migrated = sum(entry.outcome == "migrated" for entry in entries)
     quarantined = sum(entry.outcome == "quarantined" for entry in entries)
     reason_counts: dict[str, int] = {}
@@ -1764,8 +1984,10 @@ def _build_report_on_connections(
         "projection_table_count": len(state.projection_tables),
         "source_table_count": len(state.source_tables),
         "row_count": len(entries),
+        "source_row_count": len(state.projection_rows),
         "migrated": migrated,
         "quarantined": quarantined,
+        "already_migrated": len(run.already_migrated),
         "quarantine_reasons": dict(sorted(reason_counts.items())),
     }
     migration_rows = [
@@ -1787,6 +2009,7 @@ def _build_report_on_connections(
             "scope": _MEMORY_SCOPE,
             "source_digest": state.source_digest,
             "rows": migration_rows,
+            "already_migrated": list(run.already_migrated),
             "statistics": statistics,
         }
     )
@@ -1811,6 +2034,7 @@ def _build_report_on_connections(
             "tables": list(_TARGET_TABLES),
         },
         "rows": rows,
+        "already_migrated": list(run.already_migrated),
         "statistics": statistics,
     }
     manifest = dict(manifest_body)
@@ -1827,6 +2051,8 @@ def _build_report_on_connections(
         "row_count": len(entries),
         "migrated": migrated,
         "quarantined": quarantined,
+        "already_migrated": list(run.already_migrated),
+        "already_migrated_count": len(run.already_migrated),
         "statistics": statistics,
         "rows": rows,
         "manifest": manifest,
@@ -1887,6 +2113,53 @@ def _manifest_rows(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
             raise LegacyArchiveMigrationError("stored migration row is not an object")
         result.append({str(key): item for key, item in raw_row.items()})
     return tuple(result)
+
+
+def _manifest_already_migrated(
+    manifest: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """The inventory rows a stored manifest skipped because a receipt covered them."""
+
+    raw_rows = manifest.get("already_migrated", [])
+    if not isinstance(raw_rows, list):
+        raise LegacyArchiveMigrationError(
+            "stored migration manifest has invalid already-migrated rows"
+        )
+    result: list[dict[str, Any]] = []
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            raise LegacyArchiveMigrationError(
+                "stored already-migrated row is not an object"
+            )
+        result.append({str(key): item for key, item in raw_row.items()})
+    return tuple(result)
+
+
+def _recorded_migration(
+    connection: sqlite3.Connection, migration_id: str, migration_key: str
+) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = connection.execute(
+        f"SELECT * FROM {_quote_identifier(_MIGRATION_TABLE)} "
+        "WHERE migration_id = ? OR migration_key = ? LIMIT 1",
+        (migration_id, migration_key),
+    ).fetchone()
+    return row
+
+
+def _assert_manifest_matches_receipts(
+    manifest: Mapping[str, Any], receipts: Iterable[_ReceiptState]
+) -> None:
+    """Refuse a migration whose stored manifest and row receipts disagree."""
+
+    manifest_rows = {
+        (str(row.get("table")), str(row.get("source_row_id")), str(row.get("outcome")))
+        for row in _manifest_rows(manifest)
+    }
+    receipt_rows = {(receipt.table, receipt.row_id, receipt.outcome) for receipt in receipts}
+    if manifest_rows != receipt_rows:
+        raise LegacyArchiveMigrationError(
+            "stored migration manifest and row receipts disagree"
+        )
 
 
 def _find_migration(
@@ -2158,9 +2431,12 @@ def _stored_report(
 ) -> dict[str, Any]:
     manifest = _manifest_from_row(row)
     rows = list(_manifest_rows(manifest))
+    already_migrated = list(_manifest_already_migrated(manifest))
     statistics = manifest.get("statistics")
     if not isinstance(statistics, Mapping):
         raise LegacyArchiveMigrationError("stored migration manifest has no statistics")
+    source = manifest.get("source")
+    target = manifest.get("target")
     result = dict(report)
     result.update(
         {
@@ -2171,9 +2447,15 @@ def _stored_report(
             "row_count": len(rows),
             "migrated": int(statistics.get("migrated", 0)),
             "quarantined": int(statistics.get("quarantined", 0)),
+            "already_migrated": already_migrated,
+            "already_migrated_count": len(already_migrated),
             "statistics": dict(statistics),
+            "source": dict(source) if isinstance(source, Mapping) else report.get("source"),
+            "target": dict(target) if isinstance(target, Mapping) else report.get("target"),
+            "source_digest": str(row["source_digest_after"]),
             "target_digest_before": str(row["target_digest_before"]),
             "target_digest_after": str(row["target_digest_after"]),
+            "applied": False,
             "idempotent": idempotent,
             "status": str(row["status"]),
         }
@@ -2187,7 +2469,12 @@ def plan(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Build a deterministic migration manifest without writing either database."""
+    """Build a deterministic migration manifest without writing either database.
+
+    The manifest covers the rows an apply would write now and lists the
+    inventory rows an earlier run already migrated, so an operator approves
+    exactly the write set.
+    """
 
     del now  # Planning must not depend on wall-clock time.
     return _build_report(archive_path, target_path)
@@ -2212,7 +2499,14 @@ def apply(
     now: datetime | None = None,
     expected_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Apply one deterministic migration in a single target transaction."""
+    """Apply one deterministic, incremental migration in a single transaction.
+
+    Source rows whose receipts are already in the target are skipped, so a
+    later run only writes the rows the target does not have yet.  A run with
+    nothing to write is idempotent when one stored migration already covers
+    every row it found; otherwise it journals the empty run, so no apply goes
+    unrecorded.
+    """
 
     report = _build_report(archive_path, target_path)
     actual_manifest_sha256 = _manifest_sha256(report)
@@ -2246,57 +2540,56 @@ def apply(
 
         migration_id = str(report["migration_id"])
         migration_key = str(report["migration_key"])
-        has_existing = connection.execute(
-            f"SELECT 1 FROM {_quote_identifier(_MIGRATION_TABLE)} "
-            "WHERE migration_id = ? OR migration_key = ? LIMIT 1",
-            (migration_id, migration_key),
-        ).fetchone()
-        existing = (
-            _find_migration(
-                connection,
-                migration_id=migration_id,
-                migration_key=migration_key,
-            )
-            if has_existing is not None
-            else None
-        )
-        if existing is not None:
-            status = str(existing["status"])
-            if status == "rolled_back":
-                raise LegacyArchiveMigrationError(
-                    f"migration {migration_id} was rolled back and cannot be reactivated"
-                )
-            if status != "applied":
-                raise LegacyArchiveMigrationError(
-                    f"unsupported stored migration status: {status}"
-                )
-            current_target_digest = _target_digest(connection)
-            if current_target_digest != str(existing["target_digest_after"]):
-                raise LegacyArchiveMigrationError(
-                    "target drift detected for an already-applied migration"
-                )
-            if str(existing["source_digest_after"]) != current_state.source_digest:
-                raise LegacyArchiveMigrationError(
-                    "source drift detected for an already-applied migration"
-                )
-            return _stored_report(report, existing, idempotent=True)
-
-        entries = tuple(
-            _plan_entry(current_state, projection)
-            for projection in sorted(current_state.projection_rows, key=_raw_key)
-        )
-        planned_rows = report.get("rows")
-        if not isinstance(planned_rows, list) or planned_rows != [
-            _entry_dict(entry) for entry in entries
-        ]:
-            raise LegacyArchiveMigrationError(
-                "current Archive rows do not match the migration plan"
-            )
-        _assert_no_target_conflicts(connection, migration_id, entries)
 
         timestamp = _now(now).isoformat()
         connection.execute("BEGIN IMMEDIATE")
         try:
+            current = _run_plan(current_state, connection)
+            planned_rows = report.get("rows")
+            if (
+                not isinstance(planned_rows, list)
+                or planned_rows != list(current.rows)
+                or list(current.already_migrated) != report.get("already_migrated")
+            ):
+                raise LegacyArchiveMigrationError(
+                    "current Archive rows do not match the migration plan"
+                )
+            recorded = _recorded_migration(connection, migration_id, migration_key)
+            if not current.pending:
+                stored = (
+                    _find_migration(
+                        connection, migration_id=current.covering_migration_ids[0]
+                    )
+                    if len(current.covering_migration_ids) == 1
+                    else recorded
+                )
+                if stored is not None:
+                    status = str(stored["status"])
+                    if status != "applied":
+                        raise LegacyArchiveMigrationError(
+                            f"unsupported stored migration status: {status}"
+                        )
+                    _verify_receipts_against_target(
+                        connection,
+                        _receipts_for_migration(connection, str(stored["migration_id"])),
+                    )
+                    connection.rollback()
+                    return _stored_report(report, stored, idempotent=True)
+            elif recorded is not None:
+                raise LegacyArchiveMigrationError(
+                    "migration is already recorded but its row receipts do not "
+                    f"cover the planned rows: {migration_id}"
+                )
+            # The rows this run skips are fenced too: a migrated record that
+            # no longer matches its receipt is drift, not something to migrate
+            # past while writing the new rows.
+            for covering_id in current.covering_migration_ids:
+                _verify_receipts_against_target(
+                    connection, _receipts_for_migration(connection, covering_id)
+                )
+
+            entries = current.pending
+            _assert_no_target_conflicts(connection, migration_id, entries)
             for entry in entries:
                 if entry.outcome == "migrated":
                     _insert_record_and_status(connection, entry)
@@ -2383,6 +2676,90 @@ def apply(
         connection.close()
 
 
+def _rolled_back_report(
+    connection: sqlite3.Connection,
+    stored: sqlite3.Row,
+    receipts: Iterable[_ReceiptState],
+) -> dict[str, Any]:
+    """Re-verify an already rolled-back migration and report it again.
+
+    The revocation of this migration's own records is re-checked row by row, so
+    a later incremental migration - or any other unrelated target row - does
+    not make the second rollback call fail, while a changed record, a changed
+    rollback event or any further status event on that record still does.  The
+    record was created by the migration with exactly one initial status event,
+    so the revoked chain is the initial event plus the rollback event and
+    nothing else; that check does not depend on event timestamps.
+    """
+
+    migration_id = str(stored["migration_id"])
+    rolled_back_at = _normalise_text(stored["rolled_back_at"])
+    if rolled_back_at is None:
+        raise LegacyArchiveMigrationError(
+            f"rolled-back migration {migration_id} has no rollback timestamp"
+        )
+    revoked: list[dict[str, str]] = []
+    for receipt in receipts:
+        if receipt.outcome != "migrated":
+            continue
+        row = connection.execute(
+            "SELECT * FROM memory_records WHERE record_id = ?", (receipt.record_id,)
+        ).fetchone()
+        if row is None or _sha256(_record_from_target_row(row)) != receipt.record_digest:
+            raise LegacyArchiveMigrationError(
+                f"migrated target record drifted after the rollback: {receipt.record_id}"
+            )
+        event_id = _rollback_status_event_id(migration_id, receipt.record_id)
+        event_row = connection.execute(
+            "SELECT * FROM memory_status_events WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if event_row is None:
+            raise LegacyArchiveMigrationError(
+                f"rollback status event is missing: {receipt.record_id}"
+            )
+        expected_event = {
+            "event_id": event_id,
+            "record_id": receipt.record_id,
+            "status": "revoked",
+            "reason_code": "legacy_archive_rollback",
+            "created_at": rolled_back_at,
+        }
+        if _status_event_from_target_row(event_row) != expected_event:
+            raise LegacyArchiveMigrationError(
+                f"rollback status event drifted: {receipt.record_id}"
+            )
+        chain = connection.execute(
+            "SELECT * FROM memory_status_events WHERE record_id = ?",
+            (receipt.record_id,),
+        ).fetchall()
+        digests = sorted(_sha256(_status_event_from_target_row(row)) for row in chain)
+        expected_digests = sorted(
+            (receipt.status_event_digest, _sha256(expected_event))
+        )
+        if len(chain) != 2 or digests != expected_digests:
+            raise LegacyArchiveMigrationError(
+                f"status chain changed after the rollback: {receipt.record_id}"
+            )
+        revoked.append(
+            {
+                "table": receipt.table,
+                "source_row_id": receipt.row_id,
+                "record_id": receipt.record_id,
+            }
+        )
+    return {
+        "scope": _MEMORY_SCOPE,
+        "migration_id": migration_id,
+        "migration_key": str(stored["migration_key"]),
+        "manifest_sha256": str(stored["manifest_sha256"]),
+        "status": "rolled_back",
+        "target_digest_after": _target_digest(connection),
+        "revoked": revoked,
+        "revoked_count": len(revoked),
+        "idempotent": True,
+    }
+
+
 def rollback(
     archive_path: str | Path,
     target_path: str | Path | None = None,
@@ -2391,7 +2768,14 @@ def rollback(
     manifest_sha256: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Append revocation events for one applied migration without deleting data."""
+    """Append revocation events for one applied migration without deleting data.
+
+    The fence is scoped to the row receipts of that migration: the source rows
+    it migrated must still match their ``before_row_digest`` and the records it
+    wrote must still match their receipt digests.  Rows written by other runs
+    (including later, incremental ones) neither block the rollback nor get
+    revoked by it; the whole-target digest stays behind as evidence only.
+    """
 
     if migration_id is None and manifest_sha256 is None:
         raise LegacyArchiveMigrationError(
@@ -2418,6 +2802,7 @@ def rollback(
             migration_id=migration_id,
             manifest_sha256=manifest_sha256,
         )
+        stored_migration_id = str(stored["migration_id"])
         stored_manifest_sha256 = str(stored["manifest_sha256"])
         if (
             manifest_sha256 is not None
@@ -2426,121 +2811,32 @@ def rollback(
             raise LegacyArchiveMigrationError(
                 "rollback manifest SHA-256 does not match the stored migration"
             )
-        if state.source_digest != str(stored["source_digest_after"]):
-            raise LegacyArchiveMigrationError(
-                "Archive source drifted since the migration was applied"
-            )
+        receipts = _receipts_for_migration(target_read_connection, stored_migration_id)
+        _assert_manifest_matches_receipts(_manifest_from_row(stored), receipts)
         status = str(stored["status"])
-        current_target_digest = _target_digest(target_read_connection)
         if status == "rolled_back":
-            rollback_digest = _normalise_text(stored["rollback_target_digest"])
-            if rollback_digest is None or current_target_digest != rollback_digest:
-                raise LegacyArchiveMigrationError(
-                    "target drift detected after the migration was rolled back"
-                )
-            return {
-                "scope": _MEMORY_SCOPE,
-                "migration_id": str(stored["migration_id"]),
-                "migration_key": str(stored["migration_key"]),
-                "manifest_sha256": stored_manifest_sha256,
-                "status": "rolled_back",
-                "target_digest_after": current_target_digest,
-                "idempotent": True,
-            }
+            return _rolled_back_report(target_read_connection, stored, receipts)
         if status != "applied":
             raise LegacyArchiveMigrationError(f"unsupported migration status: {status}")
-        if current_target_digest != str(stored["target_digest_after"]):
-            raise LegacyArchiveMigrationError(
-                "target drift detected before rollback"
-            )
-        manifest = _manifest_from_row(stored)
-        rows = _manifest_rows(manifest)
+        _verify_receipts_against_source(state, receipts)
+        _verify_receipts_against_target(target_read_connection, receipts)
 
     connection = _connect_target(target)
     try:
         _validate_target_schema(connection)
         _validate_support_schema(connection)
-        if _target_digest(connection) != str(stored["target_digest_after"]):
-            raise LegacyArchiveMigrationError(
-                "target changed while rollback was being prepared"
-            )
-        if _source_state(archive).source_digest != str(stored["source_digest_after"]):
-            raise LegacyArchiveMigrationError(
-                "Archive source changed while rollback was being prepared"
-            )
+        _verify_receipts_against_source(_source_state(archive), receipts)
+        _verify_receipts_against_target(connection, receipts)
 
         timestamp = _now(now).isoformat()
-        stored_migration_id = str(stored["migration_id"])
+        revoked: list[dict[str, str]] = []
         connection.execute("BEGIN IMMEDIATE")
         try:
-            for row in rows:
-                if row.get("outcome") != "migrated":
+            for receipt in receipts:
+                if receipt.outcome != "migrated":
                     continue
-                table_name = _normalise_text(row.get("table"))
-                source_row_id = _normalise_text(row.get("source_row_id"))
-                record_id = _normalise_text(row.get("record_id"))
-                if table_name is None or source_row_id is None or record_id is None:
-                    raise LegacyArchiveMigrationError(
-                        "stored migration row is missing rollback identity"
-                    )
-                receipt = connection.execute(
-                    f"SELECT * FROM {_quote_identifier(_RECEIPT_TABLE)} "
-                    "WHERE migration_id = ? AND table_name = ? AND source_row_id = ?",
-                    (stored_migration_id, table_name, source_row_id),
-                ).fetchone()
-                if receipt is None:
-                    raise LegacyArchiveMigrationError(
-                        f"missing row receipt for {table_name}:{source_row_id}"
-                    )
-                record_row = connection.execute(
-                    "SELECT * FROM memory_records WHERE record_id = ?",
-                    (record_id,),
-                ).fetchone()
-                if record_row is None:
-                    raise LegacyArchiveMigrationError(
-                        f"missing target record for rollback: {record_id}"
-                    )
-                record = _record_from_target_row(record_row)
-                expected_record_digest = _normalise_text(row.get("record_digest"))
-                if expected_record_digest is None or _sha256(record) != expected_record_digest:
-                    raise LegacyArchiveMigrationError(
-                        f"target record digest mismatch before rollback: {record_id}"
-                    )
-                if str(receipt["record_digest"]) != expected_record_digest:
-                    raise LegacyArchiveMigrationError(
-                        f"receipt record digest mismatch before rollback: {record_id}"
-                    )
-                expected_status_chain = str(receipt["status_chain_digest"])
-                if _status_chain_digest(connection, record_id) != expected_status_chain:
-                    raise LegacyArchiveMigrationError(
-                        f"status chain digest mismatch before rollback: {record_id}"
-                    )
-                status_event = row.get("status_event")
-                if not isinstance(status_event, Mapping):
-                    raise LegacyArchiveMigrationError(
-                        f"stored migration row has no initial status event: {record_id}"
-                    )
-                status_event_id = _normalise_text(status_event.get("event_id"))
-                if status_event_id is None:
-                    raise LegacyArchiveMigrationError(
-                        f"stored migration row has no status event id: {record_id}"
-                    )
-                initial_event_row = connection.execute(
-                    "SELECT * FROM memory_status_events WHERE event_id = ?",
-                    (status_event_id,),
-                ).fetchone()
-                if initial_event_row is None:
-                    raise LegacyArchiveMigrationError(
-                        f"missing initial status event for rollback: {record_id}"
-                    )
-                if _sha256(_status_event_from_target_row(initial_event_row)) != str(
-                    receipt["status_event_digest"]
-                ):
-                    raise LegacyArchiveMigrationError(
-                        f"status event digest mismatch before rollback: {record_id}"
-                    )
                 rollback_event_id = _rollback_status_event_id(
-                    stored_migration_id, record_id
+                    stored_migration_id, receipt.record_id
                 )
                 if connection.execute(
                     "SELECT 1 FROM memory_status_events WHERE event_id = ?",
@@ -2548,26 +2844,33 @@ def rollback(
                 ).fetchone() is not None:
                     raise LegacyArchiveMigrationError(
                         "rollback event already exists while migration is marked applied: "
-                        f"{record_id}"
+                        f"{receipt.record_id}"
                     )
                 connection.execute(
                     "INSERT INTO memory_status_events "
                     "(event_id, record_id, status, reason_code, created_at) "
                     "VALUES (?, ?, 'revoked', 'legacy_archive_rollback', ?)",
-                    (rollback_event_id, record_id, timestamp),
+                    (rollback_event_id, receipt.record_id, timestamp),
                 )
                 _insert_audit_event(
                     connection,
                     migration_id=stored_migration_id,
                     action="legacy_archive_rollback",
-                    table_name=table_name,
-                    source_row_id=source_row_id,
-                    record_id=record_id,
+                    table_name=receipt.table,
+                    source_row_id=receipt.row_id,
+                    record_id=receipt.record_id,
                     payload={
                         "rollback_event_id": rollback_event_id,
                         "reason_code": "legacy_archive_rollback",
                     },
                     created_at=timestamp,
+                )
+                revoked.append(
+                    {
+                        "table": receipt.table,
+                        "source_row_id": receipt.row_id,
+                        "record_id": receipt.record_id,
+                    }
                 )
             rollback_target_digest = _target_digest(connection)
             _insert_audit_event(
@@ -2597,6 +2900,8 @@ def rollback(
             "manifest_sha256": stored_manifest_sha256,
             "status": "rolled_back",
             "target_digest_after": rollback_target_digest,
+            "revoked": revoked,
+            "revoked_count": len(revoked),
             "idempotent": False,
         }
     finally:

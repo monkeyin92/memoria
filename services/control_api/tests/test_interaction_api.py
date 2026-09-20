@@ -1097,8 +1097,11 @@ class _MemoryCatalog:
         self.queries: list[object] = []
         self.people_items: tuple[PersonItem, ...] = ()
 
-    async def people(self, *, account_id: str, limit: int = 100) -> tuple[PersonItem, ...]:
-        del account_id, limit
+    async def people(
+        self, *, account_id: str, limit: int = 100, subject_id: str | None = None
+    ) -> tuple[PersonItem, ...]:
+        assert subject_id == account_id
+        del limit
         return self.people_items
 
     async def context(self, query: object) -> MemorySearchResult:
@@ -1124,8 +1127,11 @@ class _ChangingMemoryCatalog:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def people(self, *, account_id: str, limit: int = 100) -> tuple[object, ...]:
-        del account_id, limit
+    async def people(
+        self, *, account_id: str, limit: int = 100, subject_id: str | None = None
+    ) -> tuple[object, ...]:
+        assert subject_id == account_id
+        del limit
         return ()
 
     async def context(self, _: object) -> MemorySearchResult:
@@ -2109,6 +2115,110 @@ async def test_response_plan_does_not_read_account_keyed_memory_for_another_subj
     # Exactly one read happened, and it belongs to the account's own turn.
     assert len(catalog.queries) == 1
     assert owner_response.json()["grounded_items"]
+
+
+@pytest.mark.asyncio
+async def test_companion_memory_queries_carry_the_resolved_subject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Both Agent seams query the subject the turn was resolved for.
+
+    ``_resolve_subject_memory_scope`` decides the subject once, and both
+    /response-plan and /context-prefetch must spend that answer: the query used
+    to name the login account as its subject, so the resolver's result never
+    reached the catalog and the two could drift apart.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        _attach_signed_runtime_profile(app, user_id=user_id, session_id=session_id)
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        prefetched = await client.post(
+            "/v1/interaction/context-prefetch",
+            headers=token,
+            json={
+                "session_id": session_id,
+                "query": "我们以前聊过什么？",
+                "speaker_decision": body["speaker_decision"],
+            },
+        )
+
+    assert planned.status_code == 200, planned.text
+    assert planned.json()["grounded_items"]
+    assert prefetched.status_code == 200, prefetched.text
+    assert prefetched.json()["grounded_items"]
+    assert len(catalog.queries) == 2
+    for recorded in catalog.queries:
+        assert isinstance(recorded, MemorySearchQuery)
+        assert recorded.account_id == user_id
+        assert recorded.subject_id == user_id
+
+
+@pytest.mark.asyncio
+async def test_companion_seams_never_read_the_account_for_a_member_subject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A member turn must not reach the account-keyed catalog on either seam.
+
+    The archive cannot attribute an account-keyed claim to a member, so the
+    subject-scoped query alone is not enough: the read itself has to stay
+    closed while the current subject and the login account differ.
+    """
+
+    class _ForbiddenCatalog:
+        async def people(self, **_: object) -> tuple[PersonItem, ...]:
+            pytest.fail("account-keyed people lookup ran for a member subject")
+
+        async def context(self, _: object) -> MemorySearchResult:
+            pytest.fail("account-keyed context lookup ran for a member subject")
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.memory_catalog = _ForbiddenCatalog()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            active_subject_id="person-independent-child",
+            subject_category="adult",
+            age_band="adult",
+            capabilities=("chat", "memory_recall_private"),
+        )
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        prefetched = await client.post(
+            "/v1/interaction/context-prefetch",
+            headers=token,
+            json={
+                "session_id": session_id,
+                "query": "我们以前聊过什么？",
+                "speaker_decision": body["speaker_decision"],
+            },
+        )
+
+    assert planned.status_code == 200, planned.text
+    assert planned.json()["grounded_items"] == []
+    assert prefetched.status_code == 200, prefetched.text
+    assert prefetched.json()["grounded_items"] == []
 
 
 @pytest.mark.asyncio

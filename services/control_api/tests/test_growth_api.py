@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -24,6 +25,30 @@ async def _registered(client: AsyncClient) -> dict[str, str]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+async def _registered_adult(client: AsyncClient, app: Any) -> dict[str, str]:
+    """Register, apply the verified-adult ratchet, then re-login.
+
+    Archive reads now decide retention from the speaking subject, and an
+    account without a decided subject profile has no retention decision, so it
+    fails closed. Tests that read memory must therefore use an adult account
+    and the token minted after the ratchet.
+    """
+
+    owner = await _registered(client)
+    app.state.memory_store.update_subject_profile(
+        user_id=owner["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in = await client.post(
+        "/v1/auth/login", json={"username": "growth-owner", "password": "safe-password"}
+    )
+    assert logged_in.status_code == 200
+    return logged_in.json()
 
 
 @pytest.mark.asyncio
@@ -155,7 +180,7 @@ async def test_structured_decision_review_preserves_fields_and_creates_a_real_ca
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _registered(client)
+        owner = await _registered_adult(client, app)
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         created = await client.post(
             "/v1/growth/tasks",
@@ -233,7 +258,7 @@ async def test_plain_text_decision_review_stays_an_unresolved_hypothetical_candi
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _registered(client)
+        owner = await _registered_adult(client, app)
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         created = await client.post(
             "/v1/growth/tasks",
@@ -291,7 +316,7 @@ async def test_decision_review_without_constraints_cannot_become_a_real_candidat
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        owner = await _registered(client)
+        owner = await _registered_adult(client, app)
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         created = await client.post(
             "/v1/growth/tasks",
@@ -397,7 +422,7 @@ async def test_natural_chat_task_is_frozen_into_the_voice_session_and_evidence(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _registered(client)
+        owner = await _registered_adult(client, app)
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         created = await client.post(
             "/v1/growth/tasks",
@@ -426,6 +451,7 @@ async def test_natural_chat_task_is_frozen_into_the_voice_session_and_evidence(
             json={
                 "event_id": "natural-speech",
                 "session_id": session.json()["session_id"],
+                "active_subject_id": owner["user_id"],
                 "turn_id": 1,
                 "generation_id": 1,
                 "event_type": "speech.utterance_finalized",

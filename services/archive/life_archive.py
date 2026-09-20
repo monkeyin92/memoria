@@ -256,22 +256,29 @@ class LifeArchive:
         occurred_before: datetime,
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
+        subject_id: str | None = None,
     ) -> tuple[EvidenceEvent, ...]:
         if not account_id.strip() or not 1 <= limit <= 10_000:
             raise ValueError("evidence window requires account_id and limit 1..10000")
         if occurred_after.tzinfo is None or occurred_before.tzinfo is None:
             raise ValueError("evidence window timestamps must include timezone")
+        if subject_id is not None and not subject_id.strip():
+            raise ValueError("evidence window subject_id must not be blank")
         start = occurred_after.astimezone(UTC)
         end = occurred_before.astimezone(UTC)
         if start > end:
             raise ValueError("evidence window start must not follow end")
         filters = ""
         parameters: list[object] = [account_id, start.isoformat(), end.isoformat()]
+        if subject_id is not None:
+            # Exact match only: an unclaimed (NULL) speaker is not this subject.
+            filters += " AND subject_id = ?"
+            parameters.append(subject_id)
         if event_types:
             if any(not value.strip() for value in event_types):
                 raise ValueError("evidence event types must not be blank")
             placeholders = ",".join("?" for _ in event_types)
-            filters = f" AND event_type IN ({placeholders})"
+            filters += f" AND event_type IN ({placeholders})"
             parameters.extend(event_types)
         parameters.append(limit)
         with self._connect() as connection:
@@ -662,6 +669,11 @@ class LifeArchive:
         parameters: list[object] = [query.account_id]
         if query.speaker_class == "owner":
             clauses.append("speaker_class IN ('owner', 'assistant', 'system')")
+            if query.session_id is not None:
+                # The owner branch narrows to one session in SQL so LIMIT
+                # counts the caller's own session instead of the whole account.
+                clauses.append("session_id = ?")
+                parameters.append(query.session_id)
         else:
             if query.session_id is None:
                 return ContextBundle()
@@ -672,6 +684,11 @@ class LifeArchive:
                 ]
             )
             parameters.extend([query.session_id, query.speaker_class])
+        if query.subject_id is not None:
+            # Explicit subject scope reads the speaking subject on the row; a
+            # NULL subject is an unclaimed speaker and never matches.
+            clauses.append("subject_id = ?")
+            parameters.append(query.subject_id)
         if query.text.strip():
             clauses.append("payload_json LIKE ? ESCAPE '\\'")
             escaped = (
@@ -730,6 +747,7 @@ class LifeArchive:
                     "action": command.action,
                     **({"corrected_text": current_text} if command.action == "correct" else {}),
                 },
+                subject_id=target.subject_id,
                 session_id=target.session_id,
                 turn_id=target.turn_id,
                 generation_id=target.generation_id,

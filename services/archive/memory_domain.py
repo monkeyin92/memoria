@@ -43,6 +43,106 @@ def lexical_query_terms(text: str, *, max_terms: int = 48) -> tuple[str, ...]:
                     return tuple(terms)
     return tuple(terms[:max_terms])
 
+
+def subject_lineage_predicates(
+    *,
+    bind: Callable[[str], str],
+    subject_id: str,
+    account_column: str,
+    single_source_column: str,
+    evidence_table: str = "evidence_events",
+    merged_source_link: tuple[str, str, str] | None = None,
+    merged_source_extra: tuple[tuple[str, str], ...] = (),
+    require_merged_source: bool = True,
+    document_source_item: tuple[str, str, str] | None = None,
+) -> tuple[str, ...]:
+    """SQL predicates that pin one projection row to a speaking subject.
+
+    Every account-keyed catalog row carries its source evidence id, so an
+    explicit subject scope is enforced by reading that lineage instead of
+    storing a second subject column.  ``bind`` appends the value and returns
+    its placeholder (``?`` for SQLite, ``$n`` for PostgreSQL); the returned
+    predicates append their own parameters in order.
+
+    ``evidence_table`` is the ledger table of the caller's store (SQLite keeps
+    ``evidence_events``, PostgreSQL ``archive_evidence_events``); it is a code
+    literal, never caller input.
+
+    ``account_column`` is the account of the row being filtered.  Every hop in
+    the lineage must stay inside that account -- the evidence row, the link row
+    and the search document all carry their own ``account_id`` -- so a link that
+    happens to reference a foreign or stale event id is treated as a missing
+    source and hides the row instead of resolving a subject across accounts.
+
+    A missing source event and a NULL ``subject_id`` both fail the comparison,
+    so an unclaimed speaker never satisfies an explicit scope: in this project
+    NULL means "no confirmed speaker", never "the account owner".
+
+    ``merged_source_link`` is ``(link_table, link_column, owner_column)`` for a
+    projection merged from several evidence rows (documents and episodes), and
+    ``merged_source_extra`` adds further ``(link_column, owner_column)``
+    equalities such as the account that owns the link row.  The row stays
+    visible only while every linked source resolves to the subject; one
+    missing, unclaimed or foreign source hides the whole row rather than
+    partially rewriting it, so an item fed by one matching session and one
+    foreign session never passes on its single matching source.
+    ``require_merged_source=False`` covers sets where empty is legitimate (a
+    person without aliases).
+
+    ``document_source_item`` is ``(document_kind, item_id_column,
+    account_id_column)`` for an item that also reaches the search projection:
+    the document merged every event that ever wrote that item, and the whole
+    set must belong to the subject too.  ``document_kind`` is a code literal,
+    never caller input.
+    """
+
+    predicates = [
+        f"(SELECT lineage.subject_id FROM {evidence_table} lineage"
+        f" WHERE lineage.event_id = {single_source_column}"
+        f" AND lineage.account_id = {account_column}) = {bind(subject_id)}"
+    ]
+    if merged_source_link is not None:
+        link_table, link_column, owner_column = merged_source_link
+        extra = "".join(
+            f" AND link.{left} = {right}" for left, right in merged_source_extra
+        )
+        link_scope = (
+            f"link.{link_column} = {owner_column}{extra}"
+            f" AND link.account_id = {account_column}"
+        )
+        if require_merged_source:
+            predicates.append(
+                f"EXISTS (SELECT 1 FROM {link_table} link"
+                f" WHERE {link_scope})"
+            )
+        predicates.append(
+            f"NOT EXISTS (SELECT 1 FROM {link_table} link"
+            f" LEFT JOIN {evidence_table} lineage"
+            " ON lineage.event_id = link.source_event_id"
+            " AND lineage.account_id = link.account_id"
+            f" WHERE {link_scope}"
+            " AND (lineage.subject_id IS NULL"
+            f" OR lineage.subject_id <> {bind(subject_id)}))"
+        )
+    if document_source_item is not None:
+        document_kind, item_id_column, account_id_column = document_source_item
+        predicates.append(
+            "NOT EXISTS (SELECT 1 FROM memory_search_documents document_link"
+            " JOIN memory_search_document_sources link"
+            " ON link.document_id = document_link.document_id"
+            " AND link.account_id = document_link.account_id"
+            f" LEFT JOIN {evidence_table} lineage"
+            " ON lineage.event_id = link.source_event_id"
+            " AND lineage.account_id = link.account_id"
+            f" WHERE document_link.kind = '{document_kind}'"
+            f" AND document_link.item_id = {item_id_column}"
+            f" AND document_link.account_id = {account_id_column}"
+            " AND (lineage.subject_id IS NULL"
+            f" OR lineage.subject_id <> {bind(subject_id)}))"
+        )
+    return tuple(predicates)
+
+
 DomainCategory = Literal[
     "life_story",
     "work_experience",
@@ -184,6 +284,7 @@ class MemoryCatalogPort(Protocol):
         *,
         account_id: str,
         limit: int = 50,
+        subject_id: str | None = None,
     ) -> tuple[TimelineItem, ...]: ...
 
     async def people(
@@ -191,9 +292,15 @@ class MemoryCatalogPort(Protocol):
         *,
         account_id: str,
         limit: int = 100,
+        subject_id: str | None = None,
     ) -> tuple[PersonItem, ...]: ...
 
-    async def review_queue(self, *, account_id: str) -> tuple[ReviewQueueItem, ...]: ...
+    async def review_queue(
+        self,
+        *,
+        account_id: str,
+        subject_id: str | None = None,
+    ) -> tuple[ReviewQueueItem, ...]: ...
 
     async def review(self, command: MemoryClaimReview) -> ReviewedClaim: ...
 
@@ -222,10 +329,13 @@ class MemorySearchQuery:
     occurred_after: datetime | None = None
     occurred_before: datetime | None = None
     limit: int = 20
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not 1 <= self.limit <= 100:
             raise ValueError("memory search requires account_id and limit 1..100")
+        if self.subject_id is not None and not self.subject_id.strip():
+            raise ValueError("memory search subject_id must not be blank")
         if self.categories and self.domain_categories:
             raise ValueError("use domain_categories or legacy categories, not both")
         if self.categories:
@@ -338,10 +448,13 @@ class MemoryClaimReview:
     claim_id: str
     action: Literal["confirm", "dispute", "retract", "correct"]
     corrected_value: str | None = None
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.claim_id.strip():
             raise ValueError("claim review requires account_id and claim_id")
+        if self.subject_id is not None and not self.subject_id.strip():
+            raise ValueError("claim review subject_id must not be blank")
         if self.action == "correct" and not (self.corrected_value or "").strip():
             raise ValueError("corrected_value is required for correction")
         if self.action != "correct" and self.corrected_value is not None:

@@ -1483,6 +1483,7 @@ async def test_real_catalog_withholds_account_memory_from_a_child_subject(
                 EvidenceEvent(
                     event_id=memory_event_id,
                     account_id=session.account_id,
+                    subject_id=session.account_id,
                     event_type="speech.utterance_finalized",
                     occurred_at=datetime.now(UTC),
                     speaker_class="owner",

@@ -1702,6 +1702,7 @@ async def _companion_items(
     request: Request,
     frozen: FrozenMode,
     account_id: str,
+    subject_id: str,
     query: str,
     speaker: ResponsePlanSpeakerDecision,
     now: datetime,
@@ -1716,7 +1717,14 @@ async def _companion_items(
     capabilities = trusted["capabilities"]
 
     async def fetch_memory() -> MemorySearchResult:
-        people = await _catalog(request).people(account_id=account_id, limit=100)
+        # The query carries the subject the turn was resolved for, never the
+        # login account: an account-keyed read cannot tell the owner apart from
+        # the person actually using the device. The legacy archive may only
+        # answer while the two are the same person
+        # (see _account_keyed_memory_is_subject_scoped).
+        people = await _catalog(request).people(
+            account_id=account_id, subject_id=subject_id, limit=100
+        )
         recall = RecallPlanner.plan(query=query, now=now, people=people)
         memory_query = recall.text
         if recall_context:
@@ -1724,6 +1732,7 @@ async def _companion_items(
         return await _catalog(request).context(
             MemorySearchQuery(
                 account_id=account_id,
+                subject_id=subject_id,
                 speaker_class="owner",
                 text=memory_query,
                 entity_ids=recall.entity_ids,
@@ -2283,6 +2292,7 @@ async def response_plan(
                 request=request,
                 frozen=frozen,
                 account_id=account_id,
+                subject_id=active_subject_id,
                 query=body.query,
                 speaker=body.speaker_decision,
                 now=now,
@@ -2433,6 +2443,7 @@ async def context_prefetch(
         request=request,
         frozen=frozen,
         account_id=account_id,
+        subject_id=scope.subject_id,
         query=body.query,
         speaker=body.speaker_decision,
         now=_local_now(cast(ControlSettings, request.app.state.settings)),

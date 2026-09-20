@@ -667,6 +667,29 @@ def _row_count(path: Path, table: str) -> int:
     return int(row["n"])
 
 
+def _migration_row(path: Path, migration_id: str) -> dict[str, Any]:
+    """One stored journal row, read straight from the support schema."""
+
+    with _connect_read_only(path) as connection:
+        row = connection.execute(
+            "SELECT * FROM legacy_archive_migrations WHERE migration_id = ?",
+            (migration_id,),
+        ).fetchone()
+    assert row is not None, f"no stored migration {migration_id}"
+    return dict(row)
+
+
+def _normalised_target_schema(path: Path) -> dict[str, str]:
+    """Normalised DDL of the two target tables, their indexes and triggers."""
+
+    with _connect_read_only(path) as connection:
+        rows = connection.execute(
+            "SELECT type, name, sql FROM sqlite_master "
+            "WHERE sql IS NOT NULL AND tbl_name IN ('memory_records', 'memory_status_events')"
+        ).fetchall()
+    return {f"{row['type']}:{row['name']}": " ".join(str(row["sql"]).split()) for row in rows}
+
+
 def _content_digest(path: Path, tables: tuple[str, ...] = _SOURCE_TABLES) -> str:
     """Content digest of the source tables (never the file bytes)."""
 
@@ -1496,6 +1519,19 @@ async def test_same_database_archive_and_target(tmp_path: Path) -> None:
     await store.close()
 
 
+def test_apply_dry_run_flag_writes_nothing(tmp_path: Path) -> None:
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    before = _content_digest(archive)
+
+    report = module.apply(archive_path=archive, target_path=target, dry_run=True)
+
+    _assert_report_counts(report)
+    assert not target.exists()
+    assert _content_digest(archive) == before
+
+
 # -- real compile path --------------------------------------------------------
 
 
@@ -1597,19 +1633,6 @@ async def test_real_life_archive_and_catalog_rows_migrate_end_to_end(
     await store.close()
 
 
-def test_apply_dry_run_flag_writes_nothing(tmp_path: Path) -> None:
-    module = _api()
-    archive = _minimal_archive(tmp_path)
-    target = tmp_path / "target.sqlite3"
-    before = _content_digest(archive)
-
-    report = module.apply(archive_path=archive, target_path=target, dry_run=True)
-
-    _assert_report_counts(report)
-    assert not target.exists()
-    assert _content_digest(archive) == before
-
-
 @pytest.mark.asyncio
 async def test_compiler_created_at_stamp_does_not_quarantine_a_safe_row(
     tmp_path: Path,
@@ -1673,3 +1696,480 @@ async def test_compiler_created_at_stamp_does_not_quarantine_a_safe_row(
     for row in claim_rows:
         repeated = _row(again, "memory_claims", row["source_row_id"])
         assert repeated["record"]["created_at"] == row["record"]["created_at"]
+
+
+# -- incremental runs ---------------------------------------------------------
+
+
+def _seed_second_claim(archive: Path) -> None:
+    """Append one more migratable claim, the way a running product would."""
+
+    with _connect(archive) as connection:
+        _seed_evidence(connection, "evidence-b", occurred_at="2026-02-01T07:59:00+00:00")
+        _seed_claim(
+            connection,
+            "claim-new",
+            source_event_id="evidence-b",
+            value="第二条历史记忆内容。",
+            created_at="2026-02-01T08:00:00+00:00",
+        )
+        _seed_authority(
+            connection,
+            "authority-claim-new",
+            table_name="memory_claims",
+            source_row_id="claim-new",
+        )
+    _checkpoint(archive)
+
+
+@pytest.mark.asyncio
+async def test_incremental_apply_writes_only_the_rows_the_target_lacks(
+    tmp_path: Path,
+) -> None:
+    """A later run migrates new Archive rows and never rewrites the old ones.
+
+    Appending history is the normal production path, so the seam owes an
+    incremental run: the plan names the row the target already has, the apply
+    writes only the new one, and the receipt of the first run - not its
+    whole-target digest, which the second run makes stale - keeps the first row
+    proven.
+    """
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+
+    first = module.apply(archive_path=archive, target_path=target)
+    _seed_second_claim(archive)
+
+    plan = module.plan(archive_path=archive, target_path=target)
+
+    assert plan["row_count"] == 1
+    assert plan["statistics"]["source_row_count"] == 2
+    assert plan["already_migrated_count"] == 1
+    assert plan["already_migrated"][0]["source_row_id"] == "claim-ok"
+    assert plan["already_migrated"][0]["migration_id"] == first["migration_id"]
+    assert [row["source_row_id"] for row in _plan_rows(plan)] == ["claim-new"]
+    assert _row(plan, "memory_claims", "claim-new")["outcome"] == "migrated"
+
+    second = module.apply(
+        archive_path=archive,
+        target_path=target,
+        expected_manifest_sha256=_manifest(plan)["manifest_sha256"],
+    )
+
+    assert second["migration_id"] != first["migration_id"]
+    assert second["idempotent"] is False
+    assert second["migrated"] == 1
+    assert second["already_migrated_count"] == 1
+    assert [row["source_row_id"] for row in _manifest(second)["already_migrated"]] == [
+        "claim-ok"
+    ]
+    assert _row_count(target, "memory_records") == 2
+    assert _row_count(target, "memory_status_events") == 2
+    assert _row_count(target, "legacy_archive_row_receipts") == 2
+    assert _row_count(target, "legacy_archive_migrations") == 2
+    assert (
+        _migration_row(target, first["migration_id"])["target_digest_after"]
+        != second["target_digest_after"]
+    ), "the first run's whole-target digest is stale once a later run wrote"
+
+    records = await store.list_records_for_subject(
+        _SUBJECT,
+        (MemoryScope.MEMORY_SCOPE_LEGACY_ARCHIVE,),
+        actor_subject_id=_SUBJECT,
+    )
+    assert {record.record_id for record in records} == {
+        _record_id("memory_claims", "claim-ok"),
+        _record_id("memory_claims", "claim-new"),
+    }
+    assert all(record.payload for record in records)
+    await store.close()
+@pytest.mark.asyncio
+async def test_incremental_apply_refuses_a_skipped_record_that_drifted(
+    tmp_path: Path,
+) -> None:
+    """Writing new rows does not license migrating past a drifted old one."""
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    module.apply(archive_path=archive, target_path=target)
+    _seed_second_claim(archive)
+    with _connect(target) as connection:
+        connection.execute(
+            "INSERT INTO memory_status_events"
+            " (event_id, record_id, status, reason_code, created_at)"
+            " VALUES (?, ?, 'disputed', 'manual_after_migration', ?)",
+            (
+                "status-event-drift-incremental",
+                _record_id("memory_claims", "claim-ok"),
+                "2026-03-01T00:00:00+00:00",
+            ),
+        )
+
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.apply(archive_path=archive, target_path=target)
+    assert _row_count(target, "memory_records") == 1
+    assert _row_count(target, "legacy_archive_row_receipts") == 1
+    assert _row_count(target, "legacy_archive_migrations") == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_nothing_pending_changes_no_migrated_row(
+    tmp_path: Path,
+) -> None:
+    """Re-planning a fully migrated inventory writes no record, receipt or event.
+
+    The inventory now spans two stored migrations, so no single one of them can
+    be reported for it: the seam journals the no-op run instead of claiming one
+    of them covered the whole inventory, and the second no-op is idempotent
+    because that journal entry exists.
+    """
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    first = module.apply(archive_path=archive, target_path=target)
+    _seed_second_claim(archive)
+    second = module.apply(archive_path=archive, target_path=target)
+
+    before = (
+        _row_count(target, "memory_records"),
+        _row_count(target, "memory_status_events"),
+        _row_count(target, "legacy_archive_row_receipts"),
+    )
+    no_op = module.apply(archive_path=archive, target_path=target)
+
+    assert no_op["applied"] is True
+    assert no_op["idempotent"] is False
+    assert no_op["row_count"] == 0
+    assert no_op["migrated"] == 0
+    assert no_op["already_migrated_count"] == 2
+    assert no_op["target_digest_after"] == second["target_digest_after"]
+    assert (
+        _row_count(target, "memory_records"),
+        _row_count(target, "memory_status_events"),
+        _row_count(target, "legacy_archive_row_receipts"),
+    ) == before
+
+    again = module.apply(archive_path=archive, target_path=target)
+
+    assert again["idempotent"] is True
+    assert again["migration_id"] == no_op["migration_id"]
+    assert again["migration_id"] not in (first["migration_id"], second["migration_id"])
+    assert (
+        _row_count(target, "memory_records"),
+        _row_count(target, "memory_status_events"),
+        _row_count(target, "legacy_archive_row_receipts"),
+    ) == before
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_archive_change_does_not_block_the_receipts(
+    tmp_path: Path,
+) -> None:
+    """Only receipt-covered rows are fenced; the rest of the Archive may move.
+
+    An evidence row that no migrated projection references is exactly the kind
+    of change a whole-Archive digest would have refused.  The fence is the row
+    receipt, so the plan stays valid and the earlier migration can still be
+    rolled back without an operator investigating a non-issue.
+    """
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    first = module.apply(archive_path=archive, target_path=target)
+
+    with _connect(archive) as connection:
+        _seed_evidence(connection, "evidence-unreferenced")
+    _checkpoint(archive)
+
+    plan = module.plan(archive_path=archive, target_path=target)
+
+    assert plan["row_count"] == 0
+    assert plan["already_migrated_count"] == 1
+    assert plan["source_digest"] != first["source_digest"]
+    assert _row_count(target, "legacy_archive_migrations") == 1
+
+    report = module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=first["migration_id"],
+    )
+
+    assert report["idempotent"] is False
+    assert report["revoked_count"] == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_apply_and_rollback_refuse_a_receipt_covered_row_that_changed(
+    tmp_path: Path,
+) -> None:
+    """A source row rewritten under its receipt is investigated, not re-migrated."""
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    applied = module.apply(archive_path=archive, target_path=target)
+    before = (
+        _row_count(target, "memory_records"),
+        _row_count(target, "memory_status_events"),
+        _row_count(target, "legacy_archive_row_receipts"),
+        _row_count(target, "legacy_archive_migrations"),
+    )
+
+    with _connect(archive) as connection:
+        connection.execute(
+            "UPDATE memory_claims SET value = ? WHERE claim_id = ?",
+            ("收据之后被改写的内容。", "claim-ok"),
+        )
+    _checkpoint(archive)
+
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.plan(archive_path=archive, target_path=target)
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.apply(archive_path=archive, target_path=target)
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.rollback(
+            archive_path=archive,
+            target_path=target,
+            migration_id=applied["migration_id"],
+        )
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.rollback(
+            archive_path=archive,
+            target_path=target,
+            manifest_sha256=_manifest(applied)["manifest_sha256"],
+        )
+    assert (
+        _row_count(target, "memory_records"),
+        _row_count(target, "memory_status_events"),
+        _row_count(target, "legacy_archive_row_receipts"),
+        _row_count(target, "legacy_archive_migrations"),
+    ) == before
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_apply_after_a_rollback_is_refused(tmp_path: Path) -> None:
+    """A revoked migration is not silently re-migrated."""
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    applied = module.apply(archive_path=archive, target_path=target)
+    module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=applied["migration_id"],
+    )
+
+    with pytest.raises(module.LegacyArchiveMigrationError) as plan_error:
+        module.plan(archive_path=archive, target_path=target)
+    assert "cannot be reactivated" in str(plan_error.value)
+    with pytest.raises(module.LegacyArchiveMigrationError) as apply_error:
+        module.apply(archive_path=archive, target_path=target)
+    assert "cannot be reactivated" in str(apply_error.value)
+    assert _row_count(target, "memory_records") == 1
+    assert _row_count(target, "legacy_archive_migrations") == 1
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_rollback_revokes_only_the_records_of_its_own_run(tmp_path: Path) -> None:
+    """An earlier run can be rolled back while a later incremental run stands."""
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    first = module.apply(archive_path=archive, target_path=target)
+    _seed_second_claim(archive)
+    second = module.apply(archive_path=archive, target_path=target)
+    first_record = _record_id("memory_claims", "claim-ok")
+    second_record = _record_id("memory_claims", "claim-new")
+
+    report = module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=first["migration_id"],
+    )
+
+    assert report["idempotent"] is False
+    assert report["revoked_count"] == 1
+    assert [entry["record_id"] for entry in report["revoked"]] == [first_record]
+    assert _row_count(target, "memory_records") == 2
+    assert _row_count(target, "memory_status_events") == 3
+    confirmed = await store.list_records_for_subject(
+        _SUBJECT,
+        (MemoryScope.MEMORY_SCOPE_LEGACY_ARCHIVE,),
+        actor_subject_id=_SUBJECT,
+    )
+    assert [record.record_id for record in confirmed] == [second_record]
+
+    # The later run's own status chain is untouched, so it still rolls back.
+    later = module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=second["migration_id"],
+    )
+    assert later["revoked_count"] == 1
+    assert [entry["record_id"] for entry in later["revoked"]] == [second_record]
+
+    # And the first run stays idempotent after the target moved again.
+    again = module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=first["migration_id"],
+    )
+    assert again["idempotent"] is True
+    assert again["status"] == "rolled_back"
+    assert [entry["record_id"] for entry in again["revoked"]] == [first_record]
+    with_revoked = await store.list_records_for_subject(
+        _SUBJECT,
+        (MemoryScope.MEMORY_SCOPE_LEGACY_ARCHIVE,),
+        actor_subject_id=_SUBJECT,
+        include_revoked=True,
+    )
+    assert {record.record_id for record in with_revoked} == {first_record, second_record}
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_a_status_event_after_a_rollback_is_refused(tmp_path: Path) -> None:
+    """The idempotent rollback path still fences the record it revoked."""
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    applied = module.apply(archive_path=archive, target_path=target)
+    record_id = _record_id("memory_claims", "claim-ok")
+    module.rollback(
+        archive_path=archive,
+        target_path=target,
+        migration_id=applied["migration_id"],
+    )
+    with _connect(target) as connection:
+        connection.execute(
+            "INSERT INTO memory_status_events"
+            " (event_id, record_id, status, reason_code, created_at)"
+            " VALUES (?, ?, 'confirmed', 'manual_after_rollback', ?)",
+            ("status-event-after-rollback", record_id, "2026-03-01T00:00:00+00:00"),
+        )
+
+    with pytest.raises(module.LegacyArchiveMigrationError):
+        module.rollback(
+            archive_path=archive,
+            target_path=target,
+            migration_id=applied["migration_id"],
+        )
+    assert _row_count(target, "memory_records") == 1
+    await store.close()
+
+
+# -- target schema parity -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_migrated_target_schema_matches_the_real_store(tmp_path: Path) -> None:
+    """A target the seam creates must be the schema the real adapter creates.
+
+    "CREATE TABLE IF NOT EXISTS" never reconciles a differing table, so a
+    database first created by this seam would keep the seam's own constraints
+    and lack the adapter's indexes forever.  The two target tables, their
+    indexes and their append-only triggers are therefore compared, object by
+    object, against a database the real adapter created.
+    """
+
+    module = _api()
+    archive = _minimal_archive(tmp_path)
+    adapter_target = tmp_path / "adapter.sqlite3"
+    store = await _store(adapter_target)
+    migrated_target = tmp_path / "migrated.sqlite3"
+
+    module.apply(archive_path=archive, target_path=migrated_target)
+
+    migrated_schema = _normalised_target_schema(migrated_target)
+    assert migrated_schema, "the seam must create the two target tables"
+    assert migrated_schema == _normalised_target_schema(adapter_target)
+    assert "uq_memory_records_shared_proposal" in ",".join(migrated_schema)
+    await store.close()
+
+
+# -- identity seam ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_migrated_records_are_keyed_by_identity_persons(tmp_path: Path) -> None:
+    """The Archive seam writes the subject ids the identity service owns.
+
+    The seam never invents a subject and never falls back to the account: the
+    subject of a migrated record is the subject_id of its lineage evidence,
+    and the identity service is the authority for those ids.  The seam does not
+    read the identity database (operator tool, SQLite only), so this pins the
+    seam between the two: every migrated subject resolves to a registered
+    person while the account stays the resource owner.
+    """
+
+    from services.identity.domain import PersonSubject
+    from services.identity.sqlite_store import SqliteIdentityStore
+
+    module = _api()
+    identity = SqliteIdentityStore(tmp_path / "identity.sqlite3")
+    identity.initialize()
+    owner = PersonSubject(
+        person_id="person-identity-owner", display_name="本人", status="active"
+    )
+    member = PersonSubject(
+        person_id="person-identity-member", display_name="家人", status="active"
+    )
+    await identity.register_person(owner)
+    await identity.register_person(member)
+
+    archive = tmp_path / "archive.sqlite3"
+    _build_archive(archive)
+    with _connect(archive) as connection:
+        for person_id, evidence_id in (
+            (owner.person_id, "evidence-owner"),
+            (member.person_id, "evidence-member"),
+        ):
+            _seed_evidence(connection, evidence_id, subject=person_id)
+            claim_id = f"claim-{evidence_id}"
+            _seed_claim(connection, claim_id, source_event_id=evidence_id)
+            _seed_authority(
+                connection,
+                f"authority-{claim_id}",
+                table_name="memory_claims",
+                source_row_id=claim_id,
+            )
+    _checkpoint(archive)
+
+    target = tmp_path / "target.sqlite3"
+    store = await _store(target)
+    module.apply(archive_path=archive, target_path=target)
+
+    assert await identity.person_exists(owner.person_id)
+    assert await identity.person_exists(member.person_id)
+    assert not await identity.person_exists(_ACCOUNT)
+    for person in (owner, member):
+        records = await store.list_records_for_subject(
+            person.person_id,
+            (MemoryScope.MEMORY_SCOPE_LEGACY_ARCHIVE,),
+            actor_subject_id=person.person_id,
+        )
+        assert [record.subject_id for record in records] == [person.person_id]
+        assert all(record.resource_owner_id == _ACCOUNT for record in records)
+        assert all(record.subject_id != _ACCOUNT for record in records)
+    await store.close()

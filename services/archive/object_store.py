@@ -26,6 +26,10 @@ class ObjectOwnershipError(ObjectIntegrityError):
     pass
 
 
+class ObjectNotFoundError(FileNotFoundError):
+    """The provider explicitly confirmed that an object does not exist."""
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectRef:
     account_id: str
@@ -122,6 +126,20 @@ def _fernet_for_version(
         raise ObjectIntegrityError("unknown encryption key version") from exc
 
 
+def _is_explicit_s3_not_found(exc: BaseException) -> bool:
+    """Recognise only provider responses that prove the object is absent."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, Mapping):
+        return False
+    error = response.get("Error")
+    metadata = response.get("ResponseMetadata")
+    code = str(error.get("Code", "")) if isinstance(error, Mapping) else ""
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, Mapping) else None
+    return code in {"NoSuchKey", "NoSuchVersion", "NotFound"} or (
+        status == 404 and code in {"", "NotFound"}
+    )
+
+
 class EncryptedLocalObjectStore:
     def __init__(
         self,
@@ -174,6 +192,12 @@ class EncryptedLocalObjectStore:
 
     async def get(self, reference: ObjectRef) -> bytes:
         _validate_owner(reference)
+        try:
+            encrypted = self._path(reference).read_bytes()
+        except FileNotFoundError as exc:
+            raise ObjectNotFoundError(
+                f"object is not present: {reference.object_key}"
+            ) from exc
         return _decrypt_and_verify(
             _fernet_for_version(
                 active=self._fernet,
@@ -181,7 +205,7 @@ class EncryptedLocalObjectStore:
                 read_keys=self._read_fernets,
                 version=reference.encryption_key_version,
             ),
-            self._path(reference).read_bytes(),
+            encrypted,
             reference,
         )
 
@@ -292,12 +316,19 @@ class EncryptedS3ObjectStore:
 
     async def get(self, reference: ObjectRef) -> bytes:
         _validate_owner(reference)
-        response = await asyncio.to_thread(
-            self._client.get_object,
-            Bucket=self._bucket,
-            Key=reference.object_key,
-        )
-        encrypted = await asyncio.to_thread(response["Body"].read)
+        try:
+            response = await asyncio.to_thread(
+                self._client.get_object,
+                Bucket=self._bucket,
+                Key=reference.object_key,
+            )
+            encrypted = await asyncio.to_thread(response["Body"].read)
+        except Exception as exc:
+            if _is_explicit_s3_not_found(exc):
+                raise ObjectNotFoundError(
+                    f"object is not present: {reference.object_key}"
+                ) from exc
+            raise
         return _decrypt_and_verify(
             _fernet_for_version(
                 active=self._fernet,

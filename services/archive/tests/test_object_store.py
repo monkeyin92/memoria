@@ -12,6 +12,7 @@ from services.archive.object_store import (
     EncryptedLocalObjectStore,
     EncryptedS3ObjectStore,
     ObjectIntegrityError,
+    ObjectNotFoundError,
     ObjectOwnershipError,
 )
 
@@ -68,6 +69,8 @@ async def test_local_object_store_encrypts_verifies_and_deletes_bytes(tmp_path: 
     assert reference.encryption_key_version == "test-v1"
     await store.delete(reference)
     assert not stored_path.exists()
+    with pytest.raises(ObjectNotFoundError):
+        await store.get(reference)
 
 
 @pytest.mark.asyncio

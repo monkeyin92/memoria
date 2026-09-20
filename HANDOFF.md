@@ -1,25 +1,30 @@
 # Memoria 当前交接
 
-更新于 2026-09-18（advisory 整改，`b668960`）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移，`aac99d3` 之后本轮提交）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
 本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）与收据 docs（`b668960`/`87262d3`）；未部署、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit agents/openai/silero 1.8.1 + RTC 1.1.18/API 1.2.1）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
+
+本轮提交（上一提交 `1e6d730`）：主体隔离批次 + 四个 account→subject SQLite 迁移接缝与 operator 执行入口（`scripts/run_subject_migrations.py`）。已完成 code 与本地/权威 PostgreSQL 回归，但**未接入产品读路径、未 enabled、未部署**，也未连接生产或设备。它覆盖 P0-04/P1-05/P2-03 的 `EvidenceEvent.subject_id`、主体读出口、按主体 retention、subject-scoped partial export 与四迁移接缝；本记录不能据此宣称发布、真机验收或真实机器人对话。
+本轮主体批次验证收据：`303 passed, 1 skipped`；PostgreSQL raw-voice contract、Ruff、`mypy services --strict`、module budget、`git diff --check`、authoritative PostgreSQL init/repeat-upgrade/contract gate 均通过。临时 PG 仅用于本轮隔离回归，生产/既有 `memoria-pgv` 未触碰。
+提交前门禁复核另修三处：`_schedule_persona_observation` 只接受账号本人主体（不同主体的已授权话轮不再教会账号人格）；growth 控制面回执（学习任务/决策回顾/反馈）落认证账号的 `subject_id`，否则会从主体读出口与导出里消失；9 个旧用例改为显式声明主体或已验证成人账户，导出用例改为断言这些回执仍在本人导出内。affected 域（control_api/archive/governance/identity/persona/digital_self/memory_scope）全绿，Ruff/module budget/strict mypy（446 files）通过。
 
 ## 权威状态
 
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-18
-reviewed_source_commit: b668960
+reviewed_source_commit: 1e6d730_plus_this_round_subject_scope_batch
+current_worktree: subject_scope_batch_and_four_migrations_committed_this_round
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_b668960
-wired: existing_python_voice_core_and_signed_runtime_profile_authorities
-enabled: last_recorded_agent_bridge_d96d4c2_and_board_d1ad38f_not_head
-verified: scoped_receipts_only_read_snapshot_tts_wake_history_fixed_device_pending
+code: committed_through_previous_plus_subject_scope_batch_and_four_migrations
+wired: subject_scoped_read_exits_in_application_code_migrations_not_wired
+enabled: false_for_current_head
+verified: local_and_authoritative_postgres_regression_for_subject_scope_and_four_migrations
 guardian_declaration_scope: binding_scoped_owner_only_third_party_excluded
 accountless_person_consent: person_scoped_grant_read_revoke_replay_unbind_revoke_and_export_verified_device_pending
 production_readiness: ready_at_last_observation_not_refreshed_this_review
@@ -61,7 +66,10 @@ device_id: dev_atk_a4cb8fd6095c
 
 - P1-03 人格投影即时生效（`6f9bcc4`，远端 CI `35304857728` success：Pytest 5110 passed/2 skipped、覆盖率 88.11%、orchestration 90%、provider protocols 95%、wake 12 passed、Offline E2E PASS，Ruff/mypy/模块预算/协议与 PG gate 通过；本地另有真实 PG 用例，无生产/设备访问）：控制端 `ensure_profile` 过去会把 TTL 内、签名仍有效的缓存 profile 原样返回，人格写入要等最长 5 分钟 `profile_ttl` 或下一次自然人脸轮换才可见。现在已签发 profile 的人格快照必须等于授权当前的解析值（subject override 优先、binding default 兜底），不等则在保留 `active_subject_id`/`actor_id` 的前提下推进 `session_epoch+1` 重签，旧 profile 随即 stale。回归：内存控制 `test_persona_write_reaches_the_next_profile_read`（修前第二次读取仍是 `starlight:v1`，修后 starlight→taoxi→starlight 且主体与会话不变）与真实 PG 路由用例 `test_real_pg_control_routes_share_start_current_resolve_and_switch_authority` 扩展（临时禁用检查时 `assert 'taoxi:v1' == 'starlight:v1'` 失败）。仍未验：运行中会话的 `next_safe_point` 主动重协商（写入只在下一次 profile 读取/协商生效；主动投影需要 device→session 映射）、小程序分配 UI 与设备实听。
 - P2-04 关闭路径任务泄漏已修（`c817ce9` + `861bd87`，远端 CI `35313490964` success：Pytest 5114 passed/2 skipped、覆盖率 88%、orchestration 90%、provider protocols 95%，模块预算门通过；首版 `c817ce9` 被该门拦下，已把关闭逻辑移入 `runtime_shutdown.py` 并把 `duplex_runtime.py` 收到 4263 行）：`close()` 现在是终结态（幂等），关闭后调度的后台任务被拒绝而不是泄漏，并在 orchestrator 关闭后二次排空 `_background_tasks`；回归用例触发真实 `interaction-delegation-start` 后断言关闭不残留任务。仍未验：WSS/桥接故障注入与 Go 侧 lane 关闭丢帧路径。
-- P2-03 第①步：证据行记录说话主体（`504e868`，远端 CI `35317165398` success：Pytest 5116 passed/2 skipped、覆盖率 88%、orchestration 90%、provider protocols 95%；本地 SQLite+真实 PG 回归通过）：`EvidenceEvent.subject_id` + 两侧幂等迁移 + 写入侧落 fence 的 `active_subject_id`（空值 None）；回归含路由级 subject 断言与 PG 往返。仍未做：读出口主体围栏、按说话主体的 retention 天花板、删除回执 HTTP 出口。
+- P2-03 主体隔离批次与四迁移（第①步 `504e868`；②/③步与四迁移随本轮提交）：`EvidenceEvent.subject_id` 已通过 `504e868` 落地并有远端 CI `35317165398`、SQLite+真实 PG 回归；本轮进一步把 timeline/search、session context、conversation review/history、life timeline、people、review queue/review、guardian summary/export 与 catalog episode/claim/person/document/review cascade 接入 subject lineage，并提交四个 account→subject SQLite 迁移接缝（durable subject、digital self、persona、memory scope）与唯一 operator 执行入口 `scripts/run_subject_migrations.py`（plan/apply/rollback/status，双围栏；应用启动不执行）。
+  - 读取时重新校验 minor retention，撤回后拒绝读回；父子事件主体不一致返回 `409 parent_subject_mismatch`，无法证明旧数据主体归属则省略不猜。
+  - subject-scoped partial export 已使用 `format_version=2`、`scope.partial=true`、字段白名单、`content_id`、`service_provider`、`ai_generated`、`manifest_sha256` 与 `omitted_sections`；guardian export 仍是治理 metadata-only，不是逐字内容导出。
+  - 仍未做：四迁移接入产品读路径、`account_deletions` 回执的独立 HTTP 查询出口、备份/provider 删除验证，以及生产、设备和真实机器人对话验收。
 - P2-06 陪伴场景评测首片（`18d36ff`，远端 CI `35315844422` success：Pytest 5116 passed/2 skipped、覆盖率≥85%、orchestration 90%、provider protocols 95%；本地 companionship 用例与 Ruff/strict mypy 通过）：`services/companionship/evaluation.py` 用离线 SQLite ASGI 走真实门（绑定→会话→app_confirm 切人→权威签名 profile→策略/监护同意），固定集 5 例：under_14/14_17 无同意 ⇒ 轮廓无会话能力且无私密记忆能力、成人自用 adult_companion、切人后旧 profile 决策被拒、记忆保留同意授予→撤回。基线 5/5、gate_violations 0、unauthorized_recall 0、p50≈284ms；CLI `scripts/evaluate_companionship.py --dataset … --output …`。仍未验：模型措辞关怀度、回顾可读性评分、超时负例、设备准入。
 - P1-06 未见改写集与基线（`c48fcf9`，本地 archive 全套与 Ruff/strict mypy 通过）：新增 4 例未见集（跨会话计划、忌口转述、安慰式回忆、跨账号隔离），固定与未见分报；规则路径基线 recall@5=0.6/nDCG@10=0.6/extraction_recall=1.0/source_attribution=1.0/leakage=0，两条未命中按现状记录为天花板（未调参），用例钉住基线。仍未验：真实 Qwen 抽取器下的两组指标（需密钥）。
 - P2-01 记忆预取与 token 预算（`948938c`，本地全量 pytest 通过、Ruff/strict mypy 434 files/模块预算通过，无生产/设备访问）：① 删除未接入的 `MemoryContextClient` 链（生产零构造点 + 专测“被忽略”；prefetch 产出会被 plan 冻结胶囊覆盖），含配置/令牌/部署样例/env 脚本与相关断言；② 记忆胶囊在快照冻结处加 `MEMORY_CAPSULE_MAX_CHARS=1200` 硬预算：整条优先、溢出条目截断、其余丢弃，persona 不计入；指标 `context_memory_chars`/`context_memory_trimmed_total`，实测算例 32×240 字 → 5 条/1200 字、裁剪 27 条、单次约 1.0µs；③ 核对隔离：请求带 session + speaker decision、响应校验同 `speaker_class`、非 owner 草稿清空胶囊、迟到由 epoch/版本守卫拒绝、persona 与当轮情绪分属两处。仍未验：真实链路端到端时延前后对照与未见集召回基线。
@@ -69,12 +77,13 @@ device_id: dev_atk_a4cb8fd6095c
 - P1-04 现状核查（本轮只读，scout 全量 + 抽查，无生产/设备访问）：链路的服务端与 Agent 侧**已完整**——真实解码体检（`services/voice_profile/sample_validation.py`，不过门 422 且不落行）、拒绝文案（`sample_copy.py`）、持久化派生的进度与 60s 预算（`enrollment_progress.py`）、生命周期与撤销删样本/删厂商音色（`manager.py`/`postgres_manager.py`）、厂商客户端超时（`cosyvoice_enrollment.py` 120s）、HTTP 面（`routes/voice.py`）、设备出声合同（`companion_delivery.py::_attach_personal_clone`，含 provider/model/resource/过期与设计音色回落）、Agent 侧解析与应用（`voice_profile_client.py`/`agent_voice_profile.py`/`providers/doubao_tts.py`）；小程序已有录音/预检/轮询/over_budget 闭环与回归。**四处缺口（① 已按代码证据修正）**：① 不是缺陷——provider 结果不确定/失败时 operation 进 `reconciliation_required`、profile 保持 `enrolling` 是**有意**的可恢复语义（`manager.reconcile_enrollment` + `pending_enrollments` 可补完为 `candidate`，见 `services/voice_profile/tests/test_manager.py` 的 provider 持久化触发器用例：重放 409 → 对账恢复成功），不得改成终态 `failed`；真实缺口只是用户可见信号——过 60s 预算后客户端只有"可以离开"，没有"仍在处理/需要处理"的区分（`status='failed'` 实践中只由 `revoked` 触达）；② 客户端 `enrollments` 从不带 `custom_persona_id`，克隆绑不到人格；③ 客户端撤销被 `configActionGate` 无条件 fail-closed 挡住（占位弹窗），属待决策的 consent 决策接口边界，**不得绕过门**直连 `DELETE /v1/voices/consent`；④ 缺真实厂商克隆→设备实听耗时证据（smoke 仍 `OFFLINE_MOCK`）。
 - P1-03/P1-04 小程序自定义人格与声音闭环（`6c3bc20`/`9e0d2b4`/`b25268b`，本地 `npm test` 229 passed + 全量 `node --check`，CI miniprogram job 覆盖）：新增 `pages/persona-custom`（名字+描述 → 结构化或手填十一个受控字段 → 创建即冻结 v1；列出并确认后删除）；我的页在 persona 为 `cu_*` 且账号目录存在时把 `custom_persona_id` 随声音克隆提交（内置人格留空）；设备页人格选择器纳入账号自建人格；**退役 bio 标记死路径**（`utils/custom-persona.js` 与三处调用删除——服务端旧 bio 自由文本形态已移除，客户端继续写 bio 是假能力），home 改为按运行时人格 + 账号目录显示自定义人格名。仍未验：设备实听、厂商克隆耗时。
 - P1-03 小程序人格分配 UI（`64a742f`，远端 CI `35306937489` miniprogram job success：225 passed / 0 fail + 全量 `node --check`；本地同口径）：设备页按使用人分配/取消分配人格。选项来自内置伙伴目录（与服务端 `COMPANION_IDS` 一致），当前值按 override 优先、binding 默认兜底解析；PUT 后立即回读服务端分配，失败保持抽屉打开并显示错误（不置成功态）。实测边界：自定义人格未进选择器（缺 `GET /v1/personas` 接线），产品内邀请通道是 `/v1/guardian/links` 而非 `/v1/relationships/invites`（后者要求小程序拿不到的 `established_evidence_id`），`pages/guardian` 已有邀请/年龄段/授权开关。仍未验：设备实听、运行中会话的 next_safe_point 轮换。
-- P1-05 待验三项已实测（本地 HTTP+SQLite 探针，无生产/设备，未提交代码）：① 同账号切主体后旧主体话轮可见——`/v1/archive/conversation-history` 的范围是 `account_id`+`session_id`，同一 session 两段话轮原样返回；② subject 围栏不存在且当前数据层无法实现——`EvidenceEvent` 无 subject 字段，Agent 的 `active_subject_id` 只进 memory-write fence 不落库，`speaker_identity_id` 对该路径恒 NULL；③ minor 无 retention 无临时读回——无 guardian consent 时 voice session 直接 403 `guardian_consent_required`（`minor_voice_session`），`retention_allowed=False` 时文本被剥离且 `history_eligible=False`，回顾只返回空列表。暴露缺口（归 P2-03）：孩子作为 subject 在家人账户设备上的话轮按 owner 账户的 `subject_category` 落库并可被 owner 回顾；在 subject 谱系落地前不得宣称“家长读回已按同意/角色控制”。
+- P1-05 旧三项探针结论已被当前未提交主体批次 supersede：此前“同账号切主体可见/无 subject 字段”只描述旧数据层，不能继续作为当前状态。当前代码已把 review/history 接入 subject lineage，按主体过滤并在读取时复核 minor retention；撤回后拒绝读回，无 eligible 话轮返回空列表且不编造汇总。
+  - 当前仍未验：小程序三端的登录绑定、主体切换、回顾与权限刷新；Edge→Control 受鉴权只读状态出口；生产/设备链。当前状态为 `code=完成（未提交）/wired=未接入/enabled=未启用/verified=本地与权威 PG 回归`。
 - P0-04 / P1-03：成员追加的三处缺陷已修（`350d62d`，见下方收据）。同一轮仍未证明的是下游同意门是否曾被绕过——本地只证明了 binding grant 扩大，没有复现越权读取。
 - P0-04 读一致性已修（`f2a95d6`）：`read_transaction` 固定 `REPEATABLE READ` 只读；真实 PG 交错回归各 1 例（读间旋转混对、读间撤销翻转），修前源码上失败、修复后通过。不标已泄漏。
 - P0-03 TTS（`27a16cf` 修正 `f2a95d6` 收据）：无时间戳降级 1 例 + 取消优先 1 例通过；`f2a95d6` 的 `slow_once` 回落测试收据作废（未触发重入、改前已通过），已由 `slow` 持续首包失败真回归替代（personal 1 次、callback/trace 各 1 次、总 5 sessions；修前 personal 4 次）。G 矩阵/EOU/部分音频设备终态/B/D/时延门仍待设备链。
 - P2-05 工具（`f2a95d6` + `27a16cf` + numerator 追补 + `768993b` 严格自包含）：曝光时间线 2 例、入窗起点 2 例、settle-wake 排除 1 例；去重用例内联 fixture 且不再读 ignored receipt（`RECEIPT_CONSOLE` 与对账分支已删）；CI 新增 wake 显式步骤，远端 12 passed。分子/分母/report wall 全口径为门后起算，`started_monotonic` 保持门前（收据不 breaking）。设备矩阵未采。
-- P1-05（收据修正）：回顾出口 1 例通过，带事件 id 与 approximate；撤回“无跨主体读”——只证 account 隔离，同账号切主体/subject 围栏/临时读回待验。
+- P1-05（历史收据已被当前未提交主体批次 supersede）：回顾出口保留事件 id 与 `assistant_approximate`；旧收据只证明 account 隔离，当前批次已补 subject lineage、主体过滤与 minor retention 读取复核。小程序三端、Edge→Control 只读出口、生产/设备链仍待验。
 - 修复轮回归（远端 `35298356748`，`768993b`）：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS，Ruff/模块预算/strict mypy（435 files）/authoritative PG gate/agent-image 通过；provider smoke 仍 `OFFLINE_MOCK=true`。Agent interaction 用例退出时的 `interaction-delegation-start` pending 提示仍归 P2-04 定位，本地 agent 全套加 `-W error::RuntimeWarning` 未复现（见 P2-04），不是本轮结论。
 
 下一步以冻结候选 `memoria-agent:b668960`（`sha256:927d…`，未启用）等人确认启用后再按 P1-01 跑设备 live 验收（本轮仅 preflight-only：receipt 合法、`usbmodem101` 可见、`serial_opened=False`）；生产切流与回滚另获授权。学生安全设备专项及全双工仍未通过。详细顺序、复现和完成条件只在 `TODOLIST.md` 维护。
@@ -97,7 +106,7 @@ device_id: dev_atk_a4cb8fd6095c
 - [fixed 2026-09-17, commit `350d62d`; local HTTP+SQLite and real PostgreSQL 17, no production/device access] P0-04 / P1-03 成员追加三处缺陷：
   - 门禁：`ruff check .`、module budget、`mypy services --strict`（435 files / 0 errors）通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest` 5101 passed / 3 skipped，总覆盖率 87.77%，85% 总覆盖与 orchestration 90%、provider protocols 95% 门禁通过；远端 CI `35231388322` 整轮 success。仍未验：小程序成员 UI 与设备链、下游同意门是否曾被绕过（未复现）。
 
-The 2026-09-16/17 local work has since been committed (`e5f9d50`, `7c0ef48`, `ec56d9a`, `6ab16b9`, `77fc86a`, `e1878ce`, `e8571d3`, `52241ed`, `a8ce4e1`, `30dea92`, `229ee13`, `3babf17`, `a65b8f2`). The earlier "uncommitted local worktree" wording is historical only; delivery levels stay `code` unless a dated receipt says otherwise.
+The 2026-09-16/17 local work has since been committed (`e5f9d50`, `7c0ef48`, `ec56d9a`, `6ab16b9`, `77fc86a`, `e1878ce`, `e8571d3`, `52241ed`, `a8ce4e1`, `30dea92`, `229ee13`, `3babf17`, `a65b8f2`). That historical wording does not describe the current checkout: the current worktree intentionally contains a new uncommitted subject-scope batch on top of `aac99d3`; its delivery level is `code` only until it is committed, wired, enabled, and verified.
 
 - 语音 TTS（P0-03）：空洞的 TTS 回归测试已删除，`services/agent/src/providers/generation_budget.py::GenerationBudget` 现在是两条 provider、四条路径（Doubao/CosyVoice × stream/batch）唯一的"首包预算 / 收到消息即续期的停滞预算 / `max(total*5, hard_deadline_s)` 硬上限"决策点，超时分类统一为 `first-audio-timeout` 与 `total-timeout`（批式首包后不再抛裸 `TimeoutError`）。新增 `DOUBAO_TTS_HARD_DEADLINE_S`（默认 180，生效上限取 `max(total*5, 该值)`，默认行为与旧内联 180 一致）。用例：流式续期（父提交 `a8a0e43^` 上以 `total-timeout` 失败）、真实停顿有界失败、40 分片持续进展仍被 0.5s 硬上限按 `total-timeout` 终止、批式续期与批式首包后分类、CosyVoice 批式续期；后四条在当时修复前的 provider 基线上均失败。`MockDoubaoServer` 新增 `pcm_chunks`（N 路分片输入）与 `chunk_count`（已发分片计数），`MockCosyVoiceServer` 新增 `chunk_delay_s`。
 - TTS 重试语义（P0-03，2026-09-16 第四轮，本地代码+测试）：`synthesize_stream_text` 的重试规则已显式定义并与预算同址（`generation_budget.py` 的 `BeforeAudioError`/`AlignmentRetryError` 标记与 `retry_allowed`/`retry_may_change_voice`，未知错误 fail closed）。音频前失败（首包超时、连接/握手、供应商 pre-audio 错误）可重试一次并允许回落设计音色；音频已存在只缺时间戳时可重试一次但必须保持同音色；音频后的停滞（`APIConnectionError: total-timeout`）、供应商错误、PCM 连续性失败与时间戳失败一律终态，最多两次尝试，且失败尝试的缓冲被丢弃——部分音频不会作为整句返回或重放。本轮修掉一处真缺陷：CosyVoice 克隆音色在"音频后缺时间戳"重试时会被换成设计音色（`test_clone_missing_timestamps_retries_without_changing_voice` 在旧行为下失败、现通过）。`MockCosyVoiceServer` 新增 `stall_after_pcm` 场景；Doubao 侧保护用例证明音频后停滞只 1 个 session 且音色不变、音频前首包失败仍回落一次。

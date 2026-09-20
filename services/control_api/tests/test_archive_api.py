@@ -34,6 +34,7 @@ from services.control_api.app.main import create_app
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
     _canonical_actual_voice,
+    _deletion_status_response,
     _observe_persona,
 )
 from services.digital_self.domain import (
@@ -44,6 +45,7 @@ from services.digital_self.domain import (
 )
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
 from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
+from services.guardian.domain import PersonConsentRecord
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -666,7 +668,11 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
     app = create_app()
     occurred_at = datetime(2026, 7, 19, 8, 0, tzinfo=UTC).isoformat()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="idempotent-evidence-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         event = {
@@ -676,6 +682,7 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
             "occurred_at": occurred_at,
             "speaker_class": "owner",
             "source": "h5.authoritative_transcript",
+            "active_subject_id": identity["user_id"],
             "payload": {"text": "我在杭州读过书。"},
         }
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
@@ -925,6 +932,9 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
             "generation_id": 3,
             "tool_epoch": 1,
         }
+        # The response-plan fence stays turn-scoped; only the archive ingress
+        # carries the confirmed speaker subject.
+        subject_claim = {"active_subject_id": identity["user_id"]}
         query = "我的手机号是13812345678，南京明天天气如何？"
         archived_query = redact_pii(query)
         plan = await client.post(
@@ -952,6 +962,7 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
             json={
                 "event_id": "archive-evolution-user",
                 **fence,
+                **subject_claim,
                 "event_type": "speech.utterance_finalized",
                 "occurred_at": now.isoformat(),
                 "speaker_class": "owner",
@@ -985,6 +996,7 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
         ]
         assistant_base = {
             **fence,
+            **subject_claim,
             "event_type": "assistant.playout_stopped",
             "occurred_at": now.isoformat(),
             "speaker_class": "assistant",
@@ -1054,7 +1066,11 @@ async def test_session_prompt_kind_accepts_valid_internal_value_and_defaults_inv
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="prompt-kind-owner",
+        )
         bearer = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
         base = {
@@ -1063,6 +1079,7 @@ async def test_session_prompt_kind_accepts_valid_internal_value_and_defaults_inv
             "occurred_at": datetime.now(UTC).isoformat(),
             "speaker_class": "owner",
             "source": "test",
+            "active_subject_id": identity["user_id"],
         }
         await client.post(
             "/v1/archive/session-events",
@@ -1113,6 +1130,7 @@ async def test_explicit_memory_intent_is_server_owned_and_owner_only(
             "event_type": "speech.utterance_finalized",
             "occurred_at": datetime.now(UTC).isoformat(),
             "source": "test",
+            "active_subject_id": identity["user_id"],
         }
         cases = (
             ("explicit-owner", "owner", "请记住我喜欢雨天散步。", 1, 0),
@@ -1353,6 +1371,7 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
             "speaker_class": "owner",
             "source": "funasr.authoritative_final",
             "consent_grant_id": grant["consent_grant_id"],
+            "active_subject_id": identity["user_id"],
             "payload": {"text": "保存这一段主人声音。"},
         }
         transcript = await client.post(
@@ -1596,6 +1615,7 @@ async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries
                 "speaker_class": "owner",
                 "source": "funasr.authoritative_final",
                 "consent_grant_id": grant["consent_grant_id"],
+                "active_subject_id": identity["user_id"],
                 "payload": {"text": "对象删除失败时保留清单供重试。"},
             },
         )
@@ -1610,6 +1630,7 @@ async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries
                 "speaker_class": "owner",
                 "source": "funasr.authoritative_final",
                 "consent_grant_id": grant["consent_grant_id"],
+                "active_subject_id": identity["user_id"],
                 "payload": {"text": "对象删除失败时保留清单供重试。"},
                 "audio_base64": base64.b64encode(_wav()).decode("ascii"),
                 "media_type": "audio/wav",
@@ -1747,6 +1768,7 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
                 "speaker_class": "owner",
                 "source": "funasr.authoritative_final",
                 "consent_grant_id": grant["consent_grant_id"],
+                "active_subject_id": identity["user_id"],
                 "payload": {"text": "验证 PostgreSQL HTTP 原始语音合同。"},
             }
             transcript = await client.post(
@@ -1833,6 +1855,7 @@ async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
                 "speaker_class": "owner",
                 "source": "funasr.authoritative_final",
                 "consent_grant_id": grant["consent_grant_id"],
+                "active_subject_id": identity["user_id"],
                 "payload": {"text": "请求取消仍需补偿对象。"},
             },
         )
@@ -1851,6 +1874,7 @@ async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
                     "speaker_class": "owner",
                     "source": "funasr.authoritative_final",
                     "consent_grant_id": grant["consent_grant_id"],
+                    "active_subject_id": identity["user_id"],
                     "payload": {"text": "请求取消仍需补偿对象。"},
                     "audio_base64": base64.b64encode(_wav()).decode("ascii"),
                     "media_type": "audio/wav",
@@ -1858,7 +1882,9 @@ async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
                 },
             )
         )
-        await started.wait()
+        # Guard the wait: a request rejected before the canonical blob write
+        # would otherwise block the whole suite instead of failing here.
+        await asyncio.wait_for(started.wait(), timeout=10)
         request_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request_task
@@ -1875,7 +1901,13 @@ async def test_guest_and_uncertain_evidence_is_recorded_but_hidden_from_owner_co
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        # The account is a verified adult so the owner read exit is reachable;
+        # the evidence under test stays guest/uncertain (never the owner).
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="guest-evidence-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         classified_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
@@ -1967,6 +1999,7 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                 "source": "funasr.authoritative_final",
                 "turn_id": 1,
                 "generation_id": 2,
+                "active_subject_id": identity["user_id"],
                 "payload": {"text": "先保存这句用户话轮。"},
             },
         )
@@ -2334,6 +2367,7 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
             EvidenceEvent(
                 event_id="source-without-projection",
                 account_id=identity["user_id"],
+                subject_id=identity["user_id"],
                 event_type="speech.utterance_finalized",
                 occurred_at=datetime.now(UTC),
                 speaker_class="owner",
@@ -2345,6 +2379,7 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
             EvidenceEvent(
                 event_id="owner-action-source",
                 account_id=identity["user_id"],
+                subject_id=identity["user_id"],
                 event_type="owner.action_recorded",
                 occurred_at=datetime.now(UTC),
                 speaker_class="owner",
@@ -2358,6 +2393,7 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
             "occurred_at": datetime.now(UTC).isoformat(),
             "speaker_class": "owner",
             "source": "funasr.authoritative_final",
+            "active_subject_id": identity["user_id"],
             "payload": {"text": "主人问题。"},
         }
         first_parent = await client.post(
@@ -2625,10 +2661,18 @@ async def test_session_events_canonicalize_the_user_and_assistant_permission_mat
             identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        # Only the verified-adult fixture may claim the account as the speaker
+        # subject; the unknown cases stay without a subject claim.
+        subject_claim = (
+            {"active_subject_id": identity["user_id"]}
+            if expected_history or expected_low_sensitivity
+            else {}
+        )
         user_event = await client.post(
             "/v1/archive/session-events",
             headers=internal,
             json={
+                **subject_claim,
                 "event_id": user_event_id,
                 "session_id": session["session_id"],
                 "event_type": "speech.utterance_finalized",
@@ -2743,6 +2787,7 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
             "source": "funasr.authoritative_final",
             "turn_id": 1,
             "generation_id": 0,
+            "active_subject_id": owner["user_id"],
             "payload": {"text": "这是一段稳定的权威转写。"},
         }
         first = await client.post("/v1/archive/session-events", headers=internal, json=event)
@@ -2807,6 +2852,7 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
                     "occurred_at": datetime(2026, 7, 19, 9, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
+                    "active_subject_id": identity["user_id"],
                     "payload": {"text": text},
                     "turn_id": index + 1,
                 },
@@ -2870,6 +2916,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
             session_id: str,
             text: str,
             turn_id: int,
+            subject_id: str | None = None,
             speaker_class: str = "owner",
             assistant_text: str | None = None,
             approximate: bool | None = None,
@@ -2887,6 +2934,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
                     "source": "test",
                     "turn_id": turn_id,
                     "generation_id": turn_id,
+                    "active_subject_id": subject_id,
                     "payload": {"text": text},
                 },
             )
@@ -2922,6 +2970,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
             session_id=first_session["session_id"],
             text="我们家的家训是答应别人的事一定做到。",
             turn_id=1,
+            subject_id=first["user_id"],
             assistant_text="我会记住这条家训。",
             approximate=False,
         )
@@ -2930,6 +2979,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
             session_id=first_session["session_id"],
             text="我在杭州读过书。",
             turn_id=2,
+            subject_id=first["user_id"],
             assistant_text="你曾在杭州读书。",
         )
         await append_turn(
@@ -2945,6 +2995,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
             session_id=second_session["session_id"],
             text="我最喜欢蓝色。",
             turn_id=4,
+            subject_id=second["user_id"],
             assistant_text="第二个账号实际听到的内容。",
         )
         await append_turn(
@@ -2952,6 +3003,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
             session_id=second_session["session_id"],
             text="我曾在北京生活。",
             turn_id=5,
+            subject_id=second["user_id"],
         )
         await app.state.memory_catalog.compile_pending()
 
@@ -3064,6 +3116,22 @@ async def test_conversation_review_subject_matrix_precedes_private_reads_and_wri
             )
         }
 
+        # A minor read is only reachable with a real memory-retention consent
+        # naming the subject; the matrix below still proves the missing-consent
+        # exits stay closed through the unknown/missing accounts.
+        await app.state.guardian_store.grant_person_consent(
+            PersonConsentRecord(
+                consent_id="matrix-minor-retention",
+                subject_person_id=minor["user_id"],
+                grantor_person_id="matrix-guardian",
+                consent_kind="memory_retention",
+                policy_version="minor-memory-v1",
+                granted_at=datetime.now(UTC),
+                evidence_event_id="matrix-minor-retention-grant",
+            ),
+            actor_person_id="matrix-guardian",
+        )
+
         archive_context = AsyncMock(return_value=ContextBundle())
         review_queue = AsyncMock(return_value=())
         search = AsyncMock(return_value=MemorySearchResult())
@@ -3149,7 +3217,13 @@ async def test_archive_memory_routes_never_accept_an_account_id_from_the_client(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = (await client.post("/v1/auth/anonymous")).json()
+        # The reader is a verified adult so the read exit is reachable; the
+        # client-supplied account id still names an unrelated unknown account.
+        first = await _register_verified_adult(
+            client,
+            app,
+            username="memory-routes-owner",
+        )
         second = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {first['access_token']}"}
 
@@ -3173,7 +3247,11 @@ async def test_archive_search_rejects_invalid_typed_filters_as_422(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="search-filters-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
 
         invalid_entity = await client.get(
@@ -3231,12 +3309,23 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
             (
                 "first-confirmed",
                 first_session["session_id"],
+                first["user_id"],
                 "我们家的家训是答应别人的事一定做到。",
             ),
-            ("first-candidate", first_session["session_id"], "我在杭州读过书。"),
-            ("second-confirmed", second_session["session_id"], "我们家的家训是每天早睡。"),
+            (
+                "first-candidate",
+                first_session["session_id"],
+                first["user_id"],
+                "我在杭州读过书。",
+            ),
+            (
+                "second-confirmed",
+                second_session["session_id"],
+                second["user_id"],
+                "我们家的家训是每天早睡。",
+            ),
         )
-        for index, (event_id, session_id, text) in enumerate(events):
+        for index, (event_id, session_id, subject_id, text) in enumerate(events):
             response = await client.post(
                 "/v1/archive/session-events",
                 headers=internal_headers,
@@ -3247,6 +3336,7 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
                     "occurred_at": datetime(2026, 7, 19, 10, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
+                    "active_subject_id": subject_id,
                     "payload": {"text": text},
                 },
             )
@@ -3360,6 +3450,7 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
                     "occurred_at": datetime(2026, 7, 19, 16, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "funasr.authoritative_final",
+                    "active_subject_id": identity["user_id"],
                     "payload": {
                         "text": text,
                         "persona_eligible": True,
@@ -3393,6 +3484,11 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
                     "occurred_at": datetime(2026, 7, 19, 16, 10, tzinfo=UTC).isoformat(),
                     "speaker_class": speaker_class,
                     "source": "funasr.authoritative_final",
+                    **(
+                        {"active_subject_id": identity["user_id"]}
+                        if speaker_class == "owner"
+                        else {}
+                    ),
                     "payload": {
                         "text": "这条样本不能进入主人的人格学习。",
                         "persona_eligible": True,
@@ -3430,18 +3526,18 @@ async def test_registered_account_exports_only_its_portable_archive(
     app = create_app()
     internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "archive-owner", "password": "safe-passphrase"},
-            )
-        ).json()
-        other = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "archive-other", "password": "other-passphrase"},
-            )
-        ).json()
+        owner = await _register_verified_adult(
+            client,
+            app,
+            username="archive-owner",
+            password="safe-passphrase",
+        )
+        other = await _register_verified_adult(
+            client,
+            app,
+            username="archive-other",
+            password="other-passphrase",
+        )
         owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
         other_headers = {"Authorization": f"Bearer {other['access_token']}"}
         for index, (identity, headers, text) in enumerate(
@@ -3479,6 +3575,7 @@ async def test_registered_account_exports_only_its_portable_archive(
                     "occurred_at": datetime.now(UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
+                    "active_subject_id": identity["user_id"],
                     "payload": {"text": text},
                 },
             )
@@ -3516,14 +3613,47 @@ async def test_registered_account_exports_only_its_portable_archive(
     assert exported.status_code == 200
     assert exported.headers["content-disposition"].startswith("attachment;")
     body = exported.json()
-    assert body["format_version"] == 1
+    # P2-03: a self export is a subject-scoped partial export, not the old
+    # account-wide snapshot, and it declares what it withheld.
+    assert body["format_version"] == 2
     assert body["account_id"] == owner["user_id"]
+    assert body["scope"]["export"] == "subject"
+    assert body["scope"]["subject_id"] == owner["user_id"]
+    assert body["scope"]["audience"] == "self"
+    assert body["scope"]["partial"] is True
     assert body["manifest_sha256"]
     serialized = exported.text
     assert "请记住我喜欢雨天散步。" in serialized
     assert "另一账户的私密内容。" not in serialized
     assert "password_hash" not in serialized
     assert "template_ciphertext" not in serialized
+    evidence = body["sections"]["evidence"]
+    items = {item["event_id"]: item for item in evidence["items"]}
+    # Owner control-plane receipts are written by the authenticated owner, so
+    # they carry the owner's subject and stay in the owner's own export.
+    assert set(items) == {
+        f"export-{owner['user_id']}",
+        "export-growth-task",
+        "export-growth-feedback",
+    }
+    speech = items[f"export-{owner['user_id']}"]
+    assert speech["content_id"] == f"export-{owner['user_id']}"
+    assert speech["service_provider"] == "Memoria"
+    assert speech["ai_generated"] is False
+    assert body["sections"]["account"]["profile"]["user_id"] == owner["user_id"]
+    omissions = {
+        entry["name"]: entry["reason_code"] for entry in body["omitted_sections"]
+    }
+    assert {
+        "conversation",
+        "archive",
+        "speaker",
+        "evolution",
+        "legacy",
+        "guardian",
+    } <= set(omissions)
+    assert all(entry["reason"] for entry in body["omitted_sections"])
+    # The growth receipts are the owner's own actions, not a member's speech.
     assert "export-growth-task" in serialized
     assert "export-growth-feedback" in serialized
 
@@ -3841,9 +3971,10 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
     ineligible owner turn and an unheard assistant event are omitted, never
     fabricated. Each turn carries its source event ids and the assistant
     approximate-delivery flag. A second account's session is invisible to the
-    first account (account isolation only -- NOT a subject-fence proof: same-
-    account subject switching and retention-scoped temporary readback are
-    still open, see TODOLIST P1-05).
+    first account, and the paired turns only surface for the account's own
+    subject (P2-03: same-account subject switching is now fenced by the
+    evidence subject, retention-scoped temporary readback stays open, see
+    TODOLIST P1-05).
     """
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -3868,6 +3999,7 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             "turn_id": 1,
             "generation_id": 1,
             "tool_epoch": 0,
+            "active_subject_id": owner["user_id"],
             "payload": {"text": "明天南京天气如何？"},
         }
         assistant_event = {
@@ -3886,6 +4018,7 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             **user_event,
             "event_id": "history-other-user-1",
             "session_id": other_session["session_id"],
+            "active_subject_id": other["user_id"],
         }
         for event in (user_event, assistant_event, other_user):
             response = await client.post(
@@ -3900,6 +4033,7 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             EvidenceEvent(
                 event_id="history-user-ineligible",
                 account_id=owner["user_id"],
+                subject_id=owner["user_id"],
                 event_type="speech.utterance_finalized",
                 occurred_at=datetime.now(UTC),
                 speaker_class="owner",
@@ -3918,6 +4052,7 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             EvidenceEvent(
                 event_id="history-assistant-unheard",
                 account_id=owner["user_id"],
+                subject_id=owner["user_id"],
                 event_type="assistant.playout_stopped",
                 occurred_at=datetime.now(UTC),
                 speaker_class="assistant",
@@ -3963,3 +4098,382 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             "session_id": other_session["session_id"],
             "turns": [],
         }
+
+
+@pytest.mark.asyncio
+async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P2-03: a child speaking on the owner's device must not be retained.
+
+    Before the subject column existed, the ingest decided retention from the
+    ACCOUNT's category, so a minor speaking on an adult's family device was
+    stored as retained adult content and surfaced by the review exits.
+    """
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="subject-fence-owner")
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        now = datetime.now(UTC)
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"],
+            display_name="家长",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="fixture-adult-evidence",
+            now=now,
+        )
+        from services.control_api.app.device_binding_token import mint_device_binding_token
+
+        token = mint_device_binding_token(
+            device_id="subject-fence-device",
+            secret=app.state.settings.device_binding_token_key(),
+            now=now,
+            ttl=timedelta(minutes=5),
+            nonce="subject-fence-nonce",
+        )
+        bound = await client.post(
+            "/v1/device-bindings",
+            headers=owner_headers,
+            json={
+                "device_claim_token": token,
+                "declared_mode": "family_shared",
+                "account_owner_person_id": owner["user_id"],
+                "primary_subject": {
+                    "person_id": "new",
+                    "relationship": "family_member_of",
+                    "subject_draft": {"display_name": "小朋友", "age_band": "under_14"},
+                },
+                "persona_selection": "starlight",
+                "service_preferences": {
+                    "memory_level": "family_shared",
+                    "shared_persona_enabled": True,
+                },
+                "consent_offer_ids": ["offer_family_space_v1"],
+            },
+        )
+        assert bound.status_code == 201, bound.text
+        child_id = bound.json()["primary_subject_ids"][0]
+        session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
+        internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+
+        async def append(
+            event_id: str, text: str, subject_id: str, turn_id: int
+        ) -> None:
+            response = await client.post(
+                "/v1/archive/session-events",
+                headers=internal,
+                json={
+                    "event_id": event_id,
+                    "session_id": session["session_id"],
+                    "event_type": "speech.utterance_finalized",
+                    "occurred_at": datetime.now(UTC).isoformat(),
+                    "speaker_class": "owner",
+                    "source": "funasr.authoritative_final",
+                    "turn_id": turn_id,
+                    "generation_id": 1,
+                    "tool_epoch": 0,
+                    "active_subject_id": subject_id,
+                    "runtime_profile_id": "profile-subject-fence",
+                    "payload": {"text": text},
+                },
+            )
+            assert response.status_code == 201, f"{event_id}: {response.text}"
+
+        await append("subject-fence-child", "我今天考试没考好。", child_id, turn_id=1)
+        await append("subject-fence-owner", "我今天有点累。", owner["user_id"], turn_id=2)
+
+    child_event = await app.state.life_archive.event(
+        account_id=owner["user_id"], event_id="subject-fence-child"
+    )
+    owner_event = await app.state.life_archive.event(
+        account_id=owner["user_id"], event_id="subject-fence-owner"
+    )
+    assert child_event is not None and owner_event is not None
+    assert child_event.subject_id == child_id
+    assert child_event.payload.get("history_eligible") is False
+    assert "text" not in child_event.payload
+    assert child_event.payload.get("memory_retention") != "retained"
+    # 同一账户、同一会话：成人本人说话仍按账户保留，证明天花板随说话主体。
+    assert owner_event.subject_id == owner["user_id"]
+    assert owner_event.payload.get("history_eligible") is True
+    assert owner_event.payload.get("text") == "我今天有点累。"
+
+
+# -- GET /v1/archive/deletion-requests ----------------------------------------
+
+_DELETION_STATUS_RESPONSE_KEYS = frozenset(
+    {
+        "request_id",
+        "status",
+        "phase",
+        "retryable",
+        "step",
+        "started_at",
+        "updated_at",
+        "completed_at",
+        "progress",
+        "deleted_counts",
+        "last_error",
+    }
+)
+
+
+def _assert_deletion_status_is_an_allowlist(
+    payload: dict[str, Any],
+    raw_body: str,
+    *,
+    account_ids: tuple[str, ...],
+) -> None:
+    """The status body must be a closed field set without account identifiers."""
+
+    _assert_deletion_status_drops_identifiers(payload)
+    for account_id in account_ids:
+        assert account_id not in raw_body
+        assert hashlib.sha256(account_id.encode("utf-8")).hexdigest() not in raw_body
+    assert "user_id" not in raw_body
+
+
+def _assert_deletion_status_drops_identifiers(payload: dict[str, Any]) -> None:
+    """The mapping is an allowlist: account keys never reach the response."""
+
+    assert set(payload) == set(_DELETION_STATUS_RESPONSE_KEYS)
+    assert "user_id" not in payload
+    assert "user_id_hash" not in payload
+    assert "account_id" not in payload
+
+
+@pytest.mark.asyncio
+async def test_archive_deletion_request_status_requires_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        anonymous = await client.get("/v1/archive/deletion-requests")
+        malformed = await client.get(
+            "/v1/archive/deletion-requests",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+
+    assert anonymous.status_code == 401
+    assert anonymous.headers["WWW-Authenticate"] == "Bearer"
+    assert malformed.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_archive_deletion_request_status_reports_no_request_without_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "status-owner", "password": "safe-passphrase"},
+            )
+        ).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        first = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+        second = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+
+    assert first.status_code == 200
+    assert first.headers["Cache-Control"] == "no-store"
+    assert second.headers["Cache-Control"] == "no-store"
+    body = first.json()
+    assert body["status"] == "not_requested"
+    assert body["phase"] == "not_requested"
+    assert body["retryable"] is False
+    assert body["request_id"] is None
+    assert body["step"] is None
+    assert (body["started_at"], body["updated_at"], body["completed_at"]) == (None, None, None)
+    assert body["progress"] == {}
+    assert body["deleted_counts"] == {}
+    assert body["last_error"] is None
+    assert first.json() == second.json()
+    _assert_deletion_status_is_an_allowlist(
+        body, first.text, account_ids=(owner["user_id"],)
+    )
+
+
+@pytest.mark.asyncio
+async def test_archive_deletion_request_status_fails_closed_while_deleting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A caller with a live deletion row is fenced before the status body."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC).isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "status-deleting", "password": "safe-passphrase"},
+            )
+        ).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        started = app.state.memory_store.begin_account_deletion(
+            user_id=owner["user_id"], started_at=now
+        )
+        app.state.memory_store.update_account_deletion(
+            user_id=owner["user_id"],
+            request_id=started["request_id"],
+            step="archive_rows",
+            updated_at=now,
+            progress={"steps_done": 3},
+            last_error="object store timeout",
+        )
+        response = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "access session is unavailable"
+    stored = app.state.memory_store.get_account_deletion(user_id=owner["user_id"])
+    assert stored is not None
+    assert stored["status"] == "deleting"
+    assert stored["last_error"] == "object store timeout"
+    # The row the fenced caller cannot read is exactly what the body would drop.
+    retryable = _deletion_status_response(stored)
+    assert retryable["status"] == "deleting"
+    assert retryable["phase"] == "in_progress"
+    assert retryable["retryable"] is True
+    assert retryable["last_error"] == "object store timeout"
+    assert retryable["progress"] == {"steps_done": 3}
+    assert retryable["step"] == "archive_rows"
+    _assert_deletion_status_drops_identifiers(retryable)
+    assert owner["user_id"] not in str(retryable)
+    assert hashlib.sha256(owner["user_id"].encode("utf-8")).hexdigest() not in str(
+        retryable
+    )
+
+
+@pytest.mark.asyncio
+async def test_archive_deletion_request_status_reports_a_completed_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Completion is reported by the pipeline status, not by the retired token."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "status-completed", "password": "safe-passphrase"},
+            )
+        ).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        completed = await client.post(
+            "/v1/archive/deletion-requests",
+            headers=owner_headers,
+            json={"password": "safe-passphrase", "confirmation": "永久删除我的全部数据"},
+        )
+        fenced = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert fenced.status_code == 401
+    stored = app.state.memory_store.get_account_deletion(user_id=owner["user_id"])
+    assert stored is not None
+    assert stored["status"] == "completed"
+    assert stored["step"] == "completed"
+    # The store reader itself never surfaces the account id or its hash.
+    assert "user_id" not in stored
+    assert "user_id_hash" not in stored
+    assert stored["last_error"] is None
+    assert isinstance(stored["completed_at"], str) and stored["completed_at"]
+    body = _deletion_status_response(stored)
+    assert body["status"] == "completed"
+    assert body["phase"] == "completed"
+    assert body["retryable"] is False
+    assert body["request_id"] == stored["request_id"]
+    assert body["completed_at"] == stored["completed_at"]
+    assert body["deleted_counts"] == stored["deleted_counts"]
+    assert body["progress"] == {}
+    _assert_deletion_status_drops_identifiers(body)
+    assert owner["user_id"] not in str(body)
+
+
+def test_deletion_status_response_clamps_unknown_states_to_deleting() -> None:
+    """Only 'deleting' and 'completed' are reachable; anything else stays retryable."""
+
+    body = _deletion_status_response(
+        {
+            "request_id": "req-clamped",
+            "status": "paused",
+            "step": "paused",
+            "progress": None,
+            "deleted_counts": None,
+            "last_error": None,
+            "user_id": "status-owner",
+            "user_id_hash": "0" * 64,
+        }
+    )
+
+    assert body["status"] == "deleting"
+    assert body["phase"] == "in_progress"
+    assert body["retryable"] is True
+    assert body["request_id"] == "req-clamped"
+    assert body["progress"] == {}
+    assert body["deleted_counts"] == {}
+    assert body["last_error"] is None
+    _assert_deletion_status_drops_identifiers(body)
+
+
+@pytest.mark.asyncio
+async def test_archive_deletion_request_status_ignores_another_accounts_query(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """?account_id= cannot be used to read somebody else's deletion request."""
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC).isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "status-borrower", "password": "safe-passphrase"},
+            )
+        ).json()
+        other = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "status-target", "password": "other-passphrase"},
+            )
+        ).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        other_row = app.state.memory_store.begin_account_deletion(
+            user_id=other["user_id"], started_at=now
+        )
+        borrowed = await client.get(
+            "/v1/archive/deletion-requests",
+            headers=owner_headers,
+            params={"account_id": other["user_id"]},
+        )
+        own = await client.get("/v1/archive/deletion-requests", headers=owner_headers)
+
+    assert borrowed.status_code == 200
+    body = borrowed.json()
+    assert body["status"] == "not_requested"
+    assert body["request_id"] is None
+    assert borrowed.json() == own.json()
+    assert other_row["status"] == "deleting"
+    assert body["request_id"] != other_row["request_id"]
+    assert other["user_id"] not in borrowed.text
+    assert other_row["request_id"] not in borrowed.text
+    _assert_deletion_status_is_an_allowlist(
+        body,
+        borrowed.text,
+        account_ids=(owner["user_id"], other["user_id"]),
+    )

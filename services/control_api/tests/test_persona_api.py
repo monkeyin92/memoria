@@ -149,6 +149,7 @@ async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_cap
                 json={
                     "event_id": f"persona-api-style-{index}",
                     "session_id": session["session_id"],
+                    "active_subject_id": identity["user_id"],
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime(2026, 7, 19, 15, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
@@ -239,6 +240,7 @@ async def test_revoked_owner_can_manage_confirmed_traits_and_version_history(
                 json={
                     "event_id": f"revoked-persona-style-{index}",
                     "session_id": session["session_id"],
+                    "active_subject_id": identity["user_id"],
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime(2026, 7, 21, 10, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
@@ -315,6 +317,7 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
             json={
                 "event_id": "persona-api-uncertain-candidate",
                 "session_id": session["session_id"],
+                "active_subject_id": identity["user_id"],
                 "event_type": "speech.utterance_finalized",
                 "occurred_at": datetime.now(UTC).isoformat(),
                 "speaker_class": "uncertain",
@@ -441,6 +444,7 @@ async def test_consented_uncertain_cross_session_evidence_auto_publishes_persona
                 json={
                     "event_id": f"automatic-persona-{index}",
                     "session_id": sessions[index // 2]["session_id"],
+                    "active_subject_id": identity["user_id"],
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime(2026, 7, 21, 9, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "uncertain",
@@ -671,6 +675,7 @@ async def test_value_or_decision_trait_requires_authenticated_review(
             json={
                 "event_id": "persona-api-decision",
                 "session_id": session["session_id"],
+                "active_subject_id": identity["user_id"],
                 "event_type": "speech.utterance_finalized",
                 "occurred_at": datetime.now(UTC).isoformat(),
                 "speaker_class": "owner",

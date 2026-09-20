@@ -896,6 +896,7 @@ async def weekly_summary(
     end_at = (start_at + timedelta(days=7)) - timedelta(microseconds=1)
     events = await _archive(request).evidence_window(
         account_id=minor_user_id,
+        subject_id=minor_user_id,
         occurred_after=start_at,
         occurred_before=end_at,
         event_types=_WEEKLY_EVENT_TYPES,
@@ -921,7 +922,14 @@ async def export_minor(
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
     )
-    exported = await _governance(request).export_account(minor_user_id)
+    require_capability_for_account_id(
+        minor_user_id, "guardian_weekly_report", store=_profiles(request)
+    )
+    # An active relationship authorizes governance metadata, never verbatim
+    # conversation. This export is deliberately narrower than self access.
+    exported = await _governance(request).export_account(
+        minor_user_id, subject_id=minor_user_id, audience="guardian"
+    )
     return JSONResponse(
         content=exported,
         headers={

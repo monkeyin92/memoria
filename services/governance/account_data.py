@@ -15,13 +15,18 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import asyncpg
 
-from services.archive.object_store import ObjectRef, ObjectStore
+from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
 from services.control_api.app.database import MemoryStore
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
+from services.governance.subject_export import (
+    build_subject_export,
+    manifest_sha256,
+    validate_subject_export_request,
+)
 from services.guardian.corpus import CorpusRetentionService
 from services.legacy.domain import LegacyAccountExport, LegacyRegistryPort
 from services.voice_profile.domain import VoiceProfilePort
@@ -799,7 +804,23 @@ class AccountDataGovernance:
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
-    async def export_account(self, account_id: str) -> dict[str, Any]:
+    async def export_account(
+        self,
+        account_id: str,
+        *,
+        subject_id: str | None = None,
+        audience: Literal["self", "guardian"] = "self",
+    ) -> dict[str, Any]:
+        """Export account data, optionally reduced to one provable subject scope.
+
+        ``subject_id=None`` keeps the internal account-wide snapshot used by
+        deletion verification and diagnostics.  An explicit subject export
+        never treats unattributed rows as that subject: it returns only rows
+        whose ``subject_id`` proves attribution, plus account/profile metadata
+        and consent records, and declares every omitted section so a partial
+        export can never be mistaken for a complete one.
+        """
+        validate_subject_export_request(subject_id=subject_id, audience=audience)
         # Export contains the same owner-private material protected by the
         # runtime read lease. Keep the snapshot and manifest construction in
         # one lease so deletion cannot race a partially exported account.
@@ -828,14 +849,17 @@ class AccountDataGovernance:
                     "guardian": guardian,
                 },
             }
-            canonical = json.dumps(
-                body,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            body["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
-            return body
+            body["manifest_sha256"] = manifest_sha256(body)
+            if subject_id is None:
+                return body
+            # Reduce the account-wide snapshot to the explicit subject scope and
+            # recompute the manifest over what is actually released.
+            return build_subject_export(
+                snapshot=body,
+                account_id=account_id,
+                subject_id=subject_id,
+                audience=audience,
+            )
 
     async def _export_guardian(self, account_id: str) -> dict[str, object]:
         if self._guardian_repository is None:
@@ -935,6 +959,17 @@ class AccountDataGovernance:
             if self._archive_object_store is not None:
                 for reference in references:
                     await self._archive_object_store.delete(reference)
+                    try:
+                        await self._archive_object_store.get(reference)
+                    except (ObjectNotFoundError, FileNotFoundError):
+                        continue
+                    except Exception as exc:
+                        raise AccountDeletionIncompleteError(
+                            "archive object deletion verification failed"
+                        ) from exc
+                    raise AccountDeletionIncompleteError(
+                        "archive object remained readable after deletion"
+                    )
             return len(references)
 
         try:

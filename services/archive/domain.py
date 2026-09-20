@@ -121,12 +121,15 @@ class ContextQuery:
     session_id: str | None = None
     limit: int = 20
     include_sensitive: bool = False
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account_id.strip():
             raise ValueError("account_id must not be blank")
         if not 1 <= self.limit <= 100:
             raise ValueError("limit must be between 1 and 100")
+        if self.subject_id is not None and not self.subject_id.strip():
+            raise ValueError("subject_id must not be blank when it is provided")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +224,7 @@ class LifeArchivePort(Protocol):
         occurred_before: datetime,
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
+        subject_id: str | None = None,
     ) -> tuple[EvidenceEvent, ...]: ...
 
     async def context(self, query: ContextQuery) -> ContextBundle: ...

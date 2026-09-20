@@ -101,6 +101,8 @@ from services.guardian.retention import (
     apply_memory_retention_ceiling,
     memory_retention_allowed,
 )
+from services.identity.domain import IdentityNotFoundError
+from services.identity.service import IdentityService
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessPurpose,
@@ -181,6 +183,7 @@ class EvidenceEventCreate(BaseModel):
 
     event_id: str = Field(min_length=1, max_length=128)
     account_id: str = Field(min_length=1, max_length=128)
+    subject_id: str | None = Field(default=None, min_length=1, max_length=128)
     event_type: str = Field(min_length=1, max_length=96)
     occurred_at: datetime
     speaker_class: Literal["owner", "guest", "uncertain", "assistant", "system"]
@@ -1083,6 +1086,10 @@ async def _canonical_response_provenance(
         event.speaker_class != "owner"
         or event.event_type not in {"speech.utterance_finalized", "owner.action_recorded"}
         or event.payload.get("owner_projection_eligible") is not True
+        or (
+            interaction_mode == "companion"
+            and (parent is None or parent.subject_id is None or event.subject_id != parent.subject_id)
+        )
         for event in resolved_events
     ):
         raise HTTPException(
@@ -1368,6 +1375,12 @@ def _schedule_persona_observation(
     allow_uncertain_candidate: bool = False,
 ) -> None:
     if duplicate or event.event_type != "speech.utterance_finalized":
+        return
+    # This learner is account-keyed; a confirmed household member is not the
+    # account owner's persona, even when that member has retention consent.
+    # A NULL subject never reaches this seam (the retention ceiling already
+    # withdrew its capabilities), and it is not the owner either.
+    if event.subject_id != event.account_id:
         return
     if event.payload.get("persona_eligible") is not True:
         return
@@ -1721,6 +1734,70 @@ async def append_event(
     )
 
 
+async def _active_memory_consent(request: Request, *, subject_id: str) -> bool:
+    """Whether the subject has an active guardian memory-retention consent."""
+    return (
+        await cast(GuardianStorePort, request.app.state.guardian_store).active_consent(
+            minor_user_id=subject_id,
+            consent_kind="memory_retention",
+        )
+        is not None
+    )
+
+
+async def _speaker_retention_inputs(
+    request: Request,
+    *,
+    account_id: str,
+    subject_id: str | None,
+) -> tuple[str | None, bool]:
+    """Retention inputs for the speaker subject (P2-03).
+
+    Missing identity is never the account owner. Authority failures propagate
+    as an unavailable response, never as a successful adult retention decision.
+    """
+    if subject_id is None:
+        return None, False
+    if subject_id == account_id:
+        profile = _store(request).get_subject_profile(user_id=account_id)
+        category = (profile or {}).get("subject_category")
+        consent = (
+            await _active_memory_consent(request, subject_id=account_id)
+            if category == "minor"
+            else False
+        )
+        return cast(str | None, category), consent
+    identity = cast(IdentityService, request.app.state.identity_service)
+    try:
+        person = await identity.get_person(subject_id)
+    except IdentityNotFoundError:
+        return None, False
+    category = person.subject_category
+    consent = (
+        await _active_memory_consent(request, subject_id=subject_id)
+        if category == "minor"
+        else False
+    )
+    return category, consent
+
+
+async def _require_subject_memory_read(request: Request, *, account_id: str) -> None:
+    require_capability_for_account_id(
+        account_id, "conversation_review", store=_store(request)
+    )
+    try:
+        category, consent = await _speaker_retention_inputs(
+            request, account_id=account_id, subject_id=account_id
+        )
+    except Exception as exc:
+        logger.exception("archive subject retention authority unavailable")
+        raise HTTPException(
+            status_code=503, detail={"code": "subject_retention_authority_unavailable"}
+        ) from exc
+    if not memory_retention_allowed(subject_category=category, active_consent=consent):
+        raise HTTPException(status_code=403, detail={"code": "memory_retention_consent_required"})
+
+
 @router.post("/session-events")
 async def append_session_event(
     body: SessionEvidenceEventCreate,
@@ -1736,20 +1813,6 @@ async def append_session_event(
     )
     archive = _archive(request)
     account_id = str(session["user_id"])
-    subject_profile = _store(request).get_subject_profile(user_id=account_id)
-    memory_consent_active = False
-    if (subject_profile or {}).get("subject_category") == "minor":
-        memory_consent_active = (
-            await cast(GuardianStorePort, request.app.state.guardian_store).active_consent(
-                minor_user_id=account_id,
-                consent_kind="memory_retention",
-            )
-            is not None
-        )
-    retention_allowed = memory_retention_allowed(
-        subject_category=(subject_profile or {}).get("subject_category"),
-        active_consent=memory_consent_active,
-    )
     values = body.model_dump()
     tool_epoch = values.pop("tool_epoch")
     memory_write_fence = {
@@ -1837,6 +1900,42 @@ async def append_session_event(
                 status_code=409,
                 detail={"code": "turn_event_conflict"},
             )
+    if assistant_event and parent is not None:
+        if values["subject_id"] is not None and values["subject_id"] != parent.subject_id:
+            raise HTTPException(status_code=409, detail={"code": "parent_subject_mismatch"})
+        values["subject_id"] = parent.subject_id
+    elif values["subject_id"] is not None and getattr(
+        request.app.state, "session_runtime_service", None
+    ) is not None:
+        # Claims identify a subject only after the existing runtime authority
+        # accepts the same profile/epoch. Never let a stale turn name the adult.
+        from services.control_api.app.routes.interaction import (
+            _current_persistent_runtime_profile,
+        )
+
+        profile = await _current_persistent_runtime_profile(
+            request, session, session_id=body.session_id
+        )
+        if any(
+            memory_write_fence[field] != profile.get(field)
+            for field in (
+                "active_subject_id", "runtime_profile_id", "session_epoch",
+                "actor_id", "device_id", "binding_id", "binding_version", "subject_revision",
+            )
+        ):
+            raise HTTPException(status_code=409, detail={"code": "archive_subject_fence_stale"})
+    try:
+        subject_category, memory_consent_active = await _speaker_retention_inputs(
+            request, account_id=account_id, subject_id=values["subject_id"]
+        )
+    except Exception as exc:
+        logger.exception("archive subject retention authority unavailable")
+        raise HTTPException(
+            status_code=503, detail={"code": "subject_retention_authority_unavailable"}
+        ) from exc
+    retention_allowed = memory_retention_allowed(
+        subject_category=subject_category, active_consent=memory_consent_active
+    )
     raw_response_provenance = payload.get("response_provenance")
     canonical_response_provenance: dict[str, Any] | None = None
     if raw_response_provenance is not None:
@@ -1893,9 +1992,7 @@ async def append_session_event(
             "interaction": trusted_interaction,
             "prompt_kind": prompt_kind,
             "memory_retention": trusted_interaction.get("memory_retention", "retained"),
-            "subject_category": (
-                (subject_profile or {}).get("subject_category")
-            ),
+            "subject_category": subject_category,
         }
     )
     if tool_epoch is not None:
@@ -2122,6 +2219,7 @@ async def _append_minor_corpus_audio(
         or parent.generation_id != body.generation_id
         or parent.event_type != "speech.utterance_finalized"
         or parent.speaker_class != "owner"
+        or parent.subject_id != account_id
     ):
         raise HTTPException(status_code=409, detail={"code": "corpus_parent_mismatch"})
     existing = await projection.corpus_sample_by_event(
@@ -2261,6 +2359,7 @@ async def append_session_raw_audio(
         or event.generation_id != body.generation_id
         or event.event_type != "speech.utterance_finalized"
         or event.speaker_class != "owner"
+        or event.subject_id != account_id
         or event.consent_grant_id != body.consent_grant_id
         or _canonical_turn_eligibility(event) != (True, True)
     ):
@@ -2320,6 +2419,13 @@ async def session_memory_context(
     _: Annotated[None, Depends(_require_memory_read_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
+    from services.control_api.app.routes.interaction import _resolve_subject_memory_scope
+
+    scope = await _resolve_subject_memory_scope(
+        request, session_id=body.session_id, account_id=str(session["user_id"])
+    )
+    if not scope.memory_readable:
+        return {"items": []}
     trusted_interaction = ModePolicy.trusted_context(
         FrozenMode.from_session(session),
         speaker_class=body.speaker_class,
@@ -2330,11 +2436,14 @@ async def session_memory_context(
     recall = RecallPlanner.plan(
         query=body.topic,
         now=current_local_time(settings.memoria_timezone),
-        people=await _catalog(request).people(account_id=str(session["user_id"]), limit=100),
+        people=await _catalog(request).people(
+            account_id=str(session["user_id"]), subject_id=scope.subject_id, limit=100
+        ),
     )
     result = await _catalog(request).context(
         MemorySearchQuery(
             account_id=str(session["user_id"]),
+            subject_id=scope.subject_id,
             speaker_class=body.speaker_class,
             text=recall.text,
             entity_ids=recall.entity_ids,
@@ -2378,13 +2487,17 @@ async def timeline(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: int = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
+    await _require_subject_memory_read(request, account_id=user.user_id)
     bundle = await _archive(request).context(
-        ContextQuery(account_id=user.user_id, speaker_class="owner", limit=limit)
+        ContextQuery(
+            account_id=user.user_id, subject_id=user.user_id, speaker_class="owner", limit=limit
+        )
     )
     return {
         "items": [
             {
                 "event_id": event.event_id,
+                "subject_id": event.subject_id,
                 "event_type": event.event_type,
                 "occurred_at": event.occurred_at.isoformat(),
                 "speaker_class": event.speaker_class,
@@ -2395,6 +2508,8 @@ async def timeline(
                 "generation_id": event.generation_id,
             }
             for event in bundle.evidence
+            if event.payload.get("memory_retention") != "ephemeral_only"
+            and (event.session_id is None or event.payload.get("history_eligible") is True)
         ]
     }
 
@@ -2408,6 +2523,7 @@ def _actual_heard_item(event: EvidenceEvent) -> dict[str, Any] | None:
         and payload.get("actual_heard") is True
         and payload.get("history_eligible") is True
         and payload.get("owner_projection_eligible") is True
+        and payload.get("memory_retention") != "ephemeral_only"
         and isinstance(text, str)
         and text.strip()
         and event.session_id is not None
@@ -2440,9 +2556,11 @@ async def conversation_review(
         "conversation_review",
         store=_store(request),
     )
+    await _require_subject_memory_read(request, account_id=user.user_id)
     bundle = await _archive(request).context(
         ContextQuery(
             account_id=user.user_id,
+            subject_id=user.user_id,
             speaker_class="owner",
             limit=min(100, actual_heard_limit * 4),
         )
@@ -2453,10 +2571,11 @@ async def conversation_review(
         if (item := _actual_heard_item(event)) is not None
     ][:actual_heard_limit]
     catalog = _catalog(request)
-    candidates = await catalog.review_queue(account_id=user.user_id)
+    candidates = await catalog.review_queue(account_id=user.user_id, subject_id=user.user_id)
     confirmed = await catalog.search(
         MemorySearchQuery(
             account_id=user.user_id,
+            subject_id=user.user_id,
             speaker_class="owner",
             kinds=("claim",),
             include_candidates=False,
@@ -2501,6 +2620,7 @@ def _owner_turn_item(event: EvidenceEvent) -> dict[str, Any] | None:
         and event.speaker_class == "owner"
         and payload.get("history_eligible") is True
         and payload.get("owner_projection_eligible") is True
+        and payload.get("memory_retention") != "ephemeral_only"
         and isinstance(text, str)
         and text.strip()
         and event.session_id is not None
@@ -2528,10 +2648,9 @@ async def conversation_history(
 ) -> dict[str, Any]:
     """Read one session's paired turns: owner text plus actual-heard replies.
 
-    Minimal P1-05 review exit: the same authenticated owner scope as the
-    account-wide ``/conversation-review`` (so no cross-account read and no
-    retention-consent long-term save), narrowed to one ``session_id``. Owner
-    turns must be history-eligible; assistant turns must carry actual-heard
+    Uses the authenticated subject's current retention permission and filters
+    both subject and session before the storage limit. Owner turns must be
+    history-eligible; assistant turns must carry actual-heard
     evidence. Anything else is omitted, never fabricated: a session with no
     eligible turns returns empty lists, not a generated summary.
     """
@@ -2540,9 +2659,11 @@ async def conversation_history(
         "conversation_review",
         store=_store(request),
     )
+    await _require_subject_memory_read(request, account_id=user.user_id)
     bundle = await _archive(request).context(
         ContextQuery(
             account_id=user.user_id,
+            subject_id=user.user_id,
             speaker_class="owner",
             session_id=session_id,
             limit=100,
@@ -2655,6 +2776,7 @@ async def search_memories(
     occurred_before: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
+    await _require_subject_memory_read(request, account_id=user.user_id)
     if category and domain_category:
         raise HTTPException(
             status_code=422,
@@ -2664,6 +2786,7 @@ async def search_memories(
         result = await _catalog(request).search(
             MemorySearchQuery(
                 account_id=user.user_id,
+                subject_id=user.user_id,
                 speaker_class="owner",
                 text=q,
                 kinds=tuple(kind or ()),
@@ -2690,7 +2813,10 @@ async def life_timeline(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: int = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
-    items = await _catalog(request).timeline(account_id=user.user_id, limit=limit)
+    await _require_subject_memory_read(request, account_id=user.user_id)
+    items = await _catalog(request).timeline(
+        account_id=user.user_id, subject_id=user.user_id, limit=limit
+    )
     return {
         "items": [
             {
@@ -2717,7 +2843,10 @@ async def people(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: int = Query(default=100, ge=1, le=100),
 ) -> dict[str, Any]:
-    items = await _catalog(request).people(account_id=user.user_id, limit=limit)
+    await _require_subject_memory_read(request, account_id=user.user_id)
+    items = await _catalog(request).people(
+        account_id=user.user_id, subject_id=user.user_id, limit=limit
+    )
     return {
         "items": [
             {
@@ -2738,7 +2867,10 @@ async def review_queue(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    items = await _catalog(request).review_queue(account_id=user.user_id)
+    await _require_subject_memory_read(request, account_id=user.user_id)
+    items = await _catalog(request).review_queue(
+        account_id=user.user_id, subject_id=user.user_id
+    )
     return {
         "items": [
             {
@@ -2785,10 +2917,12 @@ async def review_memory(
         "conversation_review",
         store=_store(request),
     )
+    await _require_subject_memory_read(request, account_id=user.user_id)
     try:
         reviewed = await _catalog(request).review(
             MemoryClaimReview(
                 account_id=user.user_id,
+                subject_id=user.user_id,
                 claim_id=claim_id,
                 action=body.action,
                 corrected_value=body.corrected_value,
@@ -2875,6 +3009,41 @@ def _account_audit_hash(account_id: str) -> str:
     return hashlib.sha256(account_id.encode("utf-8")).hexdigest()[:16]
 
 
+def _deletion_status_response(deletion: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Expose a stable, account-bound deletion status without account ids."""
+    if deletion is None:
+        return {
+            "request_id": None,
+            "status": "not_requested",
+            "phase": "not_requested",
+            "retryable": False,
+            "step": None,
+            "started_at": None,
+            "updated_at": None,
+            "completed_at": None,
+            "progress": {},
+            "deleted_counts": {},
+            "last_error": None,
+        }
+
+    status = str(deletion.get("status", "deleting"))
+    if status not in {"deleting", "completed"}:
+        status = "deleting"
+    return {
+        "request_id": str(deletion["request_id"]),
+        "status": status,
+        "phase": "completed" if status == "completed" else "in_progress",
+        "retryable": status == "deleting",
+        "step": str(deletion["step"]),
+        "started_at": deletion.get("started_at"),
+        "updated_at": deletion.get("updated_at"),
+        "completed_at": deletion.get("completed_at"),
+        "progress": dict(deletion.get("progress") or {}),
+        "deleted_counts": dict(deletion.get("deleted_counts") or {}),
+        "last_error": deletion.get("last_error"),
+    }
+
+
 @router.post("/exports")
 async def export_archive(
     body: ArchiveExportBody,
@@ -2882,8 +3051,11 @@ async def export_archive(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> JSONResponse:
     _verify_sensitive_action(request, user, body.password)
+    await _require_subject_memory_read(request, account_id=user.user_id)
     try:
-        exported = await _governance(request).export_account(user.user_id)
+        exported = await _governance(request).export_account(
+            user.user_id, subject_id=user.user_id
+        )
     except AccountDeletingError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     logger.info(
@@ -2897,6 +3069,21 @@ async def export_archive(
             "Content-Disposition": ('attachment; filename="memoria-account-export.json"'),
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/deletion-requests")
+async def get_archive_deletion(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> JSONResponse:
+    deletion = await asyncio.to_thread(
+        _store(request).get_account_deletion,
+        user_id=user.user_id,
+    )
+    return JSONResponse(
+        content=_deletion_status_response(deletion),
+        headers={"Cache-Control": "no-store"},
     )
 
 

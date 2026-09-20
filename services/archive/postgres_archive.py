@@ -126,11 +126,14 @@ class PostgresLifeArchive:
         occurred_before: datetime,
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
+        subject_id: str | None = None,
     ) -> tuple[EvidenceEvent, ...]:
         if not account_id.strip() or not 1 <= limit <= 10_000:
             raise ValueError("evidence window requires account_id and limit 1..10000")
         if occurred_after.tzinfo is None or occurred_before.tzinfo is None:
             raise ValueError("evidence window timestamps must include timezone")
+        if subject_id is not None and not subject_id.strip():
+            raise ValueError("evidence window subject_id must not be blank")
         start = occurred_after.astimezone(UTC)
         end = occurred_before.astimezone(UTC)
         if start > end:
@@ -145,6 +148,7 @@ class PostgresLifeArchive:
                 SELECT * FROM archive_evidence_events
                 WHERE account_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
                   AND (cardinality($4::text[]) = 0 OR event_type = ANY($4::text[]))
+                  AND ($6::text IS NULL OR subject_id = $6::text)
                 ORDER BY occurred_at, event_id
                 LIMIT $5
                 """,
@@ -153,6 +157,7 @@ class PostgresLifeArchive:
                 end,
                 list(event_types),
                 limit,
+                subject_id,
             )
         return tuple(self._event_from_row(row) for row in rows)
 
@@ -637,6 +642,11 @@ class PostgresLifeArchive:
         parameters: list[Any] = [query.account_id]
         if query.speaker_class == "owner":
             clauses.append("speaker_class IN ('owner', 'assistant', 'system')")
+            if query.session_id is not None:
+                # The owner branch narrows to one session in SQL so LIMIT
+                # counts the caller's own session instead of the whole account.
+                parameters.append(query.session_id)
+                clauses.append(f"session_id = ${len(parameters)}")
         else:
             if query.session_id is None:
                 return ContextBundle()
@@ -648,6 +658,11 @@ class PostgresLifeArchive:
                 ]
             )
             parameters.append(query.speaker_class)
+        if query.subject_id is not None:
+            # Explicit subject scope reads the speaking subject on the row; a
+            # NULL subject is an unclaimed speaker and never matches.
+            parameters.append(query.subject_id)
+            clauses.append(f"subject_id = ${len(parameters)}")
         if query.text.strip():
             parameters.append(f"%{query.text.strip()}%")
             clauses.append(f"payload::text ILIKE ${len(parameters)}")
@@ -706,6 +721,7 @@ class PostgresLifeArchive:
                             else {}
                         ),
                     },
+                    subject_id=target.subject_id,
                     session_id=target.session_id,
                     turn_id=target.turn_id,
                     generation_id=target.generation_id,

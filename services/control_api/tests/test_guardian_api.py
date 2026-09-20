@@ -168,6 +168,18 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
         )
         assert session.status_code == 200
         assert session.json()["interaction"]["session_focus"] == "tutor_english"
+        # P2-03: naming the speaker subject requires the exact fence the signed
+        # runtime authority issued for this session; a partial claim is stale.
+        subject_fence = {
+            "active_subject_id": child["user_id"],
+            "runtime_profile_id": f"rp-{session.json()['session_id']}",
+            "session_epoch": 1,
+            "actor_id": child["user_id"],
+            "device_id": "device-test-1",
+            "binding_id": "binding-test-1",
+            "binding_version": 1,
+            "subject_revision": 1,
+        }
         _attach_signed_runtime_profile(
             app,
             user_id=child["user_id"],
@@ -199,6 +211,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
                 "turn_id": 1,
                 "generation_id": 1,
                 "tool_epoch": 0,
+                **subject_fence,
                 "payload": {"text": "没有留存同意时不能保存这句原文"},
             },
         )
@@ -257,6 +270,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
                 "turn_id": 2,
                 "generation_id": 1,
                 "tool_epoch": 0,
+                **subject_fence,
                 "payload": {"text": "有留存同意后可以保存安全的学习原文"},
             },
         )
@@ -274,6 +288,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             EvidenceEvent(
                 event_id="guardian-weekly-emotion-1",
                 account_id=child["user_id"],
+                subject_id=child["user_id"],
                 event_type="emotion_observation",
                 occurred_at=now,
                 speaker_class="system",
@@ -524,6 +539,7 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
             "turn_id": 1,
             "generation_id": 1,
             "tool_epoch": 0,
+            "active_subject_id": child["user_id"],
             "payload": {"text": "这句话的原始音频仅用于限期授权语料。"},
         }
         transcript = await client.post(

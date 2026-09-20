@@ -41,6 +41,7 @@ from services.archive.memory_domain import (
     ReviewQueueItem,
     TimelineItem,
     lexical_query_terms,
+    subject_lineage_predicates,
 )
 from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
@@ -289,6 +290,47 @@ _SOURCE_STATUS_TABLES = (
     "knowledge_items",
 )
 
+# Scoped-review cascade guards.  Rows whose identity merged several speakers
+# are skipped instead of being rewritten through one of their sources: only
+# ``person_entities`` (via ``person_aliases``) and ``timeline_entries`` /
+# ``episode_evidence`` (via the episode) can carry more than their own source
+# event; the remaining tables above are single-source rows.
+_SCOPED_CASCADE_GUARDS: dict[str, str] = {
+    "person_entities": (
+        "NOT EXISTS (SELECT 1 FROM person_aliases alias"
+        " LEFT JOIN {evidence} lineage ON lineage.event_id = alias.source_event_id"
+        " AND lineage.account_id = alias.account_id"
+        " WHERE alias.person_id = person_entities.person_id"
+        " AND alias.account_id = person_entities.account_id"
+        " AND (lineage.subject_id IS NULL OR lineage.subject_id <> ?))"
+    ),
+    "timeline_entries": (
+        "NOT EXISTS (SELECT 1 FROM episode_evidence merged"
+        " LEFT JOIN {evidence} lineage ON lineage.event_id = merged.source_event_id"
+        " AND lineage.account_id = merged.account_id"
+        " WHERE merged.episode_id = timeline_entries.episode_id"
+        " AND merged.account_id = timeline_entries.account_id"
+        " AND (lineage.subject_id IS NULL OR lineage.subject_id <> ?))"
+    ),
+    "episode_evidence": (
+        "NOT EXISTS (SELECT 1 FROM episode_evidence merged"
+        " LEFT JOIN {evidence} lineage ON lineage.event_id = merged.source_event_id"
+        " AND lineage.account_id = merged.account_id"
+        " WHERE merged.episode_id = episode_evidence.episode_id"
+        " AND merged.account_id = episode_evidence.account_id"
+        " AND (lineage.subject_id IS NULL OR lineage.subject_id <> ?))"
+    ),
+}
+
+_SCOPED_DOCUMENT_CASCADE_GUARD = (
+    "AND NOT EXISTS (SELECT 1 FROM memory_search_document_sources merged"
+    " LEFT JOIN evidence_events lineage ON lineage.event_id = merged.source_event_id"
+    " AND lineage.account_id = merged.account_id"
+    " WHERE merged.document_id = memory_search_documents.document_id"
+    " AND merged.account_id = memory_search_documents.account_id"
+    " AND (lineage.subject_id IS NULL OR lineage.subject_id <> ?))"
+)
+
 
 @asynccontextmanager
 async def _allow_account_write(_: str) -> AsyncIterator[None]:
@@ -298,6 +340,16 @@ async def _allow_account_write(_: str) -> AsyncIterator[None]:
 def _stable_id(kind: str, *values: object) -> str:
     key = ":".join(str(value) for value in values)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:{kind}:{key}"))
+
+
+def _bind_question_mark(parameters: list[object]) -> Callable[[str], str]:
+    """SQLite placeholder binder for :func:`subject_lineage_predicates`."""
+
+    def bind(value: str) -> str:
+        parameters.append(value)
+        return "?"
+
+    return bind
 
 
 def _ensure_columns(
@@ -1167,15 +1219,45 @@ class MemoryCatalog:
         account_id: str,
         subject_key: str,
         predicate: str,
+        subject_id: str | None = None,
     ) -> None:
+        # An explicit scope keeps the conflict fold inside one speaker: another
+        # subject's claims share ``subject_key`` ("self") and must neither
+        # decide nor receive this review's conflict state.  The scope is the
+        # same lineage contract the read path uses -- account-consistent own
+        # evidence plus every source the claim's projection merged -- so a claim
+        # that a scoped read hides is not folded here either.
+        scope = ""
+        scope_parameters: list[object] = []
+        if subject_id is not None:
+
+            def bind(value: str) -> str:
+                scope_parameters.append(value)
+                return "?"
+
+            scope = "".join(
+                f" AND {lineage}"
+                for lineage in subject_lineage_predicates(
+                    bind=bind,
+                    subject_id=subject_id,
+                    account_column="memory_claims.account_id",
+                    single_source_column="memory_claims.source_event_id",
+                    document_source_item=(
+                        "claim",
+                        "memory_claims.claim_id",
+                        "memory_claims.account_id",
+                    ),
+                )
+            )
         rows = connection.execute(
-            """
+            f"""
             SELECT claim_id, value
             FROM memory_claims
             WHERE account_id = ? AND subject_key = ? AND predicate = ?
               AND status != 'retracted'
+              {scope}
             """,
-            (account_id, subject_key, predicate),
+            [account_id, subject_key, predicate, *scope_parameters],
         ).fetchall()
         state: ConflictState = (
             "active"
@@ -1184,24 +1266,57 @@ class MemoryCatalog:
             else "none"
         )
         connection.execute(
-            """
+            f"""
             UPDATE memory_claims
             SET conflict_state = ?
             WHERE account_id = ? AND subject_key = ? AND predicate = ?
+              {scope}
             """,
-            (state, account_id, subject_key, predicate),
+            [state, account_id, subject_key, predicate, *scope_parameters],
         )
         connection.execute(
-            """
+            f"""
             UPDATE memory_search_documents
             SET conflict_state = ?
             WHERE account_id = ? AND kind = 'claim' AND item_id IN (
                 SELECT claim_id FROM memory_claims
                 WHERE account_id = ? AND subject_key = ? AND predicate = ?
+                  {scope}
             )
             """,
-            (state, account_id, account_id, subject_key, predicate),
+            [state, account_id, account_id, subject_key, predicate, *scope_parameters],
         )
+
+    @staticmethod
+    def _episode_merged_other_subjects(
+        connection: sqlite3.Connection,
+        *,
+        episode_id: str,
+        account_id: str,
+        subject_id: str,
+    ) -> bool:
+        """Whether an episode carries any source that is not this subject's.
+
+        A link row from another account -- or one whose evidence row sits in a
+        different account than the link itself -- counts as foreign, so the
+        refresh leaves the episode alone instead of rewriting it.
+        """
+
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM episode_evidence evidence
+            LEFT JOIN evidence_events source
+              ON source.event_id = evidence.source_event_id
+             AND source.account_id = evidence.account_id
+            WHERE evidence.episode_id = ?
+              AND evidence.account_id = ?
+              AND (source.subject_id IS NULL OR source.subject_id <> ?)
+            LIMIT 1
+            """,
+            (episode_id, account_id, subject_id),
+        ).fetchone()
+        return row is not None
 
     @classmethod
     def _refresh_episode_projection(
@@ -1209,7 +1324,20 @@ class MemoryCatalog:
         connection: sqlite3.Connection,
         *,
         episode_id: str,
+        account_id: str | None = None,
+        subject_id: str | None = None,
     ) -> None:
+        if subject_id is not None and account_id is None:
+            raise ValueError("scoped episode refresh requires account_id")
+        if subject_id is not None and account_id is not None and cls._episode_merged_other_subjects(
+            connection,
+            episode_id=episode_id,
+            account_id=account_id,
+            subject_id=subject_id,
+        ):
+            # The episode was consolidated across speakers; rewriting it here
+            # would push this review into a projection it does not own.
+            return
         episode = connection.execute(
             "SELECT * FROM life_episodes WHERE episode_id = ?",
             (episode_id,),
@@ -1550,6 +1678,22 @@ class MemoryCatalog:
         if query.occurred_before is not None:
             clauses.append("document.occurred_at <= ?")
             parameters.append(query.occurred_before.isoformat())
+        if query.subject_id is not None:
+            # Explicit scope: the document's own evidence plus every source it
+            # was merged from must resolve to this subject.
+            clauses.extend(
+                subject_lineage_predicates(
+                    bind=_bind_question_mark(parameters),
+                    subject_id=query.subject_id,
+                    account_column="document.account_id",
+                    single_source_column="document.source_event_id",
+                    merged_source_link=(
+                        "memory_search_document_sources",
+                        "document_id",
+                        "document.document_id",
+                    ),
+                )
+            )
         parameters.append(query.limit)
         with self._connect() as connection:
             rows = connection.execute(
@@ -1602,12 +1746,39 @@ class MemoryCatalog:
             items = tuple(replace(item, score=score) for score, item in ranked)
         return MemorySearchResult(items=items)
 
-    async def timeline(self, *, account_id: str, limit: int = 50) -> tuple[TimelineItem, ...]:
+    async def timeline(
+        self,
+        *,
+        account_id: str,
+        limit: int = 50,
+        subject_id: str | None = None,
+    ) -> tuple[TimelineItem, ...]:
         if not account_id.strip() or not 1 <= limit <= 100:
             raise ValueError("timeline requires account_id and limit 1..100")
+        if subject_id is not None and not subject_id.strip():
+            raise ValueError("timeline subject_id must not be blank")
+        clauses = ["timeline.account_id = ?", "timeline.status != 'retracted'"]
+        parameters: list[object] = [account_id]
+        if subject_id is not None:
+            # A timeline entry merges every source of its episode: the entry's
+            # own evidence and the whole episode set must be the same subject.
+            clauses.extend(
+                subject_lineage_predicates(
+                    bind=_bind_question_mark(parameters),
+                    subject_id=subject_id,
+                    account_column="timeline.account_id",
+                    single_source_column="timeline.source_event_id",
+                    merged_source_link=(
+                        "episode_evidence",
+                        "episode_id",
+                        "timeline.episode_id",
+                    ),
+                )
+            )
+        parameters.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT timeline.*,
                        (
                            SELECT json_group_array(source_event_id)
@@ -1619,11 +1790,11 @@ class MemoryCatalog:
                            )
                        ) AS source_event_ids_json
                 FROM timeline_entries timeline
-                WHERE timeline.account_id = ? AND timeline.status != 'retracted'
+                WHERE {" AND ".join(clauses)}
                 ORDER BY timeline.event_start DESC, timeline.timeline_id
                 LIMIT ?
                 """,
-                (account_id, limit),
+                parameters,
             ).fetchall()
         return tuple(
             TimelineItem(
@@ -1646,18 +1817,51 @@ class MemoryCatalog:
             for row in rows
         )
 
-    async def people(self, *, account_id: str, limit: int = 100) -> tuple[PersonItem, ...]:
+    async def people(
+        self,
+        *,
+        account_id: str,
+        limit: int = 100,
+        subject_id: str | None = None,
+    ) -> tuple[PersonItem, ...]:
         if not account_id.strip() or not 1 <= limit <= 100:
             raise ValueError("people requires account_id and limit 1..100")
+        if subject_id is not None and not subject_id.strip():
+            raise ValueError("people subject_id must not be blank")
+        clauses = ["entity.account_id = ?", "entity.status != 'retracted'"]
+        parameters: list[object] = [account_id]
+        if subject_id is not None:
+            # Every alias is its own evidence row, so one alias learned from
+            # another subject hides the whole person instead of leaking a name.
+            clauses.extend(
+                subject_lineage_predicates(
+                    bind=_bind_question_mark(parameters),
+                    subject_id=subject_id,
+                    account_column="entity.account_id",
+                    single_source_column="entity.source_event_id",
+                    merged_source_link=(
+                        "person_aliases",
+                        "person_id",
+                        "entity.person_id",
+                    ),
+                    require_merged_source=False,
+                    document_source_item=(
+                        "person",
+                        "entity.person_id",
+                        "entity.account_id",
+                    ),
+                )
+            )
+        parameters.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM person_entities
-                WHERE account_id = ? AND status != 'retracted'
-                ORDER BY created_at, person_id
+                f"""
+                SELECT entity.* FROM person_entities entity
+                WHERE {" AND ".join(clauses)}
+                ORDER BY entity.created_at, entity.person_id
                 LIMIT ?
                 """,
-                (account_id, limit),
+                parameters,
             ).fetchall()
             people: list[PersonItem] = []
             for row in rows:
@@ -1680,12 +1884,54 @@ class MemoryCatalog:
                 )
         return tuple(people)
 
-    async def review_queue(self, *, account_id: str) -> tuple[ReviewQueueItem, ...]:
+    async def review_queue(
+        self,
+        *,
+        account_id: str,
+        subject_id: str | None = None,
+    ) -> tuple[ReviewQueueItem, ...]:
         if not account_id.strip():
             raise ValueError("review queue requires account_id")
+        if subject_id is not None and not subject_id.strip():
+            raise ValueError("review queue subject_id must not be blank")
+        parameters: list[object] = []
+        # The conflict probe reads memory_claims a second time.  Under an
+        # explicit scope it must not compare this subject's values against
+        # another subject's rows: the probed claim carries the same lineage
+        # contract as the read path (account-consistent own evidence plus every
+        # source its projection merged).  Its parameters come first in the
+        # statement text because the probe sits in the select list.
+        conflict_scope = ""
+        if subject_id is not None:
+            conflict_scope = "".join(
+                f" AND {lineage}"
+                for lineage in subject_lineage_predicates(
+                    bind=_bind_question_mark(parameters),
+                    subject_id=subject_id,
+                    account_column="other.account_id",
+                    single_source_column="other.source_event_id",
+                    document_source_item=(
+                        "claim",
+                        "other.claim_id",
+                        "other.account_id",
+                    ),
+                )
+            )
+        clauses = ["c.account_id = ?", "c.status IN ('candidate', 'disputed')"]
+        parameters.append(account_id)
+        if subject_id is not None:
+            clauses.extend(
+                subject_lineage_predicates(
+                    bind=_bind_question_mark(parameters),
+                    subject_id=subject_id,
+                    account_column="c.account_id",
+                    single_source_column="c.source_event_id",
+                    document_source_item=("claim", "c.claim_id", "c.account_id"),
+                )
+            )
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT c.*,
                        EXISTS (
                            SELECT 1 FROM memory_claims other
@@ -1694,12 +1940,13 @@ class MemoryCatalog:
                              AND other.predicate = c.predicate
                              AND other.value != c.value
                              AND other.status != 'retracted'
+                           {conflict_scope}
                        ) AS has_conflict
                 FROM memory_claims c
-                WHERE c.account_id = ? AND c.status IN ('candidate', 'disputed')
+                WHERE {" AND ".join(clauses)}
                 ORDER BY c.valid_at, c.claim_id
                 """,
-                (account_id,),
+                parameters,
             ).fetchall()
         return tuple(
             ReviewQueueItem(
@@ -1724,12 +1971,37 @@ class MemoryCatalog:
 
     async def review(self, command: MemoryClaimReview) -> ReviewedClaim:
         with self._connect() as connection:
+            parameters: list[object] = [command.claim_id, command.account_id]
+            clauses = ["claim.claim_id = ?", "claim.account_id = ?"]
+            if command.subject_id is not None:
+                # A scoped reviewer may only reach claims fed by its own
+                # subject's evidence; the miss below is the same not-found a
+                # nonexistent id returns, so ids stay unguessable.
+                clauses.extend(
+                    subject_lineage_predicates(
+                        bind=_bind_question_mark(parameters),
+                        subject_id=command.subject_id,
+                        account_column="claim.account_id",
+                        single_source_column="claim.source_event_id",
+                        document_source_item=(
+                            "claim",
+                            "claim.claim_id",
+                            "claim.account_id",
+                        ),
+                    )
+                )
             row = connection.execute(
-                """
-                SELECT * FROM memory_claims
-                WHERE claim_id = ? AND account_id = ?
+                f"""
+                SELECT claim.*,
+                       (
+                           SELECT lineage.subject_id FROM evidence_events lineage
+                           WHERE lineage.event_id = claim.source_event_id
+                             AND lineage.account_id = claim.account_id
+                       ) AS source_subject_id
+                FROM memory_claims claim
+                WHERE {" AND ".join(clauses)}
                 """,
-                (command.claim_id, command.account_id),
+                parameters,
             ).fetchone()
             if row is None:
                 raise EvidenceNotFoundError(command.claim_id)
@@ -1750,6 +2022,9 @@ class MemoryCatalog:
                     "previous_value": previous_value,
                     **({"corrected_value": value} if command.action == "correct" else {}),
                 },
+                # The review inherits the reviewed claim's own speaker instead
+                # of inventing one; an unclaimed source stays unclaimed.
+                subject_id=cast(str | None, row["source_subject_id"]),
             )
             self._insert_evidence(connection, review_event)
             self._write_review_projection(
@@ -1761,6 +2036,7 @@ class MemoryCatalog:
                 title=value[:80],
                 value=value,
                 review_event_id=review_event.event_id,
+                subject_id=command.subject_id,
             )
         return ReviewedClaim(
             claim_id=command.claim_id,
@@ -1807,6 +2083,7 @@ class MemoryCatalog:
             title=value[:80],
             value=value,
             review_event_id=event.event_id,
+            subject_id=event.subject_id,
         )
 
     @classmethod
@@ -1821,6 +2098,7 @@ class MemoryCatalog:
         title: str,
         value: str,
         review_event_id: str,
+        subject_id: str | None = None,
     ) -> None:
         source = connection.execute(
             """
@@ -1835,8 +2113,9 @@ class MemoryCatalog:
         subject_key = str(source["subject_key"])
         predicate = str(source["predicate"])
         source_event = connection.execute(
-            "SELECT payload_json FROM evidence_events WHERE event_id = ?",
-            (source_event_id,),
+            "SELECT payload_json FROM evidence_events"
+            " WHERE event_id = ? AND account_id = ?",
+            (source_event_id, account_id),
         ).fetchone()
         source_text = ""
         if source_event is not None:
@@ -1891,12 +2170,24 @@ class MemoryCatalog:
             (status, title, contextual_body, status, status, claim_id, account_id),
         )
         for table in _SOURCE_STATUS_TABLES:
+            guard = ""
+            if subject_id is not None:
+                template = _SCOPED_CASCADE_GUARDS.get(table)
+                if template is not None:
+                    guard = " AND " + template.format(evidence="evidence_events")
             connection.execute(
-                f"UPDATE {table} SET status = ? WHERE account_id = ? AND source_event_id = ?",
-                (projection_status, account_id, source_event_id),
+                f"UPDATE {table} SET status = ?"
+                " WHERE account_id = ? AND source_event_id = ?"
+                f"{guard}",
+                (
+                    projection_status,
+                    account_id,
+                    source_event_id,
+                    *([subject_id] if guard else []),
+                ),
             )
         connection.execute(
-            """
+            f"""
             UPDATE memory_search_documents
             SET status = ?
             WHERE kind NOT IN ('claim', 'episode') AND account_id = ?
@@ -1904,19 +2195,29 @@ class MemoryCatalog:
                   SELECT document_id FROM memory_search_document_sources
                   WHERE account_id = ? AND source_event_id = ?
               )
+              {_SCOPED_DOCUMENT_CASCADE_GUARD if subject_id is not None else ""}
             """,
-            (projection_status, account_id, account_id, source_event_id),
+            (
+                projection_status,
+                account_id,
+                account_id,
+                source_event_id,
+                *([subject_id] if subject_id is not None else []),
+            ),
         )
         for episode_row in episode_rows:
             cls._refresh_episode_projection(
                 connection,
                 episode_id=str(episode_row["episode_id"]),
+                account_id=account_id,
+                subject_id=subject_id,
             )
         cls._refresh_claim_conflicts(
             connection,
             account_id=account_id,
             subject_key=subject_key,
             predicate=predicate,
+            subject_id=subject_id,
         )
 
     @staticmethod
@@ -1933,9 +2234,10 @@ class MemoryCatalog:
             {insert} INTO evidence_events (
                 event_id, account_id, session_id, turn_id, generation_id,
                 event_type, schema_version, occurred_at, recorded_at,
-                speaker_identity_id, speaker_class, source, consent_grant_id,
-                payload_json, content_sha256, supersedes_event_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                subject_id, speaker_identity_id, speaker_class, source,
+                consent_grant_id, payload_json, content_sha256,
+                supersedes_event_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.event_id,
@@ -1947,6 +2249,7 @@ class MemoryCatalog:
                 event.schema_version,
                 event.occurred_at.isoformat(),
                 recorded_at,
+                event.subject_id,
                 event.speaker_identity_id,
                 event.speaker_class,
                 event.source,
@@ -1984,6 +2287,7 @@ class MemoryCatalog:
             session_id=row["session_id"],
             turn_id=row["turn_id"],
             generation_id=row["generation_id"],
+            subject_id=cast(str | None, row["subject_id"]),
             speaker_identity_id=row["speaker_identity_id"],
             consent_grant_id=row["consent_grant_id"],
             schema_version=int(row["schema_version"]),

@@ -283,6 +283,10 @@ async def create_task(
         event = EvidenceEvent(
             event_id=body.event_id,
             account_id=user.user_id,
+            # Control-plane actions of the authenticated owner are the owner's
+            # own evidence: unattributed rows stay out of every subject-scoped
+            # review exit, so the writer has to name its subject.
+            subject_id=user.user_id,
             event_type="learning.task_created",
             occurred_at=datetime.now(UTC),
             speaker_class="owner",
@@ -310,7 +314,7 @@ async def transition_task(
         task = await _reader(request).task(account_id=user.user_id, task_id=task_id)
         if task is None:
             raise _error(status.HTTP_404_NOT_FOUND, "task_not_found")
-        event = EvidenceEvent(event_id=body.event_id, account_id=user.user_id, event_type="learning.task_transitioned", occurred_at=datetime.now(UTC), speaker_class="owner", source="user.growth_task", payload={"task_id": task_id, "task_kind": task.kind, "to_status": body.to_status, "expected_revision": body.expected_revision, "prompt_id": task.prompt_id})
+        event = EvidenceEvent(event_id=body.event_id, account_id=user.user_id, subject_id=user.user_id, event_type="learning.task_transitioned", occurred_at=datetime.now(UTC), speaker_class="owner", source="user.growth_task", payload={"task_id": task_id, "task_kind": task.kind, "to_status": body.to_status, "expected_revision": body.expected_revision, "prompt_id": task.prompt_id})
         if body.event_id in task.event_ids:
             await _write(request, user, event)
             return _task_payload(task)
@@ -381,6 +385,7 @@ async def record_response(
         event = EvidenceEvent(
             event_id=body.event_id,
             account_id=user.user_id,
+            subject_id=user.user_id,
             event_type="owner.action_recorded",
             occurred_at=datetime.now(UTC),
             speaker_class="owner",
@@ -424,7 +429,7 @@ async def owner_action(
     _registered(request, user)
     if not await _reader(request).target_belongs(account_id=user.user_id, target_kind=body.target_kind, target_id=body.target_id):
         raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "feedback_target_mismatch")
-    event = EvidenceEvent(event_id=body.event_id, account_id=user.user_id, event_type="owner.action_recorded", occurred_at=datetime.now(UTC), speaker_class="owner", source="user.growth_feedback", payload={"action_type": body.action, "target_kind": body.target_kind, "target_id": body.target_id, "owner_projection_eligible": True})
+    event = EvidenceEvent(event_id=body.event_id, account_id=user.user_id, subject_id=user.user_id, event_type="owner.action_recorded", occurred_at=datetime.now(UTC), speaker_class="owner", source="user.growth_feedback", payload={"action_type": body.action, "target_kind": body.target_kind, "target_id": body.target_id, "owner_projection_eligible": True})
     duplicate = await _write(request, user, event)
     if body.target_kind in {
         "cognitive_claim",
