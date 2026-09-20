@@ -380,6 +380,7 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 设备控制台时间线（+08:00）：21:38:26 standby → +52s 一次唤醒成功（`Wake word detected: 茉莉`）→ `idle->connecting->listening` → 欢迎语 `listening->speaking->listening`（21:39:22–25）→ 续问答对三轮（21:39:34 / 21:39:38 / 21:40:16 进入 speaking）→ 播放“再见”后**同一秒** `speaking->idle`（21:40:21.609）。
 - 观察（**不是**判据通过，此前表述已降级）：会话从 21:39:20 连续服务到 21:40:21（约 61s），期间多次 `listening->speaking` 输出；即**上一轮输出结束后跨约 8.2s / 11.0s 仍有后续输出**——旧语义只沿用剩余预算（本例 ~4.4s）时难以维持这么久。
 - **未证实/已撤回的部分**：① `+3/+5/+8s` 精确边界未成立——脚本时间戳是 `afplay` **播完后**打印，实际播放点比标注晚；② **刺激↔generation 归属未证实**：串口 21:39:38.075 的 `listening->speaking` 出现在 q5 播放（21:39:45）**之前**，属无对应刺激的话轮（设备 VAD 跨句/重复触发），因此“每格续问被接受”不能逐条归因；③ “告别立即待命”为单次观察（bye 播放约 21:40:19.8，`speaking->idle` 21:40:21.609 ≈ +1.8s，早于旧预算到期时刻，但无对照）。
+- 佐证（Voice Core 侧，`run-20260920-f1-device-window-v2/bridge.log`）：`media ASR result rejected … reason=interval_conflict`（13:39:25）、`reason=cross_sentence_overlap`（13:39:26、13:39:32）、`media duplicate media turn skipped`（13:39:33）——按 16kHz 换算，被拒样本窗为 0.66–4.25s 与 0.66–11.0s，确证输入跨句/重叠、话轮与我的播放**不构成一一对应**，进一步支持上述降级。
 - 仍可直接归因的一项：**待命后立即再唤醒**（21:49:30.350 `listening->idle` → 21:49:33.846 `Wake word detected` → 21:49:36 新会话开启），判据来自设备端 wake 行与新会话本身。
 - 负向核查：串口无 `barge_source_forbidden`、无 session error、无 retryable；唯一 error 为无关的 BMI2 I2C 传感器超时。
 - 未覆盖：F2 打断语义（禁止源 barge 只拒交接；播放窗口只由设备本地 flush 的 `button.stop` 撤销）需要**按压设备按键**产生真实打断，脚本无法替代；“待命后立即再唤醒不弹错”与 +3s/+5s 极短格本轮未单独取值（脚本实际延迟为 +6.8/+8.2/+11s）。
