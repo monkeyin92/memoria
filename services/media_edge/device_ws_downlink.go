@@ -369,6 +369,12 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		}
 		c.sessionCloseQueued = true
 		c.currentFence = deviceFence{}
+		// The conversation is over: the playback window cannot outlive it.  The
+		// device will not send playback.ended for a session that just closed,
+		// and a barge can no longer be owed to a reply that no longer exists.
+		playbackWasActive := c.playbackActive
+		c.playbackActive = false
+		c.playbackFence = deviceFence{}
 		c.serverControlSeq++
 		controlSequence := c.serverControlSeq
 		c.stateMu.Unlock()
@@ -388,6 +394,12 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			c.sessionCloseQueued = false
 			c.stateMu.Unlock()
 			return
+		}
+		if playbackWasActive {
+			log.Printf(
+				"media edge cleared playback window session=%s device=%s epoch=%d reason=conversation_close",
+				c.sessionID, c.deviceID, c.epoch,
+			)
 		}
 		log.Printf("media edge projected conversation close session=%s device=%s epoch=%d reason=%s control_sequence=%d", c.sessionID, c.deviceID, c.epoch, reason, controlSequence)
 		c.sendControl(deviceControlPriority("session.close"), payload)

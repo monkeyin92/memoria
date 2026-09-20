@@ -302,6 +302,15 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 		t.Fatal("the device's local flush did not clear the playback window")
 	}
 
+	// A terminal conversation close ends the window too: the session is gone, so
+	// a leftover "playing" flag could only swallow the next utterance.
+	serverConn.stateMu.Lock()
+	serverConn.playbackActive = true
+	serverConn.playbackFence = deviceFence{GenerationID: 31, TurnID: 31, ToolEpoch: 0, SessionEpoch: 1}
+	serverConn.stateMu.Unlock()
+	core.inject(deviceClosedStateEvent("session_1", 18, 30, "owner_silence_timeout"))
+	waitUntil(t, 3*time.Second, func() bool { return !playbackState() })
+
 	// The next utterance is served rather than ignored as a stale barge.
 	sendVAD(21, true)
 	waitUntil(t, 3*time.Second, func() bool {
