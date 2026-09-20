@@ -13,7 +13,8 @@ audited entry instead of ad-hoc calls:
   planning;
 * the read path of the four seams lives here too, so an operator can query
   stored runs, receipt outcomes and quarantined rows without opening the
-  SQLite files by hand (``回执可查询``);
+  SQLite files by hand (``回执可查询``); :func:`read_postgres` answers the same
+  question against PostgreSQL, where the subject lineage is authoritative;
 * reports stay plain JSON, so any deployment tooling can wrap the command and
   archive the receipt.
 
@@ -33,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from services.digital_self.migrations import account_projection as _digital_self
+from services.governance import subject_postgres_reads as _postgres_reads
 from services.identity.migrations import durable_subject as _durable_subject
 from services.memory_scope.migrations import legacy_archive as _memory_scope
 from services.persona import subject_projection as _persona_projection
@@ -45,6 +47,7 @@ __all__ = [
     "apply",
     "plan",
     "read",
+    "read_postgres",
     "rollback",
     "status",
 ]
@@ -408,6 +411,44 @@ def read(
     if not subject_id.strip():
         raise MigrationError("read requires a subject_id")
     report = dict(seam.read(targets, subject_id, limit))
+    report["migration"] = seam.name
+    report["scope"] = seam.scope
+    report["read_only"] = True
+    return report
+
+
+async def read_postgres(
+    migration: str,
+    *,
+    dsn: str,
+    subject_id: str,
+    limit: int = _SUBJECT_READ_LIMIT,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """Read one subject's rows from the PostgreSQL side of the same read path.
+
+    The seams themselves stay SQLite bridges, but the subject lineage is
+    authoritative in PostgreSQL (archive evidence rows and the Memory Scope
+    records), so the operator read has a PostgreSQL side too.  It is read-only,
+    answers the same report shape, and never falls back to account-keyed rows.
+    The archive evidence policies read the account context, so
+    ``account_id`` scopes that one read to the owning account.
+    """
+
+    seam = _seam(migration)
+    if limit < 1:
+        raise MigrationError("limit must be positive")
+    if not subject_id.strip():
+        raise MigrationError("read requires a subject_id")
+    report = dict(
+        await _postgres_reads.read_subject(
+            seam.name,
+            dsn=dsn,
+            subject_id=subject_id,
+            limit=limit,
+            account_id=account_id,
+        )
+    )
     report["migration"] = seam.name
     report["scope"] = seam.scope
     report["read_only"] = True

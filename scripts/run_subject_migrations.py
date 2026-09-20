@@ -15,17 +15,25 @@ Examples::
     uv run python scripts/run_subject_migrations.py status --migration persona
     uv run python scripts/run_subject_migrations.py read --migration persona \\
         --subject <subject-id>
+    uv run python scripts/run_subject_migrations.py read --migration memory_scope \\
+        --subject <subject-id> --postgres-dsn <postgresql-dsn>
+    uv run python scripts/run_subject_migrations.py read --migration durable_subject \\
+        --subject <subject-id> --account <account-id> --postgres-dsn <postgresql-dsn>
     uv run python scripts/run_subject_migrations.py rollback --migration persona \\
         --migration-id <id> --confirm rollback-account-subject-migration
 
 Paths default to the repository's local development databases
 (``data/memoria.sqlite3`` and ``data/memoria-identity.sqlite3``) and can be
 overridden with ``--db`` / ``--identity`` / ``--archive`` / ``--target``.
+``read --postgres-dsn`` answers the same question from PostgreSQL instead of
+those files (durable_subject/digital_self/persona read the archive store,
+memory_scope the Memory Scope store).
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -42,6 +50,7 @@ from services.governance.subject_migrations import (
     apply,
     plan,
     read,
+    read_postgres,
     rollback,
     status,
 )
@@ -144,6 +153,25 @@ def _parser() -> argparse.ArgumentParser:
         help="the subject whose migrated rows are read back",
     )
     read_parser.add_argument("--limit", type=int, default=50)
+    read_parser.add_argument(
+        "--account",
+        default=None,
+        help=(
+            "durable_subject only: the account that owns the subject rows; the "
+            "archive policies read the account context, so an application role "
+            "needs it to see anything"
+        ),
+    )
+    read_parser.add_argument(
+        "--postgres-dsn",
+        default=None,
+        help=(
+            "read the same subject from PostgreSQL instead of SQLite files; "
+            "durable_subject/digital_self/persona read the archive store and "
+            "memory_scope reads the Memory Scope store, so pass the DSN that "
+            "holds that migration's rows"
+        ),
+    )
     return parser
 
 
@@ -174,6 +202,20 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "rollback_confirmation": ROLLBACK_CONFIRMATION,
             "note": "application startup never runs these; only this command does",
         }
+    if args.command == "read" and str(getattr(args, "postgres_dsn", "") or "").strip():
+        return asyncio.run(
+            read_postgres(
+                args.migration,
+                dsn=str(args.postgres_dsn).strip(),
+                subject_id=args.subject,
+                limit=args.limit,
+                account_id=(
+                    str(args.account).strip()
+                    if str(getattr(args, "account", "") or "").strip()
+                    else None
+                ),
+            )
+        )
     targets = _targets(args)
     if args.command == "plan":
         return plan(args.migration, targets)

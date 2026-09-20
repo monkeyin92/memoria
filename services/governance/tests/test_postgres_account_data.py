@@ -7,7 +7,25 @@ from pathlib import Path
 
 import asyncpg
 import pytest
-from services.governance.account_data import PostgresAccountRepository
+from cryptography.fernet import Fernet
+from services.archive.object_store import EncryptedLocalObjectStore
+from services.control_api.app.database import MemoryStore
+from services.control_api.app.security import hash_password
+from services.evolution.account_repository import PostgresEvolutionAccountRepository
+from services.evolution.postgres_store import PostgresEvolutionStore
+from services.governance.account_data import (
+    AccountDataGovernance,
+    PostgresAccountRepository,
+)
+from services.governance.tests.test_account_data import (
+    SessionTerminatorStub,
+    VoiceProviderStub,
+)
+from services.voice_profile.domain import VoiceEnrollmentRequest
+from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
+from services.voice_profile.testing_audio import voice_sample_wav
+
+_SPEAKER_SCHEMA = Path(__file__).parents[2] / "speaker" / "postgres_schema.sql"
 
 
 @pytest.mark.asyncio
@@ -449,3 +467,189 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
             [account_id, other_id],
         )
         await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL deletion saga",
+)
+async def test_postgres_deletion_saga_removes_rows_objects_and_provider_voice(
+    tmp_path: Path,
+) -> None:
+    """The whole account-deletion saga on PostgreSQL, not one repository alone.
+
+    The repository contract is covered above; this pins the saga itself, where
+    the PostgreSQL store is wired in: provider voice, encrypted objects, the
+    archive/speaker row order, the evolution tombstone and the operator receipt.
+    """
+
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = f"governance-saga-{uuid.uuid4()}"
+    event_id = f"event-{uuid.uuid4()}"
+    suffix = uuid.uuid4().hex[:8]
+    store = MemoryStore(str(tmp_path / "memoria.sqlite3"))
+    store.register_account(
+        user_id=account_id,
+        username=f"saga-{suffix}",
+        username_normalized=f"saga-{suffix}",
+        password_hash=hash_password("safe-passphrase"),
+        now=datetime.now(UTC).isoformat(),
+    )
+    PostgresEvolutionStore(dsn).initialize()
+    provider = VoiceProviderStub()
+    session_terminator = SessionTerminatorStub()
+    archive_objects = EncryptedLocalObjectStore(
+        root=tmp_path / "archive-objects",
+        key=Fernet.generate_key().decode("ascii"),
+        key_version="archive-key-v1",
+    )
+    voice_objects = EncryptedLocalObjectStore(
+        root=tmp_path / "voice-objects",
+        key=Fernet.generate_key().decode("ascii"),
+        key_version="voice-key-v1",
+    )
+    voice = PostgresVoiceProfileManager(
+        dsn,
+        object_store=voice_objects,
+        provider=provider,
+        sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
+        provider_region="cn-beijing",
+        target_model="cosyvoice-v3.5-flash",
+    )
+    await voice.initialize()
+    await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
+    enrollment = await voice.enroll(
+        VoiceEnrollmentRequest(
+            account_id=account_id,
+            audio=voice_sample_wav(),
+            media_type="audio/wav",
+            duration_ms=12_000,
+            sample_rate=24_000,
+        )
+    )
+    assert enrollment.provider_voice_id
+
+    archive_reference = await archive_objects.put(
+        account_id=account_id,
+        purpose="source-audio",
+        data=b"archive-audio",
+        media_type="audio/wav",
+    )
+    speaker_identity = uuid.uuid4()
+    speaker_profile = uuid.uuid4()
+    connection = await asyncpg.connect(dsn)
+    try:
+        await connection.execute(_SPEAKER_SCHEMA.read_text(encoding="utf-8"))
+        await connection.execute(
+            """
+            INSERT INTO archive_evidence_events (
+                event_id, account_id, event_type, schema_version, occurred_at,
+                speaker_class, source, payload, content_sha256
+            ) VALUES ($1, $2, 'speech.utterance_finalized', 1, $3, 'owner',
+                      'test', $4::jsonb, $5)
+            """,
+            event_id,
+            account_id,
+            datetime.now(UTC),
+            '{"text":"postgres deletion saga"}',
+            "b" * 64,
+        )
+        await connection.execute(
+            """
+            INSERT INTO archive_evidence_blobs (
+                blob_id, account_id, evidence_event_id, object_key, media_type,
+                byte_count, content_sha256, encryption_key_version,
+                retention_policy
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'account-lifetime')
+            """,
+            uuid.uuid4(),
+            account_id,
+            event_id,
+            archive_reference.object_key,
+            archive_reference.media_type,
+            archive_reference.byte_count,
+            archive_reference.content_sha256,
+            archive_reference.encryption_key_version,
+        )
+        await connection.execute(
+            """
+            INSERT INTO speaker_identities (
+                identity_id, account_id, identity_type, label
+            ) VALUES ($1, $2, 'owner', 'owner')
+            """,
+            speaker_identity,
+            account_id,
+        )
+        await connection.execute(
+            """
+            INSERT INTO speaker_profiles (
+                profile_id, account_id, identity_id, model_version,
+                template_version, template_ciphertext, owner_threshold,
+                guest_threshold, consent_grant_id, status
+            ) VALUES ($1, $2, $3, 'campplus-v1', 1, $4, 0.8, 0.4,
+                      'speaker-consent', 'shadow')
+            """,
+            speaker_profile,
+            account_id,
+            speaker_identity,
+            b"encrypted-template",
+        )
+    finally:
+        await connection.close()
+
+    governance = AccountDataGovernance(
+        memory_store=store,
+        archive_repository=PostgresAccountRepository.archive(dsn),
+        speaker_repository=PostgresAccountRepository.speaker(dsn),
+        evolution_repository=PostgresEvolutionAccountRepository(dsn),
+        voice_profiles=voice,
+        archive_object_store=archive_objects,
+        session_terminator=session_terminator,
+    )
+    report = await governance.delete_account(account_id)
+
+    assert report["status"] == "completed"
+    assert report["terminate_sessions"] is True
+    assert session_terminator.accounts == [account_id]
+    assert provider.deleted == [enrollment.provider_voice_id]
+    assert store.get_account(user_id=account_id) is None
+    assert store.is_account_deleted(user_id=account_id) is True
+    receipt = store.get_account_deletion_receipt(request_id=str(report["request_id"]))
+    assert receipt is not None
+    assert receipt["status"] == "completed"
+    assert account_id not in str(receipt)
+    with pytest.raises(FileNotFoundError):
+        await archive_objects.get(archive_reference)
+    assert [path for path in (tmp_path / "voice-objects").rglob("*") if path.is_file()] == []
+
+    connection = await asyncpg.connect(dsn)
+    try:
+        for table in (
+            "archive_evidence_events",
+            "archive_evidence_blobs",
+            "speaker_profiles",
+            "speaker_identities",
+            "voice_profiles",
+            "voice_samples",
+        ):
+            remaining = await connection.fetchval(
+                f"SELECT count(*) FROM {table} WHERE account_id = $1", account_id
+            )
+            assert remaining == 0, table
+        await connection.execute(
+            "DELETE FROM evolution_account_deletion_fences WHERE account_id = $1",
+            account_id,
+        )
+    finally:
+        await connection.close()
+    archive_repository = PostgresAccountRepository.archive(dsn)
+    speaker_repository = PostgresAccountRepository.speaker(dsn)
+    assert await archive_repository.remaining_account_rows(account_id) == {}
+    assert await speaker_repository.remaining_account_rows(account_id) == {}
+
+    # Idempotent: the completed row is reused and nothing is deleted twice.
+    again = await governance.delete_account(account_id)
+    assert again["status"] == "completed"
+    assert again["request_id"] == report["request_id"]
+    assert provider.deleted == [enrollment.provider_voice_id]

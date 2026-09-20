@@ -119,3 +119,91 @@ def test_read_refuses_without_a_subject(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exited:
         cli.main(["read", "--migration", "persona", "--db", str(tmp_path / "m.sqlite3")])
     assert exited.value.code == 2
+
+
+def test_read_with_a_postgres_dsn_refuses_a_non_postgres_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, report = _run(
+        [
+            "read",
+            "--migration",
+            "persona",
+            "--db",
+            str(tmp_path / "m.sqlite3"),
+            "--subject",
+            "nobody",
+            "--postgres-dsn",
+            "sqlite:///tmp/memoria.sqlite3",
+        ],
+        capsys,
+    )
+    assert code == cli._EXIT_REFUSED
+    assert "PostgreSQL DSN" in report["error"]
+
+
+def test_read_forwards_the_account_scope_to_the_postgres_read(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI must forward --account (and omit it when absent)."""
+
+    captured: list[dict[str, object]] = []
+
+    async def fake_read_postgres(
+        migration: str,
+        *,
+        dsn: str,
+        subject_id: str,
+        limit: int,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        captured.append(
+            {
+                "migration": migration,
+                "dsn": dsn,
+                "subject_id": subject_id,
+                "limit": limit,
+                "account_id": account_id,
+            }
+        )
+        return {"migration": migration, "scope": migration, "read_only": True}
+
+    monkeypatch.setattr(cli, "read_postgres", fake_read_postgres)
+    base = [
+        "read",
+        "--migration",
+        "durable_subject",
+        "--db",
+        str(tmp_path / "m.sqlite3"),
+        "--subject",
+        "subject-1",
+        "--postgres-dsn",
+        "postgresql://localhost/memoria",
+        "--limit",
+        "7",
+    ]
+
+    code, report = _run([*base, "--account", "account-1"], capsys)
+    assert code == cli._EXIT_OK
+    assert report["read_only"] is True
+    code, _ = _run(base, capsys)
+    assert code == cli._EXIT_OK
+
+    assert captured == [
+        {
+            "migration": "durable_subject",
+            "dsn": "postgresql://localhost/memoria",
+            "subject_id": "subject-1",
+            "limit": 7,
+            "account_id": "account-1",
+        },
+        {
+            "migration": "durable_subject",
+            "dsn": "postgresql://localhost/memoria",
+            "subject_id": "subject-1",
+            "limit": 7,
+            "account_id": None,
+        },
+    ]

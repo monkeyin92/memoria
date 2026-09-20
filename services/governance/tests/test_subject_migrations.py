@@ -10,6 +10,7 @@ read path answers after an apply, and the Control API never imports any of it.
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from services.governance.subject_migrations import (
     apply,
     plan,
     read,
+    read_postgres,
     rollback,
     status,
 )
@@ -276,3 +278,34 @@ def test_control_api_never_imports_the_migration_seams() -> None:
                 if any(name.startswith(forbidden) for forbidden in _FORBIDDEN_IMPORTS):
                     offenders.append(f"{path.name}:{name}")
     assert offenders == []
+
+
+async def test_read_postgres_keeps_the_same_fences() -> None:
+    """The PostgreSQL read refuses what the SQLite read refuses."""
+
+    with pytest.raises(MigrationError, match="unknown migration"):
+        await read_postgres(
+            "personas", dsn="postgresql://localhost/memoria", subject_id="nobody"
+        )
+    with pytest.raises(MigrationError, match="subject_id"):
+        await read_postgres(
+            "persona", dsn="postgresql://localhost/memoria", subject_id="   "
+        )
+    with pytest.raises(MigrationError, match="limit"):
+        await read_postgres(
+            "persona", dsn="postgresql://localhost/memoria", subject_id="nobody", limit=0
+        )
+
+
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL subject read contract",
+)
+async def test_read_postgres_answers_the_same_report_shape() -> None:
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    report = await read_postgres("memory_scope", dsn=dsn, subject_id="nobody-read")
+    assert report["migration"] == "memory_scope"
+    assert report["scope"] == "memory_scope"
+    assert report["engine"] == "postgresql"
+    assert report["read_only"] is True
+    assert report["subject_id"] == "nobody-read"
