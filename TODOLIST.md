@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-20｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿。本轮（本地，未提交）补上读路径的 PG 侧对等与 PG 全 saga 删除验证；MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。
+更新于 2026-09-20｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。
 
 ## 当前边界（不得越界宣称）
 
@@ -12,8 +12,8 @@ full_duplex_verified: false
 student_safety_loop_verified: false
 subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
 account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=persona 会话胶囊按当前主体读投影、账号本人回落现表 / enabled=未启用 / verified=本地专测与真实 PG 契约
-read_path_postgres_parity: code=本地已实现（operator `read --postgres-dsn [--account]`）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
-deletion_scope: code=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）/ enabled=未启用 / verified=真实 MinIO 未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
+read_path_postgres_parity: code=已提交 `d2318e4`（CI `35501188784` success）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
+deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
 ```
 
 这里的“通过”仅代表本地、SQLite 或临时 PostgreSQL 证据，不等于远端 CI、生产、设备或真实机器人对话验收。

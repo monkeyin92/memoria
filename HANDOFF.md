@@ -1,8 +1,8 @@
 # Memoria 当前交接
 
-更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移，`aac99d3` 之后本轮提交；另有一轮本地未提交的 PG 读路径与删除验证，见下方本轮收据）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
+更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移 `00dc059`/`7f589f0`，加本轮 `d2318e4` 读路径 PG 侧对等与 PG 全 saga 删除验证，CI `35501188784` success）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
-本轮（本地，**未提交**）：P2-03 剩余两项的本地收口——读路径的 PG 侧对等与删除范围验证；未部署、未连生产或设备，未 push。
+本轮（已提交推送 `d2318e4`，CI `35501188784` success）：P2-03 剩余两项的本地收口——读路径的 PG 侧对等与删除范围验证；未部署、未连生产或设备，未切流。
 - 读路径 PG 侧对等（新增 `services/governance/subject_postgres_reads.py`；入口 `services/governance/subject_migrations.read_postgres`；CLI `run_subject_migrations.py read --postgres-dsn [--account <id>]`）：`durable_subject` 读 PG `archive_evidence_events.subject_id` 的真实行（NULL/他人主体不命中），`memory_scope` 读 PG `memory_records`（`scope=legacy_archive`，事务内设 `app.memory.actor_subject_id/subject_id` 使 API 角色可自读）与 `memory_status_events`，行由迁移模块自己的解码器还原（与 SQLite 同形）；`digital_self`/`persona` 投影在 PG 尚无表 → `projection_missing` 且零行，**绝不回落**同库的 account 键行（用例先写 account 键行再断言不返回）；全程只读事务、不建 schema；DSN 只回显 `postgresql://host:port/db`，不含凭据。
 - RLS 语义（据 archive 策略 `postgres_archive_schema.sql:211-213` 只认 `app.account_id`）：`durable_subject` 的 PG 读不接受任何绕过策略的查询——显式给 `--account <id>` 时在只读事务内 `set_config('app.account_id')`（应用角色唯一可见路径，行仍须属于该账号，用例让两个账号共用同一 subject 并断言只回各自的行）；不给 account 且当前角色无法在 FORCE RLS 下看到证据表时**拒绝**（`NOBYPASSRLS` 角色用例），避免把隐私栅栏读成空主体。其余三个迁移不接受 account 作用域（显式报错，不做静默忽略）。
 - 投影语义（有意为之，非缺口）：`persona`/`digital_self` 的 operator PG 读只答**投影行**（P2-03 的 subject 键投影），PG 无该表 → `projection_missing` 零行；"绝不回落 account 键行"是 TODOLIST 安全约束（不得默认 `account_id == subject_id`）的必然结果，**不是待补缺口**——账号本人的实时人格由产品路径的账号键引擎回答（`routes/persona.py` 的 `scope.subject_id == account_id` 分支 + 生产 `PostgresPersonaEngine`），两条路径不混。
@@ -12,7 +12,9 @@
 - 未验/未做（保持开放）：真实 MinIO 版本删除——本地 Docker Desktop 下 MinIO 对象写入不可用（bucket 级 API 正常：`list_buckets`/`create_bucket`/`head_bucket` 即时返回；`put_object` 挂起，新版返回 `RequestTimeout: A timeout occurred while trying to lock a resource`，旧版 `RELEASE.2024-06-13T22-53-53Z` + named volume 同样 ReadTimeout），故该项无收据，S3 版本删除仍只有 stub 用例；真实 provider 删除需密钥与授权；备份「恢复后再删除」仍无实现（异地备份关闭）。
 - 新发现（结构盲区，已核实代码位置）：删除 saga 只遍历含 `account_id` 列的表，故 `memory_scope`（`memory_records` 等）、`session_runtime`、`policy_receipts_v2`、`identity_*`、`device_fleet_*`/`device_onboarding_*`、binding consent 既不被删、也不出现在 `remaining_account_rows` 中，`verified_empty` 对其天然盲；属产品/安全决策项，本轮不擅自实现。可行性核实（供下一轮直接动）：`memory_scope/postgres_schema.sql:1216-1223` 的 `memory_owner_records`/`memory_owner_status_events` 对 `memoria_memory_owner` 是 `FOR ALL`（该角色 NOLOGIN，维护登录可 `SET ROLE` 后删除），所以缺的不是权限，而是 account→subject 集合解析、`memory_status_events` 先于 `memory_records` 的删除顺序、收据计数与幂等语义。
 - 小程序读口核验（只读）：小程序 14 个读口分别读其数据所在存储（`/v1/memory/*` → 控制 SQLite `app.state.memory_store`；archive/persona/digital-self/personas/growth → 生产 PG 域存储），archive 读口按调用者本人主体过滤（`subject_id = user.user_id`），不跨主体；成员主体读口需客户端携带会话上下文，属 P1-03/P1-05，不在本批。
-- 本轮门禁（本地）：`ruff check .`、`scripts/check_module_budget.py check`（3 个预算模块未变）、`mypy services --strict`（448 files）、`generate_multi_subject_contracts.py --check`、`git diff --check` 通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest --import-mode=importlib --cov=services`（与 CI 同口径，未设 `MEMORIA_TEST_POSTGRES_CONTAINER`）：**5304 passed / 3 skipped**，总覆盖率 **87.99%**，orchestration 90%、provider protocols 95%（基线 `7f589f0` 为 5293/2；算式 5293 + 12 − 1 = 5304 passed / 3 skipped：本轮新增 13 例中该跑次已含 12 例，其中 restore drill 联合用例因未设 `MEMORIA_TEST_POSTGRES_CONTAINER` 转为 skip（与 CI 一致），最后 1 例 CLI `--account` 透传在该跑次后补入并单独复跑通过）；另有一轮加 `MEMORIA_TEST_POSTGRES_CONTAINER` 指向本轮隔离临时 PG 的重跑：5304 passed / 2 skipped、88.21%，restore drill 实跑通过。Offline E2E PASS，provider smoke 仍 `OFFLINE_MOCK=true` skip；`npm --prefix apps/miniprogram test` 229 passed / 0 fail。临时 PG/MinIO 容器与 coverage 临时文件已清理，生产 `memoria-pgv` 未触碰。
+- preflight（本地，只读；未接触机器人/串口/听感）：冻结候选复验 `docker run --rm --network none --entrypoint /app/.venv/bin/python memoria-agent:b668960 -m scripts.verify_agent_release_artifact` → **PASSED**（版本钉 livekit-agents/plugins 1.8.1、livekit 1.1.18、livekit-api 1.2.1、protocol 1.1.26；telemetry 隐私默认值与真实 exporter 探针 OK；SDK 兼容 OK）。设备腿**未开始**：本机无 `/dev/cu.usbmodem*`（`ls` 返回 No such file or directory），因此 `scripts/voice_session_capture.py --preflight-only`（需 `--firmware-receipt`）与后续 live 窗口都未执行；按边界 2，需要机器人/串口/人工听感前先通知用户，live 窗口等待接入设备与授权。
+- 远端 CI `35501188784`（`d2318e4`）**success**：python 全量 **5306 passed / 2 skipped**、总覆盖率 **88.21%**，orchestration 90%、provider protocols 95%，Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`），Ruff/模块预算/strict mypy/协议与多主体契约/authoritative PG init+repeat-upgrade/buf lint/media smoke+replay 均通过；`agent-image` 构建并复跑 release gate success。`agent`/`media-edge`/`media-edge-image`/`miniprogram`/`firmware` 按 paths-filter skip（本次未改这些路径，故 miniprogram 229 passed 只有本地收据）。本地 5304 passed / 3 skipped 与远端 5306/2 的差异只在 restore drill 的联合用例需要 `MEMORIA_TEST_POSTGRES_CONTAINER`（远端 PG service 提供，本地未设 → skip），其余口径一致。
+- 本轮门禁（本地）：`ruff check .`、`scripts/check_module_budget.py check`（3 个预算模块未变）、`mypy services --strict`（448 files）、`generate_multi_subject_contracts.py --check`、`git diff --check` 通过；带 `MEMORIA_TEST_POSTGRES_DSN` 的全量 `pytest --import-mode=importlib --cov=services`（与 CI 同口径，未设 `MEMORIA_TEST_POSTGRES_CONTAINER`）：**5304 passed / 3 skipped**，总覆盖率 **87.99%**，orchestration 90%、provider protocols 95%（基线 `7f589f0` 为 5293/2；算式 5293 + 12 − 1 = 5304 passed / 3 skipped：本轮新增 13 例中该跑次已含 12 例，其中 restore drill 联合用例因未设 `MEMORIA_TEST_POSTGRES_CONTAINER` 转为 skip（与远端一致的口径差异），最后 1 例 CLI `--account` 透传在该跑次后补入并单独复跑通过；远端 5306/2 即 5293 + 13）；另有一轮加 `MEMORIA_TEST_POSTGRES_CONTAINER` 指向本轮隔离临时 PG 的重跑：5304 passed / 2 skipped、88.21%，restore drill 实跑通过。Offline E2E PASS，provider smoke 仍 `OFFLINE_MOCK=true` skip；`npm --prefix apps/miniprogram test` 229 passed / 0 fail。临时 PG/MinIO 容器与 coverage 临时文件已清理，生产 `memoria-pgv` 未触碰。
 
 本轮在 `f2a95d6` 之上完成 advisory 整改：Doubao 真重入回归（`slow` 持续首包失败，旧 `slow_once` 收据作废）、CosyVoice 降级取消优先、P2-05 分子/分母/report wall 全口径门后起算、P1-05 回顾可追溯字段并撤回跨主体收据，另收尾 P2-05 严格自包含去重（`768993b`）与收据 docs（`b668960`/`87262d3`）；未部署、未连接生产或设备。远端 CI `35298356748`（`768993b`）success：python 全量 5109 passed/2 skipped、覆盖率 88.11%、wake 12 passed、Offline E2E PASS（provider smoke 仍 `OFFLINE_MOCK=true`）。冻结候选 `memoria-agent:b668960` 仅本地构建验收（source `b668960` docs-only 等同 `768993b`，image `sha256:927d9f473fe44f95e52c617912f26e1fbfccf83f8afd4baf776bec8ca7fba081`，`arm64/linux`，构建期 gate + `65532:65532` 运行用户复验均 PASSED，活体 LiveKit agents/openai/silero 1.8.1 + RTC 1.1.18/API 1.2.1）——未启用（enabled 仍是 `d96d4c2`，生产切流另需授权）。此前 exporter、person-consent、Runtime 与 Agent cache 修复保留下方带日期/提交的收据，不能概括为“软件全闭、只剩设备”。下列生产/板卡状态仍是既有观察，不是本轮实时健康证明；操作前须重新核验。
 
@@ -31,18 +33,18 @@
 ```yaml
 schema_version: 2
 as_of_date: 2026-09-18
-reviewed_source_commit: subject_scope_batch_00dc059_plus_read_paths_plus_uncommitted_pg_read_parity_and_deletion_verification
-current_worktree: uncommitted_pg_subject_read_parity_and_pg_deletion_saga_verification
+reviewed_source_commit: read_path_pg_parity_and_deletion_saga_d2318e4_ci_35501188784
+current_worktree: clean_after_read_path_pg_parity_and_deletion_saga_commit
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 hardware_media_interaction_authority: python_authoritative
 hardware_media_target_runtime: go_media_edge_direct_voice_core
 hardware_media_rollback_runtime: python_device_gateway_livekit_compat
 current_work_order: vocat_interrupt_assist
-code: committed_through_subject_scope_batch_and_migration_read_paths_plus_uncommitted_pg_read_parity
+code: committed_through_d2318e4_read_path_pg_parity_and_pg_deletion_saga
 wired: subject_scoped_read_exits_plus_migration_read_paths_and_persona_capsule_subject_read_plus_operator_pg_subject_read
 enabled: false_for_current_head
-verified: local_and_authoritative_postgres_regression_for_subject_scope_migrations_read_paths_and_receipts_plus_local_pg_subject_read_parity_and_pg_deletion_saga
+verified: local_and_authoritative_postgres_regression_for_subject_scope_migrations_read_paths_and_receipts_plus_pg_subject_read_parity_and_pg_deletion_saga_plus_ci_35501188784_python_5306_passed
 guardian_declaration_scope: binding_scoped_owner_only_third_party_excluded
 accountless_person_consent: person_scoped_grant_read_revoke_replay_unbind_revoke_and_export_verified_device_pending
 production_readiness: ready_at_last_observation_not_refreshed_this_review
