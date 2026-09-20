@@ -360,3 +360,14 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 固件仅回写唯一紧邻 app 至 `0x20000`；写前备份当前 `0x20000/0x3f0000` 全槽、核摘要，写后回读并比较身份和全部非 app 保护区，再做启动/媒体验收。禁止 `flash.sh` 整包、`erase-all` 或误用旧 run 回滚件。
 
 普通制品仅保留当前+一个可运行紧邻回滚，核验后按授权清理更早普通制品并查磁盘；数据库、WAL、MinIO、安全/合规备份不适用两版本规则。T1–T14 证据写 ignored `outputs/acceptance/`，由 `scripts/hardware_realtime_acceptance.py` 校验。旧 fence 可听输出/写档案、缺播放终态、错误记完成、以发送量伪造 Actual Heard、权威失败回退平行本地实现，任一均拒收。
+
+## 2026-09-20 发布与模拟音频验收（F1/F2 上线）
+
+- 发布 tag `20260920-f1f2-owner-silence-and-barge`（commit `d61d486`，tag 已随仓库推送）。依赖输入变更（`pyproject.toml`、`infra/Dockerfile.agent`）使组件快车道与 `delta_build_images.sh` 按设计拒绝，本次走本地 linux/amd64 全量构建 + 按生产既有机制切流（`component-releases/<tag>/*.override.yml` + `docker compose -p memoria … --profile media-runtime up -d --no-deps --no-build`）。
+  - agent / voice-core-media-bridge：`memoria-agent:20260920-f1f2-owner-silence-and-barge`，收据 `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/CUTOVER_RESULT.txt`（含 sha256），回滚镜像 `memoria-agent:20260916-livekit-181-v1`。
+  - media-edge：`memoria-media-edge:20260920-f1f2-owner-silence-and-barge`，收据 `MEDIA_EDGE_CUTOVER_RESULT.txt`（含 sha256），回滚镜像 `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component`。
+  - 两次切流后全栈复核：agent/bridge/media-edge/control-api/device-media-gateway 全 healthy；其它服务镜像未改动。
+- 操作事实（此前未记录，易踩）：agent 心跳上报的 `release_tag` 必须等于 control-api 自身的 `MEMORIA_RELEASE_TAG`；control-api 的组件 override 把它钉在 `20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）。故 agent 的 override 必须钉同一值，否则心跳 409 `agent release tag does not match config`、容器 healthcheck 恒 unhealthy。本次切流修正了该既存漂移，回滚 override 同样钉值，保证失败路径不劣化。
+- 模拟音频验收（电脑扬声器放合成 TTS + 麦克风收音，`scripts/wake_word_matrix.py`，`uv run --with pyserial`，`--trials 1 --warmup-s 50 --unmute --output-volume 80`）：近距档 1/1、远距档 1/1 唤醒，tv/small_talk/quiet 误唤醒 0；设备控制台同批证据为 `Wake word detected: 茉莉 (state: 3) -> idle->connecting -> connecting->listening -> listening->speaking -> speaking->listening`，即唤醒、开会话、机器人出声应答并回到待听，且运行在本轮新发布的 agent/media-edge 上。运行后系统音量已还原（31/muted=true）。
+- 未验证边界：F1 的"播后重新给足 30s 窗口"与 F2 的"禁止源 barge 只拒交接、不清播放窗口"**尚未**在设备上做行为复验，需要问答+打断序列。`outputs/design/auto-audio-20260915/auto_audio_session.py` 在本机被自身自检挡住：①live 门禁受 ffmpeg 8 的 WAV 缓冲影响（文件约 10s 才刷到 256KB，默认 10s 窗口刚好失败；`--ffmpeg-start-timeout-s 25` 可绕过）；②`blocked_reference_match`——三块归一化波形相关（NCC≥0.20）在本机扬声器→麦克风路径不成立，而同一录音的播放段电平（峰值 -1.34 dBFS、margin 36 dB）证明链路本身可用。该判据调整前，问答扫频需人工说话或修工具。
+- 发布工具缺口（P1-01 输入）：`deploy_agent_component.sh` 只支持"服务器上薄镜像"，依赖输入变更即拒绝，且无预构建镜像入口；全量制品清单（5 角色）不含 media-edge，也没有对应的切流脚本。建议补 `--target-image` 预构建路径（校验 revision/arch/role 后复用其门禁与回滚）。
