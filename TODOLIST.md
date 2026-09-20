@@ -40,7 +40,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。F1/F2 修复后需重跑本窗口（含 3s/5s/8s 延迟续问边界格）。
   - 2026-09-20 进展：待命后**立即再唤醒**回归通过（同秒待命 → 2s 内重新唤醒并开新会话，无拒绝）；收据 `outputs/acceptance/run-20260920-rewake-after-standby/`。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
-- 2026-09-20 进展：F2 语音打断亦已在设备上复验通过（`speaking` 期间再次唤醒：会话存活、无 barge 拒绝、随后追问仍被接受；收据 `outputs/acceptance/run-20260920-f2-barge-window/`）。**仍需按压设备按键**复验本地 flush 撤销窗口这条，另需 +3s/+5s 极短格与“待命后立即再唤醒”。
+- 2026-09-20：F2 **禁止源 barge 仍未验证**（撤回此前“通过”结论）。判据是 Edge 日志 `ignored barge from a forbidden source`（`device_ws_uplink.go:111` 触发时必然打印；三次采集均为 0 行），`device_barge_ignored_total` 在 mTLS 私有 `:8081` 上抓不到（明文 400）。复现需先读设备签名 `allowed_barge_in` 再构造会话内被禁源 barge；`button` 源只能在设备上产生（触摸面板/按键，需人到场或非生产 edge）。
 - 2026-09-20 进展：F1 已在设备上复验通过（新发布 `20260920-f1f2-owner-silence-and-barge`；唤醒 + 续问 +8.2s/+11.0s 仍被接受、告别同秒待命、无 barge 拒绝痕迹；收据见 HANDOFF 与 `outputs/acceptance/run-20260920-f1-device-window-v2/`）。**F2 打断语义仍待按压设备按键复验**；另需单独取 +3s/+5s 极短格与“待命后立即再唤醒”。
 - 约束：保留现有 GenerationBudget、代际隔离和失败有界退出；不靠延长静默、重复整句合成、第二提示或放宽门禁遮掩问题。入口：`providers/{generation_budget,doubao_tts,cosyvoice_tts}.py`、`voice_core/media_session_{standby,output_stream}.py`、`scripts/voice_session_{capture,report}.py`。
 
