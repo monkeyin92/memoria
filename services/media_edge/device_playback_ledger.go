@@ -193,15 +193,6 @@ func (l *devicePlaybackLedger) record(
 	}, true
 }
 
-func (l *devicePlaybackLedger) reset(downlinkRate uint64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.downlinkRate = downlinkRate
-	l.states = make(map[deviceFence]devicePlaybackState)
-	l.sentAt = make(map[devicePlaybackSentKey]time.Time)
-	l.transports = make(map[deviceFence]devicePlaybackTransport)
-}
-
 func (l *devicePlaybackLedger) startTransportFence(fence deviceFence, resumed bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -229,10 +220,4 @@ func (l *devicePlaybackLedger) setTransportBase(
 	transport.sampleBase = sampleBase
 	transport.initialized = true
 	l.transports[fence] = transport
-}
-
-func (l *devicePlaybackLedger) count() uint64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.receipts
 }

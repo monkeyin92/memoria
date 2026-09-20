@@ -115,7 +115,7 @@ func applyBargeInPolicy(mode string, allowed []string) string {
 	if mode == DeviceAudioModeFullDuplex && !allowVoice {
 		mode = DeviceAudioModeInterruptAssist
 	}
-	if mode == DeviceAudioModeInterruptAssist && !(allowButton || allowKeyword || allowVoice) {
+	if mode == DeviceAudioModeInterruptAssist && !allowButton && !allowKeyword && !allowVoice {
 		return DeviceAudioModeHalfDuplexSafe
 	}
 	return mode

@@ -414,15 +414,6 @@ func (c *DeviceConnection) clearPlaybackActive(reason string, fence deviceFence)
 	}
 }
 
-func (c *DeviceConnection) closeReasonValue() string {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if c.closeReason == "" {
-		return SessionCloseReasonNetwork
-	}
-	return c.closeReason
-}
-
 func (c *DeviceConnection) sendSessionError(code string, retryable bool) {
 	payload, err := marshalDeviceControl(deviceSessionError{
 		Type: "session.error", Version: 2,
@@ -492,11 +483,15 @@ func (c *DeviceConnection) handleHello(data []byte) error {
 	if err := json.Unmarshal(envelope.Version, &version); err != nil {
 		return errDeviceInvalidHello
 	}
-	audioMode := DeviceAudioModeHalfDuplexSafe
-	downlinkRate := uint64(24_000)
-	firmwareVersion := ""
-	boardProfile := ""
-	playbackWatermark := "none"
+	// The v2 branch below assigns every one of these before use and the v1
+	// path is refused, so dummy initial values would only be dead assignments.
+	var (
+		audioMode         string
+		downlinkRate      uint64
+		firmwareVersion   string
+		boardProfile      string
+		playbackWatermark string
+	)
 	var acoustic *DeviceAcousticProfile
 	if version == 2 {
 		var hello deviceHelloV2

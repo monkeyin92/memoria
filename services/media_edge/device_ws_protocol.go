@@ -54,6 +54,14 @@ type MemoriaAudioFrameV1 struct {
 	Payload      []byte
 }
 
+// isAsciiAlphanumeric reports whether one identifier character is ASCII
+// alphanumeric.  Kept as a predicate so the validators read as "allowed unless
+// not alphanumeric" instead of negated disjunctions.
+func isAsciiAlphanumeric(char rune) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+		char >= '0' && char <= '9'
+}
+
 func (f MemoriaAudioFrameV1) MarshalBinary() ([]byte, error) {
 	if len(f.Payload) > DeviceMaxAudioPayloadBytes {
 		return nil, fmt.Errorf("device audio payload exceeds bound")
@@ -171,9 +179,9 @@ func validateDeviceIdentifier(value, field string) error {
 		return fmt.Errorf("%s is required", field)
 	}
 	for index, char := range value {
-		allowed := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
-			char >= '0' && char <= '9' || char == '.' || char == '_' || char == ':' || char == '-'
-		if !allowed || (index == 0 && !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9')) {
+		allowed := isAsciiAlphanumeric(char) || char == '.' || char == '_' ||
+			char == ':' || char == '-'
+		if !allowed || (index == 0 && !isAsciiAlphanumeric(char)) {
 			return fmt.Errorf("%s contains an invalid character", field)
 		}
 	}

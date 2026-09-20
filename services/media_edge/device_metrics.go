@@ -28,7 +28,6 @@ type deviceMetricCounters struct {
 	helloRejected     atomic.Uint64
 	controlRejected   atomic.Uint64
 	bargeIgnored      atomic.Uint64
-	helloV1Total      atomic.Uint64
 	helloV2Total      atomic.Uint64
 	authRejected      atomic.Uint64
 	activeConnections atomic.Int64

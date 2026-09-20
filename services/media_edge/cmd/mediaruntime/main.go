@@ -424,14 +424,6 @@ func requestedWebRTCEnabled(production bool, deviceWSSRequested bool) (bool, err
 	return enabled, nil
 }
 
-func envString(name, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
 func envDuration(name string, fallback time.Duration) time.Duration {
 	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
 	if err != nil || value <= 0 {

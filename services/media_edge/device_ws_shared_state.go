@@ -230,7 +230,7 @@ func (s *RedisDeviceState) Close() error {
 }
 
 func (s *redisTicketState) consume(jti string, expiry int64) error {
-	ttl := time.Unix(expiry, 0).Sub(time.Now())
+	ttl := time.Until(time.Unix(expiry, 0))
 	if ttl <= 0 {
 		return fmt.Errorf("device media ticket expired")
 	}
