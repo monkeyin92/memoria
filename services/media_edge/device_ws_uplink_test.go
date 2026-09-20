@@ -245,10 +245,6 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 
 	// The revocation rule is fence-bound: a fence that is not the live window's
 	// must not unblock it (stale events exist), while the live fence must close.
-	// The production call site is the device's own button.stop after a local
-	// flush; driving that end-to-end here would need the harness to own the
-	// session's generation bookkeeping, so this test pins the rule itself and
-	// the handler wiring is covered by TestDeviceWSSBargeInIngressRequiresSignedSources.
 	live := deviceFence{GenerationID: 9, TurnID: 9, ToolEpoch: 0, SessionEpoch: 1}
 	serverConn.stateMu.Lock()
 	serverConn.playbackActive = true
@@ -260,9 +256,35 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 	if !playbackState() {
 		t.Fatal("a stale fence cleared the live playback window")
 	}
-	serverConn.clearPlaybackActive("device_button_stop", live)
+
+	// Real cancel sequence: Voice Core announces the cancel with the SUCCESSOR
+	// fence (the device logs "Ignoring terminal generation.cancelled for stale
+	// generation=4 (current=3)"), so it neither matches the receipts' fence nor
+	// proves the device stopped rendering.  The window therefore stays open --
+	// fail closed -- and only the device's own local flush revokes it.
+	core.inject(deviceGenerationEvent(
+		"session_1", 18, 12, 13, 13,
+		mediav1.GenerationAction_GENERATION_ACTION_START,
+	))
+	if _, payload, err := readDeviceMessage(connection, 3*time.Second); err != nil ||
+		!strings.Contains(string(payload), `"generation_id":13`) {
+		t.Fatalf("generation 13 did not start: payload=%s err=%v", payload, err)
+	}
+	sendPlayback("playback.started", 14, 13)
+	waitUntil(t, 3*time.Second, playbackState)
+	serverConn.ForwardCoreEvent(deviceGenerationEvent(
+		"session_1", 18, 15, 14, 14,
+		mediav1.GenerationAction_GENERATION_ACTION_CANCEL,
+	))
+	time.Sleep(50 * time.Millisecond)
+	if !playbackState() {
+		t.Fatal("a successor-fence cancel cleared the live playback window")
+	}
+	serverConn.clearPlaybackActive("device_button_stop", deviceFence{
+		GenerationID: 13, TurnID: 13, ToolEpoch: 0, SessionEpoch: 1,
+	})
 	if playbackState() {
-		t.Fatal("the live fence did not clear the playback window")
+		t.Fatal("the device's local flush did not clear the playback window")
 	}
 
 	// The next utterance is served rather than ignored as a stale barge.
