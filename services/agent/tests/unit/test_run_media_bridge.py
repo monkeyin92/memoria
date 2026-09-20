@@ -52,7 +52,7 @@ def _settings() -> SimpleNamespace:
         media_bridge_max_pending_messages=8,
         media_bridge_go_shadow_enabled=False,
         media_output_generation_timeout_s=45.0,
-        media_owner_silence_timeout_s=10.0,
+        media_owner_silence_timeout_s=30.0,
         media_max_user_speech_duration_s=60.0,
         media_bridge_grpc_addr="127.0.0.1:50051",
         prometheus_port=0,
@@ -85,7 +85,7 @@ async def test_run_wires_max_user_speech_duration_to_session_registry(
 
     assert len(captured) == 1
     assert captured[0]["output_generation_timeout_s"] == 45.0
-    assert captured[0]["owner_silence_timeout_s"] == 10.0
+    assert captured[0]["owner_silence_timeout_s"] == 30.0
     assert captured[0]["max_user_speech_duration_s"] == 37.5
 
 
@@ -124,7 +124,7 @@ async def test_run_wires_watchdog_in_provider_registry_variants(
     await run_media_bridge.run()
 
     assert len(captured) == 1
-    assert captured[0]["owner_silence_timeout_s"] == 10.0
+    assert captured[0]["owner_silence_timeout_s"] == 30.0
     assert captured[0]["max_user_speech_duration_s"] == 41.0
     if runtime_factory is None:
         assert "runtime_factory" not in captured[0]

@@ -2,7 +2,6 @@ package mediaedge
 
 import (
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -284,23 +283,4 @@ func TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt(t *testing.T) {
 	if closeErr.Code != 4002 || closeErr.Text != "playback_watermark_precision_mismatch" {
 		t.Fatalf("watermark refusal close code: %d %q", closeErr.Code, closeErr.Text)
 	}
-}
-
-func (env *deviceTestEnv) dialReconnect(t *testing.T, epoch uint64, jti string) *websocket.Conn {
-	t.Helper()
-	token := env.token(t, func(claims *DeviceMediaClaims) {
-		claims.StreamEpoch = epoch
-		claims.JTI = jti
-	})
-	connection, response := env.dial(t, token, "client_1")
-	if response != nil && response.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("reconnect dial status: %s", response.Status)
-	}
-	return connection
-}
-
-func deviceV2HelloWithEpoch(epoch uint64) deviceHelloV2 {
-	hello := deviceV2Hello()
-	hello.StreamEpoch = epoch
-	return hello
 }

@@ -156,7 +156,7 @@ func TestVoiceCoreBridgeHelloCarriesNegotiatedAudioMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	hello := <-service.helloReceived
 	if hello.GetCapabilities()["audio_mode"] != DeviceAudioModeInterruptAssist {
 		t.Fatalf("hello audio_mode = %q, want interrupt_assist", hello.GetCapabilities()["audio_mode"])
@@ -176,7 +176,7 @@ func TestVoiceCoreBridgeHandshakeContextDoesNotOwnAcceptedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	cancelHandshake()
 	frame := AudioFrame{
 		SessionID: "s", StreamEpoch: 1, Sequence: 0, CaptureStartSample: 0,
@@ -462,7 +462,7 @@ func TestVoiceCoreBridgeAcceptsDeviceWithEmptyRuntimeSubject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device bridge with empty subject was rejected: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	if !session.identity.equal(identity.proto()) {
 		t.Fatalf("accepted stream does not own the empty-subject identity: %+v", session.identity)
 	}
@@ -477,7 +477,7 @@ func TestDialVoiceCoreKeepsLongLivedBridgeOutOfIdle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	grpcServer := grpc.NewServer()
 	go func() { _ = grpcServer.Serve(listener) }()
 	defer grpcServer.Stop()
@@ -491,7 +491,7 @@ func TestDialVoiceCoreKeepsLongLivedBridgeOutOfIdle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bridge.Close()
+	defer func() { _ = bridge.Close() }()
 
 	// Use a short test-only timeout to prove that this option controls the
 	// grpc-go channel. The production wrapper passes zero, which disables the
