@@ -243,38 +243,30 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 		return len(core.vad) == 2
 	})
 
-	// The cancel seam: ForwardCoreEvent is exactly what Voice Core calls, so
-	// this covers the production wiring, not only the helper.
+	// The revocation rule is fence-bound: a fence that is not the live window's
+	// must not unblock it (stale events exist), while the live fence must close.
+	// The production call site is the device's own button.stop after a local
+	// flush; driving that end-to-end here would need the harness to own the
+	// session's generation bookkeeping, so this test pins the rule itself and
+	// the handler wiring is covered by TestDeviceWSSBargeInIngressRequiresSignedSources.
 	live := deviceFence{GenerationID: 9, TurnID: 9, ToolEpoch: 0, SessionEpoch: 1}
-	setWindow := func(fence deviceFence) {
-		serverConn.stateMu.Lock()
-		serverConn.playbackActive = true
-		serverConn.playbackFence = fence
-		serverConn.stateMu.Unlock()
-	}
-	setWindow(live)
-	serverConn.ForwardCoreEvent(deviceGenerationEvent(
-		"session_1", 18, 6, 9, 9,
-		mediav1.GenerationAction_GENERATION_ACTION_CANCEL,
-	))
-	if playbackState() {
-		t.Fatal("matching cancel did not clear the playback window")
-	}
-
-	// A stale cancel must not unblock the live window: the device logs exactly
-	// that shape ("Ignoring terminal generation.cancelled for stale generation=...").
-	setWindow(live)
-	serverConn.ForwardCoreEvent(deviceGenerationEvent(
-		"session_1", 18, 7, 3, 3,
-		mediav1.GenerationAction_GENERATION_ACTION_CANCEL,
-	))
+	serverConn.stateMu.Lock()
+	serverConn.playbackActive = true
+	serverConn.playbackFence = live
+	serverConn.stateMu.Unlock()
+	serverConn.clearPlaybackActive("stale_event", deviceFence{
+		GenerationID: 3, TurnID: 3, ToolEpoch: 0, SessionEpoch: 1,
+	})
 	if !playbackState() {
-		t.Fatal("stale cancel cleared the live playback window")
+		t.Fatal("a stale fence cleared the live playback window")
 	}
-	serverConn.clearPlaybackActive("test_reset", live)
+	serverConn.clearPlaybackActive("device_button_stop", live)
+	if playbackState() {
+		t.Fatal("the live fence did not clear the playback window")
+	}
 
 	// The next utterance is served rather than ignored as a stale barge.
-	sendVAD(11, true)
+	sendVAD(21, true)
 	waitUntil(t, 3*time.Second, func() bool {
 		core.mu.Lock()
 		defer core.mu.Unlock()

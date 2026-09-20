@@ -272,9 +272,13 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		if messageType == "generation.cancelled" {
 			c.lane.dropGeneration(uint32(fence.GenerationID))
 			c.setCurrentFence(deviceFence{})
-			// A cancelled generation stops the device's rendering for it: the
-			// playback window is over even without a `playback.ended` receipt.
-			c.clearPlaybackActive("generation_cancelled", fence)
+			// The playback window is deliberately NOT cleared here: Voice Core
+			// announces the cancel with the SUCCESSOR fence (the device logs
+			// "Ignoring terminal generation.cancelled for stale generation=4
+			// (current=3)"), so it neither matches the receipts' fence nor
+			// proves the device stopped rendering.  The authoritative end of a
+			// locally flushed playback is the device's own button.stop, which
+			// carries the fence it was playing.
 		} else {
 			c.setCurrentFence(fence)
 			if messageType == "generation.started" {
