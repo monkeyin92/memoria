@@ -41,7 +41,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
   - 2026-09-20 进展：待命后**立即再唤醒**回归通过（同秒待命 → 2s 内重新唤醒并开新会话，无拒绝）；收据 `outputs/acceptance/run-20260920-rewake-after-standby/`。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
 - 2026-09-20：F2 **禁止源 barge 仍未验证**（撤回此前“通过”结论）。判据是 Edge 日志 `ignored barge from a forbidden source`（`device_ws_uplink.go:111` 触发时必然打印；三次采集均为 0 行），`device_barge_ignored_total` 在 mTLS 私有 `:8081` 上抓不到（明文 400）。复现需先读设备签名 `allowed_barge_in` 再构造会话内被禁源 barge；`button` 源只能在设备上产生（触摸面板/按键，需人到场或非生产 edge）。
-- 2026-09-20 进展：F1 已在设备上复验通过（新发布 `20260920-f1f2-owner-silence-and-barge`；唤醒 + 续问 +8.2s/+11.0s 仍被接受、告别同秒待命、无 barge 拒绝痕迹；收据见 HANDOFF 与 `outputs/acceptance/run-20260920-f1-device-window-v2/`）。**F2 打断语义仍待按压设备按键复验**；另需单独取 +3s/+5s 极短格与“待命后立即再唤醒”。
+- 2026-09-20：F1 在本窗口只取得**观察**，**未达“判据通过”**——会话跨约 8.2s/11s 仍有后续输出（旧语义 ~4.4s 预算下难以维持）；但 +3/+5/+8s 精确边界与“每个 prompt→generation”归属**未证实**（串口 21:39:38 的 `listening->speaking` 早于 q5 播放；脚本时间戳为 afplay 播完后打印），已撤回“F1 判据通过”的表述。可直接归因的只有“待命后立即再唤醒成功并开新会话”。**F2 禁止源 barge 仍未验证**（判据为 Edge `ignored barge` 日志，全生命周期 0 行）。
 - 约束：保留现有 GenerationBudget、代际隔离和失败有界退出；不靠延长静默、重复整句合成、第二提示或放宽门禁遮掩问题。入口：`providers/{generation_budget,doubao_tts,cosyvoice_tts}.py`、`voice_core/media_session_{standby,output_stream}.py`、`scripts/voice_session_{capture,report}.py`。
 
 ## P1：发布门禁、运行保障与产品闭环
