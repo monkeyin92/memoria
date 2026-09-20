@@ -36,7 +36,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P0-03 TTS、续问竞态、设备停滞与真实时延
 
 - 待完成：G 的 owner-silence/endpoint/commit/watchdog 真实配置矩阵；B/D 的 Bridge→Edge→设备接收/解码/播放同 fence 证据；部分音频失败后的设备终态；ACK→正文 <1.5s 的链路拆分与达标。
-- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。
+- 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早**——播后仅沿用剩余预算（本例 ~4.4s）即 `owner_silence_timeout` 待命，多轮续问无法自然接上，用户判定体验不可接受；待决语义修复（播后重新给足整段预算）与/或 env `MEDIA_OWNER_SILENCE_TIMEOUT_S`（生产未设，默认 10s）调大，二者都需设备窗口复验。**F2 待命后再唤醒被拒**——`barge_source_forbidden retryable=0` 导致整段会话终止并弹「错误: 设备媒体会话被服务端终止」（播放期 `vad.start` 被判 voice barge，而 `AllowedBargeIn` 按 P1-07 只放行 button/keyword）；待决固件侧播放期不发 `vad.start` 或 Edge 侧降级为忽略该帧不终止会话。
+- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。F1/F2 修复后需重跑本窗口（含 3s/5s/8s 延迟续问边界格）。
 - 约束：保留现有 GenerationBudget、代际隔离和失败有界退出；不靠延长静默、重复整句合成、第二提示或放宽门禁遮掩问题。入口：`providers/{generation_budget,doubao_tts,cosyvoice_tts}.py`、`voice_core/media_session_{standby,output_stream}.py`、`scripts/voice_session_{capture,report}.py`。
 
 ## P1：发布门禁、运行保障与产品闭环
