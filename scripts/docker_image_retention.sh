@@ -34,8 +34,9 @@ declare -A retained=()
 now_epoch="$(date +%s)"
 while IFS=$'\t' read -r repository tag image_id; do
   [[ "$repository" == memoria-* && "$tag" != "<none>" ]] || continue
-  # Rollback and runtime-base tags are part of the recovery contract.
-  if [[ "$tag" == rollback-* || "$tag" == runtime-base-* ]]; then
+  # Rollback images and every runtime-base tag are part of the recovery contract.
+  # Runtime-base tags use uv-* names, so matching the repository is intentional.
+  if [[ "$repository" == memoria-agent-runtime-base || "$tag" == rollback-* ]]; then
     printf 'KEEP recovery %s:%s\n' "$repository" "$tag"
     continue
   fi

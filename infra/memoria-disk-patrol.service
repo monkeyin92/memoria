@@ -6,6 +6,6 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/memoria/current
-ExecStart=/opt/memoria/current/scripts/disk_patrol.sh --apply --json
+WorkingDirectory=/opt/memoria
+ExecStart=/opt/memoria/ops-tools/disk_patrol.sh --apply --json
 User=root

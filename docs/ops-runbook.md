@@ -1,6 +1,7 @@
 # Memoria 运维空间治理
 
 所有清理脚本默认 dry-run；生产数据卷、非 Memoria 镜像和运行容器引用的镜像不在自动清理范围内。
+`memoria-agent-runtime-base` 仓库的所有 tag 也永久保护，避免破坏 Agent 回滚恢复链。
 
 ## 镜像保留
 
@@ -42,6 +43,8 @@ MEMORIA_DOCKER_BUILDKIT=0 scripts/docker_build.sh -f infra/Dockerfile.media-edge
 
 ```bash
 scripts/disk_patrol.sh --warn-pct 75 --crit-pct 85 --json
+sudo install -d -m 0755 /opt/memoria/ops-tools
+sudo install -m 0755 scripts/disk_patrol.sh /opt/memoria/ops-tools/disk_patrol.sh
 sudo install -m 0644 infra/memoria-disk-patrol.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now memoria-disk-patrol.timer
