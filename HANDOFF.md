@@ -468,3 +468,11 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 回归：`services/archive/tests/test_memory_evaluation.py` 新增 2 例——形状（6 个 case 齐全、每个期望键都有评分、查询晚于被召回证据）与**实测状态**（离线可达性为"六例中除 mood 外全部可达"、并 pin 规则路径的 `recall_at_5=5/6` 等值；mood 的缺口被显式钉住，修好即测试失败）；模块 13 passed，`ruff` clean。
 - 未验/边界：生产装配只跑了 4 次（3 次本地 + 1 次容器内），结论是"**不稳定**"，不是"召回率是 X"；未见集与自由对话仍属 P1-06；数据集与设备链路无关，不构成 F1/F2 或学生安全链的任何证据。
 
+## 2026-09-21 提取质量专项：qwen-flash 漏存/漂移的根因与两处最小修复（**尚未部署**）
+
+- 结果（均在**容器内、生产装配 qwen-flash、当前 `services/archive` overlay**下实测，收据带 `harness_file`/`scenarios`/`prompt`/`extractor` 标签）：固定集 `recall_at_5` 由**改前四次样本 0.5 / 0.5 / 0.333 / 0.333** 变为**改后三连跑 1.000 / 1.000 / 1.000**（`extraction_recall`、`cross_session_recall_at_5`、`comfort_recall_at_5` 同为 1.0；`ndcg_at_10` 0.844–0.905 仍有波动；`cross_account_leakage=0`；`tokens ≈ 4772 in / 1300–1383 out`）。回归对照：**v1 不变**（0.469/0.550，同 prompt 变体逐项一致），`unseen` 改善（ext 0.714→0.857、x_sess 0.0→1.0）。`qwen-plus` + 旧 prompt 更差（7 句里 4 句有 claim、2 次提取报错）⇒ **模型保持 qwen-flash**。
+- 根因三条（都有证据）：① prompt 的 `domain_category` 表没有"情绪/遭遇"的落点，加上"不确定时少提取或返回空数组"，qwen-flash 对"我今天被老师批评了，好难过。"**返回空**——该记忆根本不存在；② prompt 未要求保留原话语言，模型常把值归一化成英文或裸值（`70-79`/`70s`/`dinosaurs`），同一输入跨次漂移（`temperature=0` 与 `response_format=json_object` 是原有设置，故属 provider 侧，非采样）；③ 严格 schema 的文本字段不接受数字：qwen-plus 对"我在纺织厂工作了30年。"回 `"value": 30` → 整条提取抛错 → **生产装配静默回落到规则提取器**（`FallbackMemoryExtractor`）。
+- 最小修复（两处，各带回归）：`services/archive/qwen_memory_extractor.py` 增加 prompt 两条规则（claim/timeline 保留原话语言；明确陈述的情绪/遭遇属 daily_life 或 life_story 的记忆）与 5 个 payload 的 `ConfigDict(..., coerce_numbers_to_str=True)`；`services/archive/tests/test_qwen_memory_extractor.py` 新增一例（数字 `value` 读作 `"30"`，并断言 prompt 含新规则）。
+- 数据集校正（与上面配套）：math/mood 的 `match_all` 改为描述 **claim 的取值面**（`["七十几分"]`/`["难过"]`）——生产装配把每句拆成 claim（只存值）+ episode（存描述句），跨两者的多词期望对任一提取器都不成立；mood 的 confirm review 恢复（现能提到 claim）。副产品：**只读 claim 的记忆卡会显示"七十几分/难过"这类裸值，演示应成对渲染 claim+episode**。
+- **未验/边界**：两处修复**尚未部署**（生产镜像 `20260911` 的 prompt/schema 与 harness 都是旧版，其场景表只有 13 个）；上面"1.000 ×3"是"当前代码 + 容器环境 + 生产密钥/模型"的实验室结果，**不是部署后服务端到端**；`ndcg` 仍有波动说明表面未完全确定；`qwen-plus` 只测了 7 句 ×2 重复。收据见 `outputs/acceptance/run-20260921-demo02-recall/`（`commands.txt` 第 7 节为前/后对照，另有 `qwen_quality*.txt` 变体测量、`qwen_final.txt`/`qwen_labeled.txt` 三连跑、`qwen_probe_after_fix.txt` 逐例读数）。
+

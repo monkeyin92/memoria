@@ -33,7 +33,9 @@ class MemoryExtractionError(RuntimeError):
 
 
 class _ClaimPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
+    )
 
     domain_category: DomainCategory = Field(
         validation_alias=AliasChoices("domain_category", "category")
@@ -59,7 +61,9 @@ class _ClaimPayload(BaseModel):
 
 
 class _PersonPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
+    )
 
     display_name: str = Field(min_length=1, max_length=128)
     relationship_to_owner: str = Field(min_length=1, max_length=64)
@@ -68,14 +72,18 @@ class _PersonPayload(BaseModel):
 
 
 class _RelationshipPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
+    )
 
     person_key: str = Field(min_length=1, max_length=160)
     relationship_type: str = Field(min_length=1, max_length=64)
 
 
 class _TimelinePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
+    )
 
     title: str = Field(min_length=1, max_length=500)
     domain_category: DomainCategory = Field(
@@ -107,7 +115,9 @@ class _TimelinePayload(BaseModel):
 
 
 class _KnowledgePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
+    )
 
     domain_category: DomainCategory = Field(
         validation_alias=AliasChoices("domain_category", "category")
@@ -167,6 +177,12 @@ entity_keys/participant_keys 只能引用本次 people 的 canonical_key。
 对于句首“请/帮我记住……”后的低风险偏好或习惯，且只有原文明确为非敏感日常偏好/习惯时，
 claim predicate 使用 preference 或 habit；出生日期、年龄、地点、关系、健康、金融、法律、
 生物特征或不确定内容不能使用这两个 predicate。
+
+原话是中文时，claim 的 value 与 timeline 的 title 用中文原话的表述，不要翻译成英文，也不要
+改写成纯数字、缩写或代码（"七十几分"不要写成"70s"）；所有文本字段都写成字符串。
+
+原话明确陈述的情绪、感受或遭遇（例如被老师批评、心里难过、想念家人）是 daily_life 或
+life_story 的真实陈述，只要原话说清楚了就应当提取；只有确实无法确定时才留空。
 
 严格结构：
 {{

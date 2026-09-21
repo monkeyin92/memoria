@@ -409,23 +409,20 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
 
 @pytest.mark.asyncio
 async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> None:
-    """Five of the six storyboards are reachable offline; the sixth is a recorded gap.
+    """All six storyboards are reachable offline, and the expectations describe claims.
 
-    What is pinned here is the *measured* state of the fixed set against the offline
-    contract, and the two gaps behind the numbers:
+    Two things this pins, both learned by measuring the production assembly rather than by
+    assuming it (numbers for that path are in HANDOFF; CI runs the offline rule extractor):
 
-    * `demo-student-mood-recall` carries no review and is not reachable: the production
-      extractor (qwen-flash) stored nothing for "我今天被老师批评了，好难过。", and a review
-      whose source has no claim aborts the whole run (`_apply_reviews` raises), so the set
-      keeps the case with an empty review list instead of crashing the production path.
-      The case therefore also misses offline, because `context` searches confirmed items
-      only.  When the extractor starts storing that memory, this test fails and the pin has
-      to move - which is the point.
-    * the expectations follow the storyboard wording (数学/七十几分, 恐龙, 纺织厂), not the
-      extractor's surface: the production extractor's stored text varies between runs
-      (`70-79` vs `70s`, `喜欢恐龙` vs `dinosaurs`), so a `match_all` tuned to one sample
-      would pin noise rather than behaviour.  Production numbers are recorded in HANDOFF,
-      not here, because CI runs the offline rule extractor.
+    * the expectations follow the *claim* surface, because that is what the memory contract
+      stores: a claim carries the value ("七十几分", "难过") while the descriptive sentence
+      ("上次数学考试只考了七十几分") lands on the episode item, so `match_all` terms that
+      span both would be unsatisfiable for one extractor or the other.  A memory card built
+      from the claim alone therefore reads thin - the demo should render the pair.
+    * `demo-student-mood-recall` is scoreable again.  It used to carry no review because the
+      extractor stored nothing for "我今天被老师批评了，好难过。", and a review whose source
+      has no claim aborts the whole run; the prompt now says an explicitly stated feeling is
+      a memory (and to keep the speaker's language), which made that case work.
     """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
     adapter = CatalogMemoryEvaluationAdapter()
@@ -433,23 +430,20 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
     reachable = set()
     for case in dataset.cases:
         observation = await adapter.observe(case)
-        graded = set().union(*(query.relevance for query in case.queries))
         for query in case.queries:
             result = next(
                 item for item in observation.query_results if item.query_id == query.query_id
             )
             for expected in case.expected_memories:
-                if expected.key in graded and any(
-                    _matches(expected, item) for item in result.items
-                ):
+                if any(_matches(expected, item) for item in result.items):
                     reachable.add(case.case_id)
-    assert reachable == set(DEMO_STORYBOARDS) - {"demo-student-mood-recall"}
+    assert reachable == set(DEMO_STORYBOARDS)
 
     report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
 
     assert report.case_count == len(DEMO_STORYBOARDS)
     assert report.metrics.extraction_recall == pytest.approx(1.0)
-    assert report.metrics.recall_at_5 == pytest.approx(5 / 6)
+    assert report.metrics.recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_session_recall_at_5 == pytest.approx(1.0)
-    assert report.metrics.comfort_recall_at_5 == pytest.approx(0.5)
+    assert report.metrics.comfort_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_account_leakage == 0

@@ -117,3 +117,55 @@ async def test_invalid_qwen_entity_reference_falls_back_to_local_rules() -> None
 
     assert result.extractor_version == "rules-zh-v2"
     assert result.claims[0].category == "family_principle"
+
+
+@pytest.mark.asyncio
+async def test_numeric_llm_value_is_read_as_text_and_the_prompt_keeps_the_language() -> None:
+    """A numeric value is a formatting slip, not an unusable extraction.
+
+    qwen-plus answered `"value": 30` for "我在纺织厂工作了30年。"; the strict payload rejected
+    the whole extraction, and because the production assembly is Qwen-with-rule-fallback the
+    utterance was silently remembered by the rule extractor instead.  The boundary now reads
+    numbers as their text form, and the prompt asks for the speaker's own language and for an
+    explicitly stated feeling to be kept as a memory - both measured on the DEMO-02
+    utterances, where the shipped prompt left the feeling unstored and returned English values.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompt = json.loads(request.content)["messages"][1]["content"]
+        assert "不要翻译成英文" in prompt
+        assert "所有文本字段都写成字符串" in prompt
+        assert "情绪、感受或遭遇" in prompt
+        content = json.dumps(
+            {
+                "claims": [
+                    {
+                        "domain_category": "work_experience",
+                        "subject_key": "self",
+                        "predicate": "worked_at",
+                        "value": 30,
+                        "confidence": 0.9,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+            },
+        )
+
+    extractor = QwenMemoryExtractor(
+        api_key="test-key",
+        base_url="https://dashscope.test/v1",
+        model="qwen-flash",
+        transport=httpx.MockTransport(handler),
+    )
+
+    extraction = await extractor.extract(_event("我在纺织厂工作了30年。"))
+
+    assert [claim.value for claim in extraction.claims] == ["30"]
+    assert extraction.claims[0].domain_category == "work_experience"

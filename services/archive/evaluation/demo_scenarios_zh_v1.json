@@ -30,7 +30,7 @@
           "account_id": "demo-student-math",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["数学", "七十几分"],
+          "match_all": ["七十几分"],
           "source_event_ids": ["demo-math-001"],
           "valid_from": "2026-08-20T19:10:00+08:00"
         }
@@ -58,14 +58,16 @@
           "session_id": "demo-mood-s1"
         }
       ],
-      "reviews": [],
+      "reviews": [
+        {"source_event_id": "demo-mood-001", "action": "confirm"}
+      ],
       "expected_memories": [
         {
           "key": "demo-mood-criticized",
           "account_id": "demo-student-mood",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["批评", "难过"],
+          "match_all": ["难过"],
           "source_event_ids": ["demo-mood-001"],
           "valid_from": "2026-09-01T17:30:00+08:00"
         }
