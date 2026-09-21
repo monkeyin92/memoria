@@ -491,3 +491,8 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - **前置 schema 升级（关键路径）**：首次切流**失败并自动回滚**——新 `session_runtime` 的 `_verify_schema` 拒绝旧生产 PG（"schema, RLS, policies, or least-privilege roles are incomplete"），全 app import smoke 过但启动 lifespan 崩。按既定路径执行 `upgrade_authoritative_postgres.sh`（幂等 forward-only；密码源 root-only `/etc/memoria-postgres.env`）+ `verify_authoritative_postgres.sh` PASS；PG 容器挂载的 release-tree schema 文件更新为 44711f6 版（旧版备份 `/opt/memoria/releases/20260827-architecture-split-v1/.pre-20260921-schema-backup/`）。重试切流 **PASS**：healthy / restarts=0 / environment_unchanged / 13 容器未触碰 / binds+mounts+ports 断言全过。
 - **线上验证**：live `build_memory_extractor` = `MoodFollowupEnsuringExtractor`（version 含 `|mood-followup`）；外部 readiness 200；**DEMO-02 固定集线上容器 4 连跑全 1.0**（无 overlay，镜像自带 dataset）。回滚点 `memoria-control-api:rollback-20260921-demo02-recall-net-pre-control`（=20260911 镜像）。身份对齐保持：control-api env 仍 `20260901-0945-wake-word-whitelist`/`7ca3d4ec`（与 agent 心跳一致），真实身份以镜像 label 为准（该临时对齐收敛仍是 P1-01 项）。
 - **收据**：`/opt/memoria/component-releases/20260921-demo02-recall-net/`（build/cutover/rollback/mounts json + source tar + Dockerfile overlay）；本地 `outputs/acceptance/run-20260921-demo02-deploy/`（release_receipts.txt、commands.txt、live_e2e.txt）。
+
+## 2026-09-21 DEMO-07 技术材料 DRAFT v1（outputs/，未入库）
+
+- 输出：`outputs/acceptance/run-20260921-demo07-tech-materials/DEMO-07-tech-materials.md`——架构图页（生产实跑形态文字版：Go edge→bridge→agent→control-api→小程序，存储四件套）+ 壁垒 2 页（记忆全链+确定性兜底证据 / 陪伴评估基线 / 发布与隐私门实证）+ 甘特数据表 + 成本表（只报实测 token 量，不编单价）+ 技术 Q&A（当前实测口径）。
+- 关键修正（相对 TODOLIST 原提纲）：成本"8 元/月/用户"旧估算无压测依据，BP 沿用会被尽调打回——本文件只给实测 input≈5129/output≈1400 per 记忆提取轮，单价待商务按日活建模；Q&A 准确率口径为"固定集 1.0 + 分层衰减待测"。待商务转 PPT/Excel 合入 BP。
