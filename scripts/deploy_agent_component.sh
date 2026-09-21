@@ -364,7 +364,7 @@ runtime_base_image_id="$(docker image inspect "$runtime_base" --format '{{.Id}}'
 runtime_base_metadata="$(docker image inspect "$runtime_base" --format '{{.Id}} {{.Architecture}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
 base_version="$(printf '%s' "$base_image" | cut -d: -f2-)"
 [[ "$runtime_base_metadata" == "$base_image_id amd64 $base_commit $base_version agent" ]]
-docker build \
+DOCKER_BUILDKIT="${MEMORIA_DOCKER_BUILDKIT:-0}" docker build \
   --pull=false \
   --network=none \
   --build-arg BASE_IMAGE="$runtime_base" \
@@ -913,7 +913,7 @@ COPY --chown=65532:65532 memoria/packages /app/packages
 COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py /app/scripts/run_media_bridge.py
 USER 65532:65532
 ROLLBACK_DOCKERFILE
-    docker build --pull=false --network=none \
+    DOCKER_BUILDKIT="${MEMORIA_DOCKER_BUILDKIT:-0}" docker build --pull=false --network=none \
       --build-arg "BASE_IMAGE=$recovery_base" \
       --build-arg "MEMORIA_RELEASE_COMMIT=$agent_release_commit" \
       --build-arg "MEMORIA_RELEASE_TAG=$agent_release_tag" \

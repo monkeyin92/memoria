@@ -1,0 +1,11 @@
+[Unit]
+Description=Memoria read-only disk space patrol
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memoria/current
+ExecStart=/opt/memoria/current/scripts/disk_patrol.sh --apply --json
+User=root

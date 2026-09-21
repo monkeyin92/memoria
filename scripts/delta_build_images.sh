@@ -164,7 +164,7 @@ USER 65532:65532
 EOF
 
 echo "delta-building memoria-agent:${NEW_TAG} from ${BASE_TAG}"
-docker build \
+"$ROOT/scripts/docker_build.sh" \
   --pull=false \
   --network=none \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
@@ -172,7 +172,7 @@ docker build \
   -f "$tmp/Dockerfile.agent" -t "memoria-agent:${NEW_TAG}" "$ROOT"
 
 echo "delta-building memoria-control-api:${NEW_TAG} from ${BASE_TAG}"
-docker build \
+"$ROOT/scripts/docker_build.sh" \
   --pull=false \
   --network=none \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
@@ -180,7 +180,7 @@ docker build \
   -f "$tmp/Dockerfile.control-api" -t "memoria-control-api:${NEW_TAG}" "$ROOT"
 
 echo "delta-relabeling memoria-speaker-model:${NEW_TAG} from ${BASE_TAG}"
-docker build \
+"$ROOT/scripts/docker_build.sh" \
   --pull=false \
   --network=none \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
@@ -188,7 +188,7 @@ docker build \
   -f "$tmp/Dockerfile.speaker-model" -t "memoria-speaker-model:${NEW_TAG}" "$ROOT"
 
 echo "delta-building memoria-miniprogram-gateway:${NEW_TAG} from ${BASE_TAG}"
-docker build \
+"$ROOT/scripts/docker_build.sh" \
   --pull=false \
   --network=none \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
