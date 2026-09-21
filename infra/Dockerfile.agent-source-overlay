@@ -27,7 +27,7 @@ COPY --chown=65532:65532 memoria/packages /app/packages
 COPY --chown=65532:65532 memoria/scripts/run_media_bridge.py /app/scripts/run_media_bridge.py
 # The component overlay replaces the whole source tree, so the release gate has
 # to run against the replaced source instead of trusting the base image copy.
-COPY --chown=65532:65532 --chmod=0644 memoria/scripts/verify_agent_release_artifact.py /app/scripts/verify_agent_release_artifact.py
+COPY --chown=65532:65532 memoria/scripts/verify_agent_release_artifact.py /app/scripts/verify_agent_release_artifact.py
 
 # The overlay replaces the whole tree from the build host's checkout, so
 # the same umask independence applies as in the full build.
