@@ -1,5 +1,13 @@
 # Memoria 当前交接
 
+## 2026-09-22 DEMO-03 只读对话子集（待提交）
+
+- 本轮仅实现融资 Demo 的安全只读子集：`GET /v1/archive/conversation-sessions` 返回当前认证主体最近合格会话；小程序回顾页展示时间/轮数并可展开 owner/assistant 配对详情。
+- 后端沿用 `conversation_review` capability、subject-scoped archive 查询与 memory retention 门禁；不接受客户端 `account_id`/`subject_id`，不展示 guest、他主体、ephemeral 或未实际听到的内容。
+- archive evidence window 增加受控 newest-first 读取与分页，避免单一高频旧会话占满事件窗口；小程序处理列表故障、登出及 authEpoch 迟到详情响应，近似播放记录保持显式标记。
+- 本轮验证：小程序全量 `232 passed`（另以 `TZ=UTC` 跑回顾测试 `11 passed`）；archive/control-api 相关 Python 测试通过；Ruff、strict mypy（4 个受影响 Python 文件）、编译和 `git diff --check` 通过。
+- DEMO-03 整体仍未完成：TODOLIST 中首页今日对话次数、每日摘要卡片、一键分享到微信尚未实现；未部署、未连接生产或设备。
+
 更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移 `00dc059`/`7f589f0`，加本轮 `d2318e4` 读路径 PG 侧对等与 PG 全 saga 删除验证，CI `35501188784` success）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
 本轮（已提交推送 `d2318e4`，CI `35501188784` success）：P2-03 剩余两项的本地收口——读路径的 PG 侧对等与删除范围验证；未部署、未连生产或设备，未切流。

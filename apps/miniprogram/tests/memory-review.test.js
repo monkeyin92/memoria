@@ -122,6 +122,109 @@ test("getConversationReview and reviewMemoryClaim use the canonical endpoints", 
   });
 });
 
+test("conversation session APIs validate parameters and keep session ids encoded", async () => {
+  await withWx(async () => {
+    const requests = [];
+    global.wx.request = (options) => {
+      requests.push(options);
+      options.success({ statusCode: 200, data: { items: [], turns: [] } });
+    };
+
+    await api.getConversationSessions(10);
+    await api.getConversationHistory("session/a", 20);
+    assert.equal(
+      requests[0].url,
+      `${CONTROL_API_BASE_URL}/v1/archive/conversation-sessions?limit=10`,
+    );
+    assert.equal(
+      requests[1].url,
+      `${CONTROL_API_BASE_URL}/v1/archive/conversation-history?session_id=session%2Fa&turn_limit=20`,
+    );
+    await assert.rejects(api.getConversationSessions(0), TypeError);
+    await assert.rejects(api.getConversationHistory(" session"), TypeError);
+    await assert.rejects(api.getConversationHistory("session", 51), TypeError);
+  });
+});
+
+test("conversation sessions are displayed without hiding the daily review when unavailable", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/memory/index");
+    const page = instantiate(definition);
+    let historySession = "";
+    const restore = stubApi({
+      currentIdentity: () => ({ user_id: "person_owner" }),
+      isAuthEpochCurrent: () => true,
+      requireRuntimeCapability: async () => allowedGate(),
+      getMemoryDays: async () => ({ items: [] }),
+      getConversationReview: async () => ({
+        actual_heard: [],
+        memory_candidates: [],
+        confirmed_memories: [],
+      }),
+      getConversationSessions: async () => ({
+        items: [{ session_id: "session/1", occurred_at: "2026-09-22T10:20:00Z", turn_count: 2 }],
+      }),
+      getConversationHistory: async (sessionId) => {
+        historySession = sessionId;
+        return {
+          turns: [{ turn_id: 1, owner_text: "你好", assistant_text: "你好呀", assistant_approximate: true }],
+        };
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.days.length, 0);
+      assert.deepEqual(page.data.conversationSessions, [
+        {
+          session_id: "session/1",
+          occurred_at: "2026-09-22T10:20:00Z",
+          occurred_label: page._formatConversationTime("2026-09-22T10:20:00Z"),
+          turn_count: 2,
+        },
+      ]);
+      await page.openConversation({
+        currentTarget: { dataset: { sessionId: "session/1" } },
+      });
+      assert.equal(historySession, "session/1");
+      assert.equal(page.data.conversationTurns[0].assistant_approximate, true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("late conversation detail after logout clears the transient selection state", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/memory/index");
+    const page = instantiate(definition);
+    let lastEpoch = 0;
+    let releaseHistory;
+    const historyReady = new Promise((resolve) => {
+      releaseHistory = resolve;
+    });
+    const restore = stubApi({
+      currentIdentity: () => ({ user_id: "person_owner" }),
+      isAuthEpochCurrent: (epoch) => epoch === lastEpoch,
+      getConversationHistory: async () => historyReady,
+    });
+    try {
+      const pending = page.openConversation({
+        currentTarget: { dataset: { sessionId: "session-late" } },
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(page.data.conversationLoading, true);
+      lastEpoch = 1;
+      releaseHistory({ turns: [{ owner_text: "不应展示" }] });
+      await pending;
+      assert.equal(page.data.conversationLoading, false);
+      assert.equal(page.data.selectedConversationSessionId, "");
+      assert.deepEqual(page.data.conversationTurns, []);
+    } finally {
+      restore();
+    }
+  });
+});
+
 test("conversation review is normalized into three partitions and candidates never enter confirmed", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/memory/index");

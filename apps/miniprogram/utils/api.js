@@ -551,6 +551,32 @@ function getConversationReview() {
   return rawRequest("/v1/archive/conversation-review");
 }
 
+function getConversationSessions(limit = 10) {
+  const parsedLimit = Number(limit);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 20) {
+    return Promise.reject(new TypeError("会话列表参数无效"));
+  }
+  return rawRequest(`/v1/archive/conversation-sessions?limit=${parsedLimit}`);
+}
+
+function getConversationHistory(sessionId, turnLimit = 20) {
+  if (
+    typeof sessionId !== "string" ||
+    !sessionId ||
+    sessionId.trim() !== sessionId ||
+    sessionId.length > 128
+  ) {
+    return Promise.reject(new TypeError("会话编号无效"));
+  }
+  const parsedLimit = Number(turnLimit);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 50) {
+    return Promise.reject(new TypeError("对话轮数参数无效"));
+  }
+  return rawRequest(
+    `/v1/archive/conversation-history?session_id=${encodeURIComponent(sessionId)}&turn_limit=${parsedLimit}`,
+  );
+}
+
 /*
  * 候选记忆确认（PR-19）。动作只允许服务端定义的 confirm；客户端确认
  * 成功后必须重新拉取权威投影，绝不本地把 candidate 直接升级为已确认。
@@ -1191,6 +1217,8 @@ module.exports = {
   getMemoryDays,
   summarizeDay,
   getConversationReview,
+  getConversationSessions,
+  getConversationHistory,
   reviewMemoryClaim,
   getDeliveredCapabilities,
   getGrowthOverview,

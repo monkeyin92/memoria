@@ -225,6 +225,7 @@ class LifeArchivePort(Protocol):
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
         subject_id: str | None = None,
+        newest_first: bool = False,
     ) -> tuple[EvidenceEvent, ...]: ...
 
     async def context(self, query: ContextQuery) -> ContextBundle: ...

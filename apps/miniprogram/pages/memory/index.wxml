@@ -52,6 +52,39 @@
         </block>
         <text wx:else class="caption">还没有可展示的听到记录。</text>
       </view>
+
+      <view class="section-head conversation-section-head">
+        <text class="section-head-title">最近对话</text>
+        <text class="caption">仅显示当前主体可见内容</text>
+      </view>
+      <view wx:if="{{conversationSessions.length}}" class="conversation-list">
+        <view
+          wx:for="{{conversationSessions}}"
+          wx:key="session_id"
+          class="l2-card conversation-card {{selectedConversationSessionId === item.session_id ? 'conversation-card-selected' : ''}}"
+          data-session-id="{{item.session_id}}"
+          bindtap="openConversation"
+        >
+          <view class="conversation-card-head">
+            <text class="l2-card-title">{{item.occurred_label}}</text>
+            <text class="pill pill-neutral">{{item.turn_count}} 轮</text>
+          </view>
+          <text class="section-link">查看对话详情 ›</text>
+        </view>
+      </view>
+      <view wx:elif="{{conversationSessionsUnavailable}}" class="notice">最近对话暂时无法加载，请稍后重试。</view>
+      <view wx:elif="{{!loading}}" class="notice">还没有可展示的对话记录。</view>
+      <view wx:if="{{conversationLoading}}" class="card"><text class="loading-text">正在读取对话详情…</text></view>
+      <view wx:if="{{selectedConversationSessionId && !conversationLoading}}" class="conversation-detail">
+        <view wx:for="{{conversationTurns}}" wx:key="turn_id" class="conversation-turn">
+          <text wx:if="{{item.owner_text}}" class="conversation-speaker">你</text>
+          <text wx:if="{{item.owner_text}}" class="conversation-text">{{item.owner_text}}</text>
+          <text wx:if="{{item.assistant_text}}" class="conversation-speaker assistant-speaker">Memoria</text>
+          <text wx:if="{{item.assistant_text}}" class="conversation-text assistant-text">{{item.assistant_text}}</text>
+          <text wx:if="{{item.assistant_text}}" class="caption">{{item.assistant_approximate === false ? '精确播放记录' : '近似播放记录'}}</text>
+        </view>
+        <text wx:if="{{!conversationTurns.length}}" class="caption">这段对话没有可展示的合格内容。</text>
+      </view>
     </block>
 
     <block wx:else>

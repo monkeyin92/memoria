@@ -4098,6 +4098,20 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             "session_id": other_session["session_id"],
             "turns": [],
         }
+        sessions = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+        )
+        assert sessions.status_code == 200, sessions.text
+        assert sessions.json() == {
+            "items": [
+                {
+                    "session_id": session["session_id"],
+                    "occurred_at": occurred_at,
+                    "turn_count": 1,
+                }
+            ]
+        }
 
 
 @pytest.mark.asyncio

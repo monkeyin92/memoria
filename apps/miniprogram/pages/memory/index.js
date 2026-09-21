@@ -84,6 +84,11 @@ function privatePartitionsClear() {
     reviewingClaimId: "",
     pendingCount: 0,
     visibleMemories: [],
+    conversationSessions: [],
+    conversationSessionsUnavailable: false,
+    selectedConversationSessionId: "",
+    conversationTurns: [],
+    conversationLoading: false,
   };
 }
 
@@ -105,6 +110,11 @@ Page({
     memoryFilter: "all",
     pendingCount: 0,
     visibleMemories: [],
+    conversationSessions: [],
+    conversationSessionsUnavailable: false,
+    selectedConversationSessionId: "",
+    conversationTurns: [],
+    conversationLoading: false,
   },
 
   onLoad() {
@@ -142,6 +152,11 @@ Page({
       reviewingClaimId: "",
       pendingCount: 0,
       visibleMemories: [],
+      conversationSessions: [],
+      conversationSessionsUnavailable: false,
+      selectedConversationSessionId: "",
+      conversationTurns: [],
+      conversationLoading: false,
       loading: false,
       summarizing: false,
       error: "",
@@ -182,6 +197,19 @@ Page({
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       const review = normalizeConversationReview(reviewResult);
+      let sessionsResult = { items: [] };
+      let conversationSessionsUnavailable = false;
+      if (typeof api.getConversationSessions === "function") {
+        try {
+          sessionsResult = await api.getConversationSessions(10);
+        } catch (error) {
+          // Conversation history is an optional demo enhancement. A failed
+          // session index must not hide the established daily review.
+          sessionsResult = { items: [] };
+          conversationSessionsUnavailable = true;
+        }
+      }
+      if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       this.setData({
         days: (daysResult.items || []).map(normalizeDay),
         heardTurns: review.heardTurns,
@@ -193,6 +221,16 @@ Page({
           review.confirmedMemories,
           this.data.memoryFilter,
         ),
+        conversationSessions: (sessionsResult?.items || []).map((item) => ({
+          session_id: item.session_id || "",
+          occurred_at: item.occurred_at || "",
+          occurred_label: this._formatConversationTime(item.occurred_at),
+          turn_count: item.turn_count || 0,
+        })),
+        conversationSessionsUnavailable,
+        selectedConversationSessionId: "",
+        conversationTurns: [],
+        conversationLoading: false,
       });
       return "ok";
     } catch (error) {
@@ -204,6 +242,51 @@ Page({
       return "error";
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ loading: false });
+    }
+  },
+
+  _formatConversationTime(value) {
+    if (!value) return "时间未知";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "时间未知";
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  },
+
+  async openConversation(event) {
+    if (!(await requireLogin({ reason: "view_memory" }))) return;
+    const sessionId = event?.currentTarget?.dataset?.sessionId;
+    if (!sessionId || this.data.conversationLoading) return;
+    const authEpoch = api.currentAuthEpoch();
+    this._conversationRequestSeq = (this._conversationRequestSeq || 0) + 1;
+    const requestSeq = this._conversationRequestSeq;
+    this.setData({
+      conversationLoading: true,
+      selectedConversationSessionId: sessionId,
+      conversationTurns: [],
+      error: "",
+    });
+    try {
+      const result = await api.getConversationHistory(sessionId, 20);
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ conversationTurns: result.turns || [] });
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch) || requestSeq !== this._conversationRequestSeq) return;
+      this.setData({
+        selectedConversationSessionId: "",
+        conversationTurns: [],
+        error: error?.message || "对话详情暂时无法加载。",
+      });
+    } finally {
+      if (requestSeq !== this._conversationRequestSeq) return;
+      if (api.isAuthEpochCurrent(authEpoch)) {
+        this.setData({ conversationLoading: false });
+      } else {
+        this.setData({
+          conversationLoading: false,
+          selectedConversationSessionId: "",
+          conversationTurns: [],
+        });
+      }
     }
   },
 
