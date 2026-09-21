@@ -492,6 +492,15 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - **线上验证**：live `build_memory_extractor` = `MoodFollowupEnsuringExtractor`（version 含 `|mood-followup`）；外部 readiness 200；**DEMO-02 固定集线上容器 4 连跑全 1.0**（无 overlay，镜像自带 dataset）。回滚点 `memoria-control-api:rollback-20260921-demo02-recall-net-pre-control`（=20260911 镜像）。身份对齐保持：control-api env 仍 `20260901-0945-wake-word-whitelist`/`7ca3d4ec`（与 agent 心跳一致），真实身份以镜像 label 为准（该临时对齐收敛仍是 P1-01 项）。
 - **收据**：`/opt/memoria/component-releases/20260921-demo02-recall-net/`（build/cutover/rollback/mounts json + source tar + Dockerfile overlay）；本地 `outputs/acceptance/run-20260921-demo02-deploy/`（release_receipts.txt、commands.txt、live_e2e.txt）。
 
+## 2026-09-21 设备窗口（DEMO-01/04）：F1/F2 通过（F1 含部署缺陷修复）+ 两项新缺陷
+
+- 证据：`outputs/acceptance/run-20260921-demo01-device-window/`（RUNBOOK.md、findings.md、window-a/、window-b/；capture 均 healthy/duration_elapsed）。判定详情在 findings.md，此处只记结论。
+- **F1 通过（先修了一个部署缺陷）**：线上 bridge env 仍是 `MEDIA_OWNER_SILENCE_TIMEOUT_S=10`（20260827 旧 release-tree compose 残留——20260920 切流只覆盖镜像与身份变量），30s 值从未生效；已以 env override 修至 30（`component-releases/20260921-f1-silence-30s/`，含回滚文件）。实机证据：vad start 时 `silence_remaining_s=13.53`（=30s 窗口余量）、38.3s 真静默才待命、0.4s/25.6s 间隔续问直接接上、告别走 `conversation_end_explicit` 立即待命。
+- **F2 通过（设备 happy path）**：播放中点屏 → 设备 `Abort speaking` → **41ms** 后 speaking→listening → edge `cleared playback window reason=device_button_stop generation=2`（新语义实机生效：窗口只由设备 button.stop 撤销）→ **0 条 Alert** → 14s 后新话轮接上。voice 禁止源路径维持"设备侧不可复现"（固件播放期不发 vad.start）。
+- **缺陷 A（P0-03，最高优先）**：ASR 段落跨界拒绝吞掉续问——「后天呢」realtime final 识别成功但离线段横跨提交边界被判 `straddles_committed_without_timing` 丢弃；「北京呢」被 `cross_sentence_overlap` 拒（段落含 TTS 尾音）。2/4 追问丢失，用户体感"上海呢之后等很久/北京呢没反应"。修复方向需设计决策（realtime-final 兜底提交 vs 时序拆分），不得简单放宽拒绝。
+- **缺陷 B（DEMO-04/P2-05）**：输入电平不稳——RMS 2233（成功）↔182-521（失败）摆动 ~20dB，近讲同时削波；ES7210 已 36dB（上限 42dB），加增益方向错误。路径：固件 AGC（需刷机授权）/AEC（P1-07）/演示姿态 0.3-0.5m。用户体感确认"要靠很近才行"。
+- BMI2 IMU I2C 超时持续出现（DEMO-04 硬件专项未修）；3/5/8s 精确格在缺陷 A 修复前不可测（0.4s 即刻追问一次成功）。
+
 ## 2026-09-21 DEMO-07 技术材料 DRAFT v1（outputs/，未入库）
 
 - 输出：`outputs/acceptance/run-20260921-demo07-tech-materials/DEMO-07-tech-materials.md`——架构图页（生产实跑形态文字版：Go edge→bridge→agent→control-api→小程序，存储四件套）+ 壁垒 2 页（记忆全链+确定性兜底证据 / 陪伴评估基线 / 发布与隐私门实证）+ 甘特数据表 + 成本表（只报实测 token 量，不编单价）+ 技术 Q&A（当前实测口径）。
