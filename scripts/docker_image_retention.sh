@@ -29,6 +29,22 @@ while read -r container; do
   running_ids["$(docker inspect --format '{{.Image}}' "$container")"]=1
 done < <(docker ps -aq)
 
+# A release directory can still be needed for a future cutover even when no
+# container currently references its image. Protect image names mentioned by
+# Compose/override artifacts under the production root as well.
+release_root="${MEMORIA_RELEASE_ROOT:-/opt/memoria}"
+declare -A referenced_refs=()
+if [[ -d "$release_root" ]]; then
+  while IFS= read -r image_ref; do
+    [[ -n "$image_ref" ]] && referenced_refs["$image_ref"]=1
+  done < <(
+    grep -RhoE --include='*.yml' --include='*.yaml' --include='*.json' \
+      --include='*.env' --include='*.txt' \
+      'memoria-[a-z0-9-]+:[A-Za-z0-9._-]+' "$release_root" 2>/dev/null \
+      | sort -u
+  )
+fi
+
 declare -a candidates=()
 declare -A retained=()
 now_epoch="$(date +%s)"
@@ -42,6 +58,10 @@ while IFS=$'\t' read -r repository tag image_id created_at; do
   fi
   if [[ -n "${running_ids[$image_id]:-}" ]]; then
     printf 'KEEP running %s:%s\n' "$repository" "$tag"
+    continue
+  fi
+  if [[ -n "${referenced_refs[$repository:$tag]:-}" ]]; then
+    printf 'KEEP referenced %s:%s\n' "$repository" "$tag"
     continue
   fi
   created="$(docker inspect --format '{{.Created}}' "$image_id" 2>/dev/null || true)"
