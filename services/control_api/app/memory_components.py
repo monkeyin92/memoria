@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.mood_followup import MoodFollowupEnsuringExtractor
 from services.archive.postgres_memory_catalog import QwenMemoryEmbedder
 from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
 from services.control_api.app.config import ControlSettings
@@ -26,14 +27,20 @@ def build_memory_extractor(settings: ControlSettings) -> MemoryExtractor:
     fallback = RuleBasedMemoryExtractor()
     api_key = settings.dashscope_api_key.get_secret_value()
     if settings.offline_mock or not api_key:
+        # Only the model branch is wrapped. The rule extractor already stores the
+        # owner's full sentence, so its claims carry the feeling by construction,
+        # and scripts/evaluate_memory.py relies on this branch staying a bare
+        # RuleBasedMemoryExtractor to fail loudly when the key is missing.
         return fallback
-    return FallbackMemoryExtractor(
-        QwenMemoryExtractor(
-            api_key=api_key,
-            base_url=settings.dashscope_base_url,
-            model=settings.memory_extraction_model,
-            timeout_s=settings.memory_extraction_timeout_s,
-            workspace_id=settings.dashscope_workspace_id,
-        ),
-        fallback,
+    return MoodFollowupEnsuringExtractor(
+        FallbackMemoryExtractor(
+            QwenMemoryExtractor(
+                api_key=api_key,
+                base_url=settings.dashscope_base_url,
+                model=settings.memory_extraction_model,
+                timeout_s=settings.memory_extraction_timeout_s,
+                workspace_id=settings.dashscope_workspace_id,
+            ),
+            fallback,
+        )
     )
