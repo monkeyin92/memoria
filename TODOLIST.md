@@ -279,7 +279,7 @@ P2-01/02/04/05/06 所有P2质量增强项：
 - 召回准确率目标：固定场景≥90%，自由对话≥70%
 - 时间：1周
 
-**2026-09-21 进展**：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**最终：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**仍未做**：未部署（对线上生效须随下次发布）、minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）。
+**2026-09-21 进展**：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**最终：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**已部署**：control-api `20260921-demo02-recall-net` 切流 PASS（含生产 PG authoritative schema 升级；回滚点 `rollback-…-pre-control`；线上容器固定集 4 连跑全 1.0，收据见 HANDOFF 同日部署节）。**仍未做**：minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）。
 
 #### [ ] DEMO-03 小程序家长端简化版
 
