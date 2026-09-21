@@ -44,6 +44,10 @@ media_pb2: Any = _media_pb2
 _DOWNLINK_PCM_SAMPLE_RATE = 24_000
 _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
+# Echo of the reply's tail can outlive the playback completion event by the
+# ASR pipeline's segmentation lag, so the boundary that gates early follow-up
+# endpoints carries a margin over the freshest uplink evidence.
+_PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES = 12_800  # 0.8 s at 16 kHz
 
 
 def _playback_terminal(event_type: PlaybackEventType) -> bool | None:
@@ -891,6 +895,27 @@ class MediaOutputStreamMixin:
         if callable(request_standby):
             await request_standby(context, reason="conversation_farewell_complete")
 
+    @staticmethod
+    def _record_playback_boundary(context: _MediaVoiceSession) -> None:
+        """Snapshot the uplink capture boundary of a just-ended playback.
+
+        Playback completion is the only authoritative echo boundary for the
+        early follow-up endpoint: the speaker window is over in wall-clock,
+        but the uplink sample position that corresponds to it has to come from
+        evidence (projection watermark, accepted ASR ends, PCM sent to ASR).
+        The margin keeps fail-closed semantics for echo-tail finals that were
+        segmented before the speaker actually stopped.
+        """
+
+        evidence = max(
+            context.projection.latest_capture_sample,
+            context.last_asr_evidence_end_sample,
+            int(getattr(context.asr, "last_sent_sample", 0) or 0),
+        )
+        boundary = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
+        if boundary > (context.last_playback_end_sample or 0):
+            context.last_playback_end_sample = boundary
+
     async def _finish_completed_output(
         self,
         context: _MediaVoiceSession,
@@ -905,6 +930,7 @@ class MediaOutputStreamMixin:
         owner = context.output_owner
         if owner is not None and not owner.fence.matches(fence):
             return
+        self._record_playback_boundary(context)
         context.provider_complete = False
         self._record_reply_delivery_event(
             context,
@@ -958,6 +984,9 @@ class MediaOutputStreamMixin:
     ) -> None:
         if not context.runtime.fence.matches(fence):
             return
+        # A failed playback still ends the speaker window: later finals must
+        # not keep merging with the aborted reply's echo transcript.
+        self._record_playback_boundary(context)
         self._record_reply_delivery_event(
             context,
             fence,

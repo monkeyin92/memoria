@@ -77,6 +77,16 @@ class MediaVoiceSessionState:
     pending_turn_playback_overlap: bool = False
     # Closed candidate input may not re-enter through ASR, rescue, or VAD.
     pending_turn_onset_floor: int | None = None
+    # Uplink-capture boundary of the last completed/failed playback window,
+    # including an echo-tail margin: finals that start before it may still be
+    # the reply's tail on the uplink and must not endpoint or own a turn.
+    last_playback_end_sample: int | None = None
+    # Highest accepted ASR evidence end (finals and non-empty partials); feeds
+    # the playback boundary snapshot taken when playback completes.
+    last_asr_evidence_end_sample: int = 0
+    # Endpoint pinned by the playback-followup path; a later guarded final may
+    # advance it while the utterance keeps producing post-boundary finals.
+    playback_followup_endpoint_sample: int | None = None
     turn_commit_retry_task: asyncio.Task[None] | None = None
     turn_commit_retry_attempt: int = 0
     turn_commit_retry_stream_epoch: int | None = None

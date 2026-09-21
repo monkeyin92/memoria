@@ -46,6 +46,10 @@ _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 # Conservative sample-gap policy for unanchored device candidates observed
 # during a previous reply, not a VAD silence measurement or endpoint timeout.
 _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES = 40_000  # 2.5 s at 16 kHz
+# A follow-up final that starts wholly after the playback boundary is user
+# speech, not echo: endpoint it with a short grace instead of waiting for a
+# VAD edge that a stuck post-playback VAD may never emit (run 20260921).
+_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S = 1.2
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
@@ -188,6 +192,11 @@ class MediaTurnEndpointMixin:
     ) -> None:
         """Buffer a provider final until the sample-clock endpoint is stable."""
 
+        if result.capture_end_sample > context.last_asr_evidence_end_sample:
+            # Position evidence only: rejected or abandoned text never flows
+            # from this watermark, but the playback boundary snapshot needs
+            # the freshest uplink position the ASR chain has proven.
+            context.last_asr_evidence_end_sample = result.capture_end_sample
         floor = context.pending_turn_onset_floor
         if floor is not None and result.capture_start_sample < floor:
             return
@@ -233,21 +242,102 @@ class MediaTurnEndpointMixin:
         self._maybe_early_commit_clock_fact(context, result)
         self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
+        self._maybe_endpoint_playback_followup(context, result)
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
         if context.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
+
+    def _maybe_endpoint_playback_followup(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Endpoint a post-playback follow-up without waiting for a VAD edge.
+
+        Run 20260921 window-a: both follow-ups were recognized in realtime,
+        but the device VAD stayed active across the playback echo, the pending
+        turn merged echo and follow-up text, and the offline paragraphs were
+        rejected for straddling the committed boundary -- so the endpoint
+        waited ~20 s for the next vad.start.  When playback is over and an
+        accepted final lies wholly after the playback boundary, it is user
+        speech, not echo: pin the endpoint with a short grace instead of
+        waiting for a VAD edge that may never arrive.
+        """
+
+        if context.identity.client_type != "device":
+            return
+        playback_end = context.last_playback_end_sample
+        if playback_end is None or result.capture_start_sample < playback_end:
+            # Echo guard: a final that begins before the playback boundary may
+            # still be the reply's tail on the uplink and must never endpoint
+            # a turn by itself.
+            return
+        if self._reply_in_flight(context):
+            return
+        if context.turn_endpoint_sample is not None:
+            # Only an endpoint this path pinned may be extended while the
+            # utterance keeps producing post-boundary finals; a VAD end or a
+            # clock-fact/live-query pin already owns the tail.
+            if (
+                context.playback_followup_endpoint_sample
+                == context.turn_endpoint_sample
+                and result.capture_start_sample >= context.turn_endpoint_sample
+            ):
+                endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
+                context.turn_endpoint_sample = endpoint
+                context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+                context.playback_followup_endpoint_sample = endpoint
+                context.turn_endpoint_grace_deadline = (
+                    time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+                )
+                logger.info(
+                    "media playback-followup endpoint advanced session=%s "
+                    "boundary=%s endpoint=%s text_len=%s",
+                    context.identity.session_id,
+                    playback_end,
+                    endpoint,
+                    len(result.text.strip()),
+                )
+                self._schedule_turn_commit(context)
+            return
+        if (
+            context.turn_start_sample is not None
+            and context.turn_start_sample < playback_end
+        ):
+            # The pending window still reaches back into the echo window; the
+            # playback-boundary split owns resetting it before this may fire.
+            return
+        endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
+        context.turn_endpoint_sample = endpoint
+        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+        context.playback_followup_endpoint_sample = endpoint
+        context.turn_endpoint_grace_deadline = (
+            time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+        )
+        logger.info(
+            "media playback-followup endpoint session=%s boundary=%s "
+            "endpoint=%s text_len=%s",
+            context.identity.session_id,
+            playback_end,
+            endpoint,
+            len(result.text.strip()),
+        )
+        self._schedule_turn_commit(context)
 
     def _split_pending_turn_at_unvoiced_gap(
         self,
         context: _MediaVoiceSession,
         result: ASRResult,
     ) -> None:
-        """Bound an unanchored candidate after the reply and a long ASR gap.
+        """Bound an unanchored candidate after the reply ended.
 
-        No VAD edge means the acoustic boundary is unknown. This narrow
-        fallback must not segment ordinary long pauses or active barge-in.
-        The resulting sample fence also applies before ASR/rescue/VAD ingest.
+        Two policies close the abandoned echo window: a completed playback
+        boundary (a final that starts wholly after it begins a new turn even
+        while the echo-holdover VAD is still marked active), and the original
+        conservative unvoiced-gap fallback when no boundary was recorded.
+        Neither may segment ordinary long pauses or an endpointed turn; the
+        resulting sample fence also applies before ASR/rescue/VAD ingest.
         """
 
         if context.identity.client_type != "device":
@@ -261,22 +351,30 @@ class MediaTurnEndpointMixin:
         if context.turn_end_sample is None:
             return
         if (
-            context.active_vad_start_sample is not None
-            or context.turn_endpoint_sample is not None
+            context.turn_endpoint_sample is not None
             or context.live_query_forced_text
             or context.clock_fact_forced_text
         ):
             return
-        if (
-            result.capture_start_sample - context.turn_end_sample
-            <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
-        ):
-            return
+        playback_end = context.last_playback_end_sample
+        boundary_split = (
+            playback_end is not None
+            and result.capture_start_sample >= playback_end
+        )
+        if not boundary_split:
+            if context.active_vad_start_sample is not None:
+                return
+            if (
+                result.capture_start_sample - context.turn_end_sample
+                <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
+            ):
+                return
         logger.warning(
             "media pending turn split after reply session=%s "
-            "stream_epoch=%s gap_samples=%s pending=%s-%s final=%s-%s",
+            "stream_epoch=%s boundary=%s gap_samples=%s pending=%s-%s final=%s-%s",
             context.identity.session_id,
             result.stream_epoch,
+            "playback_end" if boundary_split else "unvoiced_gap",
             result.capture_start_sample - context.turn_end_sample,
             context.turn_start_sample,
             context.turn_end_sample,
@@ -809,6 +907,8 @@ class MediaTurnEndpointMixin:
 
         if not result.text.strip():
             return
+        if result.capture_end_sample > context.last_asr_evidence_end_sample:
+            context.last_asr_evidence_end_sample = result.capture_end_sample
         previous = context.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
             context.pending_partial = result
@@ -945,6 +1045,7 @@ class MediaTurnEndpointMixin:
         context.turn_endpoint_tail_deadline = None
         context.pending_turn_playback_overlap = False
         context.pending_turn_onset_floor = None
+        context.playback_followup_endpoint_sample = None
         context.committed_asr_keys.clear()
         context.pending_partial = None
         context.clock_fact_partial_text = None

@@ -12796,6 +12796,220 @@ async def test_media_out_of_order_final_inside_the_retained_window_still_merges(
     assert "今天南京" in text and "的" in text and "还有明天呢" in text
 
 
+async def _complete_previous_device_playback(
+    window: SimpleNamespace,
+    *,
+    frame_samples: int = 3_200,
+) -> None:
+    """Drive the previous reply's playback to terminal through the real ledger.
+
+    Production ordering inside: the previous turn commits and its reply owns
+    output (the provisional for the follow-up is minted under the reply's
+    fence, exactly as in the field), realtime echo of the reply lands while
+    the reply still owns output, then the device reports the terminal ENDED
+    progress event.  The runtime speaking seam is released exactly as the
+    existing overlap tests release it after a real playback ends.
+    """
+
+    context = window.context
+    fence = await context.runtime.on_turn_committed("明天上海天气怎么样")
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="echo-1",
+        start_sample=160_000,
+        end_sample=190_000,
+        text="上海明天晴转多云",
+    )
+    assert context.pending_turn_playback_overlap is True
+    context.playback.start(fence)
+    assert context.playback.register_audio(fence, 0, 0, frame_samples)
+    context.provider_complete = True
+    await window.registry.on_playback_progress(
+        window.session,
+        PlaybackProgress(
+            identity=window.identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=frame_samples,
+            client_monotonic_ms=5,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            session_epoch=fence.session_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+    _finish_previous_reply(context)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_endpoints_without_vad_edge(
+    device_media_session: Any,
+) -> None:
+    """Run 20260921 window-a: a follow-up after playback must not wait ~20 s.
+
+    The realtime chain recognized the follow-up, but the device VAD stayed
+    active across the playback echo and the offline paragraph was rejected
+    for straddling the committed boundary, so nothing endpointed the turn
+    until the next vad.start.  A final that begins wholly after the playback
+    boundary now owns the turn and pins the endpoint itself, with no vad.end
+    and no offline paragraph ever arriving.
+    """
+
+    window = await device_media_session("followup-early-endpoint-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    # Boundary = last accepted evidence end (190_000) + echo-tail margin.
+    assert context.last_playback_end_sample == 202_800
+
+    # The echo-holdover VAD stays active across the boundary; it must not
+    # keep suppressing the split or the follow-up endpoint.
+    context.active_vad_start_sample = 195_000
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+
+    assert context.turn_start_sample == 215_000
+    assert context.turn_endpoint_sample == 230_000
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+    assert "后天呢" in _user_turn_texts(context)
+    # The abandoned echo transcript is evicted, not merely out of range.
+    assert not _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=160_000,
+        end_sample=190_000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_echo_tail_cannot_endpoint(
+    device_media_session: Any,
+) -> None:
+    """A final that begins before the playback boundary may still be echo.
+
+    The supervisor accepts interior finals on interval grounds, so the echo
+    guard has to fail them closed on its own: no early endpoint, and the
+    later real follow-up still owns the turn on exclusively its samples.
+    """
+
+    window = await device_media_session("followup-echo-guard-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.active_vad_start_sample = 195_000
+
+    tail = await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id="tail-1",
+        start_sample=195_000,
+        end_sample=208_000,
+        text="多云转晴",
+    )
+    assert tail.accepted is not None, tail.reason
+    assert context.turn_endpoint_sample is None
+    assert window.provider.prepared == []
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+    assert context.turn_start_sample == 215_000
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+    assert "多云转晴" not in window.provider.prepared[0]
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_survives_late_rejected_result(
+    device_media_session: Any,
+) -> None:
+    """A rejection between arming and commit must not cancel the endpoint.
+
+    Window-a lost the follow-ups partly because the only authoritative
+    confirmation (the offline paragraph) was rejected and nothing re-armed
+    the endpoint.  The armed follow-up endpoint now stands on the accepted
+    realtime final alone.
+    """
+
+    window = await device_media_session("followup-rejection-tolerant-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.active_vad_start_sample = 195_000
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="后天呢",
+    )
+    assert context.turn_endpoint_sample == 230_000
+
+    # Interior cross-sentence overlap: rejected by the supervisor, the same
+    # class of rejection the offline paragraphs died from in the field run.
+    late = await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id="offline-9",
+        start_sample=220_000,
+        end_sample=228_000,
+        text="南京呢",
+        revision=9,
+    )
+    assert late.accepted is None
+
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_advances_with_continued_speech(
+    device_media_session: Any,
+) -> None:
+    """Continued post-boundary finals extend one follow-up turn, not two.
+
+    A stuck VAD must not truncate the utterance at the first final either:
+    each later guarded final advances the pinned endpoint and resets the
+    grace, so both clauses commit together as one turn.
+    """
+
+    window = await device_media_session("followup-continued-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.active_vad_start_sample = 195_000
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="那后天呢",
+    )
+    assert context.turn_endpoint_sample == 225_000
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-2",
+        start_sample=230_000,
+        end_sample=240_000,
+        text="天气怎么样",
+        revision=2,
+    )
+    assert context.turn_endpoint_sample == 240_000
+
+    await _wait_until(lambda: len(window.provider.prepared) == 1, timeout=3.0)
+    prepared = window.provider.prepared[0]
+    assert "那后天呢" in prepared and "天气怎么样" in prepared
+
+
 @pytest.mark.asyncio
 async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
     device_media_session: Any,
