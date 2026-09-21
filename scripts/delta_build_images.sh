@@ -111,7 +111,7 @@ COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_
 # Delta builds replace the source tree on top of a base image that may predate
 # the gate, so the verifier is copied from this source tree rather than reused
 # from the base, and then re-runs against the combined candidate.
-COPY --chmod=0644 scripts/verify_agent_release_artifact.py ./scripts/
+COPY scripts/verify_agent_release_artifact.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 COPY infra/kws/keywords.txt ./infra/kws/keywords.txt
