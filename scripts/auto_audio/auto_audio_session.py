@@ -1604,6 +1604,23 @@ def planned_follow_up_delay(delays: list[float], position: int) -> float | None:
     return delays[min(position - 2, len(delays) - 1)]
 
 
+def follow_up_gate_verdict(position: int, gate: dict[str, object]) -> str | None:
+    """Why this question must not be played after its gate, or None when it may.
+
+    A follow-up only measures the 3 s/5 s/8 s grid if it belongs to the *same* conversation:
+    when the device has gone to standby, `ensure_listening` wakes it (and may replay the
+    greeting), so the question would open a new session and its delay would say nothing about
+    continuing the previous answer.  Only an explicit "already listening" marker counts as a
+    continuation, so a missing marker is refused rather than assumed.
+    """
+
+    if position <= 1:
+        return None
+    if gate.get("already_listening") is True:
+        return None
+    return "follow_up_requires_continuation"
+
+
 def seconds_between(earlier: object, later: object) -> float | None:
     """Local-stamp difference, or None when either stamp is absent or unparsable."""
 
@@ -1663,14 +1680,15 @@ def follow_up_grid(delays: list[float], turns: list[dict[str, object]], *,
                    tolerance_s: float = FOLLOW_UP_TOLERANCE_S) -> dict[str, object]:
     """Which planned delays this run really exercised, so the grid is never assumed.
 
-    A cell counts only when a turn waited on a previous reply's playback end and then
-    played within `tolerance_s` of the planned delay: the first question has no reply to
-    count from, and a cell whose wait was eaten by a wake (or cut by the deadline) is
-    reported as late rather than as covered.
+    A cell counts only when the prompt was played *after* its planned delay and no later
+    than `tolerance_s` beyond it.  An early play is a clock or anchor anomaly and a late one
+    was a wake, a replayed greeting or scheduling the grid never asked for; neither may read
+    as the planned cell, and the first question has no reply to count from at all.
     """
 
     cells: list[dict[str, object]] = []
     covered: list[float] = []
+    early: list[float] = []
     late: list[float] = []
     for turn in turns:
         follow_up = turn.get("follow_up")
@@ -1684,17 +1702,27 @@ def follow_up_grid(delays: list[float], turns: list[dict[str, object]], *,
             "planned_s": float(planned), "actual_s": actual,
             "late_by_s": follow_up.get("late_by_s"), "counted": False,
         }
-        if isinstance(actual, (int, float)) and float(actual) - float(planned) <= tolerance_s:
-            cell["counted"] = True
-            covered.append(float(planned))
-        elif actual is not None:
-            late.append(float(planned))
+        if isinstance(actual, (int, float)):
+            delta = float(actual) - float(planned)
+            if delta < 0.0:
+                cell["disposition"] = "early"
+                early.append(float(planned))
+            elif delta <= tolerance_s:
+                cell["disposition"] = "covered"
+                cell["counted"] = True
+                covered.append(float(planned))
+            else:
+                cell["disposition"] = "late"
+                late.append(float(planned))
+        else:
+            cell["disposition"] = "not_played"
         cells.append(cell)
     planned_grid = list(dict.fromkeys(float(value) for value in delays))
     return {
         "planned_delays_s": planned_grid,
         "tolerance_s": tolerance_s,
         "covered_delays_s": sorted(set(covered)),
+        "early_delays_s": sorted(set(early)),
         "late_delays_s": sorted(set(late)),
         "uncovered_delays_s": [value for value in planned_grid if value not in set(covered)],
         "cells": cells,
@@ -2179,6 +2207,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 results["aborted_before_turn"] = position
                 aborted = "wake_or_welcome_not_reached"
+                break
+            continuation_refusal = follow_up_gate_verdict(position, gate)
+            if continuation_refusal is not None:
+                gate["continuation_refused"] = continuation_refusal
+                results["blockers"].append(
+                    f"question {position} would have been asked in a new session "
+                    f"({continuation_refusal}): the device was not already listening when its "
+                    f"{planned_follow_up_delay(follow_up_delays, position):g}s follow-up was "
+                    "due, so it is not the same-session continuation the grid measures"
+                )
+                results["follow_up_grid"] = follow_up_grid(follow_up_delays, results["turns"])
+                results["aborted_before_turn"] = position
+                aborted = continuation_refusal
                 break
             delay_plan = planned_follow_up_delay(follow_up_delays, position)
             follow_up: dict[str, object] | None = None

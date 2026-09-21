@@ -970,10 +970,27 @@ def follow_up_checks() -> None:
     ])
     check("a delay a wake consumed is reported late, never as the planned cell",
           late_cell["covered_delays_s"] == [] and late_cell["late_delays_s"] == [3.0]
-          and late_cell["uncovered_delays_s"] == [3.0, 5.0, 8.0], late_cell)
+          and late_cell["uncovered_delays_s"] == [3.0, 5.0, 8.0]
+          and late_cell["cells"][0]["disposition"] == "late", late_cell)
+    early_cell = driver.follow_up_grid([3.0, 5.0, 8.0], [
+        {"follow_up": {"planned_s": 3.0, "actual_s": 2.5, "late_by_s": -0.5}},
+    ])
+    check("an early play is a clock/anchor anomaly, never counted as covered",
+          early_cell["covered_delays_s"] == [] and early_cell["early_delays_s"] == [3.0]
+          and early_cell["uncovered_delays_s"] == [3.0, 5.0, 8.0]
+          and early_cell["cells"][0]["disposition"] == "early", early_cell)
+    check("a follow-up only counts as a continuation if the gate did not wake the device",
+          driver.follow_up_gate_verdict(1, {}) is None
+          and driver.follow_up_gate_verdict(2, {"already_listening": True}) is None
+          and driver.follow_up_gate_verdict(2, {"wake_detected": True})
+          == "follow_up_requires_continuation"
+          and driver.follow_up_gate_verdict(3, {}) == "follow_up_requires_continuation")
     default_run = driver.follow_up_grid([3.0, 5.0, 8.0], [
-        {"follow_up": {"planned_s": driver.planned_follow_up_delay([3.0, 5.0, 8.0], position),
-                       "actual_s": 1.0}} for position in (2, 3)])
+        {"follow_up": {"planned_s": planned,
+                       "actual_s": planned + 0.1}}
+        for planned in (driver.planned_follow_up_delay([3.0, 5.0, 8.0], 2),
+                        driver.planned_follow_up_delay([3.0, 5.0, 8.0], 3))
+    ])
     check("the default three-question run covers only two cells and reports the gap",
           default_run["covered_delays_s"] == [3.0, 5.0]
           and default_run["uncovered_delays_s"] == [8.0], default_run)
