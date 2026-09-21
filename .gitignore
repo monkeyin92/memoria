@@ -49,6 +49,7 @@ node_modules/
 tmp/
 scratch/
 outputs/
+.tmp_*.sh
 
 # Local mascot cutout backups (opaque masters)
 
