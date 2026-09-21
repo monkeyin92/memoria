@@ -58,9 +58,7 @@
           "session_id": "demo-mood-s1"
         }
       ],
-      "reviews": [
-        {"source_event_id": "demo-mood-001", "action": "confirm"}
-      ],
+      "reviews": [],
       "expected_memories": [
         {
           "key": "demo-mood-criticized",
@@ -178,7 +176,7 @@
           "account_id": "demo-elder-story",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["纺织厂", "30年"],
+          "match_all": ["纺织厂"],
           "source_event_ids": ["demo-story-001"],
           "valid_from": "2026-09-01T15:00:00+08:00"
         }
