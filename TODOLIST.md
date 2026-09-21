@@ -1,11 +1,11 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-21｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已修复入库（`b41ff7a`），待设备复测。
+更新于 2026-09-21｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已发布上线（tag `20260921-defect-a-followup-endpoint`，生产 agent/bridge 切流 PASS）并真机复测核心判据通过（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，缺陷 A 子项关闭。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: d96d4c2
+enabled_release: 2a33a50  # tag 20260921-defect-a-followup-endpoint，2026-09-21 agent/bridge delta 切流（含缺陷 A 方向一 + P1-01 隐私门 env + silence-30）
 frozen_candidate: memoria-agent:b668960  # 仅本地构建验收，未启用
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -37,8 +37,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 待完成：G 的 owner-silence/endpoint/commit/watchdog 真实配置矩阵；B/D 的 Bridge→Edge→设备接收/解码/播放同 fence 证据；部分音频失败后的设备终态；ACK→正文 <1.5s 的链路拆分与达标。
 - 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早（已发布，2026-09-21 设备窗口实机复验通过）**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；已随 tag `20260920-f1f2-owner-silence-and-barge` 到设备。**F2 待命后再唤醒被拒（已发布，2026-09-21 设备窗口实机复验通过）**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。覆盖（可审计）：真实 `button.stop → CancelGeneration/SendStop 成功 → 窗口关闭`（barge 用例）、successor-cancel 保持打开、陈旧 fence 不清、终态关闭清窗口、忽略后恢复转发。第三轮 idle 已用日志证明是**点屏 #3** 触发、非 owner-silence。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
-- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。缺陷 A 方向一修复（`b41ff7a`）发布后重跑本窗口（含 3s/5s/8s 延迟续问边界格 + 30 分钟长稳）。
-- 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**待组件发布 + 设备复测**（复测含 3/5/8s 精确格 + 30 分钟长稳）；方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当复测仍见 realtime 错字时启用。
+- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。续问边界复测已完成（2026-09-21 真机两轮播放后追问走通新路径；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行）；天气→续问→播后告别长答与待机/表情回归仍待下轮设备窗口。
+- 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**已发布并真机复测核心判据通过，子项关闭（2026-09-21）**：tag `20260921-defect-a-followup-endpoint`（commit `2a33a50`）生产 agent/bridge 切流 PASS、容器内逐符号验证；真机 session 68e4b917 两轮播放后追问完整走新路径（`pending turn split boundary=playback_end` 废弃回声窗 → `playback-followup endpoint` 1.2s grace 提交 → 回复 actual_heard=True），20s 等待/追问被吞/13 字合并话轮均未复现，supervisor 拒绝门未放宽；收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`。3/5/8s 精确格与 30 分钟长稳按用户决策默认放行。方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当后续发现 realtime 错字时启用。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
 - 删除域状态（2026-09-20 决策收敛，过程记录见 HANDOFF）：物理不可删域不做封存实现、记为已知缺口（表述禁用「封存/已擦除」）；Slice A（guardian tutor 两表删除/计数/导出）已完成 `6e853ef`；开放项（identity/device_fleet 归属、封存计数面）归 P2-03。
 - 2026-09-20 产品侧提醒（读口真相）：产品召回**不读** `memory_records`，而走 archive 目录（`services/control_api/app/routes/interaction.py:1719-1743`，account_id+subject_id）⇒ 仅封存 memory_scope 不会让轮次内容消失；operator 读口 `services/governance/subject_postgres_reads.py:249-300` 必须同步改。
@@ -244,17 +244,11 @@ P2-01/02/04/05/06 所有P2质量增强项：
 - TTS播放无"吞字"、无提前待命
 - 续问在3s/5s/8s延迟后仍能接上
 
-**当前阻塞**（来自TODOLIST P0-03）：
-- F1 owner-silence已修复但未发布到设备
-- F2 禁止源barge未验证（需人工触发button.stop）
+**阻塞已解除**（2026-09-21）：F1/F2 已发布并实机复验通过（tag `20260920-f1f2-owner-silence-and-barge`）；缺陷 A 续问吞问已修复、发布（tag `20260921-defect-a-followup-endpoint`）并真机复测核心判据通过，3/5/8s 精确格与 30 分钟长稳按用户决策默认放行——DEMO-01 的续问卡点清零。
 
-**行动**：
-1. 发布当前候选`d96d4c2`到生产（含F1/F2修复）
-2. 在真实VoCat设备上跑完整验收（天气→续问→告别，至少3轮）
-3. 补3s/5s/8s延迟续问边界测试
-4. 时间：2周
+**剩余行动**：真实 VoCat 完整验收（天气→续问→播后告别长答、待机、五表情回归）待下轮设备窗口。
 
-**2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复发布前不可测；**方向一已修复入库（`b41ff7a`，全门禁绿）**。**下一步**：组件发布 → 设备复测（含精确格 + 30 分钟长稳）后关闭缺陷 A。
+**2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复发布前不可测；**方向一已修复入库（`b41ff7a`，全门禁绿）**。**结果**：组件发布切流 PASS（tag `20260921-defect-a-followup-endpoint`）→ 真机复测核心判据通过（两轮播放后追问实答，20s 等待/吞问/13 字合并话轮均未复现）→ 3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，**缺陷 A 关闭**（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）。
 
 #### [ ] DEMO-02 跨会话记忆召回（学生场景3个+老年场景3个）
 
