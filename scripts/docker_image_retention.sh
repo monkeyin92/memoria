@@ -32,7 +32,7 @@ done < <(docker ps -aq)
 declare -a candidates=()
 declare -A retained=()
 now_epoch="$(date +%s)"
-while IFS=$'\t' read -r repository tag image_id; do
+while IFS=$'\t' read -r repository tag image_id created_at; do
   [[ "$repository" == memoria-* && "$tag" != "<none>" ]] || continue
   # Rollback images and every runtime-base tag are part of the recovery contract.
   # Runtime-base tags use uv-* names, so matching the repository is intentional.
@@ -69,7 +69,11 @@ while IFS=$'\t' read -r repository tag image_id; do
     candidates+=("$repository:$tag")
     printf 'REMOVE candidate %s:%s\n' "$repository" "$tag"
   fi
-done < <(docker image ls 'memoria-*' --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}' | sort -k1,1 -k2,2r)
+done < <(
+  docker image ls 'memoria-*' \
+    --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' \
+    | sort -k1,1 -k4,4r
+)
 
 printf 'retention_mode=%s candidates=%s keep=%s min_age_days=%s\n' \
   "$(if $apply; then echo apply; else echo dry-run; fi)" \
