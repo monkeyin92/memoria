@@ -1,4 +1,4 @@
-"""The deterministic mood follow-up: measured positives always claimed, negatives never."""
+"""The deterministic follow-up nets: measured positives always claimed, negatives never."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from services.archive.memory_domain import ExtractedClaim, ExtractionUsage, Memo
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.mood_followup import (
     MoodFollowupEnsuringExtractor,
+    daily_statement_claim,
     mood_followup_claim,
 )
 from services.control_api.app.config import ControlSettings
@@ -85,7 +86,14 @@ async def test_wrapper_appends_the_claim_the_model_dropped() -> None:
     assert [claim.value for claim in extraction.claims] == [POSITIVE_UTTERANCES[0]]
 
 
-async def test_wrapper_does_not_duplicate_a_feeling_the_model_kept() -> None:
+async def test_model_claim_and_the_whole_sentence_coexist() -> None:
+    """A model value shorter than the statement never suppresses the net.
+
+    qwen-flash sometimes answered the bare "难过" for the mood utterance; that
+    value contains no 批评/老师 surface, so the recall query lost its only
+    matching item. The whole sentence is always filed alongside it.
+    """
+
     kept = MemoryExtraction(
         claims=(
             ExtractedClaim(
@@ -102,7 +110,33 @@ async def test_wrapper_does_not_duplicate_a_feeling_the_model_kept() -> None:
 
     extraction = await extractor.extract(_event(POSITIVE_UTTERANCES[0]))
 
-    assert [claim.value for claim in extraction.claims] == ["被老师批评了，好难过"]
+    assert [claim.value for claim in extraction.claims] == [
+        "被老师批评了，好难过",
+        POSITIVE_UTTERANCES[0],
+    ]
+
+
+async def test_bare_feeling_value_still_gets_the_whole_sentence() -> None:
+    bare = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="mood",
+                value="难过",
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(bare))
+
+    extraction = await extractor.extract(_event(POSITIVE_UTTERANCES[0]))
+
+    assert [claim.value for claim in extraction.claims] == [
+        "难过",
+        POSITIVE_UTTERANCES[0],
+    ]
 
 
 async def test_wrapper_appends_when_the_model_kept_the_fact_but_lost_the_feeling() -> None:
@@ -169,6 +203,140 @@ async def test_no_feeling_passes_the_delegate_result_through_unchanged() -> None
 
     assert extraction is delegate_result
     assert extraction.usage == usage
+
+
+# The plain self-statement net: qwen-flash splits "我今天去公园散步了。" into
+# atomic "公园"/"散步" claims (or drops one), which broke the park storyboard in
+# every measured run and dropped "纺织厂" in 1 of 3 factory runs. The net keeps
+# the owner's whole sentence as a claim, guarded against moods and questions.
+PLAIN_STATEMENTS = (
+    "我今天去公园散步了。",
+    "我在纺织厂工作了30年。",
+    "我最喜欢恐龙了！",
+)
+
+
+@pytest.mark.parametrize("text", PLAIN_STATEMENTS)
+async def test_plain_self_statement_is_netted_whole(text: str) -> None:
+    claim = daily_statement_claim(text, occurred_at=OCCURRED_AT)
+
+    assert claim is not None
+    assert claim.predicate == "fact"
+    assert claim.value == text
+    assert claim.valid_from == OCCURRED_AT
+
+
+@pytest.mark.parametrize("text", NEGATIVE_UTTERANCES)
+async def test_mood_sentences_never_become_fact_claims(text: str) -> None:
+    assert daily_statement_claim(text, occurred_at=OCCURRED_AT) is None
+
+
+async def test_question_and_remember_command_shapes_are_not_netted() -> None:
+    assert daily_statement_claim("我今天去公园了吗？", occurred_at=OCCURRED_AT) is None
+    assert daily_statement_claim("帮我把阳台的花浇了。", occurred_at=OCCURRED_AT) is None
+
+
+async def test_net_adds_the_whole_sentence_next_to_atomic_values() -> None:
+    atomic = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="visited",
+                value="公园",
+                confidence=0.8,
+            ),
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="did",
+                value="散步",
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(atomic))
+
+    extraction = await extractor.extract(_event(PLAIN_STATEMENTS[0]))
+
+    assert [claim.value for claim in extraction.claims] == [
+        "公园",
+        "散步",
+        PLAIN_STATEMENTS[0],
+    ]
+
+
+async def test_net_skips_when_the_delegate_already_stored_the_statement() -> None:
+    kept = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="did",
+                value="我今天去公园散步了",
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(kept))
+
+    extraction = await extractor.extract(_event(PLAIN_STATEMENTS[0]))
+
+    assert [claim.value for claim in extraction.claims] == ["我今天去公园散步了"]
+
+
+async def test_near_full_claim_missing_a_term_never_suppresses_the_net() -> None:
+    """qwen-flash answered "好久没来看我了" (no 儿子) for the son utterance.
+
+    A shorter value that merely overlaps the sentence must not suppress the net:
+    the recall surface needs 儿子 AND 好久没来 in one item, which only the whole
+    sentence guarantees.
+    """
+
+    partial = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="missed",
+                value="好久没来看我了",
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(partial))
+
+    extraction = await extractor.extract(_event("我的儿子好久没来看我了。"))
+
+    assert [claim.value for claim in extraction.claims] == [
+        "好久没来看我了",
+        "我的儿子好久没来看我了。",
+    ]
+
+
+async def test_net_reads_the_resolved_remember_content() -> None:
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(MemoryExtraction(extractor_version="qwen-json:qwen-flash:v2"))
+    )
+
+    extraction = await extractor.extract(_event("请帮我记住我今天去公园散步了。"))
+
+    assert [claim.value for claim in extraction.claims] == [PLAIN_STATEMENTS[0]]
+
+
+async def test_feeling_sentence_gets_a_mood_claim_never_a_fact_claim() -> None:
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(MemoryExtraction(extractor_version="qwen-json:qwen-flash:v2"))
+    )
+
+    extraction = await extractor.extract(_event(POSITIVE_UTTERANCES[0]))
+
+    assert [(claim.predicate, claim.value) for claim in extraction.claims] == [
+        ("mood", POSITIVE_UTTERANCES[0])
+    ]
 
 
 def test_assembly_wraps_only_the_model_branch() -> None:

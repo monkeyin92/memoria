@@ -208,9 +208,14 @@ class RecallPlanner:
             raise ValueError("recall planning requires a timezone-aware clock")
         text = query.strip()
         occurred_after, occurred_before, time_controls = _time_window(text, now)
-        entity_ids, entity_controls = _entities(text, people)
-        controls = (*time_controls, *entity_controls)
-        planned_text = _clean_query(text, controls) if controls else text
+        entity_ids, _ = _entities(text, people)
+        # Entity aliases stay in the planned text: the entity filter already
+        # narrows to the person, and stripping the alias leaves lexical terms
+        # ("这几天有给您打电话吗") that share no surface with a claim like
+        # "我的儿子好久没来看我了。" — the only overlap WAS the alias, so
+        # person-scoped recall returned nothing. Time controls are still
+        # removed: calendar words must not become search terms.
+        planned_text = _clean_query(text, time_controls) if time_controls else text
         expansions = _query_expansions(text, people)
         if expansions:
             planned_text = " ".join(part for part in (planned_text, *expansions) if part).strip()

@@ -61,6 +61,23 @@ def stamp(seconds: float) -> str:
     return (ORIGIN + timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
 
 
+def same_instant(rendered: object, seconds: float) -> bool:
+    """Compare a driver-rendered stamp with the fixture stamp as an instant.
+
+    The driver renders parsed bridge times in the runner's local zone, so the
+    rendered offset differs between a +08:00 workstation and a UTC CI runner
+    for the same moment. The instant — not the rendered offset — is the
+    contract these checks pin.
+    """
+
+    if not isinstance(rendered, str):
+        return False
+    try:
+        return datetime.fromisoformat(rendered) == datetime.fromisoformat(stamp(seconds))
+    except ValueError:
+        return False
+
+
 def utc(seconds: float) -> str:
     naive = ORIGIN.replace(tzinfo=None) + timedelta(seconds=seconds) - timedelta(hours=8)
     return naive.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
@@ -180,8 +197,8 @@ def content_case_checks() -> None:
     if not completion:
         return
     check("the completed generation carries its own delivery window",
-          completion["first_frame_t"] == stamp(12.020)
-          and completion["playback_ended_t"] == stamp(20.010), completion)
+          same_instant(completion["first_frame_t"], 12.020)
+          and same_instant(completion["playback_ended_t"], 20.010), completion)
 
     events = CollectingEvents()
     summary = driver.record_windows(events, session, 0, 1, completion=completion)
@@ -222,8 +239,8 @@ def content_case_checks() -> None:
     check("the record names the delivered generation and its window",
           len(recorded) == 1 and recorded[0]["generation_id"] == 5
           and recorded[0]["fence"]["generation_id"] == 5
-          and recorded[0]["window_start_local"] == stamp(12.030)
-          and recorded[0]["delivery_first_frame_local"] == stamp(12.020),
+          and same_instant(recorded[0]["window_start_local"], 12.030)
+          and same_instant(recorded[0]["delivery_first_frame_local"], 12.020),
           recorded[0] if recorded else None)
 
 

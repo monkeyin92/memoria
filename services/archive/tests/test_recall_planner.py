@@ -113,11 +113,42 @@ def test_only_unambiguous_confirmed_person_aliases_become_entity_filters() -> No
     )
 
     assert mother.entity_ids == ("15c1ea15-8465-4cdf-92a8-90ac860c6aac",)
-    assert mother.text == "提到的旅行"
+    assert mother.text == "妈妈提到的旅行"
     assert ambiguous_friend.entity_ids == ()
     assert candidate.entity_ids == ()
     assert child_compound.entity_ids == ()
     assert "小周" not in child_compound.text
+
+
+def test_entity_scoping_keeps_the_alias_as_a_lexical_bridge() -> None:
+    """A person-scoped query must not lose its only lexical overlap with claims.
+
+    qwen-flash extracts 儿子 as a confirmed person for "我的儿子好久没来看我了。";
+    with the alias stripped from the planned text, the remaining n-grams
+    ("这几天有给您打电话吗") share no surface with the claim, and the
+    entity-scoped context search returned zero items in measured runs. The
+    entity filter already narrows to the person, so the alias stays as a term.
+    """
+
+    people = (
+        PersonItem(
+            person_id="a1b2c3d4-0000-0000-0000-000000000001",
+            display_name="儿子",
+            relationship_to_owner="son",
+            aliases=("儿子",),
+            status="confirmed",
+            source_event_id="owner-son",
+        ),
+    )
+
+    plan = RecallPlanner.plan(
+        query="您的儿子这几天有给您打电话吗？",
+        now=_NOW,
+        people=people,
+    )
+
+    assert plan.entity_ids == ("a1b2c3d4-0000-0000-0000-000000000001",)
+    assert "儿子" in plan.text
 
 
 def test_ambiguous_or_invalid_time_language_does_not_guess_a_window() -> None:
