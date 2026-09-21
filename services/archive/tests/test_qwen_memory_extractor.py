@@ -9,6 +9,7 @@ from services.archive.domain import EvidenceEvent
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.qwen_memory_extractor import (
     FallbackMemoryExtractor,
+    MemoryExtractionError,
     QwenMemoryExtractor,
 )
 
@@ -135,7 +136,13 @@ async def test_numeric_llm_value_is_read_as_text_and_the_prompt_keeps_the_langua
         prompt = json.loads(request.content)["messages"][1]["content"]
         assert "不要翻译成英文" in prompt
         assert "所有文本字段都写成字符串" in prompt
-        assert "情绪、感受或遭遇" in prompt
+        # The durability contract: an emotion needs a reason *and* follow-up value, a trivial
+        # mood is not stored, and plain daily facts are explicitly unaffected.  Measured on
+        # qwen-flash: without the middle clause "我现在有点烦" and "公交晚点了，有点烦" were
+        # stored; a version that applied the clause to everything also dropped "去公园散步".
+        assert "值得以后接着关怀" in prompt
+        assert "一次就过去的琐碎心情" in prompt
+        assert "日常事实" in prompt and "照常提取" in prompt
         content = json.dumps(
             {
                 "claims": [
@@ -169,3 +176,39 @@ async def test_numeric_llm_value_is_read_as_text_and_the_prompt_keeps_the_langua
 
     assert [claim.value for claim in extraction.claims] == ["30"]
     assert extraction.claims[0].domain_category == "work_experience"
+
+
+@pytest.mark.asyncio
+async def test_numeric_identifier_is_still_refused() -> None:
+    """Only the claim's `value` is read as text; an identifier stays strict.
+
+    A numeric `canonical_key` is a malformed memory projection, not a formatting slip, so the
+    boundary must still refuse it (the assembly then falls back to the rule extractor).  The
+    narrowing matters because the previous fix accepted numbers in every text field, which
+    would have let `person_key`/`canonical_key`/`title` through unchecked.
+    """
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        content = json.dumps(
+            {
+                "people": [
+                    {
+                        "display_name": "李梅",
+                        "relationship_to_owner": "mother",
+                        "canonical_key": 30,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    extractor = QwenMemoryExtractor(
+        api_key="test-key",
+        base_url="https://dashscope.test/v1",
+        model="qwen-flash",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(MemoryExtractionError):
+        await extractor.extract(_event("我的妈妈叫李梅。"))

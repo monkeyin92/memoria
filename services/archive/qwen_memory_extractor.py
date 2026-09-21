@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 
 import httpx
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import (
@@ -33,9 +33,7 @@ class MemoryExtractionError(RuntimeError):
 
 
 class _ClaimPayload(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
-    )
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     domain_category: DomainCategory = Field(
         validation_alias=AliasChoices("domain_category", "category")
@@ -50,6 +48,21 @@ class _ClaimPayload(BaseModel):
     valid_to: datetime | None = None
     salience: float = Field(default=0.5, ge=0, le=1)
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def _read_number_as_text(cls, raw: object) -> object:
+        """A numeric value is a formatting slip, not an unusable extraction.
+
+        qwen-plus answered `"value": 30` for "我在纺织厂工作了30年。"; rejecting the whole
+        extraction made the production assembly fall back to the rule extractor silently.
+        Only this field is read this way: identifiers (`canonical_key`, `person_key`,
+        `subject_key`) and titles stay strict, so a numeric key is still refused.
+        """
+
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return str(raw)
+        return raw
+
     @model_validator(mode="after")
     def validate_time_range(self) -> _ClaimPayload:
         for value in (self.valid_from, self.valid_to):
@@ -61,9 +74,7 @@ class _ClaimPayload(BaseModel):
 
 
 class _PersonPayload(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
-    )
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     display_name: str = Field(min_length=1, max_length=128)
     relationship_to_owner: str = Field(min_length=1, max_length=64)
@@ -72,18 +83,14 @@ class _PersonPayload(BaseModel):
 
 
 class _RelationshipPayload(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
-    )
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     person_key: str = Field(min_length=1, max_length=160)
     relationship_type: str = Field(min_length=1, max_length=64)
 
 
 class _TimelinePayload(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
-    )
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1, max_length=500)
     domain_category: DomainCategory = Field(
@@ -115,9 +122,7 @@ class _TimelinePayload(BaseModel):
 
 
 class _KnowledgePayload(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", str_strip_whitespace=True, coerce_numbers_to_str=True
-    )
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     domain_category: DomainCategory = Field(
         validation_alias=AliasChoices("domain_category", "category")
@@ -181,8 +186,10 @@ claim predicate 使用 preference 或 habit；出生日期、年龄、地点、�
 原话是中文时，claim 的 value 与 timeline 的 title 用中文原话的表述，不要翻译成英文，也不要
 改写成纯数字、缩写或代码（"七十几分"不要写成"70s"）；所有文本字段都写成字符串。
 
-原话明确陈述的情绪、感受或遭遇（例如被老师批评、心里难过、想念家人）是 daily_life 或
-life_story 的真实陈述，只要原话说清楚了就应当提取；只有确实无法确定时才留空。
+情绪类的原话要有具体原因、而且值得以后接着关怀才提取（例如被老师批评、想念家人、考试取得
+好成绩）；没有原因、或一次就过去的琐碎心情（例如"我现在有点烦""有点无聊""今天吃了个冰淇淋，
+很开心""公交晚点了，有点烦"）不要提取。日常事实（去了哪里、做了什么、和谁在一起）照常提取，
+不受这一条限制；只有确实无法确定时才留空。
 
 严格结构：
 {{
