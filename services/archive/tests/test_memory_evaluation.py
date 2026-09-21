@@ -19,6 +19,7 @@ from services.archive.memory_evaluation import (
     MemoryEvaluationAdapter,
     MemoryEvaluationCase,
     MemoryEvaluationDataset,
+    _matches,
     _source_account_for_item,
     calculate_memory_metrics,
     covered_scenarios,
@@ -32,6 +33,18 @@ DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
 UNSEEN_DATASET = (
     Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
 )
+DEMO_DATASET = Path(__file__).parents[1] / "evaluation" / "demo_scenarios_zh_v1.json"
+
+# DEMO-02: the six fund-raising storyboards, keyed by the case that carries each one.  The
+# mapping is pinned so the set cannot drift away from the storyboard it exists to measure.
+DEMO_STORYBOARDS = {
+    "demo-student-math-weakness": "学生-学习陪伴：听到95分时召回“数学是弱项”",
+    "demo-student-mood-recall": "学生-情绪关怀：几天后召回被老师批评的事",
+    "demo-student-dinosaur-interest": "学生-兴趣陪伴：一周后由恐龙兴趣接上继续陪伴",
+    "demo-elder-park-walk": "老年-日常陪伴：次日召回公园散步",
+    "demo-elder-factory-story": "老年-人生故事留存：五天后接续纺织厂经历",
+    "demo-elder-son-visit": "老年-情感陪伴：三天后召回“儿子好久没来”",
+}
 
 
 class PerfectAdapter:
@@ -358,4 +371,80 @@ async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
     assert report.metrics.extraction_recall == pytest.approx(1.0)
     assert report.metrics.source_attribution_accuracy == pytest.approx(1.0)
     assert report.metrics.candidate_leakage == 0
+    assert report.metrics.cross_account_leakage == 0
+
+
+def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> None:
+    """DEMO-02: the six fixed demo scenarios, each one a memory asked for on a later day.
+
+    The set is a demo storyboard first, so this pins its *shape*: the six storyboard cases
+    are present, every expected key is graded in a query (a case can never be unscoreable),
+    and each query is asked after the utterance it is supposed to recall.  Quality numbers
+    are not pinned here - what the demo can quote is measured by running the set, and the
+    offline ceiling is recorded separately.
+    """
+    dataset = load_memory_evaluation_dataset(DEMO_DATASET)
+
+    assert dataset.version == "demo-scenarios-zh-v1"
+    assert [case.case_id for case in dataset.cases] == list(DEMO_STORYBOARDS)
+    for case in dataset.cases:
+        graded = set().union(*(query.relevance for query in case.queries))
+        assert {memory.key for memory in case.expected_memories} <= graded, case.case_id
+        for memory in case.expected_memories:
+            assert memory.match_all, case.case_id
+            assert memory.source_event_ids, case.case_id
+        occurred_at = {evidence.event_id: evidence.occurred_at for evidence in case.evidence}
+        recalled = {
+            event_id
+            for memory in case.expected_memories
+            for event_id in memory.source_event_ids
+        }
+        assert recalled <= set(occurred_at), case.case_id
+        for query in case.queries:
+            assert query.now is not None, case.case_id
+            assert all(
+                query.now > occurred_at[event_id] for event_id in recalled
+            ), case.case_id
+
+
+@pytest.mark.asyncio
+async def test_demo_scenario_dataset_is_reachable_and_scoreable_offline() -> None:
+    """Every demo storyboard's memory is reachable from its own later context, offline.
+
+    This pins that the fixed set is *scoreable* under the reconstructable SQLite contract -
+    extraction states each expected memory and its later query ranks it - and not product
+    quality: the rule extractor is the offline ceiling, while the production path (Qwen, see
+    `scripts/evaluate_memory.py --extractor configured`) needs DASHSCOPE_API_KEY and is not
+    what CI runs.  A query carrying a relative time word (今天/昨天/上周) narrows the recall
+    window and would be recorded as a miss, so rewording the set moves these numbers.
+    """
+    dataset = load_memory_evaluation_dataset(DEMO_DATASET)
+    adapter = CatalogMemoryEvaluationAdapter()
+
+    for case in dataset.cases:
+        observation = await adapter.observe(case)
+        for expected in case.expected_memories:
+            assert any(
+                _matches(expected, item) for item in observation.extracted_items
+            ), (case.case_id, expected.key)
+        for query in case.queries:
+            result = next(
+                item for item in observation.query_results if item.query_id == query.query_id
+            )
+            graded = {key for key, grade in query.relevance.items() if grade > 0}
+            returned = {
+                expected.key
+                for expected in case.expected_memories
+                if expected.key in graded
+                and any(_matches(expected, item) for item in result.items)
+            }
+            assert returned == graded, (case.case_id, query.query_id, returned, graded)
+
+    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+
+    assert report.case_count == len(DEMO_STORYBOARDS)
+    assert report.metrics.extraction_recall == pytest.approx(1.0)
+    assert report.metrics.recall_at_5 == pytest.approx(1.0)
+    assert report.metrics.cross_session_recall_at_5 == pytest.approx(1.0)
+    assert report.metrics.comfort_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_account_leakage == 0

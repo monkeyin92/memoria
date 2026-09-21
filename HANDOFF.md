@@ -456,3 +456,12 @@ python -m scripts.rebuild_memory_projections --confirm-rebuild
 - 旁证（本地进程上下文，需 Terminal 侧对照）：同 argv 取音的 WAV 比墙钟短 —— `-t 20` → ffmpeg 自身 `out_time 20.0s` 但 WAV 仅 16.633s；44.1kHz 原生与 16kHz 同缺（15s 取音 2.554s vs 2.473s）⇒ 与重采样无关；而 09-20 的 Terminal 运行是 20.40s/20s 满长。**仅作观察**：本轮未据此改动任何阈值，也不能作为匹配器判据的依据；须在 Terminal 复跑同一探针后才谈结论。
 - 待决（用户）：`TODOLIST_FUNDRAISING_SUPPLEMENT.md` 未跟踪且未 ignore，已使 `tests/test_documentation_budget.py` 失败（"恰好三份长期文档"门禁）；本轮未删未合并该文件，也未按补充文档 Action-01 新建 `FROZEN_FOR_FUNDRAISING.md`（会再违规一次；冻结清单在 `TODOLIST.md` 相位 0 已逐条存在）。
 
+## 2026-09-21 DEMO-02：6 个固定场景接入既有记忆评测链路（离线收据；真实 Qwen 未跑）
+
+- 交付物：`services/archive/evaluation/demo_scenarios_zh_v1.json`（6 例＝学生 3 + 老年 3，storyboard 映射钉在 `services/archive/tests/test_memory_evaluation.py` 的 `DEMO_STORYBOARDS`），复用既有链路 `scripts/evaluate_memory.py` → `services/archive/memory_evaluation.py`，**不新增脚手架、不另建 YAML**（补充文档 Action-03 的清单不再复制一份，避免两套场景漂移）。
+- 收据（离线、规则提取器）：`outputs/acceptance/run-20260921-demo02-recall/report-rules.json` —— `extraction_recall=1.0`、`recall_at_5=1.0`、`cross_session_recall_at_5=1.0`、`comfort_recall_at_5=1.0`、`ndcg_at_10=0.855`、`temporal_accuracy=1.0`、`source_attribution_accuracy=1.0`、`cross_account_leakage=0`、`extraction_precision=0.4`（规则提取器会额外产出 episode/knowledge 项）、`latency_p50≈1ms`；同目录另有同日对照 `memory_eval_zh_v1`（recall 0.938 / ndcg 0.859）与 `_unseen`（0.6 / 0.6）。
+- **这组数字证明的是"集合可评分、链路已接通"，不是产品召回质量**：CI/本轮跑的是离线规则提取器；生产路径是 Qwen（`--extractor configured`，需 `DASHSCOPE_API_KEY` 且 `OFFLINE_MOCK=false`），本轮未跑、无收据。对外引用召回率前必须先跑那条路径。
+- 落到数据集里的取数口径（免得后人踩）：`catalog.context` 只回 **confirmed** 项、对计划文本做 OR 词项 LIKE；`RecallPlanner` 把 今天/昨天/前天/上周/N天前/(最近|近|过去)N天 解析成**收窄窗口**（出现多个不同窗口就放弃窗口），并剥离 还记得/聊了什么/之前 等脚手架、按 难受→难过、避开→不喜欢 做加性扩展；`_matches` 要求 `kind=claim` 且 `memory_kind=semantic`（episode 是另一条 item）。首版 6 例里 mood/dinosaur/math 的 miss 正是"查询含相对时间词→窗口排除了旧证据"与"查询与被召回句无共享词项"，已按**召回线索**改写查询文本；**助理话术原文仍在补充文档**，数据集存的是检索条件。
+- 回归：`services/archive/tests/test_memory_evaluation.py` 新增 2 例——形状（6 个 case 齐全、每个期望键都有评分、查询晚于被召回证据）与可评分性（逐 case 断言期望记忆被提取且在该 case 自己的后续上下文里被召回，并 pin 离线指标）；模块 13 passed，`ruff` clean。
+- 未验/边界：真实 Qwen 抽取器未跑（需密钥与预算）；6 例是"固定集"（演示时靠它保成功率），未见集/自由对话仍属 P1-06；本项与设备链路无关，不构成 F1/F2 或学生安全链的任何证据。
+

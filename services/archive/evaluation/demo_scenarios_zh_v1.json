@@ -1,0 +1,235 @@
+{
+  "version": "demo-scenarios-zh-v1",
+  "cases": [
+    {
+      "case_id": "demo-student-math-weakness",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "demo-math-001",
+          "account_id": "demo-student-math",
+          "text": "我的数学成绩不太好，上次只考了七十几分。",
+          "occurred_at": "2026-08-20T19:10:00+08:00",
+          "session_id": "demo-math-s1"
+        },
+        {
+          "event_id": "demo-math-002",
+          "account_id": "demo-student-math",
+          "text": "我今天数学考了95分！",
+          "occurred_at": "2026-09-03T18:40:00+08:00",
+          "session_id": "demo-math-s2"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-math-001", "action": "confirm"},
+        {"source_event_id": "demo-math-002", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-math-weakness",
+          "account_id": "demo-student-math",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["数学", "七十几分"],
+          "source_event_ids": ["demo-math-001"],
+          "valid_from": "2026-08-20T19:10:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-math-followup",
+          "account_id": "demo-student-math",
+          "text": "数学考了95分！",
+          "mode": "context",
+          "relevance": {"demo-math-weakness": 3},
+          "now": "2026-09-03T18:41:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-student-mood-recall",
+      "scenario": "comfort_recall",
+      "evidence": [
+        {
+          "event_id": "demo-mood-001",
+          "account_id": "demo-student-mood",
+          "text": "我今天被老师批评了，好难过。",
+          "occurred_at": "2026-09-01T17:30:00+08:00",
+          "session_id": "demo-mood-s1"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-mood-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-mood-criticized",
+          "account_id": "demo-student-mood",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["批评", "难过"],
+          "source_event_ids": ["demo-mood-001"],
+          "valid_from": "2026-09-01T17:30:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-mood-day3",
+          "account_id": "demo-student-mood",
+          "text": "上次你说被老师批评了，心情好点了吗？",
+          "mode": "context",
+          "relevance": {"demo-mood-criticized": 3},
+          "now": "2026-09-04T18:00:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-student-dinosaur-interest",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "demo-dino-001",
+          "account_id": "demo-student-dinosaur",
+          "text": "我最喜欢恐龙了！",
+          "occurred_at": "2026-08-28T19:00:00+08:00",
+          "session_id": "demo-dino-s1"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-dino-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-dinosaur-interest",
+          "account_id": "demo-student-dinosaur",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["恐龙"],
+          "source_event_ids": ["demo-dino-001"],
+          "valid_from": "2026-08-28T19:00:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-dinosaur-day7",
+          "account_id": "demo-student-dinosaur",
+          "text": "恐龙里霸王龙吃什么？",
+          "mode": "context",
+          "relevance": {"demo-dinosaur-interest": 2},
+          "now": "2026-09-04T19:00:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-elder-park-walk",
+      "scenario": "episodic_recall",
+      "evidence": [
+        {
+          "event_id": "demo-park-001",
+          "account_id": "demo-elder-park",
+          "text": "我今天去公园散步了。",
+          "occurred_at": "2026-09-05T10:20:00+08:00",
+          "session_id": "demo-park-s1"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-park-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-park-walk",
+          "account_id": "demo-elder-park",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["公园", "散步"],
+          "source_event_ids": ["demo-park-001"],
+          "valid_from": "2026-09-05T10:20:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-park-day2",
+          "account_id": "demo-elder-park",
+          "text": "昨天去公园散步，今天身体感觉怎么样？",
+          "mode": "context",
+          "relevance": {"demo-park-walk": 3},
+          "now": "2026-09-06T09:30:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-elder-factory-story",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "demo-story-001",
+          "account_id": "demo-elder-story",
+          "text": "我在纺织厂工作了30年。",
+          "occurred_at": "2026-09-01T15:00:00+08:00",
+          "session_id": "demo-story-s1"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-story-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-factory-30y",
+          "account_id": "demo-elder-story",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["纺织厂", "30年"],
+          "source_event_ids": ["demo-story-001"],
+          "valid_from": "2026-09-01T15:00:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-story-day5",
+          "account_id": "demo-elder-story",
+          "text": "上次您说在纺织厂工作，那时候最难忘的事是什么？",
+          "mode": "context",
+          "relevance": {"demo-factory-30y": 3},
+          "now": "2026-09-06T15:30:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-elder-son-visit",
+      "scenario": "comfort_recall",
+      "evidence": [
+        {
+          "event_id": "demo-son-001",
+          "account_id": "demo-elder-son",
+          "text": "我的儿子好久没来看我了。",
+          "occurred_at": "2026-09-03T20:10:00+08:00",
+          "session_id": "demo-son-s1"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "demo-son-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "demo-son-not-visiting",
+          "account_id": "demo-elder-son",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["儿子", "好久没来"],
+          "source_event_ids": ["demo-son-001"],
+          "valid_from": "2026-09-03T20:10:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "demo-son-day3",
+          "account_id": "demo-elder-son",
+          "text": "您的儿子这几天有给您打电话吗？",
+          "mode": "context",
+          "relevance": {"demo-son-not-visiting": 3},
+          "now": "2026-09-06T20:30:00+08:00"
+        }
+      ]
+    }
+  ]
+}
