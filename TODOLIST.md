@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-21｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。
+更新于 2026-09-21｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已修复入库（`b41ff7a`），待设备复测。
 
 ## 当前边界（不得越界宣称）
 
@@ -36,24 +36,12 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P0-03 TTS、续问竞态、设备停滞与真实时延
 
 - 待完成：G 的 owner-silence/endpoint/commit/watchdog 真实配置矩阵；B/D 的 Bridge→Edge→设备接收/解码/播放同 fence 证据；部分音频失败后的设备终态；ACK→正文 <1.5s 的链路拆分与达标。
-- 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早（已按产品要求修复，待发布+设备复验）**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；到设备仍需随全量发布（组件快车道因依赖输入漂移拒绝）。**F2 待命后再唤醒被拒（症状+病因已修，待发布复验）**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。覆盖（可审计）：真实 `button.stop → CancelGeneration/SendStop 成功 → 窗口关闭`（barge 用例）、successor-cancel 保持打开、陈旧 fence 不清、终态关闭清窗口、忽略后恢复转发。第三轮 idle 已用日志证明是**点屏 #3** 触发、非 owner-silence。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
-- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。F1/F2 修复后需重跑本窗口（含 3s/5s/8s 延迟续问边界格）。
-  - 2026-09-20 进展：待命后**立即再唤醒**回归通过（同秒待命 → 2s 内重新唤醒并开新会话，无拒绝）；收据 `outputs/acceptance/run-20260920-rewake-after-standby/`。
+- 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早（已发布，2026-09-21 设备窗口实机复验通过）**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；已随 tag `20260920-f1f2-owner-silence-and-barge` 到设备。**F2 待命后再唤醒被拒（已发布，2026-09-21 设备窗口实机复验通过）**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。覆盖（可审计）：真实 `button.stop → CancelGeneration/SendStop 成功 → 窗口关闭`（barge 用例）、successor-cancel 保持打开、陈旧 fence 不清、终态关闭清窗口、忽略后恢复转发。第三轮 idle 已用日志证明是**点屏 #3** 触发、非 owner-silence。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
+- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。缺陷 A 方向一修复（`b41ff7a`）发布后重跑本窗口（含 3s/5s/8s 延迟续问边界格 + 30 分钟长稳）。
+- 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**待组件发布 + 设备复测**（复测含 3/5/8s 精确格 + 30 分钟长稳）；方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当复测仍见 realtime 错字时启用。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
-- 2026-09-20 删除 saga 盲区·逐域设计表已完成（55 表 + 三清单，全量 `'/Users/monkeyin/.omp/agent/sessions/-projects-memoria/2026-09-20T07-44-59-919Z_01a0bdc6-880f-703a-98fa-1c60dcd48dc3/deletionDomainDesign.md'`）。**结构性事实**：① `memory_records`/`memory_status_events`/`memory_shared_votes` 与 `session_runtime_profiles`/`events`/`profile_receipts` 有**无条件 append-only 触发器**（`services/memory_scope/postgres_schema.sql:309-322`、`services/session_runtime/postgres_schema.sql:344-357`），任何角色（含表 owner）都**无法 DELETE**；② `memory_*`/`session_runtime_*`/`policy_receipts_v2`/identity 核心表/`device_onboarding_*` 对运行时角色**零 DELETE 授权**（`services/policy/postgres_receipt_schema.sql:357-369`、`services/device_fleet/bootstrap_postgres_schema.sql:422-456`）；③ `identity_delete_guard` 需 GUC `app.identity_account_deletion='1'`，但**全仓无代码设置**（`services/identity/postgres_schema.sql:568-603`），且 `services/identity/sqlite_store.py` 无 `delete_for_account`/`remaining_account_rows` ⇒ identity 删除**未实现**；④ **guardian 漏 `tutor_practice_evidence`/`tutor_commit_outbox`**（`services/guardian/postgres_store.py:1975-2054` 删除与 `:2056-2143` 计数均未覆盖，SQLite 同构），`verified_empty`（`services/governance/account_data.py:1124-1140`）对它们全盲；⑤ `device_fleet_*` 无 person 列，账户归属须经 `identity_device_bindings.account_owner_person_id`（`services/identity/postgres_schema.sql:137`）解析；`family_space_id` 是 memory 与 device_fleet 共用的共享空间键（共属行判定核心）。**结论：物理删除对多域不可行，需先定"封存/去标识化 vs 改授权+迁移"的语义**；唯一无需新决策的干净缺口是 ④。
-- 2026-09-20 seal 契约 17 表的关键列/约束/读口/残留明文/不可归属清单已**持久化到 HANDOFF**（同日「seal 契约持久化」一节），不再依赖会失效的 `agent://`；可交付边界＝仅 `memory_capture_evidence` 与 `session_runtime_tool_effect_outbox` 两处窄片可行，且**用户未授权**，其余保持未闭合。
-- 2026-09-20 **用户决策：不做封存实现，记为已知缺口**（明文残留 + 四处不可归属面 + append-only/零 DELETE 域不可物理删除；表述纪律：不得用「封存/已擦除」；删除收据只证明可删域无残留）。见 HANDOFF 同日「删除范围：已闭合部分与已知缺口」一节。
-- 2026-09-20 逐域 seal 契约草稿完成（17 表：memory_scope 8 / session_runtime 8 / policy 1）。**结论**：三域均无 `sealed` 字段；封存只能在"仅可 INSERT"下用 (a) 追加语义行（revoked/新 revision）+ (b) 既有可变列状态转移 + (c) 读层过滤 组合实现；**tombstone 不会移除明文**（`memory_records.payload`、`memory_shared_proposals.content` 明文且不可就地改写；policy 收据被声明为不可变审计记录）⇒ 契约必须把「访问撤销/读口过滤」「payload 去标识化」「保留原始审计」分成三种结果，**禁止**把 `verified_empty` 或"删除完成"表述成"已擦除"。另有四处**不可归属**面须显式报 `unattributable` 而非计 0：`memory_outbox`（无主体列）、`session_runtime_events`（`actor_id` 可空且无 subject 列）、`session_runtime_outbox`（无 subject 列）、`policy_receipts_v2.subject_id IS NULL`。
-- 2026-09-20 **契约不可闭合的结论（采纳审计意见，覆盖上一行"全按推荐默认"对 D1/D2 的选择）**：在既有约束（封存/去标识化、不改授权、**不加迁移**）下，seal 契约**无法闭合**——① 可靠封存需要**单调、独立、且所有读口强制检查**的标记；可复用标记 `memory_status_events(status='revoked')` **不可靠**（后续合法状态事件会恢复可见性；草稿已记"封存判定必须独立于 status 的单调性"），故不能据此判 `verified_sealed`；② 四处无主体键面（`memory_outbox`、`session_runtime_events`、`session_runtime_outbox`、`policy_receipts_v2.subject_id IS NULL`）在不新增归属列的前提下**无法归属**；③ 明文残留（`memory_records.payload`、`memory_shared_proposals.content`）在不改写的约束下只能"读层不可见"，不等于清除。**因此只有两条路**：(甲) 允许**最小迁移**（各域新增独立封存登记表/列 + 读口 join + 计数口）才可能形成可信 `verified_sealed`；(乙) 不做封存，把"删除收据只覆盖可删域、残留明文与不可归属面为已知合规缺口"作为**明确结论**记录，不再以封存口径对外表述。**在选定前不实现半套封存、不改任何计数面/读口。**
-- 2026-09-20 seal 决策待定（D1–D10，推荐默认在括号内；可整体回"全按推荐"）：**D1** 语义边界（**A 仅可见性封存**；B 含读层去标识需映射表；C 引入物理删除豁免违背零 DELETE 契约）；**D2** 标记位置（**A 复用现有列/事件**；B 新增 `*_subject_seals` 需三域迁移；C 只读层外部登记无持久审计）；**D3** family_shared 共属行（A 任一成员即整行不可读；**B 按请求主体视角部分封存**，需重写 owner-grant 分支；C 家庭决议）；**D4** session 主体归属缺口（**A 接受 events/outbox 不封存**；B 新增 subject_id 列需迁移且历史行无法回填；C 用 contexts 近似会污染计数）；**D5** 计数面落点（A 改 saga 加 `verified_sealed` 步；**B 保留 `verified_empty` + 独立封存复检清单**；C 塞进 `remaining_account_rows` 需触碰 `_delete_order`，本任务非目标）；**D6** 审计出口（**A 原样保留、只收窄可读者**；B 读层假名化；C 分档）；**D7** 发起权（A 仅本人；**B 本人+监护人+运营 DSR**；C 任何共属成员）；**D8** 在飞/重放（A 一律拒绝；**B 已签发且在有效期内允许完成**，需定义时延上界；C 允许重放返回去标识结果）；**D9** 下游传播（A 各域自负；B 跨域事件广播；**C 先在 `control_api` 读口加前置门止血**，注意 operator/导出仍会泄漏）；**D10** RLS 是否内建封存维度（**A 纯应用层过滤**，代价：绕过服务的 psql/owner 读仍见明文；B RLS 内建封存维度，与 D2(B) 强绑定；C 两者都做）。
+- 删除域状态（2026-09-20 决策收敛，过程记录见 HANDOFF）：物理不可删域不做封存实现、记为已知缺口（表述禁用「封存/已擦除」）；Slice A（guardian tutor 两表删除/计数/导出）已完成 `6e853ef`；开放项（identity/device_fleet 归属、封存计数面）归 P2-03。
 - 2026-09-20 产品侧提醒（读口真相）：产品召回**不读** `memory_records`，而走 archive 目录（`services/control_api/app/routes/interaction.py:1719-1743`，account_id+subject_id）⇒ 仅封存 memory_scope 不会让轮次内容消失；operator 读口 `services/governance/subject_postgres_reads.py:249-300` 必须同步改。
-- 2026-09-20 顺序纠正（审计意见，采纳）：**先出逐域 seal 契约，再改计数面**。理由：三类盲区没有统一的 `sealed`/去标识化状态或既有 saga 接口，memory/session 还有共享行与无条件 append-only 触发器、policy 仅有 `subject_id`/`actor_id` 读权限；用户只定了语义，尚未定每域的封存记录/字段、owner key、共享行处理、`verified_empty` 判定与审计留存。**在契约与决策点明确前，不改 `remaining_account_rows`、不把无 `account_id` 的域硬塞进 `_delete_order`。** 契约草稿见 `agent://sealContractDraft`（含必须由用户决策的问题清单）。
-- 2026-09-20 **Slice A 完成**：`tutor_practice_evidence`/`tutor_commit_outbox` 已纳入 `guardian_tutor_account_scope_{delete,remaining,export}` 及 PG/SQLite 两个 store 的 export/delete/remaining；RLS 前置（`guardian_controller_tutor_evidence` 的 TO 增加 `memoria_guardian_maintenance`，保留 `allow_account_scope` 条件）+ 最小授权 `GRANT SELECT, DELETE`；测试含真 PG 的"另一主体行不受影响"与重复删除幂等断言。验证：`services/guardian` 31 passed（含 DSN-gated PG）、`services/governance` 47 passed、ruff check、mypy --strict、模块预算 PASS。提交 `6e853ef`。**仍待办**：identity（`identity_delete_guard` 依赖的 GUC 全仓从未设置、SQLite 无 delete/remaining 实现）、device_fleet/onboarding（无 person 列，须经 identity binding 解析归属）、以及 append-only/零 DELETE 域的"封存"计数面。
-- 2026-09-20 用户决策：① 切片顺序——先补 **guardian 的 `tutor_practice_evidence`/`tutor_commit_outbox`**（删除+计数+导出同口径；PG SQL 函数与 SQLite store 同构）；② 物理不可删域（`memory_records`/`memory_status_events`/`memory_shared_votes`、`session_runtime_profiles`/`events`/`profile_receipts`、`policy_receipts_v2`）统一按**封存/去标识化**语义处理，并把计数面改为反映“已封存”而非“已删除”，**不改授权、不加迁移**。身份/设备域（identity/device_fleet/onboarding）留待后续专项。
-- 2026-09-20 设备复验的前置（下次设备窗口用）：临时驱动必须修证据链——记录 `afplay` **起始**时刻与每次 prompt 唯一 ID，并用**同一 session/stream/turn/generation** 的服务端 `turn_committed`/`playback_ended` 做绑定；同时读取设备签名 `allowed_barge_in` 以分别闭合 q3/q5/q8 与被禁源 barge。在此之前 F1 维持“部分观察”、F2 维持“未验证”。
-- 2026-09-20 删除 saga 结构盲区（勘探完成，待设计决策后实施）：saga 在 `services/governance/account_data.py`（`AccountDataGovernance._delete_account`，9 步 checkpoint + `account_deletions` 收据；入口 `POST /v1/archive/deletion-requests`、guardian 路由、后台 `AccountDeletionWorker`）。`remaining_account_rows` 判据＝"表在 `_delete_order` 中且有 `account_id` 列"（`account_data.py:490-491` SQLite / `:689-690` PG），因此 `memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 这些**无 `account_id` 列**的域表既不删也不计数，`verified_empty` 看不见。**两个必须先定的设计问题**：① `policy_receipts_v2` 的角色被 REVOKE ALL 后只授 SELECT/INSERT（`services/policy/postgres_receipt_schema.sql:357-373`，无 DELETE 权限），删除要么改授权/迁移、要么改语义（如按主体封存而非物理删）；② 这些域表的键列各不相同（`subject_id`/`actor_id`/`person_id`/`account_owner_person_id` 等），需要各自的归属口径而非 `account_id` 单列。**建议切片**：先做"让 `verified_empty` 看得见"（把上述域表纳入计数面并按各自键列统计），再逐域实现删除；切片一一旦落地，未实现的域会**诚实**报为未清空（而非静默通过）。
-- 2026-09-20：F2 **禁止源 barge 仍未验证**（撤回此前“通过”结论）。判据是 Edge 日志 `ignored barge from a forbidden source`（`device_ws_uplink.go:111` 触发时必然打印；三次采集均为 0 行），`device_barge_ignored_total` 在 mTLS 私有 `:8081` 上抓不到（明文 400）。复现需先读设备签名 `allowed_barge_in` 再构造会话内被禁源 barge；`button` 源只能在设备上产生（触摸面板/按键，需人到场或非生产 edge）。
-- 2026-09-20：F1 在本窗口只取得**观察**，**未达“判据通过”**——会话跨约 8.2s/11s 仍有后续输出（旧语义 ~4.4s 预算下难以维持）；但 +3/+5/+8s 精确边界与“每个 prompt→generation”归属**未证实**（串口 21:39:38 的 `listening->speaking` 早于 q5 播放；脚本时间戳为 afplay 播完后打印），已撤回“F1 判据通过”的表述。可直接归因的只有“待命后立即再唤醒成功并开新会话”。**F2 禁止源 barge 仍未验证**（判据为 Edge `ignored barge` 日志，全生命周期 0 行）。
 - 约束：保留现有 GenerationBudget、代际隔离和失败有界退出；不靠延长静默、重复整句合成、第二提示或放宽门禁遮掩问题。入口：`providers/{generation_budget,doubao_tts,cosyvoice_tts}.py`、`voice_core/media_session_{standby,output_stream}.py`、`scripts/voice_session_{capture,report}.py`。
 
 ## P1：发布门禁、运行保障与产品闭环
@@ -119,7 +107,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P2-03 可证明删除与导出证据链
 
 - 已完成（本地，收据见 `HANDOFF.md`）：四迁移读路径的 PG 侧对等（operator `read --postgres-dsn`，真实 PG 契约；投影侧 PG 未建表时 fail closed 不回落账号键）；PG 全 saga 删除验证（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）。
-- 待完成：真实 MinIO 版本删除（本地 Docker MinIO 对象写入不可用，需可用 MinIO 或生产环境）、真实 provider 删除（需密钥与授权）、备份「恢复后再删除」实现与期限声明、结构盲区补齐（`memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 不在删除 saga；`remaining_account_rows` 需覆盖非 `account_id` 键表。其中 `memory_scope` 的可行路径已核实：`memory_owner_records`/`memory_owner_status_events` 对 `memoria_memory_owner` 是 `FOR ALL`（`pg_has_role(...,'member')`，NOLOGIN，维护登录 `SET ROLE` 即可），RLS 层允许 owner 角色删，缺的是应用侧删除路径与清点，不是权限；开工前需先定：哪些行属于删除范围（`resource_owner_id` vs `subject_id`、`family_shared` 行的族空间归属、`co_subject_ids` 共同主体）、`memory_status_events` 先于 `memory_records` 的顺序、删除 fence 与收据/幂等语义。小程序成员主体读口（需客户端会话上下文，属 P1-03/P1-05）、生产/设备与真实机器人对话验收。
+- 待完成：真实 MinIO 版本删除（本地 Docker MinIO 对象写入不可用，需可用 MinIO 或生产环境）、真实 provider 删除（需密钥与授权）、备份「恢复后再删除」实现与期限声明、物理不可删域已决策不做封存（2026-09-20，明文残留与不可归属面为已知缺口）、结构盲区补齐（`memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 不在删除 saga；`remaining_account_rows` 需覆盖非 `account_id` 键表。其中 `memory_scope` 的可行路径已核实：`memory_owner_records`/`memory_owner_status_events` 对 `memoria_memory_owner` 是 `FOR ALL`（`pg_has_role(...,'member')`，NOLOGIN，维护登录 `SET ROLE` 即可），RLS 层允许 owner 角色删，缺的是应用侧删除路径与清点，不是权限；开工前需先定：哪些行属于删除范围（`resource_owner_id` vs `subject_id`、`family_shared` 行的族空间归属、`co_subject_ids` 共同主体）、`memory_status_events` 先于 `memory_records` 的顺序、删除 fence 与收据/幂等语义。小程序成员主体读口（需客户端会话上下文，属 P1-03/P1-05）、生产/设备与真实机器人对话验收。
 - 安全约束：不得默认 `account_id == subject_id`；必须有 Control 注册、active Identity person、owner evidence 和一致事件 subject；child/member 只接受唯一 lineage，foreign/inactive/ambiguous/NULL/mixed subject fail closed；源表与 `snapshot_json` 保持字节不变；rollback 只移除本 migration 行。
 - 完成条件：PG、MinIO、投影/缓存和 provider 范围一致，重试幂等、回执可查询、导出标记 AI/授权/服务提供者；保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本；真实 MinIO 与 provider 各需一次可复现收据。
 
@@ -146,7 +134,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 家长通知发送 worker/外部渠道：仅保留 outbox/readback 验收；启用另定授权和渠道。
 - EOU 新模型、DuplexModel、expressive/抢跑；ESP-IDF/ESP-SR/upstream 整体升级；老人故事册/人物复刻、年轻人潮玩和最终外形均不进入当前队列。
 
-- 2026-09-20：F1/F2 已按组件发布上线（tag `20260920-f1f2-owner-silence-and-barge`，收据与回滚镜像见 HANDOFF）。下一步是设备上的 F1/F2 行为复验（问答 + 打断序列），以及在修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频。
+- F1/F2 已发布（tag `20260920-f1f2-owner-silence-and-barge`）并经 2026-09-21 设备窗口实机复验通过；修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频仍开放。
 
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消"agent 上报历史冻结 tag"的临时对齐；与预构建镜像入口一并作为 P1-01 输入。
 
@@ -156,6 +144,39 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - R-20260918-01/02 不改变当前桌面语音终端、学生优先、半双工和 P0 安全/TTS 优先级；只有独立验证的交付、效果、价格和长期可用证据出现时再重评硬件与市场定位。
 - R-20260921-01 启元 Q1/T1 已于 2026-09-20 正式发售：Q1/T1 标准版均 19999 元，Q1 探索版 26999 元、T1 Pro 29999 元；10 月 1 日起按订单发货；Q1 约 88cm 可折叠人形，T1 轮足/四足切换，接入腾讯云 WorkBuddy（新浪科技 2026-09-20 https://finance.sina.com.cn/jjxw/2026-09-20/doc-inisnhca6711656.shtml ；凤凰网等同日报道）。结论：强化 R-20260918-01 反定位——价位与具身形态均非 ESP-VoCat 桌面语音终端赛道；不新增 P 项，不改学生优先 / interrupt_assist 上限 / P0-03·P0-04 优先级。重评触发：真实用户开箱与长期留存一手证据，或桌面语音价位带出现可比交付。同日核对：风峦桌面伴学仍无样机/开箱实锤（公开仍称约 11 月前首代样机、约 6000 元），维持 R-20260918-02；LiveKit Agents 上游仍 1.8.2（无 1.8.3）；VoiceMem 仍 0.2.2 且 agents<1.8 不兼容；不跟踪本地 FunASR PyPI；U1 仍无个人签收/开箱实锤。
 - R-20260921-02 无动作/延期登记：ESP-SR 2.5.4 已在 Espressif Component Registry 发布（changelog 增 wn10_* / nsnet3；https://components.espressif.com/components/espressif/esp-sr/versions/2.5.4/changelog ）。按「暂缓」：ESP-IDF/ESP-SR/upstream 整体升级不自动扩张；仅登记待日后与 xiaozhi overlay / 茉莉唤醒词一并评估，不新开 P 项，也不据此宣称 AEC/全双工改善。xiaozhi #2036 仍 open（末活跃 2026-07-07）；LiveKit Agents 仍 1.8.2；VoiceMem 0.2.2 仍 agents<1.8 不兼容；Bubbo 1 预定已在既有雷达内、不重复开项；《拟人化互动办法》已生效约束继续由既有 P0-04/P2-03 承接，不另开合规 P。
+
+---
+
+## 2026-09-21 市场竞品复查（融资叙事与任务修正依据）
+
+数据来源均为 2026 年公开报道与行业报告（界面新闻、洛图科技、工信部 CSIP、深企投、母婴行业观察等），关键数字如下。
+
+**AI 玩具/陪伴硬件（与本项目同赛道，最热）**
+- 市场规模：工信部口径 2025 年 290 亿元、2026 年预计 342 亿元；中商预测 2030 年破千亿。2025 年至今赛道融资超 50 起、累计超 200 亿元。
+- 销量实证：BubblePal（跃然创新 Haivivi）11 个月售出 25 万台 @399 元、销售额破亿，两系列累计破 30 万台，2026-02 完成 A+ 轮（达晨/啟赋/拓邦/尚颀）；FoloToy 2026-01 Pre-A 数千万（深创投/火火兔），2026Q1 销量追平去年全年；珞博智能芙崽累计近 30 万台、活跃用户日均对话超 40 分钟、主打长期记忆，亿元级 Pre-A（红杉/金沙江加码）；Ropet 90 天留存超 80%。
+- 风险实证（同等重要）：电商 7 天无理由退货率普遍 30-40%（部分直播间 80%）；72% 家长反馈聊天机械、答非所问；响应延迟普遍 2-3 秒；嘈杂环境识别率不足 65%；**"宣传的长期记忆做不到"是高频退货理由**；90% 产品为"通用大模型+毛绒外壳"，行业已出现"AI 玩具没有护城河"的公开质疑；珞博创始人预测 2026 年 90% AI 陪伴硬件将被淘汰；主流价格带已降至 500 元以下，100-200 元成基本盘。
+
+**学习机（学生线参照系，不进入）**
+- 2026H1 销量 228.7 万台（同比 -14.2%），前四（作业帮/学而思/科大讯飞/小猿）合计 79.4%，中小品牌出清；家长首选付费因素是"AI 教学深度"（76.3%），主力价位 2000-2999 元。
+- 结论：学习机=提分工具红海，验证"不做学习机、做陪伴"的品类选择；但"陪伴"本身留存难（见上退货率），差异化必须落在"真的记得住"。
+
+**儿童手表（家长预算占位者）**
+- 2025 年线上销量 1122 万台，小天才份额约 30%、销额份额 51.7%，均价约 492 元；刚需=定位/通话。
+- 含义：家长每年为孩子硬件的预算已被手表（约 500 元）+学习机（2000+ 元）双重占位，Memoria 998 元单硬件定价缺乏价格带支撑，需重估（→ DEMO-10）。
+
+**养老机器人（老年线，政策与支付方均已验证）**
+- 工信部 CSIP《智能养老服务机器人发展研究报告（2026 版）》：2026 年市场规模破百亿（2025 约 91 亿 → 2026 约 104 亿）；行业共识"2026=养老机器人元年"。
+- 支付路径三条均被验证：机构采购（广西采购 35 台万元级孚宝 KZ100）、政府试点补贴（中央财政 11.6 亿失能补贴、工信部 2025-2027 试点要求居家类≥200 户/200 台）、家庭自费=子女购买+轻订阅（萤石 RK3 2499 元；心言 Bubbo 1 已于 2026-09-15 京东开订）。
+- 用户刚需排序（媒体报道实证）：提醒吃药/作息、跌倒/安全监护、视频通话 > 聊天解闷；但行业报告把"长期记忆建模"列为竞争焦点转向——Memoria 的记忆能力恰是养老赛道下半场门票。
+
+**对本计划的 5 条修正（已落入下方任务）**
+1. 融资叙事主轴从"会记住孩子的 AI 学伴"升级为"**全行业都在喊记忆、只有我们现场演示记得住**"：退货率高企的第一原因是"宣传的长期记忆做不到"，DEMO-02 固定集 7 连跑 1.0 是直接反证。DEMO-05/06 视频与 Q&A 已按此改写。
+2. 新增 DEMO-09：竞品实测（BubblePal/CocoMate、芙崽、FoloToy、Ropet 各一台，预算 ≤2000 元），输出对比矩阵进 BP 竞争页。
+3. 新增 DEMO-10：定价与单位经济重估（998 元档缺乏价格带证据；候选 599-699 硬件+首年订阅捆绑，或 998 含两年订阅），商务建模、技术给 BOM 与云成本实测。
+4. 响应延迟升级为可量化卖点：行业普遍 2-3 秒，P0-03 的 ACK→正文 <1.5s 目标若达成即为正面碾压数据，设备验收报告直接进 BP。
+5. 老年线从"备选"升为"并行第二曲线"：支付方=子女，Demo 叙事加"子女视角付费理由"；"提醒吃药/作息"作为老年 Demo 守门话术（话术级演示即可，不新建工程项，不开发真实提醒调度）。
+
+合规提示（原有约束不变）：《拟人化互动办法》禁止向未成年人提供虚拟亲属/伴侣类服务，BP 与视频话术统一用"学伴/记忆助手"，避免"虚拟伙伴/电子朋友/AI 伴侣"表述；小天才已多次因内容问题被约谈整改，儿童内容合规是尽调必查项，补充文档 Q9 的合规路线图保持有效。
 
 ---
 
@@ -233,7 +254,7 @@ P2-01/02/04/05/06 所有P2质量增强项：
 3. 补3s/5s/8s延迟续问边界测试
 4. 时间：2周
 
-**2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复前不可测，修复方向需设计决策。**下一步**：缺陷 A 设计与修复 → 重跑本窗口（含精确格 + 30 分钟长稳）。
+**2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复发布前不可测；**方向一已修复入库（`b41ff7a`，全门禁绿）**。**下一步**：组件发布 → 设备复测（含精确格 + 30 分钟长稳）后关闭缺陷 A。
 
 #### [ ] DEMO-02 跨会话记忆召回（学生场景3个+老年场景3个）
 
@@ -350,6 +371,7 @@ P2-01/02/04/05/06 所有P2质量增强项：
 50-80秒：技术壁垒说明
   - 画面：记忆召回可视化（时间线+关联图）
   - 旁白："不同于普通智能音箱，Memoria能记住一周前、一个月前的对话"
+  - 2026-09-21 复查新增：插入 5 秒行业对照——"市面上 90% 的 AI 玩具号称有记忆，电商退货率却高达 30-40%；这是 Memoria 连续 7 次实测全部召回的录像"，素材直接用 DEMO-02 固定集实测录屏
 
 80-110秒：市场价值
   - 数据展示：2.8亿双职工家庭儿童，陪伴缺口
@@ -375,10 +397,11 @@ P2-01/02/04/05/06 所有P2质量增强项：
   - 老人说"我今天去公园了" → Memoria关联记忆
   - 老人讲人生故事 → Memoria帮忙留存
   - 子女在小程序看到"本周妈妈的故事"
+  - 2026-09-21 复查新增（支付方视角）：结尾 10 秒给子女镜头——"妈， Memoria 说你这周讲了三个年轻时的故事，周末我回来想听第三个"；并加一句守门话术演示（Memoria 提醒"奶奶，该吃药了"）——行业实证刚需=提醒/看护，聊天是留存而非购买理由（话术级演示即可，不开发真实提醒调度）
 
 市场价值：
-  - 2.8亿老人，独居/空巢比例高
-  - 银发经济，客单价可达1500-3000元
+  - 2.8亿老人，独居/空巢比例高；2026 养老服务机器人市场破百亿（工信部 CSIP），中央财政 11.6 亿失能补贴试点，"养老机器人元年"叙事成立
+  - 支付方=子女（C 端路径已被萤石 RK3、Bubbo 1 等验证），客单价可达1500-3000元
 ```
 
 **时间**：1周（复用学生版框架）
@@ -412,6 +435,39 @@ P2-01/02/04/05/06 所有P2质量增强项：
 **2026-09-21 技术部分输出（DRAFT v1）**：`outputs/acceptance/run-20260921-demo07-tech-materials/DEMO-07-tech-materials.md`（outputs/ 不入库，商务转 PPT/Excel 用）。相对原提纲的实质修正：① 架构图按生产实跑形态（Go edge→bridge→agent→control-api→小程序，存储四件套）重画；② 壁垒页用线上实测证据（固定集 7 连跑 1.0、确定性兜底、发布/隐私门收据）替换"伪代码+话术示例"；③ **成本表只报实测 token 量（记忆提取轮 input≈5129/output≈1400），不编"8 元/月"单价**——旧估算无压测依据，BP 沿用会被尽调打回，单价待商务按日活建模；Q&A 同步为"固定集 1.0 + 分层衰减待测"的诚实口径。待商务合入 BP 后标 DONE。
 
 **时间**：3天（市场商务负责商业部分，技术只做技术部分）
+
+#### [ ] DEMO-09 竞品实测对比矩阵（2026-09-21 市场复查新增）
+
+**目的**：用一手实测数据支撑 BP 竞争页与路演"同质化/护城河"问答，避免引用二手数据被尽调推翻。
+
+**采购清单**（预算 ≤2000 元）：
+- BubblePal 或 CocoMate（跃然创新，399-599 元档，品类销量第一）
+- 芙崽 Fuzozo（珞博智能，主打长期记忆，日均对话 40 分钟）
+- FoloToy 向日葵或 AI 熊猫（258-398 元档）
+- Ropet 肉派派（桌面 AI 宠物，90 天留存 80%，桌面形态直接对标）
+
+**实测矩阵**（与 Memoria 同条件对照）：
+- 跨会话记忆：统一跑 DEMO-02 的 6 个场景脚本，隔 1/3/7 天验证召回
+- 响应延迟：唤醒→首字出声，各测 20 次取中位数（行业普遍 2-3s，Memoria 目标 <1.5s）
+- 嘈杂环境识别率：电视背景音下 20 条指令
+- 断网降级行为
+- 家长端能力：对话记录/摘要/管控
+- 输出：1 页对比表（进 BP 竞争页）+ 全部原始记录（进尽调数据室）
+
+**时间**：Week 3-4（提前启动，不等 Phase 2），1 周完成；技术执行，商务协助采购。
+
+#### [ ] DEMO-10 定价与单位经济重估（2026-09-21 市场复查新增）
+
+**背景**：原 BP 定价 998 元+99 元/年缺乏价格带证据——AI 玩具主流价格带已降至 500 元以下，儿童手表均价约 492 元，BubblePal 399 元卖出 25 万台；998 元已接近小度智能屏与小天才中高端，但没有同等品牌与渠道支撑。
+
+**候选方案**（商务建模，技术给实测输入）：
+- A：硬件 599-699 元 + 首年订阅 99 元捆绑（贴 BubblePal 爆发价位上沿，靠桌面圆屏形态溢价）
+- B：硬件 998 元含两年订阅（维持高客单叙事，赌差异化）
+- C：双 SKU（基础版无屏 399-499 走量 + 圆屏版 799-899 利润）——会拉宽供应链，融资前不建议，仅作 BP 远期选项
+
+**技术输入**：BOM 实测复核（当前 300 元口径需更新屏幕/外壳最新报价）、单用户云成本实测（DEMO-07 已出 token 量，待商务按日活建模）、退货率敏感性（按行业 30-40% 做悲观档，证明悲观情景下单位经济仍成立）。
+
+**时间**：Week 6 前出结论，直接写入 BP 商业模式页。
 
 ---
 
@@ -499,6 +555,8 @@ Week 11-15：
 - ✅ **功能聚焦**：只做6个跨会话记忆场景，冻结安全链/多主体/声音克隆/全双工
 
 ### 二、市场竞争环境分析
+
+> 定量数据已按 2026-09-21 市场复查刷新（见上方「2026-09-21 市场竞品复查」节，含来源）；本节 2.1-2.3 的定性结论保留，凡与复查节冲突的数字以复查节为准。
 
 #### 2.1 学生市场（当前主攻方向）
 
@@ -1157,6 +1215,23 @@ Week 15：签署投资协议
   - 让市场商务主讲商业部分，技术只讲产品Demo
   - 准备小抄：把投资人必问的10个问题+标准答案写下来
 
+#### 6.4 赛道风险（2026-09-21 市场复查新增）
+
+**风险9：AI 玩具赛道泡沫在融资窗口前破裂**
+- 概率：中（退货率 30-40%、同质化严重、"没有护城河"的媒体质疑在放大）
+- 影响：高（投资人对整个赛道转冷，融资窗口关闭）
+- 应对：
+  - 叙事上与"AI 玩具"切割：Memoria 定位"记忆型学伴/家庭记忆终端"，不蹭玩具热度；BP 可引用珞博创始人"90% 将被淘汰"的预测，并用实测数据自证属于活下来的 10%
+  - 时间缓冲：3 个月冲刺计划不变；若 Week 11 赛道明显转冷，老年线（养老机器人元年+政府补贴叙事）独立成融资故事，启动备选 B 方案
+
+**风险10：内容安全/未成年人合规事件波及整个赛道**
+- 概率：低-中（小天才已多次被约谈整改；《拟人化互动办法》已生效）
+- 影响：高（赛道性监管收紧）
+- 应对：
+  - Demo 话术统一"学伴/记忆助手"，禁用"虚拟伙伴/电子朋友/AI 伴侣"类表述
+  - 情绪只做 caring 单向映射、不镜像负面情绪（既有工程约束）——在 BP 中同时作为合规卖点呈现
+  - P0-04 虽冻结开发，BP 中保留完整合规路线图（补充文档 Q9），证明知道"钱到位后第一步做什么"
+
 ### 七、调整后的执行优先级（替代原TODOLIST前半部分）
 
 基于1人技术+无资金+3个月冲刺融资的现实约束，重新定义执行优先级：
@@ -1314,6 +1389,19 @@ A: 欢迎大厂入场，证明我们赛道是对的
    1. 抢时间窗口：大厂决策慢，我们先占领用户心智
    2. 做细分：大厂做大而全，我们只做儿童陪伴这一个场景，做深做透
    3. 走渠道：大厂走线上，我们走社区/学校/线下体验店，建立壁垒
+
+Q11: AI玩具赛道退货率30-40%，公开质疑"没有护城河"，你们凭什么不被淘汰？（2026-09-21 复查新增）
+A: 先认数据，再逐条反证：
+   1. 退货主因是"宣传的长期记忆做不到"（多家媒体实测口径）——这恰是我们的主攻点：固定测试集连续 7 次全量召回，现场可演示、可复测；
+   2. 同质化产品响应延迟普遍 2-3 秒，我们的 ACK→正文目标 <1.5 秒（以设备验收数据为准，不口头承诺）；
+   3. 留存机制不同：每日家长摘要让家长成为共同用户，硬件吃灰率下降有产品机制保障，不靠孩子一时新鲜；
+   4. 我们有自购竞品实测对比矩阵（DEMO-09），欢迎尽调复测。
+
+Q12: 家长已经买了小天才手表和学习机，凭什么再买你？（2026-09-21 复查新增）
+A: 三个产品解决三个不同问题：
+   1. 手表=安全（定位/通话，均价约 492 元），学习机=提分（AI 老师，2000-3000 元），Memoria=陪伴（情感+记忆）——家长为安全和提分付了费，"孩子一个人在家孤不孤独"这笔账还没人收；
+   2. 价位带错开：Memoria 定价落在两者之间（DEMO-10 重估后确定），不与任一方正面竞争；
+   3. 手表和学习机都是"孩子用、家长管"，Memoria 的家长端摘要能生成亲子新话题（"今天他和 Memoria 聊了数学考试"），是增量场景而非替代。
 ```
 
 ---
