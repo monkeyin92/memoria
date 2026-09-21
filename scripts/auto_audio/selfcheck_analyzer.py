@@ -985,6 +985,13 @@ def follow_up_checks() -> None:
           and driver.follow_up_gate_verdict(2, {"wake_detected": True})
           == "follow_up_requires_continuation"
           and driver.follow_up_gate_verdict(3, {}) == "follow_up_requires_continuation")
+    # A question the run refused to play (or never reached) must leave its cell uncovered
+    # rather than counted: this is the shape the refusal paths hand to the grid.
+    never_played = driver.follow_up_grid([3.0, 5.0, 8.0], [])
+    check("a delay whose question never played is uncovered, never covered",
+          never_played["covered_delays_s"] == [] and never_played["early_delays_s"] == []
+          and never_played["late_delays_s"] == []
+          and never_played["uncovered_delays_s"] == [3.0, 5.0, 8.0], never_played)
     default_run = driver.follow_up_grid([3.0, 5.0, 8.0], [
         {"follow_up": {"planned_s": planned,
                        "actual_s": planned + 0.1}}

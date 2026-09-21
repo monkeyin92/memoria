@@ -2217,7 +2217,6 @@ def main(argv: list[str] | None = None) -> int:
                     f"{planned_follow_up_delay(follow_up_delays, position):g}s follow-up was "
                     "due, so it is not the same-session continuation the grid measures"
                 )
-                results["follow_up_grid"] = follow_up_grid(follow_up_delays, results["turns"])
                 results["aborted_before_turn"] = position
                 aborted = continuation_refusal
                 break
@@ -2246,8 +2245,6 @@ def main(argv: list[str] | None = None) -> int:
                             f"the device left the addressable state ({state}) while waiting "
                             f"the {delay_plan:g}s follow-up delay before question {position}"
                         )
-                        results["follow_up_grid"] = follow_up_grid(follow_up_delays,
-                                                                   results["turns"])
                         results["aborted_before_turn"] = position
                         aborted = "follow_up_lost_addressable_state"
                         break
@@ -2271,14 +2268,6 @@ def main(argv: list[str] | None = None) -> int:
         results["bound_session"] = session.binding
         results["bound_stream_epoch"] = session.stream_epoch
         results["binding_source"] = session.binding_source
-        results["follow_up_grid"] = follow_up_grid(follow_up_delays, results["turns"])
-        if results["follow_up_grid"]["uncovered_delays_s"]:
-            print(json.dumps({
-                "follow_up_grid": results["follow_up_grid"],
-                "note": "this run did not exercise every planned delay; give each delay its "
-                        "own follow-up question (e.g. --questions q1 q2 q3 q4 "
-                        "--follow-up-delays 3,5,8) before claiming the whole grid",
-            }, ensure_ascii=False))
     except Stopped as stop:
         aborted = str(stop)
         results["aborted_by"] = aborted
@@ -2290,6 +2279,17 @@ def main(argv: list[str] | None = None) -> int:
         ignore_stop_handlers()
         aborted = aborted or abort_reason(results)
         results["aborted_by"] = aborted
+        # Single writer for the grid, on *every* exit path: a run that a stop, the global
+        # deadline or a refused follow-up unwound still has to say which delay cells were
+        # really exercised, instead of leaving that to be inferred from the command line.
+        results["follow_up_grid"] = follow_up_grid(follow_up_delays, results.get("turns") or [])
+        if results["follow_up_grid"]["uncovered_delays_s"]:
+            print(json.dumps({
+                "follow_up_grid": results["follow_up_grid"],
+                "note": "this run did not exercise every planned delay; give each delay its "
+                        "own follow-up question (e.g. --questions q1 q2 q3 q4 "
+                        "--follow-up-delays 3,5,8) before claiming the whole grid",
+            }, ensure_ascii=False))
         cleanup(capture_proc, recorders, events, results, run_dir, capture_log,
                 budget_s=args.cleanup_budget_s)
     return 3 if aborted else 0
