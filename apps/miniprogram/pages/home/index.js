@@ -51,9 +51,11 @@ function emptyDashboard() {
     heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
     heroFoot: "在设备上使用，手机不录音",
     pendingCount: 0,
+    todayCount: 0,
     todayMeta: "",
     todayTitle: "",
     todayOverview: "",
+    dailySummaryText: "",
   };
 }
 
@@ -118,6 +120,18 @@ Page({
       return;
     }
     this.loadHome().finally(() => wx.stopPullDownRefresh());
+  },
+
+  /*
+   * 一键分享：只把已经过门禁加载的每日摘要文案带出去；未登录或没有摘要时
+   * 分享一张不含任何私人内容的通用卡片。
+   */
+  onShareAppMessage() {
+    const summary = this.data.authenticated ? this.data.dailySummaryText : "";
+    return {
+      title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
+      path: "/pages/home/index",
+    };
   },
 
   _enterGuestState() {
@@ -368,30 +382,50 @@ Page({
   async _loadToday(identity) {
     const empty = {
       pendingCount: 0,
+      todayCount: 0,
       todayMeta: "",
       todayTitle: "",
       todayOverview: "",
+      dailySummaryText: "",
     };
     if (!identity) return empty;
     const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
     if (!gate.allowed) return empty;
-    const [daysResult, reviewResult] = await Promise.all([
+    const [daysResult, reviewResult, sessionsResult] = await Promise.all([
       api.getMemoryDays(identity.user_id, 7),
       api.getConversationReview(),
+      // 会话列表是可选增强：拿不到就退回 day 的 message_count，不能让首页
+      // 因为一个可选接口失败而整体空白。
+      typeof api.getConversationSessions === "function"
+        ? api.getConversationSessions(20).catch(() => null)
+        : Promise.resolve(null),
     ]);
     const today = todayKey();
     const day = (daysResult.items || []).find((item) => (item.day || item.date) === today);
-    const count = day?.message_count || 0;
+    // 「今日对话次数」以当前主体的会话数为准；会话列表不可用时退回服务端
+    // 日计数。两者都在同一道 MemoryRecallPrivate 门禁之后才读取。
+    const sessionsToday = ((sessionsResult && sessionsResult.items) || []).filter(
+      (item) => item.occurred_at && todayKey(new Date(item.occurred_at)) === today,
+    ).length;
+    const count = sessionsToday || day?.message_count || 0;
     const pending = (reviewResult?.memory_candidates || []).length;
     const overview =
       day?.summary?.overview || day?.overview || day?.summary_text || "";
     const title = day?.summary?.title || day?.title || "";
     if (!count && !pending) return empty;
+    // 每日摘要只组合「次数 + 服务端已生成的回顾」，不生成情绪、不编造事实。
+    const dailySummaryText = count
+      ? overview
+        ? `今天和 Memoria 聊了 ${count} 次。${overview}`
+        : `今天和 Memoria 聊了 ${count} 次。回顾还没生成，可在回顾页生成。`
+      : "";
     return {
       pendingCount: pending,
-      todayMeta: count ? `今天 · ${count} 段对话` : "今天",
+      todayCount: count,
+      todayMeta: count ? `今天 · ${count} 次对话` : "今天",
       todayTitle: title || (pending ? "有内容等你确认" : ""),
       todayOverview: overview || "具体内容在回顾里。",
+      dailySummaryText,
     };
   },
 });

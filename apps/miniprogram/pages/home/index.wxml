@@ -107,17 +107,20 @@
       <view wx:else class="notice">需要确认的内容都处理好了。今天不用再做什么。</view>
 
       <view class="section-head">
-        <text class="section-head-title">最近的回顾</text>
+        <text class="section-head-title">每日摘要</text>
         <text class="text-button" bindtap="openMemory">全部 ›</text>
       </view>
-      <view wx:if="{{todayTitle}}" class="l2-card home-recap" bindtap="openMemory">
+      <view wx:if="{{dailySummaryText || todayTitle}}" class="l2-card home-recap">
         <view class="home-recap-meta">
           <text class="home-recap-time">{{todayMeta}}</text>
           <text class="pill pill-neutral">AI 整理</text>
         </view>
-        <text class="l2-card-title">{{todayTitle}}</text>
-        <text class="l2-card-sub">{{todayOverview}}</text>
-        <text class="section-link">打开这段回顾 ›</text>
+        <text class="l2-card-title">{{todayTitle || '今日对话'}}</text>
+        <text class="l2-card-sub">{{dailySummaryText || todayOverview}}</text>
+        <view class="button-row">
+          <button class="secondary-button btn-sm" open-type="share">分享给家人</button>
+          <button class="secondary-button secondary-button-ghost btn-sm" bindtap="openMemory">查看回顾</button>
+        </view>
       </view>
       <view wx:else class="notice">今天还没有可回顾的内容。在设备旁唤醒「茉莉」后，再回来查看。</view>
     </block>

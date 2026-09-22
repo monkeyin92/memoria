@@ -4109,6 +4109,7 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
                     "session_id": session["session_id"],
                     "occurred_at": occurred_at,
                     "turn_count": 1,
+                    "preview": "明天南京天气如何？",
                 }
             ]
         }

@@ -162,7 +162,14 @@ test("conversation sessions are displayed without hiding the daily review when u
         confirmed_memories: [],
       }),
       getConversationSessions: async () => ({
-        items: [{ session_id: "session/1", occurred_at: "2026-09-22T10:20:00Z", turn_count: 2 }],
+        items: [
+          {
+            session_id: "session/1",
+            occurred_at: "2026-09-22T10:20:00Z",
+            turn_count: 2,
+            preview: "明天记得去公园",
+          },
+        ],
       }),
       getConversationHistory: async (sessionId) => {
         historySession = sessionId;
@@ -180,6 +187,7 @@ test("conversation sessions are displayed without hiding the daily review when u
           occurred_at: "2026-09-22T10:20:00Z",
           occurred_label: page._formatConversationTime("2026-09-22T10:20:00Z"),
           turn_count: 2,
+          preview: "明天记得去公园",
         },
       ]);
       await page.openConversation({

@@ -172,6 +172,21 @@ Page({
   },
 
   /*
+   * 一键分享：优先用分享按钮上 data-date 指定的日期，其次用当前选中日期。
+   * 只分享已经过门禁加载的回顾标题；未登录或没有该日回顾时退回通用文案。
+   */
+  onShareAppMessage(options) {
+    const buttonDate = options?.from === "button" ? options?.target?.dataset?.date : "";
+    const date = buttonDate || this.data.selectedDate;
+    const day = (this.data.days || []).find((item) => item.date === date);
+    const summary = this.data.authenticated && day ? `Memoria 回顾 · ${day.title}` : "";
+    return {
+      title: (summary || "Memoria · 每天的对话回顾").slice(0, 80),
+      path: "/pages/memory/index",
+    };
+  },
+
+  /*
    * 私人回顾统一加载（PR-19）：days 与 conversation review 共用同一道
    * MemoryRecallPrivate Runtime Profile 门禁和 authEpoch 晚到保护。
    * 门禁拒绝或加载失败时清空全部私人分区，不展示陈旧或越权投影。
@@ -226,6 +241,7 @@ Page({
           occurred_at: item.occurred_at || "",
           occurred_label: this._formatConversationTime(item.occurred_at),
           turn_count: item.turn_count || 0,
+          preview: item.preview || "",
         })),
         conversationSessionsUnavailable,
         selectedConversationSessionId: "",

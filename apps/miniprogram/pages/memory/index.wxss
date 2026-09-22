@@ -2,6 +2,10 @@
   margin-top: 28rpx;
 }
 
+.memory-share {
+  margin-top: 16rpx;
+}
+
 .memory-day {
   margin-top: 20rpx;
 }

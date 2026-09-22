@@ -2791,12 +2791,20 @@ async def conversation_sessions(
                     "session_id": event.session_id,
                     "occurred_at": event.occurred_at,
                     "turns": set(),
+                    "preview": "",
                 },
             )
             if event.occurred_at > session["occurred_at"]:
                 session["occurred_at"] = event.occurred_at
             if event.turn_id is not None and event.generation_id is not None:
                 session["turns"].add((event.turn_id, event.generation_id))
+            # Events arrive newest-first, so the first eligible utterance of a
+            # session becomes its list preview. Only already-eligible text is
+            # reused; nothing is generated or summarised server-side.
+            if not session["preview"]:
+                text = eligible.get("text")
+                if isinstance(text, str) and text.strip():
+                    session["preview"] = text.strip()[:80]
         oldest = min(event.occurred_at for event in events)
         next_before = oldest - timedelta(microseconds=1)
         if next_before >= occurred_before:
@@ -2809,6 +2817,7 @@ async def conversation_sessions(
                 "session_id": item["session_id"],
                 "occurred_at": item["occurred_at"].isoformat(),
                 "turn_count": len(item["turns"]),
+                "preview": item["preview"],
             }
             for item in sessions.values()
         ),

@@ -18,6 +18,7 @@
 
     <block wx:elif="{{memoryTab === 'reviews'}}">
       <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
+      <button class="secondary-button memory-share" open-type="share" data-date="{{selectedDate}}">分享选中日期的回顾</button>
       <view wx:if="{{!days.length}}" class="l2-card memory-empty">
         <face-badge role="mianmian" size="xl" breathe="{{true}}"></face-badge>
         <text class="l2-card-title">还没有可回顾的内容</text>
@@ -69,6 +70,7 @@
             <text class="l2-card-title">{{item.occurred_label}}</text>
             <text class="pill pill-neutral">{{item.turn_count}} 轮</text>
           </view>
+          <text wx:if="{{item.preview}}" class="l2-card-sub">{{item.preview}}</text>
           <text class="section-link">查看对话详情 ›</text>
         </view>
       </view>

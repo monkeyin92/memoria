@@ -1,12 +1,15 @@
 # Memoria 当前交接
 
-## 2026-09-22 DEMO-03 只读对话子集（待提交）
+## 2026-09-22 DEMO-03 家长端简化版（代码范围完成，待设备/三端验收）
 
-- 本轮仅实现融资 Demo 的安全只读子集：`GET /v1/archive/conversation-sessions` 返回当前认证主体最近合格会话；小程序回顾页展示时间/轮数并可展开 owner/assistant 配对详情。
-- 后端沿用 `conversation_review` capability、subject-scoped archive 查询与 memory retention 门禁；不接受客户端 `account_id`/`subject_id`，不展示 guest、他主体、ephemeral 或未实际听到的内容。
-- archive evidence window 增加受控 newest-first 读取与分页，避免单一高频旧会话占满事件窗口；小程序处理列表故障、登出及 authEpoch 迟到详情响应，近似播放记录保持显式标记。
-- 本轮验证：小程序全量 `232 passed`（另以 `TZ=UTC` 跑回顾测试 `11 passed`）；archive/control-api 相关 Python 测试通过；Ruff、strict mypy（4 个受影响 Python 文件）、编译和 `git diff --check` 通过。
-- DEMO-03 整体仍未完成：TODOLIST 中首页今日对话次数、每日摘要卡片、一键分享到微信尚未实现；未部署、未连接生产或设备。
+- 第一批 `7dbaaf1`（已推送）：`GET /v1/archive/conversation-sessions` 返回当前认证主体最近合格会话；回顾页列表 + owner/assistant 配对详情；archive evidence window 增加受控 newest-first 与分页，避免单个高频旧会话占满窗口。
+- 第二批（紧随 `7dbaaf1`）补齐 DEMO-03 剩余三项 + 列表摘要：
+  - **首页今日对话次数与每日摘要卡**：`_loadToday` 在 `MemoryRecallPrivate` 门禁后并读 days/review/会话列表（会话列表失败降级回日计数），显示「今天 · N 次对话」+ 服务端回顾文案；无回顾时如实提示未生成，**不编造情绪/姓名**。
+  - **列表摘要预览**：`conversation-sessions` 新增 subject-scoped `preview`（只复用已合格文本、截断 80 字，服务端不生成摘要），列表卡片展示。
+  - **一键分享**：首页「分享给家人」、回顾页「分享选中日期的回顾」走 `onShareAppMessage`（按钮 `data-date` 优先，其次选中日期）；只带已过门禁加载的摘要，未登录/无该日回顾退回通用文案，不带出私人内容。
+- 边界：不物理删除人格切换/声音克隆/成员管理/guardian 页面——与 Phase 0「代码保留、冻结」一致，Demo 走首页/回顾路径。
+- 验证：小程序全量 `238 passed`（`TZ=UTC`）；`services/control_api/tests/test_archive{,_subject_scope}_api.py` 全通过（含会话列表资格/主体/preview 断言）；Ruff、strict mypy、`py_compile`、`git diff --check` 通过。上一批收据：小程序 232 passed、回顾测试 11 passed。
+- **未完成/未做**：微信开发者工具与真机三端验收、体验版上传（需授权）；未部署、未连接生产或设备。TODOLIST DEMO-03 因此保持未勾选。
 
 更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移 `00dc059`/`7f589f0`，加本轮 `d2318e4` 读路径 PG 侧对等与 PG 全 saga 删除验证，CI `35501188784` success）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
