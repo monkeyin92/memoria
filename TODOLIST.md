@@ -1,11 +1,13 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-21｜主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；本轮读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已发布上线（tag `20260921-defect-a-followup-endpoint`，生产 agent/bridge 切流 PASS）并真机复测核心判据通过（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，缺陷 A 子项关闭。
+更新于 2026-09-22｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；同时发现并临时处置 readiness 定时刷新失败（P1-09）与发布链三个缺口（P1-09/P1-01 输入）。此前主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已发布上线（tag `20260921-defect-a-followup-endpoint`，生产 agent/bridge 切流 PASS）并真机复测核心判据通过（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，缺陷 A 子项关闭。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
 enabled_release: 2a33a50  # tag 20260921-defect-a-followup-endpoint，2026-09-21 agent/bridge delta 切流（含缺陷 A 方向一 + P1-01 隐私门 env + silence-30）
+control_api_release: ee57ad4  # tag 20260922-demo03-control-review，2026-09-22 控制面可审计发布链切流 PASS（healthy / env-binds-ports 不变 / 13 容器未触碰），回滚点 memoria-control-api:rollback-20260922-demo03-control-review-pre-control
+control_api_release_lane: 可审计链已用通一次（`scripts/deploy_control_component.sh` 的 cutover 块）；缺口见 P1-09
 frozen_candidate: memoria-agent:b668960  # 仅本地构建验收，未启用
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -57,6 +59,13 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 先只读刷新磁盘、归档增速/失败、现存 base backup/逻辑 dump 与所需 WAL 连续区间；旧容量预测不再复用。
 - 需用户决定并授权裁剪、停用 `archive_mode`（需重启）或手工阈值策略；不得按 mtime 删除或清理 `pg_wal` 代替归档保留。
 - 完成条件：保护集合、容量/恢复影响、执行证据和后续责任明确，保留恢复目标可验证。
+
+### [ ] P1-09 修复 readiness 定时刷新失败与发布链两个缺口（2026-09-22 线上发现）
+
+- **缺陷（已复现，非切流引入）**：`memoria-readiness-refresh.timer`（每 12h）自 2026-09-22 00:08 CST 起持续失败（systemd `status=1/FAILURE`，restart counter 3 后放弃），原因是 `/opt/memoria/current/scripts/refresh_readiness.sh` 只 `export MEMORIA_RELEASE_TAG`，而 09-21 的 agent 组件切流把 agent 的 base 换成仓库快照（`/opt/memoria/releases/20260921-defect-a-base/docker-compose.production.yml`），该 base 对 `speaker-model.build.args.MEMORIA_RELEASE_COMMIT` 用 `:?` → `docker compose config --format json` 直接报错、stdout 非 JSON → 脚本内联解析抛 `JSONDecodeError`。后果：`readiness_evidence` 中 `20260901-0945-wake-word-whitelist` 打点停在 2026-09-21T04:05Z，超过 `READINESS_GATE_TTL_S=86400` 后全栈 `/health/ready` 变 `not_ready`（core 12 项与 agent 均 ready，仅 `smokes: expired`）。
+- 临时处置（已完成，收据 `outputs/acceptance/run-20260922-demo03-deploy/readiness-refresh.txt`）：以 `MEMORIA_RELEASE_TAG`+`MEMORIA_RELEASE_COMMIT` 显式导出运行同一脚本 → livekit/provider/verify_env 全 PASS、`readiness mark OK`、readiness 回到 200。**24h 后仍会过期**，未修前需人工刷新。
+- 待完成：① 脚本按 tag 的同一模式从 control 容器 env 解析并导出 `MEMORIA_RELEASE_COMMIT`（并加脚本级回归，覆盖「base 含 `:?` 变量」的渲染失败）；② 决定部署方式（改 `/opt/memoria/current` 冻结树需授权与备份，或随下次全量发布带入）；③ 让失败可见（timer 失败目前只有 journal，readiness 到期才发现）。
+- **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 同日节。
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 
@@ -299,6 +308,9 @@ P2-01/02/04/05/06 所有P2质量增强项：
 **2026-09-21 进展**：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**最终：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**已部署**：control-api `20260921-demo02-recall-net` 切流 PASS（含生产 PG authoritative schema 升级；回滚点 `rollback-…-pre-control`；线上容器固定集 4 连跑全 1.0，收据见 HANDOFF 同日部署节）。**仍未做**：minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）。
 
 #### [ ] DEMO-03 小程序家长端简化版
+
+**2026-09-22 线上切流与验证（控制面已部署）**：tag `20260922-demo03-control-review`（commit `ee57ad4`）经控制面可审计发布链切流 **PASS**——healthy、restarts=0、env/binds/ports/network 与切前逐项一致（sha 相同）、其余 13 容器未触碰、schema/RLS 门禁 PASS；回滚点 `memoria-control-api:rollback-20260922-demo03-control-review-pre-control`（=demo02 镜像 `sha256:dfd720e0…`）。线上核验：`/health/ready` 本地与外部 Host 路由均 200（12 项 core + agent heartbeat 全 ready）、新路由 `/v1/archive/conversation-sessions` 已挂载且未鉴权返回 401、镜像内含 `def conversation_sessions`/`newest_first` 与数据集；DEMO-02 固定集线上容器 2 连跑仍为 recall@5 1.0 / x_sess 1.0 / ext_recall 1.0 / comfort 1.0 / 双泄漏 0（`paraphrase_followup_recall_at_5=0.0` 与 demo02 基线一致）。收据 `outputs/acceptance/run-20260922-demo03-deploy/`。
+- **仍未验（故本项不勾选）**：真实登录/绑定/带鉴权的端到端会话列表调用、Android/其他视口、真机分享落地与「30 秒看到内容」真人计时、体验版上传（需授权）。线上证据只到「路由已挂载 + 门禁生效 + 无召回退步」，不等于三端验收。
 
 **2026-09-22 进展（代码范围已全部完成；单机型模拟器渲染已验）**：
 - ① 首页每日摘要卡：显示「今天 · N 次对话」——N 以当前认证主体的今日会话数为准（同一道 `MemoryRecallPrivate` 门禁后读取），会话列表不可用时退回服务端日计数；并拼接服务端已生成的回顾文案。无回顾时如实写「回顾还没生成，可在回顾页生成」，**不编造情绪、不猜使用人姓名**（与原示例「心情不错😊」的差异是有意的边界）。
