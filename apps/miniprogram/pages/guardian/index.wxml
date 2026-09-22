@@ -78,6 +78,7 @@
           <view class="row-copy">
             <text class="setting-name">{{consent.label}}</text>
             <text class="setting-desc">{{consent.description}}</text>
+            <text class="caption">{{consent.statusLabel}}</text>
           </view>
           <switch
             checked="{{consent.active}}"
@@ -89,6 +90,39 @@
             data-consent-id="{{consent.consentId}}"
             data-active="{{consent.active}}"
             bindchange="toggleConsent"
+          />
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{boundSubjects.length}}" class="section-head">
+      <text class="section-head-title">无账号孩子的授权</text>
+    </view>
+    <view wx:if="{{boundSubjects.length}}">
+      <view wx:for="{{boundSubjects}}" wx:key="personId" class="l2-card">
+        <view class="list-row">
+          <view class="row-copy">
+            <text class="row-title">{{item.displayName}}</text>
+            <text class="row-meta">按当前设备绑定管理，不按登录账号另查</text>
+          </view>
+        </view>
+        <text wx:if="{{item.loadError}}" class="error-text">{{item.loadError}}</text>
+        <view wx:for="{{item.consentRows}}" wx:for-item="consent" wx:key="kind" class="setting-row">
+          <view class="row-copy">
+            <text class="setting-name">{{consent.label}}</text>
+            <text class="setting-desc">{{consent.description}}</text>
+            <text class="caption">{{consent.statusLabel}}</text>
+          </view>
+          <switch
+            checked="{{consent.active}}"
+            color="#326e70"
+            disabled="{{working || !!item.loadError}}"
+            data-person-id="{{item.personId}}"
+            data-kind="{{consent.kind}}"
+            data-policy-version="{{consent.policyVersion}}"
+            data-consent-id="{{consent.consentId}}"
+            data-active="{{consent.active}}"
+            bindchange="togglePersonConsent"
           />
         </view>
       </view>

@@ -210,7 +210,11 @@ function errorFromResponse(response) {
                             ? "绑定码无效、已过期或年龄段不符合要求。"
                             : code === "guardian_consent_conflict"
                               ? "这项授权已经存在，请刷新后再试。"
-                              : code === "voice_clone_forbidden" || code === "voice_clone"
+                              : code === "guardian_binding_owner_required"
+                                ? "只有监护绑定发起人可以修改这项资料或授权。"
+                                : code === "identity_authority_unavailable"
+                                  ? "暂时无法确认身份资料，已按受限模式处理。"
+                                  : code === "voice_clone_forbidden" || code === "voice_clone"
                             ? "当前账号未开启声音复刻。"
                           : code === "minor_forbidden"
                                 ? "学生账号不开放这项能力。"
@@ -499,6 +503,47 @@ function revokeGuardianConsent({ linkId, consentId, idempotencyKey }) {
     `/v1/guardian/links/${encodeURIComponent(linkId)}/consents/${encodeURIComponent(consentId)}`,
     { method: "DELETE", idempotencyKey },
   );
+}
+
+/*
+ * 无账号孩子的 person consent（P0-04）。主体由 parent_for_child 绑定创建，
+ * 没有可确认的 guardian link。读写都按绑定 owner 走 person 端点，不按登录
+ * 账号另查一份同意。幂等键与 link 级授权相同；过期/撤销由服务端 active 决定。
+ */
+function getPersonConsents(personId) {
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(personId)}/consents`);
+}
+
+function grantPersonConsent({ personId, consentKind, policyVersion, idempotencyKey }) {
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(personId)}/consents`, {
+    method: "POST",
+    idempotencyKey,
+    data: { consent_kind: consentKind, policy_version: policyVersion },
+  });
+}
+
+function revokePersonConsent({ personId, consentId, idempotencyKey }) {
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(personId)}/consents/${encodeURIComponent(consentId)}`,
+    { method: "DELETE", idempotencyKey },
+  );
+}
+
+/*
+ * 建后年龄资料申报。只接受 unknown / under_14 / 14_17；adult 与 verified
+ * 不能由客户端申报。调用方是本人，或 ACTIVE parent_for_child 绑定 owner。
+ * 成功只回写申报结果，不改会话、不重签 Runtime Profile。
+ */
+const DECLARABLE_AGE_BANDS = Object.freeze(["unknown", "under_14", "14_17"]);
+
+function declareAgeEvidence(personId, ageBand) {
+  if (!DECLARABLE_AGE_BANDS.includes(ageBand)) {
+    return Promise.reject(new TypeError("年龄申报只接受未知、14 岁以下或 14 至 17 岁。"));
+  }
+  return rawRequest(`/v1/persons/${encodeURIComponent(personId)}/age-evidence`, {
+    method: "PATCH",
+    data: { age_band: ageBand },
+  });
 }
 
 function getGuardianNotifications() {
@@ -1211,6 +1256,11 @@ module.exports = {
   getGuardianConsents,
   grantGuardianConsent,
   revokeGuardianConsent,
+  readBindingManifest,
+  getPersonConsents,
+  grantPersonConsent,
+  revokePersonConsent,
+  declareAgeEvidence,
   getGuardianNotifications,
   getTutorLessons,
   updateProfile,

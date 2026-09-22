@@ -533,6 +533,317 @@ test("confirming without a usable session is rejected with an explainable messag
   assert.equal(activeSubjectCalls.length, 0);
 });
 
+function parentChildManifest() {
+  return canonicalManifest({
+    binding_id: "bd_1",
+    device_id: "dev_1",
+    declared_mode: "parent_for_child",
+    binding_version: 2,
+    account_owner_id: "person_owner",
+    device_admin_ids: ["person_owner"],
+    primary_subject_ids: ["person_child", "person_owner"],
+    guardian_ids: ["person_owner"],
+    roles: [
+      { person_id: "person_owner", role: "account_owner", permissions: [] },
+      { person_id: "person_owner", role: "guardian", permissions: [] },
+      { person_id: "person_child", role: "primary_subject", permissions: [] },
+    ],
+  });
+}
+
+test("ordinary parent_for_child can resolve and confirm with app_confirm", async () => {
+  activeSubjectCalls.length = 0;
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_child",
+    session_id: "ses_child",
+    session_epoch: 3,
+    active_subject_id: "person_owner",
+    subject_category: "adult",
+    age_band: "adult",
+    speaker_state: "confirmed",
+    service_mode: "adult_companion",
+    capabilities: ["chat"],
+    signature: "e".repeat(64),
+  });
+  resolutionPayload = {
+    resolution: "confirmation_required",
+    candidate_subjects: [
+      { person_id: "person_child", display_name: "小乐", confidence: 0.8 },
+    ],
+    temporary_service_mode: "student_minor",
+    allowed_confirmation_methods: ["app_confirm"],
+    runtime_profile_id: "rp_child",
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.canConfirmWithApp, true);
+  assert.equal(page.data.candidates.length, 1);
+  assert.equal(page.data.ageRows.length, 1);
+  assert.equal(page.data.ageRows[0].person_id, "person_child");
+  assert.deepEqual(
+    page.data.ageRows[0].options.map((option) => option.value),
+    ["unknown", "under_14", "14_17"],
+  );
+  assert.equal(page.data.ageRows[0].evidenceLabel, "未核验");
+  const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
+  assert.match(template, /申报不是核验/);
+  assert.doesNotMatch(template, /已核验|adult/);
+
+  page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });
+  switchProfilePayload = wireProfile({
+    runtime_profile_id: "rp_child_next",
+    session_id: "ses_child",
+    session_epoch: 4,
+    active_subject_id: "person_child",
+    subject_category: "minor",
+    age_band: "under_14",
+    speaker_state: "confirmed",
+    service_mode: "student_minor",
+    capabilities: ["chat"],
+    signature: "f".repeat(64),
+  });
+  await page.confirmSubject();
+  assert.deepEqual(activeSubjectCalls[0], {
+    sessionId: "ses_child",
+    person_id: "person_child",
+    confirmation_method: "app_confirm",
+  });
+  assert.equal(page.data.profile.session_epoch, 4);
+  assert.equal(page.data.currentUserLabel, "小乐");
+});
+
+test("parent_for_child without app_confirm cannot switch", async () => {
+  activeSubjectCalls.length = 0;
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_voice_only",
+    session_id: "ses_voice",
+    session_epoch: 1,
+    service_mode: "adult_companion",
+    speaker_state: "confirmed",
+    capabilities: ["chat"],
+  });
+  resolutionPayload = {
+    resolution: "confirmation_required",
+    candidate_subjects: [
+      { person_id: "person_child", display_name: "小乐", confidence: 0.8 },
+    ],
+    temporary_service_mode: "student_minor",
+    allowed_confirmation_methods: ["voice_question"],
+    runtime_profile_id: "rp_voice_only",
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.candidates.length, 0);
+  assert.equal(page.data.canConfirmWithApp, false);
+  page.setData({
+    resolution: resolutionPayload,
+    selectedCandidateId: "person_child",
+  });
+  await page.confirmSubject();
+  assert.ok(page.data.error.includes("语音确认"));
+  assert.equal(activeSubjectCalls.length, 0);
+});
+
+test("unconfirmed parent_for_child subject stays unlabeled", async () => {
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_unconfirmed",
+    session_id: "ses_unconfirmed",
+    session_epoch: 1,
+    active_subject_id: null,
+    subject_category: "unknown",
+    age_band: "unknown",
+    speaker_state: "unconfirmed",
+    service_mode: "unknown_safe",
+    capabilities: ["chat"],
+    obligations: ["DO_NOT_PERSIST"],
+  });
+  resolutionPayload = {
+    resolution: "unknown",
+    candidate_subjects: [],
+    temporary_service_mode: "unknown_safe",
+    allowed_confirmation_methods: ["app_confirm"],
+    runtime_profile_id: "rp_unconfirmed",
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.currentUserLabel, "未确认");
+  assert.equal(page.data.currentUserLabelConfirmed, false);
+  assert.equal(page.data.candidates.length, 0);
+});
+
+test("stale confirm response does not refill after a newer load", async () => {
+  activeSubjectCalls.length = 0;
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_stale_base",
+    session_id: "ses_stale",
+    session_epoch: 2,
+    service_mode: "adult_companion",
+    speaker_state: "confirmed",
+    capabilities: ["chat"],
+    signature: "a".repeat(64),
+  });
+  resolutionPayload = {
+    resolution: "confirmation_required",
+    candidate_subjects: [
+      { person_id: "person_child", display_name: "小乐", confidence: 0.8 },
+    ],
+    temporary_service_mode: "student_minor",
+    allowed_confirmation_methods: ["app_confirm"],
+    runtime_profile_id: "rp_stale_base",
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });
+  deferProfileResponses = true;
+  const confirmFlow = page.confirmSubject();
+  await Promise.resolve();
+  assert.equal(deferredResponses.length, 1);
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_fresh",
+    session_id: "ses_stale",
+    session_epoch: 5,
+    active_subject_id: "person_owner",
+    service_mode: "adult_companion",
+    speaker_state: "confirmed",
+    capabilities: ["chat"],
+    signature: "b".repeat(64),
+  });
+  deferProfileResponses = false;
+  await page.loadDevice();
+  assert.equal(page.data.profile.runtime_profile_id, "rp_fresh");
+  deferredResponses[0].options.success({
+    statusCode: 200,
+    data: wireProfile({
+      runtime_profile_id: "rp_late",
+      session_id: "ses_stale",
+      session_epoch: 3,
+      active_subject_id: "person_child",
+      subject_category: "minor",
+      age_band: "under_14",
+      service_mode: "student_minor",
+      speaker_state: "confirmed",
+      capabilities: ["chat"],
+      signature: "c".repeat(64),
+    }),
+  });
+  await confirmFlow;
+  assert.equal(page.data.profile.runtime_profile_id, "rp_fresh");
+  assert.equal(page.data.profile.session_epoch, 5);
+  assert.equal(page.data.error, "");
+  deferredResponses.length = 0;
+});
+
+test("age declaration offers only three bands and never claims verification", async () => {
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_age",
+    session_id: "ses_age",
+    session_epoch: 1,
+    service_mode: "adult_companion",
+    speaker_state: "confirmed",
+    capabilities: ["chat"],
+  });
+  resolutionPayload = {
+    resolution: "confirmed",
+    candidate_subjects: [],
+    temporary_service_mode: "adult_companion",
+    allowed_confirmation_methods: [],
+    runtime_profile_id: "rp_age",
+  };
+  const calls = [];
+  const originalRequest = global.wx.request;
+  global.wx.request = (options) => {
+    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    if (pathname === "/v1/persons/person_child/age-evidence") {
+      calls.push(options.data);
+      options.success({
+        statusCode: 200,
+        data: {
+          person_id: "person_child",
+          age_band: options.data.age_band,
+          age_evidence_status: "unverified",
+          subject_category: "minor",
+        },
+      });
+      return;
+    }
+    return originalRequest(options);
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.deepEqual(
+    page.data.ageRows[0].options.map((option) => option.label),
+    ["年龄未知", "申报 14 岁以下", "申报 14 至 17 岁"],
+  );
+  page.selectAgeBand({
+    currentTarget: { dataset: { personId: "person_child", ageBand: "adult" } },
+  });
+  assert.equal(page.data.ageRows[0].selected, "unknown");
+  page.selectAgeBand({
+    currentTarget: { dataset: { personId: "person_child", ageBand: "14_17" } },
+  });
+  await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.deepEqual(calls, [{ age_band: "14_17" }]);
+  assert.equal(page.data.ageRows[0].declaredLabel, "申报 14 至 17 岁");
+  assert.equal(page.data.ageRows[0].evidenceLabel, "未核验");
+  assert.equal(page.data.profile.runtime_profile_id, "rp_age");
+  global.wx.request = originalRequest;
+});
+
+test("age declaration explains owner-only and unavailable authority failures", async () => {
+  binding.saveBindingManifest(parentChildManifest());
+  profilePayload = wireProfile({
+    runtime_profile_id: "rp_age_fail",
+    session_id: "ses_age_fail",
+    session_epoch: 1,
+    service_mode: "adult_companion",
+    speaker_state: "confirmed",
+    capabilities: ["chat"],
+  });
+  resolutionPayload = {
+    resolution: "confirmed",
+    candidate_subjects: [],
+    temporary_service_mode: "adult_companion",
+    allowed_confirmation_methods: [],
+    runtime_profile_id: "rp_age_fail",
+  };
+  const originalRequest = global.wx.request;
+  let statusCode = 403;
+  global.wx.request = (options) => {
+    const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+    if (pathname === "/v1/persons/person_child/age-evidence") {
+      options.success({
+        statusCode,
+        data: {
+          detail: {
+            code:
+              statusCode === 403
+                ? "guardian_binding_owner_required"
+                : "identity_authority_unavailable",
+          },
+        },
+      });
+      return;
+    }
+    return originalRequest(options);
+  };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.match(page.data.ageError, /只有监护绑定发起人/);
+  assert.doesNotMatch(page.data.ageError, /聊天|记忆|声纹/);
+  statusCode = 503;
+  await page.declareAge({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.match(page.data.ageError, /暂时无法确认/);
+  assert.match(page.data.ageError, /受限模式/);
+  assert.doesNotMatch(page.data.ageError, /能力/);
+  global.wx.request = originalRequest;
+});
+
 test("confirming is blocked when the server does not allow app confirmation", async () => {
   activeSubjectCalls.length = 0;
   binding.saveBindingManifest(familyManifest());

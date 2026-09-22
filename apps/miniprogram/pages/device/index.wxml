@@ -165,6 +165,34 @@
           <text class="caption">人格按使用人分配；取消分配后跟随设备默认人格。分配会在下一次设备同步时生效。</text>
           <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
         </block>
+        <block wx:if="{{ageRows.length > 0}}">
+          <view wx:for="{{ageRows}}" wx:key="person_id" class="list-row">
+            <view class="row-copy">
+              <text class="row-title">年龄资料申报</text>
+              <text class="row-meta">{{item.declaredLabel}} · {{item.evidenceLabel}}。申报不是核验，不能申报已成年。</text>
+              <view class="alias-edit">
+                <button
+                  wx:for="{{item.options}}"
+                  wx:for-item="option"
+                  wx:key="value"
+                  class="secondary-button"
+                  data-person-id="{{item.person_id}}"
+                  data-age-band="{{option.value}}"
+                  disabled="{{ageSaving}}"
+                  bindtap="selectAgeBand"
+                >{{item.selected === option.value ? '当前：' : ''}}{{option.label}}</button>
+              </view>
+              <button
+                class="secondary-button"
+                data-person-id="{{item.person_id}}"
+                loading="{{ageSaving}}"
+                disabled="{{ageSaving}}"
+                bindtap="declareAge"
+              >提交年龄申报</button>
+            </view>
+          </view>
+          <text wx:if="{{ageError}}" class="error-text">{{ageError}}</text>
+        </block>
         <view class="list-row" bindtap="openOnboarding">
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>

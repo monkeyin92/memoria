@@ -48,6 +48,10 @@ function authStubs(state, { restore = "succeed" } = {}) {
     // 因此给出空结果，避免落到真实 rawRequest（该 harness 没有 wx.request）。
     listPersonaAssignments: async () => ({ assignments: [], binding_default: "starlight:v1" }),
     listPersonas: async () => ({ custom_personas: [], builtin: [] }),
+    resolveSessionSubject: async () => ({
+      candidate_subjects: [],
+      allowed_confirmation_methods: [],
+    }),
     currentIdentity: () => (state.authenticated ? state.identity : null),
     currentAuthEpoch: () => state.authEpoch,
     isAuthEpochCurrent: (epoch) =>

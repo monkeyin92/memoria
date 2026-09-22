@@ -167,6 +167,49 @@ function currentUserLabel(profile, candidates) {
   return match?.display_name || "已确认的使用者";
 }
 
+// 年龄申报只有三档，且文案必须是「申报」而不是「已核验」。
+// adult / verified 不在选项里，服务端也不接受。
+const AGE_DECLARATION_OPTIONS = Object.freeze([
+  { value: "unknown", label: "年龄未知" },
+  { value: "under_14", label: "申报 14 岁以下" },
+  { value: "14_17", label: "申报 14 至 17 岁" },
+]);
+
+function ageDeclarationRows(binding) {
+  if (binding?.declared_mode !== "parent_for_child") return [];
+  if (binding.account_owner_id && binding.status && binding.status !== "active") return [];
+  const ownerId = typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+  const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+  return subjects
+    .filter((personId) => typeof personId === "string" && personId && personId !== ownerId)
+    .map((personId) => ({
+      person_id: personId,
+      options: AGE_DECLARATION_OPTIONS,
+      selected: "unknown",
+      declaredLabel: "尚未申报",
+      evidenceLabel: "未核验",
+    }));
+}
+
+function ageGateMessage(error) {
+  if (error?.code === "guardian_binding_owner_required" || error?.status === 403) {
+    return "只有监护绑定发起人可以修改这项年龄资料。";
+  }
+  if (error?.code === "identity_authority_unavailable" || error?.status === 503) {
+    return "暂时无法确认年龄资料，已按受限模式处理。";
+  }
+  return error?.message || "年龄申报失败，请稍后重试。";
+}
+
+// 有可确认成员、且服务端允许 app_confirm 时才拉 resolve。
+// 不再只限 degraded / family_shared：普通 parent_for_child 会话也要能确认。
+function shouldResolveSubject(profile, resolution) {
+  if (profile?.degraded || profile?.service_mode === "family_shared") return true;
+  const methods = resolution?.allowed_confirmation_methods;
+  if (!Array.isArray(methods)) return true;
+  return methods.includes("app_confirm");
+}
+
 function bindingChoiceItems(bindings) {
   const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
@@ -215,6 +258,9 @@ Page({
     personaSheetSelection: "",
     personaSaving: false,
     personaAssignmentError: "",
+    ageRows: [],
+    ageSaving: false,
+    ageError: "",
     activation: null,
     onlineLabel: "状态待同步",
     firmwareVersion: "未读取",
@@ -301,8 +347,13 @@ Page({
       degradation: null,
       sensitiveEntries: [],
       currentUserLabel: "",
+      currentUserLabelConfirmed: false,
       subjectAliasLabel: "",
       subjectAliasDraft: "",
+      personaRows: [],
+      ageRows: [],
+      ageSaving: false,
+      ageError: "",
       activation: null,
       onlineLabel: "状态待同步",
       firmwareVersion: "未读取",
@@ -456,11 +507,23 @@ Page({
           : liveRuntime?.connected === false
             ? "未连接，暂无实际模式"
             : "Edge 状态暂不可用";
-      const needResolution =
-        profile?.degraded || profile?.service_mode === "family_shared";
-      const resolution = needResolution
-        ? await api.resolveSessionSubject({ deviceId: binding.device_id })
-        : null;
+      let resolution = null;
+      if (profile && shouldResolveSubject(profile, null)) {
+        try {
+          resolution = await api.resolveSessionSubject({ deviceId: binding.device_id });
+        } catch {
+          // 解析失败不阻断设备页。没有可用候选时确认入口保持关闭。
+          resolution = null;
+        }
+        if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+        if (
+          !resolution ||
+          !shouldResolveSubject(profile, resolution) ||
+          !(resolution.candidate_subjects || []).length
+        ) {
+          resolution = null;
+        }
+      }
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       const candidates = presentSpeakerCandidates(resolution?.candidate_subjects || []);
       const summary = deviceStatusSummary(activation, profile, diagnostics);
@@ -497,8 +560,10 @@ Page({
         ),
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
-        currentUserLabel: subjectAliasLabel || speakerLabel || "未设置",
+        currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
         currentUserLabelConfirmed: Boolean(speakerLabel),
+        ageRows: ageDeclarationRows(binding),
+        ageError: "",
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
         personaRows: personaRows(
@@ -665,6 +730,7 @@ Page({
 
   async confirmSubject() {
     const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
+    const authEpoch = api.currentAuthEpoch();
     const { selectedCandidateId, switching, profile, resolution } = this.data;
     if (switching || !selectedCandidateId) return;
     if (!(resolution?.allowed_confirmation_methods || []).includes("app_confirm")) {
@@ -681,8 +747,14 @@ Page({
         personId: selectedCandidateId,
         confirmationMethod: "app_confirm",
       });
-      if (nextProfile === null || flowSeq !== this._flowSeq) {
-        this.setData({ error: "切换结果已过期，请下拉刷新后重试。" });
+      if (
+        nextProfile === null ||
+        flowSeq !== this._flowSeq ||
+        !api.isAuthEpochCurrent(authEpoch)
+      ) {
+        if (flowSeq === this._flowSeq && api.isAuthEpochCurrent(authEpoch)) {
+          this.setData({ error: "切换结果已过期，请下拉刷新后重试。" });
+        }
         return;
       }
       if (nextProfile.valid !== true) {
@@ -696,15 +768,29 @@ Page({
         this.setData({ error: "服务端返回的会话版本未提升，已拒绝应用。" });
         return;
       }
-      const needResolution =
-        nextProfile.degraded || nextProfile.service_mode === "family_shared";
-      const resolutionNext = needResolution
-        ? await api.resolveSessionSubject({ deviceId: this.data.binding.device_id })
-        : null;
-      if (flowSeq !== this._flowSeq) return;
+      let resolutionNext = null;
+      if (shouldResolveSubject(nextProfile, null)) {
+        try {
+          resolutionNext = await api.resolveSessionSubject({
+            deviceId: this.data.binding.device_id,
+          });
+        } catch {
+          resolutionNext = null;
+        }
+        if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(api.currentAuthEpoch())) return;
+        if (
+          !shouldResolveSubject(nextProfile, resolutionNext) ||
+          !(resolutionNext?.candidate_subjects || []).length
+        ) {
+          resolutionNext = null;
+        }
+      }
+      if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(api.currentAuthEpoch())) return;
       const candidates = presentSpeakerCandidates(
-        resolutionNext ? resolutionNext.candidate_subjects || [] : this.data.candidates,
+        resolutionNext ? resolutionNext.candidate_subjects || [] : [],
       );
+      const speakerLabel = currentUserLabel(nextProfile, candidates);
+      const subjectAliasLabel = readSubjectLabel(this.data.binding);
       this.setData({
         profile: nextProfile,
         resolution: resolutionNext,
@@ -718,13 +804,60 @@ Page({
         ),
         degradation: degradationFor(nextProfile),
         sensitiveEntries: sensitiveEntriesFor(nextProfile),
-        currentUserLabel: currentUserLabel(nextProfile, candidates),
+        currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
+        currentUserLabelConfirmed: Boolean(speakerLabel),
       });
       wx.showToast({ title: "已确认此刻是谁", icon: "success" });
     } catch (error) {
-      this.setData({ error: error?.message || "切换失败，请稍后重试。" });
+      if (flowSeq === this._flowSeq && api.isAuthEpochCurrent(authEpoch)) {
+        this.setData({ error: error?.message || "切换失败，请稍后重试。" });
+      }
     } finally {
-      this.setData({ switching: false });
+      if (flowSeq === this._flowSeq) this.setData({ switching: false });
+    }
+  },
+
+  selectAgeBand(event) {
+    const personId = event.currentTarget.dataset.personId;
+    const ageBand = event.currentTarget.dataset.ageBand;
+    if (!personId || !AGE_DECLARATION_OPTIONS.some((option) => option.value === ageBand)) return;
+    this.setData({
+      ageRows: (this.data.ageRows || []).map((row) =>
+        row.person_id === personId ? { ...row, selected: ageBand } : row,
+      ),
+      ageError: "",
+    });
+  },
+
+  async declareAge(event) {
+    const personId = event.currentTarget.dataset.personId;
+    const row = (this.data.ageRows || []).find((item) => item.person_id === personId);
+    if (this.data.ageSaving || !row) return;
+    const selected = AGE_DECLARATION_OPTIONS.find((option) => option.value === row.selected);
+    if (!selected) return;
+    this.setData({ ageSaving: true, ageError: "" });
+    try {
+      const updated = await api.declareAgeEvidence(personId, selected.value);
+      // 申报结果只更新本行文案。不把 unverified/disputed 显示成已核验，
+      // 也不重签当前会话的 Runtime Profile。
+      const declared = AGE_DECLARATION_OPTIONS.find((option) => option.value === updated?.age_band);
+      this.setData({
+        ageRows: (this.data.ageRows || []).map((item) =>
+          item.person_id === personId
+            ? {
+                ...item,
+                selected: declared?.value || item.selected,
+                declaredLabel: declared ? declared.label : "已申报，待服务端确认",
+                evidenceLabel: "未核验",
+              }
+            : item,
+        ),
+      });
+      wx.showToast({ title: "已申报年龄", icon: "success" });
+    } catch (error) {
+      this.setData({ ageError: ageGateMessage(error) });
+    } finally {
+      this.setData({ ageSaving: false });
     }
   },
 

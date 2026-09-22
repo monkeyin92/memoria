@@ -29,18 +29,38 @@ function operationKey(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function consentTime(item) {
+  const stamp = Date.parse(item?.revoked_at || item?.granted_at || "");
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
 function consentRows(payload) {
   const items = Array.isArray(payload?.items) ? payload.items : [];
   return CONSENT_DEFINITIONS.map((definition) => {
-    const record = items.find(
-      (item) => item?.consent_kind === definition.kind && item?.active === true,
-    );
+    const matches = items
+      .filter((item) => item?.consent_kind === definition.kind)
+      .sort((left, right) => consentTime(right) - consentTime(left));
+    const record = matches.find((item) => item?.active === true) || null;
+    const latest = matches[0] || null;
+    let statusLabel = "未授权";
+    if (record) statusLabel = "已授权";
+    else if (latest && latest.active === false && latest.expires_at && !latest.revoked_at) {
+      statusLabel = "已过期";
+    }
     return {
       ...definition,
       active: Boolean(record),
       consentId: typeof record?.consent_id === "string" ? record.consent_id : "",
+      statusLabel,
     };
   });
+}
+
+function personConsentError(error) {
+  if (error?.code === "guardian_binding_owner_required" || error?.status === 403) {
+    return "只有监护绑定发起人可以修改这项授权。";
+  }
+  return error?.message || "授权状态更新失败。";
 }
 
 Page({
@@ -64,6 +84,7 @@ Page({
     ],
     birthBandIndex: 0,
     selectedLinkId: "",
+    boundSubjects: [],
     selectedMinorId: "",
     summary: null,
     summaryState: "idle",
@@ -106,6 +127,7 @@ Page({
       links: [],
       activeLinks: [],
       pendingLinks: [],
+      boundSubjects: [],
       notifications: [],
       summary: null,
     });
@@ -144,7 +166,11 @@ Page({
       const pendingLinks = links.filter((item) => item.status === "pending");
       this.setData({ role, links, activeLinks, pendingLinks });
       if (role === "guardian") {
-        await Promise.all([this._loadLinkConsents(activeLinks), this._loadNotifications()]);
+        await Promise.all([
+          this._loadLinkConsents(activeLinks),
+          this._loadBoundSubjectConsents(),
+          this._loadNotifications(),
+        ]);
         if (activeLinks.length) await this.selectMinorById(activeLinks[0].minorUserId);
       }
     } catch (error) {
@@ -164,6 +190,46 @@ Page({
       })),
     );
     this.setData({ activeLinks: withConsents });
+  },
+
+  /*
+   * 无账号孩子没有 guardian link。只读当前 ACTIVE parent_for_child 绑定里
+   * 非账号持有人的主要使用者，再按 person 端点取同意。错绑不按登录账号查。
+   */
+  _boundChildSubjects() {
+    const binding = api.readBindingManifest?.() || null;
+    if (!binding || binding.declared_mode !== "parent_for_child" || binding.status !== "active") {
+      return [];
+    }
+    const ownerId = typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+    const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+    return subjects.filter(
+      (personId) => typeof personId === "string" && personId && personId !== ownerId,
+    );
+  },
+
+  async _loadBoundSubjectConsents() {
+    const subjects = this._boundChildSubjects();
+    const boundSubjects = await Promise.all(
+      subjects.map(async (personId) => {
+        try {
+          return {
+            personId,
+            displayName: "绑定中的孩子",
+            consentRows: consentRows(await api.getPersonConsents(personId)),
+            loadError: "",
+          };
+        } catch (error) {
+          return {
+            personId,
+            displayName: "绑定中的孩子",
+            consentRows: consentRows(null),
+            loadError: personConsentError(error),
+          };
+        }
+      }),
+    );
+    this.setData({ boundSubjects });
   },
 
   async _loadNotifications() {
@@ -255,6 +321,38 @@ Page({
       await this.refresh();
     } catch (error) {
       this.setData({ error: error?.message || "授权状态更新失败。" });
+    } finally {
+      this.setData({ working: false });
+    }
+  },
+
+  /*
+   * person consent 复用已有 grant/revoke 语义，不走尚未接入的决策接口。
+   * 授权人校验、幂等和过期都由服务端 person 端点决定。
+   */
+  async togglePersonConsent(event) {
+    if (this.data.working) return;
+    const { personId, kind, policyVersion, consentId, active } = event.currentTarget.dataset;
+    if (!personId || !kind) return;
+    this.setData({ working: true, error: "" });
+    try {
+      if (active) {
+        await api.revokePersonConsent({
+          personId,
+          consentId,
+          idempotencyKey: operationKey("person-revoke"),
+        });
+      } else {
+        await api.grantPersonConsent({
+          personId,
+          consentKind: kind,
+          policyVersion,
+          idempotencyKey: operationKey("person-grant"),
+        });
+      }
+      await this._loadBoundSubjectConsents();
+    } catch (error) {
+      this.setData({ error: personConsentError(error) });
     } finally {
       this.setData({ working: false });
     }

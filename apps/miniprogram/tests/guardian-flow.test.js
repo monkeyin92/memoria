@@ -4,6 +4,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "..");
+const api = require("../utils/api");
+const binding = require("../utils/device-binding");
+const { canonicalManifest } = require("./manifest-fixtures");
 
 test("guardian page covers child confirmation, granular consent, summary, and alerts", () => {
   const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
@@ -42,4 +45,238 @@ test("student notice and bind consent remain explicit client choices", () => {
   assert.match(api, /updateDeviceSettings/);
   assert.match(api, /learning_mode/);
   assert.doesNotMatch(api, /session_focus/);
+});
+
+const storage = {};
+
+function instantiate(definition) {
+  const instance = { ...definition };
+  instance.data = JSON.parse(JSON.stringify(definition.data));
+  instance.setData = (updates) => {
+    for (const [key, value] of Object.entries(updates)) {
+      instance.data[key] = value;
+    }
+  };
+  return instance;
+}
+
+test("guardian page grants and revokes person consent for an accountless child", async () => {
+  const requests = [];
+  global.wx = {
+    getStorageSync: (key) => storage[key],
+    setStorageSync: (key, value) => {
+      storage[key] = value;
+    },
+    removeStorageSync: (key) => {
+      delete storage[key];
+    },
+    request(options) {
+      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      requests.push({
+        pathname,
+        method: options.method,
+        data: options.data,
+        idempotencyKey: options.header?.["Idempotency-Key"] || "",
+      });
+      if (
+        pathname === "/v1/guardian/minors/person_child/consents" &&
+        (options.method || "GET") === "POST"
+      ) {
+        options.success({
+          statusCode: 201,
+          data: {
+            consent_id: "consent_1",
+            subject_person_id: "person_child",
+            consent_kind: options.data.consent_kind,
+            active: true,
+            revoked_at: null,
+            expires_at: null,
+          },
+        });
+        return;
+      }
+      if (pathname === "/v1/guardian/minors/person_child/consents/consent_1") {
+        options.success({
+          statusCode: 200,
+          data: {
+            consent_id: "consent_1",
+            consent_kind: "memory_retention",
+            active: false,
+            revoked_at: "2026-09-22T00:00:00Z",
+            expires_at: null,
+          },
+        });
+        return;
+      }
+      if (
+        pathname === "/v1/guardian/minors/person_child/consents" &&
+        (options.method || "GET") === "GET"
+      ) {
+        const granted = requests.some(
+          (item) => item.pathname.endsWith("/consents") && item.method === "POST",
+        );
+        const revoked = requests.some((item) => item.pathname.endsWith("/consent_1"));
+        options.success({
+          statusCode: 200,
+          data: {
+            items: granted
+              ? [
+                  {
+                    consent_id: "consent_1",
+                    consent_kind: "memory_retention",
+                    active: !revoked,
+                    revoked_at: revoked ? "2026-09-22T00:00:00Z" : null,
+                    expires_at: null,
+                    granted_at: "2026-09-21T00:00:00Z",
+                  },
+                ]
+              : [
+                  {
+                    consent_id: "consent_old",
+                    consent_kind: "weekly_report",
+                    active: false,
+                    revoked_at: null,
+                    expires_at: "2026-01-01T00:00:00Z",
+                    granted_at: "2025-12-01T00:00:00Z",
+                  },
+                ],
+          },
+        });
+        return;
+      }
+      options.success({ statusCode: 404, data: { detail: { code: "not_found" } } });
+    },
+  };
+  global.getApp = () => ({
+    globalData: {
+      identity: { user_id: "person_owner", display_name: "主人" },
+      accessToken: "test-token",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 0,
+    },
+  });
+  binding.saveBindingManifest(
+    canonicalManifest({
+      declared_mode: "parent_for_child",
+      status: "active",
+      account_owner_id: "person_owner",
+      primary_subject_ids: ["person_child"],
+      guardian_ids: ["person_owner"],
+      roles: [
+        { person_id: "person_owner", role: "account_owner", permissions: [] },
+        { person_id: "person_child", role: "primary_subject", permissions: [] },
+      ],
+    }),
+  );
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  const pagePath = require.resolve("../pages/guardian/index");
+  delete require.cache[pagePath];
+  require(pagePath);
+  const page = instantiate(definition);
+  await page._loadBoundSubjectConsents();
+  const before = page.data.boundSubjects[0].consentRows.find((row) => row.kind === "weekly_report");
+  assert.equal(before.statusLabel, "已过期");
+  assert.equal(before.active, false);
+  const missing = page.data.boundSubjects[0].consentRows.find(
+    (row) => row.kind === "minor_voice_session",
+  );
+  assert.equal(missing.statusLabel, "未授权");
+
+  await page.togglePersonConsent({
+    currentTarget: {
+      dataset: {
+        personId: "person_child",
+        kind: "memory_retention",
+        policyVersion: "minor-memory-v1",
+        consentId: "",
+        active: false,
+      },
+    },
+  });
+  const granted = page.data.boundSubjects[0].consentRows.find(
+    (row) => row.kind === "memory_retention",
+  );
+  assert.equal(granted.active, true);
+  assert.equal(granted.statusLabel, "已授权");
+  assert.match(requests.find((item) => item.method === "POST").idempotencyKey, /^person-grant-/);
+
+  await page.togglePersonConsent({
+    currentTarget: {
+      dataset: {
+        personId: "person_child",
+        kind: "memory_retention",
+        policyVersion: "minor-memory-v1",
+        consentId: "consent_1",
+        active: true,
+      },
+    },
+  });
+  const revoked = page.data.boundSubjects[0].consentRows.find(
+    (row) => row.kind === "memory_retention",
+  );
+  assert.equal(revoked.active, false);
+  assert.equal(revoked.statusLabel, "未授权");
+  const template = fs.readFileSync(path.join(root, "pages/guardian/index.wxml"), "utf8");
+  assert.match(template, /consent.statusLabel/);
+  assert.doesNotMatch(template, /已送达/);
+});
+
+test("person consent failure stays owner-scoped and does not blank the row", async () => {
+  global.wx = {
+    getStorageSync: (key) => storage[key],
+    setStorageSync: (key, value) => {
+      storage[key] = value;
+    },
+    removeStorageSync: (key) => {
+      delete storage[key];
+    },
+    request(options) {
+      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      if (
+        pathname === "/v1/guardian/minors/person_child/consents" &&
+        (options.method || "GET") === "GET"
+      ) {
+        options.success({ statusCode: 200, data: { items: [] } });
+        return;
+      }
+      options.success({
+        statusCode: 403,
+        data: { detail: { code: "guardian_binding_owner_required" } },
+      });
+    },
+  };
+  global.getApp = () => ({
+    globalData: {
+      identity: { user_id: "person_owner", display_name: "主人" },
+      accessToken: "test-token",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 0,
+    },
+  });
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  const pagePath = require.resolve("../pages/guardian/index");
+  delete require.cache[pagePath];
+  require(pagePath);
+  const page = instantiate(definition);
+  await page._loadBoundSubjectConsents();
+  assert.equal(page.data.boundSubjects[0].consentRows[0].statusLabel, "未授权");
+  await page.togglePersonConsent({
+    currentTarget: {
+      dataset: {
+        personId: "person_child",
+        kind: "memory_retention",
+        policyVersion: "minor-memory-v1",
+        consentId: "",
+        active: false,
+      },
+    },
+  });
+  assert.match(page.data.error, /只有监护绑定发起人/);
+  assert.equal(page.data.boundSubjects[0].consentRows.length, 3);
 });
