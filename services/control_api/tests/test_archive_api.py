@@ -324,6 +324,38 @@ def _response_provenance(
     }
 
 
+def _conversation_session_event(
+    *,
+    account_id: str,
+    event_id: str,
+    subject_id: str,
+    session_id: str,
+    occurred_at: datetime,
+    text: str,
+    turn_id: int = 1,
+    speaker_class: SpeakerClass = "owner",
+) -> EvidenceEvent:
+    assistant = speaker_class == "assistant"
+    return EvidenceEvent(
+        event_id=event_id,
+        account_id=account_id,
+        subject_id=subject_id,
+        event_type="assistant.playout_stopped" if assistant else "speech.utterance_finalized",
+        occurred_at=occurred_at,
+        speaker_class=speaker_class,
+        source="test.demo03",
+        session_id=session_id,
+        turn_id=turn_id,
+        generation_id=1,
+        payload={
+            "text": text,
+            "history_eligible": True,
+            "owner_projection_eligible": True,
+            **({"actual_heard": True} if assistant else {}),
+        },
+    )
+
+
 def _legacy_access(*, actor_role: str = "grantee", expired: bool = False) -> LegacyAccessSnapshot:
     return LegacyAccessSnapshot(
         actor_role=actor_role,  # type: ignore[arg-type]
@@ -4098,6 +4130,190 @@ async def test_conversation_history_returns_paired_turns_and_rejects_cross_accou
             "session_id": other_session["session_id"],
             "turns": [],
         }
+        sessions = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+        )
+        assert sessions.status_code == 200, sessions.text
+        assert sessions.json() == {
+            "items": [
+                {
+                    "session_id": session["session_id"],
+                    "occurred_at": occurred_at,
+                    "turn_count": 1,
+                    "preview": "明天南京天气如何？",
+                }
+            ]
+        }
+
+
+@pytest.mark.asyncio
+async def test_conversation_sessions_preview_uses_latest_nonblank_eligible_text_and_caps_at_80(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC) - timedelta(minutes=1)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-session-preview",
+        )
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        subject_id = str(owner["user_id"])
+        await app.state.life_archive.record(
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="preview-real",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now,
+                text="孩子说了今天的事。",
+            )
+        )
+        await app.state.life_archive.record(
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="preview-latest-assistant",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now + timedelta(seconds=1),
+                text="答" * 81,
+                speaker_class="assistant",
+            )
+        )
+        await app.state.life_archive.record(
+            _conversation_session_event(
+                account_id=subject_id,
+                event_id="preview-blank",
+                subject_id=subject_id,
+                session_id=session["session_id"],
+                occurred_at=now + timedelta(seconds=2),
+                text="   ",
+                turn_id=2,
+            )
+        )
+        response = await client.get("/v1/archive/conversation-sessions", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == [
+        {
+            "session_id": session["session_id"],
+            "occurred_at": (now + timedelta(seconds=1)).isoformat(),
+            "turn_count": 1,
+            "preview": "答" * 80,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conversation_sessions_are_subject_scoped_newest_first_and_limited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    now = datetime.now(UTC)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-session-owner",
+        )
+        other = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-session-other",
+        )
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        other_headers = {"Authorization": f"Bearer {other['access_token']}"}
+        owner_sessions = [
+            (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
+            for _ in range(3)
+        ]
+        other_session = (
+            await client.post("/v1/sessions", headers=other_headers, json={})
+        ).json()
+        for index, session in enumerate(owner_sessions):
+            await app.state.life_archive.record(
+                _conversation_session_event(
+                    account_id=str(owner["user_id"]),
+                    event_id=f"ordered-{index}",
+                    subject_id=str(owner["user_id"]),
+                    session_id=session["session_id"],
+                    occurred_at=now - timedelta(hours=index),
+                    text=f"第 {index} 次对话",
+                )
+            )
+        await app.state.life_archive.record(
+            _conversation_session_event(
+                account_id=str(other["user_id"]),
+                event_id="other-account-session",
+                subject_id=str(other["user_id"]),
+                session_id=other_session["session_id"],
+                occurred_at=now,
+                text="别人家的会话。",
+            )
+        )
+        await app.state.life_archive.record(
+            _conversation_session_event(
+                account_id=str(owner["user_id"]),
+                event_id="same-account-other-subject",
+                subject_id=str(other["user_id"]),
+                session_id="same-account-other-subject-session",
+                occurred_at=now,
+                text="同账号下其他主体的会话。",
+            )
+        )
+
+        owner_result = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+            params={"limit": 2},
+        )
+        owner_all = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+        )
+        other_result = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=other_headers,
+        )
+        too_many = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+            params={"limit": 21},
+        )
+        zero = await client.get(
+            "/v1/archive/conversation-sessions",
+            headers=owner_headers,
+            params={"limit": 0},
+        )
+        anonymous = await client.get("/v1/archive/conversation-sessions")
+
+    assert owner_result.status_code == 200, owner_result.text
+    assert [item["session_id"] for item in owner_result.json()["items"]] == [
+        owner_sessions[0]["session_id"],
+        owner_sessions[1]["session_id"],
+    ]
+    assert [item["preview"] for item in owner_result.json()["items"]] == [
+        "第 0 次对话",
+        "第 1 次对话",
+    ]
+    assert owner_all.status_code == 200, owner_all.text
+    assert [item["session_id"] for item in owner_all.json()["items"]] == [
+        session["session_id"] for session in owner_sessions
+    ]
+    assert "同账号下其他主体" not in owner_all.text
+    assert other_result.status_code == 200, other_result.text
+    assert [item["session_id"] for item in other_result.json()["items"]] == [
+        other_session["session_id"]
+    ]
+    assert too_many.status_code == zero.status_code == 422
+    assert anonymous.status_code == 401
 
 
 @pytest.mark.asyncio

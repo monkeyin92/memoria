@@ -127,6 +127,7 @@ class PostgresLifeArchive:
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
         subject_id: str | None = None,
+        newest_first: bool = False,
     ) -> tuple[EvidenceEvent, ...]:
         if not account_id.strip() or not 1 <= limit <= 10_000:
             raise ValueError("evidence window requires account_id and limit 1..10000")
@@ -140,18 +141,19 @@ class PostgresLifeArchive:
             raise ValueError("evidence window start must not follow end")
         if any(not value.strip() for value in event_types):
             raise ValueError("evidence event types must not be blank")
+        order = "occurred_at DESC, event_id DESC" if newest_first else "occurred_at, event_id"
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
             rows = await connection.fetch(
-                """
+                f"""
                 SELECT * FROM archive_evidence_events
                 WHERE account_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
                   AND (cardinality($4::text[]) = 0 OR event_type = ANY($4::text[]))
                   AND ($6::text IS NULL OR subject_id = $6::text)
-                ORDER BY occurred_at, event_id
+                ORDER BY {order}
                 LIMIT $5
-                """,
+                """,  # noqa: S608 - order is selected from a closed internal set
                 account_id,
                 start,
                 end,

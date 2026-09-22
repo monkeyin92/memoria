@@ -50,6 +50,7 @@ def _fake_compose(monkeypatch: pytest.MonkeyPatch, services: dict[str, object]) 
         stack_tag: str,
         release_commit: str | None = None,
         docker_cmd: list[str] | None = None,
+        profile: str = rti.PROFILE,
     ) -> tuple[int, str, str]:
         calls.append(
             {
@@ -58,6 +59,7 @@ def _fake_compose(monkeypatch: pytest.MonkeyPatch, services: dict[str, object]) 
                 "stack_tag": stack_tag,
                 "release_commit": release_commit,
                 "docker_cmd": list(docker_cmd or ()),
+                "profile": profile,
             }
         )
         return 0, json.dumps({"services": services}), ""
@@ -146,6 +148,15 @@ def test_verify_resolved_services_rejects_expected_images_from_two_artifacts() -
     assert any("one candidate artifact" in error for error in errors)
 
 
+def test_verify_resolved_services_rejects_partial_expected_image_map() -> None:
+    ok, errors = verify_resolved_services(
+        _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE),
+        expected_images={"agent": _CANDIDATE_IMAGE},
+    )
+    assert ok is False
+    assert any("do not cover every target service" in error for error in errors)
+
+
 def test_verify_resolved_services_expected_image_exact_match() -> None:
     services = _services("registry.example.com/agent:v1", "registry.example.com/agent:v1")
     ok, errors = verify_resolved_services(
@@ -157,6 +168,45 @@ def test_verify_resolved_services_expected_image_exact_match() -> None:
     )
     assert ok is True
     assert errors == []
+
+
+def test_verify_resolved_services_accepts_control_api_candidate() -> None:
+    candidate = "memoria-control-api:control-candidate"
+    ok, errors = verify_resolved_services(
+        {"control-api": {"image": candidate}},
+        candidate_tag="control-candidate",
+        stack_tag=_STACK,
+        expected_images={"control-api": candidate},
+        target_services=("control-api",),
+        live_stack_image=f"memoria-control-api:{_STACK}",
+    )
+    assert ok is True
+    assert errors == []
+
+
+def test_verify_resolved_services_rejects_missing_control_api() -> None:
+    ok, errors = verify_resolved_services(
+        {},
+        candidate_tag="control-candidate",
+        stack_tag=_STACK,
+        target_services=("control-api",),
+        live_stack_image=f"memoria-control-api:{_STACK}",
+    )
+    assert ok is False
+    assert errors == ["control-api: NOT RESOLVED"]
+
+
+def test_verify_resolved_services_rejects_old_control_stack_image() -> None:
+    live = f"memoria-control-api:{_STACK}"
+    ok, errors = verify_resolved_services(
+        {"control-api": {"image": live}},
+        candidate_tag="control-candidate",
+        stack_tag=_STACK,
+        target_services=("control-api",),
+        live_stack_image=live,
+    )
+    assert ok is False
+    assert errors and "still resolves to the effective stack image" in errors[0]
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +302,76 @@ def test_main_rejects_an_invalid_candidate_tag(
     assert calls == []
 
 
+def test_main_rejects_duplicate_expected_image_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = _fake_compose(monkeypatch, _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE))
+    code = rti.main(
+        [
+            "resolve_target_images.py",
+            "--release-dir",
+            str(_release_dir(tmp_path)),
+            "--stack-tag",
+            _STACK,
+            "--expected-image",
+            f"agent={_CANDIDATE_IMAGE}",
+            "--expected-image",
+            f"agent={_CANDIDATE_IMAGE}",
+        ]
+    )
+    assert code == 2
+    assert calls == []
+
+
+@pytest.mark.parametrize("services", ["", "agent,agent", "bad/service"])
+def test_main_rejects_invalid_target_services(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    services: str,
+) -> None:
+    calls = _fake_compose(monkeypatch, _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE))
+    code = rti.main(
+        [
+            "resolve_target_images.py",
+            "--release-dir",
+            str(_release_dir(tmp_path)),
+            "--stack-tag",
+            _STACK,
+            "--expected-tag",
+            _CANDIDATE,
+            "--services",
+            services,
+        ]
+    )
+    assert code == 2
+    assert calls == []
+
+
+def test_main_rejects_expected_image_for_an_unselected_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = _fake_compose(monkeypatch, {"control-api": {"image": _CANDIDATE_IMAGE}})
+    code = rti.main(
+        [
+            "resolve_target_images.py",
+            "--release-dir",
+            str(_release_dir(tmp_path)),
+            "--stack-tag",
+            _STACK,
+            "--expected-tag",
+            _CANDIDATE,
+            "--services",
+            "control-api",
+            "--expected-image",
+            f"agent={_CANDIDATE_IMAGE}",
+        ]
+    )
+    assert code == 2
+    assert calls == []
+
+
 def test_main_fails_on_the_real_live_override_chain_without_the_candidate_override(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -322,6 +442,41 @@ def test_main_succeeds_on_the_real_live_plus_candidate_override_chain(
     assert calls[0]["overrides"] == [str(live_override), str(candidate_override)]
 
 
+def test_main_accepts_explicit_control_api_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    candidate = "memoria-control-api:control-candidate"
+    calls = _fake_compose(monkeypatch, {"control-api": {"image": candidate}})
+    override = tmp_path / "control-component.override.yml"
+    override.write_text("services: {}\n", encoding="utf-8")
+
+    code = rti.main(
+        [
+            "resolve_target_images.py",
+            "--release-dir",
+            str(_release_dir(tmp_path)),
+            "--stack-tag",
+            _STACK,
+            "--expected-tag",
+            "control-candidate",
+            "--expected-image",
+            f"control-api={candidate}",
+            "--services",
+            "control-api",
+            "--profile",
+            "",
+            "--stack-image",
+            f"memoria-control-api:{_STACK}",
+            "--override",
+            str(override),
+        ]
+    )
+
+    assert code == 0
+    assert calls[0]["profile"] == ""
+
+
 def test_main_cli_fails_when_compose_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -365,3 +520,23 @@ def test_main_cli_succeeds_when_verified(
     )
     assert code == 0
     assert calls[0]["overrides"] == [str(override)]
+
+
+def test_agent_cli_defaults_remain_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = _fake_compose(monkeypatch, _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE))
+    code = rti.main(
+        [
+            "resolve_target_images.py",
+            "--release-dir",
+            str(_release_dir(tmp_path)),
+            "--stack-tag",
+            _STACK,
+            "--expected-tag",
+            _CANDIDATE,
+        ]
+    )
+    assert code == 0
+    assert calls[0]["profile"] == "media-runtime"

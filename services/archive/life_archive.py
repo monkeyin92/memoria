@@ -257,6 +257,7 @@ class LifeArchive:
         event_types: tuple[str, ...] = (),
         limit: int = 10_000,
         subject_id: str | None = None,
+        newest_first: bool = False,
     ) -> tuple[EvidenceEvent, ...]:
         if not account_id.strip() or not 1 <= limit <= 10_000:
             raise ValueError("evidence window requires account_id and limit 1..10000")
@@ -281,15 +282,16 @@ class LifeArchive:
             filters += f" AND event_type IN ({placeholders})"
             parameters.extend(event_types)
         parameters.append(limit)
+        order = "occurred_at DESC, event_id DESC" if newest_first else "occurred_at, event_id"
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM evidence_events
                 WHERE account_id = ? AND occurred_at >= ? AND occurred_at <= ?
                 {filters}
-                ORDER BY occurred_at, event_id
+                ORDER BY {order}
                 LIMIT ?
-                """,  # noqa: S608 - only generated placeholders enter the SQL text
+                """,  # noqa: S608 - order is selected from a closed internal set
                 parameters,
             ).fetchall()
         return tuple(self._event_from_row(row) for row in rows)

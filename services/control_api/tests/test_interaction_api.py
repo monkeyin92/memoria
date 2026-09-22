@@ -1854,7 +1854,11 @@ async def test_response_plan_applies_relative_time_and_confirmed_entity_filters(
         tzinfo=UTC,
     )
     assert "昨天" not in memory_query.text
-    assert "妈妈" not in memory_query.text
+    # The confirmed-person entity filter narrows to 妈妈's items; the alias
+    # itself stays in the planned text as the lexical bridge to claims whose
+    # only surface overlap is the alias (e.g. "我妈妈提到的南京旅行" style
+    # values). Stripping it made person-scoped recall return nothing.
+    assert "妈妈" in memory_query.text
     assert "南京旅行" in memory_query.text
 
 

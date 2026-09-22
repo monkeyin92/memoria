@@ -14,7 +14,7 @@ import uuid
 import wave
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
@@ -2730,6 +2730,101 @@ async def conversation_history(
         for key, entry in sorted(by_turn.items())
     ][:turn_limit]
     return {"session_id": session_id, "turns": turns}
+
+
+@router.get("/conversation-sessions")
+async def conversation_sessions(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    limit: int = Query(default=10, ge=1, le=20),
+) -> dict[str, Any]:
+    """List recent conversation sessions visible to the authenticated subject.
+
+    This is deliberately a narrow read model for the family/demo client.  It
+    does not accept an account or subject selector and applies the same
+    conversation-review and retention gates as the paired history endpoint.
+    Eligibility is checked before session aggregation so guest, ephemeral, and
+    non-projectable events cannot make a session appear in the list.
+    """
+    require_capability_for_subject(
+        user,
+        "conversation_review",
+        store=_store(request),
+    )
+    await _require_subject_memory_read(request, account_id=user.user_id)
+
+    # Read a bounded newest-first event window. The subject fence is pushed
+    # into the archive query, while eligibility is still checked before a
+    # session is exposed. Newest-first matters here: a busy old session must
+    # not consume the window and hide newer sessions.
+    sessions: dict[str, dict[str, Any]] = {}
+    occurred_before = datetime.now(UTC)
+    occurred_after = datetime(1970, 1, 1, tzinfo=UTC)
+    # Continue in bounded newest-first pages until enough distinct sessions
+    # are found. This prevents one very busy session from hiding older recent
+    # sessions behind a single 10,000-event window.
+    while len(sessions) < limit and occurred_before >= occurred_after:
+        events = await _archive(request).evidence_window(
+            account_id=user.user_id,
+            occurred_after=occurred_after,
+            occurred_before=occurred_before,
+            event_types=("speech.utterance_finalized", "assistant.playout_stopped"),
+            limit=10_000,
+            subject_id=user.user_id,
+            newest_first=True,
+        )
+        if not events:
+            break
+        for event in events:
+            if event.session_id is None:
+                continue
+            eligible = (
+                _owner_turn_item(event)
+                if event.event_type == "speech.utterance_finalized"
+                else _actual_heard_item(event)
+            )
+            if eligible is None:
+                continue
+            session = sessions.setdefault(
+                event.session_id,
+                {
+                    "session_id": event.session_id,
+                    "occurred_at": event.occurred_at,
+                    "turns": set(),
+                    "preview": "",
+                },
+            )
+            if event.occurred_at > session["occurred_at"]:
+                session["occurred_at"] = event.occurred_at
+            if event.turn_id is not None and event.generation_id is not None:
+                session["turns"].add((event.turn_id, event.generation_id))
+            # Events arrive newest-first, so the first eligible utterance of a
+            # session becomes its list preview. Only already-eligible text is
+            # reused; nothing is generated or summarised server-side.
+            if not session["preview"]:
+                text = eligible.get("text")
+                if isinstance(text, str) and text.strip():
+                    session["preview"] = text.strip()[:80]
+        oldest = min(event.occurred_at for event in events)
+        next_before = oldest - timedelta(microseconds=1)
+        if next_before >= occurred_before:
+            break
+        occurred_before = next_before
+
+    items = sorted(
+        (
+            {
+                "session_id": item["session_id"],
+                "occurred_at": item["occurred_at"].isoformat(),
+                "turn_count": len(item["turns"]),
+                "preview": item["preview"],
+            }
+            for item in sessions.values()
+        ),
+        key=lambda item: (item["occurred_at"], item["session_id"]),
+        reverse=True,
+    )[:limit]
+    return {"items": items}
 
 
 
