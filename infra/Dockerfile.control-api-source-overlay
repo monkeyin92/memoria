@@ -1,0 +1,40 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG MEMORIA_RELEASE_COMMIT
+ARG MEMORIA_RELEASE_TAG
+LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
+      org.opencontainers.image.version="${MEMORIA_RELEASE_TAG}" \
+      com.memoria.release.role="control-api" \
+      com.memoria.release.kind="control-api-source-overlay"
+
+USER root
+WORKDIR /app
+
+# A Control API import crosses many shared service packages. Replace the entire
+# application source tree so deleted/renamed modules cannot survive in the base
+# image and call sites never run against stale siblings. Dependencies, the venv,
+# README, the voice registry, /data, and the two maintenance entrypoints remain
+# from the reviewed base image.
+RUN rm -rf /app/services /app/packages
+COPY --chown=65532:65532 memoria/services /app/services
+COPY --chown=65532:65532 memoria/packages /app/packages
+COPY --chown=65532:65532 memoria/scripts/mark_readiness.py /app/scripts/mark_readiness.py
+COPY --chown=65532:65532 memoria/scripts/rebuild_memory_projections.py /app/scripts/rebuild_memory_projections.py
+COPY --chown=65532:65532 memoria/scripts/verify_control_release_artifact.py /app/scripts/verify_control_release_artifact.py
+RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts
+
+# The artifact check is deliberately offline. Authoritative schema/RLS
+# verification remains an explicit pre-cutover gate on the deployment host;
+# image builds must never need production connectivity or secrets.
+RUN ENVIRONMENT=development OFFLINE_MOCK=true \
+    MEMORIA_RELEASE_COMMIT="${MEMORIA_RELEASE_COMMIT}" \
+    MEMORIA_RELEASE_TAG="${MEMORIA_RELEASE_TAG}" \
+    MEMORIA_RELEASE_ROLE=control-api \
+    MEMORIA_RELEASE_KIND=control-api-source-overlay \
+    /app/.venv/bin/python -m scripts.verify_control_release_artifact \
+      --expected-commit "${MEMORIA_RELEASE_COMMIT}" \
+      --expected-tag "${MEMORIA_RELEASE_TAG}" \
+      --require-metadata
+
+USER 65532:65532

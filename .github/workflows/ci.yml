@@ -33,6 +33,11 @@ jobs:
               - 'scripts/resolve_target_images.py'
             python:
               - '.github/workflows/ci.yml'
+              - 'HANDOFF.md'
+              - 'TODOLIST.md'
+              - 'README.md'
+              - 'docs/**'
+              - 'tests/**'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'docker-compose*.yml'
@@ -42,9 +47,11 @@ jobs:
               - 'scripts/**/*.py'
               - 'scripts/**/*.sh'
               - '!scripts/deploy_agent_component.sh'
+              - 'scripts/deploy_control_component.sh'
               - 'infra/Dockerfile.agent*'
               - '!infra/Dockerfile.agent-source-overlay'
               - 'infra/Dockerfile.control-api'
+              - 'infra/Dockerfile.control-api-source-overlay'
               - 'infra/Dockerfile.miniprogram-gateway'
               - 'infra/Dockerfile.speaker-model'
             media_edge:
@@ -109,7 +116,7 @@ jobs:
         run: bash -n scripts/deploy_agent_component.sh
 
   python:
-    needs: changes
+    needs: [changes, control-api-image]
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     services:
@@ -146,6 +153,21 @@ jobs:
         run: uv run python scripts/check_module_budget.py check
       - name: Mypy
         run: uv run mypy services --strict
+      - name: Control release tool gates (offline)
+        run: >-
+          uv run pytest --import-mode=importlib --no-cov
+          scripts/tests/test_control_release_contract.py
+          scripts/tests/test_verify_control_release_artifact.py
+          scripts/tests/test_resolve_target_images.py
+      - name: Control release artifact smoke (offline)
+        env:
+          ENVIRONMENT: development
+          OFFLINE_MOCK: "true"
+        run: uv run python -m scripts.verify_control_release_artifact
+      - name: Component release script syntax
+        run: |
+          bash -n scripts/deploy_agent_component.sh
+          bash -n scripts/deploy_control_component.sh
       - name: Media proto generation is reproducible
         run: |
           uv run --extra dev python scripts/generate_media_proto.py
@@ -241,6 +263,64 @@ jobs:
           docker run --rm --network none
           --entrypoint /app/.venv/bin/python memoria-agent:ci
           -m scripts.verify_agent_release_artifact
+
+  control-api-image:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_TAG: control-ci-${{ github.sha }}
+      BASE_IMAGE: memoria-control-api:ci-base-${{ github.sha }}
+      CANDIDATE_IMAGE: memoria-control-api:ci-overlay-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate commit-bound image metadata
+        run: |
+          set -Eeuo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+      - name: Build the Control API dependency base
+        run: >-
+          docker build
+          --file infra/Dockerfile.control-api
+          --tag "$BASE_IMAGE"
+          --build-arg "MEMORIA_RELEASE_COMMIT=$RELEASE_COMMIT"
+          --build-arg "MEMORIA_RELEASE_TAG=$RELEASE_TAG"
+          .
+      - name: Prepare the source-overlay build context
+        run: |
+          set -Eeuo pipefail
+          context="$RUNNER_TEMP/control-api-overlay-context"
+          rm -rf "$context"
+          mkdir -p "$context/memoria/scripts"
+          cp -a services "$context/memoria/services"
+          cp -a packages "$context/memoria/packages"
+          cp scripts/mark_readiness.py "$context/memoria/scripts/mark_readiness.py"
+          cp scripts/rebuild_memory_projections.py "$context/memoria/scripts/rebuild_memory_projections.py"
+          cp scripts/verify_control_release_artifact.py "$context/memoria/scripts/verify_control_release_artifact.py"
+          printf 'overlay_context=%s\n' "$context"
+      - name: Build the source overlay with no network
+        run: >-
+          DOCKER_BUILDKIT=0 docker build --network none
+          --file infra/Dockerfile.control-api-source-overlay
+          --tag "$CANDIDATE_IMAGE"
+          --build-arg "BASE_IMAGE=$BASE_IMAGE"
+          --build-arg "MEMORIA_RELEASE_COMMIT=$RELEASE_COMMIT"
+          --build-arg "MEMORIA_RELEASE_TAG=$RELEASE_TAG"
+          "$RUNNER_TEMP/control-api-overlay-context"
+      - name: Re-run the in-image verifier with no network
+        run: >-
+          docker run --rm --network none
+          -e ENVIRONMENT=development -e OFFLINE_MOCK=true
+          -e "MEMORIA_RELEASE_COMMIT=$RELEASE_COMMIT"
+          -e "MEMORIA_RELEASE_TAG=$RELEASE_TAG"
+          -e MEMORIA_RELEASE_ROLE=control-api
+          -e MEMORIA_RELEASE_KIND=control-api-source-overlay
+          --entrypoint /app/.venv/bin/python "$CANDIDATE_IMAGE"
+          -m scripts.verify_control_release_artifact
+          --expected-commit "$RELEASE_COMMIT"
+          --expected-tag "$RELEASE_TAG" --require-metadata
 
   media-edge-image:
     needs: changes

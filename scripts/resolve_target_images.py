@@ -46,10 +46,10 @@ def image_tag(image: str) -> str:
     return repository.split(":", 1)[1] if ":" in repository else ""
 
 
-def stack_image(stack_tag: str) -> str:
-    """The image the live stack resolves the agent/bridge services to."""
+def stack_image(stack_tag: str, repository: str = "memoria-agent") -> str:
+    """Return the image the live stack resolves the selected services to."""
 
-    return f"memoria-agent:{stack_tag}"
+    return f"{repository}:{stack_tag}"
 
 
 def verify_resolved_services(
@@ -59,6 +59,7 @@ def verify_resolved_services(
     stack_tag: str = "",
     expected_images: Mapping[str, str] | None = None,
     target_services: tuple[str, ...] = SERVICES,
+    live_stack_image: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Validate that the target services exist, name the candidate, and agree.
 
@@ -81,6 +82,13 @@ def verify_resolved_services(
         errors.append(
             f"expected images must describe one candidate artifact: {dict(expected_images)}"
         )
+    if expected_images:
+        missing_expectations = set(target_services) - set(expected_images)
+        if missing_expectations:
+            errors.append(
+                "expected images do not cover every target service: "
+                f"{sorted(missing_expectations)}"
+            )
 
     for name in target_services:
         service = resolved_services.get(name)
@@ -103,7 +111,8 @@ def verify_resolved_services(
                 )
 
         if candidate_tag and resolved_tag != candidate_tag:
-            if stack_tag and resolved_images[name] == stack_image(stack_tag):
+            effective_stack_image = live_stack_image or stack_image(stack_tag)
+            if stack_tag and resolved_images[name] == effective_stack_image:
                 errors.append(
                     f"{name}: still resolves to the effective stack image "
                     f"'{resolved_images[name]}', not candidate '{candidate_tag}' "
@@ -131,6 +140,7 @@ def run_compose_config(
     stack_tag: str,
     release_commit: str | None = None,
     docker_cmd: list[str] | None = None,
+    profile: str = PROFILE,
 ) -> tuple[int, str, str]:
     """Execute docker compose config and return (exit_code, stdout, stderr)."""
 
@@ -140,11 +150,10 @@ def run_compose_config(
         "compose",
         "--project-name",
         PROJECT_NAME,
-        "--profile",
-        PROFILE,
-        "--file",
-        BASE_COMPOSE_FILE,
     ]
+    if profile:
+        command += ["--profile", profile]
+    command += ["--file", BASE_COMPOSE_FILE]
     for override in overrides:
         command += ["--file", override]
     command += ["config", "--format", "json"]
@@ -211,22 +220,57 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=os.getenv("MEMORIA_DOCKER_CMD", "sudo docker"),
         help="Command that runs docker, split like a shell word list",
     )
+    parser.add_argument(
+        "--services",
+        default=",".join(SERVICES),
+        help="Comma-separated target services (default: agent and voice-core-media-bridge)",
+    )
+    parser.add_argument(
+        "--profile",
+        default=PROFILE,
+        help="Compose profile used to render the stack (default: media-runtime)",
+    )
+    parser.add_argument(
+        "--stack-image",
+        help=(
+            "Effective live image for the selected services; defaults to "
+            "memoria-agent:<stack-tag>"
+        ),
+    )
     args, extra = parser.parse_known_args(argv[1:])
     if extra:
         args.positional_args.extend(extra)
     return args
 
 
-def _collect_expected_images(items: list[str]) -> dict[str, str]:
+def _collect_expected_images(items: list[str], services: tuple[str, ...]) -> dict[str, str]:
     expected_images: dict[str, str] = {}
     for item in items:
         if "=" in item:
             service, image = item.split("=", 1)
-            expected_images[service.strip()] = image.strip()
+            service = service.strip()
+            image = image.strip()
+            if not service or not image or service in expected_images:
+                raise ValueError("--expected-image entries must be unique and non-empty")
+            expected_images[service] = image
         else:
-            for service in SERVICES:
-                expected_images[service] = item.strip()
+            image = item.strip()
+            if not image:
+                raise ValueError("--expected-image entries must be non-empty")
+            for service in services:
+                if service in expected_images:
+                    raise ValueError("--expected-image entries must not overlap")
+                expected_images[service] = image
     return expected_images
+
+
+def _target_services(value: str) -> tuple[str, ...]:
+    services = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not services or len(services) != len(set(services)):
+        raise ValueError("--services must contain unique, non-empty service names")
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", item) for item in services):
+        raise ValueError("--services contains an invalid service name")
+    return services
 
 
 def _preflight(
@@ -261,9 +305,22 @@ def main(argv: list[str]) -> int:
         print("Error: release_dir must be provided", file=sys.stderr)
         return 2
 
+    try:
+        target_services = _target_services(args.services)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     candidate_tag = (args.expected_tag or "").strip()
     stack_tag = (args.stack_tag or "").strip()
-    expected_images = _collect_expected_images(args.expected_image)
+    try:
+        expected_images = _collect_expected_images(args.expected_image, target_services)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if set(expected_images) - set(target_services):
+        print("Error: --expected-image names a service outside --services", file=sys.stderr)
+        return 2
+    live_stack_image = (args.stack_image or "").strip() or stack_image(stack_tag)
 
     # Refuse to run a consistency-only check: two services on the live image
     # would otherwise pass, which is exactly what this gate must stop.
@@ -297,6 +354,7 @@ def main(argv: list[str]) -> int:
         stack_tag=stack_tag,
         release_commit=args.release_commit,
         docker_cmd=shlex.split(args.docker_cmd),
+        profile=args.profile,
     )
     if returncode != 0:
         print(stderr.strip()[:2000], file=sys.stderr)
@@ -314,10 +372,12 @@ def main(argv: list[str]) -> int:
         candidate_tag=candidate_tag,
         stack_tag=stack_tag,
         expected_images=expected_images if expected_images else None,
+        target_services=target_services,
+        live_stack_image=live_stack_image,
     )
 
     print(f"stack_tag={stack_tag} candidate_tag={candidate_tag or '<image-only>'}")
-    for name in SERVICES:
+    for name in target_services:
         service = resolved.get(name)
         image = service.get("image") if service else "NOT RESOLVED"
         print(f"{name} -> {image}")
