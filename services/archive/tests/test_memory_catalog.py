@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from services.archive.domain import ContextQuery, EvidenceEvent, MemoryReview
 from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
+from services.archive.memory_catalog import MemoryCatalog, SubjectCategoryUnresolved
 from services.archive.memory_domain import (
     AccountWriteRejectedError,
     ExtractedClaim,
@@ -607,6 +610,243 @@ async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
         ("60", "candidate"),
         ("61", "candidate"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Path) -> None:
+    """Two self-claims that name different speakers are not one fact.
+
+    Both rows stay under subject_key="self" inside the login account.  The
+    child's age must neither mark the owner's claim as a conflict nor count as
+    an existing value that blocks the owner's own confirmation.
+    """
+
+    path = tmp_path / "subject-claims.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await archive.record(
+        EvidenceEvent(
+            event_id="explicit-age-60",
+            account_id="account-memory",
+            subject_id="account-memory",
+            session_id="session-memory",
+            turn_id=1,
+            generation_id=1,
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime(2026, 7, 19, 10, 0, tzinfo=UTC),
+            speaker_class="owner",
+            source="test",
+            payload={
+                "text": "请记住我今年60岁。",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+                "tool_epoch": 0,
+                "memory_write_intent": {
+                    "kind": "explicit_remember",
+                    "policy_version": "explicit-memory-v2",
+                },
+            },
+        )
+    )
+    await archive.record(
+        EvidenceEvent(
+            event_id="explicit-age-61",
+            account_id="account-memory",
+            subject_id="person-child",
+            session_id="session-memory",
+            turn_id=2,
+            generation_id=2,
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime(2026, 7, 19, 10, 1, tzinfo=UTC),
+            speaker_class="owner",
+            source="test",
+            payload={
+                "text": "请记住我今年61岁。",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+                "tool_epoch": 0,
+                "memory_write_intent": {
+                    "kind": "explicit_remember",
+                    "policy_version": "explicit-memory-v2",
+                },
+            },
+        )
+    )
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=SingleValueClaimExtractor(),
+        # Both speakers are adults here.  The point of the test is the fold,
+        # not the minor allowlist; a missing identity must not be what hides
+        # the child's row.
+        evidence_subject_category_resolver=lambda _event: "adult",
+    )
+    await catalog.compile_pending()
+
+    with sqlite3.connect(path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT source_event_id, value, conflict_state, status FROM memory_claims"
+            " WHERE predicate = 'age' ORDER BY source_event_id"
+        ).fetchall()
+    by_event = {str(row["source_event_id"]): row for row in rows}
+    assert set(by_event) == {"explicit-age-60", "explicit-age-61"}
+    assert str(by_event["explicit-age-60"]["conflict_state"]) == "none"
+    assert str(by_event["explicit-age-61"]["conflict_state"]) == "none"
+    assert str(by_event["explicit-age-60"]["value"]) == "60"
+    assert str(by_event["explicit-age-61"]["value"]) == "61"
+    # Age is outside the auto-confirm allowlist, so both rows stay candidates
+    # the same way one age claim does.  What must not happen is the other
+    # speaker's value showing up as an existing value that would block a
+    # confirmation, or the two rows marking each other as a conflict.
+    assert str(by_event["explicit-age-60"]["status"]) == "candidate"
+    assert str(by_event["explicit-age-61"]["status"]) == "candidate"
+    owner_event = await archive.event(account_id="account-memory", event_id="explicit-age-60")
+    child_event = await archive.event(account_id="account-memory", event_id="explicit-age-61")
+    assert owner_event is not None and child_event is not None
+    extraction = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="life_story",
+                subject_key="self",
+                predicate="age",
+                value="60",
+                confidence=0.95,
+            ),
+        ),
+        extractor_version="single-value-claim-v1",
+    )
+    with catalog._connect() as connection:
+        owner_existing = catalog._existing_single_value_claims(
+            connection, event=owner_event, extraction=extraction
+        )
+        child_existing = catalog._existing_single_value_claims(
+            connection,
+            event=child_event,
+            extraction=replace(
+                extraction,
+                claims=(replace(extraction.claims[0], value="61"),),
+            ),
+        )
+    assert owner_existing == ("60",)
+    assert child_existing == ("61",)
+
+
+@pytest.mark.asyncio
+async def test_default_resolver_still_compiles_a_named_other_subject(tmp_path: Path) -> None:
+    """None from the default resolver is unknown, not "do not project".
+
+    A catalog with no evidence resolver used to compile every accepted event.
+    Naming another subject must not change that: only an explicit unresolved
+    signal skips the projection.
+    """
+
+    path = tmp_path / "default-resolver.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(archive, event_id="other-subject-fact", text="我习惯先找事实，再讨论责任。")
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
+            ("person-other", "other-subject-fact"),
+        )
+    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+
+    report = await catalog.compile_pending()
+
+    assert report.compiled_events == 1
+    assert report.ignored_events == 0
+    queue = await catalog.review_queue(account_id="account-memory")
+    assert [item.source_event_id for item in queue] == ["other-subject-fact"]
+
+
+@pytest.mark.asyncio
+async def test_unresolved_other_subject_is_ignored_without_a_projection(
+    tmp_path: Path,
+) -> None:
+    """The sentinel, not None, is what withholds a long-term projection."""
+
+    path = tmp_path / "unresolved-subject.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(archive, event_id="owner-fact", text="我习惯先找事实，再讨论责任。")
+    await _record(
+        archive,
+        event_id="missing-person-fact",
+        text="我习惯先核对范围，再开始动手。",
+        minute=1,
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
+            ("account-memory", "owner-fact"),
+        )
+        connection.execute(
+            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
+            ("person-missing", "missing-person-fact"),
+        )
+
+    def resolve(event: EvidenceEvent) -> str | None:
+        if event.subject_id == "person-missing":
+            raise SubjectCategoryUnresolved(event.subject_id)
+        return None
+
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=resolve,
+    )
+    report = await catalog.compile_pending()
+
+    assert report.compiled_events == 1
+    assert report.ignored_events == 1
+    queue = await catalog.review_queue(account_id="account-memory")
+    assert [item.source_event_id for item in queue] == ["owner-fact"]
+    stored = await archive.event(account_id="account-memory", event_id="missing-person-fact")
+    assert stored is not None
+    with sqlite3.connect(path) as connection:
+        receipt = connection.execute(
+            "SELECT outcome FROM memory_compile_receipts WHERE event_id = ?",
+            ("missing-person-fact",),
+        ).fetchone()
+    assert receipt is not None
+    assert receipt[0] == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_async_category_resolver_runs_on_the_compiler_loop(tmp_path: Path) -> None:
+    """An awaitable resolver is awaited in place, not dispatched to another loop.
+
+    Production identity pools are bound to the loop that created them.  A
+    resolver that sees a different loop would skip every non-account subject.
+    """
+
+    path = tmp_path / "async-category.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(archive, event_id="child-fact", text="我习惯先核对范围，再开始动手。")
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
+            ("person-child", "child-fact"),
+        )
+    compiler_loop = asyncio.get_running_loop()
+    seen_loops: list[asyncio.AbstractEventLoop] = []
+
+    async def resolve(event: EvidenceEvent) -> str | None:
+        seen_loops.append(asyncio.get_running_loop())
+        assert event.subject_id == "person-child"
+        return "adult"
+
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        evidence_subject_category_resolver=resolve,
+    )
+    report = await catalog.compile_pending()
+
+    assert seen_loops == [compiler_loop]
+    assert report.compiled_events == 1
+    assert report.ignored_events == 0
+    queue = await catalog.review_queue(account_id="account-memory")
+    assert [item.source_event_id for item in queue] == ["child-fact"]
 
 
 @pytest.mark.asyncio

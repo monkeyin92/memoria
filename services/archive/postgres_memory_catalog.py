@@ -21,6 +21,7 @@ from services.archive.episode_consolidator import (
     EpisodeConsolidator,
     ExistingEpisode,
 )
+from services.archive.memory_catalog import SubjectCategoryUnresolved, _await_category
 from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
@@ -57,6 +58,17 @@ from services.common.evidence_policy import contribution_for
 from services.common.redaction import redact_pii
 
 _SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
+
+
+def _confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
+    """The speaker the evidence actually names, or None when it names nobody.
+
+    Same contract as the SQLite catalog: a blank subject stays unclaimed, and
+    a named subject folds only against its own lineage.
+    """
+
+    subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
+    return subject_id or None
 
 
 def _bind_dollar(parameters: list[Any]) -> Callable[[str], str]:
@@ -235,6 +247,9 @@ class PostgresMemoryCatalog:
         require_vector: bool = False,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
+        evidence_subject_category_resolver: (
+            Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
+        ) = None,
         capture_evidence_projector: (
             Callable[[EvidenceEvent], Awaitable[bool]] | None
         ) = None,
@@ -268,6 +283,13 @@ class PostgresMemoryCatalog:
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
         self._subject_category_resolver = subject_category_resolver or (lambda _: None)
+        # Compilation must ask about the evidence subject.  Callers that only
+        # know the account owner keep the account resolver; it is not a guess
+        # that every subject is that owner.
+        self._evidence_subject_category_resolver = (
+            evidence_subject_category_resolver
+            or (lambda event: self._subject_category_resolver(event.account_id))
+        )
         self._capture_evidence_projector = capture_evidence_projector
         self._outbox_lease_s = outbox_lease_s
         self._outbox_retry_base_s = outbox_retry_base_s
@@ -534,7 +556,24 @@ class PostgresMemoryCatalog:
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
-            subject_category = self._subject_category_resolver(event.account_id)
+            try:
+                subject_category = await _await_category(
+                    self._evidence_subject_category_resolver(event)
+                )
+            except SubjectCategoryUnresolved:
+                # Identity could not classify this subject.  Do not project the
+                # row as the account owner (and do not guess adult); the archive
+                # evidence stays, and only this compile is withheld.  None is
+                # "category unknown" and still compiles on the non-minor path.
+                async with pool.acquire() as connection, connection.transaction():
+                    await self._scope(connection, account_id)
+                    await self._record_receipt(connection, event, outcome="ignored")
+                    await self._complete_outbox(
+                        connection,
+                        outbox_id,
+                        fencing_token=fencing_token,
+                    )
+                return "ignored"
             extraction = filter_extraction_for_subject(
                 event,
                 extraction,
@@ -817,11 +856,17 @@ class PostgresMemoryCatalog:
                 sensitivity=sensitivity,
                 conflict_state="none",
             )
+            # A named subject folds only its own lineage.  A blank subject
+            # folds only other unclaimed rows: passing no subject here would
+            # mark the account owner's claims as conflicts too.
+            claim_subject_id = _confirmed_evidence_subject(event)
             await self._refresh_claim_conflicts(
                 connection,
                 account_id=event.account_id,
                 subject_key=claim.subject_key,
                 predicate=claim.predicate,
+                subject_id=claim_subject_id,
+                unclaimed_only=claim_subject_id is None,
             )
 
         for index, timeline in enumerate(extraction.timeline):
@@ -1003,15 +1048,33 @@ class PostgresMemoryCatalog:
         claim = extraction.claims[0]
         if claim.predicate not in SINGLE_VALUE_PREDICATES:
             return ()
+        # A blank evidence subject is an unclaimed speaker.  It may still
+        # conflict with other unclaimed rows, but it must not inherit a value
+        # that already belongs to a named subject, and it must not be stored
+        # as the account owner: NULL means "no confirmed speaker".
+        subject_id = _confirmed_evidence_subject(event) or ""
+        lineage = (
+            "(SELECT lineage.subject_id FROM archive_evidence_events lineage"
+            " WHERE lineage.event_id = memory_claims.source_event_id"
+            " AND lineage.account_id = memory_claims.account_id)"
+        )
+        if subject_id:
+            lineage_clause = f" AND {lineage} = $4"
+            lineage_parameters: tuple[object, ...] = (subject_id,)
+        else:
+            lineage_clause = f" AND {lineage} IS NULL"
+            lineage_parameters = ()
         rows = await connection.fetch(
-            """
+            f"""
             SELECT value FROM memory_claims
             WHERE account_id = $1 AND subject_key = $2 AND predicate = $3
               AND status != 'retracted'
+              {lineage_clause}
             """,
             event.account_id,
             claim.subject_key,
             claim.predicate,
+            *lineage_parameters,
         )
         return tuple(str(row["value"]) for row in rows)
 
@@ -1086,13 +1149,16 @@ class PostgresMemoryCatalog:
         subject_key: str,
         predicate: str,
         subject_id: str | None = None,
+        unclaimed_only: bool = False,
     ) -> None:
         # An explicit scope keeps the conflict fold inside one speaker: another
         # subject's claims share ``subject_key`` ("self") and must neither
         # decide nor receive this review's conflict state.  The scope is the
         # same lineage contract the read path uses -- account-consistent own
         # evidence plus every source the claim's projection merged -- so a claim
-        # that a scoped read hides is not folded here either.
+        # that a scoped read hides is not folded here either.  ``unclaimed_only``
+        # is the compile path for a blank evidence subject: those rows fold
+        # among themselves and never against a named subject.
         def _scope(fixed_count: int) -> tuple[str, list[object]]:
             """Lineage scope for a statement with *fixed_count* leading parameters.
 
@@ -1100,6 +1166,13 @@ class PostgresMemoryCatalog:
             site uses, seeded with the number of parameters already bound.
             """
 
+            if unclaimed_only:
+                return (
+                    " AND (SELECT lineage.subject_id FROM archive_evidence_events lineage"
+                    " WHERE lineage.event_id = memory_claims.source_event_id"
+                    " AND lineage.account_id = memory_claims.account_id) IS NULL",
+                    [],
+                )
             if subject_id is None:
                 return "", []
             indexed: list[object] = [None] * fixed_count

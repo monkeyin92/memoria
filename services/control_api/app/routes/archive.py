@@ -2424,7 +2424,7 @@ async def session_memory_context(
     scope = await _resolve_subject_memory_scope(
         request, session_id=body.session_id, account_id=str(session["user_id"])
     )
-    if not scope.memory_readable:
+    if not scope.memory_readable or scope.subject_id is None:
         return {"items": []}
     trusted_interaction = ModePolicy.trusted_context(
         FrozenMode.from_session(session),
@@ -2432,18 +2432,22 @@ async def session_memory_context(
     )
     if not trusted_interaction["capabilities"]["private_memory"]:
         return {"items": []}
+    # The catalog's subject_id defaults to the whole account.  Bind it here,
+    # after the scope has already refused a missing subject, so a non-owner
+    # turn cannot fall through to the account owner's rows.
+    subject_id = scope.subject_id
     settings = cast(ControlSettings, request.app.state.settings)
     recall = RecallPlanner.plan(
         query=body.topic,
         now=current_local_time(settings.memoria_timezone),
         people=await _catalog(request).people(
-            account_id=str(session["user_id"]), subject_id=scope.subject_id, limit=100
+            account_id=str(session["user_id"]), subject_id=subject_id, limit=100
         ),
     )
     result = await _catalog(request).context(
         MemorySearchQuery(
             account_id=str(session["user_id"]),
-            subject_id=scope.subject_id,
+            subject_id=subject_id,
             speaker_class=body.speaker_class,
             text=recall.text,
             entity_ids=recall.entity_ids,

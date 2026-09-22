@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -382,6 +383,41 @@ def _sensitivity(value: str) -> MemorySensitivity:
     return "personal"
 
 
+class SubjectCategoryUnresolved(Exception):
+    """The evidence names another person whose category cannot be classified.
+
+    ``None`` from a resolver is "category unknown", and unknown still compiles
+    through the non-minor path.  Only a caller that looked and could not decide
+    -- identity down, or the person missing -- raises this.  The catalog then
+    records an ignored receipt and leaves the archive evidence unprojected.
+    """
+
+
+async def _await_category(value: str | None | Awaitable[str | None]) -> str | None:
+    """Accept a sync category or one looked up on the compiler's own loop.
+
+    The compiler calls this from ``async def``.  An awaitable resolver must be
+    awaited here so a Postgres identity pool stays on the loop that created it.
+    Opening another thread and calling ``asyncio.run`` binds that pool to the
+    wrong loop and turns every other-subject lookup into a skipped projection.
+    """
+
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _confirmed_evidence_subject(event: EvidenceEvent) -> str | None:
+    """The speaker the evidence actually names, or None when it names nobody.
+
+    A blank subject is unclaimed.  It is not the account owner and not another
+    person, so conflict folds stay inside other unclaimed rows.
+    """
+
+    subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
+    return subject_id or None
+
+
 def _json_ids(values: tuple[str, ...] | list[str] | set[str]) -> str:
     return json.dumps(sorted(set(values)), ensure_ascii=False, separators=(",", ":"))
 
@@ -409,6 +445,9 @@ class MemoryCatalog:
         account_guard: AccountWriteGuard | None = None,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
+        evidence_subject_category_resolver: (
+            Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
+        ) = None,
     ) -> None:
         self._path = sqlite_path.expanduser().resolve()
         self._extractor = extractor
@@ -416,6 +455,13 @@ class MemoryCatalog:
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
         self._subject_category_resolver = subject_category_resolver or (lambda _: None)
+        # Compilation must ask about the evidence subject.  Callers that only
+        # know the account owner keep the account resolver; it is not a guess
+        # that every subject is that owner.
+        self._evidence_subject_category_resolver = (
+            evidence_subject_category_resolver
+            or (lambda event: self._subject_category_resolver(event.account_id))
+        )
         self._initialized = False
         self._initialize_lock = threading.Lock()
 
@@ -428,6 +474,9 @@ class MemoryCatalog:
         account_guard: AccountWriteGuard | None = None,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
+        evidence_subject_category_resolver: (
+            Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
+        ) = None,
     ) -> MemoryCatalog:
         return cls(
             Path(path),
@@ -435,6 +484,7 @@ class MemoryCatalog:
             account_guard=account_guard,
             episode_consolidator=episode_consolidator,
             subject_category_resolver=subject_category_resolver,
+            evidence_subject_category_resolver=evidence_subject_category_resolver,
         )
 
     def initialize(self) -> None:
@@ -730,7 +780,21 @@ class MemoryCatalog:
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
-            subject_category = self._subject_category_resolver(event.account_id)
+            try:
+                subject_category = await _await_category(
+                    self._evidence_subject_category_resolver(event)
+                )
+            except SubjectCategoryUnresolved:
+                # Identity could not classify this subject.  Skip the long-term
+                # projection rather than guessing adult or copying the account
+                # owner's allowlist.  None is not this signal: an unknown
+                # category still compiles on the non-minor path.  The archive
+                # evidence itself stays; this receipt only records that the
+                # catalog did not project it.
+                with self._connect() as connection:
+                    self._record_receipt(connection, event, outcome="ignored")
+                    self._complete_outbox(connection, outbox_id)
+                return "ignored"
             extraction = filter_extraction_for_subject(
                 event,
                 extraction,
@@ -950,11 +1014,17 @@ class MemoryCatalog:
                 sensitivity=sensitivity,
                 conflict_state="none",
             )
+            # A named subject folds only its own lineage.  A blank subject
+            # folds only other unclaimed rows: passing no subject here would
+            # mark the account owner's claims as conflicts too.
+            claim_subject_id = _confirmed_evidence_subject(event)
             self._refresh_claim_conflicts(
                 connection,
                 account_id=event.account_id,
                 subject_key=claim.subject_key,
                 predicate=claim.predicate,
+                subject_id=claim_subject_id,
+                unclaimed_only=claim_subject_id is None,
             )
 
         for index, timeline in enumerate(extraction.timeline):
@@ -1136,13 +1206,32 @@ class MemoryCatalog:
         claim = extraction.claims[0]
         if claim.predicate not in SINGLE_VALUE_PREDICATES:
             return ()
+        # A blank evidence subject is an unclaimed speaker.  It may still
+        # conflict with other unclaimed rows, but it must not inherit a value
+        # that already belongs to a named subject, and it must not be stored
+        # as the account owner: NULL means "no confirmed speaker".  Two named
+        # subjects that share subject_key="self" are different speakers and
+        # must not see each other's values here either.
+        subject_id = _confirmed_evidence_subject(event) or ""
+        lineage = (
+            "(SELECT lineage.subject_id FROM evidence_events lineage"
+            " WHERE lineage.event_id = memory_claims.source_event_id"
+            " AND lineage.account_id = memory_claims.account_id)"
+        )
+        if subject_id:
+            lineage_clause = f" AND {lineage} = ?"
+            lineage_parameters: tuple[object, ...] = (subject_id,)
+        else:
+            lineage_clause = f" AND {lineage} IS NULL"
+            lineage_parameters = ()
         rows = connection.execute(
-            """
+            f"""
             SELECT value, source_event_id FROM memory_claims
             WHERE account_id = ? AND subject_key = ? AND predicate = ?
               AND status != 'retracted'
+              {lineage_clause}
             """,
-            (event.account_id, claim.subject_key, claim.predicate),
+            (event.account_id, claim.subject_key, claim.predicate, *lineage_parameters),
         ).fetchall()
         return tuple(str(row["value"]) for row in rows)
 
@@ -1220,16 +1309,25 @@ class MemoryCatalog:
         subject_key: str,
         predicate: str,
         subject_id: str | None = None,
+        unclaimed_only: bool = False,
     ) -> None:
         # An explicit scope keeps the conflict fold inside one speaker: another
         # subject's claims share ``subject_key`` ("self") and must neither
         # decide nor receive this review's conflict state.  The scope is the
         # same lineage contract the read path uses -- account-consistent own
         # evidence plus every source the claim's projection merged -- so a claim
-        # that a scoped read hides is not folded here either.
+        # that a scoped read hides is not folded here either.  ``unclaimed_only``
+        # is the compile path for a blank evidence subject: those rows fold
+        # among themselves and never against a named subject.
         scope = ""
         scope_parameters: list[object] = []
-        if subject_id is not None:
+        if unclaimed_only:
+            scope = (
+                " AND (SELECT lineage.subject_id FROM evidence_events lineage"
+                " WHERE lineage.event_id = memory_claims.source_event_id"
+                " AND lineage.account_id = memory_claims.account_id) IS NULL"
+            )
+        elif subject_id is not None:
 
             def bind(value: str) -> str:
                 scope_parameters.append(value)

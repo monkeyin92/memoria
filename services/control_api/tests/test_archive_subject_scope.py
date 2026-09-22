@@ -210,18 +210,30 @@ async def test_session_context_uses_current_authority_and_not_the_managing_accou
         async def current(*args: Any, **kwargs: Any) -> dict[str, Any]:
             return {"active_subject_id": "other-adult", "subject_category": "adult"}
 
-        async def forbidden(**kwargs: Any) -> None:
-            pytest.fail("account catalog was touched for a different subject")
+        seen: list[str | None] = []
+
+        async def record_people(**kwargs: Any) -> tuple[()]:
+            seen.append(kwargs.get("subject_id"))
+            return ()
+
+        async def record_context(query: Any) -> Any:
+            from services.archive.memory_domain import MemorySearchResult
+
+            seen.append(getattr(query, "subject_id", None))
+            return MemorySearchResult()
 
         from services.control_api.app.routes import interaction
         monkeypatch.setattr(interaction, "_current_persistent_runtime_profile", current)
-        monkeypatch.setattr(app.state.memory_catalog, "people", forbidden)
+        monkeypatch.setattr(app.state.memory_catalog, "people", record_people)
+        monkeypatch.setattr(app.state.memory_catalog, "context", record_context)
         result = await client.post(
             "/v1/archive/session-context", headers=INTERNAL,
             json={"session_id": session["session_id"], "speaker_class": "owner", "topic": "记忆"},
         )
         assert result.status_code == 200, result.text
         assert result.json() == {"items": []}
+        assert seen == ["other-adult", "other-adult"]
+        assert owner["user_id"] not in seen
 
 
 @pytest.mark.asyncio
@@ -377,6 +389,20 @@ async def test_real_catalog_http_exits_and_review_ids_are_subject_scoped(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner = await _register_verified_adult(client, app, username="scope-catalog")
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        # catalog-1 names a different person.  Without an identity row the
+        # compiler refuses to project that evidence, which would hide the leak
+        # this test is checking.  Register the child so the claim exists, then
+        # prove the logged-in account still cannot read or confirm it.
+        await app.state.identity_service.register_person(
+            person_id="child",
+            display_name="孩子",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="test-child-evidence",
+            now=datetime.now(UTC),
+        )
         now = datetime.now(UTC)
         for i, (subject, name) in enumerate(
             ((owner["user_id"], "李梅"), ("child", "王芳"), (None, "赵兰"))
@@ -471,3 +497,471 @@ async def test_companion_provenance_requires_every_source_to_match_parent_subjec
                 assert await app.state.life_archive.event(
                     account_id=owner["user_id"], event_id=f"provenance-reply-{i}"
                 ) is None
+
+
+def _memory_claim_ids(items: list[dict[str, Any]]) -> list[str]:
+    return [item["item_id"] for item in items if item["kind"] == "memory_claim"]
+
+
+async def _read_subject_memory(
+    client: AsyncClient,
+    *,
+    app: Any,
+    user_id: str,
+    session_id: str,
+    subject_id: str,
+    subject_category: str,
+    token: dict[str, str],
+    turn_id: int,
+) -> tuple[Any, Any, Any]:
+    """Read the three subject-scoped seams for one signed runtime profile."""
+
+    from services.control_api.tests.test_interaction_api import (
+        _attach_signed_runtime_profile,
+        _response_plan_body,
+    )
+
+    _attach_signed_runtime_profile(
+        app,
+        user_id=user_id,
+        session_id=session_id,
+        active_subject_id=subject_id,
+        subject_category=subject_category,
+        age_band="under_14" if subject_category == "minor" else "adult",
+        service_mode="student_minor" if subject_category == "minor" else "adult_companion",
+        capabilities=("chat", "memory_recall_private"),
+    )
+    body = _response_plan_body(session_id)
+    body["query"] = "我喜欢什么？"
+    body["fence"] = {**body["fence"], "turn_id": turn_id, "generation_id": turn_id}
+    planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+    prefetched = await client.post(
+        "/v1/interaction/context-prefetch",
+        headers=token,
+        json={
+            "session_id": session_id,
+            "query": "我们以前聊过什么？",
+            "speaker_decision": body["speaker_decision"],
+        },
+    )
+    session_context = await client.post(
+        "/v1/archive/session-context",
+        headers=INTERNAL,
+        json={
+            "session_id": session_id,
+            "speaker_class": "owner",
+            "topic": "我喜欢什么？",
+            "limit": 10,
+        },
+    )
+    return planned, prefetched, session_context
+
+
+@pytest.mark.asyncio
+async def test_same_account_self_claims_stay_on_their_own_subject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two self-claims in one account stay with the speaker who said them.
+
+    Both rows use subject_key="self".  Reading as the other person, then back
+    as the account, must each return only that person's row, and the catalog
+    query must name that subject.
+    """
+
+    from services.archive.domain import EvidenceEvent
+    from services.control_api.app.routes import interaction
+
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
+    )
+    app = create_app()
+    seen_subjects: list[str | None] = []
+    catalog = app.state.memory_catalog
+    original_context = catalog.context
+
+    async def recording_context(query: Any) -> Any:
+        seen_subjects.append(getattr(query, "subject_id", None))
+        return await original_context(query)
+
+    catalog.context = recording_context
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="scope-self-claims")
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        now = datetime.now(UTC)
+        await app.state.identity_service.register_person(
+            person_id="person-other-adult",
+            display_name="另一人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="test-adult-evidence",
+            now=now,
+        )
+        for index, (subject, text) in enumerate(
+            (
+                (owner["user_id"], "请记住我喜欢散步。"),
+                ("person-other-adult", "请记住我喜欢阅读。"),
+            )
+        ):
+            await app.state.life_archive.record(
+                EvidenceEvent(
+                    event_id=f"self-claim-{index}",
+                    account_id=str(owner["user_id"]),
+                    subject_id=str(subject),
+                    session_id=session["session_id"],
+                    turn_id=index + 1,
+                    generation_id=index + 1,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=now + timedelta(minutes=index),
+                    speaker_class="owner",
+                    source="test.pre-fence",
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                        "tool_epoch": 0,
+                        "memory_write_intent": {
+                            "kind": "explicit_remember",
+                            "policy_version": "explicit-memory-v2",
+                        },
+                    },
+                )
+            )
+        await app.state.memory_catalog.compile_pending()
+        other_plan, other_prefetch, other_context = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id="person-other-adult",
+            subject_category="adult",
+            token=token,
+            turn_id=7,
+        )
+        owner_plan, owner_prefetch, owner_context = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id=str(owner["user_id"]),
+            subject_category="adult",
+            token=token,
+            turn_id=8,
+        )
+
+    assert other_plan.status_code == 200, other_plan.text
+    assert other_prefetch.status_code == 200, other_prefetch.text
+    assert other_context.status_code == 200, other_context.text
+    assert owner_plan.status_code == 200, owner_plan.text
+    assert owner_prefetch.status_code == 200, owner_prefetch.text
+    assert owner_context.status_code == 200, owner_context.text
+    assert "散步" not in other_plan.text
+    assert "阅读" in other_plan.text
+    assert "阅读" not in owner_plan.text
+    assert "散步" in owner_plan.text
+    assert {item["source_event_id"] for item in other_context.json()["items"]} == {
+        "self-claim-1"
+    }
+    assert {item["source_event_id"] for item in owner_context.json()["items"]} == {
+        "self-claim-0"
+    }
+    assert seen_subjects
+    assert set(seen_subjects) == {"person-other-adult", owner["user_id"]}
+    del interaction
+
+
+@pytest.mark.asyncio
+async def test_minor_without_retention_reads_nothing_and_names_the_subject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A minor without memory_retention is empty on every subject-scoped read.
+
+    The consent lookup, when it happens, names the current subject and never
+    the login account.  Revoking a previously granted consent closes the same
+    three reads.
+    """
+
+    from services.guardian.domain import PersonConsentRecord
+
+    class _RecordingGuardian:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+            self.minor_ids: list[str] = []
+
+        async def active_consent(self, *, minor_user_id: str, consent_kind: str) -> Any:
+            self.minor_ids.append(minor_user_id)
+            return await self.inner.active_consent(
+                minor_user_id=minor_user_id, consent_kind=consent_kind
+            )
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
+    )
+    app = create_app()
+    guardian = _RecordingGuardian(app.state.guardian_store)
+    app.state.guardian_store = guardian
+    catalog_calls = {"count": 0}
+    catalog = app.state.memory_catalog
+    original_context = catalog.context
+
+    async def counting_context(query: Any) -> Any:
+        catalog_calls["count"] += 1
+        return await original_context(query)
+
+    catalog.context = counting_context
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="scope-minor-read")
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        now = datetime.now(UTC)
+        await app.state.identity_service.register_person(
+            person_id="person-minor-child",
+            display_name="孩子",
+            timezone="Asia/Shanghai",
+            subject_category="minor",
+            age_band="under_14",
+            age_evidence_status="unverified",
+            now=now,
+        )
+        planned, prefetched, session_context = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id="person-minor-child",
+            subject_category="minor",
+            token=token,
+            turn_id=7,
+        )
+        assert planned.status_code == 200, planned.text
+        assert prefetched.status_code == 200, prefetched.text
+        assert session_context.status_code == 200, session_context.text
+        assert _memory_claim_ids(planned.json()["grounded_items"]) == []
+        assert _memory_claim_ids(prefetched.json()["grounded_items"]) == []
+        assert session_context.json() == {"items": []}
+        assert catalog_calls["count"] == 0
+        assert guardian.minor_ids
+        assert set(guardian.minor_ids) == {"person-minor-child"}
+        assert owner["user_id"] not in guardian.minor_ids
+
+        consent = await app.state.guardian_store.grant_person_consent(
+            PersonConsentRecord(
+                consent_id="minor-retention",
+                subject_person_id="person-minor-child",
+                grantor_person_id="guardian",
+                consent_kind="memory_retention",
+                policy_version="test-v1",
+                granted_at=now,
+                evidence_event_id="grant-minor-retention",
+            ),
+            actor_person_id="guardian",
+        )
+        granted_plan, _, _ = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id="person-minor-child",
+            subject_category="minor",
+            token=token,
+            turn_id=8,
+        )
+        assert granted_plan.status_code == 200, granted_plan.text
+        await app.state.guardian_store.revoke_person_consent(
+            consent_id=consent.consent_id,
+            grantor_person_id="guardian",
+            subject_person_id="person-minor-child",
+            revoked_at=datetime.now(UTC),
+            revocation_evidence_event_id="revoke-minor-retention",
+        )
+        calls_before_revoke = catalog_calls["count"]
+        revoked_plan, revoked_prefetch, revoked_context = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id="person-minor-child",
+            subject_category="minor",
+            token=token,
+            turn_id=9,
+        )
+
+    assert revoked_plan.status_code == 200, revoked_plan.text
+    assert revoked_prefetch.status_code == 200, revoked_prefetch.text
+    assert revoked_context.status_code == 200, revoked_context.text
+    assert _memory_claim_ids(revoked_plan.json()["grounded_items"]) == []
+    assert _memory_claim_ids(revoked_prefetch.json()["grounded_items"]) == []
+    assert revoked_context.json() == {"items": []}
+    assert catalog_calls["count"] == calls_before_revoke
+
+
+@pytest.mark.asyncio
+async def test_unresolved_identity_does_not_project_the_other_subject(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Identity being down withholds the other subject's projection only.
+
+    The archive evidence stays.  The catalog receipt is ignored, so a later
+    read as that person cannot see the account owner's confirmed row, and the
+    owner's own row is still projected.
+    """
+
+    from services.archive.domain import EvidenceEvent
+    from services.archive.memory_catalog import SubjectCategoryUnresolved
+
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
+    )
+    app = create_app()
+
+    def refuse_other(event: EvidenceEvent) -> str | None:
+        subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
+        if subject_id and subject_id != event.account_id:
+            raise SubjectCategoryUnresolved(subject_id)
+        return "adult"
+
+    app.state.memory_catalog._evidence_subject_category_resolver = refuse_other
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="scope-unresolved")
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        now = datetime.now(UTC)
+        for index, (subject, text) in enumerate(
+            (
+                (owner["user_id"], "请记住我喜欢散步。"),
+                ("person-unresolved", "请记住我喜欢阅读。"),
+            )
+        ):
+            await app.state.life_archive.record(
+                EvidenceEvent(
+                    event_id=f"unresolved-{index}",
+                    account_id=str(owner["user_id"]),
+                    subject_id=str(subject),
+                    session_id=session["session_id"],
+                    turn_id=index + 1,
+                    generation_id=index + 1,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=now + timedelta(minutes=index),
+                    speaker_class="owner",
+                    source="test.pre-fence",
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                        "tool_epoch": 0,
+                        "memory_write_intent": {
+                            "kind": "explicit_remember",
+                            "policy_version": "explicit-memory-v2",
+                        },
+                    },
+                )
+            )
+        report = await app.state.memory_catalog.compile_pending()
+        other_plan, _, other_context = await _read_subject_memory(
+            client,
+            app=app,
+            user_id=str(owner["user_id"]),
+            session_id=session["session_id"],
+            subject_id="person-unresolved",
+            subject_category="adult",
+            token=token,
+            turn_id=7,
+        )
+        stored = await app.state.life_archive.event(
+            account_id=str(owner["user_id"]), event_id="unresolved-1"
+        )
+
+    assert report.compiled_events == 1
+    assert report.ignored_events == 1
+    assert stored is not None
+    assert other_plan.status_code == 200, other_plan.text
+    assert "散步" not in other_plan.text
+    assert "阅读" not in other_plan.text
+    assert other_context.json() == {"items": []}
+    import sqlite3
+
+    with sqlite3.connect(app.state.memory_catalog._path) as connection:
+        receipt = connection.execute(
+            "SELECT outcome FROM memory_compile_receipts WHERE event_id = ?",
+            ("unresolved-1",),
+        ).fetchone()
+        projected = connection.execute(
+            "SELECT 1 FROM memory_claims WHERE source_event_id = ?",
+            ("unresolved-1",),
+        ).fetchone()
+    assert receipt is not None and receipt[0] == "ignored"
+    assert projected is None
+
+
+@pytest.mark.asyncio
+async def test_stale_session_event_fence_creates_no_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stale subject fence is rejected before any claim is written."""
+
+    from services.control_api.app.routes import interaction
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="scope-stale-fence")
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        app.state.session_runtime_service = object()
+        monkeypatch.setattr(
+            interaction,
+            "_current_persistent_runtime_profile",
+            AsyncMock(
+                return_value={
+                    "active_subject_id": owner["user_id"],
+                    "runtime_profile_id": "profile-current",
+                    "session_epoch": 2,
+                    "actor_id": owner["user_id"],
+                    "device_id": "device-current",
+                    "binding_id": "binding-current",
+                    "binding_version": 2,
+                    "subject_revision": 2,
+                }
+            ),
+        )
+        rejected = await client.post(
+            "/v1/archive/session-events",
+            headers=INTERNAL,
+            json=_speech(
+                session["session_id"],
+                event_id="stale-fence-speech",
+                active_subject_id=owner["user_id"],
+                runtime_profile_id="profile-stale",
+                session_epoch=1,
+                actor_id=owner["user_id"],
+                device_id="device-current",
+                binding_id="binding-current",
+                binding_version=2,
+                subject_revision=2,
+                payload={"text": "请记住我喜欢散步。"},
+            ),
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["detail"]["code"] == "archive_subject_fence_stale"
+        assert (
+            await app.state.life_archive.event(
+                account_id=owner["user_id"], event_id="stale-fence-speech"
+            )
+            is None
+        )
+        await app.state.memory_catalog.compile_pending()
+        queue = await app.state.memory_catalog.review_queue(account_id=owner["user_id"])
+        assert all(item.source_event_id != "stale-fence-speech" for item in queue)

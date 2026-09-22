@@ -298,6 +298,11 @@ class MemoryWriteDecision:
             occurred_at=source.occurred_at,
             speaker_class="system",
             source=POLICY_CONFIRMATION_SOURCE,
+            # The confirmation is evidence of the same speaker.  Leaving this
+            # blank makes the review an unclaimed source on the claim's search
+            # document, so a later speaker's self-claim looks merged with
+            # nobody and can no longer confirm.
+            subject_id=source.subject_id,
             payload={
                 "target_id": claim_id,
                 "action": "confirm",

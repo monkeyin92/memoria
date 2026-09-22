@@ -579,8 +579,10 @@ async def test_scoped_review_does_not_fold_another_subjects_conflicts(
     # Compilation folded the age conflict across the account; the queue itself
     # already refuses to compare one speaker against another.
     assert all(item.reason == "pending_confirmation" for item in queue_a)
-    assert _claim_row(path, claim_a)["conflict_state"] == "active"
-    assert _claim_row(path, claim_b)["conflict_state"] == "active"
+    # Compilation no longer folds one subject's self-claim against another's,
+    # even though both rows share subject_key="self" inside the same account.
+    assert _claim_row(path, claim_a)["conflict_state"] == "none"
+    assert _claim_row(path, claim_b)["conflict_state"] == "none"
 
     await catalog.review(
         MemoryClaimReview(
@@ -592,10 +594,10 @@ async def test_scoped_review_does_not_fold_another_subjects_conflicts(
     )
 
     assert _claim_row(path, claim_a)["status"] == "retracted"
-    # An account-wide fold would recompute B's state from what is left; the
-    # scoped review only rewrites the subject that asked for it.
+    # Retracting A's only value cannot invent a conflict on B.  B never shared
+    # a value with another row of its own subject, so it stays none.
     assert _claim_row(path, claim_b)["status"] == "candidate"
-    assert _claim_row(path, claim_b)["conflict_state"] == "active"
+    assert _claim_row(path, claim_b)["conflict_state"] == "none"
 
 
 @pytest.mark.asyncio
@@ -625,9 +627,11 @@ async def test_scoped_conflict_fold_skips_a_claim_merged_with_another_speaker(
 
     claims = _age_claim_ids(path)
     assert set(claims) == {"60", "61", "62"}
-    assert {
-        _claim_row(path, claim_id)["conflict_state"] for claim_id in claims.values()
-    } == {"active"}
+    # Same subject, two values: those two conflict.  The other subject's value
+    # does not, until a later review asks about its own lineage.
+    assert _claim_row(path, claims["60"])["conflict_state"] == "active"
+    assert _claim_row(path, claims["62"])["conflict_state"] == "active"
+    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
 
     # Subject A's second age claim also merged subject B's event.
     _merge_source_into_claim_document(path, claim_id=claims["62"], source_event_id="age-b")
@@ -643,10 +647,10 @@ async def test_scoped_conflict_fold_skips_a_claim_merged_with_another_speaker(
 
     assert _claim_row(path, claims["60"])["status"] == "retracted"
     assert _claim_row(path, claims["60"])["conflict_state"] == "none"
-    # The merged claim neither decided nor received this subject's fold, and the
-    # other speaker's claim stays untouched as well.
+    # The merged claim neither decided nor received this subject's fold.  The
+    # other speaker never conflicted with its own lineage, so it stays none.
     assert _claim_row(path, claims["62"])["conflict_state"] == "active"
-    assert _claim_row(path, claims["61"])["conflict_state"] == "active"
+    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
 
 
 @pytest.mark.asyncio
@@ -676,14 +680,18 @@ async def test_scoped_conflict_probe_ignores_a_claim_merged_with_another_speaker
 
     claims = _age_claim_ids(path)
     assert set(claims) == {"60", "61", "62"}
+    # The probe starts from the compile-time fold: the same subject's two values
+    # already conflict, and the other subject does not.
+    assert _claim_row(path, claims["60"])["conflict_state"] == "active"
+    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
     _merge_source_into_claim_document(path, claim_id=claims["62"], source_event_id="probe-b")
 
     scoped = await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-a")
     age_items = [item for item in scoped if item.value in {"60", "61", "62"}]
     assert [item.item_id for item in age_items] == [claims["60"]]
     # The other value sits behind a merged projection, so it can neither label a
-    # conflict for this subject nor be listed; the raw column keeps saying
-    # "active" because compilation folded the account.
+    # conflict for this subject nor be listed.  Compilation already left this
+    # subject's own two values in conflict with each other.
     assert age_items[0].reason == "pending_confirmation"
     assert _claim_row(path, claims["60"])["conflict_state"] == "active"
 

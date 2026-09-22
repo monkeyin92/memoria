@@ -6,7 +6,7 @@ import base64
 import binascii
 import hashlib
 from asyncio import Lock, to_thread
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -295,10 +295,55 @@ def _memory_account_guard(
 
 
 def _subject_category_resolver(store: MemoryStore) -> Callable[[str], str | None]:
+    """Account-owner category from the login profile.
+
+    Callers that compile one piece of evidence must not use this for a subject
+    who is not the account.  That subject is a different person; guessing the
+    owner's adult/minor label would project the wrong allowlist.
+    """
+
     def resolve(account_id: str) -> str | None:
         profile = store.get_subject_profile(user_id=account_id)
         value = profile.get("subject_category") if profile is not None else None
         return str(value) if value in {"adult", "minor"} else None
+
+    return resolve
+
+
+def _evidence_subject_category_resolver(
+    store: MemoryStore,
+    identity: IdentityService,
+) -> Callable[[EvidenceEvent], Awaitable[str | None]]:
+    """Category of the person the evidence names, never of the login account.
+
+    The account owner and a blank subject keep the existing profile lookup.
+    ``None`` from that lookup is an unknown category and still compiles on the
+    non-minor path; it is not a reason to skip.  Any other subject is read from
+    identity on the compiler's own event loop, matching ``_speaker_retention_inputs``.
+    A fresh thread plus ``asyncio.run`` cannot use the Postgres identity pool,
+    which is bound to the loop that created it, so that path is not a fallback.
+    Identity being down, or the person being missing, raises
+    ``SubjectCategoryUnresolved`` so the compiler skips the projection instead
+    of guessing adult.
+    """
+
+    from services.archive.memory_catalog import SubjectCategoryUnresolved
+    from services.identity.domain import IdentityNotFoundError
+
+    owner_category = _subject_category_resolver(store)
+
+    async def resolve(event: EvidenceEvent) -> str | None:
+        subject_id = event.subject_id.strip() if isinstance(event.subject_id, str) else ""
+        if not subject_id or subject_id == event.account_id:
+            return owner_category(event.account_id)
+        try:
+            person = await identity.get_person(subject_id)
+        except IdentityNotFoundError as exc:
+            raise SubjectCategoryUnresolved(subject_id) from exc
+        except Exception as exc:
+            raise SubjectCategoryUnresolved(subject_id) from exc
+        category = getattr(person, "subject_category", None)
+        return str(category) if category in {"adult", "minor"} else None
 
     return resolve
 
@@ -969,6 +1014,10 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
             compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
+            evidence_subject_category_resolver=_evidence_subject_category_resolver(
+                store,
+                cast(IdentityService, app.state.identity_service),
+            ),
             capture_evidence_projector=(
                 project_capture_evidence
                 if settings.environment == "production"
@@ -1000,6 +1049,10 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
             extractor=extractor,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
+            evidence_subject_category_resolver=_evidence_subject_category_resolver(
+                store,
+                cast(IdentityService, app.state.identity_service),
+            ),
         )
         await to_thread(sqlite_catalog.initialize)
         memory_catalog = sqlite_catalog
@@ -1369,6 +1422,10 @@ def create_app() -> FastAPI:
             app.state.memory_store,
         ),
         subject_category_resolver=_subject_category_resolver(app.state.memory_store),
+        evidence_subject_category_resolver=_evidence_subject_category_resolver(
+            app.state.memory_store,
+            cast(IdentityService, app.state.identity_service),
+        ),
     )
     app.state.skill_catalog = SkillCatalog.sqlite(settings.memoria_db_path)
     app.state.persona_engine = PersonaEngine.sqlite(

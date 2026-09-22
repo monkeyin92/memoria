@@ -132,7 +132,7 @@ logger = logging.getLogger(__name__)
 _RESPONSE_PLAN_CACHE_MAX_ENTRIES = 256
 _EVOLUTION_PROTOCOL_HEADER = "X-Memoria-Evolution-Protocol"
 _EVOLUTION_PROTOCOL_V1 = "v1"
-_ResponsePlanCacheKey = tuple[str, int, int, int, str]
+_ResponsePlanCacheKey = tuple[str, int, int, int, str, str]
 _RECALL_CONTEXT_MAX_ITEMS = 4
 _RECALL_CONTEXT_ITEM_MAX_CHARS = 240
 _RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
@@ -357,13 +357,18 @@ def _response_plan_key(
     body: ResponsePlanRequest,
     *,
     evolution_protocol: str,
+    subject_id: str | None,
 ) -> _ResponsePlanCacheKey:
+    # The fence alone is the turn, not the person.  Switching the active
+    # subject and replaying the same fence must not reuse the previous
+    # subject's grounded items.
     return (
         body.fence.session_id,
         body.fence.turn_id,
         body.fence.generation_id,
         body.fence.tool_epoch,
         evolution_protocol,
+        subject_id or "",
     )
 
 
@@ -447,24 +452,20 @@ async def _subject_memory_retention_allowed(
     )
 
 
-def _account_keyed_memory_is_subject_scoped(
-    *,
-    active_subject_id: str,
-    account_id: str,
-) -> bool:
-    """Whether the account-keyed legacy archive may answer for this turn.
+def _confirmed_subject_id(value: object) -> str | None:
+    """A subject the authority actually named, never a blank or the sentinel.
 
-    Every first-person claim in the legacy archive is stored under
-    ``subject_key="self"`` inside the login account, so an account-keyed read
-    cannot tell the account owner apart from the subject currently using the
-    device.  Re-keying the query would not fix that either: it would return the
-    account owner's own rows to the subject (and no rows at all for an
-    account-less subject).  The read is therefore allowed only while the two
-    are the same person; subject-keyed memory lives in the MemoryScope store
-    and is wired separately.
+    ``unknown`` is the unsigned/unconfirmed sentinel the runtime profile uses
+    when nobody has been identified.  Treating it as a person would query the
+    catalog for a subject that does not exist and could not be fenced.
     """
 
-    return active_subject_id == account_id
+    if not isinstance(value, str):
+        return None
+    subject_id = value.strip()
+    if not subject_id or subject_id == "unknown":
+        return None
+    return subject_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,17 +480,17 @@ class _SubjectMemoryScope:
     """
 
     subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
-    subject_id: str
+    subject_id: str | None
     subject_category: str | None
     age_band: str | None
     retention_allowed: bool
-    account_keyed_memory_readable: bool
+    catalog_readable: bool
 
     @property
     def memory_readable(self) -> bool:
-        """Whether an account-keyed memory read may answer for this turn."""
+        """Whether a subject-scoped catalog read may answer for this turn."""
 
-        return self.retention_allowed and self.account_keyed_memory_readable
+        return self.retention_allowed and self.catalog_readable
 
 
 async def _resolve_subject_memory_scope(
@@ -507,17 +508,25 @@ async def _resolve_subject_memory_scope(
     guardian.  The signed Runtime Profile is the subject authority, and the
     authority's own read path fences it against the device's current binding, so
     a withdrawn session resolves to `unavailable` here.
+
+    Equality with the login account is not a default.  It holds only when this
+    deployment has no Session Runtime, or when the runtime profile itself names
+    that account as the active subject.  A missing, blank or ``unknown``
+    subject closes the catalog instead of reading the account owner's rows.
     """
 
     subject_authority: Literal["runtime_profile", "account_profile", "unavailable"]
-    subject_id = account_id
+    subject_id: str | None = None
     subject_category: str | None = None
     age_band: str | None = None
+    catalog_readable = False
     runtime_service = getattr(request.app.state, "session_runtime_service", None)
     if runtime_service is None:
         # This deployment profile has no persistent Session Runtime; the login
         # account is the subject by construction.
         subject_authority = "account_profile"
+        subject_id = account_id
+        catalog_readable = True
     else:
         subject_authority = "unavailable"
         try:
@@ -533,34 +542,38 @@ async def _resolve_subject_memory_scope(
             )
         else:
             subject_authority = "runtime_profile"
-            profile_subject_id = runtime_profile.get("active_subject_id")
-            if isinstance(profile_subject_id, str) and profile_subject_id.strip():
-                subject_id = profile_subject_id
+            subject_id = _confirmed_subject_id(runtime_profile.get("active_subject_id"))
+            # The profile was read, but it did not name a person.  Do not keep
+            # the resolver's historical account-id default and query as the
+            # owner.
+            catalog_readable = subject_id is not None
             profile_category = runtime_profile.get("subject_category")
             if isinstance(profile_category, str):
                 subject_category = profile_category
             profile_age_band = runtime_profile.get("age_band")
             if isinstance(profile_age_band, str):
                 age_band = profile_age_band
-    if subject_authority == "account_profile" and subject_category is None:
+    if subject_authority == "account_profile" and subject_id is not None and subject_category is None:
         profile = _store(request).get_subject_profile(user_id=subject_id)
         if profile is not None:
             subject_category = profile.get("subject_category")
             age_band = profile.get("birth_year_band")
+    retention_subject_id = subject_id if subject_id is not None else ""
     return _SubjectMemoryScope(
         subject_authority=subject_authority,
         subject_id=subject_id,
         subject_category=subject_category,
         age_band=age_band,
-        retention_allowed=await _subject_memory_retention_allowed(
-            request,
-            subject_person_id=subject_id,
-            subject_category=subject_category,
+        retention_allowed=(
+            await _subject_memory_retention_allowed(
+                request,
+                subject_person_id=retention_subject_id,
+                subject_category=subject_category,
+            )
+            if catalog_readable and subject_id is not None
+            else False
         ),
-        account_keyed_memory_readable=_account_keyed_memory_is_subject_scoped(
-            active_subject_id=subject_id,
-            account_id=account_id,
-        ),
+        catalog_readable=catalog_readable,
     )
 
 
@@ -1707,7 +1720,7 @@ async def _companion_items(
     speaker: ResponsePlanSpeakerDecision,
     now: datetime,
     recall_context: tuple[str, ...] = (),
-    account_keyed_memory_readable: bool = True,
+    catalog_readable: bool = False,
 ) -> tuple[tuple[GroundedItem, ...], PersonaCapsule | None]:
     trusted = ModePolicy.trusted_context(
         frozen,
@@ -1715,15 +1728,19 @@ async def _companion_items(
         reason_code=speaker.reason_code,
     )
     capabilities = trusted["capabilities"]
+    # Fail closed before the catalog sees the call.  MemorySearchQuery.subject_id
+    # defaults to None, and None means "the whole account", so a missing subject
+    # must never be passed through as that default.
+    confirmed_subject_id = _confirmed_subject_id(subject_id)
 
     async def fetch_memory() -> MemorySearchResult:
-        # The query carries the subject the turn was resolved for, never the
-        # login account: an account-keyed read cannot tell the owner apart from
-        # the person actually using the device. The legacy archive may only
-        # answer while the two are the same person
-        # (see _account_keyed_memory_is_subject_scoped).
+        # The query carries the subject the turn was resolved for.  The legacy
+        # archive stores every first-person claim under subject_key="self"
+        # inside the login account; the catalog distinguishes speakers by the
+        # evidence lineage of that subject_id, not by falling back to the owner.
+        assert confirmed_subject_id is not None
         people = await _catalog(request).people(
-            account_id=account_id, subject_id=subject_id, limit=100
+            account_id=account_id, subject_id=confirmed_subject_id, limit=100
         )
         recall = RecallPlanner.plan(query=query, now=now, people=people)
         memory_query = recall.text
@@ -1732,7 +1749,7 @@ async def _companion_items(
         return await _catalog(request).context(
             MemorySearchQuery(
                 account_id=account_id,
-                subject_id=subject_id,
+                subject_id=confirmed_subject_id,
                 speaker_class="owner",
                 text=memory_query,
                 entity_ids=recall.entity_ids,
@@ -1745,7 +1762,7 @@ async def _companion_items(
 
     memory_task = (
         asyncio.create_task(fetch_memory())
-        if capabilities["private_memory"] and account_keyed_memory_readable
+        if capabilities["private_memory"] and catalog_readable and confirmed_subject_id is not None
         else None
     )
     persona_task = (
@@ -2192,7 +2209,19 @@ async def response_plan(
         _EVOLUTION_PROTOCOL_V1 if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1 else ""
     )
     cache = _response_plan_cache(request)
-    key = _response_plan_key(body, evolution_protocol=evolution_protocol)
+    # Resolve the subject before the cache key.  A plan computed for the
+    # previous person must not answer after the device switches subject, even
+    # when the generation fence is replayed unchanged.
+    scope = await _resolve_subject_memory_scope(
+        request,
+        session_id=body.session_id,
+        account_id=account_id,
+    )
+    key = _response_plan_key(
+        body,
+        evolution_protocol=evolution_protocol,
+        subject_id=scope.subject_id,
+    )
     fingerprint = _response_plan_fingerprint(body)
     key_lock = await cache.lock_for(key)
     async with key_lock:
@@ -2226,17 +2255,12 @@ async def response_plan(
             frozen=frozen,
             now=now,
         )
-        # The current subject is read once and decides the category, the consent
-        # lookup, the memory scope and the notification target -- through the one
-        # resolver every Agent-facing seam shares, so they cannot drift apart.
-        scope = await _resolve_subject_memory_scope(
-            request,
-            session_id=body.session_id,
-            account_id=account_id,
-        )
+        # The subject was resolved once, before the cache key, and decides the
+        # category, the consent lookup, the memory scope and the notification
+        # target -- through the one resolver every Agent-facing seam shares.
         active_subject_id = scope.subject_id
         retention_allowed = scope.retention_allowed
-        account_keyed_memory_readable = scope.account_keyed_memory_readable
+        catalog_readable = scope.catalog_readable
         is_minor_student = (
             scope.subject_category == "minor"
             or scope.age_band in {"under_14", "14_17"}
@@ -2246,6 +2270,7 @@ async def response_plan(
             and crisis.notify_guardian
             and crisis.script_version is not None
             and is_minor_student
+            and active_subject_id is not None
         ):
             try:
                 await _crisis_notifications(request).record_minor_crisis(
@@ -2292,12 +2317,12 @@ async def response_plan(
                 request=request,
                 frozen=frozen,
                 account_id=account_id,
-                subject_id=active_subject_id,
+                subject_id=active_subject_id or "",
                 query=body.query,
                 speaker=body.speaker_decision,
                 now=now,
                 recall_context=tuple(body.recall_context),
-                account_keyed_memory_readable=account_keyed_memory_readable,
+                catalog_readable=catalog_readable,
             )
             if (
                 frozen.interaction_mode == "companion" and fixed_reply is None and retention_allowed
@@ -2425,14 +2450,12 @@ async def context_prefetch(
         if frozen.interaction_mode == "companion"
         else None
     )
-    if scope is None or not scope.memory_readable:
+    if scope is None or not scope.memory_readable or scope.subject_id is None:
         # The same contract as /response-plan: a non-companion turn, a subject the
-        # authority cannot read, a subject that is not the login account, or a
-        # minor without retention consent gets no account-keyed memory and no
-        # persona capsule.  This endpoint used to skip both gates and hand the
-        # account's private memory to whatever subject was using the device -- and
-        # to keep doing it after a legal manager change withdrew the session's
-        # authorization.
+        # authority cannot read, a blank or unknown subject, or a minor without
+        # retention consent gets no catalog read and no persona capsule.  A named
+        # subject that is not the login account still reads, but only through
+        # that subject's evidence lineage.
         return {
             "speaker_class": body.speaker_decision.classification,
             "grounded_items": [],
@@ -2447,7 +2470,7 @@ async def context_prefetch(
         query=body.query,
         speaker=body.speaker_decision,
         now=_local_now(cast(ControlSettings, request.app.state.settings)),
-        account_keyed_memory_readable=scope.account_keyed_memory_readable,
+        catalog_readable=scope.catalog_readable,
     )
     return {
         "speaker_class": body.speaker_decision.classification,

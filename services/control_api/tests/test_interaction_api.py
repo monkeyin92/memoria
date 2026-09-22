@@ -1095,19 +1095,27 @@ class _Registry:
 class _MemoryCatalog:
     def __init__(self) -> None:
         self.queries: list[object] = []
+        self.people_calls: list[dict[str, object]] = []
         self.people_items: tuple[PersonItem, ...] = ()
+        self.items_by_subject: dict[str, tuple[MemorySearchItem, ...]] | None = None
 
     async def people(
         self, *, account_id: str, limit: int = 100, subject_id: str | None = None
     ) -> tuple[PersonItem, ...]:
-        assert subject_id == account_id
+        # A missing subject_id is the whole-account read.  Callers that mean
+        # one person have to pass it before they get here.
+        assert subject_id is not None and subject_id.strip()
         del limit
+        self.people_calls.append({"account_id": account_id, "subject_id": subject_id})
         return self.people_items
 
     async def context(self, query: object) -> MemorySearchResult:
         self.queries.append(query)
-        return MemorySearchResult(
-            items=(
+        subject_id = getattr(query, "subject_id", None)
+        if self.items_by_subject is not None:
+            items = self.items_by_subject.get(str(subject_id), ())
+        else:
+            items = (
                 MemorySearchItem(
                     item_id="memory-杭州",
                     kind="claim",
@@ -1120,7 +1128,7 @@ class _MemoryCatalog:
                     score=0.99,
                 ),
             )
-        )
+        return MemorySearchResult(items=items)
 
 
 class _ChangingMemoryCatalog:
@@ -1130,8 +1138,8 @@ class _ChangingMemoryCatalog:
     async def people(
         self, *, account_id: str, limit: int = 100, subject_id: str | None = None
     ) -> tuple[object, ...]:
-        assert subject_id == account_id
-        del limit
+        assert subject_id is not None and subject_id.strip()
+        del account_id, limit
         return ()
 
     async def context(self, _: object) -> MemorySearchResult:
@@ -2064,26 +2072,53 @@ async def test_minor_without_memory_retention_cannot_read_private_context(
 
 
 @pytest.mark.asyncio
-async def test_response_plan_does_not_read_account_keyed_memory_for_another_subject(
+async def test_response_plan_reads_the_current_subject_and_not_the_account_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """The current subject owns the memory; the account only authorizes the turn.
+    """A non-owner turn reads the catalog, scoped to that subject.
 
-    The legacy archive stores every first-person claim inside the login
-    account, so an account-keyed read for a different current subject returns
-    the account owner's own memory.  Even with a retention-allowing category,
-    the read must not run while subject and account differ — and it must still
-    run for the account's own turn.
+    The legacy archive stores every first-person claim under subject_key="self"
+    inside the login account.  The read still runs, but the query names the
+    current subject and the returned rows are that subject's, never the
+    account owner's.
     """
 
     _configure(monkeypatch, tmp_path)
     app = create_app()
     catalog = _MemoryCatalog()
+    catalog.items_by_subject = {
+        "person-independent-child": (
+            MemorySearchItem(
+                item_id="memory-child",
+                kind="claim",
+                title="孩子的经历",
+                snippet="我在学校学画画。",
+                category="life_story",
+                status="confirmed",
+                source_event_id="event-memory-child",
+                occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
+                score=0.99,
+            ),
+        ),
+    }
     app.state.memory_catalog = catalog
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_id, user_headers = await _identity(client)
+        catalog.items_by_subject[user_id] = (
+            MemorySearchItem(
+                item_id="memory-owner",
+                kind="claim",
+                title="账号本人的经历",
+                snippet="我在杭州读过书。",
+                category="life_story",
+                status="confirmed",
+                source_event_id="event-memory-owner",
+                occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
+                score=0.99,
+            ),
+        )
         created = await client.post("/v1/sessions", headers=user_headers, json={})
         assert created.status_code == 200, created.text
         session_id = created.json()["session_id"]
@@ -2116,9 +2151,23 @@ async def test_response_plan_does_not_read_account_keyed_memory_for_another_subj
 
     assert other_response.status_code == 200, other_response.text
     assert owner_response.status_code == 200, owner_response.text
-    # Exactly one read happened, and it belongs to the account's own turn.
-    assert len(catalog.queries) == 1
-    assert owner_response.json()["grounded_items"]
+    assert [query.subject_id for query in catalog.queries] == [
+        "person-independent-child",
+        user_id,
+    ]
+    child_claims = [
+        item
+        for item in other_response.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ]
+    owner_claims = [
+        item
+        for item in owner_response.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ]
+    assert [item["item_id"] for item in child_claims] == ["memory-child"]
+    assert "杭州" not in other_response.text
+    assert [item["item_id"] for item in owner_claims] == ["memory-owner"]
 
 
 @pytest.mark.asyncio
@@ -2170,27 +2219,56 @@ async def test_companion_memory_queries_carry_the_resolved_subject(
 
 
 @pytest.mark.asyncio
-async def test_companion_seams_never_read_the_account_for_a_member_subject(
+async def test_companion_seams_read_the_member_subject_and_not_the_account(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A member turn must not reach the account-keyed catalog on either seam.
+    """Both Agent seams query the member, and neither returns the owner's rows.
 
-    The archive cannot attribute an account-keyed claim to a member, so the
-    subject-scoped query alone is not enough: the read itself has to stay
-    closed while the current subject and the login account differ.
+    The catalog is reached.  Every people() and context() call names the
+    current subject, and a catalog that only has the account owner's row
+    contributes nothing to the member's plan.
     """
 
-    class _ForbiddenCatalog:
-        async def people(self, **_: object) -> tuple[PersonItem, ...]:
-            pytest.fail("account-keyed people lookup ran for a member subject")
+    class _RecordingCatalog:
+        def __init__(self) -> None:
+            self.people_subjects: list[str | None] = []
+            self.context_subjects: list[str | None] = []
 
-        async def context(self, _: object) -> MemorySearchResult:
-            pytest.fail("account-keyed context lookup ran for a member subject")
+        async def people(
+            self, *, account_id: str, limit: int = 100, subject_id: str | None = None
+        ) -> tuple[PersonItem, ...]:
+            del account_id, limit
+            self.people_subjects.append(subject_id)
+            return ()
+
+        async def context(self, query: object) -> MemorySearchResult:
+            self.context_subjects.append(getattr(query, "subject_id", None))
+            # The owner's row is present in the account.  A query that forgot
+            # the subject (subject_id is None) would return it; a member query
+            # must not.
+            if getattr(query, "subject_id", None) is None:
+                return MemorySearchResult(
+                    items=(
+                        MemorySearchItem(
+                            item_id="memory-owner",
+                            kind="claim",
+                            title="账号本人",
+                            snippet="我在杭州读过书。",
+                            category="life_story",
+                            status="confirmed",
+                            source_event_id="event-owner",
+                            occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
+                            score=0.99,
+                        ),
+                    )
+                )
+            return MemorySearchResult()
 
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    app.state.memory_catalog = _ForbiddenCatalog()
+    catalog = _RecordingCatalog()
+    app.state.memory_catalog = catalog
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_id, user_headers = await _identity(client)
@@ -2220,9 +2298,28 @@ async def test_companion_seams_never_read_the_account_for_a_member_subject(
         )
 
     assert planned.status_code == 200, planned.text
-    assert planned.json()["grounded_items"] == []
     assert prefetched.status_code == 200, prefetched.text
-    assert prefetched.json()["grounded_items"] == []
+    assert catalog.people_subjects == [
+        "person-independent-child",
+        "person-independent-child",
+    ]
+    assert catalog.context_subjects == [
+        "person-independent-child",
+        "person-independent-child",
+    ]
+    assert all(subject_id != user_id for subject_id in catalog.context_subjects)
+    planned_claims = [
+        item for item in planned.json()["grounded_items"] if item["kind"] == "memory_claim"
+    ]
+    prefetched_claims = [
+        item
+        for item in prefetched.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ]
+    assert planned_claims == []
+    assert prefetched_claims == []
+    assert "杭州" not in planned.text
+    assert "杭州" not in prefetched.text
 
 
 @pytest.mark.asyncio
@@ -2277,7 +2374,192 @@ async def test_response_plan_looks_up_retention_consent_for_the_active_subject(
     assert response.status_code == 200, response.text
     assert guardian.minor_ids == ["person-independent-child"]
     assert catalog.queries == []
+    assert catalog.people_calls == []
     assert response.json()["grounded_items"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    ("raises", "blank", "unknown", "missing"),
+)
+async def test_unresolved_subject_returns_empty_items_without_a_catalog_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    """A subject the authority cannot name is not the login account.
+
+    The resolver used to start from account_id and keep that value when the
+    profile was missing, blank or unknown.  That queried the owner's rows.
+    Each of these failures returns empty items and never calls the catalog.
+    """
+
+    class _CountingCatalog:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def people(self, **_: object) -> tuple[PersonItem, ...]:
+            self.calls += 1
+            return ()
+
+        async def context(self, _: object) -> MemorySearchResult:
+            self.calls += 1
+            return MemorySearchResult()
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _CountingCatalog()
+    app.state.memory_catalog = catalog
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        if failure == "raises":
+
+            class _BrokenAuthority:
+                async def current(self, **_: object) -> dict[str, object]:
+                    raise RuntimeError("runtime profile unavailable")
+
+            app.state.session_runtime_service = _BrokenAuthority()
+        elif failure == "missing":
+            # The shared helper replaces None with the login account, and other
+            # tests depend on that fallback.  This case needs a profile that
+            # really has no active subject, so it is built here instead.
+            _attach_signed_runtime_profile(
+                app,
+                user_id=user_id,
+                session_id=session_id,
+                unknown_subject=True,
+                capabilities=("chat", "memory_recall_private"),
+            )
+        else:
+            active_subject_id = {"blank": "  ", "unknown": "unknown"}[failure]
+            _attach_signed_runtime_profile(
+                app,
+                user_id=user_id,
+                session_id=session_id,
+                active_subject_id=active_subject_id,
+                subject_category="adult",
+                age_band="adult",
+                capabilities=("chat", "memory_recall_private"),
+            )
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        prefetched = await client.post(
+            "/v1/interaction/context-prefetch",
+            headers=token,
+            json={
+                "session_id": session_id,
+                "query": "我们以前聊过什么？",
+                "speaker_decision": body["speaker_decision"],
+            },
+        )
+
+    assert planned.status_code == 200, planned.text
+    assert prefetched.status_code == 200, prefetched.text
+    assert [
+        item for item in planned.json()["grounded_items"] if item["kind"] == "memory_claim"
+    ] == []
+    assert [
+        item
+        for item in prefetched.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ] == []
+    assert catalog.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_switching_subject_does_not_reuse_the_previous_response_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The cache key includes the subject, not only the generation fence.
+
+    Replaying the same fence after the device switches person must not return
+    the previous subject's grounded items.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    catalog.items_by_subject = {
+        "person-independent-child": (
+            MemorySearchItem(
+                item_id="memory-child",
+                kind="claim",
+                title="孩子的经历",
+                snippet="我在学校学画画。",
+                category="life_story",
+                status="confirmed",
+                source_event_id="event-memory-child",
+                occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
+                score=0.99,
+            ),
+        ),
+    }
+    app.state.memory_catalog = catalog
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        catalog.items_by_subject[user_id] = (
+            MemorySearchItem(
+                item_id="memory-owner",
+                kind="claim",
+                title="账号本人的经历",
+                snippet="我在杭州读过书。",
+                category="life_story",
+                status="confirmed",
+                source_event_id="event-memory-owner",
+                occurred_at=datetime(2020, 1, 1, tzinfo=UTC),
+                score=0.99,
+            ),
+        )
+        created = await client.post("/v1/sessions", headers=user_headers, json={})
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            capabilities=("chat", "memory_recall_private"),
+        )
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        owner_plan = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            active_subject_id="person-independent-child",
+            subject_category="adult",
+            age_band="adult",
+            capabilities=("chat", "memory_recall_private"),
+        )
+        child_plan = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+
+    assert owner_plan.status_code == 200, owner_plan.text
+    assert child_plan.status_code == 200, child_plan.text
+    owner_claims = [
+        item["item_id"]
+        for item in owner_plan.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ]
+    child_claims = [
+        item["item_id"]
+        for item in child_plan.json()["grounded_items"]
+        if item["kind"] == "memory_claim"
+    ]
+    assert owner_claims == ["memory-owner"]
+    assert child_claims == ["memory-child"]
+    assert "杭州" not in child_plan.text
+    assert [query.subject_id for query in catalog.queries] == [
+        user_id,
+        "person-independent-child",
+    ]
 
 
 @pytest.mark.asyncio
