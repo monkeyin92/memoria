@@ -317,6 +317,7 @@ Page({
     // 设备当前分配给使用人的自定义人格（cu_*）优先于账号级内置人格；
     // 名字来自账号目录，读不到时退回内置人格而不是猜一个名字。
     const custom = await this._resolveCustomPersona(runtime);
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     const personaName = custom ? custom.display_name : companion.name;
     const personaVoice = custom ? "你提供的声音样本" : companion.voiceName;
     const personaSummary = custom
@@ -356,9 +357,11 @@ Page({
         : "可查看已同步的回顾。设备恢复连接后再记录。",
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: today.pendingCount || 0,
+      todayCount: today.todayCount || 0,
       todayMeta: today.todayMeta || "",
       todayTitle: today.todayTitle || "",
       todayOverview: today.todayOverview || "",
+      dailySummaryText: today.dailySummaryText || "",
       error: failures.length ? "部分状态暂时无法同步。" : "",
     });
   },

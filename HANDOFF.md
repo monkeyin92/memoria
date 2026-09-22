@@ -7,9 +7,11 @@
   - **首页今日对话次数与每日摘要卡**：`_loadToday` 在 `MemoryRecallPrivate` 门禁后并读 days/review/会话列表（会话列表失败降级回日计数），显示「今天 · N 次对话」+ 服务端回顾文案；无回顾时如实提示未生成，**不编造情绪/姓名**。
   - **列表摘要预览**：`conversation-sessions` 新增 subject-scoped `preview`（只复用已合格文本、截断 80 字，服务端不生成摘要），列表卡片展示。
   - **一键分享**：首页「分享给家人」、回顾页「分享选中日期的回顾」走 `onShareAppMessage`（按钮 `data-date` 优先，其次选中日期）；只带已过门禁加载的摘要，未登录/无该日回顾退回通用文案，不带出私人内容。
+- 独立 QA 随后发现首版真实接线缺陷：`_loadToday()` 的 `todayCount` / `dailySummaryText` 未进入 `loadHome()` 最终 page data，导致首页组合摘要未生效、分享总走通用文案；反向测试在未修复代码上 4 例失败。现已补齐接线，并在 `_resolveCustomPersona()` 的异步等待后追加第三道 `flowSeq` + `authEpoch` 门禁；新增回归先证明旧代码会在登出清空后把 `todayCount` 从 0 回填为 1，再证明修复后不回填。
 - 边界：不物理删除人格切换/声音克隆/成员管理/guardian 页面——与 Phase 0「代码保留、冻结」一致，Demo 走首页/回顾路径。
-- 验证：小程序全量 `238 passed`（`TZ=UTC`）；`services/control_api/tests/test_archive{,_subject_scope}_api.py` 全通过（含会话列表资格/主体/preview 断言）；Ruff、strict mypy、`py_compile`、`git diff --check` 通过。上一批收据：小程序 232 passed、回顾测试 11 passed。
-- **未完成/未做**：微信开发者工具与真机三端验收、体验版上传（需授权）；未部署、未连接生产或设备。TODOLIST DEMO-03 因此保持未勾选。
+- 验证：小程序全量 `243 passed`（`TZ=UTC`），Asia/Shanghai DEMO-03 `11 passed`；官方小程序编译器 preflight `MEMORIA_MINIPROGRAM_COMPILE_FILES=124`；archive + subject-scope `76 passed, 1 skipped`（skip 为需真实 PG DSN 的既有项）；Ruff、strict mypy（449 files）、`py_compile`、Node 语法和 `git diff --check` 通过。preview 新增断言覆盖最新非空合格文本（不限定 speaker）、80 字上限、主体隔离、newest-first 与 limit/auth 边界。
+- 开发者工具：已在 iPhone 12/13 Pro 模拟器（390×844、SDK 3.17.0）用虚构数据取得首页/回顾页截图；次数、每日摘要、显式分享入口、preview、主体范围提示、近似播放标记和游客清空均渲染成立，exceptions=0。该轮为注入数据的渲染验收；真实接线由上述反向 Node 集成测试证明。
+- **未完成/未做**：真实登录/绑定/API 链路、Android/其他视口、真机分享卡与落地、真人「30 秒」计时、体验版上传（均需授权/设备）；未部署、未连接生产或机器人。TODOLIST DEMO-03 因此保持未勾选。
 
 更新于 2026-09-20（主体隔离批次与四个 account→subject 迁移 `00dc059`/`7f589f0`，加本轮 `d2318e4` 读路径 PG 侧对等与 PG 全 saga 删除验证，CI `35501188784` success）。这里只保留当前运行基线、一个紧邻回滚、必要运维步骤和下一验收。唯一执行队列及已评估研究结论见 `TODOLIST.md`，后续完成项直接移出队列，不新增归档文档。
 
