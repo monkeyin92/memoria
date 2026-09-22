@@ -60,12 +60,12 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 需用户决定并授权裁剪、停用 `archive_mode`（需重启）或手工阈值策略；不得按 mtime 删除或清理 `pg_wal` 代替归档保留。
 - 完成条件：保护集合、容量/恢复影响、执行证据和后续责任明确，保留恢复目标可验证。
 
-### [ ] P1-09 修复 readiness 定时刷新失败与发布链两个缺口（2026-09-22 线上发现）
+### [ ] P1-09 readiness 定时刷新：已修并部署（遗留带入下次发布）；发布链三个缺口待补（2026-09-22 线上发现）
 
 - **缺陷（已复现，非切流引入）**：`memoria-readiness-refresh.timer`（每 12h）自 2026-09-22 00:08 CST 起持续失败（systemd `status=1/FAILURE`，restart counter 3 后放弃），原因是 `/opt/memoria/current/scripts/refresh_readiness.sh` 只 `export MEMORIA_RELEASE_TAG`，而 09-21 的 agent 组件切流把 agent 的 base 换成仓库快照（`/opt/memoria/releases/20260921-defect-a-base/docker-compose.production.yml`），该 base 对 `speaker-model.build.args.MEMORIA_RELEASE_COMMIT` 用 `:?` → `docker compose config --format json` 直接报错、stdout 非 JSON → 脚本内联解析抛 `JSONDecodeError`。后果：`readiness_evidence` 中 `20260901-0945-wake-word-whitelist` 打点停在 2026-09-21T04:05Z，超过 `READINESS_GATE_TTL_S=86400` 后全栈 `/health/ready` 变 `not_ready`（core 12 项与 agent 均 ready，仅 `smokes: expired`）。
-- 临时处置（已完成，收据 `outputs/acceptance/run-20260922-demo03-deploy/readiness-refresh.txt`）：以 `MEMORIA_RELEASE_TAG`+`MEMORIA_RELEASE_COMMIT` 显式导出运行同一脚本 → livekit/provider/verify_env 全 PASS、`readiness mark OK`、readiness 回到 200。**24h 后仍会过期**，未修前需人工刷新。
-- 待完成：① 脚本按 tag 的同一模式从 control 容器 env 解析并导出 `MEMORIA_RELEASE_COMMIT`（并加脚本级回归，覆盖「base 含 `:?` 变量」的渲染失败）；② 决定部署方式（改 `/opt/memoria/current` 冻结树需授权与备份，或随下次全量发布带入）；③ 让失败可见（timer 失败目前只有 journal，readiness 到期才发现）。
-- **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 同日节。
+- **已修复并部署（2026-09-22）**：脚本按 tag 同一模式从 control 容器 env 解析并导出 `MEMORIA_RELEASE_COMMIT`（空值告警不静默）；`require_live_service_image` 保留并打印 Compose 的 stderr、解析失败改为可读报错；回归 `scripts/tests/test_refresh_readiness_contract.py`。修复版部署到 `/opt/memoria/current/scripts/refresh_readiness.sh`（sha `c0152d5b…`→`89c27afc…`，备份 `…/readiness-fix/refresh_readiness.sh.pre-fix`），并以真实 systemd 单元验证 `Result=success`/`ExecMainStatus=0`、readiness 200、证据 `marked_at` 刷新（收据 `readiness-refresh.txt`、`readiness-fix-deploy.txt`、`readiness-fix-verify.txt`）。
+- 待完成（遗留）：① 该补丁位于冻结发布树内，需随下次全量发布带入并退役 `/opt/memoria/current` 的手工补丁；② 让失败可见（timer 失败目前只有 journal，readiness 到期才发现）；③ 复核下一次 timer 触发（12h 内）自动 PASS。
+- **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`），(d) 新链不校验挂载/端口/其它容器（demo02 旧工具校验了）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 同日节。
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 

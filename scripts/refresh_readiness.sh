@@ -36,6 +36,21 @@ release_tag="$MEMORIA_RELEASE_TAG"
 
 export MEMORIA_RELEASE_TAG="$release_tag"
 
+# A component cutover installs a Compose base snapshot that declares
+# MEMORIA_RELEASE_COMMIT with `:?`, so Compose refuses to render at all unless
+# the live value is exported; that render failure used to surface only as a
+# JSON decode error and left readiness evidence to expire silently.  The
+# running Control API container carries the same identity pair the Agent
+# heartbeat reports, so read it from there.
+if [[ -z "${MEMORIA_RELEASE_COMMIT:-}" ]]; then
+  MEMORIA_RELEASE_COMMIT="$(container_env_value "$control_container" MEMORIA_RELEASE_COMMIT)"
+fi
+if [[ -z "${MEMORIA_RELEASE_COMMIT:-}" ]]; then
+  echo "warning: $control_container reports no MEMORIA_RELEASE_COMMIT; a Compose base that requires it will refuse to render" >&2
+fi
+
+export MEMORIA_RELEASE_COMMIT
+
 # Smoke containers must run the very images the live stack runs, so reuse the
 # Compose file set each live container was created with (recorded by Compose in
 # its labels) instead of the base file alone.  A recorded file that has since
@@ -66,19 +81,28 @@ compose_args_for() {
 
 require_live_service_image() {
   local container="$1" service="$2"
-  local live resolved
+  local live resolved compose_stderr
   live="$(docker inspect "$container" --format '{{.Config.Image}}')"
-  if ! resolved="$("${COMPOSE_ARGS[@]}" config --format json 2>/dev/null \
+  compose_stderr="$(mktemp -t memoria-readiness-compose.XXXXXX)"
+  if ! resolved="$("${COMPOSE_ARGS[@]}" config --format json 2>"$compose_stderr" \
     | python3 -c '
 import json
 import sys
 
-services = json.load(sys.stdin).get("services", {})
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"compose config did not render JSON: {exc}")
+
+services = payload.get("services", {})
 print((services.get(sys.argv[1]) or {}).get("image") or "")
 ' "$service")"; then
     echo "cannot resolve the $service image from the Compose files recorded by $container" >&2
+    sed 's/^/  compose: /' "$compose_stderr" >&2 || true
+    rm -f "$compose_stderr"
     return 1
   fi
+  rm -f "$compose_stderr"
   if [[ "$resolved" != "$live" ]]; then
     echo "refusing to collect smoke evidence: Compose resolves $service to '${resolved:-<none>}' but $container runs '$live'" >&2
     return 1
