@@ -96,6 +96,7 @@ class EvaluationEvidence:
     occurred_at: datetime
     speaker_class: SpeakerClass = "owner"
     session_id: str | None = None
+    explicit_memory: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,7 @@ class EvaluationQuery:
     valid_at: datetime | None = None
     now: datetime | None = None
     entity_ids: tuple[str, ...] = ()
+    forbidden_text: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +141,10 @@ class MemoryEvaluationCase:
     expected_memories: tuple[ExpectedMemory, ...]
     queries: tuple[EvaluationQuery, ...]
     reviews: tuple[EvaluationReview, ...] = ()
+    # None keeps the historical adult/unspecified catalog path.  A declared
+    # category is the evidence-subject category the production compiler already
+    # asks for; it does not create a separate evaluation policy.
+    subject_category: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +167,10 @@ class EvaluationItem:
     valid_to: datetime | None = None
     sensitivity: MemorySensitivity = "personal"
     conflict_state: ConflictState = "none"
+    # Original evidence associated with this observed projection.  Empty for
+    # adapters that only synthesize an item; the catalog adapter fills it from
+    # the source events so a cleaned claim value cannot hide retained context.
+    source_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +242,108 @@ class MemoryEvaluationMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class ExpectedMemoryDiagnostic:
+    key: str
+    matched: bool
+    matched_item_id: str | None
+    source_attribution_passed: bool | None
+    temporal_passed: bool | None
+    expected_source_event_ids: tuple[str, ...]
+    actual_source_event_ids: tuple[str, ...]
+    expected_valid_from: str | None
+    actual_valid_from: str | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "key": self.key,
+            "matched": self.matched,
+            "matched_item_id": self.matched_item_id,
+            "source_attribution_passed": self.source_attribution_passed,
+            "temporal_passed": self.temporal_passed,
+            "expected_source_event_ids": list(self.expected_source_event_ids),
+            "actual_source_event_ids": list(self.actual_source_event_ids),
+            "expected_valid_from": self.expected_valid_from,
+            "actual_valid_from": self.actual_valid_from,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class QueryDiagnostic:
+    query_id: str
+    recall_at_5: float
+    recall_at_10: float
+    relevant_keys: tuple[str, ...]
+    recalled_keys: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "query_id": self.query_id,
+            "recall_at_5": self.recall_at_5,
+            "recall_at_10": self.recall_at_10,
+            "relevant_keys": list(self.relevant_keys),
+            "recalled_keys": list(self.recalled_keys),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedItemDiagnostic:
+    """One observed projection and the expected key it consumed, if any.
+
+    Matching reuses `_match_items`. An unmatched row is an extra item in the
+    extraction-precision denominator and does not change that formula.
+    """
+
+    item_id: str
+    account_id: str
+    kind: str
+    memory_kind: MemoryKind
+    title: str
+    body: str
+    status: MemoryStatus
+    source_event_ids: tuple[str, ...]
+    valid_from: str | None
+    valid_to: str | None
+    matched_expected_key: str | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "item_id": self.item_id,
+            "account_id": self.account_id,
+            "kind": self.kind,
+            "memory_kind": self.memory_kind,
+            "title": self.title,
+            "body": self.body,
+            "status": self.status,
+            "source_event_ids": list(self.source_event_ids),
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "matched_expected_key": self.matched_expected_key,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CaseDiagnostic:
+    case_id: str
+    scenario: EvaluationScenario
+    expected: tuple[ExpectedMemoryDiagnostic, ...]
+    queries: tuple[QueryDiagnostic, ...]
+    extracted: tuple[ExtractedItemDiagnostic, ...] = ()
+    predicted_count: int = 0
+    matched_projection_count: int = 0
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "case_id": self.case_id,
+            "scenario": self.scenario,
+            "expected": [item.as_dict() for item in self.expected],
+            "queries": [item.as_dict() for item in self.queries],
+            "extracted": [item.as_dict() for item in self.extracted],
+            "predicted_count": self.predicted_count,
+            "matched_projection_count": self.matched_projection_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryEvaluationReport:
     dataset_version: str
     adapter: str
@@ -239,6 +351,7 @@ class MemoryEvaluationReport:
     scenario_coverage: tuple[EvaluationScenario, ...]
     failed_cases: tuple[str, ...]
     metrics: MemoryEvaluationMetrics
+    case_diagnostics: tuple[CaseDiagnostic, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -248,6 +361,7 @@ class MemoryEvaluationReport:
             "scenario_coverage": list(self.scenario_coverage),
             "failed_cases": list(self.failed_cases),
             "metrics": self.metrics.as_dict(),
+            "cases": [item.as_dict() for item in self.case_diagnostics],
         }
 
 
@@ -267,6 +381,7 @@ async def run_memory_evaluation(
             if observation.error_code is not None
         ),
         metrics=calculate_memory_metrics(dataset, observations),
+        case_diagnostics=_case_diagnostics(dataset, observations),
     )
 
 
@@ -326,6 +441,11 @@ def calculate_memory_metrics(
         query_by_id = {query.query_id: query for query in case.queries}
         if set(query_by_id) != {result.query_id for result in observation.query_results}:
             raise ValueError(f"query observations do not match dataset case {case.case_id}")
+        forbidden = tuple(
+            dict.fromkeys(term for query in case.queries for term in query.forbidden_text)
+        )
+        if any(_contains_forbidden(item, forbidden) for item in observation.extracted_items):
+            raise ValueError(f"case {case.case_id} persisted text outside the subject policy")
         for result in observation.query_results:
             query = query_by_id[result.query_id]
             latencies.append(max(0.0, result.latency_ms))
@@ -343,6 +463,8 @@ def calculate_memory_metrics(
             grades = [query.relevance.get(key, 0) for key in ranked_keys[:10]]
             ideal = sorted(query.relevance.values(), reverse=True)[:10]
             ndcg_10.append(_ndcg(grades, ideal))
+            if any(_contains_forbidden(item, query.forbidden_text) for item in result.items):
+                raise ValueError(f"query {query.query_id} recalled text outside the subject policy")
             for item in result.items:
                 retrieved_items += 1
                 if item.account_id != query.account_id:
@@ -404,16 +526,27 @@ class CatalogMemoryEvaluationAdapter:
             path = Path(directory) / "archive.sqlite3"
             archive = LifeArchive.sqlite(path)
             extractor = _UsageTrackingExtractor(self._extractor)
-            catalog = MemoryCatalog.sqlite(path, extractor=extractor)
-            source_accounts = {
-                evidence.event_id: evidence.account_id for evidence in case.evidence
-            }
+
+            def subject_category(_account_id: str) -> str | None:
+                return case.subject_category
+
+            catalog = MemoryCatalog.sqlite(
+                path,
+                extractor=extractor,
+                subject_category_resolver=(
+                    subject_category if case.subject_category is not None else None
+                ),
+            )
+            source_accounts = {evidence.event_id: evidence.account_id for evidence in case.evidence}
+            source_texts = {evidence.event_id: evidence.text for evidence in case.evidence}
             for evidence in case.evidence:
                 await archive.record(
                     EvidenceEvent(
                         event_id=evidence.event_id,
                         account_id=evidence.account_id,
                         session_id=evidence.session_id or f"eval-{case.case_id}",
+                        turn_id=1,
+                        generation_id=1,
                         event_type="speech.utterance_finalized",
                         occurred_at=evidence.occurred_at,
                         speaker_class=evidence.speaker_class,
@@ -423,6 +556,17 @@ class CatalogMemoryEvaluationAdapter:
                             "interaction_mode": "companion",
                             "prompt_kind": "spontaneous",
                             "owner_projection_eligible": evidence.speaker_class == "owner",
+                            "tool_epoch": 0,
+                            **(
+                                {
+                                    "memory_write_intent": {
+                                        "kind": "explicit_remember",
+                                        "policy_version": "explicit-memory-v2",
+                                    }
+                                }
+                                if evidence.explicit_memory
+                                else {}
+                            ),
                         },
                     )
                 )
@@ -464,6 +608,10 @@ class CatalogMemoryEvaluationAdapter:
                         valid_to=item.valid_to,
                         sensitivity=item.sensitivity,
                         conflict_state=item.conflict_state,
+                        source_texts=_source_texts_for_item(
+                            item.source_event_ids,
+                            source_texts,
+                        ),
                     )
                     for item in search.items
                 )
@@ -486,6 +634,10 @@ class CatalogMemoryEvaluationAdapter:
                         ),
                         status=person.status,
                         source_event_ids=(person.source_event_id,),
+                        source_texts=_source_texts_for_item(
+                            (person.source_event_id,),
+                            source_texts,
+                        ),
                     )
                     for person in await catalog.people(account_id=account_id)
                 )
@@ -523,6 +675,10 @@ class CatalogMemoryEvaluationAdapter:
                                 valid_to=item.valid_to,
                                 sensitivity=item.sensitivity,
                                 conflict_state=item.conflict_state,
+                                source_texts=_source_texts_for_item(
+                                    item.source_event_ids,
+                                    source_texts,
+                                ),
                             )
                             for item in response.items
                         ),
@@ -625,14 +781,13 @@ def _parse_case(value: object) -> MemoryEvaluationCase:
     scenario = _required_text(raw, "scenario")
     if scenario not in _EVALUATION_SCENARIOS:
         raise ValueError(f"unknown memory evaluation scenario: {scenario}")
-    evidence = tuple(
-        _parse_evidence(item) for item in _required_list(raw, "evidence")
-    )
-    expected = tuple(
-        _parse_expected(item) for item in _required_list(raw, "expected_memories")
-    )
+    evidence = tuple(_parse_evidence(item) for item in _required_list(raw, "evidence"))
+    expected = tuple(_parse_expected(item) for item in _required_list(raw, "expected_memories"))
     queries = tuple(_parse_query(item) for item in _required_list(raw, "queries"))
     reviews = tuple(_parse_review(item) for item in _optional_list(raw, "reviews"))
+    subject_category = _optional_text(raw.get("subject_category"))
+    if subject_category not in {None, "minor", "adult", "unknown"}:
+        raise ValueError(f"invalid evaluation subject_category: {subject_category}")
     return MemoryEvaluationCase(
         case_id=_required_text(raw, "case_id"),
         scenario=scenario,
@@ -640,6 +795,7 @@ def _parse_case(value: object) -> MemoryEvaluationCase:
         expected_memories=expected,
         queries=queries,
         reviews=reviews,
+        subject_category=subject_category,
     )
 
 
@@ -655,6 +811,7 @@ def _parse_evidence(value: object) -> EvaluationEvidence:
         occurred_at=_timestamp(raw.get("occurred_at")),
         speaker_class=speaker,
         session_id=_optional_text(raw.get("session_id")),
+        explicit_memory=raw.get("explicit_memory") is True,
     )
 
 
@@ -714,7 +871,115 @@ def _parse_query(value: object) -> EvaluationQuery:
         valid_at=_optional_timestamp(raw.get("valid_at")),
         now=_optional_timestamp(raw.get("now")),
         entity_ids=tuple(_text_list(raw, "entity_ids", required=False)),
+        forbidden_text=tuple(_text_list(raw, "forbidden_text", required=False)),
     )
+
+
+def _iso_time(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(UTC).isoformat()
+
+
+def _case_diagnostics(
+    dataset: MemoryEvaluationDataset,
+    observations: Sequence[EvaluationObservation],
+) -> tuple[CaseDiagnostic, ...]:
+    """Per-case match and recall detail. Metric formulas stay in calculate_memory_metrics."""
+
+    observed_by_case = {observation.case_id: observation for observation in observations}
+    diagnostics: list[CaseDiagnostic] = []
+    for case in dataset.cases:
+        observation = observed_by_case.get(case.case_id)
+        if observation is None:
+            continue
+        pairs, matched_indexes = _match_items(
+            case.expected_memories,
+            observation.extracted_items,
+        )
+        expected_key_by_index = {
+            index: key
+            for key, predicted in pairs.items()
+            for index, item in enumerate(observation.extracted_items)
+            if item is predicted
+        }
+        expected_diagnostics: list[ExpectedMemoryDiagnostic] = []
+        for expected in case.expected_memories:
+            predicted = pairs.get(expected.key)
+            source_passed: bool | None = None
+            if expected.source_event_ids:
+                source_passed = predicted is not None and set(expected.source_event_ids) == set(
+                    predicted.source_event_ids
+                )
+            temporal_passed: bool | None = None
+            if expected.valid_from is not None or expected.valid_to is not None:
+                temporal_passed = predicted is not None and (
+                    _same_time(expected.valid_from, predicted.valid_from)
+                    and _same_time(expected.valid_to, predicted.valid_to)
+                )
+            expected_diagnostics.append(
+                ExpectedMemoryDiagnostic(
+                    key=expected.key,
+                    matched=predicted is not None,
+                    matched_item_id=None if predicted is None else predicted.item_id,
+                    source_attribution_passed=source_passed,
+                    temporal_passed=temporal_passed,
+                    expected_source_event_ids=expected.source_event_ids,
+                    actual_source_event_ids=(
+                        () if predicted is None else predicted.source_event_ids
+                    ),
+                    expected_valid_from=_iso_time(expected.valid_from),
+                    actual_valid_from=(
+                        None if predicted is None else _iso_time(predicted.valid_from)
+                    ),
+                )
+            )
+        query_by_id = {query.query_id: query for query in case.queries}
+        query_diagnostics: list[QueryDiagnostic] = []
+        for result in observation.query_results:
+            query = query_by_id.get(result.query_id)
+            if query is None:
+                continue
+            ranked_keys = _ranked_expected_keys(case.expected_memories, result.items)
+            relevant = tuple(key for key, grade in query.relevance.items() if grade > 0)
+            relevant_set = set(relevant)
+            query_diagnostics.append(
+                QueryDiagnostic(
+                    query_id=query.query_id,
+                    recall_at_5=_recall_at(ranked_keys, relevant_set, 5),
+                    recall_at_10=_recall_at(ranked_keys, relevant_set, 10),
+                    relevant_keys=relevant,
+                    recalled_keys=tuple(ranked_keys[:10]),
+                )
+            )
+        extracted_diagnostics = tuple(
+            ExtractedItemDiagnostic(
+                item_id=item.item_id,
+                account_id=item.account_id,
+                kind=item.kind,
+                memory_kind=item.memory_kind,
+                title=item.title,
+                body=item.body,
+                status=item.status,
+                source_event_ids=item.source_event_ids,
+                valid_from=_iso_time(item.valid_from),
+                valid_to=_iso_time(item.valid_to),
+                matched_expected_key=expected_key_by_index.get(index),
+            )
+            for index, item in enumerate(observation.extracted_items)
+        )
+        diagnostics.append(
+            CaseDiagnostic(
+                case_id=case.case_id,
+                scenario=case.scenario,
+                expected=tuple(expected_diagnostics),
+                queries=tuple(query_diagnostics),
+                extracted=extracted_diagnostics,
+                predicted_count=len(observation.extracted_items),
+                matched_projection_count=len(matched_indexes),
+            )
+        )
+    return tuple(diagnostics)
 
 
 def _match_items(
@@ -819,12 +1084,7 @@ def _ndcg(grades: Sequence[int], ideal: Sequence[int]) -> float:
 
 
 def _dcg(grades: Sequence[int]) -> float:
-    return float(
-        sum(
-            (2**grade - 1) / math.log2(index + 2)
-            for index, grade in enumerate(grades)
-        )
-    )
+    return float(sum((2**grade - 1) / math.log2(index + 2) for index, grade in enumerate(grades)))
 
 
 def _ratio(numerator: int, denominator: int) -> float:
@@ -849,6 +1109,24 @@ def _percentile(values: Sequence[float], percentile: float) -> float:
 
 def _normalized(value: str) -> str:
     return "".join(character.casefold() for character in value if character.isalnum())
+
+
+def _contains_forbidden(item: EvaluationItem, forbidden_text: tuple[str, ...]) -> bool:
+    content = _normalized(" ".join((item.title, item.body, *item.source_texts)))
+    return any(
+        normalized in content for term in forbidden_text if (normalized := _normalized(term))
+    )
+
+
+def _source_texts_for_item(
+    source_event_ids: tuple[str, ...],
+    source_texts: Mapping[str, str],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            source_texts[event_id] for event_id in source_event_ids if event_id in source_texts
+        )
+    )
 
 
 def _object(value: object, label: str) -> dict[str, object]:

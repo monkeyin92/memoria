@@ -779,3 +779,207 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
             await connection.close()
         await catalog.close()
         await archive.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL minor subject contract",
+)
+async def test_postgres_minor_subject_filter_keeps_only_allowlisted_demo_memories() -> None:
+    """The demo minor cases must survive the production PostgreSQL compiler.
+
+    The resolver is the only category authority.  A payload that claims adult,
+    or a retention marker that is not the compiler's input, must not reopen the
+    minor allowlist or drop an allowlisted projection.
+    """
+
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_minor_demo_{uuid.uuid4().hex[:10]}"
+    admin = await asyncpg.connect(admin_dsn)
+    try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+    finally:
+        await admin.close()
+    parsed = urlsplit(admin_dsn)
+    dsn = _postgres_dsn(
+        admin_dsn,
+        user=parsed.username or "postgres",
+        password=parsed.password or "",
+        database=database,
+    )
+    categories = {
+        "minor-student": "minor",
+        "minor-child": "minor",
+        "payload-adult": "minor",
+        "payload-ephemeral": "minor",
+    }
+
+    async def resolve_category(event: EvidenceEvent) -> str:
+        subject_id = event.subject_id or ""
+        if subject_id not in categories:
+            raise AssertionError(f"unexpected subject {subject_id}")
+        return categories[subject_id]
+
+    archive: PostgresLifeArchive | None = None
+    catalog: PostgresMemoryCatalog | None = None
+    try:
+        archive = PostgresLifeArchive(dsn)
+        catalog = PostgresMemoryCatalog(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            evidence_subject_category_resolver=resolve_category,
+        )
+        await archive.initialize()
+        await catalog.initialize()
+        utterances = (
+            (
+                "math-progress",
+                "minor-student",
+                "我今天练习了数学应用题，分数应用题还是薄弱点。",
+                False,
+                {},
+            ),
+            (
+                "learning-preference",
+                "minor-student",
+                "学习时我喜欢先跟读，再自己说一遍。",
+                False,
+                {},
+            ),
+            (
+                "reading-preference",
+                "minor-student",
+                "请帮我记住我喜欢阅读。",
+                True,
+                {},
+            ),
+            (
+                "teacher-criticism",
+                "minor-child",
+                "我今天被老师批评了，好难过。",
+                False,
+                {},
+            ),
+            (
+                "family-conflict",
+                "minor-child",
+                "我和爸爸最近总吵架。",
+                False,
+                {},
+            ),
+            (
+                "payload-cannot-widen",
+                "payload-adult",
+                "我和爸爸最近总吵架。",
+                False,
+                {"subject_category": "adult"},
+            ),
+            (
+                "retention-cannot-drop",
+                "payload-ephemeral",
+                "我今天练习了数学应用题，分数应用题还是薄弱点。",
+                False,
+                {
+                    "subject_category": "unknown",
+                    "memory_retention": "ephemeral_only",
+                },
+            ),
+        )
+        for index, (event_id, subject_id, text, explicit_memory, extra) in enumerate(
+            utterances
+        ):
+            payload: dict[str, object] = {
+                "text": text,
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+                "tool_epoch": 0,
+                **extra,
+            }
+            if explicit_memory:
+                payload["memory_write_intent"] = {
+                    "kind": "explicit_remember",
+                    "policy_version": "explicit-memory-v2",
+                }
+            await archive.record(
+                EvidenceEvent(
+                    event_id=event_id,
+                    account_id="minor-demo-account",
+                    subject_id=subject_id,
+                    session_id="minor-demo-session",
+                    turn_id=index + 1,
+                    generation_id=1,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=datetime(2026, 9, 4, 10, index, tzinfo=UTC),
+                    speaker_class="owner",
+                    source="minor-demo-contract",
+                    payload=payload,
+                )
+            )
+
+        report = await catalog.compile_pending(limit=1000)
+        study = await catalog.search(
+            MemorySearchQuery(
+                account_id="minor-demo-account",
+                speaker_class="owner",
+                text="分数应用题 先跟读",
+                include_candidates=True,
+            )
+        )
+        reading = await catalog.context(
+            MemorySearchQuery(
+                account_id="minor-demo-account",
+                speaker_class="owner",
+                text="阅读",
+            )
+        )
+        sensitive = await catalog.search(
+            MemorySearchQuery(
+                account_id="minor-demo-account",
+                speaker_class="owner",
+                text="难过 爸爸 吵架 批评",
+                include_candidates=True,
+            )
+        )
+        retained = await catalog.search(
+            MemorySearchQuery(
+                account_id="minor-demo-account",
+                speaker_class="owner",
+                text="分数应用题",
+                include_candidates=True,
+            )
+        )
+
+        assert report.failed_events == 0
+        assert report.compiled_events == len(utterances)
+        assert {
+            (item.source_event_id, item.domain_category, item.status)
+            for item in study.items
+            if item.source_event_id in {"math-progress", "learning-preference"}
+        } == {
+            ("math-progress", "study_progress", "candidate"),
+            ("learning-preference", "learning_preference", "candidate"),
+        }
+        assert {
+            (item.source_event_id, item.domain_category, item.status)
+            for item in reading.items
+        } == {("reading-preference", "daily_life", "confirmed")}
+        assert all("阅读" in f"{item.title} {item.snippet}" for item in reading.items)
+        assert sensitive.items == ()
+        assert any(item.source_event_id == "retention-cannot-drop" for item in retained.items)
+        assert all(item.source_event_id != "payload-cannot-widen" for item in sensitive.items)
+    finally:
+        if catalog is not None:
+            await catalog.close()
+        if archive is not None:
+            await archive.close()
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
+                database,
+            )
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database}"')
+        finally:
+            await admin.close()

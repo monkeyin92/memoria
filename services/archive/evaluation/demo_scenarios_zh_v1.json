@@ -4,18 +4,19 @@
     {
       "case_id": "demo-student-math-weakness",
       "scenario": "cross_session_followup",
+      "subject_category": "minor",
       "evidence": [
         {
           "event_id": "demo-math-001",
           "account_id": "demo-student-math",
-          "text": "我的数学成绩不太好，上次只考了七十几分。",
+          "text": "我今天练习了数学应用题，分数应用题还是薄弱点。",
           "occurred_at": "2026-08-20T19:10:00+08:00",
           "session_id": "demo-math-s1"
         },
         {
           "event_id": "demo-math-002",
           "account_id": "demo-student-math",
-          "text": "我今天数学考了95分！",
+          "text": "我今天又练习了数学应用题。",
           "occurred_at": "2026-09-03T18:40:00+08:00",
           "session_id": "demo-math-s2"
         }
@@ -30,7 +31,7 @@
           "account_id": "demo-student-math",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["七十几分"],
+          "match_all": ["分数应用题", "薄弱点"],
           "source_event_ids": ["demo-math-001"],
           "valid_from": "2026-08-20T19:10:00+08:00"
         }
@@ -39,7 +40,7 @@
         {
           "query_id": "demo-math-followup",
           "account_id": "demo-student-math",
-          "text": "数学考了95分！",
+          "text": "我们继续练习数学应用题。",
           "mode": "context",
           "relevance": {"demo-math-weakness": 3},
           "now": "2026-09-03T18:41:00+08:00"
@@ -47,76 +48,112 @@
       ]
     },
     {
-      "case_id": "demo-student-mood-recall",
-      "scenario": "comfort_recall",
+      "case_id": "demo-student-learning-preference",
+      "scenario": "cross_session_followup",
+      "subject_category": "minor",
       "evidence": [
         {
-          "event_id": "demo-mood-001",
-          "account_id": "demo-student-mood",
-          "text": "我今天被老师批评了，好难过。",
+          "event_id": "demo-learning-001",
+          "account_id": "demo-student-learning",
+          "text": "学习时我喜欢先跟读，再自己说一遍。",
           "occurred_at": "2026-09-01T17:30:00+08:00",
-          "session_id": "demo-mood-s1"
+          "session_id": "demo-learning-s1"
         }
       ],
       "reviews": [
-        {"source_event_id": "demo-mood-001", "action": "confirm"}
+        {"source_event_id": "demo-learning-001", "action": "confirm"}
       ],
       "expected_memories": [
         {
-          "key": "demo-mood-criticized",
-          "account_id": "demo-student-mood",
+          "key": "demo-learning-preference",
+          "account_id": "demo-student-learning",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["难过"],
-          "source_event_ids": ["demo-mood-001"],
+          "match_all": ["先跟读"],
+          "source_event_ids": ["demo-learning-001"],
           "valid_from": "2026-09-01T17:30:00+08:00"
         }
       ],
       "queries": [
         {
-          "query_id": "demo-mood-day3",
-          "account_id": "demo-student-mood",
-          "text": "上次你说被老师批评了，心情好点了吗？",
+          "query_id": "demo-learning-day3",
+          "account_id": "demo-student-learning",
+          "text": "还是学习时我喜欢先跟读吗？",
           "mode": "context",
-          "relevance": {"demo-mood-criticized": 3},
+          "relevance": {"demo-learning-preference": 3},
           "now": "2026-09-04T18:00:00+08:00"
         }
       ]
     },
     {
-      "case_id": "demo-student-dinosaur-interest",
+      "case_id": "demo-student-reading-preference",
       "scenario": "cross_session_followup",
+      "subject_category": "minor",
       "evidence": [
         {
-          "event_id": "demo-dino-001",
-          "account_id": "demo-student-dinosaur",
-          "text": "我最喜欢恐龙了！",
+          "event_id": "demo-reading-001",
+          "account_id": "demo-student-reading",
+          "text": "请帮我记住我喜欢阅读。",
           "occurred_at": "2026-08-28T19:00:00+08:00",
-          "session_id": "demo-dino-s1"
+          "session_id": "demo-reading-s1",
+          "explicit_memory": true
         }
       ],
-      "reviews": [
-        {"source_event_id": "demo-dino-001", "action": "confirm"}
-      ],
+      "reviews": [],
       "expected_memories": [
         {
-          "key": "demo-dinosaur-interest",
-          "account_id": "demo-student-dinosaur",
+          "key": "demo-reading-preference",
+          "account_id": "demo-student-reading",
           "kind": "claim",
           "memory_kind": "semantic",
-          "match_all": ["恐龙"],
-          "source_event_ids": ["demo-dino-001"],
+          "match_all": ["阅读"],
+          "source_event_ids": ["demo-reading-001"],
           "valid_from": "2026-08-28T19:00:00+08:00"
         }
       ],
       "queries": [
         {
-          "query_id": "demo-dinosaur-day7",
-          "account_id": "demo-student-dinosaur",
-          "text": "恐龙里霸王龙吃什么？",
+          "query_id": "demo-reading-day7",
+          "account_id": "demo-student-reading",
+          "text": "我还是喜欢阅读吗？",
           "mode": "context",
-          "relevance": {"demo-dinosaur-interest": 2},
+          "relevance": {"demo-reading-preference": 2},
           "now": "2026-09-04T19:00:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "demo-student-unsupported-sensitive",
+      "scenario": "cross_session_followup",
+      "subject_category": "minor",
+      "unsupported": ["emotion", "family", "proactive_cross_session"],
+      "evidence": [
+        {
+          "event_id": "demo-sensitive-001",
+          "account_id": "demo-student-sensitive",
+          "text": "我今天被老师批评了，好难过。",
+          "occurred_at": "2026-09-01T17:30:00+08:00",
+          "session_id": "demo-sensitive-s1"
+        },
+        {
+          "event_id": "demo-sensitive-002",
+          "account_id": "demo-student-sensitive",
+          "text": "我和爸爸最近总吵架。",
+          "occurred_at": "2026-09-01T17:40:00+08:00",
+          "session_id": "demo-sensitive-s1"
+        }
+      ],
+      "reviews": [],
+      "expected_memories": [],
+      "queries": [
+        {
+          "query_id": "demo-sensitive-day3",
+          "account_id": "demo-student-sensitive",
+          "text": "上次你说被老师批评了，心情好点了吗？",
+          "mode": "context",
+          "relevance": {},
+          "forbidden_text": ["难过", "批评", "爸爸", "吵架"],
+          "now": "2026-09-04T18:00:00+08:00"
         }
       ]
     },

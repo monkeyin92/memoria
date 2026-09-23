@@ -48,7 +48,20 @@ _THIRD_PARTY_ALIAS = re.compile(
     r"(?=的|说|，|。|,|\?|？|$)"
 )
 #: Words that describe a role rather than name a person.
-_ROLE_WORDS = frozenset({"妈妈", "母亲", "爸爸", "父亲", "妻子", "丈夫", "儿子", "女儿", "同事", "朋友"})
+_ROLE_WORDS = frozenset(
+    {"妈妈", "母亲", "爸爸", "父亲", "妻子", "丈夫", "儿子", "女儿", "同事", "朋友"}
+)
+
+
+def statement_domain_category(text: str) -> DomainCategory:
+    """Classify an owner's statement the same way the rule extractor does.
+
+    Shared so a full-sentence fallback cannot drift from the rule branch:
+    study progress and learning preference stay low-risk student domains,
+    while ordinary daily facts, work, family and life stories stay put.
+    """
+
+    return _category(text)
 
 
 def _category(text: str) -> DomainCategory:
@@ -56,6 +69,8 @@ def _category(text: str) -> DomainCategory:
         phrase in text
         for phrase in (
             "学习时我喜欢",
+            "学习时我更喜欢",
+            "学习时我习惯",
             "我喜欢先学",
             "我喜欢边学",
             "我更喜欢跟读",
@@ -155,11 +170,7 @@ class RuleBasedMemoryExtractor:
             known = {alias.casefold() for alias in people[0].aliases}
             for match in _THIRD_PARTY_ALIAS.finditer(text):
                 alias = match.group("alias").strip()
-                if (
-                    len(alias) < 2
-                    or alias in _ROLE_WORDS
-                    or alias.casefold() in known
-                ):
+                if len(alias) < 2 or alias in _ROLE_WORDS or alias.casefold() in known:
                     continue
                 known.add(alias.casefold())
                 people[0] = replace(

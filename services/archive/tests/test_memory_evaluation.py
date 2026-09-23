@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,9 @@ from services.archive.memory_evaluation import (
     CatalogMemoryEvaluationAdapter,
     EvaluationItem,
     EvaluationObservation,
+    EvaluationQuery,
     EvaluationQueryResult,
+    ExpectedMemory,
     MemoryEvaluationAdapter,
     MemoryEvaluationCase,
     MemoryEvaluationDataset,
@@ -25,22 +29,23 @@ from services.archive.memory_evaluation import (
     covered_scenarios,
     expected_scenarios,
     load_memory_evaluation_dataset,
+    report_json,
     run_memory_evaluation,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 
 DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
-UNSEEN_DATASET = (
-    Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
-)
+UNSEEN_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
 DEMO_DATASET = Path(__file__).parents[1] / "evaluation" / "demo_scenarios_zh_v1.json"
 
-# DEMO-02: the six fund-raising storyboards, keyed by the case that carries each one.  The
-# mapping is pinned so the set cannot drift away from the storyboard it exists to measure.
+# DEMO-02: the current fixed set is seven cases, not the original six storyboards.
+# Six are positive recalls and one is the minor negative case.  The mapping is pinned
+# so the set cannot drift away from the scenarios it exists to measure.
 DEMO_STORYBOARDS = {
-    "demo-student-math-weakness": "学生-学习陪伴：听到95分时召回“数学是弱项”",
-    "demo-student-mood-recall": "学生-情绪关怀：几天后召回被老师批评的事",
-    "demo-student-dinosaur-interest": "学生-兴趣陪伴：一周后由恐龙兴趣接上继续陪伴",
+    "demo-student-math-weakness": "学生-学习进度：再次练习时召回分数应用题薄弱点",
+    "demo-student-learning-preference": "学生-学习偏好：几天后召回先跟读再自己说",
+    "demo-student-reading-preference": "学生-受限日常：显式确认后一周召回阅读偏好",
+    "demo-student-unsupported-sensitive": "学生-不支持：情绪、家庭和主动跨会话关怀不进入长期记忆",
     "demo-elder-park-walk": "老年-日常陪伴：次日召回公园散步",
     "demo-elder-factory-story": "老年-人生故事留存：五天后接续纺织厂经历",
     "demo-elder-son-visit": "老年-情感陪伴：三天后召回“儿子好久没来”",
@@ -161,6 +166,39 @@ async def test_perfect_adapter_produces_stable_golden_metrics() -> None:
     assert report.metrics.paraphrase_followup_recall_at_5 == 1
     assert report.metrics.comfort_recall_at_5 == 1
     assert report.metrics.token_cost == 15 * len(dataset.cases)
+    assert len(report.case_diagnostics) == len(dataset.cases)
+    payload = json.loads(report_json(report))
+    assert isinstance(payload["cases"], list)
+    assert len(payload["cases"]) == len(dataset.cases)
+    for case, diagnostic in zip(dataset.cases, report.case_diagnostics, strict=True):
+        assert diagnostic.case_id == case.case_id
+        assert diagnostic.scenario == case.scenario
+        for expected, detail in zip(case.expected_memories, diagnostic.expected, strict=True):
+            assert detail.key == expected.key
+            assert detail.matched is True
+            assert detail.matched_item_id == expected.key
+            if expected.source_event_ids:
+                assert detail.source_attribution_passed is True
+                assert detail.expected_source_event_ids == expected.source_event_ids
+                assert detail.actual_source_event_ids == expected.source_event_ids
+            if expected.valid_from is not None or expected.valid_to is not None:
+                assert detail.temporal_passed is True
+        for query, detail in zip(case.queries, diagnostic.queries, strict=True):
+            assert detail.query_id == query.query_id
+            assert detail.recall_at_5 == 1
+            assert detail.recall_at_10 == 1
+            assert set(detail.relevant_keys) == {
+                key for key, grade in query.relevance.items() if grade > 0
+            }
+        assert diagnostic.predicted_count == len(case.expected_memories)
+        assert diagnostic.matched_projection_count == len(case.expected_memories)
+        for expected, item in zip(case.expected_memories, diagnostic.extracted, strict=True):
+            assert item.item_id == expected.key
+            assert item.matched_expected_key == expected.key
+            assert item.kind == (expected.kind or "claim")
+            assert item.memory_kind == (expected.memory_kind or "semantic")
+            assert item.status == "confirmed"
+            assert item.source_event_ids == expected.source_event_ids
 
 
 @pytest.mark.asyncio
@@ -232,6 +270,94 @@ async def test_catalog_adapter_reports_long_horizon_scenario_scores() -> None:
     assert metrics.comfort_recall_at_5 == 1
 
 
+def test_forbidden_text_rejects_a_persisted_candidate_before_recall() -> None:
+    case = MemoryEvaluationCase(
+        case_id="sensitive-candidate",
+        scenario="cross_session_followup",
+        evidence=(),
+        expected_memories=(),
+        queries=(
+            EvaluationQuery(
+                query_id="later",
+                account_id="minor",
+                text="心情好点了吗？",
+                mode="context",
+                relevance={},
+                forbidden_text=("难过",),
+            ),
+        ),
+        subject_category="minor",
+    )
+    dataset = MemoryEvaluationDataset(version="forbidden-candidate", cases=(case,))
+    observation = EvaluationObservation(
+        case_id=case.case_id,
+        extracted_items=(
+            EvaluationItem(
+                item_id="candidate-mood",
+                account_id="minor",
+                kind="claim",
+                memory_kind="semantic",
+                title="今天状态不好",
+                body="需要休息",
+                status="candidate",
+                source_event_ids=("mood-1",),
+                source_texts=("我今天被老师批评了，好难过。",),
+            ),
+        ),
+        query_results=(
+            EvaluationQueryResult(
+                query_id="later",
+                mode="context",
+                items=(),
+                latency_ms=1,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="persisted text outside the subject policy"):
+        calculate_memory_metrics(dataset, (observation,))
+
+    supported_case = replace(
+        case,
+        case_id="supported-study",
+        queries=(
+            EvaluationQuery(
+                query_id="later",
+                account_id="minor",
+                text="继续练习数学应用题",
+                mode="context",
+                relevance={},
+                forbidden_text=("", "   "),
+            ),
+        ),
+    )
+    supported_dataset = MemoryEvaluationDataset(
+        version="supported-study",
+        cases=(supported_case,),
+    )
+    supported_observation = EvaluationObservation(
+        case_id=supported_case.case_id,
+        extracted_items=(
+            EvaluationItem(
+                item_id="study-progress",
+                account_id="minor",
+                kind="claim",
+                memory_kind="semantic",
+                title="分数应用题",
+                body="薄弱点",
+                status="confirmed",
+                source_event_ids=("math-1",),
+                source_texts=("我今天练习了数学应用题，分数应用题还是薄弱点。",),
+            ),
+        ),
+        query_results=observation.query_results,
+    )
+
+    metrics = calculate_memory_metrics(supported_dataset, (supported_observation,))
+
+    assert metrics.extraction_precision == 0.0
+
+
 class CanonicalKeyExtractor:
     """The production shape: the extractor states the shared episode key.
 
@@ -297,9 +423,7 @@ async def test_repeated_episode_case_passes_when_extraction_states_the_key() -> 
     """
     dataset = load_memory_evaluation_dataset(DATASET)
     case = next(
-        value
-        for value in dataset.cases
-        if value.case_id == "repeated-episode-campus-startup"
+        value for value in dataset.cases if value.case_id == "repeated-episode-campus-startup"
     )
 
     observation = await CatalogMemoryEvaluationAdapter(CanonicalKeyExtractor()).observe(case)
@@ -340,6 +464,161 @@ def test_source_account_attribution_exposes_cross_account_and_mixed_results() ->
     )
 
 
+class MissingRecallAdapter:
+    """Returns every expected item except the one named in the constructor.
+
+    ``extra_item`` is appended after the expected projections so diagnostics can
+    show an unmatched row in the extraction-precision denominator.
+    """
+
+    name = "missing-recall"
+
+    def __init__(
+        self,
+        missing_key: str,
+        extra_item: EvaluationItem | None = None,
+    ) -> None:
+        self._missing_key = missing_key
+        self._extra_item = extra_item
+
+    async def observe(self, case: MemoryEvaluationCase) -> EvaluationObservation:
+        extracted = tuple(
+            EvaluationItem(
+                item_id=expected.key,
+                account_id=expected.account_id,
+                kind=expected.kind or "claim",
+                memory_kind=expected.memory_kind or "semantic",
+                title=" ".join(expected.match_all),
+                body=" ".join(expected.match_all),
+                status="confirmed",
+                source_event_ids=expected.source_event_ids,
+                valid_from=expected.valid_from,
+                valid_to=expected.valid_to,
+            )
+            for expected in case.expected_memories
+            if expected.key != self._missing_key
+        )
+        if self._extra_item is not None:
+            extracted = (*extracted, self._extra_item)
+        query_results = tuple(
+            EvaluationQueryResult(
+                query_id=query.query_id,
+                mode=query.mode,
+                latency_ms=1,
+                items=tuple(
+                    item for key in query.relevance for item in extracted if item.item_id == key
+                ),
+            )
+            for query in case.queries
+        )
+        return EvaluationObservation(
+            case_id=case.case_id,
+            extracted_items=extracted,
+            query_results=query_results,
+        )
+
+
+@pytest.mark.asyncio
+async def test_case_diagnostics_show_a_missed_recall_and_stay_json_serializable() -> None:
+    occurred_at = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+    case = MemoryEvaluationCase(
+        case_id="missed-recall",
+        scenario="exact_fact",
+        evidence=(),
+        expected_memories=(
+            ExpectedMemory(
+                key="kept-fact",
+                account_id="owner",
+                match_all=("公园",),
+                source_event_ids=("event-kept",),
+                valid_from=occurred_at,
+            ),
+            ExpectedMemory(
+                key="missed-fact",
+                account_id="owner",
+                match_all=("纺织厂",),
+                source_event_ids=("event-missed",),
+                valid_from=occurred_at,
+            ),
+        ),
+        queries=(
+            EvaluationQuery(
+                query_id="later-day",
+                account_id="owner",
+                text="昨天去了哪里？",
+                mode="search",
+                relevance={"kept-fact": 2, "missed-fact": 1},
+            ),
+        ),
+    )
+    dataset = MemoryEvaluationDataset(version="diagnostics", cases=(case,))
+
+    extra_from = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
+    extra_to = datetime(2026, 8, 2, 8, 0, tzinfo=UTC)
+    extra = EvaluationItem(
+        item_id="extra-episode",
+        account_id="owner",
+        kind="episode",
+        memory_kind="episodic",
+        title="额外包装",
+        body="没有对应期望的 wrapper",
+        status="candidate",
+        source_event_ids=("event-extra",),
+        valid_from=extra_from,
+        valid_to=extra_to,
+    )
+    report = await run_memory_evaluation(dataset, MissingRecallAdapter("missed-fact", extra))
+    payload = json.loads(report_json(report))
+
+    assert payload["metrics"]["recall_at_5"] == 0.5
+    diagnostic = payload["cases"][0]
+    assert diagnostic["case_id"] == "missed-recall"
+    assert diagnostic["scenario"] == "exact_fact"
+    by_key = {item["key"]: item for item in diagnostic["expected"]}
+    assert by_key["kept-fact"]["matched"] is True
+    assert by_key["kept-fact"]["matched_item_id"] == "kept-fact"
+    assert by_key["kept-fact"]["source_attribution_passed"] is True
+    assert by_key["kept-fact"]["temporal_passed"] is True
+    assert by_key["kept-fact"]["expected_source_event_ids"] == ["event-kept"]
+    assert by_key["kept-fact"]["actual_source_event_ids"] == ["event-kept"]
+    assert by_key["kept-fact"]["expected_valid_from"] == occurred_at.isoformat()
+    assert by_key["kept-fact"]["actual_valid_from"] == occurred_at.isoformat()
+    assert by_key["missed-fact"]["matched"] is False
+    assert by_key["missed-fact"]["matched_item_id"] is None
+    assert by_key["missed-fact"]["source_attribution_passed"] is False
+    assert by_key["missed-fact"]["temporal_passed"] is False
+    assert by_key["missed-fact"]["actual_source_event_ids"] == []
+    query = diagnostic["queries"][0]
+    assert query["query_id"] == "later-day"
+    assert query["recall_at_5"] == 0.5
+    assert query["recall_at_10"] == 0.5
+    assert query["relevant_keys"] == ["kept-fact", "missed-fact"]
+    assert query["recalled_keys"] == ["kept-fact"]
+    assert diagnostic["predicted_count"] == 2
+    assert diagnostic["matched_projection_count"] == 1
+    extracted = {item["item_id"]: item for item in diagnostic["extracted"]}
+    assert extracted["kept-fact"]["matched_expected_key"] == "kept-fact"
+    assert extracted["kept-fact"]["kind"] == "claim"
+    assert extracted["kept-fact"]["memory_kind"] == "semantic"
+    assert extracted["kept-fact"]["status"] == "confirmed"
+    assert extracted["kept-fact"]["source_event_ids"] == ["event-kept"]
+    assert extracted["kept-fact"]["valid_from"] == occurred_at.isoformat()
+    assert extracted["kept-fact"]["valid_to"] is None
+    assert extracted["extra-episode"] == {
+        "item_id": "extra-episode",
+        "account_id": "owner",
+        "kind": "episode",
+        "memory_kind": "episodic",
+        "title": "额外包装",
+        "body": "没有对应期望的 wrapper",
+        "status": "candidate",
+        "source_event_ids": ["event-extra"],
+        "valid_from": extra_from.isoformat(),
+        "valid_to": extra_to.isoformat(),
+        "matched_expected_key": None,
+    }
+
+
 def test_adapter_protocol_remains_structural() -> None:
     adapter: MemoryEvaluationAdapter = PerfectAdapter()
     assert adapter.name == "perfect"
@@ -375,18 +654,25 @@ async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
 
 
 def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> None:
-    """DEMO-02: the six fixed demo scenarios, each one a memory asked for on a later day.
+    """DEMO-02: fixed demo scenarios, each one checked on a later day.
 
-    The set is a demo storyboard first, so this pins its *shape*: the six storyboard cases
-    are present, every expected key is graded in a query (a case can never be unscoreable),
-    and each query is asked after the utterance it is supposed to recall.  Quality numbers
-    are not pinned here - what the demo can quote is measured by running the set, and the
-    offline ceiling is recorded separately.
+    Student cases declare the minor subject and stay inside the current long-term
+    allowlist.  The unsupported case is intentionally empty: emotion, family, and
+    proactive cross-session comfort are measured as failures, not as memories.
     """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
 
     assert dataset.version == "demo-scenarios-zh-v1"
     assert [case.case_id for case in dataset.cases] == list(DEMO_STORYBOARDS)
+    student_cases = [case for case in dataset.cases if case.case_id.startswith("demo-student-")]
+    assert {case.subject_category for case in student_cases} == {"minor"}
+    assert all(case.subject_category is None for case in dataset.cases if case not in student_cases)
+    unsupported = next(
+        case for case in dataset.cases if case.case_id == "demo-student-unsupported-sensitive"
+    )
+    assert unsupported.expected_memories == ()
+    assert unsupported.queries
+    assert all(any(term.strip() for term in query.forbidden_text) for query in unsupported.queries)
     for case in dataset.cases:
         graded = set().union(*(query.relevance for query in case.queries))
         assert {memory.key for memory in case.expected_memories} <= graded, case.case_id
@@ -395,34 +681,23 @@ def test_demo_scenario_dataset_pairs_every_storyboard_with_a_later_recall() -> N
             assert memory.source_event_ids, case.case_id
         occurred_at = {evidence.event_id: evidence.occurred_at for evidence in case.evidence}
         recalled = {
-            event_id
-            for memory in case.expected_memories
-            for event_id in memory.source_event_ids
+            event_id for memory in case.expected_memories for event_id in memory.source_event_ids
         }
         assert recalled <= set(occurred_at), case.case_id
         for query in case.queries:
             assert query.now is not None, case.case_id
-            assert all(
-                query.now > occurred_at[event_id] for event_id in recalled
-            ), case.case_id
+            assert all(query.now > occurred_at[event_id] for event_id in recalled), case.case_id
 
 
 @pytest.mark.asyncio
 async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> None:
-    """All six storyboards are reachable offline, and the expectations describe claims.
+    """Supported storyboards are reachable; the minor sensitive case stores nothing.
 
-    Two things this pins, both learned by measuring the production assembly rather than by
-    assuming it (numbers for that path are in HANDOFF; CI runs the offline rule extractor):
-
-    * the expectations follow the *claim* surface, because that is what the memory contract
-      stores: a claim carries the value ("七十几分", "难过") while the descriptive sentence
-      ("上次数学考试只考了七十几分") lands on the episode item, so `match_all` terms that
-      span both would be unsatisfiable for one extractor or the other.  A memory card built
-      from the claim alone therefore reads thin - the demo should render the pair.
-    * `demo-student-mood-recall` is scoreable again.  It used to carry no review because the
-      extractor stored nothing for "我今天被老师批评了，好难过。", and a review whose source
-      has no claim aborts the whole run; the prompt now says an explicitly stated feeling is
-      a memory (and to keep the speaker's language), which made that case work.
+    Student cases run through the same subject-category filter as catalog compilation.
+    Their supported memories are study progress, an explicit learning preference, and
+    one closed daily preference confirmed by the existing write policy.  Emotion,
+    family conflict, and a later proactive comfort question must not produce or recall
+    a long-term memory.  Elder cases stay on the historical unspecified path.
     """
     dataset = load_memory_evaluation_dataset(DEMO_DATASET)
     adapter = CatalogMemoryEvaluationAdapter()
@@ -434,10 +709,19 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
             result = next(
                 item for item in observation.query_results if item.query_id == query.query_id
             )
+            if query.forbidden_text:
+                assert observation.extracted_items == ()
+                assert not any(
+                    term in f"{item.title} {item.body}"
+                    for item in (*observation.extracted_items, *result.items)
+                    for term in query.forbidden_text
+                )
             for expected in case.expected_memories:
                 if any(_matches(expected, item) for item in result.items):
                     reachable.add(case.case_id)
-    assert reachable == set(DEMO_STORYBOARDS)
+    assert reachable == {
+        case_id for case_id in DEMO_STORYBOARDS if case_id != "demo-student-unsupported-sensitive"
+    }
 
     report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
 

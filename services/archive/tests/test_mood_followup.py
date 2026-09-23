@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 import pytest
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import ExtractedClaim, ExtractionUsage, MemoryExtraction
-from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.memory_extractor import (
+    RuleBasedMemoryExtractor,
+    statement_domain_category,
+)
+from services.archive.memory_write_policy import filter_extraction_for_subject
 from services.archive.mood_followup import (
     MoodFollowupEnsuringExtractor,
     daily_statement_claim,
@@ -234,6 +238,11 @@ async def test_mood_sentences_never_become_fact_claims(text: str) -> None:
 async def test_question_and_remember_command_shapes_are_not_netted() -> None:
     assert daily_statement_claim("我今天去公园了吗？", occurred_at=OCCURRED_AT) is None
     assert daily_statement_claim("帮我把阳台的花浇了。", occurred_at=OCCURRED_AT) is None
+    # Only an explicit learning-preference opening may precede 我.
+    # A narrative lead-in, or 学习时我 followed by a story, still fails.
+    assert daily_statement_claim("刚才学习时我喜欢先跟读。", occurred_at=OCCURRED_AT) is None
+    assert daily_statement_claim("学习时我和同学吵架。", occurred_at=OCCURRED_AT) is None
+    assert daily_statement_claim("学习时我去了图书馆。", occurred_at=OCCURRED_AT) is None
 
 
 async def test_net_adds_the_whole_sentence_next_to_atomic_values() -> None:
@@ -325,6 +334,250 @@ async def test_net_reads_the_resolved_remember_content() -> None:
     extraction = await extractor.extract(_event("请帮我记住我今天去公园散步了。"))
 
     assert [claim.value for claim in extraction.claims] == [PLAIN_STATEMENTS[0]]
+
+
+MATH_WEAKNESS = "我今天练习了数学应用题，分数应用题还是薄弱点。"
+# Dataset sentence: 我 is not sentence-initial, but the narrow 学习时 prefix is
+# the only extra shape the plain-statement net accepts.
+LEARNING_PREFERENCE = "学习时我喜欢先跟读，再自己说一遍。"
+LEARNING_PREFERENCE_VARIANTS = (
+    LEARNING_PREFERENCE,
+    "学习时我更喜欢先跟读，再自己说一遍。",
+    "学习时我习惯先跟读，再自己说一遍。",
+)
+FACTORY_STATEMENT = "我在纺织厂工作了30年。"
+PARK_STATEMENT = "我今天去公园散步了。"
+SON_STATEMENT = "我的儿子好久没来看我了。"
+
+
+async def test_math_full_statement_survives_the_minor_filter() -> None:
+    """Qwen may split the math sentence; the full-statement fallback must stay.
+
+    The fallback used to file every netted sentence as daily_life/fact, and the
+    minor filter drops that predicate. The shared classifier keeps the same
+    study_progress label the rule extractor already uses.
+    """
+
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(
+            MemoryExtraction(
+                claims=(
+                    ExtractedClaim(
+                        domain_category="study_progress",
+                        subject_key="self",
+                        predicate="weakness",
+                        value="分数应用题",
+                        confidence=0.8,
+                    ),
+                ),
+                extractor_version="qwen-json:qwen-flash:v2",
+            )
+        )
+    )
+    event = _event(MATH_WEAKNESS)
+
+    extraction = await extractor.extract(event)
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+
+    assert statement_domain_category(MATH_WEAKNESS) == "study_progress"
+    fallback = extraction.claims[-1]
+    assert (fallback.domain_category, fallback.predicate, fallback.value) == (
+        "study_progress",
+        "study_progress",
+        MATH_WEAKNESS,
+    )
+    assert [claim.value for claim in filtered.claims] == ["分数应用题", MATH_WEAKNESS]
+
+
+async def test_wrong_daily_life_full_sentence_does_not_suppress_study_fallback() -> None:
+    """A delegate daily_life copy of the whole sentence must not hide study_progress.
+
+    Containment alone used to treat that copy as coverage, so the correctly
+    labeled fallback was skipped and the minor filter then dropped everything.
+    """
+
+    wrong = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="fact",
+                value=MATH_WEAKNESS,
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(wrong))
+    event = _event(MATH_WEAKNESS)
+
+    extraction = await extractor.extract(event)
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+
+    assert [(claim.domain_category, claim.value) for claim in extraction.claims] == [
+        ("daily_life", MATH_WEAKNESS),
+        ("study_progress", MATH_WEAKNESS),
+    ]
+    assert [(claim.domain_category, claim.value) for claim in filtered.claims] == [
+        ("study_progress", MATH_WEAKNESS)
+    ]
+
+
+async def test_same_category_full_sentence_still_suppresses_the_study_fallback() -> None:
+    kept = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="study_progress",
+                subject_key="self",
+                predicate="study_progress",
+                value=MATH_WEAKNESS,
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(kept))
+
+    extraction = await extractor.extract(_event(MATH_WEAKNESS))
+
+    assert [(claim.domain_category, claim.value) for claim in extraction.claims] == [
+        ("study_progress", MATH_WEAKNESS)
+    ]
+
+
+async def test_wrong_daily_life_full_sentence_does_not_suppress_learning_preference() -> None:
+    wrong = MemoryExtraction(
+        claims=(
+            ExtractedClaim(
+                domain_category="daily_life",
+                subject_key="self",
+                predicate="fact",
+                value=LEARNING_PREFERENCE,
+                confidence=0.8,
+            ),
+        ),
+        extractor_version="qwen-json:qwen-flash:v2",
+    )
+    extractor = MoodFollowupEnsuringExtractor(_ScriptedExtractor(wrong))
+    event = _event(LEARNING_PREFERENCE)
+
+    extraction = await extractor.extract(event)
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+
+    assert [(claim.domain_category, claim.value) for claim in filtered.claims] == [
+        ("learning_preference", LEARNING_PREFERENCE)
+    ]
+
+
+@pytest.mark.parametrize("text", LEARNING_PREFERENCE_VARIANTS)
+async def test_learning_preference_full_statement_survives_the_minor_filter(text: str) -> None:
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(MemoryExtraction(extractor_version="qwen-json:qwen-flash:v2"))
+    )
+    event = _event(text)
+
+    extraction = await extractor.extract(event)
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+
+    assert statement_domain_category(text) == "learning_preference"
+    assert [(claim.domain_category, claim.predicate, claim.value) for claim in filtered.claims] == [
+        ("learning_preference", "learning_preference", text)
+    ]
+
+
+async def test_learning_time_narrative_is_not_netted_as_a_preference() -> None:
+    """学习时我... is not enough. Only an explicit preference opening is netted."""
+
+    text = "学习时我和同学吵架。"
+    claim = daily_statement_claim(text, occurred_at=OCCURRED_AT)
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(MemoryExtraction(extractor_version="qwen-json:qwen-flash:v2"))
+    )
+
+    extraction = await extractor.extract(_event(text))
+
+    assert claim is None
+    assert extraction.claims == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我和爸爸最近总吵架。",
+        "我被诊断为焦虑症。",
+        "我今天有点烦",
+        "我妈妈叫李梅。",
+        "我今天去超市买了牛奶。",
+    ],
+)
+async def test_sensitive_family_mood_and_ordinary_facts_stay_empty_for_minors(
+    text: str,
+) -> None:
+    extractor = MoodFollowupEnsuringExtractor(
+        _ScriptedExtractor(MemoryExtraction(extractor_version="qwen-json:qwen-flash:v2"))
+    )
+    event = _event(text)
+
+    extraction = await extractor.extract(event)
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+
+    if text == "我今天去超市买了牛奶。":
+        assert [(claim.domain_category, claim.predicate) for claim in extraction.claims] == [
+            ("daily_life", "fact")
+        ]
+    assert filtered.claims == ()
+    assert filtered.people == ()
+    assert filtered.timeline == ()
+    assert filtered.knowledge == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [PARK_STATEMENT, FACTORY_STATEMENT, SON_STATEMENT],
+)
+async def test_ordinary_daily_facts_keep_daily_life_fact_semantics(text: str) -> None:
+    claim = daily_statement_claim(text, occurred_at=OCCURRED_AT)
+
+    assert claim is not None
+    assert claim.domain_category == "daily_life"
+    assert claim.predicate == "fact"
+    assert claim.value == text
+    # Factory mentions 工作, which the shared classifier files as work experience.
+    # The fallback must not copy that domain into the minor allowlist.
+    if text == FACTORY_STATEMENT:
+        assert statement_domain_category(text) == "work_experience"
+
+
+async def test_rule_branch_stays_a_bare_rule_extractor() -> None:
+    extractor = RuleBasedMemoryExtractor()
+
+    extraction = await extractor.extract(_event(MATH_WEAKNESS))
+
+    assert extractor.version == "rules-zh-v2"
+    assert len(extraction.claims) == 1
+    assert extraction.claims[0].domain_category == "study_progress"
+    assert extraction.claims[0].predicate == "study_progress"
+    assert extraction.claims[0].value == MATH_WEAKNESS
 
 
 async def test_feeling_sentence_gets_a_mood_claim_never_a_fact_claim() -> None:

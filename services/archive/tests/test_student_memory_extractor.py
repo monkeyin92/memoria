@@ -23,8 +23,11 @@ def _event(text: str) -> EvidenceEvent:
     ("text", "category"),
     [
         ("我今天练习了英语口语，过去式还是薄弱点。", "study_progress"),
+        ("我今天练习了数学应用题，分数应用题还是薄弱点。", "study_progress"),
+        ("我掌握了数学应用题。", "study_progress"),
         ("学习时我喜欢先跟读，再自己说一遍。", "learning_preference"),
         ("我喜欢喝热牛奶。", "daily_life"),
+        ("请帮我记住我喜欢阅读。", "daily_life"),
     ],
 )
 async def test_student_categories_are_explicit_and_do_not_capture_general_preferences(
@@ -35,6 +38,22 @@ async def test_student_categories_are_explicit_and_do_not_capture_general_prefer
 
     assert result.claims[0].domain_category == category
     assert result.timeline[0].domain_category == category
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "今天数学应用题很难。",
+        "我看见一道数学应用题。",
+    ],
+)
+async def test_math_word_problem_without_practice_evidence_is_not_study_progress(
+    text: str,
+) -> None:
+    result = await RuleBasedMemoryExtractor().extract(_event(text))
+
+    assert result.claims[0].domain_category == "daily_life"
 
 
 @pytest.mark.asyncio
@@ -67,10 +86,65 @@ async def test_minor_long_term_filter_drops_family_health_body_and_relationship_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我今天练习了数学，被老师骂了。",
+        "我今天练习了数学，被老师批评了。",
+        "老师批评了我",
+        "老师没批评我",
+        "老师没有批评我",
+        "老师骂了我",
+        "我今天练习了数学，老师训斥了我。",
+        "我今天练习了数学，被老师罚站。",
+        "被老师罚站",
+        "我今天练习了数学，好难过。",
+        "我今天练习了数学，有点伤心。",
+        "我今天练习了数学，很生气。",
+        "我今天练习了数学，有点害怕。",
+        "我今天练习了数学，和同学吵架了。",
+        "我今天练习了数学，和同学闹翻了。",
+        "和同学闹翻了",
+        "我今天练习了数学，和同学闹矛盾。",
+        "我今天练习了数学，和同学闹别扭。",
+        "我今天练习了数学，在学校被欺负了。",
+        "我和爸爸最近总吵架。",
+        "我被诊断为焦虑症。",
+    ],
+)
+async def test_minor_filter_drops_study_sentences_that_carry_sensitive_context(
+    text: str,
+) -> None:
+    event = _event(text)
+    extraction = await RuleBasedMemoryExtractor().extract(event)
+
+    filtered = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="minor",
+    )
+    adult = filter_extraction_for_subject(
+        event,
+        extraction,
+        subject_category="adult",
+    )
+
+    assert filtered.claims == ()
+    assert filtered.timeline == ()
+    assert filtered.knowledge == ()
+    assert adult.claims == extraction.claims
+    assert adult.timeline == extraction.timeline
+
+
+@pytest.mark.asyncio
 async def test_minor_long_term_filter_keeps_only_safe_study_and_learning_preferences() -> None:
     for text, expected in (
         ("我今天练习了英语口语，过去式还是薄弱点。", "study_progress"),
+        ("我今天练习了数学应用题，分数应用题还是薄弱点。", "study_progress"),
         ("学习时我喜欢先跟读，再自己说一遍。", "learning_preference"),
+        ("请帮我记住我喜欢阅读。", "daily_life"),
+        ("我今天练习了数学，老师说不用紧张。", "study_progress"),
+        ("我今天练习了数学，老师说别担心。", "study_progress"),
     ):
         event = _event(text)
         extraction = await RuleBasedMemoryExtractor().extract(event)

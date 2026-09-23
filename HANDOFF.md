@@ -1,5 +1,13 @@
 # Memoria 当前交接
 
+## 2026-09-23 记忆评测边界修复与逐 case 诊断（当前工作区，未部署）
+
+- **范围**：本轮收紧 `MoodFollowupEnsuringExtractor` 的学习偏好兜底与 domain-aware 去重；minor 长期记忆对批评、冲突、罚站、负面情绪等上下文 fail-closed，并保留 `老师说不用紧张/别担心` 的窄否定语境；补齐 `老师没批评/老师没有批评` 字面边界。没有放宽 minor allowlist，没有改评估指标公式，没有改生产配置或部署。
+- **评估诊断**：`MemoryEvaluationReport.as_dict()` 新增兼容性的顶层 `cases`；每个 case 输出 expected 的 match、source、time、query recall，以及每个实际 projection 的 `item_id/account_id/kind/memory_kind/status/title/body/source_event_ids/valid_from/valid_to/matched_expected_key`，另有 `predicted_count` 与 `matched_projection_count`。`report_json()` 可直接 `json.loads`；现有 `metrics` 字段和公式未变。该信息用于区分 claim、episode、knowledge 等 projection，不能把 projection-level precision 当成 claim-level precision。
+- **本地验证**：独立 QA 实跑 archive 全套 `221 passed / 1 skipped`（临时 PostgreSQL；唯一 skip 为需要 `MEMORIA_TEST_POSTGRES_CONTAINER` 的 restore drill）；无 DSN 的本地跑为 `205 passed / 17 skipped`。改动生产模块 strict mypy、Ruff check、改动范围 format check、`git diff --check` 均通过。QA 另验证 adult/non-minor 路径、敏感组合、真实学习偏好句、错误 `daily_life` delegate fallback 和 PG minor 契约；未部署、未做生产或设备验收。
+- **当前 rules 7-case 收据**：`case_count=7`、`failed_cases=[]`、`recall@5/10=1.0`、`cross_session_recall@5=1.0`、`extraction_recall=1.0`、`source/temporal=1.0`、`extraction_precision=6/18=0.333`。逐 case projection 分母为：数学 `6/1`、学习偏好 `3/1`、阅读 `2/1`、敏感负例 `0/0`、公园 `2/1`、工厂 `3/1`、儿子 `2/1`（格式为 predicted/matched）。数学、工厂等额外 projection 的类型可由新 `cases[].extracted` 诊断直接复核；这是 rules/current projection-level 事实，不是 configured/Qwen 证据。
+- **configured 边界**：现有 `0.857/0.8/0.833/0.333` 只作为历史文字记录保留；当前工作区没有对应逐 case 原始 JSON 收据，且本地 configured 门禁因缺少有效 `DASHSCOPE_API_KEY`、`OFFLINE_MOCK=true` 而拒绝运行。不能据此唯一归因到数学 case、source 或 temporal 事件，也不能宣称 configured 已修复。下一步只有在隔离环境提供真实 key、设置 `OFFLINE_MOCK=false`、使用 `MEMORIA_MEMORY_EXTRACTION_MODEL=qwen-flash` 重跑并保存带 `cases` 的 JSON 后，才能完成原始问题的 case/事件归因。
+
 ## 2026-09-22 DEMO-03 控制面切流上线（可审计发布链首次用通）+ readiness 定时刷新缺陷
 
 - **候选**：tag `20260922-demo03-control-review` → commit `ee57ad4`（= `main@567c4b7` + 1 个 DEMO-03 提交，PR #26 明确不并入 main，仅作部署候选收据）；镜像 `memoria-control-api:20260922-demo03-control-review`（`sha256:ac9b516b640dcee4aba8c816466115e55015a565363995daadf8328e7d2a2a2d`，label revision=`ee57ad4`、role=`control-api`、kind=`control-api-source-overlay`）。CI `35705116092` 全绿（python / changes / control-api-image / agent / agent-image）。

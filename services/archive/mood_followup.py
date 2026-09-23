@@ -33,6 +33,7 @@ from services.archive.memory_domain import (
     MemoryExtraction,
     MemoryExtractor,
 )
+from services.archive.memory_extractor import statement_domain_category
 from services.archive.memory_write_policy import explicit_remember_content
 
 #: Explicit feeling words, matched against the owner's own words. Two-character
@@ -132,7 +133,11 @@ _FEELING_GUARD_WORDS: tuple[str, ...] = (
 
 #: A plain self-statement: optional time word, then a first-person declarative
 #: without a question mark. Length is capped so only short own-words statements
-#: are netted, not narrations or dictation.
+#: are netted, not narrations or dictation. A learning prefix is accepted only
+#: when it is an explicit preference ("学习时我喜欢/更喜欢/习惯……"), so the
+#: dataset sentence is not dropped just because 我 is not sentence-initial.
+#: "学习时我和同学……" and other narratives stay outside the net.
+_LEARNING_PREFERENCE_PREFIX = re.compile(r"学习时我(?:更)?(?:喜欢|习惯)")
 _PLAIN_SELF_STATEMENT = re.compile(r"(?:今天|昨天|前天|前几天|上午|下午|晚上|中午)?我.{1,58}")
 _MAX_NET_STATEMENT_CHARS = 60
 
@@ -145,12 +150,26 @@ def _normalized(value: str) -> str:
 #: (normalized superset or equal). A shorter value must never suppress the net:
 #: qwen-flash answered "好久没来看我了" (no 儿子) for the son utterance, and the
 #: sentence is what matches the recall surface.
-def _statement_covered_by_claims(claims: tuple[ExtractedClaim, ...], statement: str) -> bool:
+#:
+#: Study progress and learning preference are stricter: a delegate that files the
+#: whole sentence under daily_life/fact must not suppress the correctly labeled
+#: fallback, or the minor filter drops the only keepable claim.
+def _statement_covered_by_claims(
+    claims: tuple[ExtractedClaim, ...],
+    statement: str,
+    *,
+    category: str | None = None,
+) -> bool:
     statement_norm = _normalized(statement)
     if not statement_norm:
         return True
     return any(
-        statement_norm in _normalized(claim.value) for claim in claims
+        statement_norm in _normalized(claim.value)
+        and (
+            category not in {"study_progress", "learning_preference"}
+            or claim.domain_category == category
+        )
+        for claim in claims
     )
 
 
@@ -198,12 +217,23 @@ def daily_statement_claim(text: str, *, occurred_at: datetime) -> ExtractedClaim
         return None
     if any(word in stripped for word in _FEELING_GUARD_WORDS):
         return None
-    if _PLAIN_SELF_STATEMENT.fullmatch(stripped) is None:
+    preference = _LEARNING_PREFERENCE_PREFIX.match(stripped)
+    if preference is None:
+        if _PLAIN_SELF_STATEMENT.fullmatch(stripped) is None:
+            return None
+    elif len(stripped) - preference.end() > 58:
         return None
+    # Only study progress and learning preference leave daily_life/fact. Those
+    # two domains are the extractor's low-risk student categories, so a minor
+    # long-term filter can keep the whole sentence. Work, family, life story
+    # and ordinary daily facts stay daily_life/fact and are not allowlisted.
+    category = statement_domain_category(stripped)
+    if category not in {"study_progress", "learning_preference"}:
+        category = "daily_life"
     return ExtractedClaim(
-        domain_category="daily_life",
+        domain_category=category,
         subject_key="self",
-        predicate="fact",
+        predicate=category if category != "daily_life" else "fact",
         value=stripped,
         confidence=_CLAIM_CONFIDENCE,
         valid_from=occurred_at,
@@ -226,7 +256,11 @@ class MoodFollowupEnsuringExtractor:
         claim = mood_followup_claim(resolved, occurred_at=event.occurred_at) or (
             daily_statement_claim(resolved, occurred_at=event.occurred_at)
         )
-        if claim is None or _statement_covered_by_claims(extraction.claims, resolved):
+        if claim is None or _statement_covered_by_claims(
+            extraction.claims,
+            resolved,
+            category=claim.domain_category,
+        ):
             return extraction
         return MemoryExtraction(
             claims=(*extraction.claims, claim),

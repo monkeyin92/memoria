@@ -127,6 +127,54 @@ _SENSITIVE_SELF_FACT = re.compile(
     r"\d{4}\s*(?:年|[-/.])\s*\d{1,2}|"
     r"\d{1,2}\s*月\s*\d{1,2}\s*日)"
 )
+#: Whole-sentence contexts a minor long-term projection must not keep, even when
+#: the same sentence also names a safe study word such as 练习 or 数学. This is
+#: a fail-closed tightening, not an expansion of the allowlist. Criticism and
+#: conflict never have a negation exception: "老师没批评" and "老师没有批评"
+#: are still dropped.
+_MINOR_HARD_CONTEXT = (
+    "老师批评",
+    "老师没批评",
+    "老师没有批评",
+    "老师骂",
+    "被骂",
+    "训斥",
+    "罚站",
+    "吵架",
+    "打架",
+    "被欺负",
+    "闹矛盾",
+    "闹别扭",
+    "闹翻",
+)
+#: Feeling words match the mood follow-up list so a negative emotion cannot ride
+#: in on a study keyword. A short local negation ("不用紧张") does not count;
+#: anything else, including a missing or distant negation, stays fail-closed.
+_MINOR_FEELING_CONTEXT = (
+    "难过",
+    "伤心",
+    "不开心",
+    "委屈",
+    "生气",
+    "气愤",
+    "失望",
+    "沮丧",
+    "郁闷",
+    "害怕",
+    "恐惧",
+    "紧张",
+    "着急",
+    "担心",
+    "孤单",
+    "孤独",
+    "寂寞",
+    "烦躁",
+    "无聊",
+    "难受",
+)
+_MINOR_FEELING_NEGATION = re.compile(
+    r"(?:没有|不用|别|不|没)(?:太|很|非常|特别|那么|这么|有点|一点)?$"
+)
 
 
 def explicit_remember_content(text: object) -> str | None:
@@ -177,6 +225,35 @@ def _contains_sensitive_text(value: str) -> bool:
     return redact_pii(value) != value or any(term in value for term in _SENSITIVE_TERMS)
 
 
+def _negated_feeling(value: str, term: str) -> bool:
+    """True only when every hit sits immediately after a short negation."""
+
+    start = 0
+    found = False
+    while True:
+        index = value.find(term, start)
+        if index < 0:
+            return found
+        found = True
+        if _MINOR_FEELING_NEGATION.search(value[:index]) is None:
+            return False
+        start = index + len(term)
+
+
+def _minor_sensitive_context(value: str) -> bool:
+    """True when a minor sentence carries criticism, conflict, or a negative feeling.
+
+    Feeling words ignore a narrow local negation such as 不用/不/没/没有/别.
+    Hard criticism and conflict terms do not, so the guard stays fail-closed.
+    """
+
+    if any(term in value for term in _MINOR_HARD_CONTEXT):
+        return True
+    return any(
+        term in value and not _negated_feeling(value, term) for term in _MINOR_FEELING_CONTEXT
+    )
+
+
 def _is_closed_low_risk_value(value: str) -> bool:
     segments = re.split(r"[、，,和与或]", re.sub(r"\s+", "", value))
     return bool(segments) and all(
@@ -211,12 +288,13 @@ def filter_extraction_for_subject(
     if subject_category != "minor":
         return extraction
     text = str(event.payload.get("text") or "").strip()
-    if not text or _contains_sensitive_text(text):
+    if not text or _contains_sensitive_text(text) or _minor_sensitive_context(text):
         return MemoryExtraction(
             extractor_version=extraction.extractor_version,
             usage=extraction.usage,
         )
-    low_risk_daily = low_risk_self_fact_predicate(text) is not None
+    low_risk_predicate = low_risk_self_fact_predicate(explicit_remember_content(text) or text)
+    low_risk_daily = low_risk_predicate is not None
     claims = tuple(
         claim
         for claim in extraction.claims
@@ -225,13 +303,11 @@ def filter_extraction_for_subject(
         and claim.domain_category in MINOR_LONG_TERM_DOMAIN_ALLOWLIST
         and (
             claim.domain_category != "daily_life"
-            or (
-                low_risk_daily
-                and claim.predicate in {"daily_life", "preference", "habit"}
-            )
+            or (low_risk_daily and claim.predicate in {low_risk_predicate, "daily_life"})
         )
         and str(claim.sensitive_domain).casefold() in {"public", "personal"}
         and not _contains_sensitive_text(claim.value)
+        and not _minor_sensitive_context(claim.value)
     )
     timeline = tuple(
         item
@@ -241,6 +317,7 @@ def filter_extraction_for_subject(
         and (item.domain_category != "daily_life" or low_risk_daily)
         and item.sensitivity in {"public", "personal"}
         and not _contains_sensitive_text(item.title)
+        and not _minor_sensitive_context(item.title)
     )
     knowledge = tuple(
         item
@@ -250,6 +327,8 @@ def filter_extraction_for_subject(
         and item.sensitivity in {"public", "personal"}
         and not _contains_sensitive_text(item.question)
         and not _contains_sensitive_text(item.answer)
+        and not _minor_sensitive_context(item.question)
+        and not _minor_sensitive_context(item.answer)
     )
     return MemoryExtraction(
         claims=claims,

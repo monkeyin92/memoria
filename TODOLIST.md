@@ -259,25 +259,31 @@ P2-01/02/04/05/06 所有P2质量增强项：
 
 **2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复发布前不可测；**方向一已修复入库（`b41ff7a`，全门禁绿）**。**结果**：组件发布切流 PASS（tag `20260921-defect-a-followup-endpoint`）→ 真机复测核心判据通过（两轮播放后追问实答，20s 等待/吞问/13 字合并话轮均未复现）→ 3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，**缺陷 A 关闭**（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）。
 
-#### [ ] DEMO-02 跨会话记忆召回（学生场景3个+老年场景3个）
+#### [ ] DEMO-02 跨会话记忆召回（固定集当前 7 cases：6 个正向 + 1 个 minor 负例）
 
-**学生Demo场景**（基于README产品定位："陪伴、关怀、教学导师"）：
+原先提纲是「学生 3 + 老年 3」六例。当前实现不再是这个简单六例：学生侧改为 3 个 minor 正向场景，另加 1 个明确不支持的 minor 负例；老年侧仍是 3 个正向场景。固定集共 7 cases。
+
+**学生Demo场景**（minor 长期记忆只保留低风险学习与显式确认的日常偏好；情绪、家庭和主动跨会话关怀是不支持负例，不是待补的正向场景）：
 ```yaml
-场景1 - 学习陪伴：
-  Day 1: "我今天数学考了95分！"
-  → Memoria: "太棒了！你上次说数学是弱项，这次进步好大！"
-  验证点：能召回"上次说数学是弱项"这个记忆
+场景1 - 学习进度（正向，minor）:
+  Day 1: "我今天练习了数学应用题，分数应用题还是薄弱点。"
+  之后再次练习时召回「分数应用题 / 薄弱点」
+  验证点：再次练习能召回已确认的学习进度
 
-场景2 - 情绪关怀：
-  Day 1: "我今天被老师批评了，好难过"
-  Day 3: Memoria主动问: "小明，上次你说被老师批评了，今天心情好点了吗？"
-  验证点：3天后能主动召回情绪事件
+场景2 - 学习偏好（正向，minor）:
+  Day 1: "学习时我喜欢先跟读，再自己说一遍。"
+  几天后召回「先跟读」
+  验证点：能召回显式学习偏好
 
-场景3 - 兴趣陪伴：
-  Day 1: "我最喜欢恐龙了！"
-  Day 7: 孩子问"霸王龙吃什么？"
-  → Memoria: "霸王龙是肉食恐龙。你上次说最喜欢恐龙，要不要听听三角龙的故事？"
-  验证点：1周后能关联兴趣记忆
+场景3 - 显式确认的低风险阅读偏好（正向，minor）:
+  Day 1: "请帮我记住我喜欢阅读。"（explicit_memory）
+  一周后召回「阅读」
+  验证点：仅在显式确认后保留这条低风险日常偏好
+
+不支持负例（minor，预期不写入、不召回）:
+  "我今天被老师批评了，好难过。" / "我和爸爸最近总吵架。"
+  三天后的主动关怀问句不得召回难过、批评、爸爸或吵架
+  验证点：情绪、家庭敏感、主动跨会话关怀明确不进入长期记忆
 ```
 
 **老年Demo场景**（基于README产品定位："陪伴、人物复刻、人生故事册"）：
@@ -301,16 +307,24 @@ P2-01/02/04/05/06 所有P2质量增强项：
 
 **技术实现**（复用现有P1-06基础）：
 - 使用现有的memory_scope服务（不改架构）
-- 准备6个场景的固定测试集（用于演示时保证成功率）
+- 固定集当前共 7 cases（6 个正向 + 1 个 minor 负例），不是原先「学生 3 + 老年 3」的简单六例；用于演示时钉住这组场景
 - 召回准确率目标：固定场景≥90%，自由对话≥70%
 - 时间：1周
 
-**2026-09-21 进展**：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**最终：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**已部署**：control-api `20260921-demo02-recall-net` 切流 PASS（含生产 PG authoritative schema 升级；回滚点 `rollback-…-pre-control`；线上容器固定集 4 连跑全 1.0，收据见 HANDOFF 同日部署节）。**仍未做**：minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）。
+**2026-09-23 minor 边界收紧（未部署，未改 extraction_precision 口径）**：`daily_statement_claim` 只额外接受句首 `学习时` 前缀，使 `学习时我喜欢先跟读，再自己说一遍。` 经 wrapper 后以 `learning_preference` 通过 minor filter；工厂/公园/儿子等普通事实仍是 `daily_life/fact`。`study_progress`/`learning_preference` 只有已有 claim 同时覆盖整句且 domain 相同才算 covered，delegate 把整句错标成 `daily_life/fact` 不再抑制正确 fallback。minor filter 对整句中的被老师批评/被骂/训斥/吵架/打架/被欺负/闹矛盾/闹别扭及明确负面情绪 fail-closed，`我今天练习了数学，被老师骂了。` 不因「练习/数学」保留；成人路径不走该 guard。相关 pytest、ruff、mypy 已过，不是生产或设备验证。
+
+**2026-09-23 场景对齐（未部署，不是生产或设备验证）**：`services/archive/evaluation/demo_scenarios_zh_v1.json` 的学生侧已与当前 minor 写入边界对齐。3 个正向场景是学习进度、学习偏好、显式确认的低风险阅读偏好；情绪、家庭敏感、主动跨会话关怀是 `demo-student-unsupported-sensitive` 负例，预期不形成长期记忆。固定集因此是 7 cases（6 个正向 + 1 个 minor 负例）。离线 rules 评测只证明这组数据集在规则提取器上的当前行为，不能写成生产切流、线上容器或设备验收。
+
+**2026-09-23 configured/Qwen 7-case 结果（历史文字记录，待复核；未部署，不是生产或设备验收）**：此前记录称在 `memoria-prod` 主机上以独立临时源码目录、只读容器、独立网络和临时 SQLite 执行了当前工作区 7-case（非线上旧 6-case），并记录 adapter `memoria-sqlite-configured`、`MoodFollowupEnsuringExtractor`、`qwen-flash` 及结果：`recall@5=0.857`、`recall@10=0.857`、`extraction_recall=0.833`、`extraction_precision=0.333`、`cross_session_recall@5=0.8`、`source_attribution=0.833`、`temporal_accuracy=0.833`、`ndcg=0.752`、`input/output=6595/1611`。但当前仓库没有对应的原始 JSON 收据，故这些数字只能作为待复核历史记录，不能作为当前代码的已验证结果；不能写成「configured 全部通过」，也不能写成生产或设备验收通过。
+
+**2026-09-23 复核补充（以可复核证据为准）**：上段 configured 数字目前在本工作区仍只有文字记录，未找到对应的逐 case JSON 收据；本轮环境也没有可用 `DASHSCOPE_API_KEY`，且 `.env` 的 `OFFLINE_MOCK=true`，`--extractor configured` 按门禁退出。因此不能把 `demo-student-math-weakness` 或任何单一事件写成 configured 指标的已证实失败。评估报告现已增加 `cases[].extracted`、`predicted_count`、`matched_projection_count` 及 expected/query/source/time 明细；下次真实 configured 重跑必须保存带这些字段的原始 JSON，才能完成 case/事件归因。当前 rules 复核的 7-case 结果为 `predicted=18`、`matched=6`、`extraction_precision=6/18=0.333`：数学 6/1、学习偏好 3/1、阅读 2/1、敏感负例 0/0、公园 2/1、工厂 3/1、儿子 2/1；这证明当前规则路径的 projection-level 分母构成，不替代 Qwen 结果，也不把 episode/knowledge 伪装成 claim-level precision。相关边界修复与诊断仅在本地验证，未部署、未做设备验收。
+
+**2026-09-21 进展**（历史口径，针对当时已部署的固定集，不是本轮 7 cases 的生产验证）：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**当时结果：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**已部署的是该日代码**：control-api `20260921-demo02-recall-net` 切流 PASS（含生产 PG authoritative schema 升级；回滚点 `rollback-…-pre-control`；线上容器固定集 4 连跑全 1.0，收据见 HANDOFF 同日部署节）。该部署不覆盖 2026-09-23 的学生场景对齐。**仍未做**：minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）；本轮离线 rules 评测也不是生产或设备验证。
 
 #### [ ] DEMO-03 小程序家长端简化版
 
 **2026-09-22 线上切流与验证（控制面已部署）**：tag `20260922-demo03-control-review`（commit `ee57ad4`）经控制面可审计发布链切流 **PASS**——healthy、restarts=0、env/binds/ports/network 与切前逐项一致（sha 相同）、其余 13 容器未触碰、schema/RLS 门禁 PASS；回滚点 `memoria-control-api:rollback-20260922-demo03-control-review-pre-control`（=demo02 镜像 `sha256:dfd720e0…`）。线上核验：`/health/ready` 本地与外部 Host 路由均 200（12 项 core + agent heartbeat 全 ready）、新路由 `/v1/archive/conversation-sessions` 已挂载且未鉴权返回 401、镜像内含 `def conversation_sessions`/`newest_first` 与数据集；DEMO-02 固定集线上容器 2 连跑仍为 recall@5 1.0 / x_sess 1.0 / ext_recall 1.0 / comfort 1.0 / 双泄漏 0（`paraphrase_followup_recall_at_5=0.0` 与 demo02 基线一致）。收据 `outputs/acceptance/run-20260922-demo03-deploy/`。
-- **仍未验（故本项不勾选）**：真实登录/绑定/带鉴权的端到端会话列表调用、Android/其他视口、真机分享落地与「30 秒看到内容」真人计时、体验版上传（需授权）。线上证据只到「路由已挂载 + 门禁生效 + 无召回退步」，不等于三端验收。
+- **仍未验（故本项不勾选）**：真实登录/绑定/带鉴权的端到端会话列表调用、Android/其他视口、真机分享落地与「30 秒看到内容」真人计时。体验版 `0.8.85`（源 `d140eed`）已上传，但尚未做体验成员与真机验收，也不等于正式发布。线上证据只到「路由已挂载 + 门禁生效 + 无召回退步」，不等于三端验收。
 
 **2026-09-22 进展（代码范围已全部完成；单机型模拟器渲染已验）**：
 - ① 首页每日摘要卡：显示「今天 · N 次对话」——N 以当前认证主体的今日会话数为准（同一道 `MemoryRecallPrivate` 门禁后读取），会话列表不可用时退回服务端日计数；并拼接服务端已生成的回顾文案。无回顾时如实写「回顾还没生成，可在回顾页生成」，**不编造情绪、不猜使用人姓名**（与原示例「心情不错😊」的差异是有意的边界）。
@@ -320,7 +334,7 @@ P2-01/02/04/05/06 所有P2质量增强项：
 - ⑤ QA 反向对照发现并修复首页真实链路漏接：`_loadToday()` 虽已返回 `todayCount` / `dailySummaryText`，但首版 `loadHome()` 未写入 page data，导致分享总走通用文案；现已补齐接线，并在自定义人格异步解析后追加 `flowSeq` + `authEpoch` 复检，避免登出后旧响应把私人摘要回填到内存。回归覆盖真实 `_loadToday → loadHome → data → onShareAppMessage`、Asia/Shanghai 跨 UTC 日界线、接口失败回退、游客清空和两处迟到响应。
 - ⑥ 微信开发者工具证据：本机已登录并打开项目；iPhone 12/13 Pro 模拟器（390×844、SDK 3.17.0）用虚构数据完成首页/回顾页渲染检查，摘要、次数、preview、主体提示、近似播放标记与游客清空均成立、运行异常 0；官方编译器 preflight 编译 124 个文件通过。该证据只证明单机型渲染/编译，不代替真实 API、真机分享或真人计时。
 - **验收边界**：不物理删除人格切换/声音克隆/成员管理/guardian 页面——与 Phase 0「代码保留、冻结」决策一致，Demo 走首页/回顾路径，故该子项按「不投入、不演示」而非「删文件」处理。
-- **待办仅剩**：真实登录/绑定/API 链路、Android/其他视口、真机分享落地与「30 秒看到内容」真人计时，以及体验版上传（需授权）；故本项保持未勾选，不能用注入数据的模拟器截图冒充完整三端验收。
+- **待办仅剩**：真实登录/绑定/API 链路、Android/其他视口、真机分享落地与「30 秒看到内容」真人计时。体验版 `0.8.85` 已上传，仍待体验成员、真机与计时验收；故本项保持未勾选，不能用注入数据的模拟器截图冒充完整三端验收。
 
 **功能范围**（最小可用）：
 ```yaml

@@ -545,6 +545,92 @@ async def test_minor_projection_keeps_safe_study_progress(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_minor_projection_drops_study_sentence_with_teacher_scolding(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "minor-scolded.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="minor-scolded-math",
+        text="我今天练习了数学，被老师骂了。",
+    )
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    report = await catalog.compile_pending()
+    context = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="数学 老师",
+            include_candidates=True,
+        )
+    )
+
+    assert report.failed_events == 0
+    assert context.items == ()
+
+
+@pytest.mark.asyncio
+async def test_minor_explicit_daily_preference_confirms_without_sensitive_capture(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "minor-demo.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="minor-reading",
+        text="请帮我记住我喜欢阅读。",
+        explicit_memory=True,
+    )
+    await _record(
+        archive,
+        event_id="minor-criticized",
+        text="我今天被老师批评了，好难过。",
+        minute=1,
+    )
+    await _record(
+        archive,
+        event_id="minor-family",
+        text="我和爸爸最近总吵架。",
+        minute=2,
+    )
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    report = await catalog.compile_pending()
+    confirmed = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="阅读",
+            include_candidates=False,
+        )
+    )
+    sensitive = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="难过 爸爸",
+            include_candidates=True,
+        )
+    )
+
+    assert report.failed_events == 0
+    assert {(item.domain_category, item.status, item.source_event_id) for item in confirmed.items} == {
+        ("daily_life", "confirmed", "minor-reading")
+    }
+    assert sensitive.items == ()
+
+
+@pytest.mark.asyncio
 async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
     tmp_path: Path,
 ) -> None:
