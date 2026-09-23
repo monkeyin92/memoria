@@ -719,6 +719,10 @@ class CatalogMemoryEvaluationAdapter:
         return MemorySearchQuery(
             account_id=query.account_id,
             speaker_class="owner",
+            # Evaluation is an explicit diagnostic/review path.  It must see
+            # candidate projections so metric drift reflects extraction and
+            # retrieval behavior, not the ordinary companion visibility gate.
+            include_candidates=True,
             text=text,
             valid_at=query.valid_at,
             entity_ids=entity_ids,

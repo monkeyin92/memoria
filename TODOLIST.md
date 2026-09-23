@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-22｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；同时发现并临时处置 readiness 定时刷新失败（P1-09）与发布链三个缺口（P1-09/P1-01 输入）。此前主体隔离批次与四个 account→subject 迁移（`00dc059`，CI `35495932582`）及其按 subject 只读出口、persona 会话胶囊主体读路径、`account_deletions` operator 回执出口（`7f589f0`，CI `35496738878`）均已提交、推送并远端全绿；读路径 PG 侧对等与 PG 全 saga 删除验证（`d2318e4`，CI `35501188784` success）同样已提交、推送、远端全绿。MinIO、真实 provider 与备份项仍开放。本文件只保留未完成事项、执行边界和验收条件；完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。已有编号不复用。2026-09-21 市场/产品复查：新增「2026-09-21 市场竞品复查」节（赛道实证数据与来源）、DEMO-09 竞品实测、DEMO-10 定价与单位经济重估，Q&A 新增 Q11/Q12、风险新增 6.4 赛道风险。同日缺陷 A（P0-03 续问吞问）方向一已发布上线（tag `20260921-defect-a-followup-endpoint`，生产 agent/bridge 切流 PASS）并真机复测核心判据通过（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，缺陷 A 子项关闭。
+更新于 2026-09-23｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；2026-09-23 已用生产配置中的百炼 key 完成当前 HEAD 的固定 7-case 与未见 4-case 隔离 Qwen 评测，收据已保存，未部署当前 HEAD。candidate 可见性契约及回归已在代码中完成并验证，仍未部署；缺陷 A 设备复测仍未完成，不能宣称 3/5/8s 或 30 分钟验收通过。其余发布、主体隔离、删除和市场复查边界保持不变；本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。
 
 ## 当前边界（不得越界宣称）
 
@@ -9,6 +9,7 @@ enabled_release: 2a33a50  # tag 20260921-defect-a-followup-endpoint，2026-09-21
 control_api_release: ee57ad4  # tag 20260922-demo03-control-review，2026-09-22 控制面可审计发布链切流 PASS（healthy / env-binds-ports 不变 / 13 容器未触碰），回滚点 memoria-control-api:rollback-20260922-demo03-control-review-pre-control
 control_api_release_lane: 可审计链已用通一次（`scripts/deploy_control_component.sh` 的 cutover 块）；缺口见 P1-09
 frozen_candidate: memoria-agent:b668960  # 仅本地构建验收，未启用
+memory_evaluation_20260923: code=基于当前 HEAD 3ccba9c 完成的 candidate 默认契约已在本轮提交 / wired=生产 env key 非空 + qwen-flash 固定集与未见集隔离评测 / enabled=当前 HEAD 未启用，线上仍旧 control-api 镜像 / verified=7-case 固定集与 4-case 未见集收据、archive/control-api 回归；固定集 recall@5/10=0.857、未见集 recall@5/10=0.4、双泄漏均为 0；未做线上或设备验收
 direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
@@ -38,9 +39,9 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P0-03 TTS、续问竞态、设备停滞与真实时延
 
 - 待完成：G 的 owner-silence/endpoint/commit/watchdog 真实配置矩阵；B/D 的 Bridge→Edge→设备接收/解码/播放同 fence 证据；部分音频失败后的设备终态；ACK→正文 <1.5s 的链路拆分与达标。
-- 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早（已发布，2026-09-21 设备窗口实机复验通过）**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；已随 tag `20260920-f1f2-owner-silence-and-barge` 到设备。**F2 待命后再唤醒被拒（已发布，2026-09-21 设备窗口实机复验通过）**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。覆盖（可审计）：真实 `button.stop → CancelGeneration/SendStop 成功 → 窗口关闭`（barge 用例）、successor-cancel 保持打开、陈旧 fence 不清、终态关闭清窗口、忽略后恢复转发。第三轮 idle 已用日志证明是**点屏 #3** 触发、非 owner-silence。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
-- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。续问边界复测已完成（2026-09-21 真机两轮播放后追问走通新路径；3/5/8s 精确格与 30 分钟长稳按用户决策默认放行）；天气→续问→播后告别长答与待机/表情回归仍待下轮设备窗口。
-- 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**已发布并真机复测核心判据通过，子项关闭（2026-09-21）**：tag `20260921-defect-a-followup-endpoint`（commit `2a33a50`）生产 agent/bridge 切流 PASS、容器内逐符号验证；真机 session 68e4b917 两轮播放后追问完整走新路径（`pending turn split boundary=playback_end` 废弃回声窗 → `playback-followup endpoint` 1.2s grace 提交 → 回复 actual_heard=True），20s 等待/追问被吞/13 字合并话轮均未复现，supervisor 拒绝门未放宽；收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`。3/5/8s 精确格与 30 分钟长稳按用户决策默认放行。方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当后续发现 realtime 错字时启用。
+- 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早已修复并发布**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；2026-09-21 设备窗口有 30s owner-silence 观察，但不替代当前 P0-03 的完整设备验收。**F2 待命后再唤醒被拒已修复并发布**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。已有设备窗口只覆盖 `button.stop` happy path；禁止源 barge 尚未在设备旁真实触发，完整 F2 契约保持未验证。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
+- 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。当前已有代码、切流和历史核心路径证据，但本轮真机复测尚未完成；3/5/8s 精确格与 30 分钟长稳不得默认放行，天气→续问→播后告别长答与待机/表情回归仍待设备窗口。
+- 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**已发布，设备验收仍开放（2026-09-23）**：tag `20260921-defect-a-followup-endpoint`（commit `2a33a50`）生产 agent/bridge 切流 PASS、容器内逐符号验证；当前未完成本轮真机复测，因此不能把 3/5/8s 精确格或 30 分钟长稳默认放行，也不能关闭 P0-03 设备子项。方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当后续发现 realtime 错字时启用。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
 - 删除域状态（2026-09-20 决策收敛，过程记录见 HANDOFF）：物理不可删域不做封存实现、记为已知缺口（表述禁用「封存/已擦除」）；Slice A（guardian tutor 两表删除/计数/导出）已完成 `6e853ef`；开放项（identity/device_fleet 归属、封存计数面）归 P2-03。
 - 2026-09-20 产品侧提醒（读口真相）：产品召回**不读** `memory_records`，而走 archive 目录（`services/control_api/app/routes/interaction.py:1719-1743`，account_id+subject_id）⇒ 仅封存 memory_scope 不会让轮次内容消失；operator 读口 `services/governance/subject_postgres_reads.py:249-300` 必须同步改。
@@ -92,8 +93,10 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-06 定义跨会话记忆语义，补未见召回评测
 
-- 待完成：用真实 Qwen 抽取器验证别名与跨会话 episode（需要密钥和预算）；把会话记忆迁到当前 person/subject 键，覆盖切人、撤销、删除和旧缓存，不建平行存储。
-- 完成条件：固定集与未见集分别报告 recall/nDCG/extraction/leakage，遗漏项命中正确证据且隔离泄漏为 0；验证实际 ResponsePlannerClient 超时和 catalog 限额。设备追问另取 Actual Heard。
+- 已完成（2026-09-23，生产配置隔离评测，未部署）：当前 HEAD 已用真实 Qwen `qwen-flash` 跑完固定 7-case 与未见 4-case；收据与完整指标见 `HANDOFF.md`、`docs/memory-evaluation-configured-qwen-flash-20260923.json` 和 `docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json`。固定集 6 个正例全部形成并匹配目标 projection、敏感负例为 0；两组双账户泄漏/候选泄漏均为 0。固定集 `extraction_precision=6/18`、未见集 `extraction_precision=0.2777777778` 均为 projection-level 指标。
+- 已落地（2026-09-23，本轮已提交、未部署）：普通 search/context 默认仅返回 confirmed 且 `conflict_state != active`；`include_candidates=true` 作为显式审核/评测/诊断入口；companion、response-plan、context-prefetch 显式不带 candidate，评测适配器显式带 candidate。相关 SQLite/HTTP/主体隔离回归与 archive/control-api 测试目录回归通过；PostgreSQL catalog 文件已把审核/候选读取改为显式 `include_candidates=True`，并补了默认隐藏 candidate 断言，当前环境收集为 1 passed/8 skipped（无 `MEMORIA_TEST_POSTGRES_DSN`）；Ruff 与 `git diff --check` 通过，真实 PG 行为仍未验。
+- 待完成：评估 claim/episode/原子 projection 去重；补齐实际 `ResponsePlannerClient` 超时、fallback 和生产 catalog 限额证据；之后才考虑部署当前工作区，并做线上带鉴权与设备验收。把会话记忆迁到当前 person/subject 键、覆盖切人、撤销、删除和旧缓存的工作仍不提前宣称完成。
+- 完成条件：固定集与未见集分别报告 recall/nDCG/extraction/leakage，candidate 语义、projection 去重、实际超时/catalog 限额和 person/subject 隔离均有可复核证据；当前仅 candidate 契约和两组隔离评测达成，线上/设备边界仍未达成。设备追问另取 Actual Heard。
 
 ### [ ] P1-07 AEC 与播放期语音打断：独立受控实验
 
@@ -143,7 +146,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 家长通知发送 worker/外部渠道：仅保留 outbox/readback 验收；启用另定授权和渠道。
 - EOU 新模型、DuplexModel、expressive/抢跑；ESP-IDF/ESP-SR/upstream 整体升级；老人故事册/人物复刻、年轻人潮玩和最终外形均不进入当前队列。
 
-- F1/F2 已发布（tag `20260920-f1f2-owner-silence-and-barge`）并经 2026-09-21 设备窗口实机复验通过；修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频仍开放。
+- F1/F2 已发布（tag `20260920-f1f2-owner-silence-and-barge`）；F1 有 2026-09-21 设备窗口的 owner-silence 观察，F2 仅有 `button.stop` happy path 证据，禁止源 barge 未真实触发，不能宣称完整 F1/F2 契约已完成；修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频仍开放。
 
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消"agent 上报历史冻结 tag"的临时对齐；与预构建镜像入口一并作为 P1-01 输入。
 
@@ -253,11 +256,11 @@ P2-01/02/04/05/06 所有P2质量增强项：
 - TTS播放无"吞字"、无提前待命
 - 续问在3s/5s/8s延迟后仍能接上
 
-**阻塞已解除**（2026-09-21）：F1/F2 已发布并实机复验通过（tag `20260920-f1f2-owner-silence-and-barge`）；缺陷 A 续问吞问已修复、发布（tag `20260921-defect-a-followup-endpoint`）并真机复测核心判据通过，3/5/8s 精确格与 30 分钟长稳按用户决策默认放行——DEMO-01 的续问卡点清零。
+**软件发布完成，设备验收仍开放**（2026-09-23）：缺陷 A 方向一已入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）并发布到 `20260921-defect-a-followup-endpoint`（commit `2a33a50`）。当前已验证的是代码、切流和容器内符号；**真机复测尚未完成**，因此不能把 3/5/8 秒精确格或 30 分钟长稳默认放行，也不能关闭 DEMO-01 的 P0-03 设备子项。
 
-**剩余行动**：真实 VoCat 完整验收（天气→续问→播后告别长答、待机、五表情回归）待下轮设备窗口。
+**待做设备复测**：同一已启用候选上，确认 bridge 日志出现 `media playback-followup endpoint boundary=...`，播放结束后的回声不与追问合并为同一话轮，逐项跑 3 秒/5 秒/8 秒精确追问格，并完成 30 分钟长稳。全部证据齐全后再关闭缺陷 A 的设备子项。
 
-**2026-09-21 设备窗口进展**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，HANDOFF 同日设备窗口节）：F1 **通过**（先修掉线上 bridge env 残留 10s 的部署缺陷，30s 窗口实机生效：38.3s 真静默才待命、0.4s/25.6s 续问直接接上、告别立即待命）；F2 **通过**（点屏 → button.stop → edge 清窗口 → 41ms 回 listening → 0 Alert → 会话存活）。**新增缺陷 A（最高优先）**：ASR 段落跨界拒绝吞掉续问（"后天呢"实时识别成功仍被丢弃、"北京呢"被尾音 overlap 拒）——3/5/8s 精确格在修复发布前不可测；**方向一已修复入库（`b41ff7a`，全门禁绿）**。**结果**：组件发布切流 PASS（tag `20260921-defect-a-followup-endpoint`）→ 真机复测核心判据通过（两轮播放后追问实答，20s 等待/吞问/13 字合并话轮均未复现）→ 3/5/8s 精确格与 30 分钟长稳按用户决策默认放行，**缺陷 A 关闭**（收据 `outputs/acceptance/run-20260921-defect-a-retest/window-a/`）。
+**既有设备窗口证据**（收据 `outputs/acceptance/run-20260921-demo01-device-window/findings.md`，仅保留历史边界）：F1 的 30s owner-silence 与 F2 的 `button.stop` happy path 有设备观察；禁止源 barge 路径未触发，不能据此宣称 F2 的完整禁止源契约已验证。缺陷 A 的初始现象与已发布修复见 `HANDOFF.md` 对应日期节。
 
 #### [ ] DEMO-02 跨会话记忆召回（固定集当前 7 cases：6 个正向 + 1 个 minor 负例）
 
@@ -315,9 +318,11 @@ P2-01/02/04/05/06 所有P2质量增强项：
 
 **2026-09-23 场景对齐（未部署，不是生产或设备验证）**：`services/archive/evaluation/demo_scenarios_zh_v1.json` 的学生侧已与当前 minor 写入边界对齐。3 个正向场景是学习进度、学习偏好、显式确认的低风险阅读偏好；情绪、家庭敏感、主动跨会话关怀是 `demo-student-unsupported-sensitive` 负例，预期不形成长期记忆。固定集因此是 7 cases（6 个正向 + 1 个 minor 负例）。离线 rules 评测只证明这组数据集在规则提取器上的当前行为，不能写成生产切流、线上容器或设备验收。
 
-**2026-09-23 configured/Qwen 7-case 结果（历史文字记录，待复核；未部署，不是生产或设备验收）**：此前记录称在 `memoria-prod` 主机上以独立临时源码目录、只读容器、独立网络和临时 SQLite 执行了当前工作区 7-case（非线上旧 6-case），并记录 adapter `memoria-sqlite-configured`、`MoodFollowupEnsuringExtractor`、`qwen-flash` 及结果：`recall@5=0.857`、`recall@10=0.857`、`extraction_recall=0.833`、`extraction_precision=0.333`、`cross_session_recall@5=0.8`、`source_attribution=0.833`、`temporal_accuracy=0.833`、`ndcg=0.752`、`input/output=6595/1611`。但当前仓库没有对应的原始 JSON 收据，故这些数字只能作为待复核历史记录，不能作为当前代码的已验证结果；不能写成「configured 全部通过」，也不能写成生产或设备验收通过。
+**2026-09-23 configured/Qwen 7-case 结果（已复核，隔离评测，未部署，不是生产或设备验收）**：使用 `memoria-prod` 生产 env 文件中的非空 `DASHSCOPE_API_KEY`（未输出值），以当前 HEAD `3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`、`MEMORIA_MEMORY_EXTRACTION_MODEL=qwen-flash`、`OFFLINE_MOCK=false` 在一次性只读 Docker 容器和临时 SQLite 中运行；未挂载生产 SQLite/PostgreSQL/Redis，仅访问百炼 API。收据为 `docs/memory-evaluation-configured-qwen-flash-20260923.json`，包含逐 case 的 `cases[].extracted`、expected/query/source/time 明细，SHA-256 为 `bf74c1faad20951a6c2286d5c435ed34d160f2dad04dd062c781a344b98008be`。结果：`case_count=7`、`failed_cases=[]`，6 个正例全部匹配、敏感负例 `0/0`，`recall@5/10=0.8571428571`、`ndcg@10=0.7695504010`、`extraction_recall=1.0`、`source_attribution_accuracy=1.0`、`temporal_accuracy=1.0`、`cross_session_recall@5=0.8`、`comfort_recall@5=1.0`、双泄漏为 0、`contradiction_rate=0`，百炼用量 `input/output=6595/1955`。逐 case predicted/matched 为数学 `7/1`、学习偏好 `1/1`、阅读偏好 `1/1`、敏感负例 `0/0`、公园 `3/1`、工厂 `4/1`、儿子 `2/1`；`extraction_precision=6/18=0.3333` 是 projection-level 指标。阅读偏好被抽为 `candidate`，默认 search 不返回 candidate，导致该 query recall 为 0，并拉低跨会话召回；额外 projection 主要是 claim/episode 双投影和原子片段。
 
-**2026-09-23 复核补充（以可复核证据为准）**：上段 configured 数字目前在本工作区仍只有文字记录，未找到对应的逐 case JSON 收据；本轮环境也没有可用 `DASHSCOPE_API_KEY`，且 `.env` 的 `OFFLINE_MOCK=true`，`--extractor configured` 按门禁退出。本轮现场复核为 exit=1 fail-closed，且未生成输出 JSON。因此不能把 `demo-student-math-weakness` 或任何单一事件写成 configured 指标的已证实失败。评估报告现已增加 `cases[].extracted`、`predicted_count`、`matched_projection_count` 及 expected/query/source/time 明细；下次真实 configured 重跑必须保存带这些字段的原始 JSON，才能完成 case/事件归因。当前 rules 复核的 7-case 结果为 `predicted=18`、`matched=6`、`extraction_precision=6/18=0.333`：数学 6/1、学习偏好 3/1、阅读 2/1、敏感负例 0/0、公园 2/1、工厂 3/1、儿子 2/1；这证明当前规则路径的 projection-level 分母构成，不替代 Qwen 结果，也不把 episode/knowledge 伪装成 claim-level precision。专项回归重跑为 `124 passed in 1.05s`；相关边界修复与诊断仅在本地验证，未部署、未做设备验收。
+**2026-09-23 configured/Qwen 未见 4-case 结果（已复核，隔离评测，未部署，不是生产或设备验收）**：使用同一生产 env key 存在性边界、当前 HEAD、`qwen-flash` 与只读 Docker/临时 SQLite 隔离方式；收据为 `docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json`，SHA-256 为 `00c195ee243cb4c16514d23232f40abbe56e0fa501e552a0afb7373928792cda`。结果：`case_count=4`、`failed_cases=[]`、`recall@5/10=0.4`、`ndcg@10=0.4`、`extraction_recall=0.7142857143`、`extraction_precision=0.2777777778`、`source_attribution_accuracy=0.7142857143`、`cross_session_recall@5=0`、`paraphrase_followup_recall@5=0`、`comfort_recall@5=0`、`cross_account_leakage=0`、`candidate_leakage=0`、`contradiction_rate=0`。苏绣案缺 semantic claim；辣味案缺“避开什么”扩展；加班低落案缺合并记忆与“撑不住”扩展；跨账户隔离通过。百炼用量 `input/output=5133/1386`、`token_cost=6519`；catalog `latency_p50/p95=12.56/31.06ms` 仅是本地 SQLite 查询，不是完整端到端时延。
+
+**2026-09-23 本地门禁边界**：本地 shell 仍因没有 `DASHSCOPE_API_KEY` 且 `.env` 为 `OFFLINE_MOCK=true` 而对 `--extractor configured` fail-closed；这不影响上段基于生产配置的隔离评测。当前线上 `memoria-control-api-1` 仍是旧镜像，当前 HEAD 未部署，线上/设备验收仍未完成。
 
 **2026-09-21 进展**（历史口径，针对当时已部署的固定集，不是本轮 7 cases 的生产验证）：提取质量专项 + 确定性补录已落地并完成 configured 重跑（收据与边界见 `HANDOFF.md` 同日三节）——prompt 情绪契约 + 数值 coerce 后生产装配固定集三连跑 1.000；mood-reason 缺口由代码级确定性补录兜底（`services/archive/mood_followup.py`）；重跑追加两项修复：① `daily_statement_claim` 普通第一人称自述全句兜底（park 原子值拆分 0/3、factory 丢 `纺织厂` 1/3 的根因），② `RecallPlanner` 实体别名不再从计划文本剥离（person 作用域检索恒空的既有缺陷，son 场景正中）。**当时结果：固定集 7 连跑全 1.0**（recall@5/ext_recall/x_sess/comfort、双泄漏 0）、稳定集正例 6/6 负例 0/6、fallbacks=0。**已部署的是该日代码**：control-api `20260921-demo02-recall-net` 切流 PASS（含生产 PG authoritative schema 升级；回滚点 `rollback-…-pre-control`；线上容器固定集 4 连跑全 1.0，收据见 HANDOFF 同日部署节）。该部署不覆盖 2026-09-23 的学生场景对齐。**仍未做**：minor 主体在生产会话链仍受既有 P0-04 daily_life 收窄（提取层保证不等于 minor 可见）；本轮离线 rules 评测也不是生产或设备验证。
 
@@ -705,7 +710,7 @@ Week 11-15：
 保留（P0）：
   - TTS稳定性（P0-03的核心部分）
   - 10轮连续对话不断线
-  - 跨会话记忆召回（P1-06简化版：只做固定集，不做未见集）
+  - 跨会话记忆召回（P1-06 当前已具备固定集与未见集隔离基线，仍未宣称线上/设备验收）
   - 小程序查看对话记录（简化版，只读不写）
 
 暂停/降级（释放精力）：
@@ -1446,4 +1451,3 @@ A: 三个产品解决三个不同问题：
 **下一步行动**：
 1. 请你确认是否接受"3个月冲刺融资"的策略
 2. 如果接受，我将帮你重构整个TODOLIST.md，把Phase 0-3的具体任务替换掉现有的P0/P1/P2
-3. 如果不接受，请告诉我你的真实时间窗口（比如：6个月？12个月？），我将调整节奏

@@ -2216,6 +2216,7 @@ async def test_companion_memory_queries_carry_the_resolved_subject(
         assert isinstance(recorded, MemorySearchQuery)
         assert recorded.account_id == user_id
         assert recorded.subject_id == user_id
+        assert recorded.include_candidates is False
 
 
 @pytest.mark.asyncio

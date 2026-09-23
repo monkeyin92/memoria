@@ -1630,8 +1630,7 @@ class PostgresMemoryCatalog:
         parameters: list[Any] = [query.account_id]
         if confirmed_only or not query.include_candidates:
             clauses.append("document.status = 'confirmed'")
-            if confirmed_only:
-                clauses.append("document.conflict_state != 'active'")
+            clauses.append("document.conflict_state != 'active'")
         else:
             clauses.append("document.status != 'retracted'")
         metadata_score = "(0.35 * document.stability + 0.65 * document.salience)"

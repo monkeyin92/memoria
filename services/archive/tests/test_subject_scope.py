@@ -386,12 +386,21 @@ async def test_catalog_hides_an_episode_merged_across_subjects(tmp_path: Path) -
     assert await catalog.timeline(account_id=_ACCOUNT, subject_id="subject-b") == ()
 
     unscoped = await catalog.search(
-        MemorySearchQuery(account_id=_ACCOUNT, speaker_class="owner")
+        MemorySearchQuery(
+            account_id=_ACCOUNT,
+            speaker_class="owner",
+            include_candidates=True,
+        )
     )
     assert any(item.kind == "episode" for item in unscoped.items)
 
     scoped = await catalog.search(
-        MemorySearchQuery(account_id=_ACCOUNT, speaker_class="owner", subject_id="subject-a")
+        MemorySearchQuery(
+            account_id=_ACCOUNT,
+            speaker_class="owner",
+            subject_id="subject-a",
+            include_candidates=True,
+        )
     )
     assert scoped.items
     assert all(item.kind != "episode" for item in scoped.items)

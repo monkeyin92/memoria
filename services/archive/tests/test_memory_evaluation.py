@@ -626,13 +626,11 @@ def test_adapter_protocol_remains_structural() -> None:
 
 @pytest.mark.asyncio
 async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
-    """P1-06: the unseen paraphrase set is reported separately, ceiling included.
+    """P1-06: the unseen paraphrase set is reported separately.
 
-    Two of its five queries miss under the rule extractor and are recorded here
-    as the current ceiling rather than tuned away: the avoidance paraphrase
-    ("外卖该避开什么") and the comfort paraphrase ("我最近有点撑不住了") do not
-    match the planner's existing markers. Any change to either behaviour shows
-    up as a metric move in this test.
+    The avoidance and comfort paraphrases exercise closed planner expansions
+    ("吃不了" and "想哭"). The rules path is expected to cover this dataset;
+    configured/Qwen extraction remains a separate measurement.
     """
     dataset = load_memory_evaluation_dataset(UNSEEN_DATASET)
 
@@ -645,8 +643,8 @@ async def test_unseen_rewrite_set_reports_its_own_baseline() -> None:
     }
     report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
 
-    assert report.metrics.recall_at_5 == pytest.approx(0.6)
-    assert report.metrics.ndcg_at_10 == pytest.approx(0.6)
+    assert report.metrics.recall_at_5 == pytest.approx(1.0)
+    assert report.metrics.ndcg_at_10 == pytest.approx(1.0)
     assert report.metrics.extraction_recall == pytest.approx(1.0)
     assert report.metrics.source_attribution_accuracy == pytest.approx(1.0)
     assert report.metrics.candidate_leakage == 0
