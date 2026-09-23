@@ -420,7 +420,8 @@ async def test_real_catalog_http_exits_and_review_ids_are_subject_scoped(
         unscoped = await app.state.memory_catalog.review_queue(account_id=owner["user_id"])
         assert {item.source_event_id for item in unscoped} == {"catalog-0", "catalog-1", "catalog-2"}
         for path in ("search", "people", "life-timeline", "review-queue"):
-            result = await client.get(f"/v1/archive/{path}", headers=headers)
+            suffix = "?include_candidates=true" if path == "search" else ""
+            result = await client.get(f"/v1/archive/{path}{suffix}", headers=headers)
             assert result.status_code == 200, result.text
             assert result.json()["items"], path  # A real positive control, not an empty filter.
             assert {item["source_event_id"] for item in result.json()["items"]} == {"catalog-0"}

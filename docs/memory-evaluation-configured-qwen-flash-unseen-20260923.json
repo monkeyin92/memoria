@@ -1,0 +1,509 @@
+{
+  "adapter": "memoria-sqlite-configured",
+  "case_count": 4,
+  "cases": [
+    {
+      "case_id": "unseen-cross-session-suzhou-embroidery",
+      "expected": [
+        {
+          "actual_source_event_ids": [],
+          "actual_valid_from": null,
+          "expected_source_event_ids": [
+            "unseen-cross-001"
+          ],
+          "expected_valid_from": null,
+          "key": "suzhou-embroidery-plan",
+          "matched": false,
+          "matched_item_id": null,
+          "source_attribution_passed": false,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "unseen-cross-002"
+          ],
+          "actual_valid_from": "2026-08-09T10:00:00+00:00",
+          "expected_source_event_ids": [
+            "unseen-cross-002"
+          ],
+          "expected_valid_from": null,
+          "key": "bookshelf-tidying",
+          "matched": true,
+          "matched_item_id": "eb4184ff-bf68-54e2-8c61-1b8513b7790d",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "学做苏绣",
+          "item_id": "205d57e2-6e20-5369-a023-af0e6650f2a6",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-cross-001"
+          ],
+          "status": "confirmed",
+          "title": "学做苏绣",
+          "valid_from": "2026-08-02T12:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "把家里的书架整理了一遍",
+          "item_id": "eb4184ff-bf68-54e2-8c61-1b8513b7790d",
+          "kind": "claim",
+          "matched_expected_key": "bookshelf-tidying",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-cross-002"
+          ],
+          "status": "confirmed",
+          "title": "把家里的书架整理了一遍",
+          "valid_from": "2026-08-09T10:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "把家里的书架整理了一遍",
+          "item_id": "9a7bb5f2-233a-5124-be41-d8a9dcddd400",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-cross-002"
+          ],
+          "status": "confirmed",
+          "title": "把家里的书架整理了一遍",
+          "valid_from": "2026-08-09T10:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "打算秋天去苏州学做苏绣",
+          "item_id": "fbda0965-5de4-5526-9c00-9f1be289da50",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-cross-001"
+          ],
+          "status": "confirmed",
+          "title": "打算秋天去苏州学做苏绣",
+          "valid_from": "2026-08-02T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "unseen-cross-query",
+          "recall_at_10": 0.0,
+          "recall_at_5": 0.0,
+          "recalled_keys": [
+            "unmatched:205d57e2-6e20-5369-a023-af0e6650f2a6",
+            "unmatched:fbda0965-5de4-5526-9c00-9f1be289da50"
+          ],
+          "relevant_keys": [
+            "suzhou-embroidery-plan"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "unseen-paraphrase-spicy-avoidance",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "unseen-paraphrase-001"
+          ],
+          "actual_valid_from": "2026-08-03T04:00:00+00:00",
+          "expected_source_event_ids": [
+            "unseen-paraphrase-001"
+          ],
+          "expected_valid_from": null,
+          "key": "avoid-spicy",
+          "matched": true,
+          "matched_item_id": "8d94ba96-d8c4-50e4-86ab-2a5457c0e94e",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "胃不太好，辣的都吃不了",
+          "item_id": "8d94ba96-d8c4-50e4-86ab-2a5457c0e94e",
+          "kind": "claim",
+          "matched_expected_key": "avoid-spicy",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-paraphrase-001"
+          ],
+          "status": "confirmed",
+          "title": "胃不太好，辣的都吃不了",
+          "valid_from": "2026-08-03T04:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我胃不太好，辣的都吃不了。",
+          "item_id": "dfb012ac-5500-505d-9b24-0bf0850b2b01",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-paraphrase-001"
+          ],
+          "status": "confirmed",
+          "title": "我胃不太好，辣的都吃不了。",
+          "valid_from": "2026-08-03T04:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "unseen-paraphrase-query",
+          "recall_at_10": 0.0,
+          "recall_at_5": 0.0,
+          "recalled_keys": [],
+          "relevant_keys": [
+            "avoid-spicy"
+          ]
+        }
+      ],
+      "scenario": "paraphrase"
+    },
+    {
+      "case_id": "unseen-comfort-late-overtime",
+      "expected": [
+        {
+          "actual_source_event_ids": [],
+          "actual_valid_from": null,
+          "expected_source_event_ids": [
+            "unseen-comfort-001"
+          ],
+          "expected_valid_from": null,
+          "key": "overtime-low-mood",
+          "matched": false,
+          "matched_item_id": null,
+          "source_attribution_passed": false,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "unseen-comfort-002"
+          ],
+          "actual_valid_from": "2026-08-01T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "unseen-comfort-002"
+          ],
+          "expected_valid_from": null,
+          "key": "lives-in-qingdao",
+          "matched": true,
+          "matched_item_id": "95ceda92-e8e7-5114-98a5-950011dde76a",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "青岛",
+          "item_id": "95ceda92-e8e7-5114-98a5-950011dde76a",
+          "kind": "claim",
+          "matched_expected_key": "lives-in-qingdao",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-comfort-002"
+          ],
+          "status": "confirmed",
+          "title": "青岛",
+          "valid_from": "2026-08-01T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "加班到十一点",
+          "item_id": "77a488ad-106b-594b-b7a5-8424f5ef594d",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-comfort-001"
+          ],
+          "status": "confirmed",
+          "title": "加班到十一点",
+          "valid_from": "2026-08-05T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "回家路上特别想哭",
+          "item_id": "54078b84-ead5-54f7-b675-34f6c1236db4",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-comfort-001"
+          ],
+          "status": "confirmed",
+          "title": "回家路上特别想哭",
+          "valid_from": "2026-08-05T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我住在青岛。",
+          "item_id": "f99b1bf9-7865-597d-87e6-38a1fcfd41e0",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-comfort-002"
+          ],
+          "status": "confirmed",
+          "title": "我住在青岛。",
+          "valid_from": "2026-08-01T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "昨天加班到十一点，回家路上特别想哭",
+          "item_id": "a570e183-12b7-59dd-b9ed-ddd88bdc4405",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-comfort-001"
+          ],
+          "status": "confirmed",
+          "title": "昨天加班到十一点，回家路上特别想哭",
+          "valid_from": "2026-08-05T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "住在青岛",
+          "item_id": "8d7c7b0e-5ab5-5626-8dce-78e6c3712e3d",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-comfort-002"
+          ],
+          "status": "confirmed",
+          "title": "住在青岛",
+          "valid_from": "2026-08-01T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 6,
+      "queries": [
+        {
+          "query_id": "unseen-comfort-query",
+          "recall_at_10": 0.0,
+          "recall_at_5": 0.0,
+          "recalled_keys": [],
+          "relevant_keys": [
+            "overtime-low-mood"
+          ]
+        }
+      ],
+      "scenario": "comfort_recall"
+    },
+    {
+      "case_id": "unseen-cross-account-private-trip",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "unseen-isolation-a"
+          ],
+          "actual_valid_from": "2026-08-06T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "unseen-isolation-a"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-a-dunhuang",
+          "matched": true,
+          "matched_item_id": "4f2ec533-c946-554a-b504-632dd8de42e9",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "unseen-isolation-b"
+          ],
+          "actual_valid_from": "2026-08-06T01:05:00+00:00",
+          "expected_source_event_ids": [
+            "unseen-isolation-b"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-b-wuyishan",
+          "matched": true,
+          "matched_item_id": "1d942bc3-3cfe-571d-8fc3-97ceccb9d320",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我私下的旅行计划是去敦煌。",
+          "item_id": "4f2ec533-c946-554a-b504-632dd8de42e9",
+          "kind": "claim",
+          "matched_expected_key": "owner-a-dunhuang",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-isolation-a"
+          ],
+          "status": "confirmed",
+          "title": "我私下的旅行计划是去敦煌。",
+          "valid_from": "2026-08-06T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "去敦煌",
+          "item_id": "4f3435fb-bf0c-5e0b-999e-405774242aa5",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-isolation-a"
+          ],
+          "status": "confirmed",
+          "title": "去敦煌",
+          "valid_from": "2026-08-06T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "去敦煌",
+          "item_id": "a1a2fea9-d6d1-5fd3-83d3-9106d4037472",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-isolation-a"
+          ],
+          "status": "confirmed",
+          "title": "去敦煌",
+          "valid_from": "2026-08-06T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "去武夷山",
+          "item_id": "1d942bc3-3cfe-571d-8fc3-97ceccb9d320",
+          "kind": "claim",
+          "matched_expected_key": "owner-b-wuyishan",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-isolation-b"
+          ],
+          "status": "confirmed",
+          "title": "去武夷山",
+          "valid_from": "2026-08-06T01:05:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "我私下的旅行计划是去武夷山。",
+          "item_id": "dd4c2f4f-291a-56c1-8305-bdf2d5538fa1",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "unseen-isolation-b"
+          ],
+          "status": "confirmed",
+          "title": "我私下的旅行计划是去武夷山。",
+          "valid_from": "2026-08-06T01:05:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "去武夷山",
+          "item_id": "b87b8643-7328-54a5-a9c6-1109d6788cc0",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "unseen-isolation-b"
+          ],
+          "status": "confirmed",
+          "title": "去武夷山",
+          "valid_from": "2026-08-06T01:05:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 6,
+      "queries": [
+        {
+          "query_id": "unseen-isolation-owner-a",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "owner-a-dunhuang",
+            "unmatched:4f3435fb-bf0c-5e0b-999e-405774242aa5",
+            "unmatched:a1a2fea9-d6d1-5fd3-83d3-9106d4037472"
+          ],
+          "relevant_keys": [
+            "owner-a-dunhuang"
+          ]
+        },
+        {
+          "query_id": "unseen-isolation-owner-b",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "owner-b-wuyishan",
+            "unmatched:dd4c2f4f-291a-56c1-8305-bdf2d5538fa1",
+            "unmatched:b87b8643-7328-54a5-a9c6-1109d6788cc0"
+          ],
+          "relevant_keys": [
+            "owner-b-wuyishan"
+          ]
+        }
+      ],
+      "scenario": "cross_account_isolation"
+    }
+  ],
+  "dataset_version": "memory-eval-zh-v1-unseen",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 0.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 0.0,
+    "extraction_precision": 0.2777777777777778,
+    "extraction_recall": 0.7142857142857143,
+    "input_tokens": 5133,
+    "latency_p50_ms": 12.56179204210639,
+    "latency_p95_ms": 31.06191603001207,
+    "ndcg_at_10": 0.4,
+    "output_tokens": 1386,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 0.4,
+    "recall_at_5": 0.4,
+    "source_attribution_accuracy": 0.7142857142857143,
+    "temporal_accuracy": 0.0,
+    "token_cost": 6519
+  },
+  "scenario_coverage": [
+    "cross_session_followup",
+    "paraphrase",
+    "comfort_recall",
+    "cross_account_isolation"
+  ]
+}

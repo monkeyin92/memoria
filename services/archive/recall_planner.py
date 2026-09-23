@@ -34,14 +34,14 @@ _ALIAS_MASKS = ("小朋友",)
 _CHILD_QUERY_MARKERS = ("小朋友", "小孩子", "孩子")
 _CHILD_RELATIONS = frozenset({"son", "daughter"})
 _CHILD_LEXEMES = ("儿子", "女儿")
-_DISTRESS_QUERY_MARKERS = ("难受", "不开心", "伤心", "委屈")
-_DISTRESS_LEXEMES = ("难过",)
+_DISTRESS_QUERY_MARKERS = ("难受", "不开心", "伤心", "委屈", "撑不住")
+_DISTRESS_LEXEMES = ("难过", "想哭")
 #: An avoidance question ("点菜时有哪些东西要帮我避开？") and the confirmed
 #: memory that answers it ("我吃饭时不喜欢香菜。") share no lexical surface at
 #: all, so the closed vocabulary has to carry the preference wording itself.
 #: Expansion is additive: the original query terms stay in the plan.
 _AVOIDANCE_QUERY_MARKERS = ("避开", "忌口", "不能吃", "别吃", "注意别", "过敏")
-_AVOIDANCE_LEXEMES = ("不喜欢", "讨厌", "不吃", "忌口", "不要")
+_AVOIDANCE_LEXEMES = ("不喜欢", "讨厌", "不吃", "忌口", "不要", "吃不了")
 _MAX_QUERY_EXPANSIONS = 8
 
 

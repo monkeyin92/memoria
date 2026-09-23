@@ -2870,7 +2870,7 @@ async def search_memories(
     valid_at: datetime | None = None,
     sensitivity: Annotated[list[MemorySensitivity] | None, Query()] = None,
     conflict_state: Annotated[list[ConflictState] | None, Query()] = None,
-    include_candidates: bool = True,
+    include_candidates: bool = False,
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,

@@ -2892,7 +2892,11 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
             assert response.status_code == 201
         await app.state.memory_catalog.compile_pending()
 
-        search = await client.get("/v1/archive/search?q=家训", headers=headers)
+        default_search = await client.get("/v1/archive/search?q=家训", headers=headers)
+        candidate_search = await client.get(
+            "/v1/archive/search?q=家训&include_candidates=true",
+            headers=headers,
+        )
         queue = await client.get("/v1/archive/review-queue", headers=headers)
         people = await client.get("/v1/archive/people", headers=headers)
         life_timeline = await client.get("/v1/archive/life-timeline", headers=headers)
@@ -2902,10 +2906,15 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
             headers=headers,
             json={"action": "confirm"},
         )
+        confirmed_search = await client.get("/v1/archive/search?q=家训", headers=headers)
 
-    assert search.status_code == 200
-    assert search.json()["items"][0]["source_event_id"] == "memory-api-0"
+    assert default_search.status_code == 200
+    assert default_search.json() == {"items": []}
+    assert candidate_search.status_code == 200
+    assert candidate_search.json()["items"][0]["source_event_id"] == "memory-api-0"
     assert reviewed.json()["status"] == "confirmed"
+    assert confirmed_search.status_code == 200
+    assert confirmed_search.json()["items"][0]["source_event_id"] == "memory-api-0"
     assert people.json()["items"][0]["display_name"] == "李梅"
     assert {item["source_event_id"] for item in life_timeline.json()["items"]} == {
         "memory-api-0",

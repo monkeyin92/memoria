@@ -321,7 +321,9 @@ class MemorySearchQuery:
     memory_kinds: tuple[MemoryKind, ...] = ()
     domain_categories: tuple[DomainCategory, ...] = ()
     categories: tuple[MemoryCategory, ...] = ()
-    include_candidates: bool = True
+    # Candidate and disputed memories are opt-in.  Ordinary search callers
+    # must not receive evidence that has not been explicitly approved.
+    include_candidates: bool = False
     entity_ids: tuple[str, ...] = ()
     valid_at: datetime | None = None
     sensitivities: tuple[MemorySensitivity, ...] = ()

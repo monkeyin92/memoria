@@ -1718,8 +1718,7 @@ class MemoryCatalog:
         parameters: list[object] = [query.account_id]
         if confirmed_only or not query.include_candidates:
             clauses.append("document.status = 'confirmed'")
-            if confirmed_only:
-                clauses.append("document.conflict_state != 'active'")
+            clauses.append("document.conflict_state != 'active'")
         else:
             clauses.append("document.status != 'retracted'")
         if query.text.strip():
