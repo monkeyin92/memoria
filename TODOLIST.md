@@ -72,7 +72,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P1-10 Qwen-Audio 3.1 ASR/TTS 切换（2026-09-24，本地 code，未验真实 API、未部署）
 
 - 已完成（本地）：ASR 默认模型改为 `qwen-audio-3.1-asr-flash-streaming`（`17904a1`，与 `fun-asr-realtime` 同一 run-task 协议，现有 DashScope 域名可用；新增可选 `FUNASR_VAD_MODEL`）。TTS 在分支 `feat/qwen-audio-tts-migration` 彻底替换为 `qwen-audio-3.1-tts-flash`：删除 Doubao TTS/克隆、CosyVoice v3.5 设计音色与 `infra/voices` 注册表；统一身份见 `services/common/voice_identity.py`（provider `alibaba_model_studio`，人格与复刻共用同一 model/resource id，靠 voice_kind 区分）；人格音色映射 星澜→`longanyang_v3.1`、桃喜→`longhua_v3.1`、绵绵→`longwan_v3.1`、阿序→`longanzhi_v3.1`、玄墨→`longsanshu_v3.1`（按官方音色描述选取，未试听）；复刻 `target_model=qwen-audio-3.1-tts-flash`、无 provider 过期；旧 Doubao/v3.5 复刻一律回落人格音色、激活 409 提示重录、档案带 `reenrollment_required`，小程序据此提示重新录制；历史数字分身清单里的 Doubao 音色引用仍可解码。连接池上限 3（官方 3 RPS）。就绪证据 provider 改为 `qwen_audio`，冒烟行改为 `QwenAudioTTS`。
-- 未验证：真实 API 下 ASR 时间戳/VAD/空音频错误码与缺陷 A 边界是否一致；5 个人格音色在 3.1 上是否都可合成（`scripts/provider_smoke_test.py` 会逐个合成）、字级时间戳、首包时延、音量 45 是否削波；复刻真实 enrollment（返回 ID 前缀、`DEPLOYING→OK` 状态）；3 RPS 在多设备并发下是否够用；设备试听与小程序三端。
+- 真实 API 冒烟（2026-09-24，生产 key、`memoria-prod` 一次性只读容器、不挂生产数据库，跑完已清理）：`provider_smoke_test PASS: FunASR, QwenRealtimeSearch, Qwen, QwenAudioTTS, InterruptSemantic`；5 个人格音色均可合成且对齐 `ok`，ASR 新模型对 6 段合成音频给出中间/最终结果与单调字级时间戳。首跑发现 3.1 每句音频在最后一个字后带 290–450ms 尾部静音，旧对齐逻辑会把字时间戳拉伸进静音并判 `degraded`；已改为尾部静音 ≤800ms 时保留原时间戳（`TRAILING_SILENCE_MAX_MS`）。
+- 未验证：真实设备上 ASR 的 VAD/空音频错误码与缺陷 A 边界是否一致；首包时延、音量 45 是否削波；复刻真实 enrollment（返回 ID 前缀、`DEPLOYING→OK` 状态）；3 RPS 在多设备并发下是否够用；设备试听与小程序三端。
 - 部署前必须：真实 key 跑通 provider 冒烟；生产 env 用 `prepare_production_upgrade_env.py` 重新生成（`split_production_env.py` 遇到任何 DOUBAO 键会拒绝）；readiness 证据需在同一发布里刷新为 `qwen_audio`；在途会话冻结的旧 fallback 三元组会 fail closed，需低峰切流并演练回滚。本地未跟踪的 `.env` 仍是 `TTS_PROVIDER=doubao`、`MEMORIA_VOICE_TARGET_MODEL=cosyvoice-v3.5-flash`，需要改掉才能本地启动。
 - 对 P0-03 的影响：ASR/TTS 换代后，缺陷 A 的 3/5/8s、30 分钟长稳等设备证据不再适用于新候选，必须在新候选上重新验收。
 
