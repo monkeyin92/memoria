@@ -271,9 +271,10 @@ async def _subject_capsule(
     data.
     """
 
-    if scope.subject_authority == "unavailable":
-        # A configured authority that cannot answer must not hand the account
-        # owner's persona to whoever is in front of the device.
+    if scope.subject_authority == "unavailable" or scope.subject_id is None:
+        # A configured authority that cannot answer, or a runtime profile whose
+        # active subject is not confirmed, must not hand the account owner's
+        # persona to whoever is in front of the device.
         return PersonaCapsule()
     if scope.subject_id == account_id:
         return await _engine(request).capsule(

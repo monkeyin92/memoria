@@ -815,6 +815,16 @@ async def test_session_capsule_never_lends_the_account_persona_to_another_subjec
             "/v1/persona/session-capsule", headers=internal, json=capsule_body
         )
 
+        async def unconfirmed_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {"active_subject_id": None, "subject_category": None}
+
+        monkeypatch.setattr(
+            interaction, "_current_persistent_runtime_profile", unconfirmed_profile
+        )
+        unconfirmed_capsule = await client.post(
+            "/v1/persona/session-capsule", headers=internal, json=capsule_body
+        )
+
         async def broken_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
             raise RuntimeError("profile authority unavailable")
 
@@ -830,6 +840,11 @@ async def test_session_capsule_never_lends_the_account_persona_to_another_subjec
     assert member_capsule.json()["version_id"] is None
     assert unavailable_capsule.json()["entries"] == []
     assert unavailable_capsule.json()["prompt_fragment"] == ""
+    # A runtime profile whose active subject is not confirmed is nobody's
+    # persona: never fall back to the account owner's.
+    assert unconfirmed_capsule.status_code == 200
+    assert unconfirmed_capsule.json()["entries"] == []
+    assert unconfirmed_capsule.json()["prompt_fragment"] == ""
 
 
 @pytest.mark.asyncio
