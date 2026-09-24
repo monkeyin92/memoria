@@ -293,6 +293,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_WORKER_DATABASE_URL",
     )
+    memory_maintenance_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL",
+    )
     memory_bootstrap_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL",
@@ -1826,6 +1830,10 @@ class ControlSettings(BaseSettings):
             "MEMORIA_MEMORY_WORKER_DATABASE_URL": (
                 memory_worker_url,
                 "memoria_memory_worker",
+            ),
+            "MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL": (
+                self.memory_maintenance_database_url.get_secret_value().strip(),
+                "memoria_memory_maintenance",
             ),
         }
         for field_name, (dsn, expected_role) in memory_dsns.items():

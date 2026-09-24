@@ -34,7 +34,8 @@ WITH runtime_roles(role_name) AS (
         ('memoria_session_worker'),
         ('memoria_session_maintenance'),
         ('memoria_memory_api'),
-        ('memoria_memory_worker')
+        ('memoria_memory_worker'),
+        ('memoria_memory_maintenance')
 ),
 required_tables(table_name, force_rls) AS (
     VALUES

@@ -175,6 +175,7 @@ from services.memory_scope.relationship_grants import (
     IdentityRelationshipGrantResolver,
 )
 from services.memory_scope.shared_actions import PostgresFamilySharedActionExecutor
+from services.memory_scope.subject_erasure import PostgresSubjectMemoryScope
 from services.memory_scope.wiring import (
     MemoryProductionWiring,
     build_memory_router,
@@ -853,8 +854,15 @@ async def _install_memory_scope(
     """Install MemoryScope only from dedicated production PostgreSQL roles."""
 
     app.state.memory_wiring = None
+    app.state.subject_memory_scope = None
     if settings.environment != "production":
         return
+    maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
+    if maintenance_dsn:
+        # Erasing one bound subject's records: its own narrow login role.
+        subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
+        await subject_memory_scope.initialize()
+        app.state.subject_memory_scope = subject_memory_scope
     api_dsn = settings.memory_api_database_url.get_secret_value().strip()
     worker_dsn = settings.memory_worker_database_url.get_secret_value().strip()
     if not api_dsn or not worker_dsn:
@@ -1397,6 +1405,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bound_consent_store = getattr(app.state, "bound_subject_consent_store", None)
         if bound_consent_store is not None:
             await bound_consent_store.close()
+        subject_memory_scope = getattr(app.state, "subject_memory_scope", None)
+        if subject_memory_scope is not None:
+            await subject_memory_scope.close()
 
 
 def create_app() -> FastAPI:

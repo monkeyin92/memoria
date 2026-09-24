@@ -38,6 +38,7 @@ export MEMORIA_DB_SESSION_WORKER_PASSWORD="$(secret)"
 export MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD="$(secret)"
 export MEMORIA_DB_MEMORY_API_PASSWORD="$(secret)"
 export MEMORIA_DB_MEMORY_WORKER_PASSWORD="$(secret)"
+export MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD="$(secret)"
 
 docker run -d \
   --name "$POSTGRES_CONTAINER" \
@@ -62,6 +63,7 @@ docker run -d \
   -e MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD \
   -e MEMORIA_DB_MEMORY_API_PASSWORD \
   -e MEMORIA_DB_MEMORY_WORKER_PASSWORD \
+  -e MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD \
   -v "$ROOT/infra/postgres/init-memoria.sh:/docker-entrypoint-initdb.d/001-init-memoria.sh:ro" \
   -v "$ROOT/services/identity/postgres_schema.sql:/docker-entrypoint-initdb.d/002-identity-schema.sql:ro" \
   -v "$ROOT/services/consent/postgres_schema.sql:/docker-entrypoint-initdb.d/003-consent-schema.sql:ro" \
@@ -116,6 +118,7 @@ MEMORIA_DB_SESSION_WORKER_PASSWORD
 MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD
 MEMORIA_DB_MEMORY_API_PASSWORD
 MEMORIA_DB_MEMORY_WORKER_PASSWORD
+MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD
 "
   docker logs "$POSTGRES_CONTAINER" 2>&1 | "$python" -c '
 import os

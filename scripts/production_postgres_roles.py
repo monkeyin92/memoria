@@ -106,6 +106,11 @@ PRODUCTION_POSTGRES_ROLES = (
         role="memoria_memory_worker",
         control_dsn_env="MEMORIA_MEMORY_WORKER_DATABASE_URL",
     ),
+    ProductionPostgresRole(
+        password_env="MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD",
+        role="memoria_memory_maintenance",
+        control_dsn_env="MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL",
+    ),
 )
 
 
