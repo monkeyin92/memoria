@@ -181,7 +181,7 @@ def _first_error_message(*mappings: dict[str, Any]) -> Any:
 def build_run_task(
     *,
     task_id: str | None = None,
-    model: str = "qwen-audio-3.1-asr-flash-streaming",
+    model: str = "fun-asr-realtime",
     sample_rate: int = 16000,
     language_hints: list[str] | None = None,
     semantic_punctuation_enabled: bool = False,

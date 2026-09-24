@@ -292,7 +292,7 @@ class AgentSettings(BaseSettings):
         alias="MINIPROGRAM_KWS_MIN_CONFIDENCE",
     )
 
-    funasr_model: str = Field(default="qwen-audio-3.1-asr-flash-streaming", alias="FUNASR_MODEL")
+    funasr_model: str = Field(default="fun-asr-realtime", alias="FUNASR_MODEL")
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")
     funasr_max_sentence_silence_ms: int = Field(default=550, alias="FUNASR_MAX_SENTENCE_SILENCE_MS")
     funasr_context_enabled: bool = Field(default=False, alias="FUNASR_CONTEXT_ENABLED")

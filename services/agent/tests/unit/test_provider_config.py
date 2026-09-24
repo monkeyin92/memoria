@@ -40,11 +40,11 @@ def test_funasr_config_from_env() -> None:
     assert cfg.vad_model is None
 
 
-def test_funasr_config_defaults_to_qwen_audio_31_and_validates_vad_model() -> None:
+def test_funasr_config_defaults_to_fun_asr_and_validates_vad_model() -> None:
     cfg = FunASRConfig.from_env(
         {"DASHSCOPE_API_KEY": "key", "FUNASR_VAD_MODEL": "near_meeting_16k"}
     )
-    assert cfg.model == "qwen-audio-3.1-asr-flash-streaming"
+    assert cfg.model == "fun-asr-realtime"
     assert cfg.vad_model == "near_meeting_16k"
     with pytest.raises(ValueError, match="vad_model"):
         FunASRConfig.from_env({"FUNASR_VAD_MODEL": "near_field"})

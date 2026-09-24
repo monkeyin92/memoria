@@ -87,7 +87,7 @@ def test_resample_pcm_and_stt_does_not_forward_chat_history() -> None:
     session = plugin.create_session()
     assert session._context == ()
     assert plugin.provider == "alibaba_model_studio"
-    assert plugin.model == "qwen-audio-3.1-asr-flash-streaming"
+    assert plugin.model == "fun-asr-realtime"
 
 
 @pytest.mark.asyncio

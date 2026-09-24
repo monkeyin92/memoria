@@ -76,7 +76,7 @@ def _is_empty_audio_error(error_code: object) -> bool:
 class FunASRConfig:
     api_key: str
     ws_url: str
-    model: str = "qwen-audio-3.1-asr-flash-streaming"
+    model: str = "fun-asr-realtime"
     sample_rate: int = 16000
     language: str = "zh"
     chunk_ms: int = 80
@@ -119,7 +119,7 @@ class FunASRConfig:
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("FUNASR_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
-            model=e.get("FUNASR_MODEL", "qwen-audio-3.1-asr-flash-streaming"),
+            model=e.get("FUNASR_MODEL", "fun-asr-realtime"),
             sample_rate=int(e.get("FUNASR_SAMPLE_RATE", "16000")),
             language=e.get("FUNASR_LANGUAGE", "zh"),
             chunk_ms=int(e.get("FUNASR_CHUNK_MS", "80")),
