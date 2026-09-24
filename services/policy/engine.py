@@ -1164,15 +1164,17 @@ class PolicyEngine:
         if not _acts_for_subject(context) or context.resource_owner_id != subject_id:
             reason = "private_memory_subject_only" if recall else "memory_consent_required"
             return self._decision(context, effect="deny", reason_code=reason)
-        if context.actor_id != subject_id and not any(
-            relationship.source_person_id == context.actor_id
+        delegates = tuple(
+            relationship
             for relationship in active_relationship_for(
                 "delegate_for",
                 subject_id,
                 context.evaluated_at,
                 context.relationship_evidence,
             )
-        ):
+            if relationship.source_person_id == context.actor_id
+        )
+        if context.actor_id != subject_id and not delegates:
             # A device-bound adult reached through another account (an elder on
             # a device the adult child bound) needs that child's active,
             # binding-attested delegation, besides the consent it recorded.
@@ -1219,6 +1221,8 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="binding_evidence_required",
             )
+        # A delegate's grant rests on their delegation: the receipt fences it.
+        relied_on = (_select_relationship(delegates),) if context.actor_id != subject_id else ()
         if recall:
             return self._decision(
                 context,
@@ -1226,6 +1230,7 @@ class PolicyEngine:
                 reason_code="private_memory_subject_authorized",
                 obligations=_obligations("WRITE_POLICY_RECEIPT"),
                 consents=(_select_consent(consents),),
+                relationships=relied_on,
                 binding_evidence=context.binding_evidence,
             )
         return self._decision(
@@ -1238,6 +1243,7 @@ class PolicyEngine:
                 "WRITE_POLICY_RECEIPT",
             ),
             consents=(_select_consent(consents),),
+            relationships=relied_on,
             binding_evidence=context.binding_evidence,
         )
 

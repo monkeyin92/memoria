@@ -140,14 +140,29 @@ class TestRule1UnknownSubjectFailClosed:
             )
         assert denied(caught.value) == "unknown_subject"
 
-    def test_age_evidence_unverified_denied(self) -> None:
+    def test_guardian_declared_minor_age_is_accepted(self) -> None:
+        # Product decision (2026-09-25): a child's age is what the guardian
+        # declared at binding; nobody can verify it on the child's behalf.
+        result = authority().grant(
+            offer(),
+            actor_kind="guardian",
+            subject=subject(age_evidence="unverified"),
+            binding=binding(),
+            relationships=(relationship(),),
+            now=NOW,
+        )
+        assert result.evidence.actor_kind == "guardian"
+
+    def test_unverified_adult_age_is_still_denied(self) -> None:
         with pytest.raises(ConsentDeniedError) as caught:
             authority().grant(
-                offer(),
-                actor_kind="guardian",
-                subject=subject(age_evidence="unverified"),
+                offer(actor="person_adult", subject="person_adult", resource_owner="person_adult"),
+                actor_kind="subject",
+                subject=subject(
+                    subject_id="person_adult", category="adult", age_evidence="unverified"
+                ),
                 binding=binding(),
-                relationships=(relationship(),),
+                relationships=(),
                 now=NOW,
             )
         assert denied(caught.value) == "age_evidence_unverified"
@@ -878,3 +893,64 @@ class TestIdempotencyConflicts:
                 now=NOW + timedelta(minutes=2),
                 idempotency_key="rev-1",
             )
+
+
+class TestDelegateGrantForAnElder:
+    """An adult child consents for the elderly parent the device serves."""
+
+    def _grant(self, auth: ConsentAuthority, **overrides: object) -> object:
+        values: dict[str, object] = {
+            "actor_kind": "delegate",
+            "subject": subject(subject_id="person_elder", category="adult"),
+            "binding": binding(),
+            "relationships": (
+                relationship(
+                    relation_type="delegate_for", guardian="person_son", subject="person_elder"
+                ),
+            ),
+            "now": NOW,
+        }
+        values.update(overrides)
+        return auth.grant(
+            offer(
+                capability=str(values.pop("capability", "memory_recall_private")),
+                actor="person_son",
+                subject="person_elder",
+                resource_owner="person_elder",
+            ),
+            **values,  # type: ignore[arg-type]
+        )
+
+    def test_delegate_grant_is_recorded_as_a_delegate_not_the_elder(self) -> None:
+        result = self._grant(authority())
+        assert result.evidence.actor_kind == "delegate"  # type: ignore[attr-defined]
+        assert result.evidence.actor_id == "person_son"  # type: ignore[attr-defined]
+
+    def test_delegate_needs_an_active_delegate_relationship(self) -> None:
+        with pytest.raises(ConsentDeniedError) as caught:
+            self._grant(authority(), relationships=())
+        assert denied(caught.value) == "relationship_not_active"
+
+    def test_delegate_is_limited_to_the_elders_memory(self) -> None:
+        with pytest.raises(ConsentDeniedError) as caught:
+            self._grant(authority(), capability="voice_clone_use")
+        assert denied(caught.value) in {
+            "delegate_whitelist_only",
+            "sensitive_self_grant_only",
+            "sensitive_requires_verified_adult",
+        }
+
+    def test_delegate_cannot_consent_for_a_minor(self) -> None:
+        with pytest.raises(ConsentDeniedError) as caught:
+            self._grant(authority(), subject=subject(subject_id="person_elder"))
+        assert denied(caught.value) == "delegate_adult_only"
+
+    def test_delegate_can_revoke_only_what_they_granted(self) -> None:
+        auth = authority()
+        granted = self._grant(auth)
+        consent_id = granted.evidence.consent_id  # type: ignore[attr-defined]
+        with pytest.raises(ConsentDeniedError) as caught:
+            auth.revoke(consent_id, actor_id="person_other", actor_kind="delegate", now=NOW)
+        assert denied(caught.value) == "delegate_revoke_scope"
+        revoked = auth.revoke(consent_id, actor_id="person_son", actor_kind="delegate", now=NOW)
+        assert revoked.evidence.status == "revoked"

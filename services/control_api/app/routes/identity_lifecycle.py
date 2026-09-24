@@ -9,6 +9,7 @@ field are rejected with extra=forbid.  All mutations delegate to
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -20,9 +21,12 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.consent.bound_subject import BoundSubjectConsentService
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
+from services.guardian.consent import GuardianConsentService
 from services.identity.domain import (
     ALL_RELATION_TYPES,
+    BindingManifest,
     BindingRole,
     BindingVersionConflictError,
     IdentityAccessDeniedError,
@@ -35,6 +39,8 @@ from services.identity.domain import (
     validate_manifest_wire,
 )
 from services.identity.service import IdentityService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["identity-lifecycle"])
 
@@ -186,6 +192,10 @@ class UnbindRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reason: str = Field(default="unbind", min_length=1, max_length=256)
+    #: Also erase the served person's memory and conversations. Unbinding
+    #: always withdraws their consents; erasure needs the subject-scoped
+    #: deletion saga, which does not exist yet (P2-03).
+    purge_subject_data: bool = False
 
 
 def _role_permissions(
@@ -540,6 +550,9 @@ async def supersede_binding(
     identity = _identity(request)
     roles, role_permissions = _role_permissions(body.roles)
     try:
+        previous = await identity.get_active_manifest(
+            device_id, actor_person_id=user.user_id
+        )
         manifest = await identity.supersede_binding(
             device_id=device_id,
             declared_mode=body.declared_mode,
@@ -557,7 +570,49 @@ async def supersede_binding(
             forbidden="binding_forbidden",
             conflict="binding_conflict",
         ) from exc
+    if previous is not None:
+        await _carry_forward_bound_subject_consents(
+            request, user=user, previous=previous, current=manifest
+        )
     return _manifest_payload(manifest)
+
+
+async def _carry_forward_bound_subject_consents(
+    request: Request,
+    *,
+    user: AuthenticatedUser,
+    previous: BindingManifest,
+    current: BindingManifest,
+) -> None:
+    """Re-grant on the new binding version what the previous one carried.
+
+    Grants are fenced to one binding version; without this a routine
+    supersede would silently switch the served person's memory off. A
+    failure leaves memory off (fail closed) and is logged for a retry.
+    """
+
+    service = cast(
+        BoundSubjectConsentService | None,
+        getattr(request.app.state, "bound_subject_consent", None),
+    )
+    if service is None or current.account_owner_id != user.user_id:
+        return
+    for subject_id in current.primary_subject_ids:
+        if subject_id not in previous.primary_subject_ids:
+            continue
+        try:
+            await service.carry_forward(
+                actor_person_id=user.user_id,
+                subject_person_id=subject_id,
+                previous_binding_id=previous.binding_id,
+                previous_binding_version=previous.binding_version,
+                binding_id=current.binding_id,
+            )
+        except Exception:
+            logger.exception(
+                "bound-subject consent carry-forward failed binding_id=%s",
+                current.binding_id,
+            )
 
 
 @router.post("/v1/devices/{device_id}/binding/unbind")
@@ -568,7 +623,17 @@ async def unbind_device(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, object]:
     identity = _identity(request)
+    if body.purge_subject_data:
+        # Their rows sit in the binding owner's account and deletion today
+        # is account-wide; refuse rather than pretend, and unbind nothing.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "subject_deletion_unavailable"},
+        )
     try:
+        manifest = await identity.get_active_manifest(
+            device_id, actor_person_id=user.user_id
+        )
         binding = await identity.revoke_binding(
             device_id=device_id,
             actor_person_id=user.user_id,
@@ -581,7 +646,77 @@ async def unbind_device(
             forbidden="binding_forbidden",
             conflict="binding_conflict",
         ) from exc
-    return {"binding_id": binding.binding_id, "status": binding.status}
+    withdrawn = 0
+    if manifest is not None and manifest.account_owner_id == user.user_id:
+        withdrawn = await _withdraw_bound_subject_consents(
+            request,
+            user=user,
+            binding_id=manifest.binding_id,
+            subject_ids=manifest.primary_subject_ids,
+        )
+    return {
+        "binding_id": binding.binding_id,
+        "status": binding.status,
+        "consents_withdrawn": withdrawn,
+    }
+
+
+async def _withdraw_bound_subject_consents(
+    request: Request,
+    *,
+    user: AuthenticatedUser,
+    binding_id: str,
+    subject_ids: tuple[str, ...],
+) -> int:
+    """Unbinding stops memory: withdraw what the owner granted for each person.
+
+    The revoked binding already fences every grant out of Policy, so a failure
+    here cannot leave memory on; it is logged and the unbind still stands.
+    """
+
+    service = cast(
+        BoundSubjectConsentService | None,
+        getattr(request.app.state, "bound_subject_consent", None),
+    )
+    guardian_consents = cast(
+        GuardianConsentService | None,
+        getattr(request.app.state, "guardian_consent_service", None),
+    )
+    guardian_store = getattr(request.app.state, "guardian_store", None)
+    withdrawn = 0
+    for subject_id in subject_ids:
+        if subject_id == user.user_id:
+            continue
+        try:
+            if service is not None:
+                withdrawn += await service.revoke(
+                    actor_person_id=user.user_id,
+                    subject_person_id=subject_id,
+                    binding_id=binding_id,
+                    reason="device_unbound",
+                )
+            if guardian_consents is not None and guardian_store is not None:
+                records = await guardian_store.list_person_consents(
+                    subject_person_id=subject_id,
+                    actor_person_id=user.user_id,
+                )
+                for record in records:
+                    if record.revoked_at is not None or record.grantor_person_id != user.user_id:
+                        continue
+                    await guardian_consents.revoke_for_person(
+                        consent_id=record.consent_id,
+                        grantor_person_id=user.user_id,
+                        subject_person_id=subject_id,
+                        evidence_event_id=(
+                            f"guardian-person-consent-unbind:{binding_id}:{record.consent_id}"
+                        ),
+                    )
+                    withdrawn += 1
+        except Exception:
+            logger.exception(
+                "consent withdrawal after unbind failed binding_id=%s", binding_id
+            )
+    return withdrawn
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +897,9 @@ async def add_binding_member(
                 forbidden="binding_forbidden",
                 conflict="binding_conflict",
             ) from exc
+        await _carry_forward_bound_subject_consents(
+            request, user=user, previous=manifest, current=updated
+        )
         return _manifest_payload(updated)
     raise HTTPException(
         status_code=409,

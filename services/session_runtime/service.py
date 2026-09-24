@@ -664,12 +664,18 @@ class _PostgresIdentityRelationshipAuthority:
                 strict=True,
             )
         )
-        current = tuple(
-            item for item in binding.relationships if (item.snapshot_id, item.revision) in expected
-        )
-        if {(item.snapshot_id, item.revision) for item in current} != expected:
+        receipted = {
+            (item.snapshot_id, item.revision)
+            for item in binding.relationships
+            if (item.snapshot_id, item.revision) in expected
+        }
+        if receipted != expected:
             raise ActionAuthorizationError("current relationship evidence mismatch")
-        return current
+        # The decision context carried every current binding relationship
+        # (all of them are hashed), so rebuild exactly that set: a
+        # relationship added or withdrawn since issue changes the hash and
+        # fails closed, while the receipt still names only what it relied on.
+        return tuple(binding.relationships)
 
 
 @dataclass(frozen=True, slots=True)

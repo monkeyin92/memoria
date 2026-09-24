@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from services.common.companions import COMPANION_IDS, DEFAULT_COMPANION_ID
 from services.consent.binding_snapshot import (
@@ -78,6 +79,13 @@ from services.identity.domain import (
     validate_manifest_wire,
 )
 from services.identity.repository import AuditEvent, IdentityStore, OutboxEvent
+
+#: Evidence ids for a relationship the binding owner attested at binding time
+#: for a person with no account (see ``attest_binding_relationship``).
+BINDING_ATTESTATION_EVIDENCE: dict[str, str] = {
+    "guardian_of": "guardian_attestation_v1:device_binding",
+    "delegate_for": "delegate_attestation_v1:device_binding",
+}
 
 
 def _now(value: datetime | None) -> datetime:
@@ -650,6 +658,82 @@ class IdentityService:
         )
         return relationship
 
+    async def attest_binding_relationship(
+        self,
+        *,
+        source_person_id: str,
+        target_person_id: str,
+        relation_type: Literal["guardian_of", "delegate_for"],
+        actor_person_id: str,
+        now: datetime | None = None,
+    ) -> Relationship:
+        """Activate the binding owner's own attestation for a person without an account.
+
+        Product decision (2026-09-25): a device serves one person. When a
+        phone-verified adult binds a device for someone who has no account of
+        their own (a child, or an elderly parent) and declares the
+        relationship, that declaration is the relationship. The target cannot
+        confirm an endpoint, so it activates on the source side alone and
+        records ``BINDING_ATTESTATION_EVIDENCE[relation_type]``: never a
+        two-party confirmation, a WeChat verification or a manual review.
+        Callers must only use this for a target they just registered in the
+        same binding request.
+        """
+        timestamp = _now(now)
+        if actor_person_id != source_person_id:
+            raise IdentityAccessDeniedError(
+                f"person {actor_person_id} may not attest a relationship "
+                f"for source {source_person_id}"
+            )
+        evidence_id = BINDING_ATTESTATION_EVIDENCE.get(relation_type)
+        if evidence_id is None:
+            raise RelationshipLifecycleError(
+                f"{relation_type} cannot be attested by a binding owner"
+            )
+        if source_person_id == target_person_id:
+            raise RelationshipLifecycleError("an attested relationship needs two people")
+        source = await self.get_person(source_person_id, actor_person_id=actor_person_id)
+        if source.subject_category != "adult" or source.age_evidence_status != "verified":
+            raise AgeEvidenceError("only a verified adult may attest a relationship")
+        if not await self._store.person_exists(target_person_id):
+            raise IdentityNotFoundError(f"person {target_person_id} does not exist")
+        relationship = Relationship(
+            relationship_id=_new_id(),
+            source_person_id=source_person_id,
+            target_person_id=target_person_id,
+            relation_type=relation_type,
+            status="active",
+            valid_from=timestamp,
+            valid_until=None,
+            established_evidence_id=evidence_id,
+            confirmed_by_source_at=timestamp,
+            confirmed_by_target_at=None,
+            requires_confirmation=True,
+            can_delegate=False,
+            delegated_from_relationship_id=None,
+            delegation_depth=0,
+            permissions=frozenset(),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        await self._store.save_relationship(
+            relationship,
+            audit_event=AuditEvent(
+                event_id=_new_id(),
+                action="relationship.attest",
+                actor_person_id=actor_person_id,
+                subject_person_id=target_person_id,
+                person_id=source_person_id,
+                device_id=None,
+                binding_id=None,
+                relationship_id=relationship.relationship_id,
+                payload=relationship.to_dict(),
+                created_at=timestamp,
+            ),
+            actor_person_id=actor_person_id,
+        )
+        return relationship
+
     async def confirm_relationship(
         self,
         *,
@@ -982,7 +1066,7 @@ class IdentityService:
         timestamp = _now(now)
         relationships = await self._store.list_relationships(
             subject_person_id,
-            statuses=("pending",),
+            statuses=("pending", "active"),
             actor_person_id=subject_person_id,
         )
         candidates = {
@@ -997,8 +1081,18 @@ class IdentityService:
                 relationship.valid_until is None
                 or timestamp < relationship.valid_until
             )
-            and relationship.established_evidence_id
-            == "guardian_declaration_v1:device_binding"
+            and (
+                (
+                    relationship.status == "pending"
+                    and relationship.established_evidence_id
+                    == "guardian_declaration_v1:device_binding"
+                )
+                or (
+                    relationship.status == "active"
+                    and relationship.established_evidence_id
+                    == BINDING_ATTESTATION_EVIDENCE["guardian_of"]
+                )
+            )
         }
         if not candidates:
             return ()
@@ -2649,7 +2743,16 @@ class IdentityService:
                         relation_type="parent_of",
                         at=now,
                     )
-                    if not (child_of or parent_of):
+                    # An elderly parent with no account cannot confirm an
+                    # endpoint; the adult child's binding-attested
+                    # delegate_for stands in (2026-09-25).
+                    delegate = await self._store.has_active_relationship(
+                        source_person_id=admin_id,
+                        target_person_id=subject_id,
+                        relation_type="delegate_for",
+                        at=now,
+                    )
+                    if not (child_of or parent_of or delegate):
                         raise ModeConstraintError(
                             "child_for_parent device_admin requires an active "
                             f"confirmed child_of/parent_of relationship "
@@ -2667,6 +2770,11 @@ class IdentityService:
                             source_person_id=subject_id,
                             target_person_id=emergency_id,
                             relation_type="emergency_contact_for",
+                            at=now,
+                        ) or await self._store.has_active_relationship(
+                            source_person_id=emergency_id,
+                            target_person_id=subject_id,
+                            relation_type="delegate_for",
                             at=now,
                         ):
                             emergency_verified = True

@@ -10,6 +10,7 @@ verified on read.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -54,6 +55,7 @@ class PostgresConsentStore:
         self._worker_id = normalized_worker_id
         self._session_role = session_role
         self._pool: asyncpg.Pool | None = None
+        self._initialize_lock = asyncio.Lock()
 
     @property
     def worker_id(self) -> str:
@@ -70,6 +72,15 @@ class PostgresConsentStore:
             max_size=10,
             init=initialize_connection,
         )
+
+    async def ensure_initialized(self) -> None:
+        """Open the pool on first use; a caller that only rarely writes (the
+        bound-subject grants) must not make service startup depend on it."""
+        if self._pool is not None:
+            return
+        async with self._initialize_lock:
+            if self._pool is None:
+                await self.initialize()
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -88,6 +99,26 @@ class PostgresConsentStore:
         except BaseException:
             await pool.release(conn)
             raise
+
+    async def authorize_bound_subject(
+        self,
+        actor_id: str,
+        subject_id: str,
+        binding_id: str,
+        now: datetime,
+    ) -> None:
+        """Map (actor, subject, binding) for the consent role, checked by Identity."""
+        pool = self._pool
+        if pool is None:
+            raise RuntimeError("PostgresConsentStore not initialized")
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "SELECT consent_authorize_bound_subject($1, $2, $3, $4)",
+                actor_id,
+                subject_id,
+                binding_id,
+                now,
+            )
 
     async def outbox_pending(self, limit: int = 100) -> tuple[ConsentOutboxEvent, ...]:
         """Atomically claim pending events through the worker-only DB function."""

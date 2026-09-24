@@ -793,12 +793,18 @@ BEGIN
         WHERE r.source_person_id = p_source
           AND r.target_person_id = p_target
           AND r.relation_type = 'guardian_of'
-          AND r.status = 'pending'
           AND r.confirmed_by_source_at IS NOT NULL
           AND r.confirmed_by_target_at IS NULL
           AND r.valid_from <= p_at
           AND (r.valid_until IS NULL OR r.valid_until > p_at)
-          AND r.established_evidence_id = 'guardian_declaration_v1:device_binding'
+          -- A pending declaration, or the same declaration the binding owner
+          -- attested active for a person with no account (2026-09-25).
+          AND (
+              (r.status = 'pending'
+               AND r.established_evidence_id = 'guardian_declaration_v1:device_binding')
+              OR (r.status = 'active'
+               AND r.established_evidence_id = 'guardian_attestation_v1:device_binding')
+          )
           AND EXISTS (
               SELECT 1 FROM identity_device_bindings b
               WHERE b.status = 'active'

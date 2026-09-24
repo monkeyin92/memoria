@@ -48,6 +48,8 @@ from services.consent.binding_snapshot import (
     RejectingBindingConsentAuthority,
     SqliteBindingConsentStore,
 )
+from services.consent.bound_subject import BoundSubjectConsentService
+from services.consent.postgres_store import PostgresConsentStore
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -928,6 +930,19 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         transfer_verifier=RejectingTransferEvidenceVerifier(),
         consent_resolver=binding_consent_authority,
     )
+    app.state.bound_subject_consent = None
+    app.state.bound_subject_consent_store = None
+    if consent_url:
+        # Standing consents for the one person each device serves: the
+        # binding's accepted offers become authority grants Policy reads.
+        bound_consent_store = PostgresConsentStore(consent_url)
+        app.state.bound_subject_consent_store = bound_consent_store
+        app.state.bound_subject_consent = BoundSubjectConsentService(
+            store=bound_consent_store,
+            identity=app.state.identity_service,
+            provision=bound_consent_store.authorize_bound_subject,
+            prepare=bound_consent_store.ensure_initialized,
+        )
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(app, settings)
     await _install_memory_scope(app, settings)
@@ -1306,6 +1321,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         if binding_consent_store is not None:
             await binding_consent_store.close()
+        bound_consent_store = getattr(app.state, "bound_subject_consent_store", None)
+        if bound_consent_store is not None:
+            await bound_consent_store.close()
 
 
 def create_app() -> FastAPI:
