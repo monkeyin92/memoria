@@ -2,10 +2,19 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：Agent / Voice Core Media Bridge 正在运行候选 `20260921-defect-a-followup-endpoint`（commit `2a33a50`）；最近收据为全栈 12 个容器 healthy。本轮 archive / control-api 改动已提交，尚未部署。
+- **最近生产收据**：三组件生产快照如下；相关运行容器共 12 个，当前均 healthy。本轮文档与评测收据改动已提交，尚未 push/部署。
+
+| component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
+|---|---|---|---|---|---|---:|---|---|---|
+| Control API | `memoria-control-api:20260922-demo03-control-review` | `sha256:ac9b516b640dcee4aba8c816466115e55015a565363995daadf8328e7d2a2a2d` | `ee57ad4e6fecc75706ed4c2960d6c97cc83b8399` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | `2026-09-22T09:50:15.298053397Z` | `/opt/memoria/component-releases/20260922-demo03-control-review/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260922-demo03-control-review-pre-control` |
+| Agent / Bridge | `memoria-agent:20260921-defect-a-followup-endpoint` | `sha256:2b386e26f8526ed45ea144f639b43484f1ef6deebf159ef9ffed759e9f3f536f` | `2a33a50e85d09dc61944ac860e311d247a1020e2` | same frozen identity | healthy | 0 each | approximately `2026-09-21T10:51:00Z` | `/opt/memoria/component-releases/20260921-defect-a-followup-endpoint/CUTOVER_RESULT.txt` | `agent-component.rollback.override.yml` |
+| Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
+
+- **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。
+- **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，不能作为当前候选代码已部署或已完整验证的证明。
 - **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 仍为 `memoria-control-api:20260922-demo03-control-review`。
 - **未关闭缺陷**：缺陷 A 已发布但设备复测未完成；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步**：先提交当前工作区改动；提交完成后设备上电，按日志边界、无回声合并、3/5/8 秒精确格和 30 分钟长稳复测缺陷 A。P0-03 设备子项在此之前保持开放。
+- **下一步必须动作**：设备上电，按日志边界、无回声合并、3/5/8 秒精确格和 30 分钟长稳复测缺陷 A。P0-03 设备子项在此之前保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
 
 ## 2026-09-23 记忆评测边界修复与逐 case 诊断（当前工作区，未部署）
@@ -13,35 +22,36 @@
 - **范围**：本轮收紧 `MoodFollowupEnsuringExtractor` 的学习偏好兜底与 domain-aware 去重；minor 长期记忆对批评、冲突、罚站、负面情绪等上下文 fail-closed，并保留 `老师说不用紧张/别担心` 的窄否定语境；补齐 `老师没批评/老师没有批评` 字面边界。没有放宽 minor allowlist，没有改评估指标公式，没有改生产配置或部署。
 - **评估诊断**：`MemoryEvaluationReport.as_dict()` 新增兼容性的顶层 `cases`；每个 case 输出 expected 的 match、source、time、query recall，以及每个实际 projection 的 `item_id/account_id/kind/memory_kind/status/title/body/source_event_ids/valid_from/valid_to/matched_expected_key`，另有 `predicted_count` 与 `matched_projection_count`。`report_json()` 可直接 `json.loads`；现有 `metrics` 字段和公式未变。该信息用于区分 claim、episode、knowledge 等 projection，不能把 projection-level precision 当成 claim-level precision。
 - **本地验证**：独立 QA 实跑 archive 全套 `221 passed / 1 skipped`（临时 PostgreSQL；唯一 skip 为需要 `MEMORIA_TEST_POSTGRES_CONTAINER` 的 restore drill）；无 DSN 的本地跑为 `205 passed / 17 skipped`。本轮直接相关专项重跑为 `124 passed in 1.05s`（`test_memory_evaluation.py`、`test_student_memory_extractor.py`、`test_mood_followup.py`、`test_memory_catalog.py`）。改动生产模块 strict mypy、Ruff check、改动范围 format check、`git diff --check` 均通过。QA 另验证 adult/non-minor 路径、敏感组合、真实学习偏好句、错误 `daily_life` delegate fallback 和 PG minor 契约；未部署、未做生产或设备验收。
-- **当前 rules 7-case 收据**：`case_count=7`、`failed_cases=[]`、`recall@5/10=1.0`、`cross_session_recall@5=1.0`、`extraction_recall=1.0`、`source/temporal=1.0`、`extraction_precision=6/18=0.333`。逐 case projection 分母为：数学 `6/1`、学习偏好 `3/1`、阅读 `2/1`、敏感负例 `0/0`、公园 `2/1`、工厂 `3/1`、儿子 `2/1`（格式为 predicted/matched）。数学、工厂等额外 projection 的类型可由新 `cases[].extracted` 诊断直接复核；这是 rules/current projection-level 事实，不是 configured/Qwen 证据。
+- **当前 rules 16-case parent-baseline 收据**：`case_count=16`、`failed_cases=[]`、`recall@5/10=0.9375`、`ndcg@10=0.8590438584406034`、`cross_session_recall@5=1.0`、`extraction_recall=1.0`、`extraction_precision=0.39215686274509803`、`source_attribution_accuracy=0.95`、`temporal_accuracy=1.0`、`comfort_recall@5=1.0`、`candidate_leakage=0`、`cross_account_leakage=0`、`contradiction_rate=0`。这是 parent-baseline/current projection-level 事实，不是候选可见性提交后的完整验证。
+- **四份评测收据校验**：configured Qwen 7-case `89175c7c52e92560c122884b2550d56678d7d96050e265caca66256a59542efe`；configured Qwen unseen 4-case `ab2322739337c41a0124cf0c21163768d28a76f7eb4bfee24d8c59bc9d792b48`；rules 16-case `c42423590eec0c19e76f6a7639dc7cbff082cca45a38f3c014ab4bbeaddfe952`；rules unseen 4-case `12e1b112f767a1d09192d2b7e41740b236a9c4518bdb14244ccb33feb24cf86b`。
 - **本地与生产配置边界**：本地 shell 仍 fail-closed（无 `DASHSCOPE_API_KEY`，`.env` 为 `OFFLINE_MOCK=true`）；但通过 SSH 只读核对 `memoria-prod` 的 `/etc/memoria-control-api.env`、`/etc/memoria-agent.env`，`DASHSCOPE_API_KEY` 均非空且未输出值，`MEMORIA_MEMORY_EXTRACTION_MODEL=qwen-flash`、`OFFLINE_MOCK=false`。线上 `memoria-control-api-1` 当前仍是旧镜像 `memoria-control-api:20260922-demo03-control-review`，容器关键源码 hash 与当前 HEAD 不一致；本轮不能把评测当作当前 HEAD 已部署。
 
 ## 2026-09-23 candidate 默认可见性契约落地（本轮已提交、未部署）
 
-- **code / wired / enabled / verified**：`code=在当前 HEAD 3ccba9c 基线上完成 candidate 默认契约，本轮改动已提交`；`wired=生产两份 env 仅核验百炼 key 非空、模型为 qwen-flash 且 OFFLINE_MOCK=false，未读取 key 值`；`enabled=false，线上仍运行旧 control-api 镜像`；`verified=SQLite、HTTP、主体隔离、评测适配器与 archive/control-api 目录回归通过；PostgreSQL catalog 文件用项目 uv 环境收集为 1 passed/8 skipped（无 MEMORIA_TEST_POSTGRES_DSN），真实 PG 行为仍未验；Ruff 与 git diff --check 通过`。
+- **code / wired / enabled / verified**：`code=候选 visibility 契约在代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b 完成`；`wired=生产两份 env 仅核验百炼 key 非空、模型为 qwen-flash 且 OFFLINE_MOCK=false，未读取 key 值`；`enabled=false，线上仍运行旧 control-api 镜像`；`verified=SQLite、HTTP、主体隔离、评测适配器与 archive/control-api 目录回归通过；PostgreSQL catalog 文件用项目 uv 环境收集为 1 passed/8 skipped（无 MEMORIA_TEST_POSTGRES_DSN），真实 PG 行为仍未验；Ruff 与 git diff --check 通过`。四份评测 JSON 仍是 parent baseline，不覆盖该提交。
 - **普通读取语义**：`MemorySearchQuery` 与 `/v1/archive/search` 默认 `include_candidates=false`；search 仅返回 `status='confirmed' AND conflict_state!='active'`，`context()` 同样只返回 confirmed 且无 active conflict。
 - **显式审核/评测语义**：`include_candidates=true` 只作为审核、评测和诊断入口，返回所有 `status != 'retracted'` 的 projection（包括 candidate、disputed、confirmed 和 active conflict）；普通 companion、response-plan、context-prefetch 显式关闭 candidate，评测适配器显式打开 candidate。
 - **未扩大的范围**：本轮没有改变 claim/episode/原子 projection 去重、ResponsePlanner timeout/fallback、生产 catalog 限额、person/subject 迁移或线上/设备验收；没有部署，也没有输出或写入百炼 key。
 
-## 2026-09-23 生产配置 key 下当前 HEAD 的 Qwen 隔离评测（已完成，未部署）
+## 2026-09-23 生产配置 key 下 parent-baseline source 的 Qwen 隔离评测（已完成，未部署）
 
-- **code / wired / enabled / verified**：`code=当前 HEAD 3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；`wired=生产 env 文件中的百炼 key 可用，评测器按生产模型配置运行`；`enabled=当前 HEAD 未启用，线上仍为旧 control-api 镜像`；`verified=隔离 7-case 收据已保存并校验`。生产 key 只用于调用百炼，未写入收据、日志或文档。
-- **隔离方式**：通过 `memoria-prod` 只读确认 env 文件的 key 存在性，不输出 key；将当前 HEAD 源码临时 overlay 到一次性 Docker 容器，容器使用 `--read-only`（仅 `/tmp` 可写），不挂载生产 SQLite/PostgreSQL/Redis，仅访问百炼 API；评测结束后清理临时源码、env、report 和容器。
+- **code / wired / enabled / verified**：`code=parent-baseline source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；`wired=生产 env 文件中的百炼 key 可用，评测器按生产模型配置运行`；`enabled=该 source 未启用，线上仍为旧 control-api 镜像`；`verified=隔离 7-case 收据已保存并校验`。生产 key 只用于调用百炼，未写入收据、日志或文档；`receipt_scope=parent_baseline`。
+- **隔离方式**：通过 `memoria-prod` 只读确认 env 文件的 key 存在性，不输出 key；将 parent-baseline source 临时 overlay 到一次性 Docker 容器，容器使用 `--read-only`（仅 `/tmp` 可写），不挂载生产 SQLite/PostgreSQL/Redis，仅访问百炼 API；评测结束后清理临时源码、env、report 和容器。
 - **总体结果**：`case_count=7`、`failed_cases=[]`；6 个正例期望全部匹配，敏感负例未形成 projection；`recall@5/10=0.8571428571`、`ndcg@10=0.7695504010`、`extraction_recall=1.0`、`source_attribution_accuracy=1.0`、`temporal_accuracy=1.0`。
 - **安全与成本结果**：`cross_account_leakage=0`、`candidate_leakage=0`、`contradiction_rate=0`、`comfort_recall@5=1.0`、`cross_session_recall@5=0.8`、`paraphrase_followup_recall@5=0.0`；百炼用量为 `input_tokens=6595`、`output_tokens=1955`。`latency_p50/p95=2.02/7.17ms` 只代表 SQLite catalog query，不代表百炼请求或完整端到端时延。
 - **逐 case projection**：数学 `7/1`、学习偏好 `1/1`、阅读偏好 `1/1`、敏感负例 `0/0`、公园 `3/1`、工厂 `4/1`、儿子 `2/1`（格式为 predicted/matched）。`extraction_precision=6/18=0.3333` 是 projection-level 指标，额外项主要是同一原话的 claim/episode 双投影与原子片段，不能直接解释成 claim-level precision。
 - **语义落地后的评测解释**：阅读偏好被 Qwen 抽为 `candidate`；当前普通 search 仍按安全默认隐藏它，而评测/审核路径显式使用 `include_candidates=true`，因此不能把 candidate 缺失解释成评测适配器失效。该 case 的隔离收据仍保留原始默认可见性结果，后续若要改善线上召回，需单独决定确认流程或产品侧 candidate 展示策略。
-- **收据**：[docs/memory-evaluation-configured-qwen-flash-20260923.json](docs/memory-evaluation-configured-qwen-flash-20260923.json)，17756 bytes，SHA-256 为 `bf74c1faad20951a6c2286d5c435ed34d160f2dad04dd062c781a344b98008be`；收据不含 `DASHSCOPE_API_KEY`、`Authorization` 或 `Bearer` 标记。
+- **收据**：[docs/memory-evaluation-configured-qwen-flash-20260923.json](docs/memory-evaluation-configured-qwen-flash-20260923.json)，`receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，SHA-256 为 `89175c7c52e92560c122884b2550d56678d7d96050e265caca66256a59542efe`；收据不含 `DASHSCOPE_API_KEY`、`Authorization` 或 `Bearer` 标记。
 - **下一步**：candidate 默认契约已落地；仍需评估 claim/episode/原子 projection 的去重策略，补齐实际 `ResponsePlannerClient` 超时、fallback 与生产 catalog 限额证据，完成 person/subject 迁移边界后，才考虑部署当前工作区并做线上带鉴权与设备验收。
 
-## 2026-09-23 生产配置 key 下当前 HEAD 的 Qwen 未见改写集隔离评测（已完成，未部署）
+## 2026-09-23 生产配置 key 下 parent-baseline source 的 Qwen 未见改写集隔离评测（已完成，未部署）
 
-- **code / wired / enabled / verified**：`code=当前 HEAD 3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；`wired=生产 env 文件中的非空百炼 key 可用，评测器按 `qwen-flash` 运行`；`enabled=当前 HEAD 未启用，线上仍为旧 control-api 镜像`；`verified=4-case 未见收据已保存并校验`。key 只用于百炼请求，未输出、写入日志、报告或文档。
-- **隔离方式**：与固定集相同——当前 HEAD 源码 overlay 到一次性只读 Docker 容器，仅 `/tmp` 可写，使用临时 SQLite，不挂载生产 SQLite/PostgreSQL/Redis，仅访问百炼 API；评测结束后清理临时源码、env、report 和容器。
+- **code / wired / enabled / verified**：`code=parent-baseline source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；`wired=生产 env 文件中的非空百炼 key 可用，评测器按 `qwen-flash` 运行`；`enabled=该 source 未启用，线上仍为旧 control-api 镜像`；`verified=4-case 未见收据已保存并校验`。key 只用于百炼请求，未输出、写入日志、报告或文档；`receipt_scope=parent_baseline`。
+- **隔离方式**：与固定集相同——parent-baseline source overlay 到一次性只读 Docker 容器，仅 `/tmp` 可写，使用临时 SQLite，不挂载生产 SQLite/PostgreSQL/Redis，仅访问百炼 API；评测结束后清理临时源码、env、report 和容器。
 - **总体结果**：`case_count=4`、`failed_cases=[]`；`recall@5/10=0.4`、`ndcg@10=0.4`、`extraction_recall=0.7142857143`、`extraction_precision=0.2777777778`、`source_attribution_accuracy=0.7142857143`、`cross_session_recall@5=0`、`paraphrase_followup_recall@5=0`、`comfort_recall@5=0`、`cross_account_leakage=0`、`candidate_leakage=0`、`contradiction_rate=0`。
 - **逐 case 归因**：①苏绣跨会话生成了“学做苏绣” claim 与“打算秋天去苏州学做苏绣” episode，但未形成期望的 semantic claim，查询“最近我们说过什么打算？”未召回；②辣味正确形成“胃不太好，辣的都吃不了”，但 query expansion 未覆盖“避开什么”；③加班低落正确形成“加班到十一点”“回家路上特别想哭”及 episode，但未形成期望的合并记忆 `overtime-low-mood`，distress expansion 未覆盖“撑不住”；④跨账户敦煌/武夷山分别命中且互不泄漏。
 - **运行时口径**：百炼用量 `input/output=5133/1386`、`token_cost=6519`；`latency_p50/p95=12.56/31.06ms` 仅代表本地 SQLite catalog 查询，不代表百炼请求或完整线上端到端时延。
-- **收据**：[docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json](docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json)，SHA-256 为 `00c195ee243cb4c16514d23232f40abbe56e0fa501e552a0afb7373928792cda`；收据不含 `DASHSCOPE_API_KEY`、`Authorization` 或 `Bearer` 标记。
+- **收据**：[docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json](docs/memory-evaluation-configured-qwen-flash-unseen-20260923.json)，`receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，SHA-256 为 `ab2322739337c41a0124cf0c21163768d28a76f7eb4bfee24d8c59bc9d792b48`；收据不含 `DASHSCOPE_API_KEY`、`Authorization` 或 `Bearer` 标记。
 - **结论**：主要问题不是百炼 key 或 Qwen 请求失败，而是 candidate 默认召回契约、自然语言改写的词面扩展、以及 claim/episode/原子 projection 的统一与去重。未见集目前只能作为缺口基线，不能作为当前 HEAD 已上线或“自由对话≥70%”的证明。
 
 ## 2026-09-22 DEMO-03 控制面切流上线（可审计发布链首次用通）+ readiness 定时刷新缺陷
@@ -393,11 +403,11 @@ uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
 - **线上验证**：live `build_memory_extractor` = `MoodFollowupEnsuringExtractor`（version 含 `|mood-followup`）；外部 readiness 200；**DEMO-02 固定集线上容器 4 连跑全 1.0**（无 overlay，镜像自带 dataset）。回滚点 `memoria-control-api:rollback-20260921-demo02-recall-net-pre-control`（=20260911 镜像）。身份对齐保持：control-api env 仍 `20260901-0945-wake-word-whitelist`/`7ca3d4ec`（与 agent 心跳一致），真实身份以镜像 label 为准（该临时对齐收敛仍是 P1-01 项）。
 - **收据**：`/opt/memoria/component-releases/20260921-demo02-recall-net/`（build/cutover/rollback/mounts json + source tar + Dockerfile overlay）；本地 `outputs/acceptance/run-20260921-demo02-deploy/`（release_receipts.txt、commands.txt、live_e2e.txt）。
 
-## 2026-09-21 设备窗口（DEMO-01/04）：F1/F2 通过（F1 含部署缺陷修复）+ 两项新缺陷
+## 2026-09-21 设备窗口（DEMO-01/04）：F1 owner-silence 已观察；F2 button.stop happy path 已验证，完整 F1/F2 契约未通过
 
 - 证据：`outputs/acceptance/run-20260921-demo01-device-window/`（RUNBOOK.md、findings.md、window-a/、window-b/；capture 均 healthy/duration_elapsed）。判定详情在 findings.md，此处只记结论。
-- **F1 通过（先修了一个部署缺陷）**：线上 bridge env 仍是 `MEDIA_OWNER_SILENCE_TIMEOUT_S=10`（20260827 旧 release-tree compose 残留——20260920 切流只覆盖镜像与身份变量），30s 值从未生效；已以 env override 修至 30（`component-releases/20260921-f1-silence-30s/`，含回滚文件）。实机证据：vad start 时 `silence_remaining_s=13.53`（=30s 窗口余量）、38.3s 真静默才待命、0.4s/25.6s 间隔续问直接接上、告别走 `conversation_end_explicit` 立即待命。
-- **F2 通过（设备 happy path）**：播放中点屏 → 设备 `Abort speaking` → **41ms** 后 speaking→listening → edge `cleared playback window reason=device_button_stop generation=2`（新语义实机生效：窗口只由设备 button.stop 撤销）→ **0 条 Alert** → 14s 后新话轮接上。voice 禁止源路径维持"设备侧不可复现"（固件播放期不发 vad.start）。
+- **F1 owner-silence 已观察，不等于完整 F1 契约通过**：线上 bridge env 仍是 `MEDIA_OWNER_SILENCE_TIMEOUT_S=10`（20260827 旧 release-tree compose 残留——20260920 切流只覆盖镜像与身份变量），30s 值从未生效；已以 env override 修至 30（`component-releases/20260921-f1-silence-30s/`，含回滚文件）。实机证据：vad start 时 `silence_remaining_s=13.53`（=30s 窗口余量）、38.3s 真静默才待命、0.4s/25.6s 间隔续问直接接上、告别走 `conversation_end_explicit` 立即待命；完整契约仍缺完整边界覆盖。
+- **F2 button.stop happy path 已验证，不等于完整 F2 契约通过**：播放中点屏 → 设备 `Abort speaking` → **41ms** 后 speaking→listening → edge `cleared playback window reason=device_button_stop generation=2`（新语义实机生效：窗口只由设备 button.stop 撤销）→ **0 条 Alert** → 14s 后新话轮接上。voice 禁止源 barge 路径仍未取得设备旁真实复现证据；当前设备侧未触发该路径，不能以固件播放期不发 `vad.start` 代替禁止源契约验证。
 - **缺陷 A（P0-03，最高优先）**：ASR 段落跨界拒绝吞掉续问——「后天呢」realtime final 识别成功但离线段横跨提交边界被判 `straddles_committed_without_timing` 丢弃；「北京呢」被 `cross_sentence_overlap` 拒（段落含 TTS 尾音）。2/4 追问丢失，用户体感"上海呢之后等很久/北京呢没反应"。修复方向需设计决策（realtime-final 兜底提交 vs 时序拆分），不得简单放宽拒绝。
 - **缺陷 B（DEMO-04/P2-05）**：输入电平不稳——RMS 2233（成功）↔182-521（失败）摆动 ~20dB，近讲同时削波；ES7210 已 36dB（上限 42dB），加增益方向错误。路径：固件 AGC（需刷机授权）/AEC（P1-07）/演示姿态 0.3-0.5m。用户体感确认"要靠很近才行"。
 - BMI2 IMU I2C 超时持续出现（DEMO-04 硬件专项未修）；3/5/8s 精确格在缺陷 A 修复前不可测（0.4s 即刻追问一次成功）。
