@@ -36,6 +36,19 @@ from services.guardian.domain import (
     VerifiedVia,
     same_person_consent_grant_request,
 )
+from services.guardian.push import (
+    MAX_PUSH_SUBSCRIPTION_BALANCE,
+    CrisisPushOutcome,
+    PendingCrisisPush,
+    PushSubscription,
+    PushSubscriptionResult,
+    push_identifier,
+    push_openid,
+    push_template_id,
+    validate_crisis_push_claim,
+    validate_crisis_push_outcome,
+    validate_push_subscription_result,
+)
 from services.tutor.authority import (
     TutorEvidenceRejected,
     TutorPolicyReceiptVerifierPort,
@@ -62,6 +75,7 @@ _REQUIRED_TABLES = frozenset(
         "tutor_commit_outbox",
         "guardian_crisis_events",
         "guardian_notification_outbox",
+        "guardian_push_subscriptions",
     }
 )
 
@@ -1880,6 +1894,194 @@ class PostgresGuardianStore:
                 )
         return tuple(self._notification(row) for row in rows)
 
+    @staticmethod
+    def _push_subscription(row: asyncpg.Record) -> PushSubscription:
+        return PushSubscription(
+            guardian_user_id=str(row["guardian_user_id"]),
+            template_id=str(row["template_id"]),
+            remaining=int(row["remaining"]),
+            last_result=cast(PushSubscriptionResult, str(row["last_result"])),
+            updated_at=cast(datetime, row["updated_at"]),
+        )
+
+    async def record_push_subscription(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str,
+        result: PushSubscriptionResult,
+        openid: str | None,
+        now: datetime,
+    ) -> PushSubscription:
+        validate_push_subscription_result(result)
+        guardian = push_identifier(guardian_user_id, field="guardian_user_id")
+        template = push_template_id(template_id)
+        clean_openid = push_openid(openid) if openid is not None else None
+        if result == "accept" and clean_openid is None:
+            raise ValueError("an accepted push subscription requires the guardian openid")
+        timestamp = _timestamp(now, field="now")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian,
+                subject_user_id=guardian,
+            )
+            row = await connection.fetchrow(
+                """
+                INSERT INTO guardian_push_subscriptions(
+                    guardian_user_id, template_id, openid, remaining,
+                    last_result, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, CASE WHEN $4 = 'accept' THEN 1 ELSE 0 END, $4, $5, $5
+                )
+                ON CONFLICT(guardian_user_id, template_id) DO UPDATE SET
+                    openid = COALESCE(EXCLUDED.openid, guardian_push_subscriptions.openid),
+                    remaining = CASE EXCLUDED.last_result
+                        WHEN 'accept'
+                        THEN LEAST(guardian_push_subscriptions.remaining + 1, $6)
+                        WHEN 'ban' THEN 0
+                        ELSE guardian_push_subscriptions.remaining
+                    END,
+                    last_result = EXCLUDED.last_result,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING guardian_user_id, template_id, remaining, last_result, updated_at
+                """,
+                guardian,
+                template,
+                clean_openid,
+                result,
+                timestamp,
+                MAX_PUSH_SUBSCRIPTION_BALANCE,
+            )
+        if row is None:  # pragma: no cover
+            raise RuntimeError("guardian push subscription disappeared")
+        return self._push_subscription(row)
+
+    async def push_subscription(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str,
+    ) -> PushSubscription | None:
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._set_api_context(
+                connection,
+                actor_user_id=guardian_user_id,
+                subject_user_id=guardian_user_id,
+            )
+            row = await connection.fetchrow(
+                """
+                SELECT guardian_user_id, template_id, remaining, last_result, updated_at
+                FROM guardian_push_subscriptions
+                WHERE guardian_user_id = $1 AND template_id = $2
+                """,
+                guardian_user_id,
+                template_id,
+            )
+        return self._push_subscription(row) if row is not None else None
+
+    async def _crisis_push_pool(self) -> asyncpg.Pool:
+        return await self._ready_role_pool(
+            dsn=self._worker_dsn,
+            pool_attr="_worker_pool",
+            expected_role="memoria_guardian_worker",
+            operation="crisis push worker",
+        )
+
+    async def claim_crisis_pushes(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        limit: int = 20,
+        lease_s: int = 60,
+        max_attempts: int = 5,
+        max_age_s: int = 86_400,
+    ) -> tuple[PendingCrisisPush, ...]:
+        validate_crisis_push_claim(
+            worker_id=worker_id,
+            limit=limit,
+            lease_s=lease_s,
+            max_attempts=max_attempts,
+            max_age_s=max_age_s,
+        )
+        pool = await self._crisis_push_pool()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT * FROM guardian_crisis_push_claim($1, $2, $3, $4, $5, $6)",
+                worker_id,
+                _timestamp(now, field="now"),
+                limit,
+                lease_s,
+                max_attempts,
+                max_age_s,
+            )
+        return tuple(
+            PendingCrisisPush(
+                notification_id=str(row["notification_id"]),
+                crisis_event_id=str(row["crisis_event_id"]),
+                guardian_user_id=str(row["guardian_user_id"]),
+                minor_user_id=str(row["minor_user_id"]),
+                occurred_at=cast(datetime, row["occurred_at"]),
+                attempts=int(row["attempts"]),
+            )
+            for row in rows
+        )
+
+    async def reserve_crisis_push_subscription(
+        self,
+        *,
+        notification_id: str,
+        worker_id: str,
+        template_id: str,
+        now: datetime,
+    ) -> str | None:
+        pool = await self._crisis_push_pool()
+        async with pool.acquire() as connection:
+            try:
+                openid = await connection.fetchval(
+                    "SELECT guardian_crisis_push_reserve($1, $2, $3, $4)",
+                    _uuid(notification_id, field="notification_id"),
+                    worker_id,
+                    push_template_id(template_id),
+                    _timestamp(now, field="now"),
+                )
+            except asyncpg.RaiseError as exc:
+                raise GuardianAccessDeniedError("crisis push claim is not held") from exc
+        return str(openid) if openid is not None else None
+
+    async def complete_crisis_push(
+        self,
+        *,
+        notification_id: str,
+        worker_id: str,
+        outcome: CrisisPushOutcome,
+        error_code: str | None,
+        retry_delay_s: int | None,
+        exhaust_subscription: bool,
+        now: datetime,
+    ) -> bool:
+        validate_crisis_push_outcome(
+            outcome,
+            error_code=error_code,
+            retry_delay_s=retry_delay_s,
+        )
+        pool = await self._crisis_push_pool()
+        async with pool.acquire() as connection:
+            settled = await connection.fetchval(
+                "SELECT guardian_crisis_push_complete($1, $2, $3, $4, $5, $6, $7)",
+                _uuid(notification_id, field="notification_id"),
+                worker_id,
+                outcome,
+                error_code,
+                retry_delay_s if outcome == "retry" else None,
+                exhaust_subscription,
+                _timestamp(now, field="now"),
+            )
+        return bool(settled)
+
     async def export_for_account(self, *, account_id: str) -> dict[str, object]:
         maintenance_pool = await self._ready_role_pool(
             dsn=self._maintenance_dsn,
@@ -1953,6 +2155,16 @@ class PostgresGuardianStore:
                 """,
                 account_id,
             )
+            # The WeChat openid is a delivery credential, not account content.
+            push_subscriptions = await connection.fetch(
+                """
+                SELECT guardian_user_id, template_id, remaining, last_result,
+                       created_at, updated_at, openid IS NOT NULL AS openid_on_file
+                FROM guardian_push_subscriptions
+                WHERE guardian_user_id = $1 ORDER BY template_id
+                """,
+                account_id,
+            )
         async with maintenance_pool.acquire() as connection:
             row = await connection.fetchval(
                 "SELECT guardian_tutor_account_scope_export($1)",
@@ -1974,6 +2186,7 @@ class PostgresGuardianStore:
             "crisis_events": [dict(row) for row in crisis_events],
             "guardian_notifications": [dict(row) for row in notifications],
             "corpus_samples": [dict(row) for row in corpus_samples],
+            "guardian_push_subscriptions": [dict(row) for row in push_subscriptions],
         }
 
     async def delete_for_account(self, *, account_id: str) -> dict[str, int]:
@@ -2006,6 +2219,10 @@ class PostgresGuardianStore:
             )
             crisis_result = await connection.execute(
                 "DELETE FROM guardian_crisis_events WHERE minor_user_id = $1",
+                account_id,
+            )
+            push_subscription_result = await connection.execute(
+                "DELETE FROM guardian_push_subscriptions WHERE guardian_user_id = $1",
                 account_id,
             )
             corpus_result = await connection.execute(
@@ -2061,6 +2278,9 @@ class PostgresGuardianStore:
             "crisis_events": int(crisis_result.rsplit(" ", 1)[-1]),
             "guardian_notifications": int(notification_result.rsplit(" ", 1)[-1]),
             "corpus_samples": int(corpus_result.rsplit(" ", 1)[-1]),
+            "guardian_push_subscriptions": int(
+                push_subscription_result.rsplit(" ", 1)[-1]
+            ),
         }
 
     async def remaining_account_rows(self, *, account_id: str) -> dict[str, int]:
@@ -2131,6 +2351,15 @@ class PostgresGuardianStore:
                     account_id,
                 )
             )
+            push_subscriptions = int(
+                await connection.fetchval(
+                    """
+                    SELECT count(*) FROM guardian_push_subscriptions
+                    WHERE guardian_user_id = $1
+                    """,
+                    account_id,
+                )
+            )
         async with maintenance_pool.acquire() as connection:
             tutor_result = await connection.fetchval(
                 "SELECT guardian_tutor_account_scope_remaining($1)",
@@ -2161,6 +2390,7 @@ class PostgresGuardianStore:
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,
                 "person_consents": person_consents,
+                "guardian_push_subscriptions": push_subscriptions,
             }.items()
             if value
         }
