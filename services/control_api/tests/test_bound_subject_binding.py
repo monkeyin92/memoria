@@ -225,7 +225,7 @@ async def test_elder_binding_registers_an_adult_and_grants_memory_as_a_delegate(
 
 
 @pytest.mark.asyncio
-async def test_unbind_withdraws_consents_and_refuses_an_erasure_it_cannot_do(
+async def test_unbind_withdraws_consents_and_refuses_erasure_when_unwired(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -249,6 +249,9 @@ async def test_unbind_withdraws_consents_and_refuses_an_erasure_it_cannot_do(
         assert created.status_code == 201, created.text
         child_id = created.json()["primary_subject_ids"][0]
 
+        # A deployment without the subject saga must refuse, not pretend.
+        wired = app.state.subject_deletion
+        app.state.subject_deletion = None
         refused = await client.post(
             "/v1/devices/device-bound-unbind/binding/unbind",
             headers=headers,
@@ -258,6 +261,7 @@ async def test_unbind_withdraws_consents_and_refuses_an_erasure_it_cannot_do(
         assert refused.json()["detail"]["code"] == "subject_deletion_unavailable"
         # Nothing was unbound by the refused request.
         assert recorder.revokes == []
+        app.state.subject_deletion = wired
 
         unbound = await client.post(
             "/v1/devices/device-bound-unbind/binding/unbind",
@@ -327,6 +331,82 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
             headers=headers,
             json={"confirmation": "永久删除孩子的全部数据"},
         )
-        # Without a wired subject saga the erase is refused, never faked.
-        assert deleted.status_code == 503
-        assert deleted.json()["detail"]["code"] == "child_subject_deletion_unavailable"
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "completed"
+
+
+_ARCHIVE_TOKEN = {"X-Memoria-Internal-Token": "guardian-test-archive-token-that-is-long-enough"}
+
+
+async def _speech(client: AsyncClient, *, session_id: str, event_id: str, subject: str | None) -> None:
+    body: dict[str, Any] = {
+        "event_id": event_id,
+        "session_id": session_id,
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "turn_id": 1,
+        "generation_id": 1,
+        "tool_epoch": 0,
+        "payload": {"text": f"{event_id} 的原话"},
+    }
+    if subject is not None:
+        body["active_subject_id"] = subject
+    response = await client.post("/v1/archive/session-events", headers=_ARCHIVE_TOKEN, json=body)
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from services.identity.service import REDACTED_DISPLAY_NAME
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner_id, headers = await _owner(client, app, "bound-erase-owner")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-bound-erase",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+        child_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        await _speech(client, session_id=child_session["session_id"], event_id="child-turn", subject=child_id)
+        parent_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        await _speech(client, session_id=parent_session["session_id"], event_id="parent-turn", subject=None)
+
+        deleted = await client.post(
+            f"/v1/guardian/minors/{child_id}/delete",
+            headers=headers,
+            json={"confirmation": "永久删除孩子的全部数据"},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "completed"
+
+        archive = app.state.life_archive
+        assert deleted.json()["deleted_counts"]["lineage.owner_events"] == 1, deleted.text
+        assert (await archive.event(account_id=owner_id, event_id="child-turn")) is None
+        assert (await archive.event(account_id=owner_id, event_id="parent-turn")) is not None
+        # The device still serves the child, so their name stays until unbind.
+        child = await app.state.identity_service.get_person(child_id, actor_person_id=owner_id)
+        assert child.display_name == "使用人"
+
+        unbound = await client.post(
+            "/v1/devices/device-bound-erase/binding/unbind",
+            headers=headers,
+            json={"reason": "unbind", "purge_subject_data": True},
+        )
+        assert unbound.status_code == 200, unbound.text
+        assert unbound.json()["subject_deletion"] == "completed"
+        child = await app.state.identity_service.get_person(child_id, actor_person_id=owner_id)
+        assert (child.display_name, child.status) == (REDACTED_DISPLAY_NAME, "disabled")
