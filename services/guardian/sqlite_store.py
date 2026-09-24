@@ -2686,8 +2686,9 @@ class SqliteGuardianStore:
     ) -> tuple[str, ...]:
         """Archive evidence ids of one bound subject's tutor practice.
 
-        Read before ``delete_subject_rows``: these rows are the only lineage
-        to tutor archive events written without a subject_id.
+        Read before ``delete_subject_rows``: for practice archived before
+        the tutor projection carried subject_id, these rows are the only
+        lineage to the owner-account archive events.
         """
 
         scope = SubjectScope(account_id=account_id, subject_id=subject_id)

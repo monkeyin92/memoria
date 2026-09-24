@@ -92,7 +92,11 @@ class SubjectGuardianPort(Protocol):
     """Guardian/tutor store rows for one subject (crisis, notifications, tutor)."""
 
     async def subject_tutor_event_ids(self, *, account_id: str, subject_id: str) -> tuple[str, ...]:
-        """Archive evidence ids of the subject's tutor practice (archived without subject_id)."""
+        """Archive evidence ids of the subject's tutor practice.
+
+        Tutor practice is archived under the owner account; rows archived
+        before the projection carried ``subject_id`` are found only this way.
+        """
         ...
 
     async def delete_subject_rows(self, *, account_id: str, subject_id: str) -> dict[str, int]:
