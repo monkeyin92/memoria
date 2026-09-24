@@ -1,0 +1,627 @@
+[2026-09-24T11:45:34.214+08:00] ESP-ROM:esp32s3-20210327
+[2026-09-24T11:45:34.214+08:00] Build:Mar 27 2021
+[2026-09-24T11:45:34.214+08:00] rst:0x15 (USB_UART_CHIP_RESET),boot:0x2b (SPI_FAST_FLASH_BOOT)
+[2026-09-24T11:45:34.215+08:00] Saved PC:0x40387ee2
+[2026-09-24T11:45:34.215+08:00] SPIWP:0xee
+[2026-09-24T11:45:34.215+08:00] Octal Flash Mode Enabled
+[2026-09-24T11:45:34.215+08:00] For OPI Flash, Use Default Flash Boot Mode
+[2026-09-24T11:45:34.216+08:00] mode:SLOW_RD, clock div:1
+[2026-09-24T11:45:34.218+08:00] load:0x3fce2820,len:0x544
+[2026-09-24T11:45:34.220+08:00] load:0x403c8700,len:0xcc8
+[2026-09-24T11:45:34.223+08:00] load:0x403cb700,len:0x2eb4
+[2026-09-24T11:45:34.233+08:00] entry 0x403c88f4
+[2026-09-24T11:45:34.259+08:00] I (53) octal_psram: vendor id    : 0x0d (AP)
+[2026-09-24T11:45:34.259+08:00] I (53) octal_psram: dev id       : 0x03 (generation 4)
+[2026-09-24T11:45:34.261+08:00] I (53) octal_psram: density      : 0x05 (128 Mbit)
+[2026-09-24T11:45:34.265+08:00] I (55) octal_psram: good-die     : 0x01 (Pass)
+[2026-09-24T11:45:34.269+08:00] I (59) octal_psram: Latency      : 0x01 (Fixed)
+[2026-09-24T11:45:34.273+08:00] I (64) octal_psram: VCC          : 0x00 (1.8V)
+[2026-09-24T11:45:34.278+08:00] I (68) octal_psram: SRF          : 0x01 (Fast Refresh)
+[2026-09-24T11:45:34.283+08:00] I (73) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+[2026-09-24T11:45:34.287+08:00] I (77) octal_psram: BurstLen     : 0x01 (32 Byte)
+[2026-09-24T11:45:34.293+08:00] I (82) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+[2026-09-24T11:45:34.297+08:00] I (87) octal_psram: DriveStrength: 0x00 (1/1)
+[2026-09-24T11:45:34.301+08:00] I (91) MSPI Timing: Enter psram timing tuning
+[2026-09-24T11:45:34.304+08:00] I (96) esp_psram: Found 16MB PSRAM device
+[2026-09-24T11:45:34.307+08:00] I (99) esp_psram: Speed: 80MHz
+[2026-09-24T11:45:34.310+08:00] I (102) cpu_start: Multicore app
+[2026-09-24T11:45:34.322+08:00] I (116) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+[2026-09-24T11:45:34.322+08:00] I (116) cpu_start: Pro cpu start user code
+[2026-09-24T11:45:34.324+08:00] I (116) cpu_start: cpu freq: 240000000 Hz
+[2026-09-24T11:45:34.328+08:00] I (118) app_init: Application information:
+[2026-09-24T11:45:34.332+08:00] I (122) app_init: Project name:     memoria
+[2026-09-24T11:45:34.335+08:00] I (126) app_init: App version:      2.4.2
+[2026-09-24T11:45:34.340+08:00] I (130) app_init: Compile time:     Sep 15 2026 17:36:12
+[2026-09-24T11:45:34.345+08:00] I (135) app_init: ELF file SHA256:  da6ebdd16...
+[2026-09-24T11:45:34.349+08:00] I (139) app_init: ESP-IDF:          v6.0.2
+[2026-09-24T11:45:34.352+08:00] I (143) efuse_init: Min chip rev:     v0.0
+[2026-09-24T11:45:34.356+08:00] I (147) efuse_init: Max chip rev:     v0.99 
+[2026-09-24T11:45:34.360+08:00] I (151) efuse_init: Chip rev:         v0.2
+[2026-09-24T11:45:34.366+08:00] I (155) heap_init: Initializing. RAM available for dynamic allocation:
+[2026-09-24T11:45:34.372+08:00] I (161) heap_init: At 3FCB0A70 len 00038CA0 (227 KiB): RAM
+[2026-09-24T11:45:34.377+08:00] I (166) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+[2026-09-24T11:45:34.382+08:00] I (171) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+[2026-09-24T11:45:34.387+08:00] I (176) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM
+[2026-09-24T11:45:34.394+08:00] I (182) esp_psram: Adding pool of 16384K of PSRAM memory to heap allocator
+[2026-09-24T11:45:34.404+08:00] W (188) spi_flash: Octal flash chip is using but qio mode is selected, will automatically switch to Octal mode
+[2026-09-24T11:45:34.408+08:00] I (198) spi_flash: detected chip: mxic (opi)
+[2026-09-24T11:45:34.411+08:00] I (202) spi_flash: flash io: opi_str
+[2026-09-24T11:45:34.417+08:00] I (206) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[2026-09-24T11:45:34.424+08:00] I (212) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[2026-09-24T11:45:34.435+08:00] I (227) main_task: Started on CPU0
+[2026-09-24T11:45:34.443+08:00] I (227) esp_psram: Reserving pool of 96K of internal memory for DMA/internal allocations
+[2026-09-24T11:45:34.446+08:00] I (237) main_task: Calling app_main()
+[2026-09-24T11:45:34.456+08:00] I (247) Board: UUID=1ac87deb-0fa3-4300-a304-ad6c472ab8c7 SKU=memoria-esp-vocat
+[2026-09-24T11:45:34.457+08:00] I (247) button: IoT Button Version: 4.2.0
+[2026-09-24T11:45:34.465+08:00] E (247) i2c.master: this port has not been initialized, please initialize it first
+[2026-09-24T11:45:34.467+08:00] I (257) i2c_bus: i2c0 bus inited
+[2026-09-24T11:45:34.473+08:00] I (257) i2c_bus: I2C Bus V2 Config Succeed, Version: 1.5.2
+[2026-09-24T11:45:34.479+08:00] I (267) temperature_sensor: Range [-10°C ~ 80°C], error < 1°C
+[2026-09-24T11:45:34.580+08:00] E (377) i2c.master: I2C transaction timeout detected
+[2026-09-24T11:45:34.584+08:00] E (377) i2c.master: probe device timeout. Please check if xfer_timeout_ms and pull-ups are correctly set up
+[2026-09-24T11:45:34.633+08:00] E (427) i2c.master: I2C transaction timeout detected
+[2026-09-24T11:45:34.636+08:00] E (427) i2c.master: probe device timeout. Please check if xfer_timeout_ms and pull-ups are correctly set up
+[2026-09-24T11:45:34.640+08:00] E (427) MemoriaEspVocat: PCB version detection error
+[2026-09-24T11:45:34.646+08:00] I (437) BMI2_ESP32: Creating I2C device with address 0x68
+[2026-09-24T11:45:34.650+08:00] I (437) BMI2_ESP32: I2C device created successfully
+[2026-09-24T11:45:34.848+08:00] I (647) BMI2_ESP32: Detected FreeRTOS tick rate: 100 Hz
+[2026-09-24T11:45:35.401+08:00] I (1197) bmi270_api: BMI270 sensor created successfully
+[2026-09-24T11:45:35.402+08:00] I (1197) MemoriaEspVocat: BMI270 initialized
+[2026-09-24T11:45:35.402+08:00] I (1197) st77916: version: 2.0.2
+[2026-09-24T11:45:35.524+08:00] I (1197) st77916_spi: LCD panel create success, version: 2.0.2
+[2026-09-24T11:45:35.525+08:00] I (1317) MemoriaEspVocat: Device pat detected (score: 4162) state=0
+[2026-09-24T11:45:35.649+08:00] I (1447) Display: Power management not supported
+[2026-09-24T11:45:35.710+08:00] I (1507) LcdDisplay: Turning display on
+[2026-09-24T11:45:35.711+08:00] I (1507) LcdDisplay: Initialize LVGL library
+[2026-09-24T11:45:35.711+08:00] I (1507) LcdDisplay: Use 2MB of PSRAM for image cache
+[2026-09-24T11:45:35.716+08:00] I (1507) LcdDisplay: Initialize LVGL port
+[2026-09-24T11:45:35.719+08:00] I (1507) LcdDisplay: Adding LCD display
+[2026-09-24T11:45:35.722+08:00] I (1507) LVGL: Starting LVGL task
+[2026-09-24T11:45:36.617+08:00] I (2407) Backlight: Set brightness to 80
+[2026-09-24T11:45:36.618+08:00] I (2417) StateMachine: State: unknown -> starting
+[2026-09-24T11:45:37.602+08:00] I (3397) BoxAudioCodec: Duplex channels created
+[2026-09-24T11:45:37.608+08:00] I (3407) ES8311: Work in Slave mode
+[2026-09-24T11:45:37.614+08:00] I (3407) ES7210: Work in Slave mode
+[2026-09-24T11:45:37.621+08:00] I (3417) ES7210: Enable ES7210_INPUT_MIC1
+[2026-09-24T11:45:37.624+08:00] I (3417) ES7210: Enable ES7210_INPUT_MIC2
+[2026-09-24T11:45:37.627+08:00] I (3417) ES7210: Enable ES7210_INPUT_MIC3
+[2026-09-24T11:45:37.630+08:00] I (3427) ES7210: Enable ES7210_INPUT_MIC4
+[2026-09-24T11:45:37.633+08:00] I (3427) ES7210: Enable TDM mode
+[2026-09-24T11:45:37.637+08:00] I (3427) BoxAudioCodec: BoxAudioDevice initialized
+[2026-09-24T11:45:37.638+08:00] I (3427) AudioCodec: Audio codec started
+[2026-09-24T11:45:37.641+08:00] I (3437) MCP: Add tool: self.get_device_status
+[2026-09-24T11:45:37.645+08:00] I (3437) MCP: Add tool: self.audio_speaker.set_volume
+[2026-09-24T11:45:37.649+08:00] I (3437) MCP: Add tool: self.screen.set_brightness
+[2026-09-24T11:45:37.654+08:00] I (3447) MCP: Add tool: self.screen.set_theme
+[2026-09-24T11:45:37.658+08:00] I (3447) MCP: Add tool: self.get_system_info [user]
+[2026-09-24T11:45:37.662+08:00] I (3457) MCP: Add tool: self.reboot [user]
+[2026-09-24T11:45:37.667+08:00] I (3457) MCP: Add tool: self.screen.get_info [user]
+[2026-09-24T11:45:37.671+08:00] I (3457) MCP: Add tool: self.screen.snapshot [user]
+[2026-09-24T11:45:37.676+08:00] I (3467) MCP: Add tool: self.screen.preview_image [user]
+[2026-09-24T11:45:37.682+08:00] I (3467) MCP: Add tool: self.assets.set_download_url [user]
+[2026-09-24T11:45:37.685+08:00] I (3477) WifiManager: Initializing...
+[2026-09-24T11:45:37.688+08:00] I (3477) pp: pp rom version: e7ae62f
+[2026-09-24T11:45:37.693+08:00] I (3487) net80211: net80211 rom version: e7ae62f
+[2026-09-24T11:45:37.703+08:00] I (3497) wifi:wifi driver task: 3fce849c, prio:23, stack:6656, core=0
+[2026-09-24T11:45:37.704+08:00] I (3497) wifi:wifi firmware version: 00ad238
+[2026-09-24T11:45:37.707+08:00] I (3497) wifi:wifi certification version: v7.0
+[2026-09-24T11:45:37.711+08:00] I (3497) wifi:config NVS flash: disabled
+[2026-09-24T11:45:37.715+08:00] I (3507) wifi:config nano formatting: disabled
+[2026-09-24T11:45:37.720+08:00] I (3507) wifi:Init data frame dynamic rx buffer num: 6
+[2026-09-24T11:45:37.724+08:00] I (3517) wifi:Init dynamic rx mgmt buffer num: 5
+[2026-09-24T11:45:37.728+08:00] I (3517) wifi:Init management short buffer num: 32
+[2026-09-24T11:45:37.733+08:00] I (3527) wifi:Init dynamic tx buffer num: 32
+[2026-09-24T11:45:37.737+08:00] I (3527) wifi:Init static tx FG buffer num: 2
+[2026-09-24T11:45:37.741+08:00] I (3527) wifi:Init static rx buffer size: 1600
+[2026-09-24T11:45:37.746+08:00] I (3537) wifi:Init static rx buffer num: 3
+[2026-09-24T11:45:37.748+08:00] I (3537) wifi:Init dynamic rx buffer num: 6
+[2026-09-24T11:45:37.751+08:00] I (3547) wifi_init: rx ba win: 3
+[2026-09-24T11:45:37.754+08:00] I (3547) wifi_init: accept mbox: 6
+[2026-09-24T11:45:37.758+08:00] I (3547) wifi_init: tcpip mbox: 16
+[2026-09-24T11:45:37.760+08:00] I (3557) wifi_init: udp mbox: 6
+[2026-09-24T11:45:37.763+08:00] I (3557) wifi_init: tcp mbox: 6
+[2026-09-24T11:45:37.766+08:00] I (3557) wifi_init: tcp tx win: 5760
+[2026-09-24T11:45:37.770+08:00] I (3557) wifi_init: tcp rx win: 5760
+[2026-09-24T11:45:37.773+08:00] I (3567) wifi_init: tcp mss: 1440
+[2026-09-24T11:45:37.780+08:00] I (3567) WifiManager: Initialized
+[2026-09-24T11:45:37.781+08:00] I (3577) WifiBoard: Starting WiFi connection attempt
+[2026-09-24T11:45:37.784+08:00] I (3577) WifiManager: Starting station
+[2026-09-24T11:45:37.789+08:00] I (3577) WifiStation: Station DHCP hostname: Memoria-832C
+[2026-09-24T11:45:37.795+08:00] I (3587) phy_init: phy_version 712,87e8c20e,Apr 13 2026,18:51:10
+[2026-09-24T11:45:37.827+08:00] I (3617) wifi:mode : sta (90:e5:b1:d7:83:2c)
+[2026-09-24T11:45:37.827+08:00] I (3617) wifi:enable tsf
+[2026-09-24T11:45:37.829+08:00] I (3627) WifiBoard: WiFi scanning
+[2026-09-24T11:45:40.236+08:00] I (6027) WifiStation: Found AP: 915, BSSID: 40:54:93:c2:58:1a, RSSI: -38, Channel: 11, Authmode: 3
+[2026-09-24T11:45:40.243+08:00] I (6027) WifiStation: Found AP: 915, BSSID: 40:54:93:b5:0b:61, RSSI: -40, Channel: 11, Authmode: 3
+[2026-09-24T11:45:40.251+08:00] I (6037) WifiStation: Found AP: 915, BSSID: 40:54:93:c2:66:d2, RSSI: -41, Channel: 11, Authmode: 3
+[2026-09-24T11:45:40.254+08:00] I (6047) WifiBoard: WiFi connecting to 915
+[2026-09-24T11:45:40.263+08:00] W (6047) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
+[2026-09-24T11:45:40.650+08:00] I (6447) MemoriaEspVocat: Charging state changed: DISCHARGING
+[2026-09-24T11:45:42.719+08:00] I (8517) wifi:new:<11,0>, old:<1,0>, ap:<255,255>, sta:<11,0>, prof:1, snd_ch_cfg:0x0
+[2026-09-24T11:45:42.720+08:00] I (8517) wifi:state: init -> auth (0xb0)
+[2026-09-24T11:45:42.723+08:00] I (8517) wifi:state: auth -> assoc (0x0)
+[2026-09-24T11:45:42.729+08:00] I (8527) wifi:state: assoc -> run (0x10)
+[2026-09-24T11:45:42.767+08:00] I (8557) wifi:connected with 915, aid = 20, channel 11, BW20, bssid = 40:54:93:c2:58:1a
+[2026-09-24T11:45:42.772+08:00] I (8557) wifi:security: WPA2-PSK, phy: bgn, rssi: -38, cipher(pairwise:0x3, group:0x3), pmf:0
+[2026-09-24T11:45:42.774+08:00] I (8567) wifi:pm start, type: 1
+[2026-09-24T11:45:42.774+08:00] 
+[2026-09-24T11:45:42.783+08:00] I (8567) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us
+[2026-09-24T11:45:42.791+08:00] I (8577) wifi:set rx beacon pti, rx_bcn_pti: 14, bcn_timeout: 25000, mt_pti: 14, mt_time: 10000
+[2026-09-24T11:45:42.797+08:00] I (8587) wifi:AP's beacon interval = 102400 us, DTIM period = 1
+[2026-09-24T11:45:42.804+08:00] I (8597) wifi:<ba-add>idx:0 (ifx:0, 40:54:93:c2:58:1a), tid:0, ssn:2, winSize:64
+[2026-09-24T11:45:44.089+08:00] I (9887) esp_netif_handlers: sta ip: 192.168.8.142, mask: 255.255.255.0, gw: 192.168.8.1
+[2026-09-24T11:45:44.089+08:00] I (9887) WifiStation: Got IP: 192.168.8.142
+[2026-09-24T11:45:44.092+08:00] I (9887) WifiBoard: Connected to WiFi: 915
+[2026-09-24T11:45:44.097+08:00] I (9887) Application: Network connected
+[2026-09-24T11:45:44.101+08:00] I (9887) StateMachine: State: starting -> activating
+[2026-09-24T11:45:44.105+08:00] I (9897) Assets: The storage free size is 13248 KB
+[2026-09-24T11:45:44.110+08:00] I (9897) Assets: The partition size is 8192 KB
+[2026-09-24T11:45:44.416+08:00] I (10207) Assets: The checksum calculation time is 305 ms
+[2026-09-24T11:45:44.418+08:00] I (10217) MODEL_LOADER: Successfully load srmodels
+[2026-09-24T11:45:44.423+08:00] I (10217) Assets: Refreshing display theme...
+[2026-09-24T11:45:44.429+08:00] I (10227) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T11:45:45.251+08:00] I (11047) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=750
+[2026-09-24T11:45:45.342+08:00] I (11137) HttpClient: HTTP connection closed
+[2026-09-24T11:45:45.364+08:00] I (11157) MemoriaActivation: Activation Manifest verified, version=3
+[2026-09-24T11:45:45.364+08:00] I (11157) Application: Activation done
+[2026-09-24T11:45:45.367+08:00] I (11157) SystemInfo: free sram: 113243 minimal sram: 89651
+[2026-09-24T11:45:45.371+08:00] I (11157) StateMachine: State: activating -> idle
+[2026-09-24T11:45:45.378+08:00] I (11167) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+[2026-09-24T11:45:45.382+08:00] I (11177) wifi:Set ps type: 2, coexist: 0
+[2026-09-24T11:45:45.382+08:00] 
+[2026-09-24T11:45:45.385+08:00] I (11177) AfeAudioEngine: Model 0: mn6_cn
+[2026-09-24T11:45:45.389+08:00] I (11177) AfeAudioEngine: Model 1: fst
+[2026-09-24T11:45:45.395+08:00] I (11187) CustomWakeWord: Command: mo li, Text: 茉莉, Action: wake
+[2026-09-24T11:45:45.403+08:00] I (11187) CustomWakeWord: Command: mei mo li ya, Text: 梅莫里亚, Action: wake
+[2026-09-24T11:45:45.409+08:00] I (11197) CustomWakeWord: Using Memoria wake word command=mo li display=茉莉
+[2026-09-24T11:45:46.101+08:00] Build fst from commands.
+[2026-09-24T11:45:46.806+08:00] Quantized MultiNet6:rnnt_ctc_1.0, name:mn6_cn, (May 25 2026 15:51:00)
+[2026-09-24T11:45:46.811+08:00] Quantized MultiNet6 search method: 2, time out:3.0 s
+[2026-09-24T11:45:46.811+08:00] set det threshold to 0.200000
+[2026-09-24T11:45:46.816+08:00] Build fst from commands.
+[2026-09-24T11:45:46.824+08:00] 1 active speech commands:
+[2026-09-24T11:45:46.824+08:00] Command 1: mo li
+[2026-09-24T11:45:46.852+08:00] WebRtcNs_Create: self=0x3c5db654 size:23632
+[2026-09-24T11:45:46.854+08:00] I (12647) AFE: AFE Version: (1MIC_V251128)
+[2026-09-24T11:45:46.857+08:00] I (12647) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
+[2026-09-24T11:45:46.868+08:00] I (12647) AFE: AFE Pipeline: [input] -> |AEC(VOIP_HIGH_PERF, NLP_ON)| -> |NS(WebRTC)| -> |VAD(WebRTC)| -> [output]
+[2026-09-24T11:45:46.871+08:00] I (12657) AFE: AFE Version: (1MIC_V251128)
+[2026-09-24T11:45:46.880+08:00] I (12667) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
+[2026-09-24T11:45:46.887+08:00] I (12677) AFE: AFE Pipeline: [input] -> |NS(WebRTC)| -> |VAD(WebRTC)| -> [output]
+[2026-09-24T11:45:46.896+08:00] I (12677) AfeAudioEngine: Initialized FD AFE, detector: MultiNet, NS: webrtc, feed: 256, fetch: 512
+[2026-09-24T11:45:46.905+08:00] I (12687) I2S_IF: Paired data: 0x3fcdb2f8, current mode: playback, paired in_enable: 0, paired out_enable: 0
+[2026-09-24T11:45:46.914+08:00] I (12697) I2S_IF: STD: TX, data_bit: 16, slot_bit: 16, ws_width: 16, slot_mode: MONO, slot_mask: 0x1
+[2026-09-24T11:45:46.921+08:00] I (12707) I2S_IF: STD: TX, sample_rate_hz: 24000, mclk_multiple: 256, clk_src: 6
+[2026-09-24T11:45:46.937+08:00] I (12727) Adev_Codec: Open codec device OK
+[2026-09-24T11:45:46.937+08:00] I (12727) AudioCodec: Set output enable to true
+[2026-09-24T11:45:46.945+08:00] I (12737) I2S_IF: Peer mode playback need extend bits 32 to 64
+[2026-09-24T11:45:46.946+08:00] I (12737) AudioService: Resampling audio from 16000 to 24000
+[2026-09-24T11:45:46.954+08:00] I (12737) I2S_IF: TDM: RX, data_bit: 16, slot_bit: 16, ws_width: 32, total_slot: 4, slot_mask: 0x3
+[2026-09-24T11:45:46.961+08:00] I (12747) I2S_IF: TDM: RX, sample_rate_hz: 24000, mclk_multiple: 256, clk_src: 6
+[2026-09-24T11:45:46.970+08:00] I (12757) I2S_IF: STD: TX, data_bit: 16, slot_bit: 32, ws_width: 32, slot_mode: MONO, slot_mask: 0x1
+[2026-09-24T11:45:46.979+08:00] I (12767) I2S_IF: STD: TX, sample_rate_hz: 24000, mclk_multiple: 256, clk_src: 6
+[2026-09-24T11:45:46.983+08:00] E (12767) BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT
+[2026-09-24T11:45:46.985+08:00] I (12767) ES7210: Bits 16
+[2026-09-24T11:45:46.992+08:00] I (12787) ES7210: Enable ES7210_INPUT_MIC1
+[2026-09-24T11:45:46.995+08:00] I (12787) ES7210: Enable ES7210_INPUT_MIC2
+[2026-09-24T11:45:46.999+08:00] I (12797) ES7210: Enable ES7210_INPUT_MIC3
+[2026-09-24T11:45:47.001+08:00] I (12797) ES7210: Enable ES7210_INPUT_MIC4
+[2026-09-24T11:45:47.005+08:00] I (12797) ES7210: Enable TDM mode
+[2026-09-24T11:45:47.014+08:00] I (12807) ES7210: Unmuted
+[2026-09-24T11:45:47.014+08:00] I (12807) Adev_Codec: Open codec device OK
+[2026-09-24T11:45:47.014+08:00] I (12807) AudioCodec: Set input enable to true
+[2026-09-24T11:45:55.648+08:00] I (21447) SystemInfo: free sram: 79663 minimal sram: 71615
+[2026-09-24T11:46:05.646+08:00] I (31437) SystemInfo: free sram: 80819 minimal sram: 71615
+[2026-09-24T11:46:15.647+08:00] I (41437) SystemInfo: free sram: 80627 minimal sram: 71615
+[2026-09-24T11:46:25.647+08:00] I (51437) SystemInfo: free sram: 80627 minimal sram: 71615
+[2026-09-24T11:46:35.647+08:00] I (61437) SystemInfo: free sram: 80587 minimal sram: 71615
+[2026-09-24T11:46:45.647+08:00] I (71437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:46:45.875+08:00] I (71667) MemoriaEspVocat: Charging state changed: CHARGING
+[2026-09-24T11:46:55.647+08:00] I (81437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:47:05.649+08:00] I (91437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:47:15.650+08:00] I (101437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:47:25.650+08:00] I (111437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:47:35.650+08:00] I (121437) SystemInfo: free sram: 80619 minimal sram: 71615
+[2026-09-24T11:47:45.654+08:00] I (131447) SystemInfo: free sram: 80835 minimal sram: 71615
+[2026-09-24T11:47:55.651+08:00] I (141437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:05.651+08:00] I (151437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:15.651+08:00] I (161437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:25.651+08:00] I (171437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:35.651+08:00] I (181437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:45.651+08:00] I (191437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:48:55.651+08:00] I (201437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:49:05.651+08:00] I (211437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:49:15.652+08:00] I (221437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:49:25.652+08:00] I (231437) SystemInfo: free sram: 80643 minimal sram: 71615
+[2026-09-24T11:49:35.652+08:00] I (241437) SystemInfo: free sram: 80611 minimal sram: 71615
+[2026-09-24T11:49:45.082+08:00] I (250867) CustomWakeWord: Custom wake word detected: command_id=1, string= mo li, prob=0.274782
+[2026-09-24T11:49:45.085+08:00] I (250867) Application: Wake word detected: 茉莉 (state: 3)
+[2026-09-24T11:49:45.089+08:00] I (250877) StateMachine: State: idle -> connecting
+[2026-09-24T11:49:45.095+08:00] I (250877) CustomWakeWord: Encode wake word opus 0 packets in 0 ms
+[2026-09-24T11:49:45.102+08:00] I (250877) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T11:49:45.105+08:00] I (250887) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T11:49:45.105+08:00] 
+[2026-09-24T11:49:45.729+08:00] I (251517) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=620
+[2026-09-24T11:49:45.761+08:00] I (251547) HttpClient: HTTP connection closed
+[2026-09-24T11:49:46.391+08:00] I (252177) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=620
+[2026-09-24T11:49:46.589+08:00] I (252377) HttpClient: HTTP connection closed
+[2026-09-24T11:49:46.590+08:00] I (252377) MemoriaProtocol: Media session negotiated protocol v2
+[2026-09-24T11:49:47.285+08:00] I (253067) WebSocket: WebSocket handshake done, cost=690 tcp=620 handshake=70
+[2026-09-24T11:49:47.310+08:00] I (253097) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T11:49:47.318+08:00] I (253097) MemoriaProtocol: applying device settings version=22 profile=435 wake_word=mo_li command=mo li audio_mode=interrupt_assist
+[2026-09-24T11:49:47.322+08:00] I (253107) AudioCodec: Set output volume to 40
+[2026-09-24T11:49:47.329+08:00] I (253107) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T11:49:47.332+08:00] I (253117) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T11:49:47.332+08:00] 
+[2026-09-24T11:49:47.337+08:00] I (253117) Application: Wake word detected: 茉莉
+[2026-09-24T11:49:47.342+08:00] I (253127) StateMachine: State: connecting -> listening
+[2026-09-24T11:49:48.063+08:00] I (253847) MemoriaProtocol: Device VAD start at sample=0 rms=0.0000
+[2026-09-24T11:49:48.596+08:00] I (254387) MemoriaProtocol: Device VAD end at sample=8640 rms=0.0005
+[2026-09-24T11:49:49.122+08:00] I (254907) MemoriaProtocol: First playable downlink frame generation=1 seq=0
+[2026-09-24T11:49:49.122+08:00] I (254907) StateMachine: State: listening -> speaking
+[2026-09-24T11:49:51.430+08:00] I (257187) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=1 close=channel_flush output_frames=110 first_output=yes first_output_latency_ms=328 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=1209 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=587
+[2026-09-24T11:49:51.433+08:00] I (257217) StateMachine: State: speaking -> listening
+[2026-09-24T11:49:56.717+08:00] I (262507) MemoriaProtocol: First playable downlink frame generation=2 seq=0
+[2026-09-24T11:49:56.718+08:00] I (262507) StateMachine: State: listening -> speaking
+[2026-09-24T11:49:59.461+08:00] I (265217) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=2 close=channel_flush output_frames=133 first_output=yes first_output_latency_ms=327 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=5294 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=721
+[2026-09-24T11:49:59.463+08:00] I (265247) StateMachine: State: speaking -> listening
+[2026-09-24T11:50:03.376+08:00] I (269167) MemoriaProtocol: First playable downlink frame generation=3 seq=0
+[2026-09-24T11:50:03.377+08:00] I (269167) StateMachine: State: listening -> speaking
+[2026-09-24T11:50:08.783+08:00] I (274547) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=3 close=channel_flush output_frames=266 first_output=yes first_output_latency_ms=418 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=3930 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=1422
+[2026-09-24T11:50:08.787+08:00] I (274577) StateMachine: State: speaking -> listening
+[2026-09-24T11:50:11.724+08:00] I (277507) MemoriaProtocol: Device VAD start at sample=378880 rms=0.0014
+[2026-09-24T11:50:14.476+08:00] I (280267) MemoriaProtocol: Device VAD end at sample=422720 rms=0.0013
+[2026-09-24T11:50:16.946+08:00] I (282737) MemoriaProtocol: Device VAD start at sample=462080 rms=0.0008
+[2026-09-24T11:50:17.762+08:00] I (283547) MemoriaProtocol: First playable downlink frame generation=4 seq=0
+[2026-09-24T11:50:17.763+08:00] I (283547) StateMachine: State: listening -> speaking
+[2026-09-24T11:50:17.769+08:00] I (283547) MemoriaProtocol: Device VAD end at sample=475520 rms=0.0000
+[2026-09-24T11:50:24.350+08:00] I (290107) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=4 close=channel_flush output_frames=324 first_output=yes first_output_latency_ms=1319 supply_waits=1 supply_max_ms=4 supply_total_ms=4 prestart_waits=1 prestart_max_ms=8984 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=2 exact_timeouts=0 exact_polls=1541
+[2026-09-24T11:50:24.353+08:00] I (290137) StateMachine: State: speaking -> listening
+[2026-09-24T11:50:29.122+08:00] I (294907) MemoriaProtocol: Device VAD start at sample=657280 rms=0.0006
+[2026-09-24T11:50:31.825+08:00] I (297607) MemoriaProtocol: Device VAD end at sample=700160 rms=0.0003
+[2026-09-24T11:50:33.651+08:00] I (299437) SystemInfo: free sram: 73503 minimal sram: 68743
+[2026-09-24T11:50:33.809+08:00] I (299597) MemoriaProtocol: First playable downlink frame generation=5 seq=0
+[2026-09-24T11:50:33.810+08:00] I (299597) StateMachine: State: listening -> speaking
+[2026-09-24T11:50:37.931+08:00] I (303687) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=5 close=channel_flush output_frames=201 first_output=yes first_output_latency_ms=975 supply_waits=1 supply_max_ms=15 supply_total_ms=15 prestart_waits=1 prestart_max_ms=9472 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=2 exact_timeouts=0 exact_polls=962
+[2026-09-24T11:50:37.934+08:00] I (303717) StateMachine: State: speaking -> listening
+[2026-09-24T11:50:46.882+08:00] I (312667) MemoriaProtocol: Device VAD start at sample=941440 rms=0.0012
+[2026-09-24T11:50:47.652+08:00] I (313437) SystemInfo: free sram: 73503 minimal sram: 68743
+[2026-09-24T11:50:49.195+08:00] I (314977) MemoriaProtocol: Device VAD end at sample=978240 rms=0.0006
+[2026-09-24T11:50:51.648+08:00] I (317437) MemoriaProtocol: First playable downlink frame generation=6 seq=0
+[2026-09-24T11:50:51.648+08:00] I (317437) StateMachine: State: listening -> speaking
+[2026-09-24T11:50:54.986+08:00] I (320747) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=6 close=channel_flush output_frames=163 first_output=yes first_output_latency_ms=894 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=13730 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=877
+[2026-09-24T11:50:54.989+08:00] I (320777) StateMachine: State: speaking -> listening
+[2026-09-24T11:50:59.796+08:00] I (325587) MemoriaProtocol: Device VAD start at sample=1147840 rms=0.0009
+[2026-09-24T11:51:03.956+08:00] I (329747) MemoriaProtocol: Device VAD end at sample=1214400 rms=0.0008
+[2026-09-24T11:51:04.652+08:00] I (330437) SystemInfo: free sram: 73355 minimal sram: 68743
+[2026-09-24T11:51:05.489+08:00] I (331277) MemoriaProtocol: First playable downlink frame generation=7 seq=0
+[2026-09-24T11:51:05.490+08:00] I (331277) StateMachine: State: listening -> speaking
+[2026-09-24T11:51:08.101+08:00] I (333857) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=7 close=channel_flush output_frames=125 first_output=yes first_output_latency_ms=298 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=10510 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=684
+[2026-09-24T11:51:08.104+08:00] I (333887) StateMachine: State: speaking -> listening
+[2026-09-24T11:51:10.036+08:00] I (335827) MemoriaProtocol: Device VAD start at sample=1311680 rms=0.0008
+[2026-09-24T11:51:10.925+08:00] I (336707) MemoriaProtocol: Device VAD end at sample=1326080 rms=0.0007
+[2026-09-24T11:51:13.121+08:00] I (338907) MemoriaProtocol: Device VAD start at sample=1361280 rms=0.0006
+[2026-09-24T11:51:14.720+08:00] I (340507) MemoriaProtocol: Device VAD end at sample=1386880 rms=0.0009
+[2026-09-24T11:51:15.086+08:00] I (340867) MemoriaProtocol: Device VAD start at sample=1392640 rms=0.0051
+[2026-09-24T11:51:17.556+08:00] I (343347) MemoriaProtocol: Device VAD end at sample=1432000 rms=0.0004
+[2026-09-24T11:51:17.652+08:00] I (343437) SystemInfo: free sram: 74019 minimal sram: 68743
+[2026-09-24T11:51:18.666+08:00] I (344427) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=8 close=channel_flush output_frames=0 first_output=no first_output_latency_ms=-1 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=0 prestart_max_ms=0 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=0 exact_timeouts=0 exact_polls=0
+[2026-09-24T11:51:18.672+08:00] I (344447) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+[2026-09-24T11:51:18.675+08:00] I (344457) wifi:Set ps type: 2, coexist: 0
+[2026-09-24T11:51:18.675+08:00] 
+[2026-09-24T11:51:18.680+08:00] I (344467) StateMachine: State: listening -> idle
+[2026-09-24T11:51:28.652+08:00] I (354437) SystemInfo: free sram: 73959 minimal sram: 68743
+[2026-09-24T11:51:38.652+08:00] I (364437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:51:48.652+08:00] I (374437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:51:58.652+08:00] I (384437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:08.652+08:00] I (394437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:18.653+08:00] I (404437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:28.653+08:00] I (414437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:38.653+08:00] I (424437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:48.652+08:00] I (434437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:52:58.653+08:00] I (444437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:53:08.653+08:00] I (454437) SystemInfo: free sram: 73931 minimal sram: 68743
+[2026-09-24T11:53:18.653+08:00] I (464437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:53:28.653+08:00] I (474437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:53:38.653+08:00] I (484437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:53:48.653+08:00] I (494437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:53:58.654+08:00] I (504437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:08.653+08:00] I (514437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:18.653+08:00] I (524437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:28.653+08:00] I (534437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:38.653+08:00] I (544437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:48.654+08:00] I (554437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:54:58.654+08:00] I (564437) SystemInfo: free sram: 73931 minimal sram: 68743
+[2026-09-24T11:55:08.653+08:00] I (574437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:55:18.653+08:00] I (584437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:55:28.654+08:00] I (594437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:55:38.654+08:00] I (604437) SystemInfo: free sram: 73963 minimal sram: 68743
+[2026-09-24T11:55:48.654+08:00] I (614437) SystemInfo: free sram: 73987 minimal sram: 68743
+[2026-09-24T11:55:58.655+08:00] I (624437) SystemInfo: free sram: 73987 minimal sram: 68743
+[2026-09-24T11:56:08.654+08:00] I (634437) SystemInfo: free sram: 73987 minimal sram: 68743
+[2026-09-24T11:56:18.654+08:00] I (644437) SystemInfo: free sram: 73987 minimal sram: 68743
+[2026-09-24T11:56:28.654+08:00] I (654437) SystemInfo: free sram: 73987 minimal sram: 68743
+[2026-09-24T11:56:38.654+08:00] I (664437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:56:48.657+08:00] I (674437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:56:58.654+08:00] I (684437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:08.654+08:00] I (694437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:18.654+08:00] I (704437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:28.654+08:00] I (714437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:38.655+08:00] I (724437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:48.655+08:00] I (734437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:57:58.655+08:00] I (744437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:58:08.655+08:00] I (754437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:58:18.655+08:00] I (764437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:58:28.655+08:00] I (774437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:58:38.656+08:00] I (784437) SystemInfo: free sram: 73947 minimal sram: 68743
+[2026-09-24T11:58:48.655+08:00] I (794437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:58:58.656+08:00] I (804437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:08.655+08:00] I (814437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:18.655+08:00] I (824437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:28.655+08:00] I (834437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:38.655+08:00] I (844437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:48.655+08:00] I (854437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T11:59:58.655+08:00] I (864437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:08.655+08:00] I (874437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:18.656+08:00] I (884437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:28.662+08:00] I (894447) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:38.656+08:00] I (904437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:48.656+08:00] I (914437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:00:58.656+08:00] I (924437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:01:08.656+08:00] I (934437) SystemInfo: free sram: 73955 minimal sram: 68743
+[2026-09-24T12:01:18.656+08:00] I (944437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:01:28.656+08:00] I (954437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:01:38.656+08:00] I (964437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:01:48.656+08:00] I (974437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:01:58.656+08:00] I (984437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:02:08.656+08:00] I (994437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:02:18.657+08:00] I (1004437) SystemInfo: free sram: 73947 minimal sram: 68743
+[2026-09-24T12:02:28.657+08:00] I (1014437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:02:38.656+08:00] I (1024437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:02:48.656+08:00] I (1034437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:02:58.655+08:00] I (1044437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:08.655+08:00] I (1054437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:18.655+08:00] I (1064437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:28.655+08:00] I (1074437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:38.655+08:00] I (1084437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:48.655+08:00] I (1094437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:03:58.655+08:00] I (1104437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:04:08.656+08:00] I (1114437) SystemInfo: free sram: 73947 minimal sram: 68743
+[2026-09-24T12:04:18.655+08:00] I (1124437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:04:28.655+08:00] I (1134437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:04:38.655+08:00] I (1144437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:04:48.655+08:00] I (1154437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:04:58.655+08:00] I (1164437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:08.655+08:00] I (1174437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:14.670+08:00] E (1180457) BMI2_ESP32: I2C read reg 0x03 len 24 failed: ESP_ERR_TIMEOUT
+[2026-09-24T12:05:18.655+08:00] I (1184437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:28.656+08:00] I (1194437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:38.656+08:00] I (1204437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:48.655+08:00] I (1214437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:05:58.657+08:00] I (1224437) SystemInfo: free sram: 73947 minimal sram: 68743
+[2026-09-24T12:06:08.656+08:00] I (1234437) SystemInfo: free sram: 73955 minimal sram: 68743
+[2026-09-24T12:06:18.656+08:00] I (1244437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:06:28.656+08:00] I (1254437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:06:38.656+08:00] I (1264437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:06:48.656+08:00] I (1274437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:06:58.656+08:00] I (1284437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:07:08.656+08:00] I (1294437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:07:18.656+08:00] I (1304437) SystemInfo: free sram: 73991 minimal sram: 68743
+[2026-09-24T12:07:22.103+08:00] I (1307887) CustomWakeWord: Custom wake word detected: command_id=1, string= mo li, prob=0.209726
+[2026-09-24T12:07:22.110+08:00] I (1307887) Application: Wake word detected: 茉莉 (state: 3)
+[2026-09-24T12:07:22.111+08:00] I (1307897) StateMachine: State: idle -> connecting
+[2026-09-24T12:07:22.117+08:00] I (1307897) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:07:22.123+08:00] I (1307897) CustomWakeWord: Encode wake word opus 0 packets in 1 ms
+[2026-09-24T12:07:22.126+08:00] I (1307897) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:07:22.126+08:00] 
+[2026-09-24T12:07:22.132+08:00] E (1307917) Dynamic Impl: mbedtls_ssl_fetch_input error=76
+[2026-09-24T12:07:22.136+08:00] E (1307917) esp-tls-mbedtls: read error :-0x004C
+[2026-09-24T12:07:22.140+08:00] E (1307917) EspSsl: SSL receive failed: -76
+[2026-09-24T12:07:22.147+08:00] W (1307927) MemoriaProtocol: Device WebSocket disconnected attempt=1 tcp_error=0
+[2026-09-24T12:07:22.807+08:00] I (1308587) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=660
+[2026-09-24T12:07:22.870+08:00] I (1308657) HttpClient: HTTP connection closed
+[2026-09-24T12:07:23.504+08:00] I (1309287) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=630
+[2026-09-24T12:07:23.652+08:00] I (1309437) HttpClient: HTTP connection closed
+[2026-09-24T12:07:23.653+08:00] I (1309437) MemoriaProtocol: Media session negotiated protocol v2
+[2026-09-24T12:07:24.334+08:00] I (1310117) WebSocket: WebSocket handshake done, cost=680 tcp=600 handshake=80
+[2026-09-24T12:07:24.358+08:00] I (1310137) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T12:07:24.366+08:00] I (1310137) MemoriaProtocol: applying device settings version=22 profile=436 wake_word=mo_li command=mo li audio_mode=interrupt_assist
+[2026-09-24T12:07:24.370+08:00] I (1310147) AudioCodec: Set output volume to 40
+[2026-09-24T12:07:24.377+08:00] I (1310157) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:07:24.381+08:00] I (1310157) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:07:24.381+08:00] 
+[2026-09-24T12:07:24.385+08:00] I (1310167) Application: Wake word detected: 茉莉
+[2026-09-24T12:07:24.391+08:00] I (1310167) StateMachine: State: connecting -> listening
+[2026-09-24T12:07:25.109+08:00] I (1310187) AudioService: Resampling audio from 16000 to 24000
+[2026-09-24T12:07:25.110+08:00] I (1310887) MemoriaProtocol: Device VAD start at sample=0 rms=0.0005
+[2026-09-24T12:07:26.129+08:00] I (1311907) MemoriaProtocol: Device VAD end at sample=16640 rms=0.0004
+[2026-09-24T12:07:26.243+08:00] I (1312027) MemoriaProtocol: First playable downlink frame generation=1 seq=0
+[2026-09-24T12:07:26.243+08:00] I (1312027) StateMachine: State: listening -> speaking
+[2026-09-24T12:07:28.525+08:00] I (1314277) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=1 close=channel_flush output_frames=110 first_output=yes first_output_latency_ms=359 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=1285 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=578
+[2026-09-24T12:07:28.528+08:00] I (1314307) StateMachine: State: speaking -> listening
+[2026-09-24T12:07:29.890+08:00] I (1315667) MemoriaProtocol: Device VAD start at sample=76800 rms=0.0012
+[2026-09-24T12:07:32.050+08:00] I (1317837) MemoriaProtocol: Device VAD end at sample=111360 rms=0.0007
+[2026-09-24T12:07:32.470+08:00] I (1318257) MemoriaProtocol: Device VAD start at sample=118080 rms=0.0010
+[2026-09-24T12:07:33.359+08:00] I (1319137) MemoriaProtocol: Device VAD end at sample=132480 rms=0.0005
+[2026-09-24T12:07:34.244+08:00] I (1320027) MemoriaProtocol: First playable downlink frame generation=2 seq=0
+[2026-09-24T12:07:34.245+08:00] I (1320027) StateMachine: State: listening -> speaking
+[2026-09-24T12:07:38.669+08:00] I (1324417) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=2 close=channel_flush output_frames=219 first_output=yes first_output_latency_ms=388 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=5726 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=897
+[2026-09-24T12:07:38.675+08:00] I (1324457) StateMachine: State: speaking -> listening
+[2026-09-24T12:07:44.661+08:00] I (1330447) MemoriaProtocol: Device VAD start at sample=313280 rms=0.0012
+[2026-09-24T12:07:47.009+08:00] I (1332787) MemoriaProtocol: Device VAD end at sample=350720 rms=0.0003
+[2026-09-24T12:07:48.240+08:00] I (1334017) MemoriaProtocol: Device VAD start at sample=370560 rms=0.0007
+[2026-09-24T12:07:48.656+08:00] I (1334437) SystemInfo: free sram: 74647 minimal sram: 68623
+[2026-09-24T12:07:49.652+08:00] I (1335437) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+[2026-09-24T12:07:49.653+08:00] I (1335437) wifi:Set ps type: 2, coexist: 0
+[2026-09-24T12:07:49.653+08:00] 
+[2026-09-24T12:07:49.657+08:00] I (1335437) StateMachine: State: listening -> idle
+[2026-09-24T12:07:59.656+08:00] I (1345437) SystemInfo: free sram: 74583 minimal sram: 68623
+[2026-09-24T12:08:09.656+08:00] I (1355437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:08:19.656+08:00] I (1365437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:08:29.656+08:00] I (1375437) SystemInfo: free sram: 74559 minimal sram: 68623
+[2026-09-24T12:08:39.657+08:00] I (1385437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:08:49.657+08:00] I (1395437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:08:59.658+08:00] I (1405437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:09:09.656+08:00] I (1415437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:09:19.656+08:00] I (1425437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:09:29.658+08:00] I (1435437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:09:39.660+08:00] I (1445437) SystemInfo: free sram: 73631 minimal sram: 68623
+[2026-09-24T12:09:49.656+08:00] I (1455437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:09:59.657+08:00] I (1465437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:10:09.657+08:00] I (1475437) SystemInfo: free sram: 74595 minimal sram: 68623
+[2026-09-24T12:10:15.905+08:00] I (1481687) MemoriaEspVocat: Device pat detected (score: 3270) state=3
+[2026-09-24T12:10:15.905+08:00] I (1481687) MemoriaFaceDisplay: emotion=surprised open_eyes=1
+[2026-09-24T12:10:17.240+08:00] W (1483017) AFE: Ringbuffer of AFE(FEED) is full, Please use fetch() to read data to avoid data loss or overwriting
+[2026-09-24T12:10:18.139+08:00] I (1483917) CustomWakeWord: Custom wake word detected: command_id=1, string= mo li, prob=0.251798
+[2026-09-24T12:10:18.147+08:00] I (1483927) Application: Wake word detected: 茉莉 (state: 3)
+[2026-09-24T12:10:18.147+08:00] I (1483927) StateMachine: State: idle -> connecting
+[2026-09-24T12:10:18.153+08:00] I (1483927) CustomWakeWord: Encode wake word opus 0 packets in 1 ms
+[2026-09-24T12:10:18.185+08:00] I (1483967) MemoriaFaceDisplay: emotion=neutral open_eyes=0
+[2026-09-24T12:10:19.108+08:00] I (1484887) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:10:19.108+08:00] I (1484887) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:10:19.109+08:00] 
+[2026-09-24T12:10:19.112+08:00] E (1484897) Dynamic Impl: mbedtls_ssl_fetch_input error=76
+[2026-09-24T12:10:19.117+08:00] E (1484897) esp-tls-mbedtls: read error :-0x004C
+[2026-09-24T12:10:19.121+08:00] E (1484897) EspSsl: SSL receive failed: -76
+[2026-09-24T12:10:19.128+08:00] W (1484907) MemoriaProtocol: Device WebSocket disconnected attempt=3 tcp_error=0
+[2026-09-24T12:10:19.741+08:00] I (1485527) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=620
+[2026-09-24T12:10:19.771+08:00] I (1485557) HttpClient: HTTP connection closed
+[2026-09-24T12:10:20.386+08:00] I (1486167) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=610
+[2026-09-24T12:10:20.530+08:00] I (1486307) HttpClient: HTTP connection closed
+[2026-09-24T12:10:20.530+08:00] I (1486307) MemoriaProtocol: Media session negotiated protocol v2
+[2026-09-24T12:10:21.229+08:00] I (1487007) WebSocket: WebSocket handshake done, cost=690 tcp=610 handshake=80
+[2026-09-24T12:10:21.253+08:00] I (1487037) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T12:10:21.261+08:00] I (1487037) MemoriaProtocol: applying device settings version=22 profile=437 wake_word=mo_li command=mo li audio_mode=interrupt_assist
+[2026-09-24T12:10:21.265+08:00] I (1487047) AudioCodec: Set output volume to 40
+[2026-09-24T12:10:21.272+08:00] I (1487047) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:10:21.276+08:00] I (1487057) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:10:21.276+08:00] 
+[2026-09-24T12:10:21.280+08:00] I (1487057) Application: Wake word detected: 茉莉
+[2026-09-24T12:10:21.286+08:00] I (1487067) StateMachine: State: connecting -> listening
+[2026-09-24T12:10:21.991+08:00] I (1487077) AudioService: Resampling audio from 16000 to 24000
+[2026-09-24T12:10:21.992+08:00] I (1487777) MemoriaProtocol: Device VAD start at sample=0 rms=0.0008
+[2026-09-24T12:10:22.991+08:00] I (1488777) MemoriaProtocol: Device VAD end at sample=16320 rms=0.0005
+[2026-09-24T12:10:23.019+08:00] I (1488797) MemoriaProtocol: First playable downlink frame generation=1 seq=0
+[2026-09-24T12:10:23.020+08:00] I (1488797) StateMachine: State: listening -> speaking
+[2026-09-24T12:10:25.926+08:00] I (1491677) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=1 close=channel_flush output_frames=139 first_output=yes first_output_latency_ms=310 supply_waits=1 supply_max_ms=4 supply_total_ms=4 prestart_waits=1 prestart_max_ms=1193 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=2 exact_timeouts=0 exact_polls=859
+[2026-09-24T12:10:25.929+08:00] I (1491707) StateMachine: State: speaking -> listening
+[2026-09-24T12:10:27.850+08:00] I (1493627) MemoriaProtocol: Device VAD start at sample=94080 rms=0.0010
+[2026-09-24T12:10:30.352+08:00] I (1496137) MemoriaProtocol: Device VAD end at sample=134080 rms=0.0002
+[2026-09-24T12:10:34.787+08:00] I (1500567) MemoriaProtocol: First playable downlink frame generation=2 seq=0
+[2026-09-24T12:10:34.787+08:00] I (1500567) StateMachine: State: listening -> speaking
+[2026-09-24T12:10:35.980+08:00] I (1501727) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=2 close=channel_flush output_frames=55 first_output=yes first_output_latency_ms=1066 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=8893 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=337
+[2026-09-24T12:10:35.982+08:00] I (1501767) StateMachine: State: speaking -> listening
+[2026-09-24T12:10:38.380+08:00] I (1504157) MemoriaProtocol: Device VAD start at sample=262400 rms=0.0170
+[2026-09-24T12:10:38.935+08:00] I (1504717) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+[2026-09-24T12:10:38.936+08:00] I (1504717) wifi:Set ps type: 2, coexist: 0
+[2026-09-24T12:10:38.936+08:00] 
+[2026-09-24T12:10:38.939+08:00] I (1504717) StateMachine: State: listening -> idle
+[2026-09-24T12:10:40.767+08:00] I (1506547) MemoriaEspVocat: Device pat detected (score: 3679) state=3
+[2026-09-24T12:10:40.768+08:00] I (1506547) MemoriaFaceDisplay: emotion=surprised open_eyes=1
+[2026-09-24T12:10:43.613+08:00] I (1509397) MemoriaFaceDisplay: emotion=neutral open_eyes=0
+[2026-09-24T12:10:48.657+08:00] I (1514437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:10:58.657+08:00] I (1524437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:11:08.657+08:00] I (1534437) SystemInfo: free sram: 73515 minimal sram: 68507
+[2026-09-24T12:11:18.657+08:00] I (1544437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:11:28.657+08:00] I (1554437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:11:38.657+08:00] I (1564437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:11:48.657+08:00] I (1574437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:11:58.657+08:00] I (1584437) SystemInfo: free sram: 73559 minimal sram: 68507
+[2026-09-24T12:12:08.657+08:00] I (1594437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:12:18.658+08:00] I (1604437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:12:28.661+08:00] I (1614447) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:12:38.658+08:00] I (1624437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:12:48.657+08:00] I (1634437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:12:58.658+08:00] I (1644437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:08.657+08:00] I (1654437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:18.658+08:00] I (1664437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:28.658+08:00] I (1674437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:38.658+08:00] I (1684437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:48.658+08:00] I (1694437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:13:58.659+08:00] I (1704437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:14:08.658+08:00] I (1714437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:14:18.659+08:00] I (1724437) SystemInfo: free sram: 73739 minimal sram: 68507
+[2026-09-24T12:14:28.658+08:00] I (1734437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:14:38.658+08:00] I (1744437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:14:48.658+08:00] I (1754437) SystemInfo: free sram: 73771 minimal sram: 68507
+[2026-09-24T12:14:52.222+08:00] I (1757997) CustomWakeWord: Custom wake word detected: command_id=1, string= mo li, prob=0.269811
+[2026-09-24T12:14:52.227+08:00] I (1757997) Application: Wake word detected: 茉莉 (state: 3)
+[2026-09-24T12:14:52.227+08:00] I (1758007) StateMachine: State: idle -> connecting
+[2026-09-24T12:14:52.233+08:00] I (1758007) CustomWakeWord: Encode wake word opus 0 packets in 1 ms
+[2026-09-24T12:14:52.239+08:00] I (1758007) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:14:52.243+08:00] I (1758017) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:14:52.244+08:00] 
+[2026-09-24T12:14:52.249+08:00] E (1758027) Dynamic Impl: mbedtls_ssl_fetch_input error=76
+[2026-09-24T12:14:52.253+08:00] E (1758027) esp-tls-mbedtls: read error :-0x004C
+[2026-09-24T12:14:52.257+08:00] E (1758037) EspSsl: SSL receive failed: -76
+[2026-09-24T12:14:52.264+08:00] W (1758037) MemoriaProtocol: Device WebSocket disconnected attempt=5 tcp_error=0
+[2026-09-24T12:14:52.883+08:00] I (1758667) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=620
+[2026-09-24T12:14:52.913+08:00] I (1758697) HttpClient: HTTP connection closed
+[2026-09-24T12:14:53.545+08:00] I (1759327) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=630
+[2026-09-24T12:14:53.696+08:00] I (1759477) HttpClient: HTTP connection closed
+[2026-09-24T12:14:53.697+08:00] I (1759477) MemoriaProtocol: Media session negotiated protocol v2
+[2026-09-24T12:14:54.398+08:00] I (1760177) WebSocket: WebSocket handshake done, cost=700 tcp=620 handshake=80
+[2026-09-24T12:14:54.419+08:00] I (1760197) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T12:14:54.428+08:00] I (1760197) MemoriaProtocol: applying device settings version=22 profile=438 wake_word=mo_li command=mo li audio_mode=interrupt_assist
+[2026-09-24T12:14:54.432+08:00] I (1760207) AudioCodec: Set output volume to 40
+[2026-09-24T12:14:54.438+08:00] I (1760217) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:14:54.442+08:00] I (1760217) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:14:54.442+08:00] 
+[2026-09-24T12:14:54.447+08:00] I (1760227) Application: Wake word detected: 茉莉
+[2026-09-24T12:14:54.453+08:00] I (1760227) StateMachine: State: connecting -> listening
+[2026-09-24T12:14:55.172+08:00] I (1760237) AudioService: Resampling audio from 16000 to 24000
+[2026-09-24T12:14:55.172+08:00] I (1760947) MemoriaProtocol: Device VAD start at sample=0 rms=0.0008
+[2026-09-24T12:14:55.862+08:00] I (1761647) MemoriaProtocol: Device VAD end at sample=11200 rms=0.0007
+[2026-09-24T12:14:56.310+08:00] I (1762087) MemoriaProtocol: First playable downlink frame generation=1 seq=0
+[2026-09-24T12:14:56.311+08:00] I (1762087) StateMachine: State: listening -> speaking
+[2026-09-24T12:14:57.207+08:00] I (1762957) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=1 close=channel_flush output_frames=38 first_output=yes first_output_latency_ms=375 supply_waits=1 supply_max_ms=36 supply_total_ms=36 prestart_waits=1 prestart_max_ms=1303 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=2 exact_timeouts=0 exact_polls=240
+[2026-09-24T12:14:57.210+08:00] I (1762987) StateMachine: State: speaking -> listening
+[2026-09-24T12:15:03.381+08:00] I (1769157) MemoriaProtocol: First playable downlink frame generation=2 seq=0
+[2026-09-24T12:15:03.382+08:00] I (1769157) StateMachine: State: listening -> speaking
+[2026-09-24T12:15:04.408+08:00] I (1770157) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=2 close=channel_flush output_frames=47 first_output=yes first_output_latency_ms=804 supply_waits=0 supply_max_ms=0 supply_total_ms=0 prestart_waits=1 prestart_max_ms=6209 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=1 exact_timeouts=0 exact_polls=291
+[2026-09-24T12:15:04.410+08:00] I (1770187) StateMachine: State: speaking -> listening
+[2026-09-24T12:15:05.910+08:00] I (1771687) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+[2026-09-24T12:15:05.911+08:00] I (1771687) wifi:Set ps type: 2, coexist: 0
+[2026-09-24T12:15:05.911+08:00] 
+[2026-09-24T12:15:05.914+08:00] I (1771687) StateMachine: State: listening -> idle
+[2026-09-24T12:15:10.871+08:00] I (1776647) CustomWakeWord: Custom wake word detected: command_id=1, string= mo li, prob=0.235099
+[2026-09-24T12:15:10.878+08:00] I (1776657) Application: Wake word detected: 茉莉 (state: 3)
+[2026-09-24T12:15:10.879+08:00] I (1776657) StateMachine: State: idle -> connecting
+[2026-09-24T12:15:10.885+08:00] I (1776657) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:15:10.891+08:00] I (1776657) CustomWakeWord: Encode wake word opus 0 packets in 1 ms
+[2026-09-24T12:15:10.894+08:00] I (1776667) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:15:10.895+08:00] 
+[2026-09-24T12:15:10.900+08:00] E (1776677) Dynamic Impl: mbedtls_ssl_fetch_input error=76
+[2026-09-24T12:15:10.904+08:00] E (1776677) esp-tls-mbedtls: read error :-0x004C
+[2026-09-24T12:15:10.909+08:00] E (1776687) EspSsl: SSL receive failed: -76
+[2026-09-24T12:15:10.917+08:00] W (1776687) MemoriaProtocol: Device WebSocket disconnected attempt=7 tcp_error=0
+[2026-09-24T12:15:11.532+08:00] I (1777307) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=610
+[2026-09-24T12:15:11.567+08:00] I (1777347) HttpClient: HTTP connection closed
+[2026-09-24T12:15:12.196+08:00] I (1777977) HttpClient: Established new connection to aigcnice.com:8443 protocol=https cost=620
+[2026-09-24T12:15:12.341+08:00] I (1778117) HttpClient: HTTP connection closed
+[2026-09-24T12:15:12.342+08:00] I (1778127) MemoriaProtocol: Media session negotiated protocol v2
+[2026-09-24T12:15:13.055+08:00] I (1778837) WebSocket: WebSocket handshake done, cost=710 tcp=630 handshake=80
+[2026-09-24T12:15:13.077+08:00] I (1778857) MemoriaWakeWord: configured wake word id=mo_li command=mo li display=茉莉
+[2026-09-24T12:15:13.085+08:00] I (1778857) MemoriaProtocol: applying device settings version=22 profile=439 wake_word=mo_li command=mo li audio_mode=interrupt_assist
+[2026-09-24T12:15:13.089+08:00] I (1778867) AudioCodec: Set output volume to 40
+[2026-09-24T12:15:13.096+08:00] I (1778867) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+[2026-09-24T12:15:13.099+08:00] I (1778877) wifi:Set ps type: 0, coexist: 0
+[2026-09-24T12:15:13.099+08:00] 
+[2026-09-24T12:15:13.104+08:00] I (1778877) Application: Wake word detected: 茉莉
+[2026-09-24T12:15:13.109+08:00] I (1778887) StateMachine: State: connecting -> listening
+[2026-09-24T12:15:13.833+08:00] I (1778897) AudioService: Resampling audio from 16000 to 24000
+[2026-09-24T12:15:13.834+08:00] I (1779617) MemoriaProtocol: Device VAD start at sample=0 rms=0.0012
+[2026-09-24T12:15:14.312+08:00] I (1780087) MemoriaProtocol: Device VAD end at sample=8000 rms=0.0004
+[2026-09-24T12:15:14.942+08:00] I (1780717) MemoriaProtocol: First playable downlink frame generation=1 seq=0
+[2026-09-24T12:15:14.942+08:00] I (1780727) StateMachine: State: listening -> speaking
+[2026-09-24T12:15:15.843+08:00] I (1781597) AudioService: media playback supply summary layer=playout_queue scope=software_queue_wait generation=1 close=channel_flush output_frames=38 first_output=yes first_output_latency_ms=368 supply_waits=1 supply_max_ms=21 supply_total_ms=21 prestart_waits=1 prestart_max_ms=1285 boundary_waits=0 boundary_max_ms=0 close_dropped_waits=0 close_dropped_ms=0 outside_waits=0 outside_max_ms=0 exact_confirmed=2 exact_timeouts=0 exact_polls=233
+[2026-09-24T12:15:15.845+08:00] I (1781627) StateMachine: State: speaking -> listening
+[2026-09-24T12:15:21.673+08:00] I (1787457) MemoriaProtocol: Device VAD start at sample=125760 rms=0.0005
+[2026-09-24T12:15:23.522+08:00] I (1789297) MemoriaProtocol: Device VAD end at sample=155520 rms=0.0010
+[2026-09-24T12:15:23.944+08:00] I (1789727) MemoriaProtocol: Device VAD start at sample=162240 rms=0.0061
+[2026-09-24T12:15:25.223+08:00] I (1791007) MemoriaProtocol: Device VAD end at sample=182720 rms=0.0009
+[2026-09-24T12:15:25.659+08:00] I (1791437) SystemInfo: free sram: 73623 minimal sram: 68463
+[2026-09-24T12:15:29.173+08:00] I (1794957) MemoriaProtocol: Device VAD start at sample=245760 rms=0.0019
+[2026-09-24T12:15:30.633+08:00] I (1796417) MemoriaProtocol: Device VAD end at sample=269120 rms=0.0010
+[2026-09-24T12:15:32.773+08:00] I (1798557) MemoriaProtocol: Device VAD start at sample=303360 rms=0.0018
+[2026-09-24T12:15:33.972+08:00] I (1799747) MemoriaProtocol: Device VAD end at sample=322560 rms=0.0004
