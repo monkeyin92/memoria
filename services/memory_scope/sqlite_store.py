@@ -6,7 +6,10 @@ read call carries the caller's ``actor_subject_id`` exactly like the
 PostgreSQL adapter so the fail-closed contract is exercised in tests too.
 Records and status events are append-only (immutable triggers), multi-write
 operations run inside ``BEGIN IMMEDIATE`` transactions, and withdrawal is a
-status event that makes the record invisible to every read path.
+status event that makes the record invisible to every read path.  The one
+delete path is subject erasure (``erase_subject``): the delete triggers ask
+``memory_subject_erase_permits``, registered only on this adapter's own
+connection and true only for rows the running erase planned.
 """
 
 from __future__ import annotations
@@ -35,6 +38,13 @@ from services.memory_scope.domain import (
     SharedMemoryProposal,
     VoteDecision,
     WriteFenceMissingError,
+)
+from services.memory_scope.subject_erasure import (
+    SQLITE_ERASE_PERMITS_FUNCTION,
+    SqliteSubjectErasePlan,
+    apply_sqlite_subject_erasure,
+    plan_sqlite_subject_erasure,
+    sqlite_subject_remaining,
 )
 
 #: Explicit marker: this adapter must never back production traffic.
@@ -199,6 +209,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_memory_records_no_delete
 BEFORE DELETE ON memory_records
+WHEN NOT memory_subject_erase_permits('record', OLD.record_id, NULL)
 BEGIN
     SELECT RAISE(ABORT, 'memory_records is append-only');
 END;
@@ -211,6 +222,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_memory_status_events_no_delete
 BEFORE DELETE ON memory_status_events
+WHEN NOT memory_subject_erase_permits('record', OLD.record_id, NULL)
 BEGIN
     SELECT RAISE(ABORT, 'memory_status_events is append-only');
 END;
@@ -223,6 +235,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_memory_votes_no_delete
 BEFORE DELETE ON memory_shared_votes
+WHEN NOT memory_subject_erase_permits('vote', OLD.proposal_id, OLD.subject_id)
 BEGIN
     SELECT RAISE(ABORT, 'memory_shared_votes is append-only');
 END;
@@ -258,6 +271,8 @@ class SqliteMemoryStore:
         self._path = str(path)
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
+        #: Set only while ``erase_subject`` runs, under ``_lock``.
+        self._erase_plan: SqliteSubjectErasePlan | None = None
 
     async def initialize(self) -> None:
         with self._lock:
@@ -285,6 +300,24 @@ class SqliteMemoryStore:
                     f"ALTER TABLE memory_shared_proposals"
                     f" ADD COLUMN {column} {definition}"
                 )
+
+        # Delete triggers created before subject erasure had no permit
+        # clause; ``CREATE TRIGGER IF NOT EXISTS`` never replaces them.
+        replaced = False
+        for trigger in (
+            "trg_memory_records_no_delete",
+            "trg_memory_status_events_no_delete",
+            "trg_memory_votes_no_delete",
+        ):
+            ddl = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                (trigger,),
+            ).fetchone()
+            if ddl is not None and SQLITE_ERASE_PERMITS_FUNCTION not in str(ddl["sql"]):
+                connection.execute(f"DROP TRIGGER {trigger}")
+                replaced = True
+        if replaced:
+            connection.executescript(_SCHEMA)
 
         _add_column(
             "session_id",
@@ -550,8 +583,17 @@ class SqliteMemoryStore:
             connection = sqlite3.connect(self._path, timeout=5, isolation_level=None)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
+            connection.create_function(
+                SQLITE_ERASE_PERMITS_FUNCTION, 3, self._erase_permits
+            )
             self._connection = connection
         return self._connection
+
+    def _erase_permits(
+        self, kind: str, key: str | None, subject_id: str | None
+    ) -> bool:
+        plan = self._erase_plan
+        return plan is not None and plan.permits(kind, key, subject_id)
 
     def _tx(self, connection: sqlite3.Connection) -> None:
         connection.execute("BEGIN IMMEDIATE")
@@ -1485,6 +1527,31 @@ class SqliteMemoryStore:
             except BaseException:
                 connection.execute("ROLLBACK")
                 raise
+
+    # -- subject erasure (governance) ---------------------------------------
+
+    async def erase_subject(self, *, subject_id: str) -> dict[str, int]:
+        """``SubjectMemoryScopePort``: the only delete path (see
+        ``services.memory_scope.subject_erasure``)."""
+        with self._lock:
+            connection = self._connect()
+            self._tx(connection)
+            try:
+                plan = plan_sqlite_subject_erasure(connection, subject_id)
+                self._erase_plan = plan
+                try:
+                    counts = apply_sqlite_subject_erasure(connection, plan)
+                finally:
+                    self._erase_plan = None
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+        return counts
+
+    async def remaining_subject_rows(self, *, subject_id: str) -> dict[str, int]:
+        with self._lock:
+            return sqlite_subject_remaining(self._connect(), subject_id)
 
 
 def _record_from_row(row: sqlite3.Row) -> MemoryRecord:

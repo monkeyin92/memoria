@@ -238,6 +238,15 @@ class BindingRelationshipEvidence:
         )
 
 
+#: The one offer per mode whose acceptance is the subject's standing memory
+#: consent (see ``services.consent.bound_subject``).
+MEMORY_RETENTION_OFFERS: dict[str, str] = {
+    "parent_for_child": "offer_minor_memory_retention_v1",
+    "self_use": "offer_self_memory_retention_v1",
+    "child_for_parent": "offer_senior_memory_retention_v1",
+}
+
+
 class BindingOfferCatalog:
     """Single server-owned offer and preference catalog for initial binding."""
 
@@ -265,6 +274,9 @@ class BindingOfferCatalog:
             "child_for_parent": frozenset(
                 {
                     "offer_admin_device_management_v1",
+                    # The adult child consents on the parent's behalf
+                    # (2026-09-25); recorded as a delegate grant.
+                    "offer_senior_memory_retention_v1",
                     "offer_senior_health_reminder_v1",
                     "offer_senior_anti_fraud_v1",
                     "offer_senior_emergency_contact_v1",
@@ -318,6 +330,8 @@ class BindingOfferCatalog:
                 required.add("offer_self_memory_retention_v1")
         elif declared_mode == "child_for_parent":
             required.add("offer_admin_device_management_v1")
+            if self._memory_enabled(service_preferences):
+                required.add("offer_senior_memory_retention_v1")
         elif declared_mode == "family_shared":
             required.add("offer_family_space_v1")
         else:
@@ -366,6 +380,17 @@ class BindingOfferCatalog:
         if missing:
             raise BindingConsentValidationError(
                 f"required consent offers are missing: {sorted(missing)}"
+            )
+        memory_offer = MEMORY_RETENTION_OFFERS.get(declared_mode)
+        if (
+            memory_offer is not None
+            and memory_offer in selected
+            and not self._memory_enabled(service_preferences)
+        ):
+            # The ticked memory consent is what turns memory on; a binding
+            # that ticks it while declaring memory off is contradictory.
+            raise BindingConsentValidationError(
+                f"{memory_offer} requires memory_level to enable memory"
             )
         _json_value(service_preferences, field="service_preferences")
 

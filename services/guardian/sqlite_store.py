@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from services.archive.object_store import ObjectRef
+from services.governance.subject_ports import SubjectScope
 from services.guardian.corpus import (
     MAX_ACTIVE_CORPUS_SAMPLES_PER_MINOR,
     CorpusConsentInactiveError,
@@ -36,6 +37,19 @@ from services.guardian.domain import (
     VerifiedVia,
     same_person_consent_grant_request,
 )
+from services.guardian.push import (
+    MAX_PUSH_SUBSCRIPTION_BALANCE,
+    CrisisPushOutcome,
+    PendingCrisisPush,
+    PushSubscription,
+    PushSubscriptionResult,
+    push_identifier,
+    push_openid,
+    push_template_id,
+    validate_crisis_push_claim,
+    validate_crisis_push_outcome,
+    validate_push_subscription_result,
+)
 from services.tutor.authority import (
     TutorEvidenceRejected,
     TutorPolicyReceiptVerifierPort,
@@ -50,6 +64,28 @@ from services.tutor.domain import (
     TutorAggregateKind,
     TutorFocus,
 )
+
+_NOTIFICATION_OUTBOX_DDL = """
+CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
+    notification_id TEXT PRIMARY KEY,
+    crisis_event_id TEXT NOT NULL REFERENCES guardian_crisis_events(crisis_event_id)
+        ON DELETE CASCADE,
+    guardian_user_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK (channel = 'wechat_subscription'),
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'delivered', 'failed', 'no_subscription')
+    ),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    created_at TEXT NOT NULL,
+    delivered_at TEXT,
+    last_error_code TEXT,
+    claimed_by TEXT,
+    lease_until TEXT,
+    next_attempt_at TEXT,
+    reserved_template_id TEXT,
+    UNIQUE(crisis_event_id, guardian_user_id)
+);
+"""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS guardian_links (
@@ -239,23 +275,59 @@ CREATE TABLE IF NOT EXISTS guardian_crisis_events (
 CREATE INDEX IF NOT EXISTS idx_guardian_crisis_minor_occurred
 ON guardian_crisis_events(minor_user_id, occurred_at DESC);
 
-CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
-    notification_id TEXT PRIMARY KEY,
-    crisis_event_id TEXT NOT NULL REFERENCES guardian_crisis_events(crisis_event_id)
-        ON DELETE CASCADE,
+""" + _NOTIFICATION_OUTBOX_DDL + """
+CREATE TABLE IF NOT EXISTS guardian_push_subscriptions (
     guardian_user_id TEXT NOT NULL,
-    channel TEXT NOT NULL CHECK (channel = 'wechat_subscription'),
-    status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    template_id TEXT NOT NULL,
+    openid TEXT,
+    remaining INTEGER NOT NULL DEFAULT 0 CHECK (remaining BETWEEN 0 AND 20),
+    last_result TEXT NOT NULL CHECK (last_result IN ('accept', 'reject', 'ban')),
     created_at TEXT NOT NULL,
-    delivered_at TEXT,
-    last_error_code TEXT,
-    UNIQUE(crisis_event_id, guardian_user_id)
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (guardian_user_id, template_id),
+    CHECK (remaining = 0 OR openid IS NOT NULL)
 );
-
-CREATE INDEX IF NOT EXISTS idx_guardian_notification_recipient_status
-ON guardian_notification_outbox(guardian_user_id, status, created_at DESC);
 """
+
+_NOTIFICATION_OUTBOX_INDEXES = (
+    """
+    CREATE INDEX IF NOT EXISTS idx_guardian_notification_recipient_status
+    ON guardian_notification_outbox(guardian_user_id, status, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_guardian_notification_push_claim
+    ON guardian_notification_outbox(status, created_at)
+    """,
+)
+
+# Columns every outbox generation has; the delivery columns were added later.
+_LEGACY_NOTIFICATION_OUTBOX_COLUMNS = (
+    "notification_id, crisis_event_id, guardian_user_id, channel, status, "
+    "attempts, created_at, delivered_at, last_error_code"
+)
+
+
+# One bound subject inside the owner account (``SubjectScope``).  A tutor row
+# is the subject's only when it names the subject AND the owner; crisis rows
+# carry no account (the crisis evidence is stored under the subject's own id).
+# Notifications go before the crisis events they join.
+_SUBJECT_TUTOR_OWNED = (
+    "subject_id = :subject AND (account_id = :account OR actor_id = :account)"
+)
+_SUBJECT_TUTOR_WRITE = "subject_id = :subject AND actor_id = :account"
+_SUBJECT_ROWS = (
+    (
+        "guardian_notifications",
+        "guardian_notification_outbox",
+        "crisis_event_id IN (SELECT crisis_event_id FROM guardian_crisis_events"
+        " WHERE minor_user_id = :subject)",
+    ),
+    ("crisis_events", "guardian_crisis_events", "minor_user_id = :subject"),
+    ("tutor_practice_sessions", "tutor_practice_sessions", _SUBJECT_TUTOR_OWNED),
+    ("tutor_study_progress", "tutor_study_progress", _SUBJECT_TUTOR_OWNED),
+    ("tutor_practice_evidence", "tutor_practice_evidence", _SUBJECT_TUTOR_WRITE),
+    ("tutor_commit_outbox", "tutor_commit_outbox", _SUBJECT_TUTOR_WRITE),
+)
 
 
 def _timestamp(value: datetime, *, field: str) -> datetime:
@@ -269,6 +341,10 @@ def _hash(value: str) -> str:
     if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
         raise ValueError("binding_code_hash must be a SHA-256 hex digest")
     return normalized
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def _statuses(values: tuple[GuardianLinkStatus, ...]) -> tuple[GuardianLinkStatus, ...]:
@@ -311,7 +387,44 @@ class SqliteGuardianStore:
                     WHERE revoked_at IS NULL AND expires_at IS NULL
                     """
                 )
+                self._migrate_notification_outbox(connection)
             self._initialized = True
+
+    @staticmethod
+    def _migrate_notification_outbox(connection: sqlite3.Connection) -> None:
+        """Rebuild a pre-delivery outbox so it accepts push delivery state.
+
+        SQLite cannot alter a CHECK constraint in place.  Nothing references
+        the outbox, so the rows are copied into the current table shape inside
+        one transaction; every existing row keeps its status and stays pending
+        until a (default disabled) delivery worker claims it.
+        """
+
+        row = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'table' AND name = 'guardian_notification_outbox'
+            """
+        ).fetchone()
+        if row is not None and "no_subscription" not in str(row["sql"]):
+            if connection.in_transaction:
+                connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "ALTER TABLE guardian_notification_outbox "
+                "RENAME TO guardian_notification_outbox_legacy"
+            )
+            connection.execute(_NOTIFICATION_OUTBOX_DDL)
+            connection.execute(
+                f"""
+                INSERT INTO guardian_notification_outbox ({_LEGACY_NOTIFICATION_OUTBOX_COLUMNS})
+                SELECT {_LEGACY_NOTIFICATION_OUTBOX_COLUMNS}
+                FROM guardian_notification_outbox_legacy
+                """  # noqa: S608 - fixed internal column list
+            )
+            connection.execute("DROP TABLE guardian_notification_outbox_legacy")
+        for statement in _NOTIFICATION_OUTBOX_INDEXES:
+            connection.execute(statement)
 
     @staticmethod
     def _migrate_tutor_subject_scope(connection: sqlite3.Connection) -> None:
@@ -1877,6 +1990,318 @@ class SqliteGuardianStore:
             ).fetchall()
         return tuple(self._notification(row) for row in rows)
 
+    @staticmethod
+    def _push_subscription(row: sqlite3.Row) -> PushSubscription:
+        return PushSubscription(
+            guardian_user_id=str(row["guardian_user_id"]),
+            template_id=str(row["template_id"]),
+            remaining=int(row["remaining"]),
+            last_result=cast(PushSubscriptionResult, str(row["last_result"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+
+    async def record_push_subscription(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str,
+        result: PushSubscriptionResult,
+        openid: str | None,
+        now: datetime,
+    ) -> PushSubscription:
+        """Record one requestSubscribeMessage answer for the guardian.
+
+        ``accept`` adds one send (bounded); ``ban`` voids the balance because
+        WeChat will refuse every send; ``reject`` only records the answer.
+        """
+
+        self._ready()
+        validate_push_subscription_result(result)
+        guardian = push_identifier(guardian_user_id, field="guardian_user_id")
+        template = push_template_id(template_id)
+        clean_openid = push_openid(openid) if openid is not None else None
+        if result == "accept" and clean_openid is None:
+            raise ValueError("an accepted push subscription requires the guardian openid")
+        timestamp = _iso(_timestamp(now, field="now"))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO guardian_push_subscriptions(
+                    guardian_user_id, template_id, openid, remaining,
+                    last_result, created_at, updated_at
+                ) VALUES (?, ?, ?, CASE WHEN ? = 'accept' THEN 1 ELSE 0 END, ?, ?, ?)
+                ON CONFLICT(guardian_user_id, template_id) DO UPDATE SET
+                    openid = COALESCE(excluded.openid, guardian_push_subscriptions.openid),
+                    remaining = CASE excluded.last_result
+                        WHEN 'accept' THEN min(guardian_push_subscriptions.remaining + 1, ?)
+                        WHEN 'ban' THEN 0
+                        ELSE guardian_push_subscriptions.remaining
+                    END,
+                    last_result = excluded.last_result,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    guardian,
+                    template,
+                    clean_openid,
+                    result,
+                    result,
+                    timestamp,
+                    timestamp,
+                    MAX_PUSH_SUBSCRIPTION_BALANCE,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_push_subscriptions
+                WHERE guardian_user_id = ? AND template_id = ?
+                """,
+                (guardian, template),
+            ).fetchone()
+        if row is None:  # pragma: no cover
+            raise RuntimeError("guardian push subscription disappeared")
+        return self._push_subscription(row)
+
+    async def push_subscription(
+        self,
+        *,
+        guardian_user_id: str,
+        template_id: str,
+    ) -> PushSubscription | None:
+        self._ready()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM guardian_push_subscriptions
+                WHERE guardian_user_id = ? AND template_id = ?
+                """,
+                (guardian_user_id, template_id),
+            ).fetchone()
+        return self._push_subscription(row) if row is not None else None
+
+    async def claim_crisis_pushes(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        limit: int = 20,
+        lease_s: int = 60,
+        max_attempts: int = 5,
+        max_age_s: int = 86_400,
+    ) -> tuple[PendingCrisisPush, ...]:
+        """Lease pending crisis notifications for one delivery worker.
+
+        ``BEGIN IMMEDIATE`` serializes concurrent claimers, so a row is held
+        by at most one live lease.  A row whose lease expired at the attempt
+        cap is failed instead of reclaimed.
+        """
+
+        self._ready()
+        validate_crisis_push_claim(
+            worker_id=worker_id,
+            limit=limit,
+            lease_s=lease_s,
+            max_attempts=max_attempts,
+            max_age_s=max_age_s,
+        )
+        current = _timestamp(now, field="now")
+        stamp = _iso(current)
+        cutoff = _iso(current - timedelta(seconds=max_age_s))
+        lease_until = _iso(current + timedelta(seconds=lease_s))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE guardian_notification_outbox
+                SET status = 'failed', last_error_code = 'attempts_exhausted',
+                    claimed_by = NULL, lease_until = NULL, next_attempt_at = NULL
+                WHERE status = 'pending' AND attempts >= ?
+                  AND (lease_until IS NULL OR lease_until < ?)
+                """,
+                (max_attempts, stamp),
+            )
+            rows = connection.execute(
+                """
+                SELECT outbox.notification_id, outbox.crisis_event_id,
+                       outbox.guardian_user_id, outbox.attempts,
+                       crisis.minor_user_id, crisis.occurred_at
+                FROM guardian_notification_outbox outbox
+                JOIN guardian_crisis_events crisis
+                  ON crisis.crisis_event_id = outbox.crisis_event_id
+                WHERE outbox.status = 'pending'
+                  AND outbox.channel = 'wechat_subscription'
+                  AND outbox.attempts < ?
+                  AND outbox.created_at >= ?
+                  AND (outbox.next_attempt_at IS NULL OR outbox.next_attempt_at <= ?)
+                  AND (outbox.lease_until IS NULL OR outbox.lease_until < ?)
+                ORDER BY outbox.created_at, outbox.notification_id
+                LIMIT ?
+                """,
+                (max_attempts, cutoff, stamp, stamp, limit),
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """
+                    UPDATE guardian_notification_outbox
+                    SET claimed_by = ?, lease_until = ?, attempts = attempts + 1
+                    WHERE notification_id = ?
+                    """,
+                    (worker_id, lease_until, str(row["notification_id"])),
+                )
+        return tuple(
+            PendingCrisisPush(
+                notification_id=str(row["notification_id"]),
+                crisis_event_id=str(row["crisis_event_id"]),
+                guardian_user_id=str(row["guardian_user_id"]),
+                minor_user_id=str(row["minor_user_id"]),
+                occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
+                attempts=int(row["attempts"]) + 1,
+            )
+            for row in rows
+        )
+
+    async def reserve_crisis_push_subscription(
+        self,
+        *,
+        notification_id: str,
+        worker_id: str,
+        template_id: str,
+        now: datetime,
+    ) -> str | None:
+        """Take one accepted send for a claimed notification.
+
+        The reservation is recorded on the notification, so a reclaim after a
+        crashed worker reuses it instead of consuming a second acceptance.
+        Returns the recipient openid, or ``None`` when no acceptance remains.
+        """
+
+        self._ready()
+        template = push_template_id(template_id)
+        stamp = _iso(_timestamp(now, field="now"))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                """
+                SELECT guardian_user_id, reserved_template_id
+                FROM guardian_notification_outbox
+                WHERE notification_id = ? AND status = 'pending'
+                  AND claimed_by = ? AND lease_until >= ?
+                """,
+                (notification_id, worker_id, stamp),
+            ).fetchone()
+            if claim is None:
+                raise GuardianAccessDeniedError("crisis push claim is not held")
+            guardian = str(claim["guardian_user_id"])
+            if claim["reserved_template_id"] == template:
+                held = connection.execute(
+                    """
+                    SELECT openid FROM guardian_push_subscriptions
+                    WHERE guardian_user_id = ? AND template_id = ?
+                    """,
+                    (guardian, template),
+                ).fetchone()
+                return str(held["openid"]) if held and held["openid"] else None
+            subscription = connection.execute(
+                """
+                SELECT openid FROM guardian_push_subscriptions
+                WHERE guardian_user_id = ? AND template_id = ?
+                  AND remaining > 0 AND openid IS NOT NULL
+                """,
+                (guardian, template),
+            ).fetchone()
+            if subscription is None:
+                return None
+            connection.execute(
+                """
+                UPDATE guardian_push_subscriptions
+                SET remaining = remaining - 1, updated_at = ?
+                WHERE guardian_user_id = ? AND template_id = ?
+                """,
+                (stamp, guardian, template),
+            )
+            connection.execute(
+                """
+                UPDATE guardian_notification_outbox SET reserved_template_id = ?
+                WHERE notification_id = ?
+                """,
+                (template, notification_id),
+            )
+        return str(subscription["openid"])
+
+    async def complete_crisis_push(
+        self,
+        *,
+        notification_id: str,
+        worker_id: str,
+        outcome: CrisisPushOutcome,
+        error_code: str | None,
+        retry_delay_s: int | None,
+        exhaust_subscription: bool,
+        now: datetime,
+    ) -> bool:
+        """Settle a claimed notification; returns False if the claim was lost.
+
+        A send WeChat did not accept (``failed``/``retry``) refunds the
+        reservation; ``exhaust_subscription`` voids the balance after WeChat
+        reported that the guardian holds no acceptance.
+        """
+
+        self._ready()
+        validate_crisis_push_outcome(outcome, error_code=error_code, retry_delay_s=retry_delay_s)
+        current = _timestamp(now, field="now")
+        stamp = _iso(current)
+        next_attempt_at = (
+            _iso(current + timedelta(seconds=retry_delay_s))
+            if outcome == "retry" and retry_delay_s is not None
+            else None
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            claim = connection.execute(
+                """
+                SELECT guardian_user_id, reserved_template_id
+                FROM guardian_notification_outbox
+                WHERE notification_id = ? AND status = 'pending' AND claimed_by = ?
+                """,
+                (notification_id, worker_id),
+            ).fetchone()
+            if claim is None:
+                return False
+            reserved = claim["reserved_template_id"]
+            if reserved is not None and (outcome in {"failed", "retry"} or exhaust_subscription):
+                connection.execute(
+                    """
+                    UPDATE guardian_push_subscriptions
+                    SET remaining = CASE WHEN ? THEN 0 ELSE min(remaining + 1, ?) END,
+                        updated_at = ?
+                    WHERE guardian_user_id = ? AND template_id = ?
+                    """,
+                    (
+                        1 if exhaust_subscription else 0,
+                        MAX_PUSH_SUBSCRIPTION_BALANCE,
+                        stamp,
+                        str(claim["guardian_user_id"]),
+                        str(reserved),
+                    ),
+                )
+            connection.execute(
+                """
+                UPDATE guardian_notification_outbox
+                SET status = ?, delivered_at = ?, last_error_code = ?,
+                    claimed_by = NULL, lease_until = NULL,
+                    reserved_template_id = NULL, next_attempt_at = ?
+                WHERE notification_id = ?
+                """,
+                (
+                    "pending" if outcome == "retry" else outcome,
+                    stamp if outcome == "delivered" else None,
+                    None if outcome == "delivered" else error_code,
+                    next_attempt_at,
+                    notification_id,
+                ),
+            )
+        return True
+
     async def export_for_account(self, *, account_id: str) -> dict[str, object]:
         self._ready()
         with self._connect() as connection:
@@ -2000,6 +2425,19 @@ class SqliteGuardianStore:
                     (account_id,),
                 ).fetchall()
             ]
+            # The WeChat openid is a delivery credential, not account content.
+            push_subscriptions = [
+                {**dict(row), "openid_on_file": bool(row["openid_on_file"])}
+                for row in connection.execute(
+                    """
+                    SELECT guardian_user_id, template_id, remaining, last_result,
+                           created_at, updated_at, openid IS NOT NULL AS openid_on_file
+                    FROM guardian_push_subscriptions
+                    WHERE guardian_user_id = ? ORDER BY template_id
+                    """,
+                    (account_id,),
+                ).fetchall()
+            ]
         return {
             "links": [dict(row) for row in links],
             "consents": consents,
@@ -2011,6 +2449,7 @@ class SqliteGuardianStore:
             "crisis_events": crisis_events,
             "guardian_notifications": notifications,
             "corpus_samples": corpus_samples,
+            "guardian_push_subscriptions": push_subscriptions,
         }
 
     async def delete_for_account(self, *, account_id: str) -> dict[str, int]:
@@ -2057,6 +2496,10 @@ class SqliteGuardianStore:
             ).rowcount
             crisis_count = connection.execute(
                 "DELETE FROM guardian_crisis_events WHERE minor_user_id = ?",
+                (account_id,),
+            ).rowcount
+            push_subscription_count = connection.execute(
+                "DELETE FROM guardian_push_subscriptions WHERE guardian_user_id = ?",
                 (account_id,),
             ).rowcount
             corpus_count = connection.execute(
@@ -2112,6 +2555,7 @@ class SqliteGuardianStore:
             "crisis_events": crisis_count,
             "guardian_notifications": notification_count,
             "corpus_samples": corpus_count,
+            "guardian_push_subscriptions": push_subscription_count,
         }
 
     async def remaining_account_rows(self, *, account_id: str) -> dict[str, int]:
@@ -2210,6 +2654,15 @@ class SqliteGuardianStore:
                     (account_id, account_id),
                 ).fetchone()[0]
             )
+            push_subscriptions = int(
+                connection.execute(
+                    """
+                    SELECT count(*) FROM guardian_push_subscriptions
+                    WHERE guardian_user_id = ?
+                    """,
+                    (account_id,),
+                ).fetchone()[0]
+            )
         return {
             key: value
             for key, value in {
@@ -2223,9 +2676,100 @@ class SqliteGuardianStore:
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,
                 "person_consents": person_consents,
+                "guardian_push_subscriptions": push_subscriptions,
             }.items()
             if value
         }
+
+    async def subject_tutor_event_ids(
+        self, *, account_id: str, subject_id: str
+    ) -> tuple[str, ...]:
+        """Archive evidence ids of one bound subject's tutor practice.
+
+        Read before ``delete_subject_rows``: for practice archived before
+        the tutor projection carried subject_id, these rows are the only
+        lineage to the owner-account archive events.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        ids: set[str] = set()
+        with self._connect() as connection:
+            for (event_id,) in connection.execute(
+                f"SELECT event_id FROM tutor_practice_evidence WHERE {_SUBJECT_TUTOR_WRITE}",  # noqa: S608
+                params,
+            ):
+                ids.add(str(event_id))
+            for event_id, payload_json in connection.execute(
+                "SELECT event_id, archive_payload_json FROM tutor_commit_outbox "  # noqa: S608
+                f"WHERE {_SUBJECT_TUTOR_WRITE}",
+                params,
+            ):
+                ids.add(str(event_id))
+                payload = json.loads(str(payload_json))
+                if isinstance(payload, dict) and payload.get("event_id"):
+                    ids.add(str(payload["event_id"]))
+            for table, column in (
+                ("tutor_practice_sessions", "event_ids_json"),
+                ("tutor_study_progress", "source_event_ids_json"),
+            ):
+                for (values_json,) in connection.execute(
+                    f"SELECT {column} FROM {table} WHERE {_SUBJECT_TUTOR_OWNED}",  # noqa: S608
+                    params,
+                ):
+                    values = json.loads(str(values_json))
+                    if isinstance(values, list):
+                        ids.update(str(value) for value in values if value)
+        return tuple(sorted(ids))
+
+    async def delete_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Crisis events + notifications and the subject's tutor rows, atomically.
+
+        Person consents and the guardian's subscribe-message ledger stay.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        deleted: dict[str, int] = {}
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for key, table, predicate in _SUBJECT_ROWS:
+                deleted[key] = connection.execute(
+                    f"DELETE FROM {table} WHERE {predicate}",  # noqa: S608
+                    params,
+                ).rowcount
+        return deleted
+
+    async def remaining_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Rows ``delete_subject_rows`` covers, plus live corpus samples
+        (purged by the corpus retention service, not here)."""
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        counts: dict[str, int] = {}
+        with self._connect() as connection:
+            for key, table, predicate in (
+                *_SUBJECT_ROWS,
+                (
+                    "corpus_samples",
+                    "guardian_corpus_samples",
+                    "minor_user_id = :subject AND deleted_at IS NULL",
+                ),
+            ):
+                counts[key] = int(
+                    connection.execute(
+                        f"SELECT count(*) FROM {table} WHERE {predicate}",  # noqa: S608
+                        params,
+                    ).fetchone()[0]
+                )
+        return {key: value for key, value in counts.items() if value}
 
     async def related_minor_accounts(self, *, guardian_user_id: str) -> tuple[str, ...]:
         self._ready()

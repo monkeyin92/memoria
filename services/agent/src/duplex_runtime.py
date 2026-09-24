@@ -125,6 +125,7 @@ from services.common.redaction import redact_pii
 from services.speaker.domain import (
     SpeakerDecision,
     SpeakerPermissions,
+    is_voice_authority,
     permissions_for_speaker,
 )
 
@@ -1083,12 +1084,7 @@ class DuplexRuntime(
 
     @property
     def current_speaker_authority_verified(self) -> bool:
-        decision = self._speaker_decision
-        return bool(
-            decision is not None
-            and decision.classification in {"owner", "guest"}
-            and not decision.reason_code.startswith("shadow_")
-        )
+        return self._speaker_decision is not None and is_voice_authority(self._speaker_decision)
 
     @property
     def current_speaker_decision(self) -> SpeakerDecision:
@@ -2673,6 +2669,10 @@ class DuplexRuntime(
         if not target_route.allow_input:
             self._reject_target_speaker(context="turn_commit", route=target_route)
             return False, target_route.reason
+        if close_turn and self._close_phrase_is_playback_echo(text):
+            self.orchestrator.metrics.inc_guarded_user_input("conversation_end_playback_echo")
+            self.mark_audio_event("conversation_end_playback_echo", status="ignored")
+            return False, "conversation_end_playback_echo"
         if close_turn:
             # The Media Voice registry owns the terminal session projection;
             # runtime only suppresses side effects after the gate authorizes it.

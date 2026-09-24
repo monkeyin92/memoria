@@ -34,6 +34,7 @@ EXPECTED_CONTROL_DATABASE_ROLES = {
     "MEMORIA_SESSION_RUNTIME_MAINTENANCE_DATABASE_URL": "memoria_session_maintenance",
     "MEMORIA_MEMORY_API_DATABASE_URL": "memoria_memory_api",
     "MEMORIA_MEMORY_WORKER_DATABASE_URL": "memoria_memory_worker",
+    "MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL": "memoria_memory_maintenance",
 }
 
 EXPECTED_PASSWORD_ROLES = {
@@ -57,6 +58,7 @@ EXPECTED_PASSWORD_ROLES = {
     "MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD": "memoria_session_maintenance",
     "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
     "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
+    "MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD": "memoria_memory_maintenance",
 }
 
 

@@ -150,7 +150,7 @@
       <view wx:if="{{activation.updated_at}}" class="summary-row"><text class="summary-key">最近更新</text><text class="summary-value">{{activation.updated_at}}</text></view>
     </view>
     <view class="button-row">
-      <text class="form-note">接下来对着机器人说几句话完成主人声纹。手机不采集声纹。</text>
+      <text class="form-note">使用人由刚才的绑定确定，机器人不需要识别声音，激活后直接开始对话即可。</text>
     </view>
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新激活状态</button>
   </view>
@@ -158,7 +158,7 @@
   <view wx:if="{{state === 'complete'}}" class="l2-card done-card">
     <text class="done-badge">READY</text>
     <text class="done-title">机器人可以开始对话了</text>
-    <text class="done-note">设备已就绪。请唤醒机器人，按提示说几句话完成主人声纹；第一个完成设置的人就是管理员，之后可在「我的」里重新录制。</text>
+    <text class="done-note">设备已就绪。唤醒机器人就可以开始聊天；它只服务这次绑定的使用人，使用人和设备管理都可以在「设备」页调整。</text>
     <button class="primary-button onboarding-button" bindtap="openDevicePage">进入设备管理</button>
   </view>
 

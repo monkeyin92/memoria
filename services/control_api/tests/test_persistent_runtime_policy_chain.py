@@ -45,6 +45,7 @@ from services.archive.memory_domain import (
     CompileReport,
     MemoryClaimReview,
     MemorySearchQuery,
+    MemorySearchResult,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
@@ -90,6 +91,21 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the real persistent Session Runtime chain",
 )
+
+
+class _SubjectScopedMemoryCatalog(_MemoryCatalog):
+    """The account's claims answer only a read keyed to the account itself.
+
+    Companion reads are keyed to the active subject's own lineage (4fc9be9):
+    another subject's read targets that subject and finds nothing of the
+    account owner's, which is what the real catalog does.
+    """
+
+    async def context(self, query: object) -> MemorySearchResult:
+        result = await super().context(query)
+        if getattr(query, "subject_id", None) != getattr(query, "account_id", None):
+            return MemorySearchResult(items=())
+        return result
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -625,7 +641,7 @@ async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
         store=store,
         signing_key=signing_key,
     )
-    catalog = _MemoryCatalog()
+    catalog = _SubjectScopedMemoryCatalog()
     app.state.memory_catalog = catalog
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -665,7 +681,11 @@ async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
         )
         assert child_turn.status_code == 200, child_turn.text
         assert child_turn.json()["grounded_items"] == []
-        assert catalog.queries == []
+        # The lifted ceiling allows a read, but only of the child's own
+        # lineage: nothing is ever read under the account key for the child.
+        assert [getattr(q, "subject_id", None) for q in catalog.queries] == [
+            chain.child_person_id
+        ]
 
         # The account's own turn, in the same session, does read exactly once.
         account_profile = await chain.runtime_service.switch_subject(
@@ -686,7 +706,8 @@ async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
             generation_id=2,
         )
         assert owner_turn.status_code == 200, owner_turn.text
-        assert len(catalog.queries) == 1
+        assert len(catalog.queries) == 2
+        assert getattr(catalog.queries[-1], "subject_id", None) == chain.account_id
         assert owner_turn.json()["grounded_items"]
 
 @pytest.mark.asyncio
@@ -714,7 +735,7 @@ async def test_real_postgres_person_consent_lifts_and_closes_both_policy_seams(
         store=store,
         signing_key=signing_key,
     )
-    catalog = _MemoryCatalog()
+    catalog = _SubjectScopedMemoryCatalog()
     app.state.memory_catalog = catalog
 
     database = bootstrap_dsn.rstrip("/").rsplit("/", 1)[-1]
@@ -811,12 +832,13 @@ async def test_real_postgres_person_consent_lifts_and_closes_both_policy_seams(
                 turn_id=2,
                 generation_id=2,
             )
-            # The account-keyed legacy catalog must never answer for another
-            # subject (subject-keyed memory migration is still pending), so
-            # the open retention gate must not leak account memory here.
+            # The open retention gate reads the child's own lineage only; the
+            # account owner's memory never answers for another subject.
             assert memory_open.status_code == 200, memory_open.text
             assert memory_open.json()["grounded_items"] == []
-            assert catalog.queries == []
+            assert [getattr(q, "subject_id", None) for q in catalog.queries] == [
+                chain.child_person_id
+            ]
 
             # Revoke in the real PostgreSQL store: both seams close again.
             await consent_service.revoke_for_person(
@@ -1712,7 +1734,7 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
         signing_key=signing_key,
         profile_ttl=timedelta(minutes=30),
     )
-    catalog = _MemoryCatalog()
+    catalog = _SubjectScopedMemoryCatalog()
     app.state.memory_catalog = catalog
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1853,9 +1875,12 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
                     assert policy["capabilities"]["private_memory"] is False
                     assert policy["capabilities"]["history"] is False
                     # A different person is neither named nor fed the account's
-                    # memory: no account-keyed read is even attempted.
+                    # memory: the read is keyed to that person, never the account.
                     assert "owner_display_name" not in policy
-                    assert len(catalog.queries) == queries_before
+                    assert len(catalog.queries) == queries_before + 1
+                    member_query = catalog.queries[-1]
+                    assert getattr(member_query, "subject_id", None) == session.active_subject_id
+                    assert session.active_subject_id != session.account_id
                     assert memory_turn.json()["grounded_items"] == []
 
         # The authority's own unknown_safe profile, same app: a device with an

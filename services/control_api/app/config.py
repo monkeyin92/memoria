@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -26,6 +27,36 @@ from services.common.security_constants import (
     DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
 from services.evolution.release_policy import parse_runtime_prompt_families
+
+_SUBSCRIBE_TEMPLATE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_SUBSCRIBE_KEYWORD_RE = re.compile(r"^[a-z_]+[0-9]+$")
+_SUBSCRIBE_PAGE_RE = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\?[A-Za-z0-9_=&-]*)?$")
+SUBSCRIBE_CRISIS_SLOTS = frozenset({"title", "child", "time", "tip"})
+
+
+def parse_subscribe_fields(value: str) -> dict[str, str]:
+    """Parse ``slot=keyword`` pairs for the fixed crisis alert template."""
+
+    fields: dict[str, str] = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        slot, separator, keyword = (part.strip() for part in item.partition("="))
+        if (
+            separator != "="
+            or slot not in SUBSCRIBE_CRISIS_SLOTS
+            or slot in fields
+            or not _SUBSCRIBE_KEYWORD_RE.fullmatch(keyword)
+            or keyword in fields.values()
+        ):
+            raise ValueError(
+                "MEMORIA_WECHAT_SUBSCRIBE_CRISIS_FIELDS must be unique slot=keyword "
+                "pairs, slots title/child/time/tip, keywords like thing1"
+            )
+        fields[slot] = keyword
+    if not fields:
+        raise ValueError("MEMORIA_WECHAT_SUBSCRIBE_CRISIS_FIELDS must map at least one slot")
+    return fields
 
 
 def _read_key_map(value: str, *, label: str) -> dict[str, str]:
@@ -261,6 +292,10 @@ class ControlSettings(BaseSettings):
     memory_worker_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_WORKER_DATABASE_URL",
+    )
+    memory_maintenance_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL",
     )
     memory_bootstrap_database_url: SecretStr = Field(
         default=SecretStr(""),
@@ -825,6 +860,48 @@ class ControlSettings(BaseSettings):
         default="",
         alias="WECHAT_AVATAR_PUBLIC_BASE_URL",
     )
+    # Guardian crisis alerts via Mini Program one-time subscribe messages.
+    # Disabled by default: alerts then stay queued and visible on the
+    # guardian page only, exactly as before delivery existed.
+    guardian_push_enabled: bool = Field(
+        default=False,
+        alias="MEMORIA_GUARDIAN_PUSH_ENABLED",
+    )
+    wechat_subscribe_crisis_template_id: str = Field(
+        default="",
+        max_length=128,
+        alias="MEMORIA_WECHAT_SUBSCRIBE_CRISIS_TEMPLATE_ID",
+    )
+    # slot=keyword pairs mapping the fixed alert onto the chosen template's
+    # keywords.  Slots: title, child, time, tip.
+    wechat_subscribe_crisis_fields: str = Field(
+        default="title=thing1,child=name2,time=time3,tip=thing4",
+        alias="MEMORIA_WECHAT_SUBSCRIBE_CRISIS_FIELDS",
+    )
+    wechat_subscribe_send_endpoint: str = Field(
+        default="https://api.weixin.qq.com/cgi-bin/message/subscribe/send",
+        alias="WECHAT_SUBSCRIBE_SEND_ENDPOINT",
+    )
+    wechat_subscribe_crisis_page: str = Field(
+        default="pages/guardian/index",
+        alias="MEMORIA_WECHAT_SUBSCRIBE_CRISIS_PAGE",
+    )
+    wechat_miniprogram_state: Literal["formal", "trial", "developer"] = Field(
+        default="formal",
+        alias="WECHAT_MINIPROGRAM_STATE",
+    )
+    guardian_push_interval_s: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=300.0,
+        alias="MEMORIA_GUARDIAN_PUSH_INTERVAL_S",
+    )
+    guardian_push_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        alias="MEMORIA_GUARDIAN_PUSH_MAX_ATTEMPTS",
+    )
     legacy_auth_compat_until: datetime | None = Field(
         default=None,
         alias="MEMORIA_LEGACY_AUTH_COMPAT_UNTIL",
@@ -849,6 +926,23 @@ class ControlSettings(BaseSettings):
     def validate_evolution_runtime_prompt_families(cls, value: str) -> str:
         parse_runtime_prompt_families(value)
         return value
+
+    @field_validator("wechat_subscribe_crisis_fields")
+    @classmethod
+    def validate_wechat_subscribe_crisis_fields(cls, value: str) -> str:
+        parse_subscribe_fields(value)
+        return value
+
+    @field_validator("wechat_subscribe_crisis_page")
+    @classmethod
+    def validate_wechat_subscribe_crisis_page(cls, value: str) -> str:
+        page = value.strip()
+        if not _SUBSCRIBE_PAGE_RE.fullmatch(page):
+            raise ValueError(
+                "MEMORIA_WECHAT_SUBSCRIBE_CRISIS_PAGE must be a Mini Program page path "
+                "without a leading slash"
+            )
+        return page
 
     @field_validator("legacy_auth_compat_until", mode="before")
     @classmethod
@@ -882,6 +976,33 @@ class ControlSettings(BaseSettings):
         if configured:
             return configured
         return self.memoria_auth_secret.get_secret_value()
+
+    def guardian_push_crisis_fields(self) -> dict[str, str]:
+        return parse_subscribe_fields(self.wechat_subscribe_crisis_fields)
+
+    def validate_guardian_push(self) -> None:
+        """Fail closed when crisis push is switched on without its WeChat config."""
+
+        if not self.guardian_push_enabled:
+            return
+        if (
+            not self.wechat_miniprogram_appid.strip()
+            or not self.wechat_miniprogram_appsecret.get_secret_value().strip()
+        ):
+            raise ValueError(
+                "MEMORIA_GUARDIAN_PUSH_ENABLED requires WECHAT_MINIPROGRAM_APPID "
+                "and WECHAT_MINIPROGRAM_APPSECRET"
+            )
+        if not _SUBSCRIBE_TEMPLATE_ID_RE.fullmatch(
+            self.wechat_subscribe_crisis_template_id.strip()
+        ):
+            raise ValueError(
+                "MEMORIA_GUARDIAN_PUSH_ENABLED requires "
+                "MEMORIA_WECHAT_SUBSCRIBE_CRISIS_TEMPLATE_ID"
+            )
+        if not self.wechat_subscribe_send_endpoint.startswith("https://"):
+            raise ValueError("WECHAT_SUBSCRIBE_SEND_ENDPOINT must use HTTPS")
+        parse_subscribe_fields(self.wechat_subscribe_crisis_fields)
 
     def wechat_avatar_base_url(self) -> str:
         return (self.wechat_avatar_public_base_url.strip() or self.public_base_url).rstrip("/")
@@ -1215,6 +1336,7 @@ class ControlSettings(BaseSettings):
                 "production Mini Program requires an HTTPS "
                 "WECHAT_AVATAR_PUBLIC_BASE_URL or PUBLIC_BASE_URL"
             )
+        self.validate_guardian_push()
         wechat_identity_secret = self.memoria_wechat_identity_secret.get_secret_value().strip()
         if self.miniprogram_media_gateway_url.strip() and (
             len(wechat_identity_secret) < 32
@@ -1708,6 +1830,10 @@ class ControlSettings(BaseSettings):
             "MEMORIA_MEMORY_WORKER_DATABASE_URL": (
                 memory_worker_url,
                 "memoria_memory_worker",
+            ),
+            "MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL": (
+                self.memory_maintenance_database_url.get_secret_value().strip(),
+                "memoria_memory_maintenance",
             ),
         }
         for field_name, (dsn, expected_role) in memory_dsns.items():

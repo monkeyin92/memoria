@@ -854,6 +854,32 @@ class PostgresIdentityStore:
                     actor_person_id,
                 )
 
+    async def redact_bound_subject(
+        self,
+        *,
+        person_id: str,
+        display_name: str,
+        updated_at: datetime,
+        audit_event: AuditEvent,
+        actor_person_id: str,
+    ) -> None:
+        # The function re-checks the attestation and the absence of a live
+        # binding under the owner's RLS context, and writes its own audit.
+        del audit_event
+        pool = self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(
+                    connection, actor_person_id=actor_person_id, scope="api"
+                )
+                await connection.execute(
+                    "SELECT identity_redact_bound_subject($1, $2, $3, $4)",
+                    person_id,
+                    actor_person_id,
+                    display_name,
+                    _timestamp(updated_at, field="updated_at"),
+                )
+
     async def get_person(
         self,
         person_id: str,

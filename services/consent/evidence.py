@@ -33,7 +33,9 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 
 type ConsentStatus = Literal["active", "revoked", "expired", "disputed", "superseded"]
 type ConsentOfferStatus = Literal["active", "revoked", "expired", "superseded"]
-type ActorKind = Literal["subject", "guardian", "family_admin", "service", "other"]
+type ActorKind = Literal[
+    "subject", "guardian", "delegate", "family_admin", "service", "other"
+]
 # Wire seam dependency: Identity owns these directed values today. Move this
 # alias to packages/contracts when the cross-domain relationship enum converges.
 RelationTypeValue = RelationshipTypeValue
@@ -51,7 +53,7 @@ ALL_CONSENT_STATUS_VALUES: frozenset[str] = frozenset(
     {"active", "revoked", "expired", "disputed", "superseded"}
 )
 ALL_ACTOR_KIND_VALUES: frozenset[str] = frozenset(
-    {"subject", "guardian", "family_admin", "service", "other"}
+    {"subject", "guardian", "delegate", "family_admin", "service", "other"}
 )
 ALL_CONSENT_OFFER_STATUS_VALUES: frozenset[str] = frozenset(
     {"active", "revoked", "expired", "superseded"}

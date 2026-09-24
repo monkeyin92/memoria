@@ -793,12 +793,18 @@ BEGIN
         WHERE r.source_person_id = p_source
           AND r.target_person_id = p_target
           AND r.relation_type = 'guardian_of'
-          AND r.status = 'pending'
           AND r.confirmed_by_source_at IS NOT NULL
           AND r.confirmed_by_target_at IS NULL
           AND r.valid_from <= p_at
           AND (r.valid_until IS NULL OR r.valid_until > p_at)
-          AND r.established_evidence_id = 'guardian_declaration_v1:device_binding'
+          -- A pending declaration, or the same declaration the binding owner
+          -- attested active for a person with no account (2026-09-25).
+          AND (
+              (r.status = 'pending'
+               AND r.established_evidence_id = 'guardian_declaration_v1:device_binding')
+              OR (r.status = 'active'
+               AND r.established_evidence_id = 'guardian_attestation_v1:device_binding')
+          )
           AND EXISTS (
               SELECT 1 FROM identity_device_bindings b
               WHERE b.status = 'active'
@@ -1351,6 +1357,75 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'identity_self_update_profile: person not found';
     END IF;
+END
+$$;
+
+-- Subject deletion (2026-09-25): once a person with no account has had their
+-- data erased and no binding serves them, the owner who attested them may
+-- turn them into a disabled placeholder and scrub earlier copies of the name.
+CREATE OR REPLACE FUNCTION identity_redact_bound_subject(
+    p_person_id text,
+    p_actor_person_id text,
+    p_display_name text,
+    p_updated_at timestamptz
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+BEGIN
+    IF p_actor_person_id IS NULL
+       OR p_actor_person_id <> NULLIF(current_setting('app.identity_actor', true), '') THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: actor context mismatch';
+    END IF;
+    IF p_display_name IS NULL OR char_length(p_display_name) NOT BETWEEN 1 AND 128 THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: invalid display name';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM identity_relationships r
+        WHERE r.source_person_id = p_actor_person_id
+          AND r.target_person_id = p_person_id
+          AND r.relation_type IN ('guardian_of', 'delegate_for')
+          AND r.status IN ('active', 'pending')
+          AND r.established_evidence_id IN (
+              'guardian_attestation_v1:device_binding',
+              'delegate_attestation_v1:device_binding',
+              'guardian_declaration_v1:device_binding'
+          )
+    ) THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: actor did not attest this person';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM identity_device_binding_roles role
+        JOIN identity_device_bindings b ON b.binding_id = role.binding_id
+        WHERE role.person_id = p_person_id
+          AND role.status = 'active'
+          AND b.status = 'active'
+    ) THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: a device still serves this person';
+    END IF;
+    UPDATE identity_persons
+    SET display_name = p_display_name,
+        status = 'disabled',
+        updated_at = p_updated_at
+    WHERE person_id = p_person_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'identity_redact_bound_subject: person not found';
+    END IF;
+    UPDATE identity_audit_events
+    SET payload_json = jsonb_set(payload_json, '{display_name}', to_jsonb(p_display_name))
+    WHERE (person_id = p_person_id OR subject_person_id = p_person_id)
+      AND payload_json ? 'display_name';
+    UPDATE identity_outbox
+    SET payload_json = jsonb_set(payload_json, '{display_name}', to_jsonb(p_display_name))
+    WHERE payload_json ->> 'person_id' = p_person_id
+      AND payload_json ? 'display_name';
+    INSERT INTO identity_audit_events (
+        event_id, action, actor_person_id, subject_person_id, person_id,
+        payload_json, created_at
+    ) VALUES (
+        gen_random_uuid()::text, 'person.redact', p_actor_person_id, p_person_id,
+        p_person_id, jsonb_build_object('person_id', p_person_id, 'status', 'disabled'),
+        p_updated_at
+    );
 END
 $$;
 
@@ -1911,6 +1986,9 @@ REVOKE ALL ON FUNCTION identity_patch_idempotency_result(text, text, jsonb)
 REVOKE ALL ON FUNCTION identity_self_update_profile(
     text, text, text, text, timestamptz, text
 ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_redact_bound_subject(
+    text, text, text, timestamptz
+) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_declare_age_evidence(
     text, text, timestamptz, text
 ) FROM PUBLIC;
@@ -2171,6 +2249,9 @@ BEGIN
         ) TO memoria_identity;
         GRANT EXECUTE ON FUNCTION identity_declare_age_evidence(
             text, text, timestamptz, text
+        ) TO memoria_identity;
+        GRANT EXECUTE ON FUNCTION identity_redact_bound_subject(
+            text, text, text, timestamptz
         ) TO memoria_identity;
 
         DROP POLICY IF EXISTS identity_api_idempotency

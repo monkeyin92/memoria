@@ -28,6 +28,7 @@ let personaPayload = () => ({
   binding_default: "starlight:v1",
 });
 let personasPayload = () => ({ custom_personas: [], builtin: [] });
+const unbindCalls = [];
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -164,6 +165,11 @@ global.wx = {
     }
     if (pathname === "/v1/personas") {
       options.success({ statusCode: 200, data: personasPayload() });
+      return;
+    }
+    if (pathname === "/v1/devices/dev_1/binding/unbind") {
+      unbindCalls.push({ method: options.method, data: options.data });
+      options.success({ statusCode: 200, data: { binding_id: "bd_1", status: "revoked" } });
       return;
     }
     options.success(nextRequestResult);
@@ -642,7 +648,7 @@ test("parent_for_child without app_confirm cannot switch", async () => {
     selectedCandidateId: "person_child",
   });
   await page.confirmSubject();
-  assert.ok(page.data.error.includes("语音确认"));
+  assert.ok(page.data.error.includes("暂不支持在应用里切换使用人"));
   assert.equal(activeSubjectCalls.length, 0);
 });
 
@@ -866,11 +872,11 @@ test("confirming is blocked when the server does not allow app confirmation", as
   assert.equal(page.data.canConfirmWithApp, false);
   page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });
   await page.confirmSubject();
-  assert.ok(page.data.error.includes("语音确认"));
+  assert.ok(page.data.error.includes("暂不支持在应用里切换使用人"));
   assert.equal(activeSubjectCalls.length, 0);
 });
 
-test("low confidence candidates are rendered with the low-confidence hint", async () => {
+test("candidate voice-match confidence is never decorated or shown", async () => {
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireUnknownSafeProfile({
     runtime_profile_id: "rp_6",
@@ -888,8 +894,12 @@ test("low confidence candidates are rendered with the low-confidence hint", asyn
   };
   const page = instantiate(pageDefinition);
   await page.onShow();
-  assert.equal(page.data.candidates[0].confidence, 0.31);
+  assert.equal(page.data.candidates[0].person_id, "person_guest");
+  assert.equal(page.data.candidates[0].confidencePercent, undefined);
+  assert.equal(page.data.candidates[0].confidenceLow, undefined);
   assert.ok(page.data.degradation.reasons.some((reason) => reason.includes("尚未确认")));
+  const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  assert.doesNotMatch(template, /置信度|confidencePercent|说话人候选|语音确认身份/);
 });
 
 test("device load failures surface an error without breaking the page", async () => {
@@ -1310,4 +1320,88 @@ test("persona assignment failure keeps the sheet open and reports the error", as
     1,
   );
   personaFailure = false;
+});
+
+async function bootBoundDevicePage() {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireUnknownSafeProfile({
+    runtime_profile_id: "rp_unbind",
+    session_id: "ses_unbind",
+    session_epoch: 1,
+  });
+  resolutionPayload = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.hasBinding, true);
+  return page;
+}
+
+test("unbind keeps the subject's data when the owner chooses to keep it", async () => {
+  unbindCalls.length = 0;
+  const modals = [];
+  const previousShowModal = global.wx.showModal;
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success?.({ confirm: true });
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    assert.equal(page.data.unbindSheetVisible, true);
+    // 没有二选一之前不能提交。
+    await page.confirmUnbind();
+    assert.equal(unbindCalls.length, 0);
+    assert.match(page.data.unbindError, /请先选择/);
+
+    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "keep" } } });
+    await page.confirmUnbind();
+    assert.equal(unbindCalls.length, 1);
+    assert.equal(unbindCalls[0].method, "POST");
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: false });
+    // 保留数据不需要再弹删除确认。
+    assert.equal(modals.length, 0);
+    assert.equal(binding.readBindingManifest(), null);
+    assert.equal(page.data.unbindSheetVisible, false);
+    assert.equal(page.data.hasBinding, false);
+  } finally {
+    global.wx.showModal = previousShowModal;
+  }
+});
+
+test("unbind with purge asks a second time and sends purge_subject_data true", async () => {
+  unbindCalls.length = 0;
+  const modals = [];
+  let confirmPurge = false;
+  const previousShowModal = global.wx.showModal;
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success?.({ confirm: confirmPurge });
+  };
+  try {
+    const page = await bootBoundDevicePage();
+    page.openUnbindSheet();
+    page.pickUnbindChoice({ currentTarget: { dataset: { choice: "purge" } } });
+    // 第二次确认点了「再想想」：不发请求，绑定仍在。
+    await page.confirmUnbind();
+    assert.equal(modals.length, 1);
+    assert.match(modals[0].content, /永久删除/);
+    assert.equal(unbindCalls.length, 0);
+    assert.notEqual(binding.readBindingManifest(), null);
+
+    confirmPurge = true;
+    await page.confirmUnbind();
+    assert.equal(modals.length, 2);
+    assert.equal(unbindCalls.length, 1);
+    assert.deepEqual(unbindCalls[0].data, { reason: "unbind", purge_subject_data: true });
+    assert.equal(binding.readBindingManifest(), null);
+  } finally {
+    global.wx.showModal = previousShowModal;
+  }
+});
+
+test("device page offers both unbind data choices", () => {
+  const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  assert.match(template, /同时删除 TA 的记忆和对话数据/);
+  assert.match(template, /保留数据（重新绑定后可恢复）/);
+  assert.match(template, /停止记忆/);
 });

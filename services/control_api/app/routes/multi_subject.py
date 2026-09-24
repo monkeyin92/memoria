@@ -15,6 +15,12 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.consent.binding_snapshot import BINDING_OFFER_CATALOG
+from services.consent.bound_subject import (
+    MEMORY_CAPABILITIES,
+    MINOR_SESSION_CAPABILITIES,
+    BoundSubjectConsentService,
+    BoundSubjectGrant,
+)
 from services.control_api.app.account_gate import require_capability_for_subject_category
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_binding_token import (
@@ -67,10 +73,9 @@ router = APIRouter(tags=["multi-subject"])
 
 PrimaryRelationship = Literal["self", "guardian_of", "child_of", "family_member_of"]
 
-#: Evidence id for a guardian's unilateral declaration over a subject that has
-#: no account. It is deliberately distinct from any verification evidence: the
-#: declaration never satisfies a verified-guardian capability gate.
-_GUARDIAN_DECLARATION_EVIDENCE = "guardian_declaration_v1:device_binding"
+#: Age evidence for an elderly parent without an account: the binding owner,
+#: a verified adult, vouches for them (verify_age_evidence keeps the verifier).
+_BINDING_OWNER_AGE_ATTESTATION = "binding_owner_attestation_v1"
 
 _RELATIONSHIP_FOR_MODE: dict[DeviceDeclaredModeValue, PrimaryRelationship] = {
     "parent_for_child": "guardian_of",
@@ -294,7 +299,8 @@ async def _primary_subject(
     category: Literal["unknown", "minor"] = (
         "minor" if draft.age_band in {"under_14", "14_17"} else "unknown"
     )
-    person = await _identity(request).register_person(
+    identity = _identity(request)
+    person = await identity.register_person(
         display_name=draft.display_name,
         timezone="Asia/Shanghai",
         subject_category=category,
@@ -303,28 +309,137 @@ async def _primary_subject(
         actor_person_id=owner.person_id,
         now=now,
     )
+    # The person was created by this binding and has no account, so they can
+    # never confirm an endpoint. Product decision (2026-09-25): the
+    # phone-verified binding owner's own declaration is the relationship, and
+    # the device serves this one person. Identity records it as the owner's
+    # attestation, never as a two-party confirmation or a verification.
     if body.declared_mode == "parent_for_child" or body.primary_subject.relationship == "guardian_of":
-        # The subject was created here and has no account, so nobody can
-        # confirm the target endpoint.  Record only the guardian's own
-        # declaration: the relationship stays pending with
-        # ``confirmed_by_source_at`` set and ``confirmed_by_target_at`` NULL.
-        # Identity therefore reports a declared guardianship, never a
-        # completed two-party confirmation, a WeChat verification or a manual
-        # review, and no guardian link/consent is manufactured from it.
-        proposed = await _identity(request).propose_relationship(
+        await identity.attest_binding_relationship(
             source_person_id=owner.person_id,
             target_person_id=person.person_id,
             relation_type="guardian_of",
-            established_evidence_id=_GUARDIAN_DECLARATION_EVIDENCE,
             actor_person_id=owner.person_id,
             now=now,
         )
-        await _identity(request).confirm_relationship(
-            relationship_id=proposed.relationship_id,
-            person_id=owner.person_id,
+    elif body.declared_mode == "child_for_parent" and draft.age_band == "adult":
+        # The adult child vouches that their parent is an adult and acts as
+        # the parent's delegate on this device (their consent is recorded as
+        # a delegate grant, not the parent's own).
+        person = await identity.verify_age_evidence(
+            person_id=person.person_id,
+            evidence_id=f"{_BINDING_OWNER_AGE_ATTESTATION}:{person.person_id}"[:128],
+            verifier_person_id=owner.person_id,
+            now=now,
+        )
+        await identity.attest_binding_relationship(
+            source_person_id=owner.person_id,
+            target_person_id=person.person_id,
+            relation_type="delegate_for",
+            actor_person_id=owner.person_id,
             now=now,
         )
     return person
+
+
+def _bound_subject_grants(
+    *,
+    declared_mode: str,
+    consent_offer_ids: tuple[str, ...],
+    owner_id: str,
+    subject_id: str,
+    binding_id: str,
+    source_key: str,
+) -> tuple[BoundSubjectGrant, ...]:
+    """The standing consents this binding's accepted offers stand for."""
+
+    accepted = set(consent_offer_ids)
+    grants: list[BoundSubjectGrant] = []
+
+    def add(kind: Literal["subject", "guardian", "delegate"], capabilities: tuple[Any, ...]) -> None:
+        grants.append(
+            BoundSubjectGrant(
+                actor_person_id=owner_id,
+                subject_person_id=subject_id,
+                binding_id=binding_id,
+                kind=kind,
+                capabilities=capabilities,
+                source_key=source_key,
+            )
+        )
+
+    if declared_mode == "parent_for_child":
+        if "offer_minor_voice_session_v1" in accepted:
+            add("guardian", MINOR_SESSION_CAPABILITIES)
+        if "offer_minor_memory_retention_v1" in accepted:
+            add("guardian", MEMORY_CAPABILITIES)
+    elif declared_mode == "self_use" and owner_id == subject_id:
+        if "offer_self_memory_retention_v1" in accepted:
+            add("subject", MEMORY_CAPABILITIES)
+    elif declared_mode == "child_for_parent" and owner_id != subject_id:
+        if "offer_senior_memory_retention_v1" in accepted:
+            add("delegate", MEMORY_CAPABILITIES)
+    return tuple(grants)
+
+
+async def _grant_bound_subject_consents(
+    request: Request,
+    *,
+    body: CreateDeviceBindingRequest,
+    manifest: BindingManifest,
+    owner: PersonSubject,
+    subject: PersonSubject,
+    now: datetime,
+) -> None:
+    """Turn the accepted binding offers into the subject's standing consents.
+
+    Runs after the binding committed (the authority checks the live binding),
+    and is idempotent: a retry of the same binding replays the same grants.
+    Without a consent authority (a SQLite deployment has no Session Runtime
+    either) there is nothing to grant.
+    """
+
+    service = cast(
+        BoundSubjectConsentService | None,
+        getattr(request.app.state, "bound_subject_consent", None),
+    )
+    if service is None:
+        return
+    grants = _bound_subject_grants(
+        declared_mode=body.declared_mode,
+        consent_offer_ids=body.consent_offer_ids,
+        owner_id=owner.person_id,
+        subject_id=subject.person_id,
+        binding_id=manifest.binding_id,
+        source_key=manifest.consent_snapshot_id or manifest.binding_id,
+    )
+    for grant in grants:
+        await service.grant(grant)
+    if (
+        body.declared_mode == "parent_for_child"
+        and "offer_minor_memory_retention_v1" in body.consent_offer_ids
+    ):
+        # The retention ceiling reads the Guardian ledger: the same consent
+        # is written there too, keyed to this binding so a retry replays.
+        await request.app.state.guardian_consent_service.grant_for_person(
+            subject_person_id=subject.person_id,
+            grantor_person_id=owner.person_id,
+            consent_kind="memory_retention",
+            policy_version="guardian-v1",
+            evidence_event_id=str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"memoria:binding-memory-consent:{manifest.binding_id}:{subject.person_id}",
+                )
+            ),
+            consent_id=str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"memoria:binding-memory-consent-id:{manifest.binding_id}:{subject.person_id}",
+                )
+            ),
+            now=now,
+        )
 
 
 def _binding_roles(
@@ -501,6 +616,14 @@ async def create_device_binding(
                     device_media_endpoint=gateway_url or "wss://media.invalid",
                 ),
             )
+        await _grant_bound_subject_consents(
+            request,
+            body=body,
+            manifest=manifest,
+            owner=owner,
+            subject=subject,
+            now=now,
+        )
         request.app.state.multi_subject_binding_manifests[device_id] = manifest
         # No guardian link is created here.  A guardian link is a separate
         # authority whose activation needs the subject's own binding-code

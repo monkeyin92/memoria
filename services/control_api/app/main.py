@@ -48,10 +48,16 @@ from services.consent.binding_snapshot import (
     RejectingBindingConsentAuthority,
     SqliteBindingConsentStore,
 )
+from services.consent.bound_subject import BoundSubjectConsentService
+from services.consent.postgres_store import PostgresConsentStore
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.guardian_push import (
+    app_display_name_resolver,
+    build_crisis_push_worker,
+)
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
@@ -131,6 +137,9 @@ from services.governance.account_data import (
     PostgresAccountRepository,
     SqliteAccountRepository,
 )
+from services.governance.subject_archive import PostgresSubjectArchive, SqliteSubjectArchive
+from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
+from services.governance.subject_ports import SubjectGuardianPort, SubjectMemoryScopePort
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.reader import GrowthReader
 from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
@@ -142,6 +151,7 @@ from services.guardian.corpus import (
 from services.guardian.crisis import CrisisNotificationService, CrisisNotificationStorePort
 from services.guardian.domain import ConsentKind, GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
+from services.guardian.push import CrisisPushStorePort
 from services.guardian.sqlite_store import SqliteGuardianStore
 from services.identity.authority import (
     ConsentSnapshotResolver,
@@ -165,6 +175,7 @@ from services.memory_scope.relationship_grants import (
     IdentityRelationshipGrantResolver,
 )
 from services.memory_scope.shared_actions import PostgresFamilySharedActionExecutor
+from services.memory_scope.subject_erasure import PostgresSubjectMemoryScope
 from services.memory_scope.wiring import (
     MemoryProductionWiring,
     build_memory_router,
@@ -682,6 +693,51 @@ def _guardian_revocation_hook(
     return on_revoked
 
 
+def _subject_archive(settings: ControlSettings) -> PostgresSubjectArchive | SqliteSubjectArchive:
+    # One repository serves account deletion and a bound subject's deletion.
+    archive_url = settings.archive_database_url.get_secret_value()
+    if archive_url:
+        return PostgresSubjectArchive(archive_url)
+    return SqliteSubjectArchive(settings.memoria_db_path)
+
+
+def _install_subject_deletion(
+    app: FastAPI,
+    settings: ControlSettings,
+    *,
+    guardian_store: GuardianStorePort,
+    archive_object_store: ObjectStore,
+    corpus_retention_service: CorpusRetentionService,
+    session_terminator: AccountSessionTerminator,
+) -> SubjectDeletionService:
+    """Erase one bound subject inside their owner's account (not account-wide)."""
+
+    ledger = SubjectDeletionLedger(settings.memoria_db_path)
+    ledger.initialize()
+    identity = cast(IdentityService, app.state.identity_service)
+
+    async def redact(subject_id: str, account_id: str) -> None:
+        await identity.redact_bound_subject(person_id=subject_id, actor_person_id=account_id)
+
+    async def purge_corpus(subject_id: str) -> int:
+        return await corpus_retention_service.purge_minor(minor_user_id=subject_id)
+
+    service = SubjectDeletionService(
+        ledger=ledger,
+        archive=_subject_archive(settings),
+        object_store=archive_object_store,
+        guardian=cast(SubjectGuardianPort, guardian_store),
+        memory_scope=cast(
+            SubjectMemoryScopePort | None, getattr(app.state, "subject_memory_scope", None)
+        ),
+        terminate_sessions=session_terminator.terminate_subject,
+        purge_corpus=purge_corpus,
+        redact_identity=redact,
+    )
+    app.state.subject_deletion = service
+    return service
+
+
 def _account_data_governance(
     settings: ControlSettings,
     *,
@@ -697,11 +753,7 @@ def _account_data_governance(
     session_terminator: AccountSessionTerminator,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
-    archive_repository = (
-        PostgresAccountRepository.archive(archive_url)
-        if archive_url
-        else SqliteAccountRepository.archive(settings.memoria_db_path)
-    )
+    archive_repository = _subject_archive(settings)
     speaker_url = settings.speaker_database_url.get_secret_value() or archive_url
     speaker_repository = (
         PostgresAccountRepository.speaker(speaker_url)
@@ -802,8 +854,13 @@ async def _install_memory_scope(
     """Install MemoryScope only from dedicated production PostgreSQL roles."""
 
     app.state.memory_wiring = None
+    app.state.subject_memory_scope = None
     if settings.environment != "production":
         return
+    maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
+    if maintenance_dsn:
+        # Erasing one bound subject's records: its own narrow login role.
+        app.state.subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
     api_dsn = settings.memory_api_database_url.get_secret_value().strip()
     worker_dsn = settings.memory_worker_database_url.get_secret_value().strip()
     if not api_dsn or not worker_dsn:
@@ -928,6 +985,19 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         transfer_verifier=RejectingTransferEvidenceVerifier(),
         consent_resolver=binding_consent_authority,
     )
+    app.state.bound_subject_consent = None
+    app.state.bound_subject_consent_store = None
+    if consent_url:
+        # Standing consents for the one person each device serves: the
+        # binding's accepted offers become authority grants Policy reads.
+        bound_consent_store = PostgresConsentStore(consent_url)
+        app.state.bound_subject_consent_store = bound_consent_store
+        app.state.bound_subject_consent = BoundSubjectConsentService(
+            store=bound_consent_store,
+            identity=app.state.identity_service,
+            provision=bound_consent_store.authorize_bound_subject,
+            prepare=bound_consent_store.ensure_initialized,
+        )
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(app, settings)
     await _install_memory_scope(app, settings)
@@ -1212,6 +1282,16 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     corpus_retention_worker.start()
     app.state.corpus_retention_service = corpus_retention_service
     app.state.corpus_retention_worker = corpus_retention_worker
+    # Default disabled: without the flag no worker exists and crisis alerts
+    # stay queued and visible on the guardian page only.
+    crisis_push_worker = build_crisis_push_worker(
+        settings,
+        cast(CrisisPushStorePort, guardian_store),
+        display_name=app_display_name_resolver(app),
+    )
+    if crisis_push_worker is not None:
+        crisis_push_worker.start()
+    app.state.crisis_push_worker = crisis_push_worker
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=store,
@@ -1232,14 +1312,28 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
     deletion_worker.start()
     app.state.account_deletion_worker = deletion_worker
+    subject_deletion_worker = AccountDeletionWorker(
+        _install_subject_deletion(
+            app,
+            settings,
+            guardian_store=guardian_store,
+            archive_object_store=archive_object_store,
+            corpus_retention_service=corpus_retention_service,
+            session_terminator=session_terminator,
+        )
+    )
+    subject_deletion_worker.start()
     try:
         yield
     finally:
+        if crisis_push_worker is not None:
+            await crisis_push_worker.stop()
         await corpus_retention_worker.stop()
         if crisis_semantic_classifier is not None:
             await crisis_semantic_classifier.aclose()
         await evolution_sleep_worker.stop()
         await deletion_worker.stop()
+        await subject_deletion_worker.stop()
         await compiler_worker.stop()
         await session_directory.close()
         await media_slo_gate.close()
@@ -1306,6 +1400,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         if binding_consent_store is not None:
             await binding_consent_store.close()
+        bound_consent_store = getattr(app.state, "bound_subject_consent_store", None)
+        if bound_consent_store is not None:
+            await bound_consent_store.close()
+        subject_memory_scope = getattr(app.state, "subject_memory_scope", None)
+        if subject_memory_scope is not None:
+            await subject_memory_scope.close()
 
 
 def create_app() -> FastAPI:
@@ -1476,6 +1576,14 @@ def create_app() -> FastAPI:
         archive_object_store,
     )
     app.state.corpus_retention_service = corpus_retention_service
+    _install_subject_deletion(
+        app,
+        settings,
+        guardian_store=guardian_store,
+        archive_object_store=archive_object_store,
+        corpus_retention_service=corpus_retention_service,
+        session_terminator=session_terminator,
+    )
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=app.state.memory_store,

@@ -204,7 +204,9 @@ class CompositeActionAuthority:
             consents = await consent.lock_current(connection, receipt, request)
 
         relationships: tuple[RelationshipEvidencePort, ...] = ()
-        if receipt.relationship_snapshot_ids:
+        # A decision that relied on no relationship still hashed the ones in
+        # its context; those must be re-locked too or the hash cannot match.
+        if receipt.relationship_snapshot_ids or request.context.relationship_evidence:
             relationship = _required(self._relationship, "relationship")
             relationships = await relationship.lock_current(
                 connection, receipt, request

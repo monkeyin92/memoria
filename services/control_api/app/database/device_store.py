@@ -919,6 +919,16 @@ class DeviceStoreMixin:
             )
             return cursor.rowcount == 1
 
+    def open_device_media_session_ids(self, *, subject_id: str) -> tuple[str, ...]:
+        """Open device sessions currently serving this subject."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT session_id FROM device_media_sessions "
+                "WHERE closed_at IS NULL AND (active_subject_id = ? OR subject_id = ?)",
+                (subject_id, subject_id),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def delete_device_media_sessions(self, *, subject_id: str) -> int:
         with self._connection() as connection:
             cursor = connection.execute(

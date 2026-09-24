@@ -212,6 +212,9 @@ function errorFromResponse(response) {
                               ? "这项授权已经存在，请刷新后再试。"
                               : code === "guardian_binding_owner_required"
                                 ? "只有监护绑定发起人可以修改这项资料或授权。"
+                              : code === "subject_deletion_unavailable" ||
+                                  code === "child_subject_deletion_unavailable"
+                                ? "删除 TA 数据的功能还在完善中，暂时可以先选择保留数据。"
                                 : code === "identity_authority_unavailable"
                                   ? "暂时无法确认身份资料，已按受限模式处理。"
                                   : code === "voice_clone_forbidden" || code === "voice_clone"
@@ -530,6 +533,31 @@ function revokePersonConsent({ personId, consentId, idempotencyKey }) {
 }
 
 /*
+ * 无账号孩子的数据导出 / 删除。授权人是监护关系或当前 parent_for_child
+ * 绑定 owner，由服务端决定。导出只含治理元数据（audience=guardian），不含
+ * 对话原文；删除必须带服务端约定的确认文本，客户端不自行放宽。
+ */
+const GUARDIAN_MINOR_DELETE_CONFIRMATION = "永久删除孩子的全部数据";
+
+function exportGuardianMinorData(personId) {
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(personId)}/export`, {
+    method: "POST",
+  });
+}
+
+function deleteGuardianMinorData(personId, { confirmation } = {}) {
+  if (confirmation !== GUARDIAN_MINOR_DELETE_CONFIRMATION) {
+    return Promise.reject(
+      new TypeError(`请完整输入「${GUARDIAN_MINOR_DELETE_CONFIRMATION}」。`),
+    );
+  }
+  return rawRequest(`/v1/guardian/minors/${encodeURIComponent(personId)}/delete`, {
+    method: "POST",
+    data: { confirmation },
+  });
+}
+
+/*
  * 建后年龄资料申报。只接受 unknown / under_14 / 14_17；adult 与 verified
  * 不能由客户端申报。调用方是本人，或 ACTIVE parent_for_child 绑定 owner。
  * 成功只回写申报结果，不改会话、不重签 Runtime Profile。
@@ -550,6 +578,23 @@ function getGuardianNotifications() {
   return rawRequest("/v1/guardian/notifications");
 }
 
+/* 危机提醒订阅（一次性订阅消息）。关闭时服务端不下发模板 ID。 */
+function getGuardianPushConfig() {
+  return rawRequest("/v1/guardian/push-config");
+}
+
+/* accept 必须附带新的 wx.login code，由服务端核对 openid 属于当前监护人。 */
+function recordGuardianPushSubscription({ templateId, result, loginCode = "" }) {
+  return rawRequest("/v1/guardian/push-subscriptions", {
+    method: "POST",
+    data: {
+      template_id: templateId,
+      result,
+      ...(loginCode ? { login_code: loginCode } : {}),
+    },
+  });
+}
+
 function getTutorLessons(focus = "tutor_english") {
   return rawRequest(`/v1/tutor/lessons?focus=${encodeURIComponent(focus)}`);
 }
@@ -562,7 +607,6 @@ function updateProfile(userId, profile) {
     "auto_summary",
     "voice_reply",
     "gentle_reminders",
-    "reject_non_owner_voice",
     "companion_id",
     "timezone",
   ]) {
@@ -954,6 +998,25 @@ function getDeviceBinding(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding`);
 }
 
+/*
+ * 解除绑定。服务端先停止该使用人的记忆，再按 purge_subject_data 决定是否
+ * 同时删除 TA 的记忆与对话数据；false 表示保留，重新绑定后可恢复。成功后
+ * 清理本地绑定上下文，由调用方重新同步账号设备。
+ */
+function unbindDevice(deviceId, { purgeSubjectData } = {}) {
+  if (typeof purgeSubjectData !== "boolean") {
+    return Promise.reject(new TypeError("请先选择是否删除使用人的数据。"));
+  }
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding/unbind`, {
+    method: "POST",
+    data: { reason: "unbind", purge_subject_data: purgeSubjectData },
+  }).then((result) => {
+    const current = readBindingManifest();
+    if (!current || current.device_id === deviceId) clearDeviceBindingContext();
+    return result;
+  });
+}
+
 function getDeviceSettings(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
 }
@@ -1260,8 +1323,14 @@ module.exports = {
   getPersonConsents,
   grantPersonConsent,
   revokePersonConsent,
+  GUARDIAN_MINOR_DELETE_CONFIRMATION,
+  exportGuardianMinorData,
+  deleteGuardianMinorData,
   declareAgeEvidence,
   getGuardianNotifications,
+  getGuardianPushConfig,
+  recordGuardianPushSubscription,
+  wechatLoginCode,
   getTutorLessons,
   updateProfile,
   getMemoryDays,
@@ -1288,6 +1357,7 @@ module.exports = {
   syncDeviceBindings,
   selectDeviceBinding,
   getDeviceBinding,
+  unbindDevice,
   getDeviceSettings,
   getWakeWordCatalog,
   validateWakeWord,

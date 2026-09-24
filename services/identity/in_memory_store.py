@@ -150,6 +150,30 @@ class InMemoryIdentityStore:
             if audit_event is not None:
                 self._audit.append(audit_event)
 
+    async def redact_bound_subject(
+        self,
+        *,
+        person_id: str,
+        display_name: str,
+        updated_at: datetime,
+        audit_event: AuditEvent,
+        actor_person_id: str,
+    ) -> None:
+        del actor_person_id
+        with self._lock:
+            person = self._persons[person_id]
+            self._persons[person_id] = replace(
+                person, display_name=display_name, status="disabled", updated_at=updated_at
+            )
+            self._audit[:] = [
+                replace(event, payload={**event.payload, "display_name": display_name})
+                if person_id in (event.person_id, event.subject_person_id)
+                and "display_name" in event.payload
+                else event
+                for event in self._audit
+            ]
+            self._audit.append(audit_event)
+
     async def get_person(
         self,
         person_id: str,

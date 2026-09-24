@@ -206,12 +206,19 @@
           </view>
           <text class="row-chevron">›</text>
         </view>
+        <view class="list-row" bindtap="openUnbindSheet">
+          <view class="row-copy">
+            <text class="row-title">解除绑定</text>
+            <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
       </view>
 
       <block wx:if="{{candidates.length > 0 && !currentUserLabelConfirmed}}">
         <view class="card">
           <text class="setting-name">此刻是谁在用</text>
-          <text class="setting-desc">无法自动确认时，请选择并确认。详细置信度见下方诊断。</text>
+          <text class="setting-desc">请选择此刻在用的成员并确认。</text>
           <view wx:for="{{candidates}}" wx:key="person_id" class="choice-card {{selectedCandidateId === item.person_id ? 'choice-card-on' : ''}}" data-person-id="{{item.person_id}}" bindtap="selectCandidate">
             <view class="row-copy">
               <text class="row-title">{{item.display_name}}</text>
@@ -219,7 +226,7 @@
             </view>
           </view>
           <button class="primary-button empty-button" loading="{{switching}}" disabled="{{!canConfirmWithApp}}" bindtap="confirmSubject">确认是我</button>
-          <text wx:if="{{!canConfirmWithApp}}" class="caption">当前会话需要通过语音确认身份，应用内切换暂不可用。</text>
+          <text wx:if="{{!canConfirmWithApp}}" class="caption">当前会话暂不支持在应用内切换使用人。</text>
         </view>
       </block>
 
@@ -290,6 +297,33 @@
         <button class="text-button" style="margin-top: 8rpx;" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
       </view>
 
+      <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->
+      <view wx:if="{{unbindSheetVisible}}" class="sheet-mask" bindtap="closeUnbindSheet"></view>
+      <view wx:if="{{unbindSheetVisible}}" class="sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">解除绑定</text>
+        <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
+        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">保留数据（重新绑定后可恢复）</text>
+            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
+            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
+        <button class="danger-button" style="margin-top: 16rpx;" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>
+        <button class="text-button" style="margin-top: 8rpx;" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
+      </view>
+
       <!-- 设备信息诊断折叠面板 -->
       <view class="fold">
         <view class="list-row" bindtap="toggleDiag">
@@ -313,14 +347,7 @@
             <view class="summary-row"><text class="summary-key">配置版本</text><text class="summary-value">v{{diagnostics.runtime_profile_version}}</text></view>
             <view class="summary-row"><text class="summary-key">实际音频模式</text><text class="summary-value">{{effectiveAudioModeLabel}}</text></view>
           </block>
-          <block wx:if="{{candidates.length}}">
-            <text class="caption">说话人候选仅供诊断，不代替当前使用者备注。</text>
-            <view wx:for="{{candidates}}" wx:key="person_id" class="summary-row">
-              <text class="summary-key">{{item.display_name}}</text>
-              <text class="summary-value">{{item.confidenceLow ? '置信度较低' : '匹配 ' + item.confidencePercent + '%'}}</text>
-            </view>
-          </block>
-          <text class="caption">设备归属、在线状态、主人识别和私密权限分别确认，不能互相替代。</text>
+          <text class="caption">设备归属、在线状态、使用人和私密权限分别确认，不能互相替代。</text>
           <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
       </view>

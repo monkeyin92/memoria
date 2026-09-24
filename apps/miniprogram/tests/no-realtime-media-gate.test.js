@@ -128,6 +128,41 @@ test("phone voiceprint enrollment page is fully removed", () => {
   assert.doesNotMatch(apiSource, /enrollSpeakerProfiles|\/v1\/speakers\/enrollments/, "api.js 不得保留声纹上传函数");
 });
 
+test("voiceprint is gone from every page, only voice cloning stays", () => {
+  // 声纹整体下线：使用人身份来自设备绑定。页面不得再出现声纹文案，也不得
+  // 发起或读取说话人登记；声音复刻（声音样本 / 自定义声音）是另一项能力，保留。
+  const pageFiles = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(wxml|js|json)$/.test(entry.name)) pageFiles.push(full);
+    }
+  };
+  for (const dir of ["pages", "components", "custom-tab-bar"]) walk(path.join(root, dir));
+  const voiceprintHits = pageFiles
+    .filter((file) => /声纹|说话人登记|过滤明显旁人/.test(fs.readFileSync(file, "utf8")))
+    .map((file) => path.relative(root, file));
+  assert.deepEqual(voiceprintHits, []);
+  const enrollmentCallers = pageFiles
+    .filter((file) =>
+      /createSpeakerEnrollmentIntent|getSpeakerEnrollmentStatus|reject_non_owner_voice/.test(
+        fs.readFileSync(file, "utf8"),
+      ),
+    )
+    .map((file) => path.relative(root, file));
+  assert.deepEqual(enrollmentCallers, []);
+  const { CONSENT_OFFERS } = require("../utils/device-binding");
+  assert.equal(
+    CONSENT_OFFERS.some((offer) => offer.id === "offer_self_voice_profile_v1" || /声纹/.test(offer.label)),
+    false,
+  );
+  const complianceSource = fs.readFileSync(path.join(root, "utils", "compliance.js"), "utf8");
+  assert.doesNotMatch(complianceSource, /声纹/);
+  const profile = fs.readFileSync(path.join(root, "pages", "profile", "index.wxml"), "utf8");
+  assert.match(profile, /自定义人格与声音/);
+});
+
 test("deleted media modules stay deleted", () => {
   for (const name of [
     "media-gateway.js",

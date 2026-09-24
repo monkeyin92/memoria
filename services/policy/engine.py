@@ -237,6 +237,24 @@ ADULT_SENSITIVE_RULES: Final[dict[Capability, tuple[str, tuple[PolicyObligationC
 }
 
 
+def _acts_for_subject(context: PolicyContext) -> bool:
+    """The session acts for its subject: their own account, or their own device.
+
+    A device serves the one person it is bound to. When that person is the one
+    talking on it (``device_bound``), the session acts for them although the
+    binding owner's account opened it. A guardian's own app session never does:
+    there the guardian, not the child, is the one talking.
+    """
+
+    return (
+        context.subject_id is not None
+        and (
+            context.actor_id == context.subject_id
+            or context.subject_presence == "device_bound"
+        )
+    )
+
+
 def _params(
     *,
     max_session_seconds: int | None = None,
@@ -910,8 +928,9 @@ class PolicyEngine:
                 reason_code="consent_purpose_mismatch",
             )
         subject_id = context.subject_id or ""
+        acts_for_subject = _acts_for_subject(context)
         if context.capability == "memory_recall_private" and (
-            context.actor_id != subject_id or context.resource_owner_id != subject_id
+            not acts_for_subject or context.resource_owner_id != subject_id
         ):
             return self._decision(
                 context,
@@ -919,14 +938,14 @@ class PolicyEngine:
                 reason_code="private_memory_subject_only",
             )
         if context.capability == "memory_capture" and (
-            context.actor_id != subject_id or context.resource_owner_id != subject_id
+            not acts_for_subject or context.resource_owner_id != subject_id
         ):
             return self._decision(
                 context,
                 effect="deny",
                 reason_code="memory_consent_required",
             )
-        if context.capability == "tutor" and context.actor_id != subject_id:
+        if context.capability == "tutor" and not acts_for_subject:
             return self._decision(
                 context,
                 effect="deny",
@@ -1095,7 +1114,7 @@ class PolicyEngine:
                 ),
             )
         if context.capability == "tutor":
-            if context.actor_id != context.subject_id:
+            if not _acts_for_subject(context):
                 return self._decision(
                     context,
                     effect="deny",
@@ -1142,9 +1161,28 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="consent_purpose_mismatch",
             )
-        if context.actor_id != subject_id or context.resource_owner_id != subject_id:
+        if not _acts_for_subject(context) or context.resource_owner_id != subject_id:
             reason = "private_memory_subject_only" if recall else "memory_consent_required"
             return self._decision(context, effect="deny", reason_code=reason)
+        delegates = tuple(
+            relationship
+            for relationship in active_relationship_for(
+                "delegate_for",
+                subject_id,
+                context.evaluated_at,
+                context.relationship_evidence,
+            )
+            if relationship.source_person_id == context.actor_id
+        )
+        if context.actor_id != subject_id and not delegates:
+            # A device-bound adult reached through another account (an elder on
+            # a device the adult child bound) needs that child's active,
+            # binding-attested delegation, besides the consent it recorded.
+            return self._decision(
+                context,
+                effect="deny",
+                reason_code="delegate_evidence_required",
+            )
         if context.device_trust not in TRUSTED_DEVICE_TRUSTS:
             return self._decision(
                 context,
@@ -1183,6 +1221,8 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="binding_evidence_required",
             )
+        # A delegate's grant rests on their delegation: the receipt fences it.
+        relied_on = (_select_relationship(delegates),) if context.actor_id != subject_id else ()
         if recall:
             return self._decision(
                 context,
@@ -1190,6 +1230,7 @@ class PolicyEngine:
                 reason_code="private_memory_subject_authorized",
                 obligations=_obligations("WRITE_POLICY_RECEIPT"),
                 consents=(_select_consent(consents),),
+                relationships=relied_on,
                 binding_evidence=context.binding_evidence,
             )
         return self._decision(
@@ -1202,6 +1243,7 @@ class PolicyEngine:
                 "WRITE_POLICY_RECEIPT",
             ),
             consents=(_select_consent(consents),),
+            relationships=relied_on,
             binding_evidence=context.binding_evidence,
         )
 

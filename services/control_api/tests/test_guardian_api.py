@@ -853,23 +853,24 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
         )
         assert stranger_delete.status_code == 404
 
-        # 13. The recorded grantor can revoke its own grant after the unbind.
-        revoke_res = await client.delete(
+        # 13. Product decision (2026-09-25): unbinding stops memory, so the
+        # unbind itself withdrew the grantor's consents; a later revoke of
+        # the same grant finds it already withdrawn.
+        assert unbind_res.json()["consents_withdrawn"] >= 1
+        assert (
+            await app.state.guardian_store.active_consent(
+                minor_user_id=child_id, consent_kind="memory_retention"
+            )
+            is None
+        )
+        already = await client.delete(
             f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
             headers={**owner_headers, "Idempotency-Key": "owner-revoke-001"},
         )
-        assert revoke_res.status_code == 200, revoke_res.text
-        assert revoke_res.json()["active"] is False
+        assert already.status_code == 409
+        assert already.json()["detail"]["code"] == "guardian_consent_conflict"
 
-        # Same-key revoke replay returns the original revocation.
-        revoke_replay = await client.delete(
-            f"/v1/guardian/minors/{child_id}/consents/{consent_id}",
-            headers={**owner_headers, "Idempotency-Key": "owner-revoke-001"},
-        )
-        assert revoke_replay.status_code == 200
-        assert revoke_replay.json()["revoked_at"] == revoke_res.json()["revoked_at"]
-
-        # 14. The policy gate closes again after the revoke.
+        # 14. The policy gate is closed after the unbind.
         policy_res3 = await client.post(
             "/v1/interaction/session-policy",
             headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
@@ -890,10 +891,10 @@ async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_
             == "guardian_binding_owner_required"
         )
 
-        # 16. The other grant can also be revoked by its recorded grantor.
-        voice_revoke = await client.delete(
-            f"/v1/guardian/minors/{child_id}/consents/{voice_consent_id}",
-            headers={**owner_headers, "Idempotency-Key": "owner-revoke-voice-001"},
+        # 16. The voice-session grant was withdrawn by the unbind as well.
+        assert (
+            await app.state.guardian_store.active_consent(
+                minor_user_id=child_id, consent_kind="minor_voice_session"
+            )
+            is None
         )
-        assert voice_revoke.status_code == 200, voice_revoke.text
-        assert voice_revoke.json()["active"] is False

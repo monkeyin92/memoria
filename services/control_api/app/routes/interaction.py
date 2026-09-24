@@ -44,6 +44,11 @@ from services.control_api.app.account_gate import (
     AccountDeletingError,
     require_capability_for_account_id,
 )
+from services.control_api.app.bound_subject import (
+    DEVICE_BOUND_SUBJECT_UNVERIFIED,
+    claims_device_bound_subject,
+    runtime_profile_trusts_bound_subject,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import RuntimeProfileLedger
@@ -485,6 +490,9 @@ class _SubjectMemoryScope:
     age_band: str | None
     retention_allowed: bool
     catalog_readable: bool
+    # The current signed profile confirms this device's bound subject and
+    # grants private recall: the only proof a device-bound owner claim needs.
+    bound_subject_trusted: bool = False
 
     @property
     def memory_readable(self) -> bool:
@@ -520,6 +528,7 @@ async def _resolve_subject_memory_scope(
     subject_category: str | None = None
     age_band: str | None = None
     catalog_readable = False
+    bound_subject_trusted = False
     runtime_service = getattr(request.app.state, "session_runtime_service", None)
     if runtime_service is None:
         # This deployment profile has no persistent Session Runtime; the login
@@ -553,6 +562,7 @@ async def _resolve_subject_memory_scope(
             profile_age_band = runtime_profile.get("age_band")
             if isinstance(profile_age_band, str):
                 age_band = profile_age_band
+            bound_subject_trusted = runtime_profile_trusts_bound_subject(runtime_profile)
     if subject_authority == "account_profile" and subject_id is not None and subject_category is None:
         profile = _store(request).get_subject_profile(user_id=subject_id)
         if profile is not None:
@@ -574,6 +584,22 @@ async def _resolve_subject_memory_scope(
             else False
         ),
         catalog_readable=catalog_readable,
+        bound_subject_trusted=bound_subject_trusted,
+    )
+
+
+def _trusted_speaker_decision(
+    decision: ResponsePlanSpeakerDecision,
+    scope: _SubjectMemoryScope | None,
+) -> ResponsePlanSpeakerDecision:
+    """Honour a device-bound owner claim only on its own confirming profile."""
+
+    if not claims_device_bound_subject(decision.classification, decision.reason_code):
+        return decision
+    if scope is not None and scope.bound_subject_trusted:
+        return decision
+    return decision.model_copy(
+        update={"classification": "uncertain", "reason_code": DEVICE_BOUND_SUBJECT_UNVERIFIED}
     )
 
 
@@ -2217,6 +2243,9 @@ async def response_plan(
         session_id=body.session_id,
         account_id=account_id,
     )
+    body = body.model_copy(
+        update={"speaker_decision": _trusted_speaker_decision(body.speaker_decision, scope)}
+    )
     key = _response_plan_key(
         body,
         evolution_protocol=evolution_protocol,
@@ -2449,6 +2478,9 @@ async def context_prefetch(
         )
         if frozen.interaction_mode == "companion"
         else None
+    )
+    body = body.model_copy(
+        update={"speaker_decision": _trusted_speaker_decision(body.speaker_decision, scope)}
     )
     if scope is None or not scope.memory_readable or scope.subject_id is None:
         # The same contract as /response-plan: a non-companion turn, a subject the

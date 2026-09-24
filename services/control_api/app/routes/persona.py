@@ -12,6 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import EvidenceNotFoundError
 from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.bound_subject import (
+    DEVICE_BOUND_SUBJECT_UNVERIFIED,
+    claims_device_bound_subject,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
@@ -271,9 +275,10 @@ async def _subject_capsule(
     data.
     """
 
-    if scope.subject_authority == "unavailable":
-        # A configured authority that cannot answer must not hand the account
-        # owner's persona to whoever is in front of the device.
+    if scope.subject_authority == "unavailable" or scope.subject_id is None:
+        # A configured authority that cannot answer, or a runtime profile whose
+        # active subject is not confirmed, must not hand the account owner's
+        # persona to whoever is in front of the device.
         return PersonaCapsule()
     if scope.subject_id == account_id:
         return await _engine(request).capsule(
@@ -318,6 +323,20 @@ async def session_capsule(
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
     account_id = str(session["user_id"])
+    scope = None
+    if claims_device_bound_subject(body.speaker_class, body.speaker_reason_code):
+        scope = await _resolve_subject_memory_scope(
+            request,
+            session_id=body.session_id,
+            account_id=account_id,
+        )
+        if not scope.bound_subject_trusted:
+            body = body.model_copy(
+                update={
+                    "speaker_class": "uncertain",
+                    "speaker_reason_code": DEVICE_BOUND_SUBJECT_UNVERIFIED,
+                }
+            )
     trusted_interaction = ModePolicy.trusted_context(
         FrozenMode.from_session(session),
         speaker_class=body.speaker_class,
@@ -337,11 +356,12 @@ async def session_capsule(
         capabilities["persona_low_sensitivity"]
         and _store(request).get_account(user_id=account_id) is not None
     )
-    scope = await _resolve_subject_memory_scope(
-        request,
-        session_id=body.session_id,
-        account_id=account_id,
-    )
+    if scope is None:
+        scope = await _resolve_subject_memory_scope(
+            request,
+            session_id=body.session_id,
+            account_id=account_id,
+        )
     capsule = await _subject_capsule(
         request,
         scope=scope,
