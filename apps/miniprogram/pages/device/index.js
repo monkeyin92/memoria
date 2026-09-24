@@ -770,11 +770,17 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ unbinding: true, unbindError: "" });
     try {
-      await api.unbindDevice(binding.device_id, { purgeSubjectData });
+      const result = await api.unbindDevice(binding.device_id, { purgeSubjectData });
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
+      // 删除分步执行、可续跑；未跑完时服务端返回 pending，后台会继续删完。
+      const purgePending = purgeSubjectData && result?.subject_deletion === "pending";
       wx.showToast({
-        title: purgeSubjectData ? "已解除绑定并删除数据" : "已解除绑定",
+        title: !purgeSubjectData
+          ? "已解除绑定"
+          : purgePending
+            ? "已解除绑定，数据正在删除"
+            : "已解除绑定并删除数据",
         icon: "none",
       });
       await this.loadDevice();
