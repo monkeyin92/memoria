@@ -12,6 +12,7 @@ from typing import cast
 import asyncpg
 
 from services.archive.object_store import ObjectRef
+from services.governance.subject_ports import SubjectScope
 from services.guardian.corpus import (
     MAX_ACTIVE_CORPUS_SAMPLES_PER_MINOR,
     CorpusConsentInactiveError,
@@ -2393,6 +2394,71 @@ class PostgresGuardianStore:
                 "guardian_push_subscriptions": push_subscriptions,
             }.items()
             if value
+        }
+
+    async def _subject_scope_pool(self) -> asyncpg.Pool:
+        # SubjectScope validates the ids first; the SQL functions re-check.
+        return await self._ready_role_pool(
+            dsn=self._maintenance_dsn,
+            pool_attr="_maintenance_pool",
+            expected_role="memoria_guardian_maintenance",
+            operation="subject deletion",
+        )
+
+    async def subject_tutor_event_ids(
+        self, *, account_id: str, subject_id: str
+    ) -> tuple[str, ...]:
+        """Archive evidence ids of one bound subject's tutor practice.
+
+        Read before ``delete_subject_rows``: for practice archived before
+        the tutor projection carried subject_id, these rows are the only
+        lineage to the owner-account archive events.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        pool = await self._subject_scope_pool()
+        async with pool.acquire() as connection:
+            values = await connection.fetchval(
+                "SELECT guardian_subject_scope_tutor_event_ids($1, $2)",
+                scope.account_id,
+                scope.subject_id,
+            )
+        return tuple(sorted(str(value) for value in values or ()))
+
+    async def delete_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Crisis events + notifications and the subject's tutor rows, atomically.
+
+        Person consents and the guardian's subscribe-message ledger stay.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        pool = await self._subject_scope_pool()
+        async with pool.acquire() as connection:
+            result = await connection.fetchval(
+                "SELECT guardian_subject_scope_delete($1, $2)",
+                scope.account_id,
+                scope.subject_id,
+            )
+        return {key: int(value) for key, value in json.loads(result).items()}
+
+    async def remaining_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Rows ``delete_subject_rows`` covers, plus live corpus samples
+        (purged by the corpus retention service, not here)."""
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        pool = await self._subject_scope_pool()
+        async with pool.acquire() as connection:
+            result = await connection.fetchval(
+                "SELECT guardian_subject_scope_remaining($1, $2)",
+                scope.account_id,
+                scope.subject_id,
+            )
+        return {
+            key: int(value) for key, value in json.loads(result).items() if int(value)
         }
 
     async def related_minor_accounts(self, *, guardian_user_id: str) -> tuple[str, ...]:
