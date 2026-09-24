@@ -642,7 +642,7 @@ test("parent_for_child without app_confirm cannot switch", async () => {
     selectedCandidateId: "person_child",
   });
   await page.confirmSubject();
-  assert.ok(page.data.error.includes("语音确认"));
+  assert.ok(page.data.error.includes("暂不支持在应用里切换使用人"));
   assert.equal(activeSubjectCalls.length, 0);
 });
 
@@ -866,11 +866,11 @@ test("confirming is blocked when the server does not allow app confirmation", as
   assert.equal(page.data.canConfirmWithApp, false);
   page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });
   await page.confirmSubject();
-  assert.ok(page.data.error.includes("语音确认"));
+  assert.ok(page.data.error.includes("暂不支持在应用里切换使用人"));
   assert.equal(activeSubjectCalls.length, 0);
 });
 
-test("low confidence candidates are rendered with the low-confidence hint", async () => {
+test("candidate voice-match confidence is never decorated or shown", async () => {
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireUnknownSafeProfile({
     runtime_profile_id: "rp_6",
@@ -888,8 +888,12 @@ test("low confidence candidates are rendered with the low-confidence hint", asyn
   };
   const page = instantiate(pageDefinition);
   await page.onShow();
-  assert.equal(page.data.candidates[0].confidence, 0.31);
+  assert.equal(page.data.candidates[0].person_id, "person_guest");
+  assert.equal(page.data.candidates[0].confidencePercent, undefined);
+  assert.equal(page.data.candidates[0].confidenceLow, undefined);
   assert.ok(page.data.degradation.reasons.some((reason) => reason.includes("尚未确认")));
+  const template = fs.readFileSync(path.join(__dirname, "../pages/device/index.wxml"), "utf8");
+  assert.doesNotMatch(template, /置信度|confidencePercent|说话人候选|语音确认身份/);
 });
 
 test("device load failures surface an error without breaking the page", async () => {

@@ -120,8 +120,8 @@
           <view class="picker-row"><text class="picker-label">子女可见范围</text><text class="picker-value">{{adminVisibilityOptions[form.adminVisibilityIndex].label}}</text></view>
         </picker>
         <view class="notice notice-warn parent-acceptance-notice">
-          <text class="notice-title">服务与数据规则需要父母本人确认</text>
-          <text class="notice-copy">绑定完成后，请让父母本人在设备上确认接受；在此之前你不会代替父母开启人生记录等能力。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
+          <text class="notice-title">长期记忆由你代父母决定</text>
+          <text class="notice-copy">下一步如果勾选「我代父母同意」，就是你代父母同意伙伴记住 TA 聊过的事；不勾选只保留当次对话。你可以随时在小程序里撤回。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
         </view>
       </block>
 
@@ -168,9 +168,10 @@
           <text class="offer-label">{{item.label}}</text>
           <text class="offer-desc">{{item.description}}</text>
           <text wx:if="{{item.requiresParentSelfAcceptance}}" class="offer-note">需父母本人确认，绑定后在设备上完成</text>
+          <text wx:if="{{item.proxyConsent}}" class="offer-note">由你代父母同意，可随时在小程序里撤回</text>
         </view>
       </view>
-      <text class="form-note">敏感能力（声音复刻、数字自我、传承、原始音频等）只有明确勾选才会申请；数字自我、声音复刻与传承默认不勾选。</text>
+      <text class="form-note">敏感能力（长期记忆、声音复刻、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToForm">上一步</button>
@@ -189,12 +190,12 @@
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
-      <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它对着设备说几句话完成主人声纹；手机不录音。</text>
+      <text class="done-note">绑定成功不等于设备已经激活。下一步等机器人确认后，唤醒它就能开始对话；手机不录音。</text>
       <view class="button-row">
         <button class="primary-button" bindtap="continueActivation">继续等待激活</button>
       </view>
       <button class="secondary-button empty-button" bindtap="openDevicePage">返回设备管理</button>
-      <text class="form-note">说话人登记只用于区分当前是谁在说话，不是声音复刻；设备端完成后状态由服务端记录。</text>
+      <text class="form-note">使用人由这次绑定确定，不通过声音识别身份；之后可在「设备」页管理使用人或解除绑定。</text>
     </view>
   </block>
 </view>

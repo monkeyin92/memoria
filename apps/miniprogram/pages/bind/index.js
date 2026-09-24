@@ -7,6 +7,7 @@ const {
   AGE_BAND_LABELS,
   MODE_AGE_BANDS,
   consentOffersFor,
+  memoryLevelForOffers,
 } = require("../../utils/device-binding");
 const { isExpired } = require("../../utils/device-onboarding/state");
 const {
@@ -426,7 +427,8 @@ Page({
       }
       preferences.tutor_enabled = form.tutorEnabled;
       preferences.english_practice_enabled = form.englishPracticeEnabled;
-      preferences.memory_level = "growth_summary";
+      // 长期记忆只跟随监护人是否勾选 offer_minor_memory_retention_v1。
+      preferences.memory_level = memoryLevelForOffers(mode, this.data.acceptedOfferIds);
       preferences.max_session_minutes = form.maxSessionMinutes;
       preferences.quiet_hours = {
         start: form.quietHoursStart,
@@ -441,7 +443,8 @@ Page({
     } else if (mode === "child_for_parent") {
       subjectDraft = { display_name: form.parentNickname.trim(), age_band: "adult" };
       preferences.speech_speed = SPEECH_SPEED_OPTIONS[form.speechSpeedIndex]?.value || "slow";
-      preferences.memory_level = "none";
+      // 子女代父母勾选 offer_senior_memory_retention_v1 后才开启长期记忆。
+      preferences.memory_level = memoryLevelForOffers(mode, this.data.acceptedOfferIds);
       preferences.admin_visibility =
         ADMIN_VISIBILITY_OPTIONS[form.adminVisibilityIndex]?.value || "device_status";
     } else {

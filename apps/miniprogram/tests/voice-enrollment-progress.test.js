@@ -156,7 +156,6 @@ function apiStubs(overrides = {}) {
     isAuthEpochCurrent: () => true,
     syncDeviceBindings: async () => ({ status: "empty", binding: null, bindings: [] }),
     getProfile: async () => ({ display_name: "主人" }),
-    getSpeakerEnrollmentStatus: async () => ({ enrollment: { state: "allowed" } }),
     listVoiceProfiles: async () => ({ items: [] }),
     getDeliveredCapabilities: async () => ({}),
     getRuntimeProfile: async () => null,

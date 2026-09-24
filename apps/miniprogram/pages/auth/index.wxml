@@ -27,7 +27,7 @@
     <view class="compliance-notice">
       <text class="compliance-line">连接设备、查看回顾、管理资料。对话在设备上完成，手机不录音。</text>
       <text class="compliance-line">设备回应由人工智能生成，会明确标识；模型训练默认关闭。</text>
-      <text class="compliance-line">声纹属于敏感生物识别信息，只在设备端采集。</text>
+      <text class="compliance-line">使用人由设备绑定确定，不通过声音识别身份；声音复刻需要单独授权。</text>
     </view>
 
     <view class="auth-user">

@@ -108,13 +108,6 @@
         </view>
         <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#326e70" />
       </view>
-      <view class="setting-row">
-        <view>
-          <text class="setting-name">过滤明显旁人</text>
-          <text class="setting-desc">不让明确非主人的声音进入主人私有路径</text>
-        </view>
-        <switch checked="{{profile.reject_non_owner_voice}}" data-key="reject_non_owner_voice" bindchange="onSwitch" color="#326e70" />
-      </view>
       <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
         <view class="row-icon">
           <svg viewBox="0 0 18 18" fill="none"><rect x="3" y="7" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -122,13 +115,6 @@
         <view class="row-copy">
           <text class="row-title">隐私与数据</text>
           <text class="row-meta">授权、声音样本、导出与删除</text>
-        </view>
-        <text class="row-chevron">›</text>
-      </view>
-      <view wx:if="{{authenticated}}" class="list-row" data-state="{{speakerEnrollmentState}}" bindtap="startSpeakerEnrollment">
-        <view class="row-copy">
-          <text class="row-title">主人声纹</text>
-          <text class="row-meta">{{speakerEnrollmentHint}}</text>
         </view>
         <text class="row-chevron">›</text>
       </view>

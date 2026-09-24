@@ -562,7 +562,6 @@ function updateProfile(userId, profile) {
     "auto_summary",
     "voice_reply",
     "gentle_reminders",
-    "reject_non_owner_voice",
     "companion_id",
     "timezone",
   ]) {

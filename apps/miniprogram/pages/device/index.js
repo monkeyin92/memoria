@@ -8,11 +8,7 @@ const {
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
-const {
-  devicePlaceName,
-  deviceStatusSummary,
-  presentSpeakerCandidates,
-} = require("../../utils/device-status");
+const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 
@@ -525,7 +521,8 @@ Page({
         }
       }
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-      const candidates = presentSpeakerCandidates(resolution?.candidate_subjects || []);
+      // 候选只用于多成员绑定的「此刻是谁在用」选择，不展示任何声音匹配度。
+      const candidates = resolution?.candidate_subjects || [];
       const summary = deviceStatusSummary(activation, profile, diagnostics);
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
@@ -734,7 +731,7 @@ Page({
     const { selectedCandidateId, switching, profile, resolution } = this.data;
     if (switching || !selectedCandidateId) return;
     if (!(resolution?.allowed_confirmation_methods || []).includes("app_confirm")) {
-      this.setData({ error: "当前会话需要通过语音确认身份，暂时不能在应用里切换。" });
+      this.setData({ error: "当前会话暂不支持在应用里切换使用人。" });
       return;
     }
     if (!profile?.session_id) {
@@ -786,9 +783,7 @@ Page({
         }
       }
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(api.currentAuthEpoch())) return;
-      const candidates = presentSpeakerCandidates(
-        resolutionNext ? resolutionNext.candidate_subjects || [] : [],
-      );
+      const candidates = resolutionNext ? resolutionNext.candidate_subjects || [] : [];
       const speakerLabel = currentUserLabel(nextProfile, candidates);
       const subjectAliasLabel = readSubjectLabel(this.data.binding);
       this.setData({

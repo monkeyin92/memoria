@@ -68,7 +68,7 @@ test("self_use uses the owner person and no draft", () => {
       declared_mode: "self_use",
       primary_subject: { person_id: "person_owner", relationship: "self" },
       service_preferences: { memory_level: "personal", interview_frequency: "low" },
-      consent_offer_ids: ["offer_self_memory_retention_v1", "offer_self_voice_profile_v1"],
+      consent_offer_ids: ["offer_self_memory_retention_v1"],
     }),
   );
   assert.equal(payload.primary_subject.person_id, "person_owner");
@@ -166,8 +166,91 @@ test("rejects unknown, mismatched, and parent-self-acceptance consent offers", (
           consent_offer_ids: ["offer_senior_service_acceptance_v1"],
         }),
       ),
-    /需要父母本人确认/,
+    /未知的 consent offer/,
   );
+  // 声纹已下线：客户端不再提供也不再提交声纹档案授权。
+  assert.throws(
+    () =>
+      binding.buildBindingRequest(
+        validRequest({
+          declared_mode: "self_use",
+          primary_subject: { person_id: "person_owner", relationship: "self" },
+          service_preferences: { memory_level: "personal" },
+          consent_offer_ids: ["offer_self_voice_profile_v1"],
+        }),
+      ),
+    /未知的 consent offer/,
+  );
+});
+
+test("memory_level must follow the long-term memory offer selection", () => {
+  const minorPreferences = {
+    tutor_enabled: true,
+    english_practice_enabled: true,
+    max_session_minutes: 30,
+    quiet_hours: { start: "21:00", end: "07:00" },
+  };
+  // 未勾选孩子长期记忆却申请 growth_summary：拒绝。
+  assert.throws(
+    () =>
+      binding.buildBindingRequest(
+        validRequest({
+          service_preferences: { ...minorPreferences, memory_level: "growth_summary" },
+          consent_offer_ids: ["offer_minor_voice_session_v1"],
+        }),
+      ),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+  // 勾选了却发 none：同样拒绝，服务端按同一规则校验。
+  assert.throws(
+    () =>
+      binding.buildBindingRequest(
+        validRequest({
+          service_preferences: { ...minorPreferences, memory_level: "none" },
+          consent_offer_ids: ["offer_minor_voice_session_v1", "offer_minor_memory_retention_v1"],
+        }),
+      ),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+  const unticked = binding.buildBindingRequest(
+    validRequest({
+      service_preferences: { ...minorPreferences, memory_level: "none" },
+      consent_offer_ids: ["offer_minor_voice_session_v1"],
+    }),
+  );
+  assert.equal(unticked.service_preferences.memory_level, "none");
+
+  const seniorRequest = (memoryLevel, offerIds) =>
+    validRequest({
+      declared_mode: "child_for_parent",
+      primary_subject: {
+        person_id: "new",
+        relationship: "child_of",
+        subject_draft: { display_name: "妈妈", age_band: "adult" },
+      },
+      service_preferences: { memory_level: memoryLevel },
+      consent_offer_ids: ["offer_admin_device_management_v1", ...offerIds],
+    });
+  const proxy = binding.buildBindingRequest(
+    seniorRequest("personal", ["offer_senior_memory_retention_v1"]),
+  );
+  assert.ok(proxy.consent_offer_ids.includes("offer_senior_memory_retention_v1"));
+  assert.equal(proxy.service_preferences.memory_level, "personal");
+  assert.throws(
+    () => binding.buildBindingRequest(seniorRequest("personal", [])),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+
+  assert.equal(binding.memoryLevelForOffers("parent_for_child", []), "none");
+  assert.equal(
+    binding.memoryLevelForOffers("parent_for_child", ["offer_minor_memory_retention_v1"]),
+    "growth_summary",
+  );
+  assert.equal(
+    binding.memoryLevelForOffers("child_for_parent", ["offer_senior_memory_retention_v1"]),
+    "personal",
+  );
+  assert.equal(binding.memoryLevelForOffers("self_use", []), null);
 });
 
 test("rejects unknown service preference keys and invalid values", () => {
@@ -229,17 +312,31 @@ test("consent catalogs keep sensitive capabilities off by default", () => {
   const selfOffers = binding.consentOffersFor("self_use");
   const byId = Object.fromEntries(selfOffers.map((offer) => [offer.id, offer]));
   assert.equal(byId.offer_self_memory_retention_v1.defaultChecked, true);
-  assert.equal(byId.offer_self_voice_profile_v1.defaultChecked, true);
+  assert.equal(byId.offer_self_voice_profile_v1, undefined);
   assert.equal(byId.offer_self_raw_audio_v1.defaultChecked, false);
   assert.equal(byId.offer_self_voice_clone_v1.defaultChecked, false);
   assert.equal(byId.offer_self_digital_self_v1.defaultChecked, false);
   assert.equal(byId.offer_self_legacy_v1.defaultChecked, false);
 
+  const minorOffers = binding.consentOffersFor("parent_for_child");
+  const minorMemory = minorOffers.find((offer) => offer.id === "offer_minor_memory_retention_v1");
+  assert.equal(minorMemory.defaultChecked, false);
+  assert.equal(minorMemory.requiresParentSelfAcceptance, false);
+
+  // 父母模式：子女代父母同意长期记忆，默认不勾选；文案如实写明是代为同意。
   const seniorOffers = binding.consentOffersFor("child_for_parent");
-  const seniorAcceptance = seniorOffers.find(
-    (offer) => offer.id === "offer_senior_service_acceptance_v1",
+  assert.equal(
+    seniorOffers.some((offer) => offer.id === "offer_senior_service_acceptance_v1"),
+    false,
   );
-  assert.equal(seniorAcceptance.requiresParentSelfAcceptance, true);
+  const seniorMemory = seniorOffers.find(
+    (offer) => offer.id === "offer_senior_memory_retention_v1",
+  );
+  assert.equal(seniorMemory.defaultChecked, false);
+  assert.equal(seniorMemory.requiresParentSelfAcceptance, false);
+  assert.equal(seniorMemory.proxyConsent, true);
+  assert.match(seniorMemory.label, /我代父母同意/);
+  assert.match(seniorMemory.description, /随时在小程序里撤回/);
 });
 
 function validRuntimeProfile(overrides = {}) {
@@ -741,8 +838,8 @@ test("each valid capability opens exactly its own sensitive entry", () => {
 });
 
 test("voice_profile_create no longer opens a navigation entry", () => {
-  // PR-02：手机声纹录取移除后，voice_profile_create 只作为「我的」页的服务端
-  // 授权状态展示，不再映射到任何页面入口（说话人登记在机器人端完成）。
+  // 声纹功能已下线：即使服务端仍签发 voice_profile_create，也不映射到任何
+  // 页面入口，小程序不展示或发起说话人登记。
   const profile = binding.normalizeRuntimeProfile(
     validRuntimeProfile({ capabilities: ["voice_profile_create"] }),
   );

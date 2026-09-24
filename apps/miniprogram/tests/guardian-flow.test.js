@@ -35,7 +35,8 @@ test("student notice and bind consent remain explicit client choices", () => {
 
   // 敏感入口只能由 Runtime Profile capabilities 驱动，WXML 不得按本地年龄显示。
   assert.match(profile, /guardianEntryAllowed/);
-  assert.match(profile, /speakerEnrollmentState/);
+  // 声纹已下线：「我的」页不再有主人声纹登记与旁人声音过滤。
+  assert.doesNotMatch(profile, /speakerEnrollment|主人声纹|reject_non_owner_voice|过滤明显旁人/);
   assert.match(profile, /digitalSelfEntryAllowed/);
   assert.match(profile, /rawVoiceEntryAllowed/);
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);

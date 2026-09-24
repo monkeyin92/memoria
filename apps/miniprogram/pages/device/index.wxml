@@ -211,7 +211,7 @@
       <block wx:if="{{candidates.length > 0 && !currentUserLabelConfirmed}}">
         <view class="card">
           <text class="setting-name">此刻是谁在用</text>
-          <text class="setting-desc">无法自动确认时，请选择并确认。详细置信度见下方诊断。</text>
+          <text class="setting-desc">请选择此刻在用的成员并确认。</text>
           <view wx:for="{{candidates}}" wx:key="person_id" class="choice-card {{selectedCandidateId === item.person_id ? 'choice-card-on' : ''}}" data-person-id="{{item.person_id}}" bindtap="selectCandidate">
             <view class="row-copy">
               <text class="row-title">{{item.display_name}}</text>
@@ -219,7 +219,7 @@
             </view>
           </view>
           <button class="primary-button empty-button" loading="{{switching}}" disabled="{{!canConfirmWithApp}}" bindtap="confirmSubject">确认是我</button>
-          <text wx:if="{{!canConfirmWithApp}}" class="caption">当前会话需要通过语音确认身份，应用内切换暂不可用。</text>
+          <text wx:if="{{!canConfirmWithApp}}" class="caption">当前会话暂不支持在应用内切换使用人。</text>
         </view>
       </block>
 
@@ -313,14 +313,7 @@
             <view class="summary-row"><text class="summary-key">配置版本</text><text class="summary-value">v{{diagnostics.runtime_profile_version}}</text></view>
             <view class="summary-row"><text class="summary-key">实际音频模式</text><text class="summary-value">{{effectiveAudioModeLabel}}</text></view>
           </block>
-          <block wx:if="{{candidates.length}}">
-            <text class="caption">说话人候选仅供诊断，不代替当前使用者备注。</text>
-            <view wx:for="{{candidates}}" wx:key="person_id" class="summary-row">
-              <text class="summary-key">{{item.display_name}}</text>
-              <text class="summary-value">{{item.confidenceLow ? '置信度较低' : '匹配 ' + item.confidencePercent + '%'}}</text>
-            </view>
-          </block>
-          <text class="caption">设备归属、在线状态、主人识别和私密权限分别确认，不能互相替代。</text>
+          <text class="caption">设备归属、在线状态、使用人和私密权限分别确认，不能互相替代。</text>
           <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
       </view>

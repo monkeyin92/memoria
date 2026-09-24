@@ -9,6 +9,9 @@
  *   不写入绑定请求（正式年龄证据由服务端验证，见 PR-02）。
  * - 数字自我 / 声音复刻 / 传承等敏感授权默认不勾选；“父母本人接受”类
  *   consent 只能由父母本人确认，客户端不得代为提交。
+ * - 每台设备只服务一位使用人，身份来自绑定而不是声纹；客户端不再提供
+ *   声纹档案授权。长期记忆（孩子 / 父母）默认不勾选、不是完成绑定的
+ *   前提，memory_level 必须与该项勾选一致（见 MEMORY_OFFER_BY_MODE）。
  * - Runtime Profile（§9.3）与服务端主体解析（§9.2）的响应统一在此做
  *   fail-closed 规范化：未知 service_mode 一律落到 unknown_safe，未知
  *   speaker_state 一律 unknown，缺失 capabilities 一律空集。
@@ -40,7 +43,7 @@ const MODE_META = Object.freeze({
     title: "家庭共同使用",
     tagline: "全家共用，每人独立档案",
     description:
-      "建立家庭空间与成员独立档案；私人记忆、家庭共享记忆与待确认记忆分区管理，无法确认说话人时安全降级。",
+      "建立家庭空间与成员独立档案；私人记忆、家庭共享记忆与待确认记忆分区管理，无法确认当前成员时安全降级。",
   },
 });
 
@@ -58,7 +61,10 @@ const PRIMARY_RELATIONSHIPS = Object.freeze({
 /*
  * ConsentOffer 目录（PR-04 服务端必须验证 offer id；客户端只提交给用户
  * 展示过且可代为确认的 offer）。requiresParentSelfAcceptance 的 offer
- * 只能由父母本人确认，客户端不得写入 consent_offer_ids。
+ * 只能由父母本人确认，客户端不得写入 consent_offer_ids。proxyConsent 的
+ * offer 由绑定人代使用人同意（子女代父母），文案必须如实说明是代为同意。
+ * 这里的 id 必须是服务端 BindingOfferCatalog（services/consent/
+ * binding_snapshot.py）对应模式下列出的 offer。
  */
 const CONSENT_OFFERS = Object.freeze([
   {
@@ -72,9 +78,10 @@ const CONSENT_OFFERS = Object.freeze([
   {
     id: "offer_minor_memory_retention_v1",
     modes: ["parent_for_child"],
-    label: "学习与成长记录",
-    description: "保存脱敏转写与学习进度；不保存原始音频",
-    defaultChecked: true,
+    label: "长期记忆：学习与成长记录",
+    description:
+      "勾选后伙伴会记住孩子的学习进度和聊过的事（脱敏保存，不存原始音频）；不勾选也能完成绑定，只保留当次对话",
+    defaultChecked: false,
     requiresParentSelfAcceptance: false,
   },
   {
@@ -98,14 +105,6 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["self_use"],
     label: "长期记忆",
     description: "让伙伴记住你们聊过的事，形成你自己的回忆",
-    defaultChecked: true,
-    requiresParentSelfAcceptance: false,
-  },
-  {
-    id: "offer_self_voice_profile_v1",
-    modes: ["self_use"],
-    label: "声纹档案",
-    description: "用于识别是你本人在说话，而不是别人",
     defaultChecked: true,
     requiresParentSelfAcceptance: false,
   },
@@ -142,20 +141,14 @@ const CONSENT_OFFERS = Object.freeze([
     requiresParentSelfAcceptance: false,
   },
   {
-    id: "offer_senior_service_acceptance_v1",
-    modes: ["child_for_parent"],
-    label: "服务与数据规则（父母本人确认）",
-    description: "需要父母本人在设备上确认接受后才能开启",
-    defaultChecked: false,
-    requiresParentSelfAcceptance: true,
-  },
-  {
     id: "offer_senior_memory_retention_v1",
     modes: ["child_for_parent"],
-    label: "父母本人的人生记录",
-    description: "父母本人确认后才会开启",
+    label: "我代父母同意：长期记忆",
+    description:
+      "勾选即由你代父母同意，让伙伴记住父母聊过的事；不勾选只保留当次对话。可随时在小程序里撤回，你也不能因此读取父母的聊天内容",
     defaultChecked: false,
-    requiresParentSelfAcceptance: true,
+    requiresParentSelfAcceptance: false,
+    proxyConsent: true,
   },
   {
     id: "offer_admin_device_management_v1",
@@ -215,6 +208,34 @@ const CONSENT_OFFERS = Object.freeze([
   },
 ]);
 
+/*
+ * 需要监护人 / 子女单独勾选的长期记忆 offer，以及勾选后对应的
+ * memory_level。未勾选时 memory_level 必须是 none；服务端按同一规则校验。
+ */
+const MEMORY_OFFER_BY_MODE = Object.freeze({
+  parent_for_child: { offerId: "offer_minor_memory_retention_v1", enabledLevel: "growth_summary" },
+  child_for_parent: { offerId: "offer_senior_memory_retention_v1", enabledLevel: "personal" },
+});
+
+function memoryLevelForOffers(mode, offerIds) {
+  const rule = MEMORY_OFFER_BY_MODE[mode];
+  if (!rule) return null;
+  return (offerIds || []).includes(rule.offerId) ? rule.enabledLevel : "none";
+}
+
+function assertMemoryMatchesOffer(mode, preferences, offerIds) {
+  const rule = MEMORY_OFFER_BY_MODE[mode];
+  if (!rule) return;
+  const expected = memoryLevelForOffers(mode, offerIds);
+  if (preferences.memory_level !== expected) {
+    throw new TypeError(
+      `memory_level 必须与长期记忆授权一致：${rule.offerId} ${
+        expected === "none" ? "未勾选时只能是 none" : `勾选后应为 ${expected}`
+      }`,
+    );
+  }
+}
+
 const OFFER_BY_ID = Object.freeze(
   CONSENT_OFFERS.reduce((map, offer) => {
     map[offer.id] = offer;
@@ -230,7 +251,7 @@ const MODE_PREFERENCE_SCHEMAS = Object.freeze({
   parent_for_child: {
     tutor_enabled: "boolean",
     english_practice_enabled: "boolean",
-    memory_level: { enum: ["none", "growth_summary"], default: "growth_summary" },
+    memory_level: { enum: ["none", "growth_summary"], default: "none" },
     max_session_minutes: "minutes",
     quiet_hours: "quiet_hours",
   },
@@ -269,9 +290,9 @@ const AGE_BAND_LABELS = Object.freeze({
 
 /* 敏感入口：是否展示由服务端 Runtime Profile 的 capabilities 决定（D-07）。
  * 可导航入口全部 fail-closed：Profile 缺失/非法/过期时一律不开放，
- * 客户端不得用本地年龄或账号资料做成人降级。手机声纹录取已移除（整改方案
- * PR-02），voice_profile_create 只在「我的」页作为服务端授权状态展示，
- * 不再映射到任何页面入口；实际说话人登记在机器人端完成。 */
+ * 客户端不得用本地年龄或账号资料做成人降级。声纹功能已整体下线：使用人
+ * 身份来自设备绑定，voice_profile_create 不映射到任何页面入口，小程序也
+ * 不再展示或发起说话人登记。 */
 const SENSITIVE_ENTRIES = Object.freeze([
   {
     key: "digital_self",
@@ -537,6 +558,15 @@ function buildBindingRequest(request) {
   if (request.persona_selection.length > 64) {
     throw new TypeError("persona_selection 过长");
   }
+  const servicePreferences = validateServicePreferences(
+    request.declared_mode,
+    request.service_preferences,
+  );
+  const consentOfferIds = validateConsentOffers(
+    request.declared_mode,
+    request.consent_offer_ids,
+  );
+  assertMemoryMatchesOffer(request.declared_mode, servicePreferences, consentOfferIds);
   return {
     claim_id: request.claim_id.trim(),
     onboarding_session_id: request.onboarding_session_id.trim(),
@@ -544,14 +574,8 @@ function buildBindingRequest(request) {
     account_owner_person_id: request.account_owner_person_id.trim(),
     primary_subject: validatePrimarySubject(request.declared_mode, request.primary_subject),
     persona_selection: request.persona_selection.trim(),
-    service_preferences: validateServicePreferences(
-      request.declared_mode,
-      request.service_preferences,
-    ),
-    consent_offer_ids: validateConsentOffers(
-      request.declared_mode,
-      request.consent_offer_ids,
-    ),
+    service_preferences: servicePreferences,
+    consent_offer_ids: consentOfferIds,
   };
 }
 
@@ -562,6 +586,7 @@ function consentOffersFor(mode) {
     description: offer.description,
     defaultChecked: offer.defaultChecked,
     requiresParentSelfAcceptance: offer.requiresParentSelfAcceptance,
+    proxyConsent: offer.proxyConsent === true,
   }));
 }
 
@@ -1089,7 +1114,7 @@ function degradationFor(runtimeProfile) {
   if (runtimeProfile.speaker_state === contracts.SpeakerState.Unknown) {
     reasons.push("暂时无法确认是谁在使用这台设备");
   } else if (runtimeProfile.speaker_state === contracts.SpeakerState.Unconfirmed) {
-    reasons.push("说话人尚未确认，敏感能力保持关闭");
+    reasons.push("当前使用人尚未确认，敏感能力保持关闭");
   }
   if (reasons.length === 0) return null;
   return {
@@ -1394,6 +1419,7 @@ module.exports = {
   MINOR_FORBIDDEN_MODES,
   buildBindingRequest,
   consentOffersFor,
+  memoryLevelForOffers,
   normalizeRuntimeProfile,
   normalizeSubjectResolution,
   runtimeProfileWirePayload,
