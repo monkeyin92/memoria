@@ -23,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from services.consent.bound_subject import BoundSubjectConsentService
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
+from services.governance.subject_deletion import SubjectDeletionService
+from services.governance.subject_ports import SubjectScope
 from services.guardian.consent import GuardianConsentService
 from services.identity.domain import (
     ALL_RELATION_TYPES,
@@ -623,9 +625,13 @@ async def unbind_device(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, object]:
     identity = _identity(request)
-    if body.purge_subject_data:
-        # Their rows sit in the binding owner's account and deletion today
-        # is account-wide; refuse rather than pretend, and unbind nothing.
+    deletion = cast(
+        SubjectDeletionService | None,
+        getattr(request.app.state, "subject_deletion", None),
+    )
+    if body.purge_subject_data and deletion is None:
+        # Without the subject saga nothing could erase their rows; refuse
+        # rather than pretend, and unbind nothing.
         raise HTTPException(
             status_code=409,
             detail={"code": "subject_deletion_unavailable"},
@@ -647,6 +653,7 @@ async def unbind_device(
             conflict="binding_conflict",
         ) from exc
     withdrawn = 0
+    subject_deletion = "not_requested"
     if manifest is not None and manifest.account_owner_id == user.user_id:
         withdrawn = await _withdraw_bound_subject_consents(
             request,
@@ -654,10 +661,26 @@ async def unbind_device(
             binding_id=manifest.binding_id,
             subject_ids=manifest.primary_subject_ids,
         )
+        if body.purge_subject_data and deletion is not None:
+            subject_deletion = "completed"
+            for subject_id in manifest.primary_subject_ids:
+                if subject_id == user.user_id:
+                    continue
+                try:
+                    await deletion.delete_subject(
+                        SubjectScope(account_id=user.user_id, subject_id=subject_id),
+                        # Unbound now, so the name is no longer needed either.
+                        redact_identity=True,
+                    )
+                except Exception:
+                    # Checkpointed and fenced; the deletion worker resumes it.
+                    logger.exception("subject deletion after unbind is incomplete")
+                    subject_deletion = "pending"
     return {
         "binding_id": binding.binding_id,
         "status": binding.status,
         "consents_withdrawn": withdrawn,
+        "subject_deletion": subject_deletion,
     }
 
 

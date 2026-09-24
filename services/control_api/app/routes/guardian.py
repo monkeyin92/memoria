@@ -42,6 +42,11 @@ from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
 )
+from services.governance.subject_deletion import (
+    SubjectDeletionIncompleteError,
+    SubjectDeletionService,
+)
+from services.governance.subject_ports import SubjectScope
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
 from services.guardian.crisis import CrisisNotificationStorePort
@@ -1159,13 +1164,29 @@ async def delete_minor(
 ) -> dict[str, Any]:
     _require_wechat_guardian(request, user)
     if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        # Their rows live in the binding owner's account, and deletion today
-        # is account-wide: running it would erase the parent's own data.
-        # Refuse honestly until the subject-scoped saga exists (P2-03).
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "child_subject_deletion_unavailable"},
+        # Their rows live in the binding owner's account: erase exactly the
+        # child's, never the parent's (account deletion is account-wide).
+        if not secrets.compare_digest(body.confirmation, _DELETE_CONFIRMATION):
+            raise HTTPException(
+                status_code=422, detail={"code": "deletion_confirmation_invalid"}
+            )
+        deletion = cast(
+            SubjectDeletionService | None,
+            getattr(request.app.state, "subject_deletion", None),
         )
+        if deletion is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "child_subject_deletion_unavailable"}
+            )
+        try:
+            return await deletion.delete_subject(
+                SubjectScope(account_id=user.user_id, subject_id=minor_user_id)
+            )
+        except SubjectDeletionIncompleteError as exc:
+            # Checkpointed: the deletion worker resumes it.
+            raise HTTPException(
+                status_code=503, detail={"code": "child_data_deletion_incomplete"}
+            ) from exc
     await _active_link_or_403(
         request,
         guardian_user_id=user.user_id,

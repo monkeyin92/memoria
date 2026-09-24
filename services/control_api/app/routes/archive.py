@@ -1931,6 +1931,16 @@ async def append_session_event(
             )
         ):
             raise HTTPException(status_code=409, detail={"code": "archive_subject_fence_stale"})
+    subject_deletion = getattr(request.app.state, "subject_deletion", None)
+    if (
+        values["subject_id"] is not None
+        and subject_deletion is not None
+        and subject_deletion.is_subject_deleting(
+            account_id=account_id, subject_id=values["subject_id"]
+        )
+    ):
+        # Their data is being erased: nothing new may land behind the sweep.
+        raise HTTPException(status_code=409, detail={"code": "subject_deletion_in_progress"})
     if claims_device_bound_subject(
         body.speaker_class, reason_code
     ) and not runtime_profile_trusts_bound_subject(

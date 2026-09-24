@@ -327,5 +327,6 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
             headers=headers,
             json={"confirmation": "永久删除孩子的全部数据"},
         )
-        assert deleted.status_code == 409
+        # Without a wired subject saga the erase is refused, never faked.
+        assert deleted.status_code == 503
         assert deleted.json()["detail"]["code"] == "child_subject_deletion_unavailable"

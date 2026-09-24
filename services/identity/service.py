@@ -88,6 +88,10 @@ BINDING_ATTESTATION_EVIDENCE: dict[str, str] = {
 }
 
 
+#: What a redacted person is shown as (``redact_bound_subject``).
+REDACTED_DISPLAY_NAME = "已删除的使用人"
+
+
 def _now(value: datetime | None) -> datetime:
     return value.astimezone(UTC) if value is not None else datetime.now(UTC)
 
@@ -733,6 +737,71 @@ class IdentityService:
             actor_person_id=actor_person_id,
         )
         return relationship
+
+    async def redact_bound_subject(
+        self,
+        *,
+        person_id: str,
+        actor_person_id: str,
+        now: datetime | None = None,
+    ) -> PersonSubject:
+        """Erase what identifies a person with no account once their data is gone.
+
+        Only the binding owner who attested this person (guardian_of or
+        delegate_for) may, and only after no binding serves them any more:
+        the name is still needed while a device does. The person becomes a
+        disabled placeholder, and earlier audit copies of the name are
+        scrubbed; relationships and bindings stay as content-free audit.
+        """
+        timestamp = _now(now)
+        relationships = await self._store.list_relationships(
+            person_id, statuses=("active", "pending"), actor_person_id=actor_person_id
+        )
+        attested = {
+            BINDING_ATTESTATION_EVIDENCE["guardian_of"],
+            BINDING_ATTESTATION_EVIDENCE["delegate_for"],
+            "guardian_declaration_v1:device_binding",
+        }
+        if not any(
+            item.source_person_id == actor_person_id
+            and item.target_person_id == person_id
+            and item.relation_type in {"guardian_of", "delegate_for"}
+            and item.established_evidence_id in attested
+            for item in relationships
+        ):
+            raise IdentityAccessDeniedError(
+                "only the owner who attested this person may redact them"
+            )
+        if await self._store.list_active_bindings_for_person(
+            person_id, timestamp, actor_person_id=actor_person_id
+        ):
+            raise RelationshipLifecycleError("a device still serves this person")
+        person = await self.get_person(person_id, actor_person_id=actor_person_id)
+        redacted = replace(
+            person,
+            display_name=REDACTED_DISPLAY_NAME,
+            status="disabled",
+            updated_at=timestamp,
+        )
+        await self._store.redact_bound_subject(
+            person_id=person_id,
+            display_name=REDACTED_DISPLAY_NAME,
+            updated_at=timestamp,
+            audit_event=AuditEvent(
+                event_id=_new_id(),
+                action="person.redact",
+                actor_person_id=actor_person_id,
+                subject_person_id=person_id,
+                person_id=person_id,
+                device_id=None,
+                binding_id=None,
+                relationship_id=None,
+                payload={"person_id": person_id, "status": "disabled"},
+                created_at=timestamp,
+            ),
+            actor_person_id=actor_person_id,
+        )
+        return redacted
 
     async def confirm_relationship(
         self,

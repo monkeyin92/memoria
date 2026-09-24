@@ -134,6 +134,16 @@ class IdentityStore(Protocol):
         scope: str = "api",
     ) -> None: ...
 
+    async def redact_bound_subject(
+        self,
+        *,
+        person_id: str,
+        display_name: str,
+        updated_at: datetime,
+        audit_event: AuditEvent,
+        actor_person_id: str,
+    ) -> None: ...
+
     async def reconcile_account_registration(
         self,
         person: PersonSubject,
