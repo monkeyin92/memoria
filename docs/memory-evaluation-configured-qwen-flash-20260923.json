@@ -1,5 +1,7 @@
 {
   "adapter": "memoria-sqlite-configured",
+  "receipt_scope": "parent_baseline",
+  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
   "case_count": 7,
   "cases": [
     {
