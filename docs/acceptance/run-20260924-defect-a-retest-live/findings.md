@@ -66,9 +66,9 @@
 
 两个缺陷：
 
-- **D1 底噪占住话语权**：设备 VAD 被底噪触发，且其边界 rms 不能区分真话与噪声（真实话轮边界也只有 0.0006–0.0014）。两路 ASR 已判空后话语权仍不释放；每段新 VAD 延长同一空话轮并重置 2.5s 尾超时，工具回答因此被压约 8s，用户在“稍等”后近 10s 无声。**未修复**，方案待定（见下）。
-- **D2 近噪声救援结果可结束会话**：`_recover_straddling_live_query_final` 对被拒的救援结果仍做告别判定；唯一的低能量保护只覆盖 `CROSS_SENTENCE_OVERLAP`，且阈值沿用 SenseVoice 入口门槛（rms 100 / peak 350），低于本房间底噪。**已在本地修复，未部署**：救援结果携带所救 PCM 段的 `rescue_rms`/`rescue_peak_abs`，两种被拒形状下，rms < 1000 且 peak < 8000 的救援告别不结束会话。代价是：音量很低的真实告别不会立即待命，改由 owner-silence 30s 超时回到待命。回归 `test_device_straddling_rescue_farewell_needs_speech_energy`（底噪组在去掉修复后失败、真话组保持告别）。
+- **D1 底噪占住话语权**：设备 VAD 被底噪触发，且其边界 rms 不能区分真话与噪声（真实话轮边界也只有 0.0006–0.0014）。两路 ASR 已判空后话语权仍不释放；每段新 VAD 延长同一空话轮并重置 2.5s 尾超时，工具回答因此被压约 8s，用户在“稍等”后近 10s 无声。**已本地实现修复**（见下）。
+- **D2 近噪声救援结果可结束会话**：`_recover_straddling_live_query_final` 对被拒的救援结果仍做告别判定；唯一的低能量保护只覆盖 `CROSS_SENTENCE_OVERLAP`，且阈值沿用 SenseVoice 入口门槛（rms 100 / peak 350），低于本房间底噪。**已修复（提交 `200d52e`），未部署**：救援结果携带所救 PCM 段的 `rescue_rms`/`rescue_peak_abs`，两种被拒形状下，rms < 1000 且 peak < 8000 的救援告别不结束会话。代价是：音量很低的真实告别不会立即待命，改由 owner-silence 30s 超时回到待命。回归 `test_device_straddling_rescue_farewell_needs_speech_energy`（底噪组在去掉修复后失败、真话组保持告别）。
 
-D1 候选方案（未实现，需评审）：两路 ASR 对某 VAD 段都给出“空”结论时立即退役该空话轮并恢复被 `floor_blocked` 的输出，不等尾超时；另给排队的工具回答设“无文本证据占用”的最长等待。须回归 3/5/8s 续问格，不得回退缺陷 A。
+D1 已本地实现（未提交、未部署）：输出因 `floor_blocked` 排队、且占用话语权的待定话轮没有任何文本证据（partial / provisional / 强制文本皆空）时，启动“无证据占用上限”——基础 3s，每次 vad.start 最多推后到其后 1.5s，总计不超过输出排队后 6s；到期仍无证据则提前退役该空话轮（退役到已上行水位）并恢复排队输出，任何文本证据出现即不干预。按本轮时间线，回答约在 14.6s 放出而非 18.2s，也不会走到那段 3 字文本。回归 `test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap`（底噪组去掉到期退役后超时失败；owner-partial 组保持用户话轮）。3/5/8s 续问格需在下次设备窗口复测。
 
 附带观察：真人话轮上行 PCM 普遍削波（peak 32768，DTLN makeup gain 8.0 / 18 dB），可能影响识别质量，需单独评估，不计入本判定。

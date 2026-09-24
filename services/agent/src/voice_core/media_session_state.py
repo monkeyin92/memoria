@@ -73,6 +73,10 @@ class MediaVoiceSessionState:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # When admitted output first waited behind the floor; bounds how long a
+    # pending turn with no text evidence (room-noise VAD) may keep holding it.
+    evidence_less_hold_since: float | None = None
+    evidence_less_hold_handle: asyncio.TimerHandle | None = None
     # Observed while a reply owned output; not proof of acoustic echo.
     pending_turn_playback_overlap: bool = False
     # Closed candidate input may not re-enter through ASR, rescue, or VAD.

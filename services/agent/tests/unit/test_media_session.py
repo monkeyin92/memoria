@@ -9706,6 +9706,105 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text_evidence", [False, True], ids=["room-noise", "owner-partial"])
+async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    text_evidence: bool,
+) -> None:
+    """Room-noise VAD bursts must not starve a ready tool answer.
+
+    Run 2026-09-24 session b18fede9: the weather answer was ready 2 s after
+    the filler, but three noise VAD bursts (FunASR and rescue both empty)
+    kept one empty pending turn open for ~8 s; each vad.start reset the
+    2.5 s tail.  The cap retires such an evidence-less turn and resumes the
+    answer, while any text evidence leaves the user's turn in charge.
+    """
+
+    from services.agent.src.voice_core import media_session_turns
+
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        # Only the cap may release the floor inside this test's window.
+        turn_endpoint_grace_s=60,
+        turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"qa-evidence-less-hold-{text_evidence}")
+    session = bridge.bridge.open(identity)
+
+    async def vad(name: str, sample: int, *, final: bool) -> None:
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id=f"noise-{name}",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=sample,
+                capture_end_sample=sample + 1,
+                final=final,
+                voiced_end_sample=sample if final else None,
+            ),
+        )
+
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry, identity, bridge, provider, session, "今天南京天气怎么样"
+        )
+        claim = context.delegation_output_claims[fence]
+        registry._clear_pending_turn_state(context)
+        await vad("start-1", 640, final=False)
+        assert not context.runtime.output_floor_allows_assistant
+        if text_evidence:
+            context.pending_partial = ASRResult(
+                stream_epoch=identity.stream_epoch,
+                task_epoch=1,
+                sentence_id="owner-partial",
+                revision=1,
+                capture_start_sample=640,
+                capture_end_sample=1_600,
+                text="我还想问",
+                is_final=False,
+            )
+        assert await registry.generate_reply(identity.session_id, "今天南京天气怎么样", fence)
+        frame_count = len(bridge.frames)
+        provider.release.set()
+        await _wait_until(lambda: claim.state is not DelegationOutputState.OWNED)
+        assert context.evidence_less_hold_since is not None
+        # Noise keeps re-opening the same empty turn faster than any tail.
+        for index, sample in enumerate((1_280, 1_920, 2_560, 3_200, 3_840), start=1):
+            await asyncio.sleep(0.1)
+            await vad(f"end-{index}", sample, final=True)
+            await asyncio.sleep(0.05)
+            await vad(f"start-{index + 1}", sample + 160, final=False)
+
+        if text_evidence:
+            await asyncio.sleep(0.5)
+            assert not context.runtime.output_floor_allows_assistant
+            assert context.turn_start_sample is not None
+            assert not provider.deep_started.is_set()
+            assert len(bridge.frames) == frame_count
+            assert context.evidence_less_hold_since is None
+        else:
+            await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+            await _wait_until(lambda: len(bridge.frames) > frame_count)
+            assert context.evidence_less_hold_since is None
+            assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
+            assert context.runtime.fence.turn_id == fence.turn_id
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalidator",
     [

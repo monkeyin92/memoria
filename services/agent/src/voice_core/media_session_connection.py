@@ -269,6 +269,9 @@ class MediaSessionConnectionMixin:
         if context.turn_endpoint_timeout_handle is not None:
             context.turn_endpoint_timeout_handle.cancel()
             context.turn_endpoint_timeout_handle = None
+        if context.evidence_less_hold_handle is not None:
+            context.evidence_less_hold_handle.cancel()
+            context.evidence_less_hold_handle = None
         await self._cancel_audio_pump(context)
         await context.runtime.close()
         await context.provider.close(context.identity)
