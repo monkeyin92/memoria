@@ -206,6 +206,13 @@
           </view>
           <text class="row-chevron">›</text>
         </view>
+        <view class="list-row" bindtap="openUnbindSheet">
+          <view class="row-copy">
+            <text class="row-title">解除绑定</text>
+            <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
       </view>
 
       <block wx:if="{{candidates.length > 0 && !currentUserLabelConfirmed}}">
@@ -288,6 +295,33 @@
         </view>
         <button class="primary-button" style="margin-top: 16rpx;" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
         <button class="text-button" style="margin-top: 8rpx;" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
+      </view>
+
+      <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->
+      <view wx:if="{{unbindSheetVisible}}" class="sheet-mask" bindtap="closeUnbindSheet"></view>
+      <view wx:if="{{unbindSheetVisible}}" class="sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">解除绑定</text>
+        <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
+        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">保留数据（重新绑定后可恢复）</text>
+            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
+            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
+          </view>
+          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </view>
+        <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
+        <button class="danger-button" style="margin-top: 16rpx;" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>
+        <button class="text-button" style="margin-top: 8rpx;" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
       </view>
 
       <!-- 设备信息诊断折叠面板 -->

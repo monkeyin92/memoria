@@ -953,6 +953,25 @@ function getDeviceBinding(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding`);
 }
 
+/*
+ * 解除绑定。服务端先停止该使用人的记忆，再按 purge_subject_data 决定是否
+ * 同时删除 TA 的记忆与对话数据；false 表示保留，重新绑定后可恢复。成功后
+ * 清理本地绑定上下文，由调用方重新同步账号设备。
+ */
+function unbindDevice(deviceId, { purgeSubjectData } = {}) {
+  if (typeof purgeSubjectData !== "boolean") {
+    return Promise.reject(new TypeError("请先选择是否删除使用人的数据。"));
+  }
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding/unbind`, {
+    method: "POST",
+    data: { reason: "unbind", purge_subject_data: purgeSubjectData },
+  }).then((result) => {
+    const current = readBindingManifest();
+    if (!current || current.device_id === deviceId) clearDeviceBindingContext();
+    return result;
+  });
+}
+
 function getDeviceSettings(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
 }
@@ -1287,6 +1306,7 @@ module.exports = {
   syncDeviceBindings,
   selectDeviceBinding,
   getDeviceBinding,
+  unbindDevice,
   getDeviceSettings,
   getWakeWordCatalog,
   validateWakeWord,
