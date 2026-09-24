@@ -76,7 +76,6 @@ from services.session_runtime.service import (
     PostgresSessionRuntimeService,
     StartPersistentSessionCommand,
 )
-from services.session_runtime.subject_resolver import SubjectCandidate
 
 router = APIRouter(prefix="/v1/media", tags=["media"])
 device_router = APIRouter(prefix="/v1/devices", tags=["media"])
@@ -682,7 +681,9 @@ async def _create_direct_device_media_session(
         Literal["chat", "tutor_english", "tutor_homework"],
         device_settings.learning_mode if device_settings.learning_mode != "off" else "chat",
     )
-    requested_capabilities: list[CapabilityValue] = ["chat"]
+    # The device serves its one bound person, so their own memory is requested
+    # with the conversation; Policy still grants it only on recorded consent.
+    requested_capabilities: list[CapabilityValue] = ["chat", "memory_recall_private"]
     if device_settings.learning_mode == "tutor_english":
         requested_capabilities.append("english_practice")
     elif device_settings.learning_mode == "tutor_homework":
@@ -719,9 +720,9 @@ async def _create_direct_device_media_session(
             learning_task_id=None,
         )
 
-    # The subject candidate is not a client claim: authenticate_media_challenge
+    # The bound subject is not a client claim: authenticate_media_challenge
     # already verified the binding primary subject, so the authority evaluates
-    # that exact member. Missing or incomplete category/age facts may still
+    # that exact member as the one this device serves. Missing or incomplete category/age facts may still
     # atomically degrade the resulting Runtime Profile to unknown_safe.
     try:
         runtime_profile = await runtime_service.start(
@@ -733,9 +734,7 @@ async def _create_direct_device_media_session(
                 idempotency_key=f"device-media-{session_id}",
                 now=now,
                 requested_capabilities=tuple(requested_capabilities),
-                candidates=(
-                    SubjectCandidate(subject_id=binding_subject_id, confidence=1.0),
-                ),
+                device_bound_subject_id=binding_subject_id,
                 profile_ttl=timedelta(seconds=settings.device_runtime_profile_ttl_s),
             ),
         )

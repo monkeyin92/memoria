@@ -10,6 +10,11 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SpeakerStateValue,
 )
 
+#: The device's own authenticated media session names the binding's primary
+#: subject: a device serves the one person it is bound to, so that person is
+#: the one talking on it. Never produced for an app or voice claim.
+DEVICE_BINDING_PRIMARY_REASON = "device_binding_primary"
+
 
 @dataclass(frozen=True, slots=True)
 class SubjectCandidate:
@@ -38,6 +43,7 @@ class ResolveSubjectCommand:
     device_id: str
     candidates: tuple[SubjectCandidate, ...] = ()
     app_claimed_subject_id: str | None = None
+    device_bound_subject_id: str | None = None
     multiple_speakers: bool = False
     offline: bool = False
 
@@ -80,6 +86,17 @@ class SubjectResolver:
             return self._unknown("policy_snapshot_unavailable")
         if command.multiple_speakers:
             return self._unknown("multiple_speakers")
+        if command.device_bound_subject_id is not None:
+            if command.device_bound_subject_id not in binding.primary_subject_ids:
+                return self._unknown("device_subject_not_primary")
+            return SubjectResolution(
+                active_subject_id=command.device_bound_subject_id,
+                speaker_state="confirmed",
+                speaker_confidence=None,
+                service_mode="family_shared",
+                reason_code=DEVICE_BINDING_PRIMARY_REASON,
+                requires_confirmation=False,
+            )
         if command.app_claimed_subject_id is not None:
             if command.app_claimed_subject_id not in binding.member_subject_ids:
                 return self._unknown("app_subject_not_bound")

@@ -47,6 +47,7 @@ from services.policy.action_authorizer import (
 )
 from services.policy.context import (
     PolicyContext,
+    SubjectPresence,
     effective_action_resource_fence,
     is_resource_scoped_action,
 )
@@ -86,6 +87,7 @@ from services.session_runtime.profile_service import (
 )
 from services.session_runtime.service_mode_resolver import ServiceModeResolver
 from services.session_runtime.subject_resolver import (
+    DEVICE_BINDING_PRIMARY_REASON,
     BindingSnapshot,
     ResolveSubjectCommand,
     SubjectCandidate,
@@ -116,6 +118,9 @@ class StartPersistentSessionCommand:
     now: datetime
     requested_capabilities: tuple[CapabilityValue, ...] = ("chat",)
     candidates: tuple[SubjectCandidate, ...] = ()
+    # Only the device's own authenticated media session sets this: it names
+    # the binding primary subject the device serves (see SubjectResolver).
+    device_bound_subject_id: str | None = None
     multiple_speakers: bool = False
     offline: bool = False
     # Per-session profile lifetime override. Only the direct hardware media
@@ -324,6 +329,29 @@ def _canonical_json(value: object, *, allow_nan: bool = True) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _subject_presence_from_profile(
+    profile: RuntimeProfileSignedV2,
+    *,
+    actor_id: str,
+) -> SubjectPresence:
+    """Recover device-bound presence from a signed profile at action time.
+
+    Policy grants ``memory_recall_private`` to a subject other than the actor
+    only for the device's own bound subject, so a confirmed profile carrying it
+    for another person can only have been issued device-bound.
+    """
+
+    subject_id = profile.active_subject_id
+    if (
+        subject_id is not None
+        and subject_id != actor_id
+        and profile.speaker_state.value == "confirmed"
+        and any(item.value == "memory_recall_private" for item in profile.capabilities)
+    ):
+        return "device_bound"
+    return "resolved"
 
 
 def _digest(value: object) -> str:
@@ -1015,6 +1043,7 @@ class PostgresSessionRuntimeService:
             ResolveSubjectCommand(
                 device_id=command.device_id,
                 candidates=command.candidates,
+                device_bound_subject_id=command.device_bound_subject_id,
                 multiple_speakers=command.multiple_speakers,
                 offline=command.offline,
             ),
@@ -1059,6 +1088,7 @@ class PostgresSessionRuntimeService:
                 "device_id": command.device_id,
                 "binding_version": command.expected_binding_version,
                 "requested_capabilities": list(command.requested_capabilities),
+                "device_bound_subject_id": command.device_bound_subject_id,
                 "multiple_speakers": command.multiple_speakers,
                 "offline": command.offline,
             }
@@ -1203,6 +1233,13 @@ class PostgresSessionRuntimeService:
                 now=now,
             )
             context = PolicyContext(
+                subject_presence=(
+                    "device_bound"
+                    if resolution.reason_code == DEVICE_BINDING_PRIMARY_REASON
+                    and resolution.active_subject_id is not None
+                    and resolution.speaker_state == "confirmed"
+                    else "resolved"
+                ),
                 actor_id=actor_id,
                 subject_id=resolution.active_subject_id,
                 resource_owner_id=resolution.active_subject_id,
@@ -1948,6 +1985,7 @@ class PostgresSessionRuntimeService:
     ) -> PolicyContext:
         purpose = canonical_runtime_decision_purpose(capability)
         return PolicyContext(
+            subject_presence=_subject_presence_from_profile(profile, actor_id=actor_id),
             actor_id=actor_id,
             subject_id=profile.active_subject_id,
             resource_owner_id=profile.active_subject_id,
@@ -2663,6 +2701,9 @@ class PostgresSessionRuntimeService:
                     now=now,
                 )
                 context = PolicyContext(
+                    subject_presence=_subject_presence_from_profile(
+                        requested, actor_id=actor_id
+                    ),
                     actor_id=actor_id,
                     subject_id=requested.active_subject_id,
                     resource_owner_id=requested.active_subject_id,
