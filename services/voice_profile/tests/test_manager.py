@@ -107,10 +107,11 @@ class ProviderStub:
             self.create_entered.set()
         if self.create_release is not None:
             await self.create_release.wait()
+        # DashScope clones carry no provider expiry; the id is
+        # "{target_model}-{prefix}-{unique id}".
         return ProviderVoice(
-            voice_id=f"{target_model}-clone-{prefix}",
+            voice_id=f"{target_model}-{prefix}-abc123",
             target_model=target_model,
-            expires_at=datetime.now(UTC) + timedelta(days=365),
         )
 
     async def delete_voice(self, *, voice_id: str) -> None:
@@ -172,19 +173,19 @@ def _manager(tmp_path: Path) -> tuple[VoiceProfileManager, ProviderStub, Path]:
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     return manager, provider, object_root
 
 
-def _doubao_manager(
+def _unsupported_delete_manager(
     tmp_path: Path,
 ) -> tuple[VoiceProfileManager, UnsupportedDeleteProvider]:
     provider = UnsupportedDeleteProvider()
     manager = VoiceProfileManager.sqlite(
-        tmp_path / "doubao.sqlite3",
+        tmp_path / "manual-cleanup.sqlite3",
         object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "doubao-voice-objects",
+            root=tmp_path / "manual-cleanup-voice-objects",
             key=Fernet.generate_key().decode("ascii"),
             key_version="voice-key-v1",
         ),
@@ -193,8 +194,7 @@ def _doubao_manager(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="seed-icl-2.0",
-        provider_name="volcengine_doubao",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     return manager, provider
 
@@ -238,9 +238,11 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
     assert consent.policy_version == "voice-clone-v1"
     assert candidate.status == "candidate"
     assert candidate.provider == "alibaba_model_studio"
-    assert candidate.provider_voice_id.startswith("cosyvoice-v3.5-flash-clone-")
+    assert candidate.provider_voice_id.startswith("qwen-audio-3.1-tts-flash-")
+    assert candidate.provider_expires_at is None
+    assert provider.created[0]["target_model"] == "qwen-audio-3.1-tts-flash"
     assert provider.created[0]["sample_url"].endswith("?token=signed")
-    assert preview.model == "cosyvoice-v3.5-flash"
+    assert preview.model == "qwen-audio-3.1-tts-flash"
     assert preview.voice_id == candidate.provider_voice_id
     assert sample.data.startswith(b"RIFF")
     ciphertexts = [path.read_bytes() for path in object_root.rglob("*.fernet")]
@@ -447,7 +449,10 @@ async def test_activation_requires_passed_ab_evaluation_and_is_versioned(
     assert resolution.profile_id == candidate.profile_id
     assert resolution.provider == "alibaba_model_studio"
     assert resolution.voice_kind == "personal"
+    assert resolution.model == "qwen-audio-3.1-tts-flash"
+    assert resolution.resource_id == "qwen-audio-3.1-tts-flash"
     assert resolution.voice_id == candidate.provider_voice_id
+    assert resolution.provider_expires_at is None
 
     await manager.evaluate(
         VoiceEvaluationRequest(
@@ -465,15 +470,15 @@ async def test_activation_requires_passed_ab_evaluation_and_is_versioned(
     assert (await manager.resolve(account_id="voice-account")).mode == "fallback"
 
 
-@pytest.mark.asyncio
-async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pending(
-    tmp_path: Path,
-) -> None:
-    manager, provider = _doubao_manager(tmp_path)
-    await manager.grant_consent(account_id="voice-account", policy_version="voice-clone-v1")
+async def _passed_candidate(
+    manager: VoiceProfileManager,
+    *,
+    account_id: str,
+    source_run_id: str,
+) -> VoiceProfile:
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
-            account_id="voice-account",
+            account_id=account_id,
             audio=_sample(),
             media_type="audio/wav",
             duration_ms=12_000,
@@ -482,7 +487,7 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
     )
     await manager.evaluate(
         VoiceEvaluationRequest(
-            account_id="voice-account",
+            account_id=account_id,
             profile_id=candidate.profile_id,
             similarity=4.0,
             naturalness=4.0,
@@ -495,9 +500,9 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
     )
     await manager.record_quality_measurement(
         VoiceQualityMeasurementRequest(
-            account_id="voice-account",
+            account_id=account_id,
             profile_id=candidate.profile_id,
-            source_run_id="probe-run-doubao",
+            source_run_id=source_run_id,
             first_audio_ms=700,
             cancel_tail_ms=100,
             timestamp_error_ms=100,
@@ -505,31 +510,52 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
             long_sentence_completion_ratio=0.99,
         )
     )
+    return candidate
+
+
+@pytest.mark.asyncio
+async def test_current_clone_resolves_without_provider_expiry_and_keeps_cleanup_pending(
+    tmp_path: Path,
+) -> None:
+    manager, provider = _unsupported_delete_manager(tmp_path)
+    await manager.grant_consent(account_id="voice-account", policy_version="voice-clone-v1")
+    candidate = await _passed_candidate(
+        manager, account_id="voice-account", source_run_id="probe-run-cleanup"
+    )
     await manager.activate(account_id="voice-account", profile_id=candidate.profile_id)
 
     resolution = await manager.resolve(account_id="voice-account")
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
-        connection.execute(
-            "UPDATE voice_profiles SET provider_expires_at = NULL WHERE profile_id = ?",
-            (candidate.profile_id,),
-        )
-    assert (await manager.resolve(account_id="voice-account")).mode == "fallback"
-    assert candidate.provider_expires_at is not None
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
+    assert candidate.provider_expires_at is None
+    assert resolution.mode == "active"
+    assert resolution.provider_expires_at is None
+
+    # An expiry is optional, but once one is set and passed the clone falls back.
+    with sqlite3.connect(tmp_path / "manual-cleanup.sqlite3") as connection:
         connection.execute(
             "UPDATE voice_profiles SET provider_expires_at = ? WHERE profile_id = ?",
-            (candidate.provider_expires_at.isoformat(), candidate.profile_id),
+            (datetime(2000, 1, 1, tzinfo=UTC).isoformat(), candidate.profile_id),
         )
+    assert (await manager.resolve(account_id="voice-account")).mode == "fallback"
+    future = datetime.now(UTC) + timedelta(days=30)
+    with sqlite3.connect(tmp_path / "manual-cleanup.sqlite3") as connection:
+        connection.execute(
+            "UPDATE voice_profiles SET provider_expires_at = ? WHERE profile_id = ?",
+            (future.isoformat(), candidate.profile_id),
+        )
+    unexpired = await manager.resolve(account_id="voice-account")
+    assert unexpired.mode == "active"
+    assert unexpired.provider_expires_at == future
     revoked = await manager.revoke_profile(
         account_id="voice-account",
         profile_id=candidate.profile_id,
     )
 
-    assert candidate.provider == "volcengine_doubao"
-    assert resolution.provider == "volcengine_doubao"
+    assert candidate.provider == "alibaba_model_studio"
+    assert resolution.provider == "alibaba_model_studio"
     assert resolution.voice_kind == "personal"
-    assert resolution.model == "seed-icl-2.0"
-    assert resolution.resource_id == "seed-icl-2.0"
+    assert resolution.model == "qwen-audio-3.1-tts-flash"
+    assert resolution.resource_id == "qwen-audio-3.1-tts-flash"
+    assert resolution.voice_id == candidate.provider_voice_id
     assert revoked.status == "revoked"
     assert revoked.deletion_status == "pending"
     assert (await manager.resolve(account_id="voice-account")).mode == "fallback"
@@ -538,10 +564,10 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
     confirmed = await manager.confirm_provider_deletion(
         account_id="voice-account",
         profile_id=candidate.profile_id,
-        evidence_reference="doubao-console-ticket/cleanup-001",
+        evidence_reference="dashscope-console-ticket/cleanup-001",
     )
     assert confirmed.deletion_status == "completed"
-    evidence = await LifeArchive.sqlite(tmp_path / "doubao.sqlite3").context(
+    evidence = await LifeArchive.sqlite(tmp_path / "manual-cleanup.sqlite3").context(
         ContextQuery(account_id="voice-account", speaker_class="owner", limit=20)
     )
     confirmation = next(
@@ -549,52 +575,79 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
         for event in evidence.evidence
         if event.event_type == "voice_profile.provider_deletion_confirmed"
     )
-    assert confirmation.payload["evidence_reference"] == "doubao-console-ticket/cleanup-001"
+    assert confirmation.payload["evidence_reference"] == "dashscope-console-ticket/cleanup-001"
     assert "provider_voice_id" not in confirmation.payload
 
 
 @pytest.mark.asyncio
-async def test_doubao_activation_requires_a_known_future_provider_expiry(
+@pytest.mark.parametrize(
+    ("provider_name", "target_model", "voice_id", "expires_at"),
+    [
+        (
+            "volcengine_doubao",
+            "seed-icl-2.0",
+            "S_legacyDoubaoSpeaker",
+            datetime.now(UTC) + timedelta(days=365),
+        ),
+        (
+            "alibaba_model_studio",
+            "cosyvoice-v3.5-flash",
+            "cosyvoice-v3.5-flash-owner01-abc123",
+            None,
+        ),
+    ],
+)
+async def test_legacy_model_clone_falls_back_and_must_be_re_recorded(
     tmp_path: Path,
+    provider_name: str,
+    target_model: str,
+    voice_id: str,
+    expires_at: datetime | None,
 ) -> None:
-    manager, _provider = _doubao_manager(tmp_path)
+    manager, _provider, _object_root = _manager(tmp_path)
     await manager.grant_consent(
-        account_id="voice-expiry-account",
+        account_id="voice-legacy-account",
         policy_version="voice-clone-v1",
     )
-    candidate = await manager.enroll(
-        VoiceEnrollmentRequest(
-            account_id="voice-expiry-account",
-            audio=_sample(),
-            media_type="audio/wav",
-            duration_ms=12_000,
-            sample_rate=24_000,
-        )
+    candidate = await _passed_candidate(
+        manager, account_id="voice-legacy-account", source_run_id="probe-run-legacy"
     )
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
+    # Rows written before the Qwen-Audio migration keep their old identity,
+    # including otherwise usable evidence and an unexpired provider voice.
+    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
         connection.execute(
             """
             UPDATE voice_profiles
-            SET evaluation_status = 'passed', quality_status = 'passed',
-                provider_expires_at = NULL
+            SET provider = ?, target_model = ?, provider_voice_id = ?,
+                provider_expires_at = ?
             WHERE profile_id = ?
             """,
-            (candidate.profile_id,),
+            (
+                provider_name,
+                target_model,
+                voice_id,
+                expires_at.isoformat() if expires_at is not None else None,
+                candidate.profile_id,
+            ),
         )
-    with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
+
+    with pytest.raises(EvaluationRequiredError, match="re-recorded for the current model"):
         await manager.activate(
-            account_id="voice-expiry-account",
+            account_id="voice-legacy-account",
             profile_id=candidate.profile_id,
         )
 
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
+    # A legacy clone that was already active before the migration never speaks.
+    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
         connection.execute(
-            "UPDATE voice_profiles SET provider_expires_at = ? WHERE profile_id = ?",
-            (datetime(2000, 1, 1, tzinfo=UTC).isoformat(), candidate.profile_id),
+            "UPDATE voice_profiles SET status = 'active', activated_at = ? WHERE profile_id = ?",
+            (datetime.now(UTC).isoformat(), candidate.profile_id),
         )
-    with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
-        await manager.activate(
-            account_id="voice-expiry-account",
+    assert (await manager.resolve(account_id="voice-legacy-account")).mode == "fallback"
+    # Previewing it would only fail inside the renderer; say re-record instead.
+    with pytest.raises(EvaluationRequiredError, match="re-recorded for the current model"):
+        await manager.preview_target(
+            account_id="voice-legacy-account",
             profile_id=candidate.profile_id,
         )
 
@@ -737,7 +790,7 @@ async def test_revocation_during_enrollment_deletes_the_late_provider_asset(
         await enrollment
 
     assert provider.deleted == [
-        f"cosyvoice-v3.5-flash-clone-m{enrolling.profile_id.replace('-', '')[:9]}"
+        f"qwen-audio-3.1-tts-flash-m{enrolling.profile_id.replace('-', '')[:9]}-abc123"
     ]
 
 
@@ -828,8 +881,8 @@ async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
     assert profiles[0].status == "enrolling"
 
     recovered = ProviderVoice(
-        voice_id=f"cosyvoice-v3.5-flash-clone-{pending[0].provider_prefix}",
-        target_model="cosyvoice-v3.5-flash",
+        voice_id=f"qwen-audio-3.1-tts-flash-{pending[0].provider_prefix}-abc123",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     candidate = await manager.reconcile_enrollment(
         account_id="voice-account",
@@ -863,7 +916,7 @@ async def test_ambiguous_sample_upload_is_enumerable_and_blocks_false_deletion(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     await manager.grant_consent(
         account_id="voice-account",
@@ -924,7 +977,7 @@ async def test_consent_revocation_waits_for_orphan_sample_reconciliation(
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/{sample_id}",
         provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     await manager.grant_consent(
         account_id="voice-account",

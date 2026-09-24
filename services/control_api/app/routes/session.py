@@ -21,6 +21,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.account_gate import (
     SubjectCapability,
     require_capability_for_account_id,
@@ -675,9 +676,9 @@ async def create_session(
             voice_provider_expires_at=voice_provider_expires_at,
             voice_speaker_sha256=voice_speaker_sha256,
             fallback_voice_profile_id=companion.designed_voice_profile,
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
         )
     else:
         preview_frozen = None
@@ -737,9 +738,9 @@ async def create_session(
             voice_provider_expires_at=voice_provider_expires_at,
             voice_speaker_sha256=voice_speaker_sha256,
             fallback_voice_profile_id=companion.designed_voice_profile,
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
         )
     persistent_service = cast(
         PostgresSessionRuntimeService | None,

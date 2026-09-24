@@ -30,6 +30,7 @@ from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.main import create_app
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
@@ -315,10 +316,10 @@ def _response_provenance(
         "disclosures": ["inference", "privacy_refusal"],
         "llm_provider": "qwen",
         "llm_model": "qwen-test",
-        "tts_provider": "volcengine_doubao",
-        "tts_model": "seed-tts-2.0",
+        "tts_provider": TTS_PROVIDER,
+        "tts_model": TTS_MODEL,
         "actual_voice_profile_id": "warm_companion",
-        "actual_voice_resource_id": "seed-tts-2.0",
+        "actual_voice_resource_id": TTS_MODEL,
         "actual_voice_speaker_sha256": designed_voice_speaker_sha256("warm_companion"),
         **overrides,
     }
@@ -444,25 +445,24 @@ def _add_legacy_session(app: object, access: LegacyAccessSnapshot) -> str:
         legacy_voice_allowed=access.voice_allowed,
         legacy_expires_at=access.expires_at.isoformat(),
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider="volcengine_doubao",
-        fallback_voice_model="seed-tts-2.0",
-        fallback_voice_resource_id="seed-tts-2.0",
+        fallback_voice_provider=TTS_PROVIDER,
+        fallback_voice_model=TTS_MODEL,
+        fallback_voice_resource_id=TTS_MODEL,
     )
     return session_id
 
 
 def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
     frozen_digest = "1" * 64
-    provider_expires_at = "2027-07-23T00:00:00+00:00"
     session = {
         "interaction_mode": "self_preview",
         "mode_policy_version": "s8-v1",
         "voice_profile_id": "voice-profile-1",
         "voice_profile_version": 1,
-        "voice_provider": "volcengine_doubao",
-        "voice_model": "seed-icl-2.0",
-        "voice_resource_id": "seed-icl-2.0",
-        "voice_provider_expires_at": provider_expires_at,
+        "voice_provider": TTS_PROVIDER,
+        "voice_model": TTS_MODEL,
+        "voice_resource_id": TTS_MODEL,
+        "voice_provider_expires_at": None,
         "voice_speaker_sha256": frozen_digest,
     }
     submitted = ResponseProvenanceCreate.model_validate(
@@ -472,11 +472,8 @@ def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
             generation_id=1,
             source_refs=[],
             interaction_mode="self_preview",
-            tts_model="seed-icl-2.0",
             actual_voice_profile_id="voice-profile-1",
             actual_voice_profile_version=1,
-            actual_voice_resource_id="seed-icl-2.0",
-            actual_voice_provider_expires_at=provider_expires_at,
             actual_voice_speaker_sha256=frozen_digest,
         )
     )
@@ -488,8 +485,8 @@ def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
     ) == (
         "voice-profile-1",
         1,
-        "seed-icl-2.0",
-        provider_expires_at,
+        TTS_MODEL,
+        None,
         frozen_digest,
     )
 
@@ -507,44 +504,88 @@ def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
         assert exc_info.value.status_code == 409
 
 
+def test_personal_voice_provenance_does_not_require_a_provider_expiry() -> None:
+    provenance = ResponseProvenanceCreate.model_validate(
+        _response_provenance(
+            session_id="personal-provenance-without-expiry",
+            turn_id=1,
+            generation_id=1,
+            source_refs=[],
+            interaction_mode="self_preview",
+            actual_voice_profile_id="voice-profile-1",
+            actual_voice_profile_version=1,
+            actual_voice_speaker_sha256="1" * 64,
+        )
+    )
+
+    assert provenance.actual_voice_profile_version == 1
+    assert provenance.actual_voice_provider_expires_at is None
+
+
 @pytest.mark.parametrize(
-    "missing",
-    ["actual_voice_profile_version", "actual_voice_provider_expires_at"],
+    ("overrides", "message"),
+    [
+        ({"actual_voice_profile_id": None}, "requires a profile"),
+        (
+            {"tts_model": "seed-icl-2.0", "actual_voice_resource_id": "seed-icl-2.0"},
+            "not the current tts model",
+        ),
+        (
+            {
+                "tts_model": "cosyvoice-v3.5-flash",
+                "actual_voice_resource_id": "cosyvoice-v3.5-flash",
+            },
+            "not the current tts model",
+        ),
+        ({"tts_provider": "volcengine_doubao"}, "does not match the tts runtime"),
+    ],
 )
-def test_personal_voice_provenance_requires_version_and_expiry(missing: str) -> None:
+def test_personal_voice_provenance_requires_a_profile_on_the_current_model(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
     values = _response_provenance(
         session_id="incomplete-personal-provenance",
         turn_id=1,
         generation_id=1,
         source_refs=[],
         interaction_mode="self_preview",
-        tts_model="seed-icl-2.0",
         actual_voice_profile_id="voice-profile-1",
         actual_voice_profile_version=1,
-        actual_voice_resource_id="seed-icl-2.0",
-        actual_voice_provider_expires_at="2027-07-23T00:00:00+00:00",
         actual_voice_speaker_sha256="1" * 64,
     )
-    values.pop(missing)
+    values.update(overrides)
 
-    with pytest.raises(ValueError, match="requires version and expiry"):
+    with pytest.raises(ValueError, match=message):
         ResponseProvenanceCreate.model_validate(values)
 
 
-@pytest.mark.parametrize("missing", ["voice_profile_version", "voice_provider_expires_at"])
+def test_designed_voice_provenance_cannot_claim_a_provider_expiry() -> None:
+    values = _response_provenance(
+        session_id="designed-provenance-with-expiry",
+        turn_id=1,
+        generation_id=1,
+        source_refs=[],
+        actual_voice_provider_expires_at="2027-07-23T00:00:00+00:00",
+    )
+
+    with pytest.raises(ValueError, match="cannot claim personal metadata"):
+        ResponseProvenanceCreate.model_validate(values)
+
+
+@pytest.mark.parametrize("missing", ["voice_profile_version", "voice_speaker_sha256"])
 def test_personal_voice_archive_rejects_an_incomplete_frozen_contract(
     missing: str,
 ) -> None:
-    provider_expires_at = "2027-07-23T00:00:00+00:00"
     session = {
         "interaction_mode": "self_preview",
         "mode_policy_version": "s8-v1",
         "voice_profile_id": "voice-profile-1",
         "voice_profile_version": 1,
-        "voice_provider": "volcengine_doubao",
-        "voice_model": "seed-icl-2.0",
-        "voice_resource_id": "seed-icl-2.0",
-        "voice_provider_expires_at": provider_expires_at,
+        "voice_provider": TTS_PROVIDER,
+        "voice_model": TTS_MODEL,
+        "voice_resource_id": TTS_MODEL,
+        "voice_provider_expires_at": None,
         "voice_speaker_sha256": "1" * 64,
     }
     session.pop(missing)
@@ -555,11 +596,8 @@ def test_personal_voice_archive_rejects_an_incomplete_frozen_contract(
             generation_id=1,
             source_refs=[],
             interaction_mode="self_preview",
-            tts_model="seed-icl-2.0",
             actual_voice_profile_id="voice-profile-1",
             actual_voice_profile_version=1,
-            actual_voice_resource_id="seed-icl-2.0",
-            actual_voice_provider_expires_at=provider_expires_at,
             actual_voice_speaker_sha256="1" * 64,
         )
     )
@@ -591,9 +629,9 @@ def test_personal_voice_archive_rejects_an_incomplete_frozen_contract(
                 "interaction_mode": "self_preview",
                 "mode_policy_version": "s8-v1",
                 "fallback_voice_profile_id": "bright_peer",
-                "fallback_voice_provider": "volcengine_doubao",
-                "fallback_voice_model": "seed-tts-2.0",
-                "fallback_voice_resource_id": "seed-tts-2.0",
+                "fallback_voice_provider": TTS_PROVIDER,
+                "fallback_voice_model": TTS_MODEL,
+                "fallback_voice_resource_id": TTS_MODEL,
             },
             "bright_peer",
         ),
@@ -621,15 +659,21 @@ def test_designed_voice_archive_requires_the_canonical_speaker_digest(
         submitted=submitted,
         session=session,
         interaction_mode=interaction_mode,
-    ) == (profile_id, None, "seed-tts-2.0", None, canonical_digest)
+    ) == (profile_id, None, TTS_MODEL, None, canonical_digest)
 
-    with pytest.raises(HTTPException) as exc_info:
-        _canonical_actual_voice(
-            submitted=submitted.model_copy(update={"actual_voice_speaker_sha256": "f" * 64}),
-            session=session,
-            interaction_mode=interaction_mode,
-        )
-    assert exc_info.value.status_code == 409
+    # Designed and personal voices share one model, so a designed snapshot is
+    # told apart by carrying no profile version.
+    for update in (
+        {"actual_voice_speaker_sha256": "f" * 64},
+        {"actual_voice_profile_version": 1},
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            _canonical_actual_voice(
+                submitted=submitted.model_copy(update=update),
+                session=session,
+                interaction_mode=interaction_mode,
+            )
+        assert exc_info.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -2084,10 +2128,10 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                         "disclosures": ["inference", "privacy_refusal"],
                         "llm_provider": "qwen",
                         "llm_model": "qwen-test",
-                        "tts_provider": "volcengine_doubao",
-                        "tts_model": "seed-tts-2.0",
+                        "tts_provider": TTS_PROVIDER,
+                        "tts_model": TTS_MODEL,
                         "actual_voice_profile_id": "warm_companion",
-                        "actual_voice_resource_id": "seed-tts-2.0",
+                        "actual_voice_resource_id": TTS_MODEL,
                         "actual_voice_speaker_sha256": designed_voice_speaker_sha256(
                             "warm_companion"
                         ),
@@ -2203,10 +2247,10 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
     assert provenance["epistemic_status"] == "not_applicable"
     assert provenance["epistemic_reason_codes"] == ["no_grounded_items"]
     assert provenance["disclosures"] == []
-    assert provenance["tts_provider"] == "volcengine_doubao"
-    assert provenance["tts_model"] == "seed-tts-2.0"
+    assert provenance["tts_provider"] == TTS_PROVIDER
+    assert provenance["tts_model"] == TTS_MODEL
     assert provenance["actual_voice_profile_id"] == "warm_companion"
-    assert provenance["actual_voice_resource_id"] == "seed-tts-2.0"
+    assert provenance["actual_voice_resource_id"] == TTS_MODEL
     assert provenance["actual_voice_speaker_sha256"] == designed_voice_speaker_sha256(
         "warm_companion"
     )
@@ -2302,10 +2346,10 @@ async def test_response_provenance_rejects_guest_or_assistant_source_evidence(
                         "disclosures": [],
                         "llm_provider": "qwen",
                         "llm_model": "qwen-test",
-                        "tts_provider": "volcengine_doubao",
-                        "tts_model": "seed-tts-2.0",
+                        "tts_provider": TTS_PROVIDER,
+                        "tts_model": TTS_MODEL,
                         "actual_voice_profile_id": "warm_companion",
-                        "actual_voice_resource_id": "seed-tts-2.0",
+                        "actual_voice_resource_id": TTS_MODEL,
                         "actual_voice_speaker_sha256": designed_voice_speaker_sha256(
                             "warm_companion"
                         ),

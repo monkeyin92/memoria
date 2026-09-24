@@ -8,6 +8,7 @@ from services.agent.src.mode_policy_client import (
     ModePolicyClient,
     ModePolicyClientConfig,
 )
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 
 
 def _payload(**overrides: object) -> dict[str, object]:
@@ -312,9 +313,9 @@ def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilitie
             preview_grant_id="grant-001",
             perspective="child",
             fallback_voice_profile_id="warm_companion",
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
             capabilities={
                 "conversation": True,
                 "private_memory": False,
@@ -351,15 +352,15 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
         perspective="owner",
         voice_profile_id="voice-profile-1",
         voice_profile_version=2,
-        voice_provider="volcengine_doubao",
-        voice_model="seed-icl-2.0",
-        voice_resource_id="seed-icl-2.0",
+        voice_provider=TTS_PROVIDER,
+        voice_model=TTS_MODEL,
+        voice_resource_id=TTS_MODEL,
         voice_provider_expires_at="2026-08-01T00:00:00+00:00",
         voice_speaker_sha256="b" * 64,
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider="volcengine_doubao",
-        fallback_voice_model="seed-tts-2.0",
-        fallback_voice_resource_id="seed-tts-2.0",
+        fallback_voice_provider=TTS_PROVIDER,
+        fallback_voice_model=TTS_MODEL,
+        fallback_voice_resource_id=TTS_MODEL,
         capabilities={
             "conversation": True,
             "private_memory": False,
@@ -393,20 +394,27 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
         "relationship_profile_id": None,
         "relationship_profile_version": None,
         "resource_owner_account_id": None,
-        "voice_model": "seed-icl-2.0",
+        "voice_model": TTS_MODEL,
         "voice_profile_id": "voice-profile-1",
         "voice_profile_version": "2",
-        "voice_provider": "volcengine_doubao",
+        "voice_provider": TTS_PROVIDER,
         "voice_provider_expires_at": "2026-08-01T00:00:00+00:00",
-        "voice_resource_id": "seed-icl-2.0",
+        "voice_resource_id": TTS_MODEL,
         "voice_speaker_sha256": "b" * 64,
         "fallback_voice_profile_id": "warm_companion",
-        "fallback_voice_provider": "volcengine_doubao",
-        "fallback_voice_model": "seed-tts-2.0",
-        "fallback_voice_resource_id": "seed-tts-2.0",
+        "fallback_voice_provider": TTS_PROVIDER,
+        "fallback_voice_model": TTS_MODEL,
+        "fallback_voice_resource_id": TTS_MODEL,
     }
     assert not ModePolicyClient._parse({**payload, "voice_profile_version": None}).available
-    assert not ModePolicyClient._parse({**payload, "voice_resource_id": "seed-tts-2.0"}).available
+    assert ModePolicyClient._parse({**payload, "voice_provider_expires_at": None}).available
+    assert not ModePolicyClient._parse({**payload, "voice_resource_id": "seed-icl-2.0"}).available
+    assert not ModePolicyClient._parse(
+        {**payload, "voice_provider": "volcengine_doubao"}
+    ).available
+    assert not ModePolicyClient._parse(
+        {**payload, "voice_model": "cosyvoice-v3.5-flash"}
+    ).available
     assert not ModePolicyClient._parse(
         {**payload, "voice_provider_expires_at": "2026-08-01T08:00:00+08:00"}
     ).available
@@ -428,15 +436,15 @@ def test_personal_voice_version_rejects_non_positive_or_non_integer_values(
             perspective="owner",
             voice_profile_id="voice-profile-1",
             voice_profile_version=invalid_version,
-            voice_provider="volcengine_doubao",
-            voice_model="seed-icl-2.0",
-            voice_resource_id="seed-icl-2.0",
+            voice_provider=TTS_PROVIDER,
+            voice_model=TTS_MODEL,
+            voice_resource_id=TTS_MODEL,
             voice_provider_expires_at="2026-08-01T00:00:00+00:00",
             voice_speaker_sha256="b" * 64,
             fallback_voice_profile_id="warm_companion",
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
             capabilities={
                 "conversation": True,
                 "private_memory": False,
@@ -481,15 +489,15 @@ def test_self_preview_voice_contract_rejects_partial_or_forged_fields(
         perspective="owner",
         voice_profile_id="voice-profile-1",
         voice_profile_version=2,
-        voice_provider="volcengine_doubao",
-        voice_model="seed-icl-2.0",
-        voice_resource_id="seed-icl-2.0",
+        voice_provider=TTS_PROVIDER,
+        voice_model=TTS_MODEL,
+        voice_resource_id=TTS_MODEL,
         voice_provider_expires_at="2026-08-01T00:00:00+00:00",
         voice_speaker_sha256="b" * 64,
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider="volcengine_doubao",
-        fallback_voice_model="seed-tts-2.0",
-        fallback_voice_resource_id="seed-tts-2.0",
+        fallback_voice_provider=TTS_PROVIDER,
+        fallback_voice_model=TTS_MODEL,
+        fallback_voice_resource_id=TTS_MODEL,
         capabilities={
             "conversation": True,
             "private_memory": False,
@@ -518,9 +526,9 @@ def test_self_preview_accepts_all_null_personal_voice_with_complete_fallback() -
             preview_grant_id="grant-001",
             perspective="owner",
             fallback_voice_profile_id="bright_peer",
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
             capabilities={
                 "conversation": True,
                 "private_memory": False,
@@ -561,17 +569,17 @@ def _legacy_payload(*, voice_allowed: bool = False) -> dict[str, object]:
         legacy_expires_at="2026-08-23T00:00:00+00:00",
         voice_profile_id="voice-1" if personal else None,
         voice_profile_version=2 if personal else None,
-        voice_provider="volcengine_doubao" if personal else None,
-        voice_model="seed-icl-2.0" if personal else None,
-        voice_resource_id="seed-icl-2.0" if personal else None,
+        voice_provider=TTS_PROVIDER if personal else None,
+        voice_model=TTS_MODEL if personal else None,
+        voice_resource_id=TTS_MODEL if personal else None,
         voice_provider_expires_at=(
             "2026-08-22T00:00:00+00:00" if personal else None
         ),
         voice_speaker_sha256="d" * 64 if personal else None,
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider="volcengine_doubao",
-        fallback_voice_model="seed-tts-2.0",
-        fallback_voice_resource_id="seed-tts-2.0",
+        fallback_voice_provider=TTS_PROVIDER,
+        fallback_voice_model=TTS_MODEL,
+        fallback_voice_resource_id=TTS_MODEL,
         capabilities={
             "conversation": True,
             "private_memory": False,
@@ -641,21 +649,21 @@ def test_companion_policy_accepts_a_complete_personal_clone_contract() -> None:
         _payload(
             voice_profile_id="voice-profile-personal",
             voice_profile_version=2,
-            voice_provider="alibaba_model_studio",
-            voice_model="cosyvoice-v3.5-flash",
-            voice_resource_id="cosyvoice-v3.5-flash",
+            voice_provider=TTS_PROVIDER,
+            voice_model=TTS_MODEL,
+            voice_resource_id=TTS_MODEL,
             voice_provider_expires_at=None,
             voice_speaker_sha256=speaker,
             fallback_voice_profile_id="bright_peer",
-            fallback_voice_provider="volcengine_doubao",
-            fallback_voice_model="seed-tts-2.0",
-            fallback_voice_resource_id="seed-tts-2.0",
+            fallback_voice_provider=TTS_PROVIDER,
+            fallback_voice_model=TTS_MODEL,
+            fallback_voice_resource_id=TTS_MODEL,
         )
     )
 
     assert policy.available
     assert policy.mode == "companion"
-    assert dict(policy.references)["voice_provider"] == "alibaba_model_studio"
+    assert dict(policy.references)["voice_provider"] == TTS_PROVIDER
     assert dict(policy.references)["fallback_voice_profile_id"] == "bright_peer"
 
 
@@ -664,9 +672,9 @@ def test_companion_policy_rejects_a_partial_personal_clone_contract() -> None:
         _payload(
             voice_profile_id="voice-profile-personal",
             voice_profile_version=2,
-            voice_provider="alibaba_model_studio",
-            voice_model="cosyvoice-v3.5-flash",
-            voice_resource_id="cosyvoice-v3.5-flash",
+            voice_provider=TTS_PROVIDER,
+            voice_model=TTS_MODEL,
+            voice_resource_id=TTS_MODEL,
             voice_speaker_sha256="a" * 64,
         )
     )

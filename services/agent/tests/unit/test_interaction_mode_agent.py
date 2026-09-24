@@ -30,7 +30,10 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     personal_voice_profile,
 )
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
+
+PERSONAL_VOICE = "qwen-audio-3.1-tts-flash-owner001-abc123"
 
 
 def _plan(runtime: DuplexRuntime) -> ResponsePlan:
@@ -45,7 +48,7 @@ def _plan(runtime: DuplexRuntime) -> ResponsePlan:
         voice_target=ResponseVoiceTarget(
             kind="companion",
             profile_id="warm_companion",
-            model="seed-tts-2.0",
+            model=TTS_MODEL,
         ),
         provenance=ResponseProvenance(
             planner_policy_version="digital-self-response-planner-v2",
@@ -124,7 +127,7 @@ def _approved_personal_plan(runtime: DuplexRuntime) -> ResponsePlan:
         voice_target=ResponseVoiceTarget(
             kind="approved_personal",
             profile_id="voice-profile-1",
-            model="seed-icl-2.0",
+            model=TTS_MODEL,
         ),
         provenance=replace(
             plan.provenance,
@@ -161,9 +164,9 @@ def _legacy_policy(*, voice_allowed: bool) -> ModePolicy:
             ("legacy_voice_allowed", voice_allowed),
             ("legacy_expires_at", "2026-08-23T00:00:00+00:00"),
             ("voice_profile_id", "voice-profile-1" if personal else None),
-            ("voice_model", "seed-icl-2.0" if personal else None),
+            ("voice_model", TTS_MODEL if personal else None),
             ("fallback_voice_profile_id", "bright_peer"),
-            ("fallback_voice_model", "seed-tts-2.0"),
+            ("fallback_voice_model", TTS_MODEL),
         ),
         capabilities=(),
         companion_style=None,
@@ -178,13 +181,13 @@ def _runtime_legacy_policy(*, fallback_profile_id: str = "bright_peer") -> ModeP
                 {
                     **dict(_legacy_policy(voice_allowed=True).references),
                     "voice_profile_version": "3",
-                    "voice_provider": "volcengine_doubao",
-                    "voice_resource_id": "seed-icl-2.0",
+                    "voice_provider": TTS_PROVIDER,
+                    "voice_resource_id": TTS_MODEL,
                     "voice_provider_expires_at": "2027-07-23T00:00:00+00:00",
-                    "voice_speaker_sha256": hashlib.sha256(b"personal-speaker").hexdigest(),
+                    "voice_speaker_sha256": hashlib.sha256(PERSONAL_VOICE.encode()).hexdigest(),
                     "fallback_voice_profile_id": fallback_profile_id,
-                    "fallback_voice_provider": "volcengine_doubao",
-                    "fallback_voice_resource_id": "seed-tts-2.0",
+                    "fallback_voice_provider": TTS_PROVIDER,
+                    "fallback_voice_resource_id": TTS_MODEL,
                 }.items()
             )
         ),
@@ -195,8 +198,8 @@ def _runtime_legacy_policy(*, fallback_profile_id: str = "bright_peer") -> ModeP
 class SwitchableTTS:
     def __init__(self) -> None:
         self.current_voice_profile_id = "voice-profile-1"
-        self.current_model = "seed-icl-2.0"
-        self.current_voice = "personal-speaker"
+        self.current_model = TTS_MODEL
+        self.current_voice = PERSONAL_VOICE
         self.current_voice_kind = "personal"
         self.bound: list[object] = []
 
@@ -213,7 +216,7 @@ class SwitchableTTS:
         voice_kind: str,
         resource_id: str,
     ) -> None:
-        assert provider == "volcengine_doubao"
+        assert provider == TTS_PROVIDER
         self.current_voice_profile_id = profile_id
         self.current_model = model
         self.current_voice = voice
@@ -294,7 +297,7 @@ def _legacy_plan(runtime: DuplexRuntime, *, personal: bool) -> ResponsePlan:
             else ResponseVoiceTarget(
                 kind="fallback",
                 profile_id="bright_peer",
-                model="seed-tts-2.0",
+                model=TTS_MODEL,
             )
         ),
         provenance=replace(
@@ -579,7 +582,7 @@ def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target()
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        tts_model="seed-tts-2.0",
+        tts_model=TTS_MODEL,
     )
     plan = _plan(runtime)
 
@@ -659,19 +662,19 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
         ("relationship_profile_id", "relationship-1"),
         ("relationship_profile_version", "4"),
         ("voice_profile_id", "voice-profile-1"),
-        ("voice_model", "seed-icl-2.0"),
+        ("voice_model", TTS_MODEL),
         ("voice_speaker_sha256", "a" * 64),
         ("fallback_voice_profile_id", "bright_peer"),
-        ("fallback_voice_provider", "volcengine_doubao"),
-        ("fallback_voice_model", "seed-tts-2.0"),
-        ("fallback_voice_resource_id", "seed-tts-2.0"),
+        ("fallback_voice_provider", TTS_PROVIDER),
+        ("fallback_voice_model", TTS_MODEL),
+        ("fallback_voice_resource_id", TTS_MODEL),
     )
     policy = _self_preview_policy(references=references)
     runtime.set_mode_policy(policy)
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        tts_model="seed-tts-2.0",
+        tts_model=TTS_MODEL,
     )
     plan = _approved_personal_plan(runtime)
 
@@ -727,7 +730,7 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
         voice_target=ResponseVoiceTarget(
             kind="fallback",
             profile_id="bright_peer",
-            model="seed-tts-2.0",
+            model=TTS_MODEL,
         ),
     )
     assert agent._plan_matches_mode_policy(fallback, policy)
@@ -759,9 +762,9 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
         ("relationship_profile_id", "relationship-1"),
         ("relationship_profile_version", "4"),
         ("voice_profile_id", "voice-profile-1"),
-        ("voice_model", "seed-icl-2.0"),
+        ("voice_model", TTS_MODEL),
         ("fallback_voice_profile_id", "bright_peer"),
-        ("fallback_voice_model", "seed-tts-2.0"),
+        ("fallback_voice_model", TTS_MODEL),
     )
     policy = replace(
         _self_preview_policy(references=references),
@@ -771,7 +774,7 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        tts_model="seed-tts-2.0",
+        tts_model=TTS_MODEL,
     )
     plan = replace(
         _approved_personal_plan(runtime),
@@ -802,7 +805,7 @@ def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity() 
         voice_target=ResponseVoiceTarget(
             kind="fallback",
             profile_id="bright_peer" if mode == "self_preview" else None,
-            model="seed-tts-2.0",
+            model=TTS_MODEL,
         ),
         provenance=replace(
             plan.provenance,
@@ -917,7 +920,7 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
     assert plan.voice_target == ResponseVoiceTarget(
         kind="fallback",
         profile_id="bright_peer",
-        model="seed-tts-2.0",
+        model=TTS_MODEL,
     )
     assert plan.provenance.digital_self_version_id == "digital-self-1"
     assert plan.provenance.manifest_sha256 == "a" * 64
@@ -937,8 +940,8 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
         fence=runtime.fence,
         llm_provider=None,
         llm_model=None,
-        tts_provider="volcengine_doubao",
-        tts_model="seed-tts-2.0",
+        tts_provider=TTS_PROVIDER,
+        tts_model=TTS_MODEL,
         actual_voice_profile_id="bright_peer",
     )
     assert archive_payload["legacy_grant_id"] == "grant-1"
@@ -971,7 +974,7 @@ def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallb
             voice_target=ResponseVoiceTarget(
                 kind="approved_personal",
                 profile_id="voice-profile-1",
-                model="seed-icl-2.0",
+                model=TTS_MODEL,
             ),
         ),
         policy,
@@ -1068,14 +1071,14 @@ async def test_legacy_local_safe_plan_rebinds_personal_generation_to_designed_fa
     assert agent._is_local_safe_plan(plan)
     assert snapshot is not None
     assert snapshot.profile_id == "bright_peer"
-    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.resource_id == TTS_MODEL
     assert snapshot.voice_kind == "designed"
     assert tts.current_voice_profile_id == "bright_peer"
     assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
     provenance = runtime.response_provenance_for(runtime.fence)
     assert provenance is not None
     assert provenance["actual_voice_profile_id"] == "bright_peer"
-    assert provenance["actual_voice_resource_id"] == "seed-tts-2.0"
+    assert provenance["actual_voice_resource_id"] == TTS_MODEL
 
 
 @pytest.mark.asyncio
@@ -1105,7 +1108,7 @@ def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance(
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        tts_model="seed-tts-2.0",
+        tts_model=TTS_MODEL,
     )
     plan = agent._local_safe_plan(
         fence=runtime.fence,

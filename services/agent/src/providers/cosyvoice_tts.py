@@ -1,4 +1,9 @@
-"""CosyVoice Realtime TTS adapter with connection pool (ch.15)."""
+"""Qwen-Audio 3.1 realtime TTS over DashScope's SpeechSynthesizer protocol.
+
+DashScope serves Qwen-Audio-TTS and CosyVoice through the same run-task /
+continue-task / finish-task WebSocket API, so this adapter (historically the
+CosyVoice one) is Memoria's only synthesis path.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from websockets.asyncio.client import ClientConnection
 
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.orchestration.prosody import cosyvoice_instruction
 from services.agent.src.providers.cosyvoice_protocol import (
     build_continue_text,
@@ -28,13 +33,6 @@ from services.agent.src.providers.cosyvoice_protocol import (
     pcm_duration_ms,
     scale_word_timestamps,
 )
-from services.agent.src.providers.cosyvoice_voice_catalog import (
-    DEFAULT_VOICE_PROFILE,
-    catalog_by_id,
-    resolve_approved_designed_voice,
-    resolve_voice_id,
-    uses_freeform_instruct,
-)
 from services.agent.src.providers.generation_budget import (
     AlignmentRetryError,
     BeforeAudioError,
@@ -42,7 +40,19 @@ from services.agent.src.providers.generation_budget import (
     retry_allowed,
     retry_may_change_voice,
 )
+from services.agent.src.providers.qwen_voice_catalog import (
+    DEFAULT_VOICE_PROFILE,
+    catalog_by_id,
+    resolve_approved_voice,
+)
 from services.agent.src.providers.reliability import CircuitBreaker
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
+from services.common.voice_identity import (
+    PERSONAL_VOICE_MODEL,
+    TTS_MODEL,
+    TTS_PROVIDER,
+    is_personal_voice_id,
+)
 
 logger = logging.getLogger(__name__)
 COSYVOICE_EMOTIONS = frozenset(
@@ -54,16 +64,18 @@ COSYVOICE_EMOTIONS = frozenset(
 class CosyVoiceConfig:
     api_key: str
     ws_url: str
-    model: str = "cosyvoice-v3-flash"
-    voice: str = "longanyang"
+    model: str = TTS_MODEL
+    voice: str = DESIGNED_VOICE_SPEAKERS[DEFAULT_VOICE_PROFILE]
     sample_rate: int = 24000
     rate: float = 1.0
     pitch: float = 1.0
-    # Leave true-peak headroom before Opus encoding. The designed v3.5 voices
+    # Leave true-peak headroom before Opus encoding. CosyVoice v3.5 voices
     # clipped at 55+ in production probes; 45 measured at about -1 dBFS.
+    # Re-measure on Qwen-Audio 3.1 before raising it.
     volume: int = 45
     word_timestamps: bool = True
-    pool_size: int = 4
+    # qwen-audio-3.1-tts-flash is limited to 3 requests per second.
+    pool_size: int = 3
     connect_timeout_s: float = 5.0
     first_audio_timeout_s: float = 1.5
     total_timeout_s: float = 20.0
@@ -71,88 +83,40 @@ class CosyVoiceConfig:
     #: reporting. The effective cap is ``max(total_timeout_s * 5, hard_deadline_s)``.
     hard_deadline_s: float = 180.0
     instruction: str | None = None
-    # auto | fixed | freeform — auto picks freeform for v3.5 / designed voices.
-    instruct_style: str = "auto"
     voice_profile: str = DEFAULT_VOICE_PROFILE
 
     def __post_init__(self) -> None:
-        if self.instruction is None:
-            return
-        if self.uses_freeform_instruct:
-            # Freeform: only length-ish sanity; Alibaba limit is model-side.
-            if len(self.instruction) > 200:
-                raise ValueError("CosyVoice freeform instruction is too long")
-            return
-        if self.voice != "longanyang":
-            return
-        allowed = {cosyvoice_instruction(emotion, freeform=False) for emotion in COSYVOICE_EMOTIONS}
-        if self.instruction not in allowed:
-            raise ValueError("longanyang requires Alibaba's fixed Instruct format")
+        if self.instruction is not None and len(self.instruction) > 200:
+            # Qwen-Audio 3.1 follows free-style instructions; the length
+            # limit is model-side, this only stops runaway prompts.
+            raise ValueError("TTS instruction is too long")
+        if not 0 <= self.pool_size <= 3:
+            # 0 opens connections on demand; more than 3 exceeds the 3 RPS limit.
+            raise ValueError("TTS pool size must be within the 3 RPS provider limit")
 
     @property
     def uses_freeform_instruct(self) -> bool:
-        style = (
-            self.instruct_style if self.instruct_style in {"auto", "fixed", "freeform"} else "auto"
-        )
-        return uses_freeform_instruct(
-            model=self.model,
-            voice=self.voice,
-            instruct_style=style,  # type: ignore[arg-type]
-        )
+        return True
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> CosyVoiceConfig:
         import os
 
         e = env or dict(os.environ)
-        from pathlib import Path
-
-        model = e.get("COSYVOICE_MODEL", "cosyvoice-v3.5-flash")
+        model = e.get("COSYVOICE_MODEL", TTS_MODEL)
         profile = e.get("COSYVOICE_VOICE_PROFILE", DEFAULT_VOICE_PROFILE)
         explicit = e.get("COSYVOICE_VOICE") or None
-        registry_raw = e.get("COSYVOICE_VOICE_REGISTRY")
-        registry_path = Path(registry_raw) if registry_raw else None
         production = e.get("ENVIRONMENT", "development").lower() == "production"
-        resolved: str | None
-        if production and "v3.5" in model:
-            approved = resolve_approved_designed_voice(
-                profile_id=profile,
-                model=model,
-                registry_path=registry_path,
-            )
-            if approved is None or (explicit is not None and explicit not in {profile, approved}):
-                raise ValueError(
-                    "production CosyVoice requires an approved designed baseline voice"
-                )
-            resolved = approved
-        elif production and model == "cosyvoice-v3-flash":
-            if explicit not in {None, "longanyang"}:
-                raise ValueError(
-                    "production CosyVoice requires an approved designed baseline voice"
-                )
-            resolved = "longanyang"
-        else:
-            # Prefer explicit voice id; else resolve designed profile registry;
-            # else keep longanyang for v3 system-voice mainline.
-            resolved = resolve_voice_id(
-                profile_id=profile,
-                explicit_voice=explicit,
-                registry_path=registry_path,
-            )
-        profile_names = catalog_by_id()
-        if resolved:
-            voice = resolved
-        elif explicit and explicit not in profile_names:
-            # Real vendor voice_id (system or designed), not a catalog key.
-            voice = explicit
-        elif "v3.5" in model:
+        approved = resolve_approved_voice(profile_id=profile, model=model)
+        if production and (
+            model != TTS_MODEL
+            or approved is None
+            or (explicit is not None and explicit != approved)
+        ):
             raise ValueError(
-                "cosyvoice-v3.5 requires a designed voice_id. "
-                "Run scripts/design_cosyvoice_voices.py then set "
-                "COSYVOICE_VOICE or COSYVOICE_VOICE_PROFILE + registry."
+                f"production TTS requires {TTS_MODEL} and an approved persona voice"
             )
-        else:
-            voice = "longanyang"
+        voice = explicit or approved or DESIGNED_VOICE_SPEAKERS[DEFAULT_VOICE_PROFILE]
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("COSYVOICE_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
@@ -163,14 +127,13 @@ class CosyVoiceConfig:
             pitch=float(e.get("COSYVOICE_PITCH", "1.0")),
             volume=int(e.get("COSYVOICE_VOLUME", "45")),
             word_timestamps=e.get("COSYVOICE_WORD_TIMESTAMPS", "true").lower() == "true",
-            pool_size=int(e.get("COSYVOICE_POOL_SIZE", "4")),
+            pool_size=int(e.get("COSYVOICE_POOL_SIZE", "3")),
             connect_timeout_s=float(e.get("COSYVOICE_CONNECT_TIMEOUT_S", "5")),
             first_audio_timeout_s=float(e.get("COSYVOICE_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(e.get("COSYVOICE_TOTAL_TIMEOUT_S", "20")),
             hard_deadline_s=float(e.get("COSYVOICE_HARD_DEADLINE_S", "180")),
             instruction=e.get("COSYVOICE_INSTRUCTION") or None,
-            instruct_style=e.get("COSYVOICE_INSTRUCT_STYLE", "auto"),
-            voice_profile=profile,
+            voice_profile=profile if approved is not None else DEFAULT_VOICE_PROFILE,
         )
 
 
@@ -569,6 +532,7 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
                     status="degraded",
                     detail={"reason": type(exc).__name__},
                 )
+                self._tts_instance._report_voice_fallback(self._fence, self._fallback_config)
                 raise APIConnectionError(
                     "clone failed before audio; retrying approved baseline"
                 ) from exc
@@ -592,21 +556,26 @@ class CosyVoiceTTS(tts.TTS[Any]):
         self._config = config
         self._baseline_model = config.model
         self._baseline_voice = config.voice
+        self._baseline_profile = config.voice_profile
         self._voice_kind = "designed"
         self._voice_profile_id: str | None = None
+        self._personal_fallback: tuple[str, str] | None = None
         self._pool = pool or CosyVoicePool(config)
         self._active_fence: GenerationFence | None = None
         self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None
         self._alignment_callback: Callable[[GenerationFence, str, str], None] | None = None
+        self._voice_fallback_callback: (
+            Callable[[GenerationFence, str, str, str, str], None] | None
+        ) = None
 
     @classmethod
     def from_env(cls) -> CosyVoiceTTS:
         cfg = CosyVoiceConfig.from_env()
-        return cls(cfg, CosyVoicePool(cfg))
+        return cls(cfg, CosyVoicePool(cfg, metrics=GLOBAL_METRICS))
 
     @property
     def provider(self) -> str:
-        return "alibaba_model_studio"
+        return TTS_PROVIDER
 
     @property
     def model(self) -> str:
@@ -633,6 +602,13 @@ class CosyVoiceTTS(tts.TTS[Any]):
         """Observe LiveKit stream alignment without losing its generation/task identity."""
         self._alignment_callback = callback
 
+    def set_voice_fallback_callback(
+        self,
+        callback: Callable[[GenerationFence, str, str, str, str], None],
+    ) -> None:
+        """Observe (fence, profile_id, resource_id, voice, voice_kind) on fallback."""
+        self._voice_fallback_callback = callback
+
     def _report_alignment(
         self,
         fence: GenerationFence | None,
@@ -645,6 +621,25 @@ class CosyVoiceTTS(tts.TTS[Any]):
             self._alignment_callback(fence, utterance_id, status)
         except Exception:
             logger.warning("CosyVoice alignment callback failed", exc_info=True)
+
+    def _fallback_config(self, config: CosyVoiceConfig) -> CosyVoiceConfig:
+        """The persona's designed voice when one is configured, else the baseline."""
+        profile, voice = self._personal_fallback or (self._baseline_profile, self._baseline_voice)
+        return replace(config, model=TTS_MODEL, voice=voice, voice_profile=profile)
+
+    def _report_voice_fallback(
+        self,
+        fence: GenerationFence | None,
+        fallback: CosyVoiceConfig,
+    ) -> None:
+        if fence is None or self._voice_fallback_callback is None:
+            return
+        try:
+            self._voice_fallback_callback(
+                fence, fallback.voice_profile, fallback.model, fallback.voice, "designed"
+            )
+        except Exception:
+            logger.warning("TTS voice fallback callback failed", exc_info=True)
 
     def apply_speech_plan(
         self,
@@ -676,22 +671,62 @@ class CosyVoiceTTS(tts.TTS[Any]):
         voice_kind: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        if not model.startswith("cosyvoice-v3.5-") or not voice.strip():
-            raise ValueError("active voice profile must use CosyVoice v3.5")
-        if provider not in {None, "alibaba_model_studio"}:
-            raise ValueError("CosyVoice profile requires alibaba_model_studio")
+        if model != TTS_MODEL or not voice.strip() or voice != voice.strip():
+            raise ValueError(f"active voice profile must use {TTS_MODEL}")
+        if provider not in {None, TTS_PROVIDER}:
+            raise ValueError(f"TTS voice profile requires {TTS_PROVIDER}")
         if voice_kind not in {None, "designed", "personal"}:
-            raise ValueError("CosyVoice voice_kind must be designed or personal")
+            raise ValueError("TTS voice_kind must be designed or personal")
         if resource_id not in {None, model}:
-            raise ValueError("CosyVoice resource_id must match the model")
+            raise ValueError("TTS resource_id must match the model")
+        catalog = catalog_by_id()
+        if voice_kind == "personal":
+            if (
+                model != PERSONAL_VOICE_MODEL
+                or not profile_id
+                or not is_personal_voice_id(voice)
+                or any(spec.speaker_id == voice for spec in catalog.values())
+            ):
+                raise ValueError("personal voice requires an enrolled Qwen-Audio clone")
+        else:
+            spec = next((item for item in catalog.values() if item.speaker_id == voice), None)
+            if spec is None or (profile_id is not None and profile_id != spec.profile_id):
+                raise ValueError("designed voice must be an approved persona system voice")
+            profile_id = spec.profile_id
         self._config.model = model
         self._config.voice = voice
+        self._config.voice_profile = profile_id or self._baseline_profile
         self._voice_kind = "personal" if voice_kind == "personal" else "designed"
         self._voice_profile_id = profile_id
+
+    def configure_personal_fallback(
+        self,
+        *,
+        profile_id: str,
+        provider: str,
+        model: str,
+        resource_id: str,
+        voice: str,
+    ) -> None:
+        """Speak this persona voice if the personal clone fails before audio."""
+        approved = resolve_approved_voice(profile_id=profile_id, model=model)
+        if (
+            provider != TTS_PROVIDER
+            or model != TTS_MODEL
+            or resource_id != TTS_MODEL
+            or approved is None
+            or voice != approved
+        ):
+            raise ValueError("personal fallback must be an approved designed voice")
+        self._personal_fallback = (profile_id, voice)
+
+    def clear_personal_fallback(self) -> None:
+        self._personal_fallback = None
 
     def use_baseline_voice(self) -> None:
         self._config.model = self._baseline_model
         self._config.voice = self._baseline_voice
+        self._config.voice_profile = self._baseline_profile
         self._voice_kind = "designed"
         self._voice_profile_id = None
 
@@ -709,7 +744,11 @@ class CosyVoiceTTS(tts.TTS[Any]):
 
     @property
     def current_voice_profile_id(self) -> str | None:
-        return self._voice_profile_id
+        # A designed voice is always a persona profile; provenance checks the
+        # companion's profile id even after a baseline restore.
+        if self._voice_kind == "personal":
+            return self._voice_profile_id
+        return self._config.voice_profile
 
     @property
     def current_instruction(self) -> str | None:
@@ -718,6 +757,15 @@ class CosyVoiceTTS(tts.TTS[Any]):
     @property
     def current_rate(self) -> float:
         return self._config.rate
+
+    @property
+    def current_pitch(self) -> int:
+        # Pitch is a multiplier here; the speech plan never shifts it.
+        return 0
+
+    @property
+    def current_context_texts(self) -> tuple[str, ...]:
+        return ()
 
     def trace(
         self,
@@ -740,11 +788,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
         return CosyVoiceSynthesizeStream(
             tts_instance=self,
             config=config,
-            fallback_config=replace(
-                config,
-                model=self._baseline_model,
-                voice=self._baseline_voice,
-            ),
+            fallback_config=self._fallback_config(config),
             pool=self._pool,
             conn_options=conn_options,
             fence=self._active_fence,
@@ -759,7 +803,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
     ) -> SynthesizeResult:
         """Synthesize with at most one fresh-connection retry.
 
-        Retry rule (shared with the Doubao batch path):
+        Retry rule:
 
         - a pre-audio failure (``BeforeAudioError``) may be retried and may fall
           back to the baseline voice, because no audio with the requested voice
@@ -773,11 +817,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
           discarded, so partial audio is never returned as the sentence.
         """
         config = replace(self._config)
-        baseline = replace(
-            config,
-            model=self._baseline_model,
-            voice=self._baseline_voice,
-        )
+        baseline = self._fallback_config(config)
         for attempt in range(2):
             try:
                 return await self._synthesize_once(
@@ -805,6 +845,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
                         status="degraded",
                         detail={"reason": type(exc).__name__},
                     )
+                    self._report_voice_fallback(fence, baseline)
                 self.trace(
                     "cosyvoice_retry",
                     status="degraded",

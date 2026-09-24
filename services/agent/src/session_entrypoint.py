@@ -48,6 +48,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_HEALTH_TOPIC,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 
 try:
     from livekit import rtc
@@ -239,7 +240,7 @@ def build_session_kwargs(
 
 
 async def entrypoint(ctx: Any) -> None:
-    """Production LiveKit entry. Wires FunASR/Doubao TTS/LLM + DuplexRuntime."""
+    """Production LiveKit entry. Wires FunASR/Qwen-Audio TTS/LLM + DuplexRuntime."""
     if not _HAS_LIVEKIT:
         raise RuntimeError("livekit-agents not installed")
 
@@ -673,7 +674,7 @@ async def entrypoint(ctx: Any) -> None:
                 detail={"reason": "stale_fence"},
             )
             return
-        sample_rate = int(runtime_settings.doubao_tts_sample_rate or 24000)
+        sample_rate = int(getattr(tts_plugin, "sample_rate", 0) or 24000)
         played = False
         if hasattr(tts_plugin, "synthesize_stream_text"):
             try:
@@ -965,8 +966,8 @@ async def entrypoint(ctx: Any) -> None:
         fast_model_warmer=fast_model_warmer if callable(fast_model_warmer) else None,
         llm_provider=runtime_settings.llm_provider,
         llm_model=runtime_settings.llm_fast_model,
-        tts_provider="volcengine_doubao",
-        tts_model=runtime_settings.doubao_tts_resource_id,
+        tts_provider=TTS_PROVIDER,
+        tts_model=TTS_MODEL,
     )
 
     async def _handle_text_input(

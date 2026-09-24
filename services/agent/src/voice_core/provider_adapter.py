@@ -2,8 +2,8 @@
 
 The media registry intentionally depends on a small provider protocol.  This
 module is the concrete, provider-facing adapter used by a deployment that
-wants to reuse Memoria's existing FunASR, language-model and Doubao handler
-objects.  It does not create a second orchestration stack or embed a vendor
+wants to reuse Memoria's existing FunASR, language-model and Qwen-Audio TTS
+handler objects.  It does not create a second orchestration stack or embed a vendor
 SDK in the media bridge.
 """
 
@@ -884,7 +884,7 @@ class ExistingVoiceProviderAdapter:
     ) -> AsyncIterator[MediaReplyChunk]:
         """Feed every completed LLM phrase into one live TTS session.
 
-        Doubao's bidirectional protocol is generation-scoped: reopening it for
+        The TTS task is generation-scoped: reopening it for
         every phrase adds avoidable first-audio latency and can change the
         voice between adjacent phrases.  Text-to-audio boundaries are not
         exposed until the provider's final subtitle alignment, so this seam
@@ -1337,7 +1337,7 @@ def build_existing_provider_factory(
 def build_production_provider_factory(
     settings: AgentSettings,
 ) -> Callable[[SessionIdentity], ExistingVoiceProviderAdapter]:
-    """Build FunASR/Doubao around the existing full response orchestrator.
+    """Build FunASR/Qwen-Audio TTS around the existing full response orchestrator.
 
     The media bridge is a transport seam, not a second product brain.  Its
     production language-model handler must come from the same memory,
@@ -1347,7 +1347,11 @@ def build_production_provider_factory(
     """
 
     from services.agent.src.observability.metrics import GLOBAL_METRICS
-    from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+    from services.agent.src.providers.cosyvoice_tts import (
+        CosyVoiceConfig,
+        CosyVoicePool,
+        CosyVoiceTTS,
+    )
     from services.agent.src.providers.funasr_stt import FunASRConfig
 
     orchestrated_reference = os.getenv(
@@ -1370,19 +1374,14 @@ def build_production_provider_factory(
         raise ValueError("orchestrated LLM builder did not return a session factory")
 
     asr_config = FunASRConfig.from_env()
-    tts_config = DoubaoTTSConfig.from_env()
+    tts_config = CosyVoiceConfig.from_env()
     if getattr(settings, "environment", "development") == "production":
-        doubao_auth = tts_config.api_key.strip() or (
-            tts_config.app_id.strip() and tts_config.access_token.strip()
-        )
         missing = [
             name
             for name, value in (
                 ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
                 ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
-                ("DOUBAO_TTS_AUTH", doubao_auth),
-                ("DOUBAO_TTS_WS_URL", tts_config.ws_url.strip()),
-                ("DOUBAO_TTS_SPEAKER", tts_config.speaker.strip()),
+                ("COSYVOICE_VOICE", tts_config.voice.strip()),
             )
             if not value
         ]
@@ -1415,7 +1414,10 @@ def build_production_provider_factory(
             language_model=language_model,
             speech_synthesis=cast(
                 SpeechSynthesisHandler,
-                DoubaoTTS(replace(tts_config), metrics=GLOBAL_METRICS),
+                CosyVoiceTTS(
+                    replace(tts_config),
+                    CosyVoicePool(replace(tts_config), metrics=GLOBAL_METRICS),
+                ),
             ),
             config=adapter_config,
             metrics=GLOBAL_METRICS,

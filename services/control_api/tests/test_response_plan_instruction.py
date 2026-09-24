@@ -17,8 +17,8 @@ def _frozen() -> SimpleNamespace:
         interaction_mode="companion",
         companion_style_id="starlight",
         mode_policy_version="v1",
-        fallback_voice_model="seed-tts-2.0",
-        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="qwen-audio-3.1-tts-flash",
+        fallback_voice_provider="alibaba_model_studio",
     )
 
 

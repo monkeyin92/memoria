@@ -209,10 +209,6 @@ from services.voice_profile.domain import (
     VoicePreviewRenderer,
     VoiceProfilePort,
 )
-from services.voice_profile.doubao_voice_clone import (
-    DoubaoVoiceCloneClient,
-    DoubaoVoiceCloneConfig,
-)
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
@@ -535,24 +531,6 @@ def _voice_profile_services(
     provider: VoiceEnrollmentProvider
     if settings.offline_mock:
         provider = UnavailableVoiceEnrollmentProvider()
-    elif settings.voice_clone_provider == "volcengine_doubao":
-        api_key = settings.doubao_voice_api_key.get_secret_value()
-        if not api_key:
-            provider = UnavailableVoiceEnrollmentProvider()
-        else:
-            provider = DoubaoVoiceCloneClient(
-                DoubaoVoiceCloneConfig(
-                    endpoint=settings.doubao_voice_clone_url,
-                    query_endpoint=settings.doubao_voice_query_url,
-                    api_key=api_key,
-                    timeout_s=settings.voice_enrollment_timeout_s,
-                    poll_interval_s=settings.doubao_voice_clone_poll_interval_s,
-                    synth_ready_id_mode=settings.doubao_voice_synth_ready_id_mode,
-                    synth_ready_id_field=settings.doubao_voice_synth_ready_id_field,
-                    expires_at_field=settings.doubao_voice_expires_at_field,
-                    expires_at_format=settings.doubao_voice_expires_at_format,
-                )
-            )
     else:
         api_key = settings.dashscope_api_key.get_secret_value()
         if not api_key:

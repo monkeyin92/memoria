@@ -31,7 +31,7 @@ AGENT_HEARTBEAT_MAX_AGE_S = 45
 class TTSSmokeChecks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["doubao"]
+    provider: Literal["qwen_audio"]
     audio: bool
     word_timestamps: bool
 
@@ -413,7 +413,7 @@ async def health_ready(request: Request) -> JSONResponse:
                     "livekit": "skipped",
                     "funasr": "skipped",
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
-                    "tts": {"provider": "doubao", "status": "skipped"},
+                    "tts": {"provider": "qwen_audio", "status": "skipped"},
                 },
             },
         )
@@ -450,7 +450,7 @@ async def health_ready(request: Request) -> JSONResponse:
                 "funasr": True,
                 "llm": {"provider": settings.llm_provider, "passed": True},
                 "tts": {
-                    "provider": "doubao",
+                    "provider": "qwen_audio",
                     "audio": True,
                     "word_timestamps": True,
                 },

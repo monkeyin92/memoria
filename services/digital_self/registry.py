@@ -17,6 +17,7 @@ from services.archive.domain import EvidenceEvent, SpeakerClass
 from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.common.evidence_policy import confirmed_projection_contribution_for
+from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_PROVIDER
 from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
@@ -551,22 +552,31 @@ class DigitalSelfRegistry:
               AND status = 'active'
               AND evaluation_status = 'passed'
               AND quality_status = 'passed'
-              AND provider = 'volcengine_doubao'
-              AND target_model = 'seed-icl-2.0'
+              AND provider = ?
+              AND target_model = ?
               AND provider_voice_id IS NOT NULL
-              AND provider_expires_at IS NOT NULL
-              AND provider_expires_at > ?
+              AND (provider_expires_at IS NULL OR provider_expires_at > ?)
               AND EXISTS (
                   SELECT 1 FROM voice_clone_consents
                   WHERE account_id = ? AND revoked_at IS NULL
               )
             """,
-            (account_id, datetime.now(UTC).isoformat(), account_id),
+            (
+                account_id,
+                TTS_PROVIDER,
+                PERSONAL_VOICE_MODEL,
+                datetime.now(UTC).isoformat(),
+                account_id,
+            ),
         ).fetchone()
         if row is None:
             return None
         try:
-            expires_at = datetime.fromisoformat(str(row["provider_expires_at"])).isoformat()
+            expires_at = (
+                datetime.fromisoformat(str(row["provider_expires_at"])).isoformat()
+                if row["provider_expires_at"] is not None
+                else None
+            )
             return VoiceProfileManifestRef(
                 profile_id=str(row["profile_id"]),
                 version_number=int(row["version_number"]),

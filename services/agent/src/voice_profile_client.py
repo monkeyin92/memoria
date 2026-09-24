@@ -8,15 +8,16 @@ from typing import Any, Literal
 
 import httpx
 
-from services.agent.src.providers.doubao_voice_catalog import (
-    DOUBAO_TTS_MODEL,
+from services.agent.src.providers.qwen_voice_catalog import (
     catalog_by_id,
     resolve_approved_voice,
 )
-
-DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
-DOUBAO_PROVIDER = "volcengine_doubao"
-COSYVOICE_PROVIDER = "alibaba_model_studio"
+from services.common.voice_identity import (
+    PERSONAL_VOICE_MODEL,
+    TTS_MODEL,
+    TTS_PROVIDER,
+    is_personal_voice_id,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,9 +39,9 @@ class VoiceRuntimeProfile:
     profile_id: str
     model: str
     voice_id: str
-    provider: str = DOUBAO_PROVIDER
+    provider: str = TTS_PROVIDER
     voice_kind: Literal["designed", "personal"] = "designed"
-    resource_id: str = DOUBAO_TTS_MODEL
+    resource_id: str = TTS_MODEL
     speaker_sha256: str | None = None
 
 
@@ -135,10 +136,10 @@ class VoiceProfileClient:
             if payload.get("voice_id") is not None or payload.get("speaker_sha256") is not None:
                 raise ValueError("invalid designed voice response")
             if (
-                provider != DOUBAO_PROVIDER
+                provider != TTS_PROVIDER
                 or voice_kind != "designed"
-                or model != DOUBAO_TTS_MODEL
-                or resource_id != DOUBAO_TTS_MODEL
+                or model != TTS_MODEL
+                or resource_id != TTS_MODEL
                 or not isinstance(profile_id, str)
                 or not profile_id.strip()
             ):
@@ -154,9 +155,9 @@ class VoiceProfileClient:
                 profile_id=str(profile_id),
                 model=str(model),
                 voice_id=voice_id,
-                provider=DOUBAO_PROVIDER,
+                provider=TTS_PROVIDER,
                 voice_kind="designed",
-                resource_id=DOUBAO_TTS_MODEL,
+                resource_id=TTS_MODEL,
             )
         if mode != "active":
             raise ValueError("invalid voice profile response")
@@ -167,20 +168,15 @@ class VoiceProfileClient:
         resource_id = payload.get("resource_id")
         voice_id = payload.get("voice_id")
         speaker_sha256 = payload.get("speaker_sha256")
-        doubao_personal = (
-            provider == DOUBAO_PROVIDER
-            and model == DOUBAO_PERSONAL_VOICE_MODEL
-            and resource_id == DOUBAO_PERSONAL_VOICE_MODEL
-        )
-        cosyvoice_personal = (
-            provider == COSYVOICE_PROVIDER
-            and isinstance(model, str)
-            and model.startswith("cosyvoice-v3.5-")
-            and resource_id == model
+        current_personal = (
+            provider == TTS_PROVIDER
+            and model == PERSONAL_VOICE_MODEL
+            and resource_id == PERSONAL_VOICE_MODEL
+            and is_personal_voice_id(voice_id)
         )
         if (
             voice_kind != "personal"
-            or not (doubao_personal or cosyvoice_personal)
+            or not current_personal
             or not all(isinstance(value, str) and value for value in (profile_id, voice_id))
             or profile_id != str(profile_id).strip()
             or voice_id != str(voice_id).strip()

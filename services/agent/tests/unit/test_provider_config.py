@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.prosody import cosyvoice_instruction
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
-from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
-from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig
+from services.agent.src.providers.qwen_voice_catalog import catalog_by_id
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 
 
 def test_funasr_config_from_env() -> None:
@@ -70,233 +69,28 @@ def test_funasr_rejects_invalid_speech_noise_threshold(value: str) -> None:
         )
 
 
-def test_doubao_config_uses_approved_profile_and_old_console_auth() -> None:
-    voice = catalog_by_id()["bright_peer"]
-    config = DoubaoTTSConfig.from_env(
-        {
-            "DOUBAO_TTS_MOCK_WS_URL": "ws://mock",
-            "DOUBAO_TTS_VOICE_PROFILE": "bright_peer",
-            "DOUBAO_TTS_APP_ID": "app-test",
-            "DOUBAO_TTS_ACCESS_TOKEN": "token-test",
-        }
-    )
-
-    assert config.ws_url == "ws://mock"
-    assert config.speaker == voice.speaker_id
-    headers = config.auth_headers(connect_id="connect-test")
-    assert headers["X-Api-App-Id"] == "app-test"
-    assert headers["X-Api-Access-Key"] == "token-test"
-    assert headers["X-Api-Resource-Id"] == "seed-tts-2.0"
-    assert "X-Api-Key" not in headers
+_CLONE = f"{TTS_MODEL}-owner01-3f9a2c"
 
 
-@pytest.mark.parametrize(
-    "auth",
-    [
-        {
-            "DOUBAO_TTS_API_KEY": "api-key",
-            "DOUBAO_TTS_APP_ID": "app-id",
-            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
-        },
-        {"DOUBAO_TTS_APP_ID": "app-id"},
-        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
-    ],
-)
-def test_doubao_config_requires_exactly_one_complete_auth_mode(
-    auth: dict[str, str],
-) -> None:
-    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
-        DoubaoTTSConfig.from_env(
-            {
-                "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
-                **auth,
-            }
-        )
+def _tts() -> CosyVoiceTTS:
+    return CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
 
 
-def test_doubao_speech_plan_keeps_context_instruction_disabled_and_clamps_rate() -> None:
-    config = DoubaoTTSConfig(
-        api_key="test",
-        speaker=catalog_by_id()["warm_companion"].speaker_id,
-        instruction="不要保留这条指令",
-        pool_size=0,
-    )
-    tts = DoubaoTTS(config)
-
-    tts.apply_speech_plan(emotion="happy", rate=1.2)
-
-    assert tts.current_instruction is None
-    assert tts.current_rate == 1.05
-
-
-def test_doubao_style_control_is_opt_in() -> None:
-    common = {
-        "DOUBAO_TTS_MOCK_WS_URL": "ws://mock",
-        "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
-    }
-
-    assert not DoubaoTTSConfig.from_env(common).style_control_enabled
-    assert DoubaoTTSConfig.from_env(
-        {**common, "DOUBAO_TTS_STYLE_CONTROL_ENABLED": "true"}
-    ).style_control_enabled
-
-
-def test_doubao_speech_plan_applies_bounded_style_and_reference_context() -> None:
-    config = DoubaoTTSConfig(
-        api_key="test",
-        speaker=catalog_by_id()["warm_companion"].speaker_id,
-        style_control_enabled=True,
-        pool_size=0,
-    )
-    tts = DoubaoTTS(config)
-
-    tts.apply_speech_plan(
-        emotion="angry",
-        rate=1.2,
-        instruction="整体带生气和不满，但不要吼叫。",
-        pitch=2,
-        reference_contexts=("用户：今天真是太气人了。\n助手：我听着呢。",),
-    )
-
-    assert tts.current_instruction == "整体带生气和不满，但不要吼叫。"
-    assert tts.current_rate == 1.2
-    assert tts.current_pitch == 2
-    assert tts.current_context_texts == (
-        "语音要求：整体带生气和不满，但不要吼叫。\n"
-        "引用上文（只理解语境和承接情绪，不要朗读）："
-        "用户：今天真是太气人了。\n助手：我听着呢。",
-    )
-
-
-def test_late_old_generation_plan_cannot_overwrite_the_new_generation() -> None:
-    tts = DoubaoTTS(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker=catalog_by_id()["warm_companion"].speaker_id,
-            style_control_enabled=True,
-            pool_size=0,
-        )
-    )
-    old_fence = GenerationFence("style-fence", 1, 1, 0)
-    new_fence = GenerationFence("style-fence", 2, 2, 0)
-    tts.bind_fence(new_fence)
-    tts.apply_speech_plan(
-        emotion="sad",
-        rate=0.9,
-        instruction="使用四川话，温柔承接。",
-        pitch=-2,
-        reference_contexts=("用户：新话轮上文。",),
-        fence=new_fence,
-    )
-
-    tts.apply_speech_plan(emotion="neutral", rate=1.0, fence=old_fence)
-    tts.bind_fence(new_fence)
-
-    assert tts.current_instruction == "使用四川话，温柔承接。"
-    assert tts.current_rate == 0.9
-    assert tts.current_pitch == -2
-    assert "新话轮上文" in tts.current_context_texts[0]
-
-
-def test_doubao_personal_voice_never_receives_context_texts() -> None:
-    tts = DoubaoTTS(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker=catalog_by_id()["warm_companion"].speaker_id,
-            style_control_enabled=True,
-            pool_size=0,
-        )
-    )
-    tts.apply_voice_profile(
-        model="seed-icl-2.0",
-        resource_id="seed-icl-2.0",
-        voice="S_personal_synth_ready",
-        profile_id="voice-profile-personal",
-        provider="volcengine_doubao",
-        voice_kind="personal",
-    )
-
-    tts.apply_speech_plan(
-        emotion="happy",
-        rate=1.2,
-        instruction="轻松愉快地说。",
-        pitch=2,
-        reference_contexts=("用户：这是私密上文。",),
-    )
-
-    assert tts.current_context_texts == ()
-    assert tts.current_instruction is None
-    assert tts.current_pitch == 0
-    assert tts.current_rate == 1.05
-
-
-def test_production_doubao_rejects_unapproved_explicit_voice() -> None:
-    with pytest.raises(ValueError, match="approved companion voice"):
-        DoubaoTTSConfig.from_env(
-            {
-                "ENVIRONMENT": "production",
-                "DOUBAO_TTS_API_KEY": "test",
-                "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
-                "DOUBAO_TTS_SPEAKER": "unapproved-voice",
-            }
-        )
-
-
-@pytest.mark.parametrize(
-    "environment,variable,ws_url",
-    [
-        (
-            "production",
-            "DOUBAO_TTS_WS_URL",
-            "ws://openspeech.bytedance.com/api/v3/tts/bidirection",
-        ),
-        (
-            "production",
-            "DOUBAO_TTS_WS_URL",
-            "wss://user:password@openspeech.bytedance.com/api/v3/tts/bidirection",
-        ),
-        (
-            "development",
-            "DOUBAO_TTS_MOCK_WS_URL",
-            "ws://mock/path#credentials",
-        ),
-    ],
-)
-def test_doubao_config_rejects_unsafe_websocket_urls(
-    environment: str,
-    variable: str,
-    ws_url: str,
-) -> None:
-    env = {
-        "ENVIRONMENT": environment,
-        "DOUBAO_TTS_API_KEY": "test",
-        "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
-        variable: ws_url,
-    }
-
-    with pytest.raises(ValueError, match="Doubao TTS WebSocket URL"):
-        DoubaoTTSConfig.from_env(env)
-
-
-def test_cosyvoice_config_from_env_prefers_mock_url() -> None:
+def test_tts_config_defaults_to_qwen_audio_31_and_prefers_mock_url() -> None:
     cfg = CosyVoiceConfig.from_env(
         {
             "DASHSCOPE_API_KEY": "key",
             "DASHSCOPE_WS_URL": "wss://real",
             "COSYVOICE_MOCK_WS_URL": "ws://mock",
-            "COSYVOICE_MODEL": "cosyvoice-v3-flash",
-            "COSYVOICE_VOICE": "longanyang",
             "COSYVOICE_SAMPLE_RATE": "16000",
             "COSYVOICE_RATE": "1.1",
-            "COSYVOICE_PITCH": "0.9",
             "COSYVOICE_VOLUME": "40",
             "COSYVOICE_WORD_TIMESTAMPS": "false",
             "COSYVOICE_POOL_SIZE": "2",
-            "COSYVOICE_CONNECT_TIMEOUT_S": "3",
-            "COSYVOICE_FIRST_AUDIO_TIMEOUT_S": "1",
-            "COSYVOICE_TOTAL_TIMEOUT_S": "10",
         }
     )
+    assert cfg.model == TTS_MODEL
+    assert cfg.voice == catalog_by_id()["warm_companion"].speaker_id == "longanyang_v3.1"
     assert cfg.ws_url == "ws://mock"
     assert cfg.sample_rate == 16000
     assert not cfg.word_timestamps
@@ -304,138 +98,181 @@ def test_cosyvoice_config_from_env_prefers_mock_url() -> None:
     assert cfg.rate == 1.1
 
 
-def test_cosyvoice_applies_a_valid_generation_speech_plan() -> None:
-    config = CosyVoiceConfig(
-        api_key="key",
-        ws_url="wss://example",
-        volume=45,
-        pool_size=0,
+def test_tts_config_resolves_the_persona_profile_voice() -> None:
+    cfg = CosyVoiceConfig.from_env(
+        {"DASHSCOPE_API_KEY": "key", "COSYVOICE_VOICE_PROFILE": "soft_confidante"}
     )
-    tts = CosyVoiceTTS(config)
+    assert cfg.voice == "longwan_v3.1"
+    assert cfg.voice_profile == "soft_confidante"
+
+
+@pytest.mark.parametrize("pool_size", [-1, 4])
+def test_tts_pool_must_stay_within_the_provider_rps_limit(pool_size: int) -> None:
+    with pytest.raises(ValueError, match="3 RPS"):
+        CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=pool_size)
+
+
+def test_tts_rejects_runaway_instruction() -> None:
+    with pytest.raises(ValueError, match="too long"):
+        CosyVoiceConfig(api_key="key", ws_url="wss://example", instruction="慢" * 201)
+
+
+def test_tts_applies_a_freeform_generation_speech_plan() -> None:
+    tts = _tts()
 
     tts.apply_speech_plan(emotion="sad", rate=0.95)
 
-    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是sad。"
+    assert tts.current_instruction == cosyvoice_instruction("sad", freeform=True)
+    assert "你说话的情感是" not in (tts.current_instruction or "")
     assert tts.current_rate == 0.95
-    assert config.volume == 45
+    assert tts.current_pitch == 0
+    assert tts.current_context_texts == ()
 
 
-def test_longanyang_rejects_free_form_instruction() -> None:
-    with pytest.raises(ValueError, match="longanyang"):
-        CosyVoiceConfig.from_env(
-            {
-                "DASHSCOPE_API_KEY": "key",
-                "COSYVOICE_MODEL": "cosyvoice-v3-flash",
-                "COSYVOICE_VOICE": "longanyang",
-                "COSYVOICE_INSTRUCTION": "请自然一点，并适当拉长重点词。",
-            }
-        )
+def test_unknown_emotion_falls_back_to_neutral_instruction() -> None:
+    tts = _tts()
+    tts.apply_speech_plan(emotion="ecstatic", rate=2.0)
+    assert tts.current_instruction == cosyvoice_instruction("neutral", freeform=True)
+    assert tts.current_rate == 1.05
 
 
-def test_v3_5_applies_freeform_speech_plan() -> None:
-    tts = CosyVoiceTTS(
-        CosyVoiceConfig(
-            api_key="key",
-            ws_url="wss://example",
-            model="cosyvoice-v3.5-flash",
-            voice="cosyvoice-v3.5-flash-vd-warmboy-demo",
-            pool_size=0,
-        )
-    )
-    tts.apply_speech_plan(emotion="happy", rate=1.0)
-    assert tts.current_instruction is not None
-    assert "轻松愉快" in tts.current_instruction
-    assert "你说话的情感是" not in tts.current_instruction
-
-
-def test_v3_5_from_env_requires_designed_voice(tmp_path, monkeypatch) -> None:
-    empty_registry = tmp_path / "empty_voices.json"
-    empty_registry.write_text('{"target_model":"cosyvoice-v3.5-flash","voices":{}}\n')
-    monkeypatch.setenv("COSYVOICE_VOICE_REGISTRY", str(empty_registry))
-    with pytest.raises(ValueError, match="designed voice"):
-        CosyVoiceConfig.from_env(
-            {
-                "DASHSCOPE_API_KEY": "key",
-                "COSYVOICE_MODEL": "cosyvoice-v3.5-flash",
-                "COSYVOICE_VOICE": "",
-                "COSYVOICE_VOICE_REGISTRY": str(empty_registry),
-            }
-        )
-
-
-def test_v3_5_from_env_accepts_explicit_voice_id() -> None:
-    cfg = CosyVoiceConfig.from_env(
-        {
-            "DASHSCOPE_API_KEY": "key",
-            "COSYVOICE_MODEL": "cosyvoice-v3.5-flash",
-            "COSYVOICE_VOICE": "cosyvoice-v3.5-flash-vd-warmboy-abc123",
-        }
-    )
-    assert cfg.model == "cosyvoice-v3.5-flash"
-    assert cfg.voice.endswith("abc123")
-    assert cfg.uses_freeform_instruct
-
-
-def test_production_rejects_an_unapproved_clone_as_the_baseline(tmp_path) -> None:
-    approved = "cosyvoice-v3.5-flash-vd-warmboy-approved"
-    registry = tmp_path / "voices.json"
-    registry.write_text(
-        json.dumps(
-            {
-                "target_model": "cosyvoice-v3.5-flash",
-                "voices": {
-                    "warm_companion": {
-                        "voice_id": approved,
-                        "target_model": "cosyvoice-v3.5-flash",
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="approved designed baseline"):
+@pytest.mark.parametrize(
+    ("env", "match"),
+    [
+        ({"COSYVOICE_MODEL": "cosyvoice-v3.5-flash"}, "qwen-audio-3.1-tts-flash"),
+        ({"COSYVOICE_VOICE": "longanyang"}, "approved persona voice"),
+        ({"COSYVOICE_VOICE": _CLONE}, "approved persona voice"),
+        ({"COSYVOICE_VOICE_PROFILE": "unknown_profile"}, "approved persona voice"),
+    ],
+    ids=["legacy-model", "legacy-voice", "clone-as-baseline", "unknown-profile"],
+)
+def test_production_rejects_anything_but_an_approved_persona_voice(
+    env: dict[str, str], match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
         CosyVoiceConfig.from_env(
             {
                 "ENVIRONMENT": "production",
                 "DASHSCOPE_API_KEY": "key",
                 "DASHSCOPE_WS_URL": "wss://dashscope.example",
-                "COSYVOICE_MODEL": "cosyvoice-v3.5-flash",
-                "COSYVOICE_VOICE_PROFILE": "warm_companion",
-                "COSYVOICE_VOICE": "cosyvoice-v3.5-flash-clone-owner001",
-                "COSYVOICE_VOICE_REGISTRY": str(registry),
+                **env,
             }
         )
 
 
-def test_production_accepts_the_whitelisted_designed_baseline(tmp_path) -> None:
-    approved = "cosyvoice-v3.5-flash-vd-warmboy-approved"
-    registry = tmp_path / "voices.json"
-    registry.write_text(
-        json.dumps(
-            {
-                "target_model": "cosyvoice-v3.5-flash",
-                "voices": {
-                    "warm_companion": {
-                        "voice_id": approved,
-                        "target_model": "cosyvoice-v3.5-flash",
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    config = CosyVoiceConfig.from_env(
+def test_production_accepts_the_approved_persona_voice() -> None:
+    cfg = CosyVoiceConfig.from_env(
         {
             "ENVIRONMENT": "production",
             "DASHSCOPE_API_KEY": "key",
             "DASHSCOPE_WS_URL": "wss://dashscope.example",
-            "COSYVOICE_MODEL": "cosyvoice-v3.5-flash",
-            "COSYVOICE_VOICE_PROFILE": "warm_companion",
-            "COSYVOICE_VOICE": approved,
-            "COSYVOICE_VOICE_REGISTRY": str(registry),
+            "COSYVOICE_VOICE_PROFILE": "calm_guide",
+            "COSYVOICE_VOICE": "longanzhi_v3.1",
         }
     )
+    assert cfg.voice == "longanzhi_v3.1"
 
-    assert config.voice == approved
+
+def test_designed_voice_profile_must_be_an_approved_persona_voice() -> None:
+    tts = _tts()
+    tts.apply_voice_profile(
+        model=TTS_MODEL,
+        voice="longhua_v3.1",
+        profile_id="bright_peer",
+        provider=TTS_PROVIDER,
+        voice_kind="designed",
+        resource_id=TTS_MODEL,
+    )
+    assert tts.current_voice == "longhua_v3.1"
+    assert tts.current_voice_kind == "designed"
+    for bad in (
+        {"voice": "longxiaoxia_v3.1"},  # system voice outside the persona catalog
+        {"voice": "longhua_v3.1", "profile_id": "calm_guide"},
+        {"model": "cosyvoice-v3.5-flash"},
+        {"provider": "volcengine_doubao"},
+    ):
+        kwargs = {
+            "model": TTS_MODEL,
+            "voice": "longhua_v3.1",
+            "profile_id": "bright_peer",
+            "provider": TTS_PROVIDER,
+            "voice_kind": "designed",
+            **bad,
+        }
+        with pytest.raises(ValueError):
+            tts.apply_voice_profile(**kwargs)  # type: ignore[arg-type]
+
+
+def test_personal_voice_requires_a_current_model_clone() -> None:
+    tts = _tts()
+    tts.apply_voice_profile(
+        model=TTS_MODEL,
+        voice=_CLONE,
+        profile_id="voice-profile-1",
+        provider=TTS_PROVIDER,
+        voice_kind="personal",
+        resource_id=TTS_MODEL,
+    )
+    assert tts.current_voice_kind == "personal"
+    assert tts.current_voice_profile_id == "voice-profile-1"
+    for voice in (
+        "cosyvoice-v3.5-flash-owner01-3f9a2c",  # a clone bound to the retired model
+        "longanyang_v3.1",  # persona voices cannot pose as a personal clone
+    ):
+        with pytest.raises(ValueError, match="enrolled Qwen-Audio clone"):
+            tts.apply_voice_profile(
+                model=TTS_MODEL,
+                voice=voice,
+                profile_id="voice-profile-1",
+                provider=TTS_PROVIDER,
+                voice_kind="personal",
+            )
+    tts.use_baseline_voice()
+    assert tts.current_voice == "longanyang_v3.1"
+    assert tts.current_voice_kind == "designed"
+
+
+def test_personal_clone_falls_back_to_the_configured_persona_voice() -> None:
+    tts = _tts()
+    reported: list[tuple[str, str, str, str]] = []
+    tts.set_voice_fallback_callback(
+        lambda _fence, profile, resource, voice, kind: reported.append(
+            (profile, resource, voice, kind)
+        )
+    )
+    tts.apply_voice_profile(
+        model=TTS_MODEL,
+        voice=_CLONE,
+        profile_id="voice-profile-1",
+        provider=TTS_PROVIDER,
+        voice_kind="personal",
+    )
+    config = tts._config
+    assert tts._fallback_config(config).voice == "longanyang_v3.1"
+
+    tts.configure_personal_fallback(
+        profile_id="low_magnetic",
+        provider=TTS_PROVIDER,
+        model=TTS_MODEL,
+        resource_id=TTS_MODEL,
+        voice="longsanshu_v3.1",
+    )
+    fallback = tts._fallback_config(config)
+    assert (fallback.model, fallback.voice, fallback.voice_profile) == (
+        TTS_MODEL,
+        "longsanshu_v3.1",
+        "low_magnetic",
+    )
+    tts._report_voice_fallback(GenerationFence("fallback", 1, 1, 0), fallback)
+    assert reported == [("low_magnetic", TTS_MODEL, "longsanshu_v3.1", "designed")]
+
+    tts.clear_personal_fallback()
+    assert tts._fallback_config(config).voice == "longanyang_v3.1"
+    with pytest.raises(ValueError, match="approved designed voice"):
+        tts.configure_personal_fallback(
+            profile_id="low_magnetic",
+            provider=TTS_PROVIDER,
+            model=TTS_MODEL,
+            resource_id=TTS_MODEL,
+            voice="longanyang_v3.1",
+        )

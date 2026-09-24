@@ -69,6 +69,13 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 待完成（遗留）：① 该补丁位于冻结发布树内，需随下次全量发布带入并退役 `/opt/memoria/current` 的手工补丁；② 让失败可见（timer 失败目前只有 journal，readiness 到期才发现）；③ 复核下一次 timer 触发（12h 内）自动 PASS。
 - **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`），(d) 新链不校验挂载/端口/其它容器（demo02 旧工具校验了）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 同日节。
 
+### [ ] P1-10 Qwen-Audio 3.1 ASR/TTS 切换（2026-09-24，本地 code，未验真实 API、未部署）
+
+- 已完成（本地）：ASR 默认模型改为 `qwen-audio-3.1-asr-flash-streaming`（`17904a1`，与 `fun-asr-realtime` 同一 run-task 协议，现有 DashScope 域名可用；新增可选 `FUNASR_VAD_MODEL`）。TTS 在分支 `feat/qwen-audio-tts-migration` 彻底替换为 `qwen-audio-3.1-tts-flash`：删除 Doubao TTS/克隆、CosyVoice v3.5 设计音色与 `infra/voices` 注册表；统一身份见 `services/common/voice_identity.py`（provider `alibaba_model_studio`，人格与复刻共用同一 model/resource id，靠 voice_kind 区分）；人格音色映射 星澜→`longanyang_v3.1`、桃喜→`longhua_v3.1`、绵绵→`longwan_v3.1`、阿序→`longanzhi_v3.1`、玄墨→`longsanshu_v3.1`（按官方音色描述选取，未试听）；复刻 `target_model=qwen-audio-3.1-tts-flash`、无 provider 过期；旧 Doubao/v3.5 复刻一律回落人格音色、激活 409 提示重录、档案带 `reenrollment_required`，小程序据此提示重新录制；历史数字分身清单里的 Doubao 音色引用仍可解码。连接池上限 3（官方 3 RPS）。就绪证据 provider 改为 `qwen_audio`，冒烟行改为 `QwenAudioTTS`。
+- 未验证：真实 API 下 ASR 时间戳/VAD/空音频错误码与缺陷 A 边界是否一致；5 个人格音色在 3.1 上是否都可合成（`scripts/provider_smoke_test.py` 会逐个合成）、字级时间戳、首包时延、音量 45 是否削波；复刻真实 enrollment（返回 ID 前缀、`DEPLOYING→OK` 状态）；3 RPS 在多设备并发下是否够用；设备试听与小程序三端。
+- 部署前必须：真实 key 跑通 provider 冒烟；生产 env 用 `prepare_production_upgrade_env.py` 重新生成（`split_production_env.py` 遇到任何 DOUBAO 键会拒绝）；readiness 证据需在同一发布里刷新为 `qwen_audio`；在途会话冻结的旧 fallback 三元组会 fail closed，需低峰切流并演练回滚。本地未跟踪的 `.env` 仍是 `TTS_PROVIDER=doubao`、`MEMORIA_VOICE_TARGET_MODEL=cosyvoice-v3.5-flash`，需要改掉才能本地启动。
+- 对 P0-03 的影响：ASR/TTS 换代后，缺陷 A 的 3/5/8s、30 分钟长稳等设备证据不再适用于新候选，必须在新候选上重新验收。
+
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 
 - 待完成：把生产 sidecar 的启动脚本、Dockerfile、模型/词表摘要和基础镜像输入纳入仓库；用真实中文 PCM 验证短句/尾字、长段、低 RMS、静音、削波、并发、失败降级与 2.5s 预算。

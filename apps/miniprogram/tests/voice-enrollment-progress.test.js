@@ -553,3 +553,58 @@ test("422 拒绝时把服务端 detail 显示给用户", async () => {
     }
   });
 });
+
+test("旧模型的声音提示重新录制，而不是显示已就绪", async () => {
+  await withWx(async () => {
+    const restore = stubApi(
+      apiStubs({
+        listVoiceProfiles: async () => ({
+          consent: { accepted_at: "2026-09-01T00:00:00Z", revoked_at: null },
+          items: [
+            {
+              profile_id: "vp_legacy",
+              status: "active",
+              target_model: "cosyvoice-v3.5-flash",
+              reenrollment_required: true,
+            },
+          ],
+        }),
+      }),
+    );
+    const page = newPage();
+    try {
+      const state = await page.loadVoiceCloneStatus();
+      assert.match(state.voiceCloneStatusLabel, /重新录一段/);
+      assert.doesNotMatch(state.voiceCloneStatusLabel, /已就绪/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("重新录好的新声音就绪后，不再提示旧模型", async () => {
+  await withWx(async () => {
+    const readied = [];
+    const restore = stubApi(
+      apiStubs({
+        listVoiceProfiles: async () => ({
+          items: [
+            { profile_id: "vp_legacy", status: "candidate", reenrollment_required: true },
+            { profile_id: "vp_new", status: "active", reenrollment_required: false },
+          ],
+        }),
+        readyVoiceForDevice: async (profileId) => {
+          readied.push(profileId);
+        },
+      }),
+    );
+    const page = newPage();
+    try {
+      const state = await page.loadVoiceCloneStatus();
+      assert.match(state.voiceCloneStatusLabel, /自定义声音已就绪/);
+      assert.deepEqual(readied, [], "旧模型的候选声音不能再推到设备上");
+    } finally {
+      restore();
+    }
+  });
+});

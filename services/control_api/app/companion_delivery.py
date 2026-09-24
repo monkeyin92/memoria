@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from services.common.companions import DESIGNED_VOICE_MODEL, CompanionDefinition
+from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_PROVIDER
 from services.control_api.app.account_gate import require_capability_for_account_id
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
 from services.control_api.app.session_companion import custom_persona_id_or_none
@@ -102,7 +103,7 @@ def _attach_personal_clone(
         voice_provider_expires_at=expires_at,
         voice_speaker_sha256=hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest(),
         fallback_voice_profile_id=companion.designed_voice_profile,
-        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_provider=TTS_PROVIDER,
         fallback_voice_model=DESIGNED_VOICE_MODEL,
         fallback_voice_resource_id=DESIGNED_VOICE_MODEL,
     )
@@ -121,16 +122,12 @@ def _clone_resolution_bindable(resolution: VoiceResolution) -> bool:
         or not resolution.provider
     ):
         return False
-    if resolution.provider == "volcengine_doubao":
-        return (
-            resolution.model == "seed-icl-2.0"
-            and resolution.resource_id == "seed-icl-2.0"
-            and resolution.provider_expires_at is not None
-            and resolution.provider_expires_at.tzinfo is not None
-            and resolution.provider_expires_at.utcoffset() == UTC.utcoffset(None)
-        )
     return bool(
-        resolution.provider == "alibaba_model_studio"
-        and resolution.model.startswith("cosyvoice-v3.5-")
+        resolution.provider == TTS_PROVIDER
+        and resolution.model == PERSONAL_VOICE_MODEL
         and resolution.resource_id == resolution.model
+        and (
+            resolution.provider_expires_at is None
+            or resolution.provider_expires_at.utcoffset() == UTC.utcoffset(None)
+        )
     )

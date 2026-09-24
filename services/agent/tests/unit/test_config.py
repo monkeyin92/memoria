@@ -27,13 +27,15 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
     monkeypatch.delenv("MEDIA_MAX_USER_SPEECH_DURATION_S", raising=False)
+    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("COSYVOICE_SAMPLE_RATE", raising=False)
     s = AgentSettings(_env_file=None)
     assert s.funasr_sample_rate == 16000
     assert s.funasr_context_enabled is False
     assert s.funasr_vocabulary_id == ""
     assert s.funasr_speech_noise_threshold is None
-    assert s.doubao_tts_sample_rate == 24000
-    assert s.tts_provider == "doubao"
+    assert s.tts_sample_rate == 24000
+    assert s.tts_provider == "qwen_audio"
     assert s.listener_cues_enabled is False
     assert s.listener_cue_playback == "main_track"
     assert s.listener_cue_aec_validated is False
@@ -244,9 +246,6 @@ def test_online_settings_require_provider_endpoints_and_keys(
         "LIVEKIT_API_SECRET",
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_WS_URL",
-        "DOUBAO_TTS_API_KEY",
-        "DOUBAO_TTS_APP_ID",
-        "DOUBAO_TTS_ACCESS_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -255,33 +254,23 @@ def test_online_settings_require_provider_endpoints_and_keys(
 
 
 @pytest.mark.parametrize(
-    "auth",
+    ("name", "value", "match"),
     [
-        {
-            "DOUBAO_TTS_API_KEY": "api-key",
-            "DOUBAO_TTS_APP_ID": "app-id",
-            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
-        },
-        {"DOUBAO_TTS_APP_ID": "app-id"},
-        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+        ("TTS_PROVIDER", "doubao", "qwen_audio"),
+        ("COSYVOICE_SAMPLE_RATE", "16000", "COSYVOICE_SAMPLE_RATE"),
     ],
 )
-def test_agent_settings_requires_one_complete_doubao_auth_mode(
+def test_agent_settings_reject_legacy_tts_provider_and_sample_rate(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    auth: dict[str, str],
+    name: str,
+    value: str,
+    match: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    for name in (
-        "DOUBAO_TTS_API_KEY",
-        "DOUBAO_TTS_APP_ID",
-        "DOUBAO_TTS_ACCESS_TOKEN",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    for name, value in auth.items():
-        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(name, value)
 
-    with pytest.raises(ValidationError, match="exactly one complete authentication mode"):
+    with pytest.raises(ValidationError, match=match):
         AgentSettings()
 
 
@@ -334,7 +323,6 @@ def test_explicit_deepseek_requires_its_key(
     monkeypatch.setenv("LIVEKIT_API_SECRET", "test-secret")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope")
-    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "doubao-test-key")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     with pytest.raises(ConfigValidationError, match="DEEPSEEK_API_KEY"):
@@ -485,12 +473,12 @@ def test_production_plaintext_internal_url_is_limited_to_local_docker_dns(
 @pytest.mark.parametrize(
     "ws_url",
     [
-        "ws://openspeech.bytedance.com/api/v3/tts/bidirection",
-        "wss://user:password@openspeech.bytedance.com/api/v3/tts/bidirection",
-        "wss://openspeech.bytedance.com/api/v3/tts/bidirection#credentials",
+        "ws://dashscope.aliyuncs.com/api-ws/v1/inference",
+        "wss://user:password@dashscope.aliyuncs.com/api-ws/v1/inference",
+        "wss://dashscope.aliyuncs.com/api-ws/v1/inference#credentials",
     ],
 )
-def test_production_rejects_unsafe_doubao_websocket_urls(
+def test_production_rejects_unsafe_dashscope_websocket_urls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     ws_url: str,
@@ -499,9 +487,9 @@ def test_production_rejects_unsafe_doubao_websocket_urls(
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
-    monkeypatch.setenv("DOUBAO_TTS_WS_URL", ws_url)
+    monkeypatch.setenv("DASHSCOPE_WS_URL", ws_url)
 
-    with pytest.raises(ValidationError, match="DOUBAO_TTS_WS_URL"):
+    with pytest.raises(ValidationError, match="DASHSCOPE_WS_URL"):
         AgentSettings()
 
 

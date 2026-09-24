@@ -97,7 +97,7 @@ class VoiceProviderStub:
     ) -> ProviderVoice:
         del sample_url
         return ProviderVoice(
-            voice_id=f"{target_model}-clone-{prefix}",
+            voice_id=f"{target_model}-{prefix}-abc123",
             target_model=target_model,
         )
 
@@ -669,7 +669,7 @@ async def _fixture(
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
         provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
     await voice.enroll(
@@ -819,7 +819,7 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     deleted = await governance.delete_account("account-governance")
 
     assert deleted["status"] == "completed"
-    assert provider.deleted and provider.deleted[0].startswith("cosyvoice-v3.5-flash-clone-")
+    assert provider.deleted and provider.deleted[0].startswith("qwen-audio-3.1-tts-flash-")
     with pytest.raises(FileNotFoundError):
         await archive_objects.get(archive_reference)  # type: ignore[arg-type]
     assert await speaker.profiles("account-governance") == ()

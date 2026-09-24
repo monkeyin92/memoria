@@ -116,7 +116,6 @@ dependency_inputs=(
   pyproject.toml
   uv.lock
   infra/Dockerfile.control-api
-  infra/voices/designed_voice_ids.json
 )
 dependency_changes="$(
   git -C "$ROOT" diff --name-only "$base_commit" "$expected_commit" -- \
@@ -143,7 +142,7 @@ while IFS= read -r changed; do
       ;;
     scripts/deploy_control_component.sh|scripts/verify_control_release_artifact.py|scripts/resolve_target_images.py|scripts/mark_readiness.py|scripts/rebuild_memory_projections.py|scripts/verify_authoritative_postgres.sh|scripts/tests/test_control_release_contract.py|scripts/tests/test_verify_control_release_artifact.py|scripts/tests/test_resolve_target_images.py)
       ;;
-    infra/Dockerfile.control-api-source-overlay|infra/Dockerfile.control-api|infra/voices/designed_voice_ids.json)
+    infra/Dockerfile.control-api-source-overlay|infra/Dockerfile.control-api)
       ;;
     *)
       scope_rejections+=("$changed")

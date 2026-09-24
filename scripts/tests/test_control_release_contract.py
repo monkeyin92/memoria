@@ -43,6 +43,9 @@ def test_control_component_release_is_offline_commit_bound_and_fail_closed() -> 
     assert "--services control-api" in deploy
     assert '--expected-image "control-api=$target_image"' in deploy
     assert '--override "$live_override" --override "$override"' in deploy
+    # The bundled voice registries were retired with Doubao/CosyVoice v3.5, so
+    # they are neither a dependency input nor an allowed release path.
+    assert "infra/voices" not in deploy
     assert "schema" in verifier.lower()
     assert "_safe_environment" in verifier
 
