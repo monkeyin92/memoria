@@ -442,6 +442,13 @@ async def _sync_bound_subject_authority(
             )
 
 
+def _deletion_confirmed(confirmation: str) -> bool:
+    # compare_digest rejects non-ASCII str, and the phrase is Chinese.
+    return secrets.compare_digest(
+        confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")
+    )
+
+
 async def _owns_accountless_child(
     request: Request,
     *,
@@ -1166,7 +1173,7 @@ async def delete_minor(
     if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # Their rows live in the binding owner's account: erase exactly the
         # child's, never the parent's (account deletion is account-wide).
-        if not secrets.compare_digest(body.confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")):
+        if not _deletion_confirmed(body.confirmation):
             raise HTTPException(
                 status_code=422, detail={"code": "deletion_confirmation_invalid"}
             )
@@ -1192,7 +1199,7 @@ async def delete_minor(
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
     )
-    if not secrets.compare_digest(body.confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")):
+    if not _deletion_confirmed(body.confirmation):
         raise HTTPException(status_code=422, detail={"code": "deletion_confirmation_invalid"})
     try:
         return await _governance(request).delete_account(minor_user_id)
