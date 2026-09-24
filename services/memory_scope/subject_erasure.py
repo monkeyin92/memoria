@@ -28,6 +28,7 @@ recalled and are counted as ``memory_outbox_dispatched``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -274,6 +275,7 @@ class PostgresSubjectMemoryScope:
             )
         self._dsn = maintenance_dsn
         self._pool: asyncpg.Pool | None = None
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         pool = await asyncpg.create_pool(
@@ -305,14 +307,19 @@ class PostgresSubjectMemoryScope:
             await self._pool.close()
             self._pool = None
 
-    def _require_pool(self) -> asyncpg.Pool:
+    async def _require_pool(self) -> asyncpg.Pool:
+        # Opened on first erase: a rare maintenance path must not make Control
+        # startup depend on it.
         if self._pool is None:
-            raise RuntimeError("PostgresSubjectMemoryScope is not initialized")
+            async with self._initialize_lock:
+                if self._pool is None:
+                    await self.initialize()
+        assert self._pool is not None
         return self._pool
 
     async def erase_subject(self, *, subject_id: str) -> dict[str, int]:
         _require_subject(subject_id)
-        async with self._require_pool().acquire() as connection:
+        async with (await self._require_pool()).acquire() as connection:
             async with connection.transaction():
                 raw = await connection.fetchval(
                     "SELECT memory_subject_erase($1)", subject_id
@@ -321,7 +328,7 @@ class PostgresSubjectMemoryScope:
 
     async def remaining_subject_rows(self, *, subject_id: str) -> dict[str, int]:
         _require_subject(subject_id)
-        async with self._require_pool().acquire() as connection:
+        async with (await self._require_pool()).acquire() as connection:
             raw = await connection.fetchval(
                 "SELECT memory_subject_remaining($1)", subject_id
             )

@@ -225,6 +225,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
         "MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD": "memoria_session_maintenance",
         "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
         "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
+        "MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD": "memoria_memory_maintenance",
     }
     for password_env, role in runtime_roles.items():
         assert password_env in postgres_init

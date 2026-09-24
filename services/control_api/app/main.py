@@ -860,9 +860,7 @@ async def _install_memory_scope(
     maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
     if maintenance_dsn:
         # Erasing one bound subject's records: its own narrow login role.
-        subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
-        await subject_memory_scope.initialize()
-        app.state.subject_memory_scope = subject_memory_scope
+        app.state.subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
     api_dsn = settings.memory_api_database_url.get_secret_value().strip()
     worker_dsn = settings.memory_worker_database_url.get_secret_value().strip()
     if not api_dsn or not worker_dsn:

@@ -11,6 +11,7 @@ from services.control_api.tests.test_tutor_config import _production_settings
     [
         "MEMORIA_MEMORY_API_DATABASE_URL",
         "MEMORIA_MEMORY_WORKER_DATABASE_URL",
+        "MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL",
     ],
 )
 def test_production_requires_all_memory_scope_runtime_dsns(
