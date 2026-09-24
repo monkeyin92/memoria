@@ -38,6 +38,17 @@ def test_funasr_config_from_env() -> None:
     assert cfg.vocabulary_id == "vocab-control-commands"
     assert cfg.speech_noise_threshold == -0.1
     assert cfg.ws_trace
+    assert cfg.vad_model is None
+
+
+def test_funasr_config_defaults_to_qwen_audio_31_and_validates_vad_model() -> None:
+    cfg = FunASRConfig.from_env(
+        {"DASHSCOPE_API_KEY": "key", "FUNASR_VAD_MODEL": "near_meeting_16k"}
+    )
+    assert cfg.model == "qwen-audio-3.1-asr-flash-streaming"
+    assert cfg.vad_model == "near_meeting_16k"
+    with pytest.raises(ValueError, match="vad_model"):
+        FunASRConfig.from_env({"FUNASR_VAD_MODEL": "near_field"})
 
 
 def test_funasr_default_sentence_silence_matches_turn_endpointing() -> None:

@@ -35,6 +35,7 @@ from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegi
 from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.providers.funasr_protocol import (
+    QWEN_AUDIO_31_ASR_VAD_MODELS,
     FunASRSentence,
     FunASRServerEvent,
     build_continue_task_context,
@@ -75,7 +76,7 @@ def _is_empty_audio_error(error_code: object) -> bool:
 class FunASRConfig:
     api_key: str
     ws_url: str
-    model: str = "fun-asr-realtime"
+    model: str = "qwen-audio-3.1-asr-flash-streaming"
     sample_rate: int = 16000
     language: str = "zh"
     chunk_ms: int = 80
@@ -89,6 +90,7 @@ class FunASRConfig:
     conversation_context_enabled: bool = False
     vocabulary_id: str | None = None
     speech_noise_threshold: float | None = None
+    vad_model: str | None = None
     ws_trace: bool = False
     rescue_config: SenseVoiceRescueConfig | None = None
 
@@ -101,6 +103,10 @@ class FunASRConfig:
             or not 0.0 <= self.post_finish_tail_grace_s <= 2.0
         ):
             raise ValueError("FunASR post-finish tail grace must be between 0 and 2 seconds")
+        if self.vad_model is not None and self.vad_model not in QWEN_AUDIO_31_ASR_VAD_MODELS:
+            raise ValueError(
+                "FunASR vad_model must be one of " + ", ".join(sorted(QWEN_AUDIO_31_ASR_VAD_MODELS))
+            )
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> FunASRConfig:
@@ -113,7 +119,7 @@ class FunASRConfig:
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("FUNASR_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
-            model=e.get("FUNASR_MODEL", "fun-asr-realtime"),
+            model=e.get("FUNASR_MODEL", "qwen-audio-3.1-asr-flash-streaming"),
             sample_rate=int(e.get("FUNASR_SAMPLE_RATE", "16000")),
             language=e.get("FUNASR_LANGUAGE", "zh"),
             chunk_ms=int(e.get("FUNASR_CHUNK_MS", "80")),
@@ -131,6 +137,7 @@ class FunASRConfig:
             ),
             vocabulary_id=vocabulary_id,
             speech_noise_threshold=(float(threshold_raw) if threshold_raw else None),
+            vad_model=e.get("FUNASR_VAD_MODEL", "").strip() or None,
             ws_trace=e.get("FUNASR_WS_TRACE", "false").lower() == "true",
             rescue_config=(
                 SenseVoiceRescueConfig.from_env(e) if rescue_url else None
@@ -608,6 +615,7 @@ class FunASRSession:
             context=list(self._context),
             vocabulary_id=self.config.vocabulary_id,
             speech_noise_threshold=self.config.speech_noise_threshold,
+            vad_model=self.config.vad_model,
         )
 
     async def connect(self) -> None:

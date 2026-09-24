@@ -18,12 +18,23 @@ from services.agent.src.voice_core.speech_timeline import ASRResult, ASRTimingCo
 def test_run_task_shape() -> None:
     msg = build_run_task(task_id="t1")
     assert msg["header"]["action"] == "run-task"
-    assert msg["payload"]["model"] == "fun-asr-realtime"
+    assert msg["payload"]["model"] == "qwen-audio-3.1-asr-flash-streaming"
     assert msg["payload"]["parameters"]["sample_rate"] == 16000
     assert msg["payload"]["parameters"]["semantic_punctuation_enabled"] is False
     assert "vocabulary_id" not in msg["payload"]["parameters"]
     assert "speech_noise_threshold" not in msg["payload"]["parameters"]
     assert msg["payload"]["input"] == {}
+    assert "vad_model" not in msg["payload"]["parameters"]
+
+
+def test_run_task_sends_vad_model_only_to_qwen_audio_31() -> None:
+    qwen = build_run_task(task_id="t1", vad_model="near_meeting_16k")
+    assert qwen["payload"]["parameters"]["vad_model"] == "near_meeting_16k"
+
+    legacy = build_run_task(
+        task_id="t1", model="fun-asr-realtime", vad_model="near_meeting_16k"
+    )
+    assert "vad_model" not in legacy["payload"]["parameters"]
 
 
 def test_run_task_adds_optional_vocabulary_and_noise_threshold() -> None:

@@ -211,7 +211,7 @@ async def smoke_funasr(
     cfg = FunASRConfig(
         api_key=os.environ["DASHSCOPE_API_KEY"],
         ws_url=_dashscope_ws_url(),
-        model=os.getenv("FUNASR_MODEL", "fun-asr-realtime"),
+        model=os.getenv("FUNASR_MODEL", "qwen-audio-3.1-asr-flash-streaming"),
         sample_rate=16000,
     )
     session = FunASRSession(cfg)
