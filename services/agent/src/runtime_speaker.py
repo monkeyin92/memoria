@@ -46,10 +46,17 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
-from services.speaker.domain import SpeakerDecision, permissions_for_speaker
+from services.speaker.domain import (
+    DEVICE_BOUND_SUBJECT_MODEL,
+    DEVICE_BOUND_SUBJECT_REASON,
+    SpeakerDecision,
+    permissions_for_speaker,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
+
+    from services.agent.src.mode_policy_client import ModePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -135,10 +142,15 @@ class DuplexSpeakerMixin:
         _enroll_started_mono: float
         _last_enroll_progress_speech_ms: int
         _set_interruption_min_words: Callable[[int], None] | None
+        _mode_policy: ModePolicy
 
         # Core runtime methods consumed by this mixin.
         @property
         def fence(self) -> GenerationFence: ...
+
+        def profile_permits(
+            self, fence: GenerationFence, *, capability: str | None = None
+        ) -> bool: ...
 
         def decide_interaction(
             self, snapshot: InteractionSnapshot
@@ -681,10 +693,48 @@ class DuplexSpeakerMixin:
             durable=True,
         )
 
+    def _device_bound_subject_decision(self) -> SpeakerDecision | None:
+        """Owner data authority for the one person this device is bound to.
+
+        Only when no voiceprint runs on a device conversation: the signed
+        Runtime Profile must confirm its active subject outside unknown_safe
+        and grant ``memory_recall_private`` for the current fence. Control API
+        re-checks the same profile before it honours the claim.
+        """
+
+        if self._speaker_classifier is not None or not self._device_conversation_controls_enabled:
+            return None
+        verified = self._mode_policy.runtime_profile
+        if verified is None:
+            return None
+        profile = verified.profile
+        if (
+            profile.speaker_state != "confirmed"
+            or profile.active_subject_id is None
+            or profile.service_mode == "unknown_safe"
+            or not self.profile_permits(self.fence, capability="memory_recall_private")
+        ):
+            return None
+        return SpeakerDecision(
+            classification="owner",
+            score=None,
+            quality_score=0.0,
+            reason_code=DEVICE_BOUND_SUBJECT_REASON,
+            model_version=DEVICE_BOUND_SUBJECT_MODEL,
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("owner"),
+        )
+
     async def await_speaker_classification(self) -> SpeakerDecision:
         self._start_speaker_classification()
         task = self._speaker_classification_task
         if task is None:
+            bound = self._device_bound_subject_decision()
+            if bound is not None:
+                self._speaker_decision = bound
+                self._speaker_class = "owner"
+                return bound
             decision = self._uncertain_speaker_decision(
                 "authority_unconfigured" if self._speaker_classifier is None else "no_audio"
             )

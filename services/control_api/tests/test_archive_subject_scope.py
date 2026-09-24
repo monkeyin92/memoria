@@ -965,3 +965,26 @@ async def test_stale_session_event_fence_creates_no_claim(
         await app.state.memory_catalog.compile_pending()
         queue = await app.state.memory_catalog.review_queue(account_id=owner["user_id"])
         assert all(item.source_event_id != "stale-fence-speech" for item in queue)
+
+
+@pytest.mark.asyncio
+async def test_device_bound_owner_claim_needs_a_confirming_runtime_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No Session Runtime means no signed profile names the device's subject, so
+    # the binding cannot vouch for anyone: the claim is refused, not archived.
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register_verified_adult(client, app, username="bound-claim")
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        rejected = await client.post(
+            "/v1/archive/session-events", headers=INTERNAL,
+            json=_speech(
+                session["session_id"],
+                payload={"text": "设备绑定声明", "speaker_reason_code": "device_bound_subject"},
+            ),
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["detail"]["code"] == "device_bound_subject_unverified"
