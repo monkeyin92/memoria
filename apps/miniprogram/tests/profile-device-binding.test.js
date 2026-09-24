@@ -110,7 +110,6 @@ function baseStubs(overrides = {}) {
       bindings: [readyBinding],
     }),
     getProfile: async () => ({ display_name: "主人" }),
-    getSpeakerEnrollmentStatus: async () => ({ enrollment: { state: "allowed" } }),
     listVoiceProfiles: async () => ({ items: [] }),
     getDeliveredCapabilities: async () => ({}),
     getRuntimeProfile: async () => ({

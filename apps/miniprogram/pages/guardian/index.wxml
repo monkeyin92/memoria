@@ -125,6 +125,14 @@
             bindchange="togglePersonConsent"
           />
         </view>
+        <view class="button-row">
+          <button class="secondary-button" disabled="{{working}}" data-person-id="{{item.personId}}" bindtap="exportMinorData">导出 TA 的数据</button>
+          <button class="danger-button" disabled="{{working}}" data-person-id="{{item.personId}}" bindtap="openMinorDelete">删除 TA 的数据</button>
+        </view>
+        <view wx:if="{{minorExport && minorExport.personId === item.personId}}" class="binding-result">
+          <text class="caption">导出文件已生成，只含授权与数据管理记录，不含对话原文。</text>
+          <button class="text-button" bindtap="shareMinorExport">发送到微信聊天保存</button>
+        </view>
       </view>
     </view>
 
@@ -164,4 +172,18 @@
   </block>
 
   <view wx:if="{{role === 'unknown' && !loading}}" class="notice">账号资料尚未加载完成。</view>
+
+  <!-- 删除无账号孩子数据的二次确认：完整输入确认文本才可删除 -->
+  <view wx:if="{{showMinorDelete}}" class="modal-wrap" bindtap="closeMinorDelete">
+    <view class="modal-card" catchtap="noop">
+      <text class="modal-title">删除 TA 的数据</text>
+      <text class="modal-desc">将永久删除 TA 的记忆、对话和成长记录，且不可恢复。请完整输入「{{minorDeleteConfirmText}}」确认。</text>
+      <input class="field-input" value="{{minorDeleteConfirmation}}" placeholder="{{minorDeleteConfirmText}}" placeholder-class="field-placeholder" bindinput="onMinorDeleteConfirmation" />
+      <text wx:if="{{minorDeleteError}}" class="error-text">{{minorDeleteError}}</text>
+      <view class="button-row">
+        <button class="secondary-button" bindtap="closeMinorDelete">取消</button>
+        <button class="danger-button" loading="{{minorDeleting}}" disabled="{{minorDeleteConfirmation !== minorDeleteConfirmText}}" bindtap="confirmMinorDelete">永久删除</button>
+      </view>
+    </view>
+  </view>
 </view>

@@ -35,7 +35,8 @@ test("student notice and bind consent remain explicit client choices", () => {
 
   // 敏感入口只能由 Runtime Profile capabilities 驱动，WXML 不得按本地年龄显示。
   assert.match(profile, /guardianEntryAllowed/);
-  assert.match(profile, /speakerEnrollmentState/);
+  // 声纹已下线：「我的」页不再有主人声纹登记与旁人声音过滤。
+  assert.doesNotMatch(profile, /speakerEnrollment|主人声纹|reject_non_owner_voice|过滤明显旁人/);
   assert.match(profile, /digitalSelfEntryAllowed/);
   assert.match(profile, /rawVoiceEntryAllowed/);
   assert.doesNotMatch(profile, /canUseAdultCapabilities|_allowAdultExperience/);
@@ -279,4 +280,135 @@ test("person consent failure stays owner-scoped and does not blank the row", asy
   });
   assert.match(page.data.error, /只有监护绑定发起人/);
   assert.equal(page.data.boundSubjects[0].consentRows.length, 3);
+});
+
+function guardianMinorPage(handler) {
+  const requests = [];
+  const files = [];
+  const shared = [];
+  global.wx = {
+    env: { USER_DATA_PATH: "wxfile://usr" },
+    getStorageSync: (key) => storage[key],
+    setStorageSync: (key, value) => {
+      storage[key] = value;
+    },
+    removeStorageSync: (key) => {
+      delete storage[key];
+    },
+    showToast() {},
+    getFileSystemManager: () => ({
+      writeFile(options) {
+        files.push(options);
+        options.success?.();
+      },
+    }),
+    shareFileMessage(options) {
+      shared.push(options);
+    },
+    request(options) {
+      const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
+      requests.push({ pathname, method: options.method || "GET", data: options.data });
+      if (pathname === "/v1/guardian/minors/person_child/consents") {
+        options.success({ statusCode: 200, data: { items: [] } });
+        return;
+      }
+      handler(pathname, options);
+    },
+  };
+  global.getApp = () => ({
+    globalData: {
+      identity: { user_id: "person_owner", display_name: "主人" },
+      accessToken: "test-token",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 0,
+    },
+  });
+  binding.saveBindingManifest(
+    canonicalManifest({
+      declared_mode: "parent_for_child",
+      status: "active",
+      account_owner_id: "person_owner",
+      primary_subject_ids: ["person_child"],
+      guardian_ids: ["person_owner"],
+      roles: [
+        { person_id: "person_owner", role: "account_owner", permissions: [] },
+        { person_id: "person_child", role: "primary_subject", permissions: [] },
+      ],
+    }),
+  );
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  const pagePath = require.resolve("../pages/guardian/index");
+  delete require.cache[pagePath];
+  require(pagePath);
+  return { page: instantiate(definition), requests, files, shared };
+}
+
+test("guardian exports an accountless child's data to a file without rendering it", async () => {
+  const { page, requests, files, shared } = guardianMinorPage((pathname, options) => {
+    if (pathname === "/v1/guardian/minors/person_child/export") {
+      options.success({ statusCode: 200, data: { audience: "guardian", consents: [] } });
+      return;
+    }
+    options.success({ statusCode: 404, data: { detail: { code: "not_found" } } });
+  });
+  await page._loadBoundSubjectConsents();
+  await page.exportMinorData({ currentTarget: { dataset: { personId: "person_child" } } });
+  const exportRequest = requests.find((item) => item.pathname.endsWith("/export"));
+  assert.equal(exportRequest.pathname, "/v1/guardian/minors/person_child/export");
+  assert.equal(exportRequest.method, "POST");
+  assert.equal(files.length, 1);
+  assert.match(files[0].filePath, /^wxfile:\/\/usr\/memoria-child-export-\d+\.json$/);
+  assert.deepEqual(JSON.parse(files[0].data), { audience: "guardian", consents: [] });
+  assert.equal(page.data.minorExport.personId, "person_child");
+  assert.equal(page.data.error, "");
+  page.shareMinorExport();
+  assert.equal(shared[0].filePath, files[0].filePath);
+
+  // 页面只提供文件，不渲染导出内容，更不展示孩子的对话原文。
+  const template = fs.readFileSync(path.join(root, "pages/guardian/index.wxml"), "utf8");
+  assert.match(template, /导出 TA 的数据/);
+  assert.match(template, /删除 TA 的数据/);
+  assert.doesNotMatch(template, /transcript|utterance|对话记录|聊天记录/);
+});
+
+test("guardian deletes an accountless child's data only after typed confirmation", async () => {
+  const { page, requests } = guardianMinorPage((pathname, options) => {
+    if (pathname === "/v1/guardian/minors/person_child/delete") {
+      options.success({ statusCode: 200, data: { status: "deleted" } });
+      return;
+    }
+    options.success({ statusCode: 404, data: { detail: { code: "not_found" } } });
+  });
+  await page._loadBoundSubjectConsents();
+  page.openMinorDelete({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.equal(page.data.showMinorDelete, true);
+  assert.equal(page.data.minorDeleteConfirmText, "永久删除孩子的全部数据");
+
+  // 第一次点击只打开确认弹窗；确认文本不完整时不发请求。
+  page.onMinorDeleteConfirmation({ detail: { value: "永久删除" } });
+  await page.confirmMinorDelete();
+  assert.equal(requests.filter((item) => item.pathname.endsWith("/delete")).length, 0);
+  assert.match(page.data.minorDeleteError, /请完整输入/);
+
+  page.onMinorDeleteConfirmation({ detail: { value: "永久删除孩子的全部数据" } });
+  await page.confirmMinorDelete();
+  const deleteRequests = requests.filter((item) => item.pathname.endsWith("/delete"));
+  assert.equal(deleteRequests.length, 1);
+  assert.equal(deleteRequests[0].pathname, "/v1/guardian/minors/person_child/delete");
+  assert.equal(deleteRequests[0].method, "POST");
+  assert.deepEqual(deleteRequests[0].data, { confirmation: "永久删除孩子的全部数据" });
+  assert.equal(page.data.showMinorDelete, false);
+});
+
+test("guardian child data actions surface a 403 as an owner-scoped message", async () => {
+  const { page } = guardianMinorPage((pathname, options) => {
+    options.success({ statusCode: 403, data: { detail: { code: "guardian_link_required" } } });
+  });
+  await page._loadBoundSubjectConsents();
+  await page.exportMinorData({ currentTarget: { dataset: { personId: "person_child" } } });
+  assert.match(page.data.error, /只有监护人或绑定发起人/);
+  assert.equal(page.data.minorExport, null);
 });

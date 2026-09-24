@@ -33,17 +33,6 @@ function devicePlaceName(binding, companionName) {
   return `我的${name}`;
 }
 
-function presentSpeakerCandidates(candidates) {
-  return (candidates || []).map((item) => {
-    const confidence = Number(item.confidence) || 0;
-    return {
-      ...item,
-      confidencePercent: Math.round(confidence * 100),
-      confidenceLow: confidence < 0.5,
-    };
-  });
-}
-
 function offlineLabelFor(status, activation, profile) {
   if (status === "ready_for_conversation") return "暂时离线";
   if (activation?.network?.internet === true) return "已联网，等待激活";
@@ -81,6 +70,5 @@ module.exports = {
   activationLabel,
   currentUserSummary,
   devicePlaceName,
-  presentSpeakerCandidates,
   deviceStatusSummary,
 };
