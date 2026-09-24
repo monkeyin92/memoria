@@ -159,6 +159,12 @@
       <text class="caption">不含对话原文，也不提供心理诊断或严重度评分。</text>
     </view>
 
+    <view wx:if="{{crisisPush.enabled}}" class="l2-card">
+      <text class="l2-card-title">微信安全提醒</text>
+      <text class="l2-card-sub">{{crisisPush.explanation}}</text>
+      <button size="mini" bindtap="enableCrisisPush">开启一次提醒</button>
+    </view>
+
     <block wx:if="{{notifications.length}}">
       <view class="section-head">
         <text class="section-head-title">需要及时关注</text>

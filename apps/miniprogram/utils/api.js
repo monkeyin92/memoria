@@ -578,6 +578,23 @@ function getGuardianNotifications() {
   return rawRequest("/v1/guardian/notifications");
 }
 
+/* 危机提醒订阅（一次性订阅消息）。关闭时服务端不下发模板 ID。 */
+function getGuardianPushConfig() {
+  return rawRequest("/v1/guardian/push-config");
+}
+
+/* accept 必须附带新的 wx.login code，由服务端核对 openid 属于当前监护人。 */
+function recordGuardianPushSubscription({ templateId, result, loginCode = "" }) {
+  return rawRequest("/v1/guardian/push-subscriptions", {
+    method: "POST",
+    data: {
+      template_id: templateId,
+      result,
+      ...(loginCode ? { login_code: loginCode } : {}),
+    },
+  });
+}
+
 function getTutorLessons(focus = "tutor_english") {
   return rawRequest(`/v1/tutor/lessons?focus=${encodeURIComponent(focus)}`);
 }
@@ -1311,6 +1328,9 @@ module.exports = {
   deleteGuardianMinorData,
   declareAgeEvidence,
   getGuardianNotifications,
+  getGuardianPushConfig,
+  recordGuardianPushSubscription,
+  wechatLoginCode,
   getTutorLessons,
   updateProfile,
   getMemoryDays,

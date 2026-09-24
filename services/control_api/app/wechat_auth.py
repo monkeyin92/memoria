@@ -142,6 +142,19 @@ async def _access_token(
     return token, cache_key
 
 
+async def mini_program_access_token(
+    settings: ControlSettings,
+) -> tuple[str, tuple[str, str, str]]:
+    """Return the cached Mini Program access token and its cache key."""
+
+    appid, secret = _require_credentials(settings)
+    return await _access_token(settings, appid=appid, secret=secret)
+
+
+def invalidate_access_token(cache_key: tuple[str, str, str]) -> None:
+    _ACCESS_TOKEN_CACHE.pop(cache_key, None)
+
+
 async def code_to_session(settings: ControlSettings, login_code: str) -> WechatSession:
     code = login_code.strip()
     if not code:

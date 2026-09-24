@@ -3,6 +3,7 @@ const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
 const contracts = require("../../utils/multi-subject-contracts");
 const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
+const guardianPush = require("../../utils/guardian-push");
 
 const CONSENT_DEFINITIONS = Object.freeze([
   {
@@ -101,6 +102,7 @@ Page({
     minorDeleteConfirmText: api.GUARDIAN_MINOR_DELETE_CONFIRMATION,
     minorDeleting: false,
     minorDeleteError: "",
+    crisisPush: { enabled: false, templateId: "", explanation: "" },
   },
 
   onLoad() {
@@ -141,6 +143,7 @@ Page({
       pendingLinks: [],
       boundSubjects: [],
       notifications: [],
+      crisisPush: { enabled: false, templateId: "", explanation: "" },
       summary: null,
       minorExport: null,
       showMinorDelete: false,
@@ -188,6 +191,7 @@ Page({
           this._loadLinkConsents(activeLinks),
           this._loadBoundSubjectConsents(),
           this._loadNotifications(),
+          this._loadCrisisPush(),
         ]);
         if (activeLinks.length) await this.selectMinorById(activeLinks[0].minorUserId);
       }
@@ -255,6 +259,20 @@ Page({
     this.setData({ notifications: Array.isArray(payload?.items) ? payload.items : [] });
   },
 
+  async _loadCrisisPush() {
+    this.setData({ crisisPush: await guardianPush.loadCrisisPushConfig(api) });
+  },
+
+  /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
+  async enableCrisisPush() {
+    try {
+      const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.crisisPush, api });
+      if (outcome.result === "accept") wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+    } catch (error) {
+      this.setData({ error: error?.message || "安全提醒开启失败，请稍后再试。" });
+    }
+  },
+
   onMinorUserId(event) {
     this.setData({ minorUserId: event.detail.value.trim() });
   },
@@ -282,6 +300,7 @@ Page({
         createdMinorName: link.minor_display_name || "孩子",
         minorUserId: "",
       });
+      guardianPush.offerCrisisSubscription({ config: this.data.crisisPush, api }).catch(() => {});
       await this.refresh();
     } catch (error) {
       this.setData({ error: error?.message || "绑定发起失败。" });

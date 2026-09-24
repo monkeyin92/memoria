@@ -102,6 +102,7 @@ required_tables(table_name, force_rls) AS (
         ('tutor_commit_outbox', TRUE),
         ('guardian_crisis_events', TRUE),
         ('guardian_notification_outbox', TRUE),
+        ('guardian_push_subscriptions', TRUE),
         ('memory_records', TRUE),
         ('memory_status_events', TRUE),
         ('memory_shared_proposals', TRUE),
@@ -134,6 +135,7 @@ required_functions(function_name) AS (
         ('session_runtime_commit_initial'),
         ('evolution_block_immutable_mutation'),
         ('guardian_tutor_outbox_claim'),
+        ('guardian_crisis_push_claim'),
         ('memory_sensitive_commit')
 ),
 owner_roles(role_name) AS (
