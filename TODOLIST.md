@@ -75,8 +75,9 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 真实 API 冒烟（2026-09-24，生产 key、`memoria-prod` 一次性只读容器、不挂生产数据库，跑完已清理）：`provider_smoke_test PASS: FunASR, QwenRealtimeSearch, Qwen, QwenAudioTTS, InterruptSemantic`；5 个人格音色均可合成且对齐 `ok`，ASR 新模型对 6 段合成音频给出中间/最终结果与单调字级时间戳。首跑发现 3.1 每句音频在最后一个字后带 290–450ms 尾部静音，旧对齐逻辑会把字时间戳拉伸进静音并判 `degraded`；已改为尾部静音 ≤800ms 时保留原时间戳（`TRAILING_SILENCE_MAX_MS`）。
 - 未验证：真实设备上 ASR 的 VAD/空音频错误码与缺陷 A 边界是否一致；首包时延、音量 45 是否削波；复刻真实 enrollment（返回 ID 前缀、`DEPLOYING→OK` 状态）；3 RPS 在多设备并发下是否够用；设备试听与小程序三端。
 - 部署前必须：真实 key 跑通 provider 冒烟；生产 env 用 `prepare_production_upgrade_env.py` 重新生成（`split_production_env.py` 遇到任何 DOUBAO 键会拒绝）；readiness 证据需在同一发布里刷新为 `qwen_audio`；在途会话冻结的旧 fallback 三元组会 fail closed，需低峰切流并演练回滚。本地未跟踪的 `.env` 仍是 `TTS_PROVIDER=doubao`、`MEMORIA_VOICE_TARGET_MODEL=cosyvoice-v3.5-flash`，需要改掉才能本地启动。
+- 待办：`MEMORIA_INTERACTION_POLICY_TOKEN` 在 2026-09-24 操作输出中泄露，需轮换（控制面 + Agent env，重建相关容器），待授权。
 - 对 P0-03 的影响：ASR/TTS 换代后，缺陷 A 的 3/5/8s、30 分钟长稳等设备证据不再适用于新候选，必须在新候选上重新验收。
-- **ASR 真机对照失败（2026-09-24，收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`）**：生产把 `FUNASR_MODEL` 切到 `qwen-audio-3.1-asr-flash-streaming` 后，两轮会话出现 3 个“无人说话却提交的话轮”（机器人回答自己播放期的回声，含一次误判告别结束会话），同一流程的 fun-asr 对照为 0；新模型对同一问句多识别约 10 字、“稍等”开口延迟 4.1s（fun-asr 1.2–1.7s）。已切回 fun-asr。重试前需先定位：新模型的段落/VAD（默认 `far_field_meeting_16k`）是否把播放期回声并进播放后的 final、结束点与回声边界逻辑是否需要按新模型调整；可先试 `FUNASR_VAD_MODEL=near_meeting_16k` 与离线回放对照，再上真机。在此之前 TTS 迁移也不应随新 ASR 一起发布。
+- **ASR 真机对照失败（2026-09-24，收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`）**：生产把 `FUNASR_MODEL` 切到 `qwen-audio-3.1-asr-flash-streaming` 后，两轮会话出现 3 个“无人说话却提交的话轮”（机器人回答自己播放期的回声，含一次误判告别结束会话），同一流程的 fun-asr 对照为 0；新模型对同一问句多识别约 10 字、“稍等”开口延迟 4.1s（fun-asr 1.2–1.7s）。已切回 fun-asr；用户亲测再切一次同样失败（漏识别轻声语句；最终结果晚于结束点 2.5s 触发 `turn_prepare_timeout` 待命），已再次切回，选型结论为继续用 fun-asr（收据同上）。若将来重试，需先定位：新模型的段落/VAD（默认 `far_field_meeting_16k`）是否把播放期回声并进播放后的 final、结束点与回声边界逻辑是否需要按新模型调整；可先试 `FUNASR_VAD_MODEL=near_meeting_16k` 与离线回放对照，再上真机。在此之前 TTS 迁移也不应随新 ASR 一起发布。
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 
