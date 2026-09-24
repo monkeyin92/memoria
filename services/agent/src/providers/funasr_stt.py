@@ -1549,6 +1549,8 @@ class FunASRSession:
             heartbeat=False,
             words=(),
             rescue_synthesized=True,
+            rescue_rms=rms,
+            rescue_peak_abs=peak_abs,
         )
         if empty_audio_boundary and not boundary:
             # The provider rejected the task as empty audio, so no

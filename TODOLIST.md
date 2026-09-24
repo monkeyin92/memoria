@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-24｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；2026-09-23 已用生产配置中的百炼 key 完成 parent-baseline source 的固定 7-case 与未见 4-case 隔离 Qwen 评测，收据已保存，未部署候选可见性代码。candidate 可见性契约及回归已在代码提交 `f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b` 中完成并验证，仍未部署；2026-09-24 缺陷 A 核心续问边界真实设备复测通过，3/5/8s 与 30 分钟基础长稳有证据，但工具查询最终回答未完成且 TLS/WSS 自动重连保留观察项，不能关闭 `P0-03`。四份评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，不证明候选代码已部署或完整验证。其余发布、主体隔离和删除边界保持不变；本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。
+更新于 2026-09-24｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；2026-09-23 已用生产配置中的百炼 key 完成 parent-baseline source 的固定 7-case 与未见 4-case 隔离 Qwen 评测，收据已保存，未部署候选可见性代码。candidate 可见性契约及回归已在代码提交 `f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b` 中完成并验证，仍未部署；2026-09-24 缺陷 A 核心续问边界真实设备复测通过，3/5/8s 与 30 分钟基础长稳有证据，但工具查询最终回答未完成（离线诊断：底噪占话语权 D1 + 底噪救援误判告别 D2；D2 已本地修复未部署，D1 待方案）且 TLS/WSS 自动重连保留观察项，不能关闭 `P0-03`。四份评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，不证明候选代码已部署或完整验证。其余发布、主体隔离和删除边界保持不变；本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。
 
 ## 当前边界（不得越界宣称）
 
@@ -24,7 +24,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ## 下一步与执行边界
 
 1. P2-03 剩余：读路径的 PG 侧对等已落地（operator `read --postgres-dsn [--account <id>]`，真实 PG 契约）；删除范围验证完成本地部分（PG 全 saga 行/对象/厂商桩/声纹 + 收据幂等）。仍未验/未做：真实 MinIO 版本删除（本地 Docker MinIO 对象写入不可用，需可用 MinIO 或生产环境）、真实 provider 删除（需密钥与授权）、备份「恢复后再删除」实现与期限声明，以及新发现的结构盲区（`memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 不在删除 saga，`remaining_account_rows` 只统计含 `account_id` 列的表）。小程序读口核验结论：各读口读的是数据所在存储（控制库 `MEMORIA_DB_PATH` 生产即 SQLite，archive/persona/digital-self/personas/growth 走 PG），archive 读口按调用者本人主体过滤；成员主体读口需客户端会话上下文，属 P1-03/P1-05。生产/设备验收仍待授权。
-2. 缺陷 A 核心设备窗口已完成；下一次设备窗口先补齐工具查询最终交付和 TLS/WSS 重连观察，再按同一候选继续 P0-03 的 >45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 矩阵。不得把本轮核心通过扩大为完整 P0-03 或全双工通过。
+2. 缺陷 A 核心设备窗口已完成；工具查询最终回答被取消的根因已离线定位（见 P0-03 的 D1/D2），D2 已本地修复，D1 方案待评审后实现；两者随下一候选发布后，下一次设备窗口先补齐工具查询最终交付和 TLS/WSS 重连观察，再按同一候选继续 P0-03 的 >45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 矩阵。不得把本轮核心通过扩大为完整 P0-03 或全双工通过。
 3. 生产切流、回滚演练和制品清理须另获授权；设备功能通过不等于学生安全或全双工通过。
 4. P1-08 WAL 可独立只读测量；删除、重启、定时任务、自动备份和异地副本不在当前授权内。
 
@@ -42,6 +42,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早已修复并发布**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；2026-09-21 设备窗口有 30s owner-silence 观察，但不替代当前 P0-03 的完整设备验收。**F2 待命后再唤醒被拒已修复并发布**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。已有设备窗口只覆盖 `button.stop` happy path；禁止源 barge 尚未在设备旁真实触发，完整 F2 契约保持未验证。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
 - 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。2026-09-24 已完成缺陷 A 核心续问的真实设备证据：3/5/8s 精确格通过，30 分钟基础长稳通过但带 TLS/WSS 自动重连观察项；工具查询最终回答、长答/故障/待机/表情及交互矩阵仍待补齐。
 - 缺陷 A（2026-09-21 window-a 新发现）：ASR 段落跨界拒绝吞续问 + 回声驻留 VAD 压制拆分 + endpoint 空等 ~20s。**方向一已实现入库（`b41ff7a`，pytest/mypy/ruff/offline e2e 全绿）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ 边界拆分不再被回声 VAD/间隔门压制 → followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。**已发布并于 2026-09-24 完成核心真机复测**：tag `20260921-defect-a-followup-endpoint`（commit `2a33a50`）生产 agent/bridge 切流 PASS；3/5/8s 精确追问和无 echo+追问合并核心边界通过，30 分钟基础长稳通过但带 TLS/WSS 重连观察项。工具查询最终回答未完成，故不能关闭 P0-03；完整收据见 `docs/acceptance/run-20260924-defect-a-retest-live/findings.md`。方向二 2a（rescue 换 paraformer 词级时间戳）留独立工单，仅当后续发现 realtime 错字时启用。
+- 工具查询回答被取消（2026-09-24 复测 `turn_id=6`，离线诊断收据见同目录 `findings.md`「离线诊断」节）：搜索 10.18s 已返回，但回答被 `floor_blocked` 压约 8s，随后被一段 3 字救援文本判为告别，generation 8 首帧前 `preempted`。该段上行 rms 389 / peak 2616，与底噪同量级（真话 rms ≥2812、peak 削波），FunASR 静音；无原始音频，判为“极可能底噪幻听”。**D2 底噪救援告别可结束会话**：已本地修复、未提交未部署——救援结果携带段能量 `rescue_rms`/`rescue_peak_abs`，`CROSS_SENTENCE_OVERLAP` 与 `STRADDLES_COMMITTED_WITHOUT_TIMING` 两种被拒形状下 rms<1000 且 peak<8000 的救援告别不结束会话（低音量真实告别退回 owner-silence 30s 待命）；回归 `test_device_straddling_rescue_farewell_needs_speech_energy`。**D1 底噪 VAD 占住话语权**：两路 ASR 已判空仍不释放，每段新 VAD 重置 2.5s 尾超时；待完成：评审「双路判空即退役空话轮并恢复 floor_blocked 输出」与「无文本证据占用的最长等待」方案，实现后须回归 3/5/8s 续问格。附带：真话上行普遍削波（DTLN makeup gain 18 dB），单独评估；下次采集须确认 agent 日志流非空。
 - 2026-09-20 设备侧异常（非刺激引起，空闲期发生）：BMI2 IMU I2C 读持续超时刷屏；端口复位后两次 `abort() PC 0x4038acd6` → `RTC_SW_CPU_RST`（约 12s 后再起，随后自愈）。需硬件/固件侧单独排查。
 - 删除域状态（2026-09-20 决策收敛，过程记录见 HANDOFF）：物理不可删域不做封存实现、记为已知缺口（表述禁用「封存/已擦除」）；Slice A（guardian tutor 两表删除/计数/导出）已完成 `6e853ef`；开放项（identity/device_fleet 归属、封存计数面）归 P2-03。
 - 2026-09-20 产品侧提醒（读口真相）：产品召回**不读** `memory_records`，而走 archive 目录（`services/control_api/app/routes/interaction.py:1719-1743`，account_id+subject_id）⇒ 仅封存 memory_scope 不会让轮次内容消失；operator 读口 `services/governance/subject_postgres_reads.py:249-300` 必须同步改。
@@ -139,6 +140,18 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 待完成：补学习挫败承接、隔次继续计划、本人/获授权管理人查看回顾等场景，交叉 under_14/14_17 与 retention 允许/拒绝，包含切人、撤销、模型超时和未见集。
 - 逐场景记录任务接续、记忆证据、越权/编造、回顾可读性和失败降级；模型措辞需 recorded-bundle 人工盲评或设备窗口，离线生成不计真机成功。
 - 完成条件：形成可重复 baseline 与同条件对照，主体/撤销隔离和编造事实零回归，汇总可追溯到话轮/证据。
+
+### [ ] P2-07 Prompt 审计遗留（2026-09-24 审计，暂不修改）
+
+- 审计口径：全仓发给模型的文本；实际模型为 DeepSeek V4 Flash（主对话，百炼）、`qwen-flash`（四个语义分类器/人格结构化）、`qwen-plus`/`qwen3.7-flash`（抽取/联网）。判据源自 Claude 文档，对这些模型只算经验判断，置信度最高为“中”；均未调用真实模型验证。
+- 中-1 身份规则双版本矛盾：`services/agent/src/prompts.py:12-15` 的旧“不得自称或讨论 AI”规则仍在 `SAFETY_CORE`/`VOICE_SYSTEM_PROMPT` 中，并经 `tutor_session.voice_system_prompt` 与 `Orchestrator` 默认 `ContextManager`（`scripts/run_e2e.py`）可达；生产透明版靠 `prompts.py:74` 的 `.replace()` 生成，`SAFETY_CORE` 改一字即静默回退为隐藏版。拟改：`AI_IDENTITY_RULE_TRANSPARENT` 作为唯一规则拼入 `SAFETY_CORE`，`SAFETY_CORE_TRANSPARENT` 保留为别名（生产文本逐字节不变，已在临时副本验证）。
+- 中-2 口癖禁用词表：`prompts.py:34` 列举“首先、其次、最后/综上所述/希望以上内容对你有帮助”，无来由（首次提交即有），列出原词可能反向锚定。拟改为正面表述“像当面聊天一样自然衔接，不用书面报告式的分点连接词、总结句或客服式结束语。”；会改变生产陪伴提示词。
+- 中-3 小结指令语义歧义：`services/control_api/app/routes/memory.py:293`“也不要输出敏感信息之外的推断”字面可读成允许推断敏感信息。拟改为“只写聊天中实际出现的内容：不编造事实，也不推测对方没有明说的健康、财务、关系等敏感信息。”（本意需确认）。
+- 中-4 人格抽取规则重复：`services/persona/qwen_extractor.py:66` 与 `:68` 同一规则两种措辞（“永久性格”/“稳定风格”）；拟删 66 行分句，保留更精确的 68 行。
+- 低-5 仅标记：`services/agent/src/providers/qwen_realtime_search.py:90` 发往 DashScope 只带 `thinking: {type: disabled}`，而其余 DashScope 调用都带 `enable_thinking: False`（`handlers.py:82-83`、四个分类器）；需对照百炼文档或抓响应确认后再决定是否补齐。
+- 低-6 仅标记：三个 Qwen JSON 抽取器用 `response_format: json_object` + pydantic 兜底；若当前 Qwen 支持 `json_schema` 结构化输出可再评估，现状可用。
+- 已核实保留：分类器“只输出一个枚举词”（精确解析、`max_tokens` 12）、半双工 120 字规则（`agent.py:93` 代码截断）、禁 Markdown（TTS）、禁笑/咳嗽标签（CosyVoice 支持且 `prosody.py:29` 过滤）、导师不给答案、危机/暴力固定话术、`context_assembler` 指令/数据分离、小结字数上限（pydantic 校验）。
+- 完成条件：1–4 逐条单独落地；2 需在 DeepSeek V4 Flash 上用真实语音样本前后对照，3/4 跑 `scripts/evaluate_memory.py` 或小样本对照；语音/导师/prompt composition/persona/小结相关测试通过（临时副本上已通过，1 skip）。
 
 ## 暂缓，不自动扩张范围
 

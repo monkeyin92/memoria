@@ -7378,6 +7378,84 @@ async def test_device_low_energy_rescue_close_rejection_does_not_request_standby
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rescue_rms", "rescue_peak_abs", "expect_close"),
+    [
+        (389, 2_616, False),
+        (3_263, 32_768, True),
+    ],
+    ids=["room-noise-rescue", "owner-speech-rescue"],
+)
+async def test_device_straddling_rescue_farewell_needs_speech_energy(
+    rescue_rms: int,
+    rescue_peak_abs: int,
+    expect_close: bool,
+) -> None:
+    """A rescue farewell decoded from room noise must not end the session.
+
+    Run 2026-09-24 session b18fede9: a weather answer waited behind noise
+    VAD, SenseVoice turned the noise into three characters (rms 389, peak
+    2616, FunASR silent), the straddle recovery honoured it as a farewell,
+    and the pending answer was cancelled before its first frame.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity(f"device-straddle-rescue-close-{rescue_rms}")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        context.asr.mark_committed(64_000)
+        context.runtime.commit_media_speech_range(
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=64_000,
+        )
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+        farewell = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="0",
+            revision=1,
+            capture_start_sample=40_000,
+            capture_end_sample=160_000,
+            text="拜拜。",
+            is_final=True,
+            rescue_synthesized=True,
+            rescue_rms=rescue_rms,
+            rescue_peak_abs=rescue_peak_abs,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            farewell,
+        )
+
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+        if expect_close:
+            assert context.conversation_close_endpoint_pinned == 160_000
+        else:
+            assert context.conversation_close_endpoint_pinned is None
+            assert context.turn_endpoint_sample is None
+            assert context.standby_requested is False
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() -> None:
     """Reject-then-VAD-jitter must not starve an authoritative live-query recovery.
 
