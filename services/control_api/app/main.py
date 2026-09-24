@@ -52,6 +52,10 @@ from services.control_api.app.account_gate import AccountDeletingError, AccountO
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.guardian_push import (
+    app_display_name_resolver,
+    build_crisis_push_worker,
+)
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
@@ -142,6 +146,7 @@ from services.guardian.corpus import (
 from services.guardian.crisis import CrisisNotificationService, CrisisNotificationStorePort
 from services.guardian.domain import ConsentKind, GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
+from services.guardian.push import CrisisPushStorePort
 from services.guardian.sqlite_store import SqliteGuardianStore
 from services.identity.authority import (
     ConsentSnapshotResolver,
@@ -1212,6 +1217,16 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     corpus_retention_worker.start()
     app.state.corpus_retention_service = corpus_retention_service
     app.state.corpus_retention_worker = corpus_retention_worker
+    # Default disabled: without the flag no worker exists and crisis alerts
+    # stay queued and visible on the guardian page only.
+    crisis_push_worker = build_crisis_push_worker(
+        settings,
+        cast(CrisisPushStorePort, guardian_store),
+        display_name=app_display_name_resolver(app),
+    )
+    if crisis_push_worker is not None:
+        crisis_push_worker.start()
+    app.state.crisis_push_worker = crisis_push_worker
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=store,
@@ -1235,6 +1250,8 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        if crisis_push_worker is not None:
+            await crisis_push_worker.stop()
         await corpus_retention_worker.stop()
         if crisis_semantic_classifier is not None:
             await crisis_semantic_classifier.aclose()

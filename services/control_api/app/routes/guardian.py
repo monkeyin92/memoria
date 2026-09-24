@@ -27,8 +27,10 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.guardian_push import resolve_minor_display_name
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.session_termination import AccountSessionTerminator
+from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
@@ -52,6 +54,7 @@ from services.guardian.domain import (
     SubjectTransitionError,
     validate_subject_transition,
 )
+from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
 from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
@@ -107,6 +110,14 @@ class GuardianConsentCreate(BaseModel):
         if self.consent_kind != "corpus_recording" and self.retention_days is not None:
             raise ValueError("retention_days is only valid for corpus recording consent")
         return self
+
+
+class GuardianPushSubscriptionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    template_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    result: PushSubscriptionResult
+    login_code: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class GuardianDeleteCreate(BaseModel):
@@ -501,20 +512,13 @@ async def guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
     )
+    display_name = resolve_minor_display_name(
+        _profiles(request),
+        getattr(request.app.state, "identity_service", None),
+    )
     items = []
     for item in notifications:
-        minor_profile = _profiles(request).get_subject_profile(user_id=item.minor_user_id)
-        minor_display_name = (minor_profile or {}).get("display_name")
-        if (not minor_display_name or minor_display_name == "朋友") and hasattr(
-            request.app.state, "identity_service"
-        ):
-            try:
-                person = await request.app.state.identity_service.get_person(
-                    item.minor_user_id, actor_person_id=user.user_id
-                )
-                minor_display_name = person.display_name
-            except Exception:
-                pass
+        minor_display_name = await display_name(user.user_id, item.minor_user_id)
         items.append(
             {
                 "notification_id": item.notification_id,
@@ -529,6 +533,90 @@ async def guardian_notifications(
             }
         )
     return {"items": items}
+
+
+def _push_store(request: Request) -> PushSubscriptionStorePort:
+    return cast(PushSubscriptionStorePort, request.app.state.guardian_store)
+
+
+@router.get("/push-config")
+async def guardian_push_config(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, Any]:
+    """Tell the guardian page whether to offer the crisis subscribe prompt.
+
+    The template id is only disclosed while delivery is enabled, so a
+    disabled deployment never prompts.  A guardian without a bound WeChat
+    identity cannot receive a subscribe message and is told push is off.
+    """
+
+    require_capability_for_subject(user, "guardian_manage", store=_profiles(request))
+    settings = _settings(request)
+    enabled = settings.guardian_push_enabled and _profiles(request).has_external_identity(
+        user_id=user.user_id,
+        provider="wechat_openid",
+    )
+    template_id = settings.wechat_subscribe_crisis_template_id.strip()
+    return {
+        "enabled": bool(enabled and template_id),
+        "template_ids": {"crisis": template_id} if enabled and template_id else {},
+    }
+
+
+@router.post("/push-subscriptions")
+async def record_guardian_push_subscription(
+    body: GuardianPushSubscriptionCreate,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Record one ``wx.requestSubscribeMessage`` answer for the guardian.
+
+    An acceptance must carry a fresh ``wx.login`` code: the server exchanges
+    it for the openid and only stores it when it matches the guardian's bound
+    WeChat identity, so a client can never direct alerts to another user.
+    """
+
+    _require_wechat_guardian(request, user)
+    settings = _settings(request)
+    template_id = settings.wechat_subscribe_crisis_template_id.strip()
+    if not settings.guardian_push_enabled or not template_id:
+        raise HTTPException(status_code=409, detail={"code": "guardian_push_disabled"})
+    if not hmac.compare_digest(body.template_id, template_id):
+        raise HTTPException(status_code=422, detail={"code": "guardian_push_template_unknown"})
+    openid: str | None = None
+    if body.result == "accept":
+        if not body.login_code:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "wechat_login_code_required"},
+            )
+        try:
+            session = await code_to_session(settings, body.login_code)
+        except WechatAuthError as exc:
+            raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
+        bound = _profiles(request).external_identity_subject_hash(
+            user_id=user.user_id,
+            provider="wechat_openid",
+        )
+        if bound is None or not hmac.compare_digest(bound, openid_hash(session.openid)):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "guardian_push_identity_mismatch"},
+            )
+        openid = session.openid
+    subscription = await _push_store(request).record_push_subscription(
+        guardian_user_id=user.user_id,
+        template_id=template_id,
+        result=body.result,
+        openid=openid,
+        now=_now(),
+    )
+    return {
+        "template_id": subscription.template_id,
+        "result": subscription.last_result,
+        "remaining": subscription.remaining,
+    }
 
 
 @router.post("/links/{link_id}/confirm")
