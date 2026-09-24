@@ -9,6 +9,10 @@
       {
         "value": "design-preview",
         "type": "folder"
+      },
+      {
+        "value": "assets/companions",
+        "type": "folder"
       }
     ],
     "include": [
