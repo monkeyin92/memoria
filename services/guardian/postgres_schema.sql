@@ -659,6 +659,179 @@ BEGIN
 END
 $maintenance$;
 
+-- Subject-scoped deletion: one bound subject (a child or elder with no
+-- account) inside the binding owner's account.  Same role discipline as the
+-- account-scope functions above: SECURITY DEFINER under the maintenance role,
+-- which alone may open the scope flags.  A tutor row is the subject's only
+-- when it names the subject AND the owner, so the owner's own practice and
+-- another subject's practice stay.  Crisis rows carry no account: the crisis
+-- evidence is stored under the subject's own id.  Person consents are never
+-- touched (they are the consent audit) and neither is the guardian-side
+-- subscribe-message ledger.
+--
+-- The event-id function returns the subject's tutor archive evidence ids:
+-- tutor practice is archived under the owner account, and rows archived
+-- before the projection carried subject_id can only be found through these
+-- tables, so the ids must be read before the rows are deleted.
+CREATE OR REPLACE FUNCTION guardian_subject_scope_tutor_event_ids(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS TEXT[]
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    result TEXT[];
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    SELECT COALESCE(array_agg(DISTINCT ids.event_id), ARRAY[]::TEXT[])
+    INTO result
+    FROM (
+        SELECT event_id FROM tutor_practice_evidence
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT event_id FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT archive_payload_json->>'event_id' FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT jsonb_array_elements_text(event_ids_json) FROM tutor_practice_sessions
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        UNION
+        SELECT jsonb_array_elements_text(source_event_ids_json) FROM tutor_study_progress
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+    ) ids(event_id)
+    WHERE COALESCE(ids.event_id, '') <> '';
+    RETURN result;
+END
+$maintenance$;
+
+CREATE OR REPLACE FUNCTION guardian_subject_scope_delete(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    deleted JSONB;
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    PERFORM set_config('app.guardian_account_deletion', '1', true);
+    WITH removed_notifications AS (
+        DELETE FROM guardian_notification_outbox outbox
+        USING guardian_crisis_events crisis
+        WHERE outbox.crisis_event_id = crisis.crisis_event_id
+          AND crisis.minor_user_id = target_subject_id
+        RETURNING 1
+    ), removed_sessions AS (
+        DELETE FROM tutor_practice_sessions
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        RETURNING 1
+    ), removed_progress AS (
+        DELETE FROM tutor_study_progress
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        RETURNING 1
+    ), removed_evidence AS (
+        DELETE FROM tutor_practice_evidence
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        RETURNING 1
+    ), removed_outbox AS (
+        DELETE FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        RETURNING 1
+    )
+    SELECT jsonb_build_object(
+        'guardian_notifications', (SELECT count(*) FROM removed_notifications),
+        'tutor_practice_sessions', (SELECT count(*) FROM removed_sessions),
+        'tutor_study_progress', (SELECT count(*) FROM removed_progress),
+        'tutor_practice_evidence', (SELECT count(*) FROM removed_evidence),
+        'tutor_commit_outbox', (SELECT count(*) FROM removed_outbox)
+    ) INTO deleted;
+    -- The crisis rows go after their notifications have: the outbox rows'
+    -- USING join must still see the event they belong to.
+    WITH removed_crisis AS (
+        DELETE FROM guardian_crisis_events
+        WHERE minor_user_id = target_subject_id
+        RETURNING 1
+    )
+    SELECT deleted || jsonb_build_object(
+        'crisis_events', (SELECT count(*) FROM removed_crisis)
+    ) INTO deleted;
+    RETURN deleted;
+END
+$maintenance$;
+
+CREATE OR REPLACE FUNCTION guardian_subject_scope_remaining(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    result JSONB;
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    SELECT jsonb_build_object(
+        'crisis_events', (
+            SELECT count(*) FROM guardian_crisis_events
+            WHERE minor_user_id = target_subject_id
+        ),
+        'guardian_notifications', (
+            SELECT count(*) FROM guardian_notification_outbox outbox
+            JOIN guardian_crisis_events crisis
+              ON crisis.crisis_event_id = outbox.crisis_event_id
+            WHERE crisis.minor_user_id = target_subject_id
+        ),
+        'tutor_practice_sessions', (
+            SELECT count(*) FROM tutor_practice_sessions
+            WHERE subject_id = target_subject_id
+              AND (account_id = target_account_id OR actor_id = target_account_id)
+        ),
+        'tutor_study_progress', (
+            SELECT count(*) FROM tutor_study_progress
+            WHERE subject_id = target_subject_id
+              AND (account_id = target_account_id OR actor_id = target_account_id)
+        ),
+        'tutor_practice_evidence', (
+            SELECT count(*) FROM tutor_practice_evidence
+            WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        ),
+        'tutor_commit_outbox', (
+            SELECT count(*) FROM tutor_commit_outbox
+            WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        ),
+        -- Purged by the corpus retention service (object first, then the
+        -- row is marked deleted); only live samples count as remaining.
+        'corpus_samples', (
+            SELECT count(*) FROM guardian_corpus_samples
+            WHERE minor_user_id = target_subject_id AND deleted_at IS NULL
+        )
+    ) INTO result;
+    RETURN result;
+END
+$maintenance$;
+
 -- Outbox worker entry points: SECURITY DEFINER under the maintenance role.
 -- Claim leases rows with an expiry so a crashed worker's claim is reclaimed;
 -- SKIP LOCKED keeps concurrent workers from double-delivering.  The API
@@ -1747,6 +1920,18 @@ BEGIN
             ALTER FUNCTION guardian_tutor_account_scope_delete(TEXT)
                 OWNER TO memoria_guardian_maintenance;
             ALTER FUNCTION guardian_tutor_account_scope_remaining(TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_tutor_event_ids(TEXT, TEXT)
+                FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_delete(TEXT, TEXT)
+                FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_remaining(TEXT, TEXT)
+                FROM PUBLIC;
+            ALTER FUNCTION guardian_subject_scope_tutor_event_ids(TEXT, TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_subject_scope_delete(TEXT, TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_subject_scope_remaining(TEXT, TEXT)
                 OWNER TO memoria_guardian_maintenance;
         END IF;
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_worker') THEN

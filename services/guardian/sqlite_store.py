@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from services.archive.object_store import ObjectRef
+from services.governance.subject_ports import SubjectScope
 from services.guardian.corpus import (
     MAX_ACTIVE_CORPUS_SAMPLES_PER_MINOR,
     CorpusConsentInactiveError,
@@ -303,6 +304,29 @@ _NOTIFICATION_OUTBOX_INDEXES = (
 _LEGACY_NOTIFICATION_OUTBOX_COLUMNS = (
     "notification_id, crisis_event_id, guardian_user_id, channel, status, "
     "attempts, created_at, delivered_at, last_error_code"
+)
+
+
+# One bound subject inside the owner account (``SubjectScope``).  A tutor row
+# is the subject's only when it names the subject AND the owner; crisis rows
+# carry no account (the crisis evidence is stored under the subject's own id).
+# Notifications go before the crisis events they join.
+_SUBJECT_TUTOR_OWNED = (
+    "subject_id = :subject AND (account_id = :account OR actor_id = :account)"
+)
+_SUBJECT_TUTOR_WRITE = "subject_id = :subject AND actor_id = :account"
+_SUBJECT_ROWS = (
+    (
+        "guardian_notifications",
+        "guardian_notification_outbox",
+        "crisis_event_id IN (SELECT crisis_event_id FROM guardian_crisis_events"
+        " WHERE minor_user_id = :subject)",
+    ),
+    ("crisis_events", "guardian_crisis_events", "minor_user_id = :subject"),
+    ("tutor_practice_sessions", "tutor_practice_sessions", _SUBJECT_TUTOR_OWNED),
+    ("tutor_study_progress", "tutor_study_progress", _SUBJECT_TUTOR_OWNED),
+    ("tutor_practice_evidence", "tutor_practice_evidence", _SUBJECT_TUTOR_WRITE),
+    ("tutor_commit_outbox", "tutor_commit_outbox", _SUBJECT_TUTOR_WRITE),
 )
 
 
@@ -2656,6 +2680,95 @@ class SqliteGuardianStore:
             }.items()
             if value
         }
+
+    async def subject_tutor_event_ids(
+        self, *, account_id: str, subject_id: str
+    ) -> tuple[str, ...]:
+        """Archive evidence ids of one bound subject's tutor practice.
+
+        Read before ``delete_subject_rows``: these rows are the only lineage
+        to tutor archive events written without a subject_id.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        ids: set[str] = set()
+        with self._connect() as connection:
+            for (event_id,) in connection.execute(
+                f"SELECT event_id FROM tutor_practice_evidence WHERE {_SUBJECT_TUTOR_WRITE}",  # noqa: S608
+                params,
+            ):
+                ids.add(str(event_id))
+            for event_id, payload_json in connection.execute(
+                "SELECT event_id, archive_payload_json FROM tutor_commit_outbox "  # noqa: S608
+                f"WHERE {_SUBJECT_TUTOR_WRITE}",
+                params,
+            ):
+                ids.add(str(event_id))
+                payload = json.loads(str(payload_json))
+                if isinstance(payload, dict) and payload.get("event_id"):
+                    ids.add(str(payload["event_id"]))
+            for table, column in (
+                ("tutor_practice_sessions", "event_ids_json"),
+                ("tutor_study_progress", "source_event_ids_json"),
+            ):
+                for (values_json,) in connection.execute(
+                    f"SELECT {column} FROM {table} WHERE {_SUBJECT_TUTOR_OWNED}",  # noqa: S608
+                    params,
+                ):
+                    values = json.loads(str(values_json))
+                    if isinstance(values, list):
+                        ids.update(str(value) for value in values if value)
+        return tuple(sorted(ids))
+
+    async def delete_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Crisis events + notifications and the subject's tutor rows, atomically.
+
+        Person consents and the guardian's subscribe-message ledger stay.
+        """
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        deleted: dict[str, int] = {}
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for key, table, predicate in _SUBJECT_ROWS:
+                deleted[key] = connection.execute(
+                    f"DELETE FROM {table} WHERE {predicate}",  # noqa: S608
+                    params,
+                ).rowcount
+        return deleted
+
+    async def remaining_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]:
+        """Rows ``delete_subject_rows`` covers, plus live corpus samples
+        (purged by the corpus retention service, not here)."""
+
+        scope = SubjectScope(account_id=account_id, subject_id=subject_id)
+        params = {"account": scope.account_id, "subject": scope.subject_id}
+        self._ready()
+        counts: dict[str, int] = {}
+        with self._connect() as connection:
+            for key, table, predicate in (
+                *_SUBJECT_ROWS,
+                (
+                    "corpus_samples",
+                    "guardian_corpus_samples",
+                    "minor_user_id = :subject AND deleted_at IS NULL",
+                ),
+            ):
+                counts[key] = int(
+                    connection.execute(
+                        f"SELECT count(*) FROM {table} WHERE {predicate}",  # noqa: S608
+                        params,
+                    ).fetchone()[0]
+                )
+        return {key: value for key, value in counts.items() if value}
 
     async def related_minor_accounts(self, *, guardian_user_id: str) -> tuple[str, ...]:
         self._ready()
