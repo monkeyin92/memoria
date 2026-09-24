@@ -161,6 +161,20 @@ DEVICE_BOUND_SUBJECT_REASON = "device_bound_subject"
 DEVICE_BOUND_SUBJECT_MODEL = "device-binding-v1"
 
 
+def is_voice_authority(decision: SpeakerDecision) -> bool:
+    """A formal voice decision the voice loop may rely on (barge-in, nudges).
+
+    Shadow candidates are not formal, and a device-bound owner is data
+    authority only: the robot's own echo must never pass an owner-voice gate.
+    """
+
+    return (
+        decision.classification in {"owner", "guest"}
+        and not decision.reason_code.startswith("shadow_")
+        and decision.reason_code != DEVICE_BOUND_SUBJECT_REASON
+    )
+
+
 def permissions_for_speaker(classification: SpeakerClassification) -> SpeakerPermissions:
     if classification == "owner":
         return SpeakerPermissions(True, True, True, False)

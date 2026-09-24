@@ -26,6 +26,7 @@ from services.agent.src.orchestration.interaction_plane import (
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
+    normalize_short,
 )
 from services.agent.src.orchestration.orchestrator import Orchestrator
 from services.agent.src.orchestration.speaker_verify import (
@@ -69,6 +70,10 @@ KEYWORD_SPOTTER_MIN_PCM_MS = 80
 POST_PLAYBACK_SPEAKER_UNTRUSTED_MS = 2_000
 POST_PLAYBACK_SPEAKER_PREROLL_MS = 400
 POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
+# A farewell heard this soon after playback that the robot itself just said is
+# its own tail, not the user: short phrases such as 再见 fall under the
+# 4-character text-echo floor, and with no voiceprint nothing else rejects them.
+POST_PLAYBACK_CLOSE_ECHO_GUARD_MS = 3_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +123,7 @@ class DuplexSpeakerMixin:
         _target_focus_pending_epoch: int | None
         _target_speaker_interrupt: Callable[[], Awaitable[None]] | None
         _device_conversation_controls_enabled: bool
+        _played_assistant_text: str
         _sticky_interrupt_epoch: int | None
         _sticky_interrupt_route: UtteranceRoute | None
         _sticky_interrupt_text: str
@@ -559,6 +565,23 @@ class DuplexSpeakerMixin:
         if decision.classification != "guest" and decision.reason_code != "owner_mismatch":
             return False
         return decision.quality_score < POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY
+
+    def _close_phrase_is_playback_echo(
+        self,
+        text: str,
+        *,
+        now_ns: int | None = None,
+    ) -> bool:
+        if not self._device_conversation_controls_enabled:
+            return False
+        completed_ns = self._last_playback_completed_ns
+        if completed_ns is None:
+            return False
+        elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
+        if not 0 <= elapsed_ms <= POST_PLAYBACK_CLOSE_ECHO_GUARD_MS:
+            return False
+        phrase = normalize_short(text)
+        return bool(phrase) and phrase in normalize_short(self._played_assistant_text)
 
     def _uncertain_speaker_decision(self, reason: str) -> SpeakerDecision:
         return SpeakerDecision(

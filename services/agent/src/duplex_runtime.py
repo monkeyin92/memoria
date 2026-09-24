@@ -123,9 +123,9 @@ from services.common.realtime_information import (
 )
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
-    DEVICE_BOUND_SUBJECT_REASON,
     SpeakerDecision,
     SpeakerPermissions,
+    is_voice_authority,
     permissions_for_speaker,
 )
 
@@ -134,10 +134,6 @@ logger = logging.getLogger(__name__)
 ResumeSpeakerBinding = tuple[str, str, int | None, str]
 POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
 POST_PLAYBACK_ECHO_GUARD_MS = 10_000
-# A farewell heard this soon after playback that the robot itself just said is
-# its own tail, not the user: short phrases such as 再见 fall under the
-# 4-character text-echo floor, and with no voiceprint nothing else rejects them.
-POST_PLAYBACK_CLOSE_ECHO_GUARD_MS = 3_000
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
 
 
@@ -1088,15 +1084,7 @@ class DuplexRuntime(
 
     @property
     def current_speaker_authority_verified(self) -> bool:
-        decision = self._speaker_decision
-        return bool(
-            decision is not None
-            and decision.classification in {"owner", "guest"}
-            and not decision.reason_code.startswith("shadow_")
-            # The device binding authorizes data, not a voice: the robot's own
-            # echo must never pass an owner-voice barge-in or nudge gate.
-            and decision.reason_code != DEVICE_BOUND_SUBJECT_REASON
-        )
+        return self._speaker_decision is not None and is_voice_authority(self._speaker_decision)
 
     @property
     def current_speaker_decision(self) -> SpeakerDecision:
@@ -2683,11 +2671,7 @@ class DuplexRuntime(
             return False, target_route.reason
         if close_turn and self._close_phrase_is_playback_echo(text):
             self.orchestrator.metrics.inc_guarded_user_input("conversation_end_playback_echo")
-            self.mark_audio_event(
-                "conversation_end_playback_echo",
-                status="ignored",
-                detail={"text_len": len(text)},
-            )
+            self.mark_audio_event("conversation_end_playback_echo", status="ignored")
             return False, "conversation_end_playback_echo"
         if close_turn:
             # The Media Voice registry owns the terminal session projection;
@@ -3947,23 +3931,6 @@ class DuplexRuntime(
                 fence=reply_fence,
             )
             self._schedule_context_snapshot_prepare()
-
-    def _close_phrase_is_playback_echo(
-        self,
-        text: str,
-        *,
-        now_ns: int | None = None,
-    ) -> bool:
-        if not self._device_conversation_controls_enabled:
-            return False
-        completed_ns = self._last_playback_completed_ns
-        if completed_ns is None:
-            return False
-        elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
-        if not 0 <= elapsed_ms <= POST_PLAYBACK_CLOSE_ECHO_GUARD_MS:
-            return False
-        phrase = normalize_short(text)
-        return bool(phrase) and phrase in normalize_short(self._played_assistant_text)
 
     def should_ignore_post_playback_backchannel(
         self,

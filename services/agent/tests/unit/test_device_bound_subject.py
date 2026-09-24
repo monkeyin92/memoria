@@ -5,10 +5,8 @@ from __future__ import annotations
 import time
 
 import pytest
-from services.agent.src.duplex_runtime import (
-    POST_PLAYBACK_CLOSE_ECHO_GUARD_MS,
-    DuplexRuntime,
-)
+from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.runtime_speaker import POST_PLAYBACK_CLOSE_ECHO_GUARD_MS
 from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,
