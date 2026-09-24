@@ -40,7 +40,7 @@
 | 后天呢（第二次） | turn 4，4 字（rms 4564） | 回答 7.4s |
 | 未来七天 | 结束点 22:01:39.7 时 0 字，5 字结果 22:01:42.2 才到 | 触发 2.5s 绝对尾超时，Agent 以 `turn_prepare_timeout` 让设备待命（Edge：`projected conversation close`）|
 
-结论：新 ASR 除回声外，还会漏掉较轻的语句，且最终结果常晚于结束点 2.5s 以上，超出现有结束判定的节奏。22:0x 已按用户决定恢复 env 备份切回 `fun-asr-realtime`（sha `75ddd624…`，与切流前一致）。
+结论：新 ASR 除回声外，还会漏掉较轻的语句，且最终结果常晚于结束点 2.5s 以上，超出现有结束判定的节奏。随后已按用户决定恢复 env 备份切回 `fun-asr-realtime`（sha `75ddd624…`，与切流前一致）。
 
 ## 选型结论
 
@@ -48,5 +48,5 @@
 
 ## 安全事件
 
-22:00 一条校验命令的 `docker inspect` 格式把容器第一个环境变量拼到了名称行，导致 `MEMORIA_INTERACTION_POLICY_TOKEN` 的值出现在操作会话输出中；未写入文件、日志或提交。建议轮换（需同时更新控制面与 Agent env 并重建），待用户决定。此后 env 校验只按变量名精确提取。
+22:00 一条校验命令的 `docker inspect` 格式把容器第一个环境变量拼到了名称行，导致 `MEMORIA_INTERACTION_POLICY_TOKEN` 的值出现在操作会话输出中；未写入文件、日志或提交。已于 2026-09-24T14:52:02Z 轮换（`outputs/acceptance/run-20260924-d1d2-deploy/rotate-interaction-policy-token.sh`）：新值在服务器上生成、不落输出，`/etc/memoria-agent.env` 与 `/etc/memoria-control-api.env` 各只变这一行（备份在 `…/20260924-d1d2-evidence-floor/token-rotation/`），先重建 Control API 再重建 Agent + Bridge；三容器 token 摘要一致且≠旧值，均 healthy，readiness 200，轮换后三容器 401/403 计数为 0，其余容器未重启。此后 env 校验只按变量名精确提取。
 
