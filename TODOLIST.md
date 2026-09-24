@@ -1,6 +1,6 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-23｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；2026-09-23 已用生产配置中的百炼 key 完成 parent-baseline source 的固定 7-case 与未见 4-case 隔离 Qwen 评测，收据已保存，未部署候选可见性代码。candidate 可见性契约及回归已在代码提交 `f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b` 中完成并验证，仍未部署；缺陷 A 设备复测仍未完成，不能宣称 3/5/8s 或 30 分钟验收通过。四份评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，不证明候选代码已部署或完整验证。其余发布、主体隔离、删除和市场复查边界保持不变；本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。
+更新于 2026-09-23｜DEMO-03 控制面已用可审计发布链切流上线（tag `20260922-demo03-control-review`/`ee57ad4`，healthy + env/binds/ports 不变 + 13 容器未触碰 + 线上 readiness 200 + 固定集无召回退步），回滚点与收据见 HANDOFF 同日节；2026-09-23 已用生产配置中的百炼 key 完成 parent-baseline source 的固定 7-case 与未见 4-case 隔离 Qwen 评测，收据已保存，未部署候选可见性代码。candidate 可见性契约及回归已在代码提交 `f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b` 中完成并验证，仍未部署；缺陷 A 设备复测仍未完成，不能宣称 3/5/8s 或 30 分钟验收通过。四份评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`，不证明候选代码已部署或完整验证。其余发布、主体隔离和删除边界保持不变；本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`，过时探针、旧 CI 数字和重复修复流水账从本文件删除。
 
 ## 当前边界（不得越界宣称）
 
@@ -149,13 +149,6 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - F1/F2 已发布（tag `20260920-f1f2-owner-silence-and-barge`）；F1 有 2026-09-21 设备窗口的 owner-silence 观察，F2 仅有 `button.stop` happy path 证据，禁止源 barge 未真实触发，不能宣称完整 F1/F2 契约已完成；修好模拟音频工具的两处自检判据（live 缓冲窗口、参考波形匹配）后跑自动问答扫频仍开放。
 
 - 身份收敛（发布治理）：control-api 期望的 release tag 应与真实发布 tag 一致，取消"agent 上报历史冻结 tag"的临时对齐；与预构建镜像入口一并作为 P1-01 输入。
-
-## 研究重评条件（非开发队列）
-
-- R-20260917-01 已转化为 P1-05/P1-06/P2-06；只有学生功能与安全链闭环、出现明确老人试点和一手交付/隐私证据时，才重评老年阶段。
-- R-20260918-01/02 不改变当前桌面语音终端、学生优先、半双工和 P0 安全/TTS 优先级；只有独立验证的交付、效果、价格和长期可用证据出现时再重评硬件与市场定位。
-- R-20260921-01 启元 Q1/T1 已于 2026-09-20 正式发售：Q1/T1 标准版均 19999 元，Q1 探索版 26999 元、T1 Pro 29999 元；10 月 1 日起按订单发货；Q1 约 88cm 可折叠人形，T1 轮足/四足切换，接入腾讯云 WorkBuddy（新浪科技 2026-09-20 https://finance.sina.com.cn/jjxw/2026-09-20/doc-inisnhca6711656.shtml ；凤凰网等同日报道）。结论：强化 R-20260918-01 反定位——价位与具身形态均非 ESP-VoCat 桌面语音终端赛道；不新增 P 项，不改学生优先 / interrupt_assist 上限 / P0-03·P0-04 优先级。重评触发：真实用户开箱与长期留存一手证据，或桌面语音价位带出现可比交付。同日核对：风峦桌面伴学仍无样机/开箱实锤（公开仍称约 11 月前首代样机、约 6000 元），维持 R-20260918-02；LiveKit Agents 上游仍 1.8.2（无 1.8.3）；VoiceMem 仍 0.2.2 且 agents<1.8 不兼容；不跟踪本地 FunASR PyPI；U1 仍无个人签收/开箱实锤。
-- R-20260921-02 无动作/延期登记：ESP-SR 2.5.4 已在 Espressif Component Registry 发布（changelog 增 wn10_* / nsnet3；https://components.espressif.com/components/espressif/esp-sr/versions/2.5.4/changelog ）。按「暂缓」：ESP-IDF/ESP-SR/upstream 整体升级不自动扩张；仅登记待日后与 xiaozhi overlay / 茉莉唤醒词一并评估，不新开 P 项，也不据此宣称 AEC/全双工改善。xiaozhi #2036 仍 open（末活跃 2026-07-07）；LiveKit Agents 仍 1.8.2；VoiceMem 0.2.2 仍 agents<1.8 不兼容；Bubbo 1 预定已在既有雷达内、不重复开项；《拟人化互动办法》已生效约束继续由既有 P0-04/P2-03 承接，不另开合规 P。
 
 ---
 
