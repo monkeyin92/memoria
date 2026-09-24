@@ -56,6 +56,11 @@ function consentRows(payload) {
   });
 }
 
+function minorDataError(error, fallback) {
+  if (error?.status === 403) return "只有监护人或绑定发起人可以处理 TA 的数据。";
+  return error?.message || fallback;
+}
+
 function personConsentError(error) {
   if (error?.code === "guardian_binding_owner_required" || error?.status === 403) {
     return "只有监护绑定发起人可以修改这项授权。";
@@ -89,6 +94,13 @@ Page({
     summary: null,
     summaryState: "idle",
     notifications: [],
+    minorExport: null,
+    showMinorDelete: false,
+    minorDeletePersonId: "",
+    minorDeleteConfirmation: "",
+    minorDeleteConfirmText: api.GUARDIAN_MINOR_DELETE_CONFIRMATION,
+    minorDeleting: false,
+    minorDeleteError: "",
   },
 
   onLoad() {
@@ -130,6 +142,12 @@ Page({
       boundSubjects: [],
       notifications: [],
       summary: null,
+      minorExport: null,
+      showMinorDelete: false,
+      minorDeletePersonId: "",
+      minorDeleteConfirmation: "",
+      minorDeleting: false,
+      minorDeleteError: "",
     });
   },
 
@@ -355,6 +373,98 @@ Page({
       this.setData({ error: personConsentError(error) });
     } finally {
       this.setData({ working: false });
+    }
+  },
+
+  /*
+   * 无账号孩子的数据导出 / 删除。导出是服务端的监护人视图（治理元数据），
+   * 不含对话原文，页面也不展示导出内容，只写成文件供发送到微信聊天保存。
+   */
+  async exportMinorData(event) {
+    const personId = event.currentTarget.dataset.personId;
+    if (!personId || this.data.working) return;
+    this.setData({ working: true, error: "", minorExport: null });
+    try {
+      const exported = await api.exportGuardianMinorData(personId);
+      const fileName = `memoria-child-export-${Date.now()}.json`;
+      const filePath = `${wx.env.USER_DATA_PATH}/${fileName}`;
+      await new Promise((resolve, reject) => {
+        wx.getFileSystemManager().writeFile({
+          filePath,
+          data: JSON.stringify(exported ?? {}, null, 2),
+          encoding: "utf8",
+          success: resolve,
+          fail: reject,
+        });
+      });
+      this.setData({ minorExport: { personId, filePath, fileName } });
+      wx.showToast({ title: "导出文件已生成", icon: "success" });
+    } catch (error) {
+      this.setData({ error: minorDataError(error, "导出失败，请稍后重试。") });
+    } finally {
+      this.setData({ working: false });
+    }
+  },
+
+  /* 分享文件必须由点击触发，所以导出完成后单独给一个发送按钮。 */
+  shareMinorExport() {
+    const exported = this.data.minorExport;
+    if (!exported?.filePath) return;
+    wx.shareFileMessage({
+      filePath: exported.filePath,
+      fileName: exported.fileName,
+      fail: () => wx.showToast({ title: "发送未完成", icon: "none" }),
+    });
+  },
+
+  openMinorDelete(event) {
+    const personId = event.currentTarget.dataset.personId;
+    if (!personId || this.data.working) return;
+    this.setData({
+      showMinorDelete: true,
+      minorDeletePersonId: personId,
+      minorDeleteConfirmation: "",
+      minorDeleteError: "",
+    });
+  },
+
+  closeMinorDelete() {
+    if (this.data.minorDeleting) return;
+    this.setData({ showMinorDelete: false, minorDeletePersonId: "", minorDeleteConfirmation: "" });
+  },
+
+  noop() {},
+
+  onMinorDeleteConfirmation(event) {
+    this.setData({ minorDeleteConfirmation: event.detail.value, minorDeleteError: "" });
+  },
+
+  async confirmMinorDelete() {
+    const { minorDeletePersonId, minorDeleteConfirmation, minorDeleting } = this.data;
+    if (minorDeleting || !minorDeletePersonId) return;
+    if (minorDeleteConfirmation !== api.GUARDIAN_MINOR_DELETE_CONFIRMATION) {
+      this.setData({
+        minorDeleteError: `请完整输入「${api.GUARDIAN_MINOR_DELETE_CONFIRMATION}」。`,
+      });
+      return;
+    }
+    this.setData({ minorDeleting: true, minorDeleteError: "" });
+    try {
+      await api.deleteGuardianMinorData(minorDeletePersonId, {
+        confirmation: minorDeleteConfirmation,
+      });
+      this.setData({
+        showMinorDelete: false,
+        minorDeletePersonId: "",
+        minorDeleteConfirmation: "",
+        minorExport: null,
+      });
+      wx.showToast({ title: "已删除 TA 的数据", icon: "success" });
+      await this._loadBoundSubjectConsents();
+    } catch (error) {
+      this.setData({ minorDeleteError: minorDataError(error, "删除失败，请稍后重试。") });
+    } finally {
+      this.setData({ minorDeleting: false });
     }
   },
 

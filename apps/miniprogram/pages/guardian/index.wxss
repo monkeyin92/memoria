@@ -75,3 +75,8 @@
 .picker-value {
   color: #326e70;
 }
+
+/* 删除孩子数据：居中弹窗复用全局 .modal-wrap / .modal-card，只补输入框间距 */
+.modal-card .field-input {
+  margin-top: 24rpx;
+}
