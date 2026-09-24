@@ -54,6 +54,16 @@ _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
 _DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
+# Bound how long admitted output may wait behind a pending turn that has no
+# text evidence at all.  Run 2026-09-24 session b18fede9: a ready weather
+# answer waited ~8 s because room-noise VAD bursts under 2.5 s apart kept
+# re-opening one empty pending turn (each vad.start resets the tail timeout)
+# while FunASR and the rescue both heard nothing.  Real speech yields a
+# partial well within the per-VAD extension, and any text evidence cancels
+# the cap, so only evidence-less holds are retired early.
+_EVIDENCE_LESS_HOLD_BASE_S = 3.0
+_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S = 1.5
+_EVIDENCE_LESS_HOLD_MAX_S = 6.0
 
 
 class MediaTurnEndpointMixin:
@@ -1186,53 +1196,13 @@ class MediaTurnEndpointMixin:
                 or context.turn_endpoint_sample != endpoint_sample
             ):
                 return
-            input_fence = context.turn_input_fence
             partial = context.pending_partial
-            provisional = context.projection.provisional
-            empty_input = not any(
-                text and text.strip()
-                for text in (
-                    partial.text if partial is not None else None,
-                    provisional.text if provisional is not None else None,
-                    context.clock_fact_forced_text,
-                    context.live_query_forced_text,
-                )
-            )
-            if not await self._retire_pending_turn_input_range(
+            discarded, resume_owned_output = await self._retire_pending_turn_locked(
                 context,
                 stream_epoch=stream_epoch,
                 endpoint_sample=endpoint_sample,
-            ):
-                context.asr.mark_committed(endpoint_sample)
-            discarded = context.projection.discard_provisional(
-                None,
-                "provider_final_missing",
+                floor_cause="empty_input_retired",
             )
-            self._clear_pending_turn_state(context)
-            # A control/identity/generation change retires this placeholder;
-            # only the exact originating fence may restore queued playback.
-            if (
-                empty_input
-                and input_fence is not None
-                and input_fence.matches(context.runtime.fence)
-                and not context.closed
-                and not context.standby_requested
-                and not context.runtime.formal_speaker_enrollment_active
-            ):
-                context.runtime.open_assistant_floor(cause="empty_input_retired")
-                resume_owned_output = owned_delegation_holds_turn(
-                    context.delegation_output_claims, input_fence
-                ) or any(
-                    self._output_work_is_active(context, work)
-                    for work in tuple(context.output_work.values())
-                )
-                self._schedule_output_retry(context)
-                logger.info(
-                    "media empty input retired session=%s fence=%s resume_output=%s",
-                    session_id, input_fence, resume_owned_output,
-                )
-            if context.runtime.assistant_speaking:
-                context.runtime.publish_assistant_audio("restore", gain=1.0)
         if discarded is not None:
             await self._emit_projection_patch(context, discarded)
         logger.warning(
@@ -1248,6 +1218,206 @@ class MediaTurnEndpointMixin:
         )
         if endpoint_sample > 0 and not resume_owned_output:
             self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
+
+    @staticmethod
+    def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool:
+        partial = context.pending_partial
+        provisional = context.projection.provisional
+        return any(
+            text and text.strip()
+            for text in (
+                partial.text if partial is not None else None,
+                provisional.text if provisional is not None else None,
+                context.clock_fact_forced_text,
+                context.live_query_forced_text,
+            )
+        )
+
+    async def _retire_pending_turn_locked(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        stream_epoch: int,
+        endpoint_sample: int,
+        floor_cause: str,
+    ) -> tuple[ProjectionPatch | None, bool]:
+        """Discard the pending turn; hand the floor back if it held no text.
+
+        Caller holds ``turn_commit_lock``.  Returns the projection discard
+        patch and whether queued same-turn output was resumed.
+        """
+
+        input_fence = context.turn_input_fence
+        empty_input = not self._pending_turn_has_text_evidence(context)
+        if not await self._retire_pending_turn_input_range(
+            context,
+            stream_epoch=stream_epoch,
+            endpoint_sample=endpoint_sample,
+        ):
+            context.asr.mark_committed(endpoint_sample)
+        discarded = context.projection.discard_provisional(
+            None,
+            "provider_final_missing",
+        )
+        self._clear_pending_turn_state(context)
+        resume_owned_output = False
+        # A control/identity/generation change retires this placeholder;
+        # only the exact originating fence may restore queued playback.
+        if (
+            empty_input
+            and input_fence is not None
+            and input_fence.matches(context.runtime.fence)
+            and not context.closed
+            and not context.standby_requested
+            and not context.runtime.formal_speaker_enrollment_active
+        ):
+            self._clear_evidence_less_floor_hold(context)
+            context.runtime.open_assistant_floor(cause=floor_cause)
+            resume_owned_output = owned_delegation_holds_turn(
+                context.delegation_output_claims, input_fence
+            ) or any(
+                self._output_work_is_active(context, work)
+                for work in tuple(context.output_work.values())
+            )
+            self._schedule_output_retry(context)
+            logger.info(
+                "media empty input retired session=%s fence=%s resume_output=%s cause=%s",
+                context.identity.session_id, input_fence, resume_owned_output, floor_cause,
+            )
+        if context.runtime.assistant_speaking:
+            context.runtime.publish_assistant_audio("restore", gain=1.0)
+        return discarded, resume_owned_output
+
+    @staticmethod
+    def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None:
+        handle = context.evidence_less_hold_handle
+        if handle is not None:
+            handle.cancel()
+        context.evidence_less_hold_handle = None
+        context.evidence_less_hold_since = None
+
+    def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None:
+        """Start, or extend on vad.start, the cap on a floor-blocked wait.
+
+        Each vad.start may push the cap to at most 1.5 s after itself, never
+        past 6 s after the output first waited.  Expiry re-checks everything:
+        text evidence, an open floor or no queued output leaves it inert.
+        """
+
+        if context.closed:
+            return
+        now = time.monotonic()
+        since = context.evidence_less_hold_since
+        if since is None:
+            if context.runtime.output_floor_allows_assistant:
+                return
+            since = now
+            context.evidence_less_hold_since = since
+        deadline = min(
+            since + _EVIDENCE_LESS_HOLD_MAX_S,
+            max(since + _EVIDENCE_LESS_HOLD_BASE_S, now + _EVIDENCE_LESS_HOLD_VAD_EXTENSION_S),
+        )
+        handle = context.evidence_less_hold_handle
+        if handle is not None:
+            handle.cancel()
+        context.evidence_less_hold_handle = asyncio.get_running_loop().call_later(
+            max(0.0, deadline - now),
+            self._start_evidence_less_hold_expiry,
+            context.identity.session_id,
+            context.stream_epoch,
+        )
+
+    def _start_evidence_less_hold_expiry(self, session_id: str, stream_epoch: int) -> None:
+        context = self._sessions.get(session_id)
+        if context is None or context.closed or context.stream_epoch != stream_epoch:
+            return
+        context.evidence_less_hold_handle = None
+        asyncio.create_task(
+            self._expire_evidence_less_floor_hold(session_id, stream_epoch),
+            name=f"media-evidence-less-hold-{session_id}",
+        )
+
+    def _evidence_less_hold_applies(self, context: _MediaVoiceSession) -> bool:
+        return (
+            not context.closed
+            and not context.standby_requested
+            and not context.runtime.output_floor_allows_assistant
+            and context.turn_start_sample is not None
+            and not self._pending_turn_has_text_evidence(context)
+            and any(
+                self._output_work_is_active(context, work)
+                for work in tuple(context.output_work.values())
+            )
+        )
+
+    async def _expire_evidence_less_floor_hold(
+        self,
+        session_id: str,
+        stream_epoch: int,
+    ) -> None:
+        context = self._sessions.get(session_id)
+        if context is None or context.stream_epoch != stream_epoch:
+            return
+        if context.evidence_less_hold_handle is not None:
+            # A vad.start re-armed the cap while this task was queued.
+            return
+        since = context.evidence_less_hold_since
+        if since is None or not self._evidence_less_hold_applies(context):
+            self._clear_evidence_less_floor_hold(context)
+            return
+        discarded: ProjectionPatch | None = None
+        resume_owned_output = False
+        endpoint_sample = 0
+        async with context.turn_commit_lock:
+            if (
+                self._sessions.get(session_id) is not context
+                or context.stream_epoch != stream_epoch
+                or context.evidence_less_hold_handle is not None
+                or not self._evidence_less_hold_applies(context)
+            ):
+                if context.evidence_less_hold_handle is None:
+                    self._clear_evidence_less_floor_hold(context)
+                return
+            start_sample = context.turn_start_sample
+            if start_sample is None:
+                return
+            endpoint_task = context.turn_endpoint_task
+            if (
+                endpoint_task is not None
+                and endpoint_task is not asyncio.current_task()
+                and not endpoint_task.done()
+            ):
+                endpoint_task.cancel()
+            # The device VAD may still be open: retire everything uplinked so
+            # far.  Later audio of the same burst straddles this watermark and
+            # is rejected rather than re-opening the floor.
+            endpoint_sample = max(
+                start_sample + 1,
+                context.turn_end_sample or 0,
+                context.turn_endpoint_sample or 0,
+                context.asr.last_sent_sample,
+            )
+            context.turn_end_sample = max(context.turn_end_sample or 0, endpoint_sample)
+            context.turn_endpoint_sample = endpoint_sample
+            context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint_sample)
+            discarded, resume_owned_output = await self._retire_pending_turn_locked(
+                context,
+                stream_epoch=stream_epoch,
+                endpoint_sample=endpoint_sample,
+                floor_cause="evidence_less_hold_capped",
+            )
+            self._clear_evidence_less_floor_hold(context)
+        if discarded is not None:
+            await self._emit_projection_patch(context, discarded)
+        logger.warning(
+            "media evidence-less floor hold capped session=%s stream_epoch=%s "
+            "endpoint=%s waited_s=%.2f resume_output=%s",
+            session_id,
+            stream_epoch,
+            endpoint_sample,
+            time.monotonic() - since,
+            resume_owned_output,
+        )
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:
         if context.closed or context.standby_requested:
