@@ -2,7 +2,7 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：三组件生产快照如下；相关运行容器共 12 个，当前均 healthy。本轮文档与评测收据改动已提交，尚未 push/部署。
+- **最近生产收据**：三组件生产快照如下；相关运行容器共 12 个，当前均 healthy。2026-09-24 真实设备复测收据已保存至 [缺陷 A 复测收据](docs/acceptance/run-20260924-defect-a-retest-live/findings.md)；本轮未部署、未切流、未刷机。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
@@ -13,8 +13,8 @@
 - **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，不能作为当前候选代码已部署或已完整验证的证明。
 - **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 仍为 `memoria-control-api:20260922-demo03-control-review`。
-- **未关闭缺陷**：缺陷 A 已发布但设备复测未完成；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：设备上电，按日志边界、无回声合并、3/5/8 秒精确格和 30 分钟长稳复测缺陷 A。P0-03 设备子项在此之前保持开放。
+- **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界已通过；工具查询最终回答未完成，TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
+- **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
 
 ## 2026-09-23 记忆评测边界修复与逐 case 诊断（当前工作区，未部署）
@@ -417,10 +417,18 @@ uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
 - 输出：`outputs/acceptance/run-20260921-demo07-tech-materials/DEMO-07-tech-materials.md`——架构图页（生产实跑形态文字版：Go edge→bridge→agent→control-api→小程序，存储四件套）+ 壁垒 2 页（记忆全链+确定性兜底证据 / 陪伴评估基线 / 发布与隐私门实证）+ 甘特数据表 + 成本表（只报实测 token 量，不编单价）+ 技术 Q&A（当前实测口径）。
 - 关键修正（相对 TODOLIST 原提纲）：成本"8 元/月/用户"旧估算无压测依据，BP 沿用会被尽调打回——本文件只给实测 input≈5129/output≈1400 per 记忆提取轮，单价待商务按日活建模；Q&A 准确率口径为"固定集 1.0 + 分层衰减待测"。待商务转 PPT/Excel 合入 BP。
 
-## 2026-09-21 缺陷 A 修复发布：defect-a-followup-endpoint 上线（切流 PASS，待设备复测）
+## 2026-09-21 缺陷 A 修复发布：defect-a-followup-endpoint 上线（切流 PASS，核心设备边界已复测）
 
 - **发布**：tag `20260921-defect-a-followup-endpoint`（commit `2a33a50`，已推送）。agent/bridge 切至 `memoria-agent:20260921-defect-a-followup-endpoint`（`sha256:2b386e26f852…`，delta 自 f1f2 基像构建），收据 `/opt/memoria/component-releases/20260921-defect-a-followup-endpoint/CUTOVER_RESULT.txt`（含 sha256 与回滚 override）。全栈 12 容器 healthy；容器内已逐符号核实缺陷 A 代码在跑（`_maybe_endpoint_playback_followup`/`last_playback_end_sample`/`playback_followup_endpoint_sample`/两个常量）且整树覆盖带入（archive 修复同在）。**控制面语义**：agent/bridge 上报身份仍钉冻结 tag `20260901-0945-wake-word-whitelist`/`7ca3d4ec`；`MEDIA_OWNER_SILENCE_TIMEOUT_S=30` 由新 base compose 固化（今晨的 env override `20260921-f1-silence-30s` 已退出链条、被 base 取代）。回滚：`agent-component.rollback.override.yml`（f1f2 + 同身份钉值）。
 - **修复内容（本文件上节缺陷 A 的方向一）**：播放终止快照上行捕获域边界（证据水位 + 0.8s 回声尾余量）→ gap 拆分新增 playback 边界分支（不再被回声驻留 VAD/2.5s 间隔门压制）→ followup 提前 endpoint（1.2s grace，不等 vad.end/离线段，续说并入同话轮）；supervisor 拒绝门未放宽。4 个新单测走 commit_user_turn 正路；全量 pytest + mypy --strict + ruff + offline e2e 绿。
 - **为何没走组件快车道（工具缺口扩展，P1-01 输入）**：快车道从「全量镜像基线」切流有两道独立硬门——①切流预检要求在跑 agent/bridge 镜像带 `com.memoria.release.kind` 标签（全量 Dockerfile 不打此标签）；②回滚冻结同样要求该标签 ∈ {agent-source-overlay, agent-running-source-recovery}。f1f2 是全量产物 ⇒ 快车道不可用，按 09-20 先例走 delta 全量构建 + 手动切流。修复尝试中一并发现/解决：本机 rsync 为 openrsync（需 homebrew 3.x）、服务器 docker 29 无 buildx 插件致 legacy builder 拒 `COPY --chmod`（overlay 与 delta 两处 Dockerfile 的 `--chmod=0644` 均为冗余——git 模式 100644 + `RUN chmod -R` 兜底——已删，镜像内容逐字节不变）。
 - **compose base 快照换版**：切流链的 base 由 20260827 旧快照换为 repo@d61d486 的 `docker-compose.production.yml`（`/opt/memoria/releases/20260921-defect-a-base/`）——与组件脚本「base sha == git show <base_commit>:compose」的校验对齐，同时把 silence-30 与 P1-01 隐私门 env（`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=0`/`LIVEKIT_TELEMETRY_ALLOW_PII=0`，agent+bridge）正式带入生产链。**遗留**：`firmware/esp32/.cache`（48GB ESP-IDF 历史构建缓存）不在 `.dockerignore`，把构建上下文撑到撑爆 Docker VM 磁盘——本轮以「同卷移出至 `/tmp/memoria-firmware-cache-parking/`（可随时 mv 回）」绕过；正解是 `.dockerignore` 加 `firmware`，但它是依赖冻结输入，须随下一次全量发布或专用清理工单处理。
-- **设备复测窗口（下一步，需设备上电）**：判据＝①播放结束后追问（"后天呢"式）在 bridge 日志出现 `media playback-followup endpoint boundary=… endpoint=…` 并在 ~1.2s grace 后提交（不再等 20s/下一 vad.start）；②播放刚结束时无回声文本被提交（无 echo+追问合并话轮）；③3/5/8s 精确追问格；④30 分钟长稳。全过则关闭缺陷 A（P0-03 设备子项）。
+- **设备复测结论（2026-09-24）**：3/5/8s “后天呢？”均出现非空 `media playback-followup endpoint boundary=… endpoint=…`，形成独立话轮并完成 Actual Heard/播放结束；未见 echo+追问合并。30 分钟基础长稳通过但伴随 TLS/WSS 自动重连观察项；工具查询最终回答未完成，因此仅关闭“缺陷 A 核心续问边界”这一子结论，不能关闭 P0-03。完整收据见 [docs/acceptance/run-20260924-defect-a-retest-live/findings.md](docs/acceptance/run-20260924-defect-a-retest-live/findings.md)。
+
+## 2026-09-24 缺陷 A 真实设备复测（核心边界通过，P0-03 未关闭）
+
+- **候选与采集**：真实设备采集窗口为 `2026-09-24 11:45:34.122697`–`12:15:34.489031` CST，持续 1800s；服务端候选为 `memoria-agent:20260921-defect-a-followup-endpoint` / commit `2a33a50e85d09dc61944ac860e311d247a1020e2`。本轮未刷机、未向串口写数据、未重启服务；固件版本未从板上重新读取。
+- **核心续问判定：通过**：同一主会话中 3/5/8s 停顿的“后天呢？”分别形成独立 `turn_id=3/4/5`，均有非空 boundary/endpoint、`actual_heard=true`、`playback_ended=true`；未见旧的回声与追问合并。逐格 boundary/endpoint 与日志链接见[完整收据](docs/acceptance/run-20260924-defect-a-retest-live/findings.md)。
+- **长稳判定：基础通过，带连接观察项**：约第 10、12、14 分钟的三次人工唤醒均独立应答并回到 idle；无二次复位、panic、服务重启或 uptime reset。但期间多次出现 TLS/WebSocket 断开并自动重连，重连频率、期间体验和根因仍待收敛。
+- **未完成边界**：“今天适合散步吗？”只完成了“我稍等，查询一下”的首段播放，最终工具查询回答在首帧前被 `conversation_end_explicit` / `output_task_cancelled` 取消；>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归仍未覆盖。BMI2 I2C 超时为独立硬件观察项，不归因于缺陷 A。
+- **状态**：本轮将缺陷 A 从“待真机复测”推进为“核心续问边界真实设备证据通过”，但 `P0-03` 保持 `[ ]`；`direct_real_device_verified=false`、`full_duplex_verified=false` 不变。

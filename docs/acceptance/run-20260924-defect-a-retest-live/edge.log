@@ -1,0 +1,8 @@
+2026-09-24T03:51:18.604724306Z 2026/09/24 03:51:18 media edge projected conversation close session=b18fede9-5711-49d1-b205-a3044d57ce70 device=dev_atk_a4cb8fd6095c epoch=1995 reason=conversation_end_explicit control_sequence=23
+2026-09-24T04:07:22.127394006Z 2026/09/24 04:07:22 media edge device WSS socket error session=b18fede9-5711-49d1-b205-a3044d57ce70 device=dev_atk_a4cb8fd6095c epoch=1995 phase=read close_code=1005 close_text=""
+2026-09-24T04:07:49.624240644Z 2026/09/24 04:07:49 media edge projected conversation close session=d35e09d7-0cd9-4fc9-b215-448f60bcaf18 device=dev_atk_a4cb8fd6095c epoch=1996 reason=conversation_end_explicit control_sequence=7
+2026-09-24T04:10:19.108985253Z 2026/09/24 04:10:19 media edge device WSS socket error session=d35e09d7-0cd9-4fc9-b215-448f60bcaf18 device=dev_atk_a4cb8fd6095c epoch=1996 phase=read close_code=1005 close_text=""
+2026-09-24T04:10:38.910334976Z 2026/09/24 04:10:38 media edge projected conversation close session=7718e8db-b094-4a77-af4a-c33394425cb7 device=dev_atk_a4cb8fd6095c epoch=1997 reason=conversation_end_explicit control_sequence=7
+2026-09-24T04:14:52.243624519Z 2026/09/24 04:14:52 media edge device WSS socket error session=7718e8db-b094-4a77-af4a-c33394425cb7 device=dev_atk_a4cb8fd6095c epoch=1997 phase=read close_code=1005 close_text=""
+2026-09-24T04:15:05.887299764Z 2026/09/24 04:15:05 media edge projected conversation close session=59c608e0-0a1b-4c7e-8a30-433f83d1cf17 device=dev_atk_a4cb8fd6095c epoch=1998 reason=conversation_end_explicit control_sequence=7
+2026-09-24T04:15:10.895519242Z 2026/09/24 04:15:10 media edge device WSS socket error session=59c608e0-0a1b-4c7e-8a30-433f83d1cf17 device=dev_atk_a4cb8fd6095c epoch=1998 phase=read close_code=1005 close_text=""
