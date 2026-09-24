@@ -212,6 +212,9 @@ function errorFromResponse(response) {
                               ? "这项授权已经存在，请刷新后再试。"
                               : code === "guardian_binding_owner_required"
                                 ? "只有监护绑定发起人可以修改这项资料或授权。"
+                              : code === "subject_deletion_unavailable" ||
+                                  code === "child_subject_deletion_unavailable"
+                                ? "删除 TA 数据的功能还在完善中，暂时可以先选择保留数据。"
                                 : code === "identity_authority_unavailable"
                                   ? "暂时无法确认身份资料，已按受限模式处理。"
                                   : code === "voice_clone_forbidden" || code === "voice_clone"
