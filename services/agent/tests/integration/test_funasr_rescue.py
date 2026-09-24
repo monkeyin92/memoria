@@ -75,6 +75,11 @@ async def test_rescue_emits_synthetic_final_for_silent_task(
     assert final is not None
     assert final.sentence_end is True
     assert final.text == "兜底识别成功。"
+    assert final.rescue_synthesized is True
+    # Constant-amplitude PCM: RMS and peak both equal the amplitude, so
+    # downstream gates can see how loud the rescued audio really was.
+    assert final.rescue_rms == 200
+    assert final.rescue_peak_abs == 200
     assert events[-1].task_id == task_id
     assert session.task_id == task_id
 

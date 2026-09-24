@@ -45,3 +45,30 @@
 ## 判定边界
 
 本轮可以把缺陷 A 的**核心续问边界**从“待真机复测”更新为“真实设备核心证据通过”；不能据此关闭 P0-03，也不能把设备整体 `direct_real_device_verified` 或 `full_duplex_verified` 改为 `true`。下一步应先收敛工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 的长答、故障注入和交互回归矩阵。
+
+## 离线诊断：工具查询最终回答被取消的根因（2026-09-24 同日补记）
+
+依据仅为本目录 `bridge.log` 与 `serial.log`（`agent.log` 为 0 字节，采集时 agent 日志流未取到内容）；未保存原始音频，以下对“3 字文本来自底噪”的判断为**极可能**，不是确证。
+
+时间线（UTC `03:51`，`session=b18fede9`，`turn_id=6`）：
+
+| 时刻 | 事件 |
+|---|---|
+| 08.11 | generation 7“稍等”播完，`speaking→tool_waiting` |
+| 10.04 | 设备 VAD start → `tool_waiting→user_speaking`，话语权归用户 |
+| 10.18 | realtime search 返回（206 字符 / 5020ms），回答 `media output deferred reason=floor_blocked` |
+| 10.0–17.6 | 设备连报 3 段 VAD；FunASR 均 `vendor_silent`，SenseVoice 救援前两段为空 |
+| 17.90 | 第 3 段救援得 3 字，preview 阶段被拒 `straddles_committed_without_timing` |
+| 18.23 | 空话轮尾超时退役（`turn discarded after ASR tail timeout`），generation 8 开始合成 |
+| 18.60 | straddle 恢复路径把 3 字判为告别 → `early conversation-close endpoint source=final` → generation 8 首帧前 `preempted` |
+
+逐段上行能量（`media_asr_boundary` 的 int16 rms / peak）：本轮真人话轮 rms 2812–5269、peak 均为 32768（削波）；上表 3 段为 265/1850、306/1695、**389/2616**，与同轮空闲底噪（rms 143–423）同量级。触发告别的正是最后一段。长稳阶段 3 次告别来自 FunASR 实时 partial 或语义 final，与操作者描述一致，判为真实告别。
+
+两个缺陷：
+
+- **D1 底噪占住话语权**：设备 VAD 被底噪触发，且其边界 rms 不能区分真话与噪声（真实话轮边界也只有 0.0006–0.0014）。两路 ASR 已判空后话语权仍不释放；每段新 VAD 延长同一空话轮并重置 2.5s 尾超时，工具回答因此被压约 8s，用户在“稍等”后近 10s 无声。**未修复**，方案待定（见下）。
+- **D2 近噪声救援结果可结束会话**：`_recover_straddling_live_query_final` 对被拒的救援结果仍做告别判定；唯一的低能量保护只覆盖 `CROSS_SENTENCE_OVERLAP`，且阈值沿用 SenseVoice 入口门槛（rms 100 / peak 350），低于本房间底噪。**已在本地修复，未部署**：救援结果携带所救 PCM 段的 `rescue_rms`/`rescue_peak_abs`，两种被拒形状下，rms < 1000 且 peak < 8000 的救援告别不结束会话。代价是：音量很低的真实告别不会立即待命，改由 owner-silence 30s 超时回到待命。回归 `test_device_straddling_rescue_farewell_needs_speech_energy`（底噪组在去掉修复后失败、真话组保持告别）。
+
+D1 候选方案（未实现，需评审）：两路 ASR 对某 VAD 段都给出“空”结论时立即退役该空话轮并恢复被 `floor_blocked` 的输出，不等尾超时；另给排队的工具回答设“无文本证据占用”的最长等待。须回归 3/5/8s 续问格，不得回退缺陷 A。
+
+附带观察：真人话轮上行 PCM 普遍削波（peak 32768，DTLN makeup gain 8.0 / 18 dB），可能影响识别质量，需单独评估，不计入本判定。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.agent.src.providers.funasr_protocol import (
+    FunASRSentence,
     build_continue_task_context,
     build_finish_task,
     build_run_task,
@@ -95,6 +96,29 @@ def test_sentence_to_asr_result_uses_sample_clock() -> None:
     offset = sentence_to_asr_result(sentence, task_epoch=2, sample_offset=10_000)
     assert offset.capture_start_sample == 12_720
     assert offset.capture_end_sample == 24_720
+    assert result.rescue_rms is None
+    assert result.rescue_peak_abs is None
+
+
+def test_sentence_to_asr_result_carries_rescue_energy() -> None:
+    sentence = FunASRSentence(
+        sentence_id=0,
+        text="拜拜。",
+        begin_ms=0,
+        end_ms=2_820,
+        sentence_end=True,
+        heartbeat=False,
+        words=(),
+        rescue_synthesized=True,
+        rescue_rms=389,
+        rescue_peak_abs=2_616,
+    )
+
+    result = sentence_to_asr_result(sentence, task_epoch=9)
+
+    assert result.rescue_synthesized is True
+    assert result.rescue_rms == 389
+    assert result.rescue_peak_abs == 2_616
 
 
 def test_sentence_to_asr_result_downgrades_malformed_word_timing() -> None:

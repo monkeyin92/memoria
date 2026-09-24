@@ -39,6 +39,11 @@ class FunASRSentence:
     # for provider silence, so it must never outrank a real provider final on
     # the same audio (see ASRResult.rescue_synthesized).
     rescue_synthesized: bool = False
+    # Uplink energy of the rescued PCM segment (int16 RMS / peak), carried so
+    # consumers can tell a rescue transcript of real speech from one decoded
+    # out of near-silence.  None for provider finals.
+    rescue_rms: int | None = None
+    rescue_peak_abs: int | None = None
 
 
 def sentence_to_asr_result(
@@ -98,6 +103,8 @@ def sentence_to_asr_result(
         stream_epoch=stream_epoch,
         word_timings=word_timings,
         rescue_synthesized=sentence.rescue_synthesized,
+        rescue_rms=sentence.rescue_rms,
+        rescue_peak_abs=sentence.rescue_peak_abs,
     )
 
 
