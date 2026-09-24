@@ -2,12 +2,12 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：三组件生产快照如下；相关运行容器共 12 个，当前均 healthy。2026-09-24 真实设备复测收据已保存至 [缺陷 A 复测收据](docs/acceptance/run-20260924-defect-a-retest-live/findings.md)；本轮未部署、未切流、未刷机。
+- **最近生产收据**：三组件生产快照如下；相关运行容器共 12 个，当前均 healthy。2026-09-24 晚 Agent/Bridge 切至 D1/D2 候选并做了新 ASR 真机对照，收据见 [D1/D2 发布与新 ASR 设备对照](docs/acceptance/run-20260924-d1d2-deploy/findings.md)；新 ASR 已切回 `fun-asr-realtime`，env 与切流前一致；未刷机。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
 | Control API | `memoria-control-api:20260922-demo03-control-review` | `sha256:ac9b516b640dcee4aba8c816466115e55015a565363995daadf8328e7d2a2a2d` | `ee57ad4e6fecc75706ed4c2960d6c97cc83b8399` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | `2026-09-22T09:50:15.298053397Z` | `/opt/memoria/component-releases/20260922-demo03-control-review/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260922-demo03-control-review-pre-control` |
-| Agent / Bridge | `memoria-agent:20260921-defect-a-followup-endpoint` | `sha256:2b386e26f8526ed45ea144f639b43484f1ef6deebf159ef9ffed759e9f3f536f` | `2a33a50e85d09dc61944ac860e311d247a1020e2` | same frozen identity | healthy | 0 each | approximately `2026-09-21T10:51:00Z` | `/opt/memoria/component-releases/20260921-defect-a-followup-endpoint/CUTOVER_RESULT.txt` | `agent-component.rollback.override.yml` |
+| Agent / Bridge | `memoria-agent:20260924-d1d2-evidence-floor` | `sha256:c5c11cb79740cfa96fd05edc0ba68d658b5ee39003e6837bb415b202ca789e2a` | `3eede2f53a94493bb2754c2bc01973adcd072d6c` | same frozen identity | healthy | 0 each | approximately `2026-09-24T13:46:40Z`（ASR 切回后重建） | `/opt/memoria/component-releases/20260924-d1d2-evidence-floor/CUTOVER_RESULT.txt` | `memoria-agent:rollback-20260924-d1d2-evidence-floor-pre`（`agent-component.rollback.override.yml`） |
 | Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
 
 - **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。

@@ -5,7 +5,7 @@
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 2a33a50  # tag 20260921-defect-a-followup-endpoint，2026-09-21 agent/bridge delta 切流（含缺陷 A 方向一 + P1-01 隐私门 env + silence-30）
+enabled_release: 3eede2f  # tag 20260924-d1d2-evidence-floor（本地 tag），2026-09-24 agent/bridge 手动 cutover 块切流：2a33a50 + D2 救援告别能量门 + D1 无证据占用上限；ASR 仍为 fun-asr-realtime，TTS 仍为 Doubao；回滚 memoria-agent:rollback-20260924-d1d2-evidence-floor-pre
 control_api_release: ee57ad4  # tag 20260922-demo03-control-review，2026-09-22 控制面可审计发布链切流 PASS（healthy / env-binds-ports 不变 / 13 容器未触碰），回滚点 memoria-control-api:rollback-20260922-demo03-control-review-pre-control
 control_api_release_lane: 可审计链已用通一次（`scripts/deploy_control_component.sh` 的 cutover 块）；缺口见 P1-09
 frozen_candidate: memoria-agent:b668960  # 仅本地构建验收，未启用
@@ -24,7 +24,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ## 下一步与执行边界
 
 1. P2-03 剩余：读路径的 PG 侧对等已落地（operator `read --postgres-dsn [--account <id>]`，真实 PG 契约）；删除范围验证完成本地部分（PG 全 saga 行/对象/厂商桩/声纹 + 收据幂等）。仍未验/未做：真实 MinIO 版本删除（本地 Docker MinIO 对象写入不可用，需可用 MinIO 或生产环境）、真实 provider 删除（需密钥与授权）、备份「恢复后再删除」实现与期限声明，以及新发现的结构盲区（`memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 不在删除 saga，`remaining_account_rows` 只统计含 `account_id` 列的表）。小程序读口核验结论：各读口读的是数据所在存储（控制库 `MEMORIA_DB_PATH` 生产即 SQLite，archive/persona/digital-self/personas/growth 走 PG），archive 读口按调用者本人主体过滤；成员主体读口需客户端会话上下文，属 P1-03/P1-05。生产/设备验收仍待授权。
-2. 缺陷 A 核心设备窗口已完成；工具查询最终回答被取消的根因已离线定位（见 P0-03 的 D1/D2），D2 已提交、D1 已本地实现；两者随下一候选发布后，下一次设备窗口先补齐工具查询最终交付和 TLS/WSS 重连观察，再按同一候选继续 P0-03 的 >45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 矩阵。不得把本轮核心通过扩大为完整 P0-03 或全双工通过。
+2. 缺陷 A 核心设备窗口已完成；D1/D2 已随 `20260924-d1d2-evidence-floor` 上线，工具查询最终回答在真机走通（`docs/acceptance/run-20260924-d1d2-deploy/findings.md`）；下一次设备窗口先补齐工具查询最终交付和 TLS/WSS 重连观察，再按同一候选继续 P0-03 的 >45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 矩阵。不得把本轮核心通过扩大为完整 P0-03 或全双工通过。
 3. 生产切流、回滚演练和制品清理须另获授权；设备功能通过不等于学生安全或全双工通过。
 4. P1-08 WAL 可独立只读测量；删除、重启、定时任务、自动备份和异地副本不在当前授权内。
 
@@ -76,6 +76,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 未验证：真实设备上 ASR 的 VAD/空音频错误码与缺陷 A 边界是否一致；首包时延、音量 45 是否削波；复刻真实 enrollment（返回 ID 前缀、`DEPLOYING→OK` 状态）；3 RPS 在多设备并发下是否够用；设备试听与小程序三端。
 - 部署前必须：真实 key 跑通 provider 冒烟；生产 env 用 `prepare_production_upgrade_env.py` 重新生成（`split_production_env.py` 遇到任何 DOUBAO 键会拒绝）；readiness 证据需在同一发布里刷新为 `qwen_audio`；在途会话冻结的旧 fallback 三元组会 fail closed，需低峰切流并演练回滚。本地未跟踪的 `.env` 仍是 `TTS_PROVIDER=doubao`、`MEMORIA_VOICE_TARGET_MODEL=cosyvoice-v3.5-flash`，需要改掉才能本地启动。
 - 对 P0-03 的影响：ASR/TTS 换代后，缺陷 A 的 3/5/8s、30 分钟长稳等设备证据不再适用于新候选，必须在新候选上重新验收。
+- **ASR 真机对照失败（2026-09-24，收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`）**：生产把 `FUNASR_MODEL` 切到 `qwen-audio-3.1-asr-flash-streaming` 后，两轮会话出现 3 个“无人说话却提交的话轮”（机器人回答自己播放期的回声，含一次误判告别结束会话），同一流程的 fun-asr 对照为 0；新模型对同一问句多识别约 10 字、“稍等”开口延迟 4.1s（fun-asr 1.2–1.7s）。已切回 fun-asr。重试前需先定位：新模型的段落/VAD（默认 `far_field_meeting_16k`）是否把播放期回声并进播放后的 final、结束点与回声边界逻辑是否需要按新模型调整；可先试 `FUNASR_VAD_MODEL=near_meeting_16k` 与离线回放对照，再上真机。在此之前 TTS 迁移也不应随新 ASR 一起发布。
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
 
