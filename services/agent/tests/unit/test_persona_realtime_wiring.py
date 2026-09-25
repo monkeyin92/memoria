@@ -10,7 +10,6 @@ from services.agent.src import agent as agent_mod
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.persona_client import PersonaCapsuleSnapshot
 from services.agent.src.response_planner_client import (
     ResponsePlan,
     ResponseProvenance,
@@ -117,17 +116,10 @@ async def _prepare_speaker(
 
 
 @pytest.mark.asyncio
-async def test_legacy_persona_client_is_ignored_by_realtime_agent(
+async def test_owner_realtime_agent_answers_without_persona_capsule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
-
-    class PersonaStub:
-        async def refresh(self, **_kwargs: object) -> bool:
-            raise AssertionError("legacy persona client must not be invoked")
-
-        def cached(self, **_kwargs: object) -> PersonaCapsuleSnapshot:
-            raise AssertionError("legacy persona cache must not be read")
 
     async def fake_llm_node(
         _agent: Any,
@@ -144,7 +136,6 @@ async def test_legacy_persona_client_is_ignored_by_realtime_agent(
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        persona_client=PersonaStub(),  # type: ignore[arg-type]
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="说说你的看法")
@@ -174,14 +165,6 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     captured: dict[str, Any] = {}
     refresh_calls: list[dict[str, object]] = []
 
-    class PersonaStub:
-        async def refresh(self, **kwargs: object) -> bool:
-            refresh_calls.append(dict(kwargs))
-            return False
-
-        def cached(self, **_kwargs: object) -> PersonaCapsuleSnapshot:
-            raise AssertionError("guest path must not read private persona cache")
-
     async def fake_llm_node(
         _agent: Any,
         safe_ctx: Any,
@@ -197,7 +180,6 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        persona_client=PersonaStub(),  # type: ignore[arg-type]
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="你好")
@@ -358,19 +340,6 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     captured: dict[str, Any] = {}
     refresh_calls: list[dict[str, object]] = []
 
-    class PersonaStub:
-        async def refresh(self, **kwargs: object) -> bool:
-            refresh_calls.append(dict(kwargs))
-            return True
-
-        def cached(self, **kwargs: object) -> PersonaCapsuleSnapshot:
-            assert kwargs["speaker_class"] == "uncertain"
-            return PersonaCapsuleSnapshot(
-                version_id="persona-v1",
-                version_number=1,
-                prompt_fragment="[已确认表达风格 v1]\n- 日常表达偏好短句",
-            )
-
     async def fake_llm_node(
         _agent: Any,
         safe_ctx: Any,
@@ -386,7 +355,6 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        persona_client=PersonaStub(),  # type: ignore[arg-type]
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="主人之前说过一个私人家庭故事。")

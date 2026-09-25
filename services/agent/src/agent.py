@@ -159,7 +159,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         *,
         instructions: str,
         runtime: DuplexRuntime,
-        persona_client: Any = None,
         voice_profile_client: VoiceProfileClient | None = None,
         response_planner_client: ResponsePlannerClient | None = None,
         realtime_search_resolver: Any = None,
@@ -176,7 +175,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             super().__init__(instructions=instructions)
         self._runtime = runtime
         self._standalone_instructions = instructions
-        _ = persona_client
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
         self._realtime_search_resolver = realtime_search_resolver
