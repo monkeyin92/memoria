@@ -28,6 +28,7 @@ let personaPayload = () => ({
   binding_default: "starlight:v1",
 });
 let personasPayload = () => ({ custom_personas: [], builtin: [] });
+let accountProfilePayload = null;
 const unbindCalls = [];
 
 global.wx = {
@@ -165,6 +166,10 @@ global.wx = {
     }
     if (pathname === "/v1/personas") {
       options.success({ statusCode: 200, data: personasPayload() });
+      return;
+    }
+    if (pathname === "/v1/memory/profile/person_owner" && accountProfilePayload) {
+      options.success({ statusCode: 200, data: accountProfilePayload });
       return;
     }
     if (pathname === "/v1/devices/dev_1/binding/unbind") {
@@ -1292,6 +1297,61 @@ test("persona assignment follows the subject override and the binding default", 
     personId: "person_child",
     data: null,
   });
+});
+
+test("an override written by the companion picker reads as following the pick", async () => {
+  personaCalls.length = 0;
+  personaFailure = false;
+  personasPayload = () => ({ custom_personas: [], builtin: [] });
+  personaPayload = () => ({
+    assignments: [
+      {
+        binding_id: "bd_1",
+        subject_id: "person_child",
+        assignment_id: "taoxi:v1",
+        persona_id: "taoxi",
+        persona_version: 1,
+      },
+      {
+        binding_id: "bd_1",
+        subject_id: "person_parent",
+        assignment_id: "xuanmo:v1",
+        persona_id: "xuanmo",
+        persona_version: 1,
+      },
+    ],
+    binding_default: "starlight:v1",
+  });
+  accountProfilePayload = { user_id: "person_owner", companion_id: "taoxi" };
+  binding.saveBindingManifest({
+    ...familyManifest(),
+    member_ids: ["person_child", "person_parent"],
+    roles: [
+      { person_id: "person_owner", role: "device_admin", permissions: [] },
+      { person_id: "person_child", role: "primary_subject", permissions: [] },
+      { person_id: "person_parent", role: "member", permissions: [] },
+    ],
+  });
+  profilePayload = wireProfile({ runtime_profile_id: "rp_pick", session_id: "ses_pick", session_epoch: 1 });
+  nextRequestResult = null;
+
+  try {
+    const page = instantiate(pageDefinition);
+    await page.onShow();
+    assert.deepEqual(
+      page.data.personaRows.map((row) => [row.person_id, row.persona_name, row.source_label]),
+      [
+        ["person_child", "桃喜", "跟随陪伴选择"],
+        ["person_parent", "玄墨", "已单独分配"],
+      ],
+    );
+
+    // 回读分配后仍按账号伙伴解释来源。
+    await page.reloadPersonaAssignments("dev_1");
+    assert.equal(page.data.personaRows[0].source_label, "跟随陪伴选择");
+  } finally {
+    accountProfilePayload = null;
+  }
 });
 
 test("persona assignment failure keeps the sheet open and reports the error", async () => {

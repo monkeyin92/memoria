@@ -1007,21 +1007,48 @@ class DeviceOnboardingService:
         }
 
     @staticmethod
-    def device_manifest_request_payload(device_id: str, certificate_id: str) -> dict[str, object]:
+    def device_get_request_payload(
+        *, device_id: str, certificate_id: str, path: str
+    ) -> dict[str, object]:
+        """The canonical object a device signs for one bodiless GET.
+
+        The signature binds method, exact path, device and certificate, so a
+        signature captured for one endpoint never authenticates another.
+        """
         return {
             "method": "GET",
-            "path": f"/v1/devices/{device_id}/activation-manifest",
+            "path": path,
             "device_id": device_id,
             "certificate_id": certificate_id,
         }
 
-    def get_activation_manifest(
+    @staticmethod
+    def device_manifest_request_payload(device_id: str, certificate_id: str) -> dict[str, object]:
+        return DeviceOnboardingService.device_get_request_payload(
+            device_id=device_id,
+            certificate_id=certificate_id,
+            path=f"/v1/devices/{device_id}/activation-manifest",
+        )
+
+    @staticmethod
+    def device_display_profile_request_payload(
+        device_id: str, certificate_id: str
+    ) -> dict[str, object]:
+        return DeviceOnboardingService.device_get_request_payload(
+            device_id=device_id,
+            certificate_id=certificate_id,
+            path=f"/v1/devices/{device_id}/display-profile",
+        )
+
+    def _verify_bound_device_get(
         self,
         *,
         device_id: str,
         certificate_id: str,
-        request_signature: bytes | None = None,
-    ) -> dict[str, object]:
+        request_signature: bytes | None,
+        payload: Mapping[str, object],
+    ) -> DeviceRecord:
+        """Authenticate a signed device GET against a bound device (read-only)."""
         device = self._device(device_id)
         if device.certificate_id != certificate_id:
             raise InvalidDeviceProof("certificate does not belong to device")
@@ -1034,13 +1061,65 @@ class DeviceOnboardingService:
         if request_signature is not None:
             verify_signed_payload(
                 public_key=public_key_from_bytes(device.public_key),
-                payload=self.device_manifest_request_payload(device_id, certificate_id),
+                payload=payload,
                 signature=request_signature,
             )
+        return device
+
+    def get_activation_manifest(
+        self,
+        *,
+        device_id: str,
+        certificate_id: str,
+        request_signature: bytes | None = None,
+    ) -> dict[str, object]:
+        self._verify_bound_device_get(
+            device_id=device_id,
+            certificate_id=certificate_id,
+            request_signature=request_signature,
+            payload=self.device_manifest_request_payload(device_id, certificate_id),
+        )
         activation = self.store.mark_activation_downloaded(  # type: ignore[attr-defined]
             device_id=device_id, now=self._now()
         )
         return dict(activation.manifest)
+
+    def get_display_binding(
+        self,
+        *,
+        device_id: str,
+        certificate_id: str,
+        request_signature: bytes | None = None,
+    ) -> dict[str, str]:
+        """Who a bound device serves, for its idle display poll.
+
+        Authenticates exactly like the activation manifest but is strictly
+        read-only: no download mark, no counter, no audit row, so a device may
+        poll it every few seconds.
+        """
+        device = self._verify_bound_device_get(
+            device_id=device_id,
+            certificate_id=certificate_id,
+            request_signature=request_signature,
+            payload=self.device_display_profile_request_payload(device_id, certificate_id),
+        )
+        if device.actor_id is None or device.binding_id is None:
+            raise BindingConflict("device has no active binding")
+        binding = cast(
+            BindingRecord | None,
+            self.store.get_binding(device.binding_id),  # type: ignore[attr-defined]
+        )
+        subject_id = (
+            str(binding.initialization.primary_subject.get("person_id", ""))
+            if binding is not None
+            else ""
+        )
+        return {
+            "device_id": device.device_id,
+            "actor_id": device.actor_id,
+            "binding_id": device.binding_id,
+            "subject_id": subject_id,
+        }
 
     def accept_activation_ack(
         self,

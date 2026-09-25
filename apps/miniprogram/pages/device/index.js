@@ -80,7 +80,9 @@ function personaSubjects(binding) {
 
 // 分配结果只用于展示：override 优先、binding 默认兜底，与服务端同一顺序。
 // 显示名来自同一份目录（内置 + 自建），未知 id 原样显示，不猜名字。
-function personaRows(binding, payload, options) {
+// 「选TA陪伴」保存后，服务端把所选伙伴写成主要使用者的单独分配；与账号伙伴
+// 一致的分配读作“跟随陪伴选择”，而不是一条来历不明的手动分配。
+function personaRows(binding, payload, options, accountCompanionId = "") {
   const labels = new Map((options || []).map((item) => [item.id, item.label]));
   const overrides = new Map(
     (Array.isArray(payload?.assignments) ? payload.assignments : [])
@@ -107,7 +109,11 @@ function personaRows(binding, payload, options) {
       persona_id: personaId,
       persona_name: labels.get(personaId) || personaId || "未设置",
       is_override: Boolean(override),
-      source_label: override ? "已单独分配" : "跟随设备默认",
+      source_label: !override
+        ? "跟随设备默认"
+        : accountCompanionId && personaId === accountCompanionId
+          ? "跟随陪伴选择"
+          : "已单独分配",
     };
   });
 }
@@ -249,6 +255,7 @@ Page({
     subjectAliasDraft: "",
     personaRows: [],
     personaOptions: [],
+    accountCompanionId: "",
     personaSheetVisible: false,
     personaSheetSubjectId: "",
     personaSheetSubjectLabel: "",
@@ -549,6 +556,8 @@ Page({
       const personaOptions = personaOptionItems(
         personasResult.status === "fulfilled" ? personasResult.value : null,
       );
+      const accountCompanionId =
+        typeof accountProfile?.companion_id === "string" ? accountProfile.companion_id : "";
       this.setData({
         hasBinding: true,
         authenticated: true,
@@ -585,8 +594,10 @@ Page({
             ? personaAssignmentsResult.value
             : null,
           personaOptions,
+          accountCompanionId,
         ),
         personaOptions,
+        accountCompanionId,
         devicePlaceName: devicePlaceName(binding, companion.name),
         personaName: companion.name,
         personaVoice: companion.voiceName,
@@ -1012,7 +1023,12 @@ Page({
     try {
       const payload = await api.listPersonaAssignments(deviceId);
       this.setData({
-        personaRows: personaRows(this.data.binding, payload, this.data.personaOptions),
+        personaRows: personaRows(
+          this.data.binding,
+          payload,
+          this.data.personaOptions,
+          this.data.accountCompanionId,
+        ),
         personaAssignmentError: "",
       });
     } catch (error) {

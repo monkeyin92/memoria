@@ -161,7 +161,7 @@
             </view>
             <text class="row-chevron">›</text>
           </view>
-          <text class="caption">人格按使用人分配；取消分配后跟随设备默认人格。分配会在下一次设备同步时生效。</text>
+          <text class="caption">在「选TA陪伴」里选的伙伴会自动分配给主要使用者；也可以按使用人单独分配。分配从下一次对话起生效。</text>
           <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
         </block>
         <block wx:if="{{ageRows.length > 0}}">
