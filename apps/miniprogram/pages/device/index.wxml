@@ -55,7 +55,7 @@
             <text class="mem-hero-title">{{devicePlaceName}}</text>
             <text class="mem-hero-sub">{{onlineLabel}} · {{currentUserLabel}}正在使用</text>
           </view>
-          <device-screen online="{{online}}" size="180"></device-screen>
+          <face-badge role="{{heroRoleId}}" size="xl" plain="{{true}}" animated="{{true}}" dim="{{!online}}"></face-badge>
         </view>
         <view class="hero-pills">
           <view class="pill {{online ? '' : 'pill-amber'}}">

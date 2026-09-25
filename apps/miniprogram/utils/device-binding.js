@@ -641,6 +641,25 @@ const RUNTIME_PROFILE_KEY_SET = new Set(RUNTIME_PROFILE_KEYS);
 const PERSONA_KEYS = Object.freeze(["persona_id", "version", "relationship_stage"]);
 const HEX64_PATTERN = /^[a-f0-9]{64}$/;
 
+/*
+ * 服务端当前签发 runtime-profile-v2（packages/contracts RuntimeProfileSignedV2，
+ * lifecycle=current）：字段集合与 v1 相同，只把 obligations 升级为结构化
+ * { code, params }。v1（字符串义务）仅作迁移兼容继续接受。两种 schema 的
+ * obligations 形状必须与 signature_schema 一致，混用一律 fail closed。
+ */
+const RUNTIME_PROFILE_SCHEMA_V1 = "runtime-profile-v1";
+const RUNTIME_PROFILE_SCHEMA_V2 = "runtime-profile-v2";
+const OBLIGATION_SPEC_KEYS = Object.freeze(["code", "params"]);
+const OBLIGATION_PARAM_KEYS = Object.freeze([
+  "max_session_seconds",
+  "retention_ttl_seconds",
+  "quiet_hours",
+  "extras",
+]);
+const QUIET_HOUR_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+/* 手机与服务端时钟的小幅偏差不应让刚签发的 profile 被判为“未来签发”。 */
+const RUNTIME_PROFILE_CLOCK_SKEW_MS = 30_000;
+
 const CATEGORY_FOR_AGE_BAND = Object.freeze({
   unknown: contracts.SubjectCategory.Unknown,
   under_14: contracts.SubjectCategory.Minor,
@@ -760,6 +779,73 @@ function isUniqueArray(value, predicate, maxItems) {
   return value.every(predicate);
 }
 
+function hasExactKeys(value, keys) {
+  if (!isPlainObject(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => actual.includes(key));
+}
+
+function isBoundedIntegerOrNull(value, max) {
+  return value === null || (Number.isInteger(value) && value >= 1 && value <= max);
+}
+
+/* PolicyObligationSpec / ObligationParams（v2 wire），未知字段 fail closed。 */
+function isObligationSpec(value) {
+  if (!hasExactKeys(value, OBLIGATION_SPEC_KEYS)) return false;
+  if (!contracts.isPolicyObligation(value.code)) return false;
+  const params = value.params;
+  if (!hasExactKeys(params, OBLIGATION_PARAM_KEYS)) return false;
+  if (!isBoundedIntegerOrNull(params.max_session_seconds, 86400)) return false;
+  if (!isBoundedIntegerOrNull(params.retention_ttl_seconds, 315576000)) return false;
+  if (
+    params.quiet_hours !== null &&
+    !(
+      Array.isArray(params.quiet_hours) &&
+      params.quiet_hours.length === 2 &&
+      params.quiet_hours.every((item) => typeof item === "string" && QUIET_HOUR_PATTERN.test(item))
+    )
+  ) {
+    return false;
+  }
+  return (
+    Array.isArray(params.extras) &&
+    params.extras.length <= 32 &&
+    params.extras.every(
+      (pair) =>
+        Array.isArray(pair) &&
+        pair.length === 2 &&
+        pair.every((item) => typeof item === "string" && item.length >= 1 && item.length <= 128),
+    )
+  );
+}
+
+/* v2 义务数组按整项结构去重（同 code 不同 params 视为不同项）。 */
+function isValidObligationSpecs(value) {
+  if (!Array.isArray(value) || value.length > 32) return false;
+  if (!value.every(isObligationSpec)) return false;
+  return new Set(value.map(canonicalJsonStringify)).size === value.length;
+}
+
+function obligationCodes(signatureSchema, obligations) {
+  return signatureSchema === RUNTIME_PROFILE_SCHEMA_V2
+    ? obligations.map((item) => item.code)
+    : obligations;
+}
+
+function cloneObligations(signatureSchema, obligations) {
+  return signatureSchema === RUNTIME_PROFILE_SCHEMA_V2
+    ? obligations.map((item) => ({
+        code: item.code,
+        params: {
+          max_session_seconds: item.params.max_session_seconds,
+          retention_ttl_seconds: item.params.retention_ttl_seconds,
+          quiet_hours: item.params.quiet_hours === null ? null : [...item.params.quiet_hours],
+          extras: item.params.extras.map((pair) => [...pair]),
+        },
+      }))
+    : [...obligations];
+}
+
 function failClosedRuntimeProfile(reasons) {
   return {
     valid: false,
@@ -825,8 +911,9 @@ function normalizeRuntimeProfile(payload, options = {}) {
   }
   if (reasons.length > 0) return failClosedRuntimeProfile(reasons);
 
-  if (payload.signature_schema !== "runtime-profile-v1") {
-    reasons.push("signature_schema 必须是 runtime-profile-v1");
+  const signatureSchema = payload.signature_schema;
+  if (signatureSchema !== RUNTIME_PROFILE_SCHEMA_V1 && signatureSchema !== RUNTIME_PROFILE_SCHEMA_V2) {
+    reasons.push("signature_schema 必须是 runtime-profile-v2（或迁移兼容的 runtime-profile-v1）");
   }
   for (const key of [
     "runtime_profile_id",
@@ -871,13 +958,17 @@ function normalizeRuntimeProfile(payload, options = {}) {
   if (!isUniqueArray(payload.capabilities, contracts.isCapability, 32)) {
     reasons.push("capabilities 必须是去重且全部合法的 canonical 能力");
   }
-  if (!isUniqueArray(payload.obligations, contracts.isPolicyObligation, 32)) {
-    reasons.push("obligations 必须是去重且全部合法的 canonical 义务");
+  const obligationsValid =
+    signatureSchema === RUNTIME_PROFILE_SCHEMA_V2
+      ? isValidObligationSpecs(payload.obligations)
+      : isUniqueArray(payload.obligations, contracts.isPolicyObligation, 32);
+  if (!obligationsValid) {
+    reasons.push("obligations 必须是去重且全部合法的 canonical 义务（形状须与 signature_schema 一致）");
   }
   if (
     !isUniqueArray(
       payload.policy_receipt_ids,
-      (item) => isNonEmptyString(item),
+      (item) => isNonEmptyString(item, 192),
       64,
     )
   ) {
@@ -905,7 +996,7 @@ function normalizeRuntimeProfile(payload, options = {}) {
   if (expiresMs <= now) {
     reasons.push("runtime profile 已过期");
   }
-  if (issuedMs > now) {
+  if (issuedMs > now + RUNTIME_PROFILE_CLOCK_SKEW_MS) {
     reasons.push("issued_at 不能晚于当前时间");
   }
 
@@ -956,7 +1047,11 @@ function normalizeRuntimeProfile(payload, options = {}) {
     if (unexpectedCapability !== undefined) {
       reasons.push(`unknown_safe 不允许能力 ${unexpectedCapability}`);
     }
-    if (!payload.obligations.includes(contracts.PolicyObligation.DoNotPersist)) {
+    if (
+      !obligationCodes(signatureSchema, payload.obligations).includes(
+        contracts.PolicyObligation.DoNotPersist,
+      )
+    ) {
       reasons.push("unknown_safe 必须携带 DO_NOT_PERSIST 义务");
     }
   }
@@ -987,7 +1082,7 @@ function normalizeRuntimeProfile(payload, options = {}) {
     persona,
     policy_bundle_version: payload.policy_bundle_version,
     capabilities: [...payload.capabilities],
-    obligations: [...payload.obligations],
+    obligations: cloneObligations(signatureSchema, payload.obligations),
     policy_receipt_ids: [...payload.policy_receipt_ids],
     session_epoch: payload.session_epoch,
     issued_at: payload.issued_at,

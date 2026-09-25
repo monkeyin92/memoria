@@ -19,6 +19,10 @@
       {
         "value": "assets/bg/night-stars.png",
         "type": "file"
+      },
+      {
+        "value": "assets/mascots",
+        "type": "folder"
       }
     ]
   },

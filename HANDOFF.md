@@ -6,16 +6,23 @@
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260922-demo03-control-review` | `sha256:ac9b516b640dcee4aba8c816466115e55015a565363995daadf8328e7d2a2a2d` | `ee57ad4e6fecc75706ed4c2960d6c97cc83b8399` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | approximately `2026-09-24T14:51:50Z`（token 轮换重建，镜像未变） | `/opt/memoria/component-releases/20260922-demo03-control-review/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260922-demo03-control-review-pre-control` |
+| Control API | `memoria-control-api:20260925-control-binding-actor` | `sha256:d0a7dbe6861cb4aa2443774f6cb25e9d978171692122a2fa9bda5cad0a1a8539`（本地 image id） | `e6ab586ff11500248c1af38e761402530507c1d8` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | `2026-09-25T06:54:57Z` | `/opt/memoria/component-releases/20260925-control-binding-actor/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260925-control-binding-actor-pre-control`（= `20260922-demo03-control-review`，`ee57ad4`） |
 | Agent / Bridge | `memoria-agent:20260924-d1d2-evidence-floor` | `sha256:c5c11cb79740cfa96fd05edc0ba68d658b5ee39003e6837bb415b202ca789e2a` | `3eede2f53a94493bb2754c2bc01973adcd072d6c` | same frozen identity | healthy | 0 each | approximately `2026-09-24T14:51:55Z`（token 轮换重建，镜像未变） | `/opt/memoria/component-releases/20260924-d1d2-evidence-floor/CUTOVER_RESULT.txt` | `memoria-agent:rollback-20260924-d1d2-evidence-floor-pre`（`agent-component.rollback.override.yml`） |
 | Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
 
 - **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，不能作为当前候选代码已部署或已完整验证的证明。
-- **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 仍为 `memoria-control-api:20260922-demo03-control-review`。
+- **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 为 `memoria-control-api:20260925-control-binding-actor`（= 旧 `ee57ad4` + 单个 hotfix，仍不含 main 上未部署的服务端改动）。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界已通过；工具查询最终回答未完成，TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
+
+## 2026-09-25 Control API binding 查询 hotfix 上线 + 小程序 0.2.20260925 体验版
+
+- **缺陷**：`PostgresMultiSubjectRuntimeControl.active_manifest` 查 binding 不带 `actor_person_id`；`identity_device_bindings` 按操作账号 FORCE RLS，生产因此对 `GET /v1/devices/{id}/runtime-profile`、resolve-subject、人格分配、memory-scope 一律 404 `binding_not_found`（自 `14b61c0`，2026-08-11）。测试未发现是因为 harness 用 SQLite，真实 PG 路由测试的假 identity 忽略 actor。
+- **发布**：tag `20260925-control-binding-actor` → `e6ab586`（分支 `hotfix/20260925-control-binding-actor` = 线上 `ee57ad4` + 仅 `services/control_api/app/multi_subject_runtime.py`）；`deploy_control_component.sh` dry-run PASS → `--cutover` PASS（PG schema/RLS 校验、target 解析、单容器重建），healthy、restarts=0，其余容器未动。回滚点 `memoria-control-api:rollback-20260925-control-binding-actor-pre-control`。main 侧同改动与真实 PG 回归见 PR #33。
+- **小程序**：体验版 `0.2.20260925`（1.4 MB）经开发者工具 CLI 上传（CI 密钥 IP 白名单不含当前出口 IP，未改白名单）；含吉祥物表情动画、Runtime Profile v2 校验兼容、回顾/首页摘要/我的统计去掉 `memory_recall_private` 门禁（产品决定：一对一，账号即使用者）。**提交审核与正式发布需在公众平台手动完成。**
+- **未验**：部署后带登录的真实 runtime-profile 200 回读（开发者工具登录态过期，待重新登录后复核）。
 
 ## 2026-09-23 记忆评测边界修复与逐 case 诊断（当前工作区，未部署）
 

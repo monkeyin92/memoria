@@ -754,12 +754,7 @@ Page({
       this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
       return;
     }
-    // 私人回顾统计也是 memory_recall_private 敏感动作：未授权时保持 0，不请求。
-    const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
-    if (!gate.allowed) {
-      this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
-      return;
-    }
+    // 回顾统计是账号自己的数据，服务端按登录账号鉴权，不走 Runtime Profile 门禁。
     const authEpoch = api.currentAuthEpoch();
     try {
       const result = await api.getMemoryDays(identity.user_id, 30);

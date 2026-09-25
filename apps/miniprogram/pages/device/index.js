@@ -223,6 +223,7 @@ Page({
     devicePlaceName: "设备",
     personaName: "星澜",
     personaVoice: "角色默认声音",
+    heroRoleId: defaultCompanionId,
     currentUserLabelConfirmed: false,
     online: false,
     onlineLabel: "状态待同步",
@@ -452,7 +453,8 @@ Page({
       return;
     }
     try {
-      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult] =
+      const identity = api.currentIdentity();
+      const [profileResult, activationResult, settingsResult, diagnosticsResult, wakeWordCatalogResult, personaAssignmentsResult, personasResult, accountProfileResult] =
         await Promise.allSettled([
           api.getRuntimeProfile(binding.device_id),
           api.getActivationStatus(binding.device_id),
@@ -461,6 +463,7 @@ Page({
           api.getWakeWordCatalog(),
           api.listPersonaAssignments(binding.device_id),
           api.listPersonas(),
+          identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
         ]);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return; // 晚到响应丢弃
       const profile =
@@ -537,7 +540,12 @@ Page({
       );
       const subjectAliasLabel = readSubjectLabel(binding);
       const speakerLabel = currentUserLabel(profile, candidates);
-      const companion = companionById(profile?.persona?.persona_id);
+      // 与首页、伙伴页同源：以账号选定的伙伴为准；Runtime Profile 读不到时也不回落成默认伙伴。
+      const accountProfile =
+        accountProfileResult.status === "fulfilled" ? accountProfileResult.value : null;
+      const companion = companionById(
+        accountProfile?.companion_id || profile?.persona?.persona_id,
+      );
       const personaOptions = personaOptionItems(
         personasResult.status === "fulfilled" ? personasResult.value : null,
       );
@@ -582,6 +590,7 @@ Page({
         devicePlaceName: devicePlaceName(binding, companion.name),
         personaName: companion.name,
         personaVoice: companion.voiceName,
+        heroRoleId: companion.id,
         activation,
         online: summary.online,
         onlineLabel: summary.onlineLabel,

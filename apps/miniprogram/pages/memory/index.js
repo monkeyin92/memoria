@@ -1,7 +1,5 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
-const contracts = require("../../utils/multi-subject-contracts");
-const { capabilityGateMessage } = require("../../utils/device-binding");
 
 function today() {
   const date = new Date();
@@ -187,9 +185,10 @@ Page({
   },
 
   /*
-   * 私人回顾统一加载（PR-19）：days 与 conversation review 共用同一道
-   * MemoryRecallPrivate Runtime Profile 门禁和 authEpoch 晚到保护。
-   * 门禁拒绝或加载失败时清空全部私人分区，不展示陈旧或越权投影。
+   * 私人回顾统一加载（PR-19）：days 与 conversation review 共用 authEpoch 晚到保护。
+   * 一对一产品里登录账号就是设备使用者本人，回顾只看账号自己的数据，
+   * 由服务端按登录账号鉴权，不再走 Runtime Profile 门禁。
+   * 加载失败时清空全部私人分区，不展示陈旧投影。
    */
   async loadDays() {
     const identity = api.currentIdentity();
@@ -197,15 +196,6 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
-      const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
-      if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
-      if (!gate.allowed) {
-        this.setData({
-          ...privatePartitionsClear(),
-          error: capabilityGateMessage(gate, contracts.Capability.MemoryRecallPrivate),
-        });
-        return "denied";
-      }
       const [daysResult, reviewResult] = await Promise.all([
         api.getMemoryDays(identity.user_id, 30),
         api.getConversationReview(),
@@ -411,13 +401,6 @@ Page({
   async summarizeSelectedDay() {
     if (!(await requireLogin({ reason: "generate_review" }))) return;
     this.setData({ authenticated: true });
-    const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
-    if (!gate.allowed) {
-      this.setData({
-        error: capabilityGateMessage(gate, contracts.Capability.MemoryRecallPrivate),
-      });
-      return;
-    }
     const identity = api.currentIdentity();
     if (!identity || this.data.summarizing) return;
     const authEpoch = api.currentAuthEpoch();

@@ -1,40 +1,16 @@
 <view
-  class="face-badge fb-{{size}}{{breathe ? ' fb-breathe' : ''}}{{onLight ? ' face-on-light' : ''}}"
-  data-role="{{role}}"
+  class="face-badge fb-{{size}} fb-role-{{roleId}}{{plain ? ' fb-plain' : ''}}{{breathe && !animated ? ' fb-breathe' : ''}}{{onLight ? ' face-on-light' : ''}}{{dim ? ' fb-dim' : ''}}"
+  aria-hidden="true"
 >
-  <svg viewBox="0 0 100 100" fill="none" wx:if="{{role === 'starlight'}}">
-    <path d="M26 41 Q35 33.5 44 41 Q35 46.5 26 41 Z" fill="var(--role-ink)" />
-    <path d="M56 41 Q65 33.5 74 41 Q65 46.5 56 41 Z" fill="var(--role-ink)" />
-    <circle cx="50" cy="54" r="1.8" fill="var(--role-ink)" opacity=".55" />
-    <path d="M42 64 Q50 69 58 64" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <path d="M76 13 L78.5 19 L84.5 21.5 L78.5 24 L76 30 L73.5 24 L67.5 21.5 L73.5 19 Z" fill="var(--role-accent)" />
-  </svg>
-  <svg viewBox="0 0 100 100" fill="none" wx:elif="{{role === 'taoxi'}}">
-    <path d="M26 42 Q35 32 44 42" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <path d="M56 42 Q65 32 74 42" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <circle cx="50" cy="54" r="1.8" fill="var(--role-ink)" opacity=".55" />
-    <path d="M37 60 Q50 63 63 60 Q50 76 37 60 Z" fill="var(--role-ink)" />
-  </svg>
-  <svg viewBox="0 0 100 100" fill="none" wx:elif="{{role === 'mianmian'}}">
-    <path d="M27 40 Q34 33.5 42 39" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <path d="M58 39 Q66 33.5 73 40" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <ellipse cx="24" cy="52" rx="5" ry="3" fill="var(--role-accent)" opacity=".5" />
-    <ellipse cx="76" cy="52" rx="5" ry="3" fill="var(--role-accent)" opacity=".5" />
-    <circle cx="50" cy="54" r="1.8" fill="var(--role-ink)" opacity=".55" />
-    <path d="M43 63 Q50 67.5 57 63" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-  </svg>
-  <svg viewBox="0 0 100 100" fill="none" wx:elif="{{role === 'axu'}}">
-    <path d="M27 40 L43 40" stroke="var(--role-ink)" stroke-width="4" stroke-linecap="round" />
-    <path d="M57 40 L73 40" stroke="var(--role-ink)" stroke-width="4" stroke-linecap="round" />
-    <circle cx="50" cy="54" r="1.8" fill="var(--role-ink)" opacity=".55" />
-    <path d="M42 64 L58 64" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-  </svg>
-  <svg viewBox="0 0 100 100" fill="none" wx:else>
-    <path d="M28 41.5 L42 39.5" stroke="var(--role-ink)" stroke-width="4" stroke-linecap="round" />
-    <path d="M58 39.5 L72 41.5" stroke="var(--role-ink)" stroke-width="4" stroke-linecap="round" />
-    <circle cx="50" cy="54" r="1.8" fill="var(--role-ink)" opacity=".55" />
-    <path d="M44 64 Q50 66.5 56 64" stroke="var(--role-ink)" stroke-width="3.5" stroke-linecap="round" />
-    <circle cx="76" cy="21" r="7.5" fill="var(--role-accent)" opacity=".22" />
-    <circle cx="76" cy="21" r="3" fill="var(--role-accent)" />
-  </svg>
+  <view wx:if="{{plain}}" class="fb-shadow"></view>
+  <view wx:if="{{animated}}" class="fb-stage fb-mood-{{mood}}" bindtap="poke">
+    <image
+      wx:for="{{frames}}"
+      wx:key="*this"
+      class="fb-img fb-frame{{item === mood ? ' fb-frame-on' : ''}}"
+      src="/assets/mascots/{{roleId}}/{{item}}.png"
+      mode="aspectFit"
+    ></image>
+  </view>
+  <image wx:else class="fb-img" src="/assets/mascots/{{roleId}}/default.png" mode="aspectFit"></image>
 </view>

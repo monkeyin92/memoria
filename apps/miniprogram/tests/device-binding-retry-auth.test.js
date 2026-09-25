@@ -48,6 +48,7 @@ function authStubs(state, { restore = "succeed" } = {}) {
     // 因此给出空结果，避免落到真实 rawRequest（该 harness 没有 wx.request）。
     listPersonaAssignments: async () => ({ assignments: [], binding_default: "starlight:v1" }),
     listPersonas: async () => ({ custom_personas: [], builtin: [] }),
+    getProfile: async () => ({ companion_id: "taoxi" }),
     resolveSessionSubject: async () => ({
       candidate_subjects: [],
       allowed_confirmation_methods: [],
@@ -282,6 +283,9 @@ test("device retry 恢复登录后正常同步", async () => {
     assert.equal(page.data.hasBinding, true);
     assert.equal(page.data.binding.device_id, "dev_retry");
     assert.equal(page.data.bindingSyncError, "");
+    // Runtime Profile 读不到时，形象与名字仍跟随账号选定的伙伴，而不是回落成默认伙伴。
+    assert.equal(page.data.heroRoleId, "taoxi");
+    assert.equal(page.data.personaName, "桃喜");
   });
   restore();
 });
