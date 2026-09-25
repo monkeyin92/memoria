@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const binding = require("../utils/device-binding");
 const contracts = require("../utils/multi-subject-contracts");
@@ -931,11 +933,17 @@ test("sensitive entries are driven by capabilities, not local inference", () => 
   assert.deepEqual(binding.sensitiveEntriesFor(binding.normalizeRuntimeProfile(null)), []);
 });
 
-test("each valid capability opens exactly its own sensitive entry", () => {
+test("profile-listed capabilities open only their own entry; action-time entries need a confirmed profile", () => {
+  // 动作时决策的入口（数字分身、原始语音）只看 profile 是否有效且已确认，
+  // 服务端签发 profile 时从不列出它们。
+  const actionTime = ["digital_self", "raw_voice_consent"];
+  const base = binding.normalizeRuntimeProfile(validRuntimeProfile({ capabilities: ["chat"] }));
+  assert.equal(base.valid, true);
+  assert.equal(base.degraded, false);
+  assert.deepEqual(binding.sensitiveEntriesFor(base).map((entry) => entry.key), actionTime);
+
   const cases = [
-    ["digital_self_preview", "digital_self"],
     ["guardian_summary_view", "guardian_summary"],
-    ["raw_audio_retention", "raw_voice_consent"],
     ["memory_recall_private", "memory_recall"],
   ];
   for (const [capability, key] of cases) {
@@ -944,9 +952,36 @@ test("each valid capability opens exactly its own sensitive entry", () => {
     );
     assert.equal(profile.valid, true);
     const keys = binding.sensitiveEntriesFor(profile).map((entry) => entry.key);
-    assert.deepEqual(keys, [key], `${capability} 应只开放 ${key}`);
+    assert.deepEqual(keys.filter((entry) => !actionTime.includes(entry)), [key], `${capability} 应只开放 ${key}`);
     assert.deepEqual(binding.sensitiveCapabilitiesFor(profile), [capability]);
   }
+});
+
+test("action-time entries stay closed for degraded, invalid and minor-forbidden profiles", () => {
+  assert.equal(binding.entryAllowed(null, "digital_self_preview"), false);
+  assert.equal(
+    binding.entryAllowed(binding.normalizeRuntimeProfile(null), "digital_self_preview"),
+    false,
+  );
+  const confirmed = binding.normalizeRuntimeProfile(validRuntimeProfile({ capabilities: ["chat"] }));
+  assert.equal(binding.entryAllowed(confirmed, "digital_self_preview"), true);
+  assert.equal(binding.entryAllowed({ ...confirmed, degraded: true }, "digital_self_preview"), false);
+  const minor = { ...confirmed, service_mode: "student_minor" };
+  assert.equal(binding.entryAllowed(minor, "digital_self_preview"), false);
+  assert.equal(binding.entryAllowed(minor, "raw_audio_retention"), true);
+  // 非动作时能力仍只看 capabilities。
+  assert.equal(binding.entryAllowed(confirmed, "guardian_summary_view"), false);
+});
+
+test("client action-time capabilities match the server's PROFILE_ISSUE_DEFERRED_CAPABILITIES", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../../../services/session_runtime/profile_service.py"),
+    "utf8",
+  );
+  const block = source.match(/PROFILE_ISSUE_DEFERRED_CAPABILITIES[^=]*=\s*frozenset\(\s*\{([^}]*)\}/);
+  assert.ok(block, "server deferred capability set not found");
+  const server = [...block[1].matchAll(/"([a-z_]+)"/g)].map((match) => match[1]).sort();
+  assert.deepEqual([...binding.ACTION_TIME_CAPABILITIES].sort(), server);
 });
 
 test("voice_profile_create no longer opens a navigation entry", () => {
@@ -956,7 +991,9 @@ test("voice_profile_create no longer opens a navigation entry", () => {
     validRuntimeProfile({ capabilities: ["voice_profile_create"] }),
   );
   assert.equal(profile.valid, true);
-  assert.deepEqual(binding.sensitiveEntriesFor(profile), []);
+  const keys = binding.sensitiveEntriesFor(profile).map((entry) => entry.key);
+  assert.ok(!keys.includes("speaker_enrollment"));
+  assert.ok(binding.sensitiveEntriesFor(profile).every((entry) => entry.capability !== "voice_profile_create"));
   assert.deepEqual(binding.sensitiveCapabilitiesFor(profile), ["voice_profile_create"]);
   assert.equal(binding.entryForCapability("voice_profile_create"), null);
 });

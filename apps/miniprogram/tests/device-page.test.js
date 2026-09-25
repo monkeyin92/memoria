@@ -388,7 +388,8 @@ test("family mode loads candidates and switches with an epoch-bumped profile", a
   assert.equal(page.data.currentUserLabel, "妈妈");
   assert.equal(page.data.degradation, null);
   assert.ok(page.data.sensitiveEntries.some((entry) => entry.key === "memory_recall"));
-  assert.ok(!page.data.sensitiveEntries.some((entry) => entry.key === "digital_self"));
+  // 数字分身是动作时决策：确认后露出入口，是否允许由服务端动作接口决定。
+  assert.ok(page.data.sensitiveEntries.some((entry) => entry.key === "digital_self"));
 });
 
 test("switch result without an epoch bump is rejected and not applied", async () => {
@@ -515,9 +516,9 @@ test("capability hiding removes un-granted sensitive entries", async () => {
   await page.onShow();
   const keys = page.data.sensitiveEntries.map((entry) => entry.key);
   assert.ok(keys.includes("raw_voice_consent"));
-  assert.ok(!keys.includes("digital_self"));
+  assert.ok(keys.includes("digital_self"), "动作时决策的入口在已确认 profile 下露出");
   assert.ok(!keys.includes("speaker_enrollment"));
-  assert.ok(!keys.includes("guardian_summary"));
+  assert.ok(!keys.includes("guardian_summary"), "profile 未列出的能力仍然隐藏");
   assert.equal(page.data.degradation, null);
 });
 

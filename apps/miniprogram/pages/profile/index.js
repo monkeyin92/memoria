@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const compliance = require("../../utils/compliance");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
-const { MODE_META, readBindingManifest } = require("../../utils/device-binding");
+const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
 const contracts = require("../../utils/multi-subject-contracts");
 
 const defaultProfile = {
@@ -703,11 +703,11 @@ Page({
       const state = {
         hasRuntimeProfile: true,
         runtimeCapabilities: capabilities,
-        speakerEntryAllowed: capabilities.includes(contracts.Capability.VoiceProfileCreate),
-        digitalSelfEntryAllowed: capabilities.includes(contracts.Capability.DigitalSelfPreview),
-        guardianEntryAllowed: capabilities.includes(contracts.Capability.GuardianSummaryView),
-        rawVoiceEntryAllowed: capabilities.includes(contracts.Capability.RawAudioRetention),
-        voiceCloneAllowed: capabilities.includes(contracts.Capability.VoiceCloneUse),
+        speakerEntryAllowed: entryAllowed(profile, contracts.Capability.VoiceProfileCreate),
+        digitalSelfEntryAllowed: entryAllowed(profile, contracts.Capability.DigitalSelfPreview),
+        guardianEntryAllowed: entryAllowed(profile, contracts.Capability.GuardianSummaryView),
+        rawVoiceEntryAllowed: entryAllowed(profile, contracts.Capability.RawAudioRetention),
+        voiceCloneAllowed: entryAllowed(profile, contracts.Capability.VoiceCloneUse),
         customPersonaId: customPersonaIdFor(profile),
         profileUnavailableReason: "",
       };
