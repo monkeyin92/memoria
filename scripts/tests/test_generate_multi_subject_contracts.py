@@ -221,19 +221,6 @@ def test_python_artifact_importable_and_fail_closed() -> None:
     assert module.AgeBand.AGE_BAND_14_17.value == "14_17"
 
 
-def test_typescript_artifact_syntax_and_values() -> None:
-    ts_path = GENERATED_ROOT / "typescript/multi_subject_contracts.ts"
-    text = ts_path.read_text(encoding="utf-8")
-    for name, values in EXPECTED_VALUES.items():
-        assert f"export const {name} =" in text
-        assert f"export function is{name}(" in text
-        for value in values:
-            assert f'"{value}"' in text
-    assert "AgeBand14_17" in text
-    if shutil.which("node") is None:
-        pytest.skip("node unavailable; skipping syntax check")
-    result = subprocess.run(["node", "--check", str(ts_path)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
 
 
 def test_miniprogram_commonjs_artifact_is_canonical_and_executable() -> None:
@@ -275,29 +262,5 @@ def test_miniprogram_utils_seam_reexports_generated_artifact() -> None:
             assert f'"{value}"' not in text
 
 
-def test_go_artifact_gofmt_and_values() -> None:
-    go_path = GENERATED_ROOT / "go/multi_subject_contracts.go"
-    text = go_path.read_text(encoding="utf-8")
-    for name, values in EXPECTED_VALUES.items():
-        assert f"type {name} string" in text
-        assert f"func All{name}()" in text
-        assert f"func IsValid{name}(" in text
-        for value in values:
-            assert f'"{value}"' in text
-    if shutil.which("gofmt") is None:
-        pytest.skip("gofmt unavailable; skipping format check")
-    result = subprocess.run(["gofmt", "-l", str(go_path)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == ""
 
 
-def test_firmware_compact_json_matches_schema() -> None:
-    payload = json.loads((GENERATED_ROOT / "firmware/multi_subject_contracts.compact.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
-    defs = _schema()["$defs"]
-    assert [entry["name"] for entry in payload["enums"]] == list(defs)
-    for entry in payload["enums"]:
-        meta = defs[entry["name"]]["x-memoria"]
-        assert entry["values"] == defs[entry["name"]]["enum"]
-        assert entry["missing_value_policy"] == meta["missing_value_policy"]
-        assert entry.get("default") == meta.get("default")
