@@ -27,6 +27,11 @@ def test_control_component_release_is_offline_commit_bound_and_fail_closed() -> 
     assert "scripts/verify_release_source.py" in deploy
     assert "dependency inputs changed" in deploy
     assert "changes escape the Control/archive scope" in deploy
+    # Session Runtime code ships with Control, but never its schema.
+    assert "services/control_api/*|services/archive/*|services/session_runtime/*)" in deploy
+    assert deploy.index("services/session_runtime/*.sql)") < deploy.index(
+        "services/control_api/*|services/archive/*|services/session_runtime/*)"
+    )
     assert "git get-tar-commit-id" in deploy
     assert "--network=none" in deploy
     assert "verify_authoritative_postgres.sh" in deploy
