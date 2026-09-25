@@ -2,7 +2,6 @@ from dataclasses import replace
 
 import pytest
 from services.common.companions import COMPANIONS
-from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.mode_policy import (
     LEGACY_POLICY_VERSION,
     FrozenMode,
@@ -30,15 +29,17 @@ def _legacy(*, actor_role: str = "grantee", voice_allowed: bool = False) -> Froz
         expires_at="2026-08-23T00:00:00+00:00",
         voice_profile_id="voice-1" if personal else None,
         voice_profile_version=2 if personal else None,
-        voice_provider=TTS_PROVIDER if personal else None,
-        voice_model=TTS_MODEL if personal else None,
-        voice_resource_id=TTS_MODEL if personal else None,
-        voice_provider_expires_at=None,
+        voice_provider="volcengine_doubao" if personal else None,
+        voice_model="seed-icl-2.0" if personal else None,
+        voice_resource_id="seed-icl-2.0" if personal else None,
+        voice_provider_expires_at=(
+            "2026-08-22T00:00:00+00:00" if personal else None
+        ),
         voice_speaker_sha256="d" * 64 if personal else None,
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider=TTS_PROVIDER,
-        fallback_voice_model=TTS_MODEL,
-        fallback_voice_resource_id=TTS_MODEL,
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
     )
 
 
@@ -84,8 +85,7 @@ def test_companion_focus_is_frozen_and_non_companion_focus_fails_closed() -> Non
         {"legacy_shell_id": None},
         {"relationship_profile_version": None},
         {"legacy_expires_at": "2026-08-23T08:00:00+08:00"},
-        {"fallback_voice_model": "seed-tts-2.0"},
-        {"fallback_voice_provider": "volcengine_doubao"},
+        {"fallback_voice_model": "seed-icl-2.0"},
     ],
 )
 def test_legacy_availability_rejects_forged_frozen_authority(
@@ -144,31 +144,3 @@ def test_owner_preview_requires_owner_actor_and_has_no_shell() -> None:
     assert frozen.legacy_shell_id is None
     assert ModePolicy.effective_capabilities(frozen, speaker_class="owner").conversation
     assert not ModePolicy.effective_capabilities(frozen, speaker_class="guest").conversation
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {
-            "voice_provider": "volcengine_doubao",
-            "voice_model": "seed-icl-2.0",
-            "voice_resource_id": "seed-icl-2.0",
-            "voice_provider_expires_at": "2026-08-22T00:00:00+00:00",
-        },
-        {
-            "voice_model": "cosyvoice-v3.5-flash",
-            "voice_resource_id": "cosyvoice-v3.5-flash",
-        },
-        {"voice_provider_expires_at": "2026-08-22T08:00:00+08:00"},
-    ],
-)
-def test_legacy_personal_voice_snapshot_must_use_the_current_model(
-    change: dict[str, object],
-) -> None:
-    current = _legacy(voice_allowed=True)
-    assert ModePolicy.availability(current).status == "available"
-    assert ModePolicy.availability(
-        replace(current, voice_provider_expires_at="2026-08-22T00:00:00+00:00")
-    ).status == "available"
-
-    assert ModePolicy.availability(replace(current, **change)).status == "blocked"

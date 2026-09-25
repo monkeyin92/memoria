@@ -14,7 +14,7 @@ from services.agent.src.generation_output_policy import (
     generation_voice_reject_reason,
 )
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.providers.qwen_voice_catalog import resolve_approved_voice
+from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companions import (
     DEFAULT_COMPANION_ID,
@@ -22,7 +22,6 @@ from services.common.companions import (
     companion_definition,
     designed_voice_profile,
 )
-from services.common.voice_identity import TTS_PROVIDER
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ def _frozen_designed_fallback(policy: ModePolicy | None) -> VoiceRuntimeProfile 
         or not isinstance(model, str)
         or not isinstance(resource_id, str)
         or not isinstance(provider, str)
-        or provider != TTS_PROVIDER
+        or provider != "volcengine_doubao"
         or model != DESIGNED_VOICE_MODEL
         or resource_id != DESIGNED_VOICE_MODEL
     ):
@@ -177,7 +176,7 @@ def _designed_runtime_profile(profile_id: str) -> VoiceRuntimeProfile | None:
         profile_id=profile_id,
         model=DESIGNED_VOICE_MODEL,
         voice_id=voice,
-        provider=TTS_PROVIDER,
+        provider="volcengine_doubao",
         voice_kind="designed",
         resource_id=DESIGNED_VOICE_MODEL,
     )

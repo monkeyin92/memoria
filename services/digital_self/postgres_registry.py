@@ -15,7 +15,6 @@ import asyncpg
 
 from services.archive.domain import EvidenceEvent, SpeakerClass
 from services.common.evidence_policy import confirmed_projection_contribution_for
-from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_PROVIDER
 from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
@@ -500,22 +499,21 @@ class PostgresDigitalSelfRegistry:
               AND status = 'active'
               AND evaluation_status = 'passed'
               AND quality_status = 'passed'
-              AND provider = $2
-              AND target_model = $3
+              AND provider = 'volcengine_doubao'
+              AND target_model = 'seed-icl-2.0'
               AND provider_voice_id IS NOT NULL
-              AND (provider_expires_at IS NULL OR provider_expires_at > CURRENT_TIMESTAMP)
+              AND provider_expires_at IS NOT NULL
+              AND provider_expires_at > CURRENT_TIMESTAMP
               AND EXISTS (
                   SELECT 1 FROM voice_clone_consents
                   WHERE account_id = $1 AND revoked_at IS NULL
               )
             """,
             account_id,
-            TTS_PROVIDER,
-            PERSONAL_VOICE_MODEL,
         )
         if row is None:
             return None
-        expires_at = cast(datetime | None, row["provider_expires_at"])
+        expires_at = cast(datetime, row["provider_expires_at"])
         try:
             return VoiceProfileManifestRef(
                 profile_id=str(row["profile_id"]),
@@ -523,7 +521,7 @@ class PostgresDigitalSelfRegistry:
                 provider=str(row["provider"]),
                 target_model=str(row["target_model"]),
                 resource_id=str(row["target_model"]),
-                provider_expires_at=(expires_at.isoformat() if expires_at is not None else None),
+                provider_expires_at=expires_at.isoformat(),
                 speaker_sha256=hashlib.sha256(
                     str(row["provider_voice_id"]).encode("utf-8")
                 ).hexdigest(),

@@ -10,10 +10,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from services.common.voice_identity import TTS_MODEL
-
 DEFAULT_COMPANION_ID: Final = "starlight"
-DESIGNED_VOICE_MODEL: Final = TTS_MODEL
+DESIGNED_VOICE_MODEL: Final = "seed-tts-2.0"
 
 COMPANION_STYLE_VERSION: Final = "companion-v1"
 
@@ -158,14 +156,12 @@ COMPANION_VOICE_PROFILES: Final[dict[str, str]] = {
     for companion_id, definition in COMPANIONS.items()
 }
 
-# Qwen-Audio 3.1 system voices (voice list 2026-09-24), matched to each
-# persona by the vendor's own description; confirm by listening on device.
 DESIGNED_VOICE_SPEAKERS: Final[dict[str, str]] = {
-    "warm_companion": "longanyang_v3.1",  # 阳光大男孩，社交陪伴（标杆音色）
-    "bright_peer": "longhua_v3.1",  # 元气甜美女，社交陪伴
-    "soft_confidante": "longwan_v3.1",  # 细腻柔声女，社交陪伴
-    "calm_guide": "longanzhi_v3.1",  # 睿智轻熟男，社交陪伴
-    "low_magnetic": "longsanshu_v3.1",  # 沉稳质感男，有声书
+    "warm_companion": "zh_male_yangguangqingnian_uranus_bigtts",
+    "bright_peer": "zh_female_tianmeitaozi_uranus_bigtts",
+    "soft_confidante": "zh_female_wenrouxiaoya_uranus_bigtts",
+    "calm_guide": "zh_male_gaolengchenwen_uranus_bigtts",
+    "low_magnetic": "zh_male_shenyeboke_uranus_bigtts",
 }
 
 COMPANION_IDS: Final[frozenset[str]] = frozenset(COMPANION_VOICE_PROFILES)

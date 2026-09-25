@@ -1228,10 +1228,10 @@ def _voice_version(*, account_id: str) -> DigitalSelfVersion:
     ref = VoiceProfileManifestRef(
         profile_id="voice-profile-1",
         version_number=3,
-        provider="alibaba_model_studio",
-        target_model="qwen-audio-3.1-tts-flash",
-        resource_id="qwen-audio-3.1-tts-flash",
-        provider_expires_at=None,
+        provider="volcengine_doubao",
+        target_model="seed-icl-2.0",
+        resource_id="seed-icl-2.0",
+        provider_expires_at="2027-07-23T00:00:00+00:00",
         speaker_sha256="1" * 64,
     )
     return DigitalSelfVersion(
@@ -1315,7 +1315,7 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert payload["voice_target"] == {
         "kind": "companion",
         "profile_id": "warm_companion",
-        "model": "qwen-audio-3.1-tts-flash",
+        "model": "seed-tts-2.0",
     }
     assert payload["disclosures"] == []
     assert payload["provenance"]["interaction_mode"] == "companion"
@@ -1727,15 +1727,15 @@ async def test_response_plan_uses_only_exact_frozen_personal_voice_ref(
                 self_preview_perspective="owner",
                 voice_profile_id="voice-profile-1",
                 voice_profile_version=frozen_version,
-                voice_provider="alibaba_model_studio",
-                voice_model="qwen-audio-3.1-tts-flash",
-                voice_resource_id="qwen-audio-3.1-tts-flash",
-                voice_provider_expires_at=None,
+                voice_provider="volcengine_doubao",
+                voice_model="seed-icl-2.0",
+                voice_resource_id="seed-icl-2.0",
+                voice_provider_expires_at="2027-07-23T00:00:00+00:00",
                 voice_speaker_sha256="1" * 64,
                 fallback_voice_profile_id="warm_companion",
-                fallback_voice_provider="alibaba_model_studio",
-                fallback_voice_model="qwen-audio-3.1-tts-flash",
-                fallback_voice_resource_id="qwen-audio-3.1-tts-flash",
+                fallback_voice_provider="volcengine_doubao",
+                fallback_voice_model="seed-tts-2.0",
+                fallback_voice_resource_id="seed-tts-2.0",
                 created_at=datetime.now(UTC).isoformat(),
             )
         exact = await client.post(
@@ -1753,13 +1753,13 @@ async def test_response_plan_uses_only_exact_frozen_personal_voice_ref(
     assert exact.json()["voice_target"] == {
         "kind": "approved_personal",
         "profile_id": "voice-profile-1",
-        "model": "qwen-audio-3.1-tts-flash",
+        "model": "seed-icl-2.0",
     }
     assert mismatch.status_code == 200
     assert mismatch.json()["voice_target"] == {
         "kind": "fallback",
         "profile_id": "warm_companion",
-        "model": "qwen-audio-3.1-tts-flash",
+        "model": "seed-tts-2.0",
     }
 
 

@@ -24,7 +24,6 @@ from services.common.companions import (
     CompanionDefinition,
     companion_definition,
 )
-from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_MODEL, TTS_PROVIDER
 from services.identity.domain import is_custom_persona_id
 from services.persona.custom_persona_fields import companion_definition_from_envelope
 from services.tutor.domain import SESSION_FOCUSES, SessionFocus
@@ -534,7 +533,6 @@ class ModePolicyClient:
         references["voice_profile_version"] = voice_profile_version
         references["relationship_profile_version"] = relationship_profile_version
         capabilities = payload.get("capabilities")
-        # Qwen-Audio clones carry no provider expiry: it is optional.
         voice_values = tuple(
             references[key]
             for key in (
@@ -543,6 +541,7 @@ class ModePolicyClient:
                 "voice_provider",
                 "voice_model",
                 "voice_resource_id",
+                "voice_provider_expires_at",
                 "voice_speaker_sha256",
             )
         )
@@ -555,24 +554,23 @@ class ModePolicyClient:
                 "fallback_voice_resource_id",
             )
         )
-        voice_expires = references["voice_provider_expires_at"]
         voice_complete = all(value is not None for value in voice_values)
-        voice_absent = voice_expires is None and all(value is None for value in voice_values)
+        voice_absent = all(value is None for value in voice_values)
         voice_contract_valid = voice_absent or (
             voice_complete
-            and references["voice_provider"] == TTS_PROVIDER
-            and references["voice_model"] == PERSONAL_VOICE_MODEL
-            and references["voice_resource_id"] == PERSONAL_VOICE_MODEL
-            and (voice_expires is None or _valid_utc_timestamp(voice_expires))
+            and references["voice_provider"] == "volcengine_doubao"
+            and references["voice_model"] == "seed-icl-2.0"
+            and references["voice_resource_id"] == "seed-icl-2.0"
+            and _valid_utc_timestamp(references["voice_provider_expires_at"])
             and _valid_sha256(references["voice_speaker_sha256"])
         )
         fallback_voice_complete = all(value is not None for value in fallback_voice_values)
         fallback_voice_contract_valid = (
             fallback_voice_complete
             and _bounded_string(references["fallback_voice_profile_id"])
-            and references["fallback_voice_provider"] == TTS_PROVIDER
-            and references["fallback_voice_model"] == TTS_MODEL
-            and references["fallback_voice_resource_id"] == TTS_MODEL
+            and references["fallback_voice_provider"] == "volcengine_doubao"
+            and references["fallback_voice_model"] == "seed-tts-2.0"
+            and references["fallback_voice_resource_id"] == "seed-tts-2.0"
         )
         text_references = tuple(
             value
@@ -873,9 +871,9 @@ def _companion_voice_contract_valid(references: dict[str, Any]) -> bool:
     fallback_ok = (
         all(value is not None for value in fallback_values)
         and _bounded_string(references.get("fallback_voice_profile_id"))
-        and references.get("fallback_voice_provider") == TTS_PROVIDER
-        and references.get("fallback_voice_model") == TTS_MODEL
-        and references.get("fallback_voice_resource_id") == TTS_MODEL
+        and references.get("fallback_voice_provider") == "volcengine_doubao"
+        and references.get("fallback_voice_model") == "seed-tts-2.0"
+        and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
     )
     speaker = references.get("voice_speaker_sha256")
     version = references.get("voice_profile_version")
@@ -893,7 +891,14 @@ def _companion_voice_contract_valid(references: dict[str, Any]) -> bool:
     provider = references.get("voice_provider")
     model = references.get("voice_model")
     resource = references.get("voice_resource_id")
-    if provider == TTS_PROVIDER and model == PERSONAL_VOICE_MODEL and resource == model:
+    if provider == "volcengine_doubao" and model == "seed-icl-2.0" and resource == "seed-icl-2.0":
+        return _valid_utc_timestamp(references.get("voice_provider_expires_at"))
+    if (
+        provider == "alibaba_model_studio"
+        and isinstance(model, str)
+        and model.startswith("cosyvoice-v3.5-")
+        and resource == model
+    ):
         expires = references.get("voice_provider_expires_at")
         return expires is None or _valid_utc_timestamp(expires)
     return False

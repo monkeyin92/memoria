@@ -14,9 +14,9 @@ from services.common.companions import (
     designed_voice_speaker_sha256,
 )
 from services.common.realtime_information import is_safe_realtime_reply
-from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_PROVIDER
 
 VoiceKind = Literal["designed", "personal"]
+PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS = (
     "仅依据当前用户这一轮及本次会话内已经对用户公开说过的内容回答普通聊天、"
     "通用知识或临时练习。本会话刚提到的地点或话题可以沿用，但要先向用户确认，"
@@ -70,12 +70,14 @@ def generation_voice_reject_reason(
             return "personal_profile"
         if references.get("voice_profile_version") is None:
             return "personal_version"
-        if references.get("voice_provider") != TTS_PROVIDER:
+        if references.get("voice_provider") != "volcengine_doubao":
             return "personal_provider"
         if references.get("voice_model") != PERSONAL_VOICE_MODEL:
             return "personal_model"
         if references.get("voice_resource_id") != PERSONAL_VOICE_MODEL:
             return "personal_resource_id"
+        if references.get("voice_provider_expires_at") is None:
+            return "personal_expires"
         if speaker_sha256 != references.get("voice_speaker_sha256"):
             return "personal_speaker"
         return None
@@ -103,7 +105,7 @@ def generation_voice_reject_reason(
             return "fallback_profile"
         if profile_id != fallback_profile:
             return "fallback_profile"
-        if references.get("fallback_voice_provider") != TTS_PROVIDER:
+        if references.get("fallback_voice_provider") != "volcengine_doubao":
             return "fallback_provider"
         if references.get("fallback_voice_model") != DESIGNED_VOICE_MODEL:
             return "fallback_model"
@@ -253,11 +255,19 @@ def _companion_personal_reject_reason(
         return "personal_speaker"
     if resource_id != references.get("voice_resource_id") or resource_id != model:
         return "personal_resource_id"
-    if provider != TTS_PROVIDER:
-        return "personal_provider"
-    if model != PERSONAL_VOICE_MODEL:
-        return "personal_model"
-    return None
+    if provider == "volcengine_doubao" and model == PERSONAL_VOICE_MODEL:
+        if references.get("voice_model") != PERSONAL_VOICE_MODEL:
+            return "personal_model"
+        if references.get("voice_provider_expires_at") is None:
+            return "personal_expires"
+        return None
+    if (
+        provider == "alibaba_model_studio"
+        and isinstance(model, str)
+        and model.startswith("cosyvoice-v3.5-")
+    ):
+        return None
+    return "personal_provider"
 
 
 __all__ = [

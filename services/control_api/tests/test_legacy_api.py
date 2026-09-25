@@ -593,8 +593,8 @@ async def test_pending_owner_preview_and_activated_grantee_session_freeze_server
     assert interaction["voice_profile_id"] is None
     assert interaction["voice_provider"] is None
     assert interaction["fallback_voice_profile_id"] == "warm_companion"
-    assert interaction["fallback_voice_provider"] == "alibaba_model_studio"
-    assert interaction["fallback_voice_model"] == "qwen-audio-3.1-tts-flash"
+    assert interaction["fallback_voice_provider"] == "volcengine_doubao"
+    assert interaction["fallback_voice_model"] == "seed-tts-2.0"
     assert context.voice_manager.account_ids == []
     persisted = app.state.memory_store.get_voice_session_by_id(
         session_id=grantee_session.json()["session_id"]

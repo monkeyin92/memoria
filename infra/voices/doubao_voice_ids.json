@@ -1,0 +1,32 @@
+{
+  "provider": "doubao",
+  "model": "seed-tts-2.0",
+  "source": "https://docs.volcengine.com/docs/6561/1257544?lang=zh",
+  "voices": {
+    "warm_companion": {
+      "speaker_id": "zh_male_yangguangqingnian_uranus_bigtts",
+      "display_name": "阳光青年 2.0",
+      "model": "seed-tts-2.0"
+    },
+    "bright_peer": {
+      "speaker_id": "zh_female_tianmeitaozi_uranus_bigtts",
+      "display_name": "甜美桃子 2.0",
+      "model": "seed-tts-2.0"
+    },
+    "soft_confidante": {
+      "speaker_id": "zh_female_wenrouxiaoya_uranus_bigtts",
+      "display_name": "温柔小雅 2.0",
+      "model": "seed-tts-2.0"
+    },
+    "calm_guide": {
+      "speaker_id": "zh_male_gaolengchenwen_uranus_bigtts",
+      "display_name": "高冷沉稳 2.0",
+      "model": "seed-tts-2.0"
+    },
+    "low_magnetic": {
+      "speaker_id": "zh_male_shenyeboke_uranus_bigtts",
+      "display_name": "深夜播客 2.0",
+      "model": "seed-tts-2.0"
+    }
+  }
+}

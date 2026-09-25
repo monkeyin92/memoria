@@ -60,11 +60,10 @@ class ProviderStub:
             self.create_entered.set()
         if self.create_release is not None:
             await self.create_release.wait()
-        # DashScope clones carry no provider expiry; the id is
-        # "{target_model}-{prefix}-{unique id}".
         return ProviderVoice(
-            voice_id=f"{target_model}-{prefix}-abc123",
+            voice_id=f"{target_model}-clone-{prefix}",
             target_model=target_model,
+            expires_at=datetime.now(UTC) + timedelta(days=365),
         )
 
     async def delete_voice(self, *, voice_id: str) -> None:
@@ -126,16 +125,16 @@ async def _cleanup(dsn: str, *account_ids: str) -> None:
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL voice contract test",
 )
-async def test_postgres_current_clone_needs_no_expiry_and_legacy_clone_is_re_recorded(
+async def test_postgres_persists_doubao_provider_and_keeps_unconfirmed_delete_pending(
     tmp_path: Path,
 ) -> None:
     dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
-    account_id = "postgres-current-voice-provider"
+    account_id = "postgres-doubao-voice-provider"
     provider = UnsupportedDeleteProvider()
     manager = PostgresVoiceProfileManager(
         dsn,
         object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "manual-cleanup-voice-objects",
+            root=tmp_path / "doubao-voice-objects",
             key=Fernet.generate_key().decode("ascii"),
             key_version="voice-postgres-test-v1",
         ),
@@ -144,7 +143,8 @@ async def test_postgres_current_clone_needs_no_expiry_and_legacy_clone_is_re_rec
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="seed-icl-2.0",
+        provider_name="volcengine_doubao",
     )
     try:
         await manager.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
@@ -162,63 +162,46 @@ async def test_postgres_current_clone_needs_no_expiry_and_legacy_clone_is_re_rec
             await connection.execute(
                 """
                 UPDATE voice_profiles
-                SET evaluation_status = 'passed', quality_status = 'passed'
+                SET evaluation_status = 'passed', quality_status = 'passed',
+                    provider_expires_at = NULL
                 WHERE profile_id = $1::uuid
                 """,
                 candidate.profile_id,
             )
         finally:
             await connection.close()
-        assert candidate.provider_expires_at is None
-        await manager.activate(account_id=account_id, profile_id=candidate.profile_id)
-        resolution = await manager.resolve(account_id=account_id)
-        assert resolution.mode == "active"
-        assert resolution.provider == "alibaba_model_studio"
-        assert resolution.model == "qwen-audio-3.1-tts-flash"
-        assert resolution.resource_id == "qwen-audio-3.1-tts-flash"
-        assert resolution.provider_expires_at is None
-
-        # An expiry is optional, but once one is set and passed the clone falls back.
-        connection = await asyncpg.connect(dsn)
-        try:
-            await connection.execute(
-                "UPDATE voice_profiles SET provider_expires_at = $1 WHERE profile_id = $2::uuid",
-                datetime(2000, 1, 1, tzinfo=UTC),
-                candidate.profile_id,
-            )
-        finally:
-            await connection.close()
-        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
-
-        # A pre-migration Doubao clone keeps its identity but never speaks again,
-        # even with an unexpired provider voice.
-        connection = await asyncpg.connect(dsn)
-        try:
-            await connection.execute(
-                """
-                UPDATE voice_profiles
-                SET provider = 'volcengine_doubao', target_model = 'seed-icl-2.0',
-                    provider_expires_at = $1
-                WHERE profile_id = $2::uuid
-                """,
-                datetime.now(UTC) + timedelta(days=365),
-                candidate.profile_id,
-            )
-        finally:
-            await connection.close()
-        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
-        with pytest.raises(EvaluationRequiredError, match="re-recorded for the current model"):
+        with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
             await manager.activate(
                 account_id=account_id,
                 profile_id=candidate.profile_id,
             )
+        assert candidate.provider_expires_at is not None
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "UPDATE voice_profiles SET provider_expires_at = $1 WHERE profile_id = $2::uuid",
+                candidate.provider_expires_at,
+                candidate.profile_id,
+            )
+        finally:
+            await connection.close()
+        await manager.activate(account_id=account_id, profile_id=candidate.profile_id)
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "UPDATE voice_profiles SET provider_expires_at = NULL WHERE profile_id = $1::uuid",
+                candidate.profile_id,
+            )
+        finally:
+            await connection.close()
+        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
         revoked = await manager.revoke_profile(
             account_id=account_id,
             profile_id=candidate.profile_id,
         )
 
-        assert candidate.provider == "alibaba_model_studio"
-        assert candidate.target_model == "qwen-audio-3.1-tts-flash"
+        assert candidate.provider == "volcengine_doubao"
+        assert candidate.target_model == "seed-icl-2.0"
         assert revoked.status == "revoked"
         assert revoked.deletion_status == "pending"
         assert (await manager.resolve(account_id=account_id)).mode == "fallback"
@@ -226,7 +209,7 @@ async def test_postgres_current_clone_needs_no_expiry_and_legacy_clone_is_re_rec
         confirmed = await manager.confirm_provider_deletion(
             account_id=account_id,
             profile_id=candidate.profile_id,
-            evidence_reference="dashscope-console-ticket/postgres-cleanup-001",
+            evidence_reference="doubao-console-ticket/postgres-cleanup-001",
         )
         assert confirmed.deletion_status == "completed"
     finally:
@@ -258,7 +241,7 @@ async def test_postgres_voice_profile_matches_lifecycle_contract_and_forces_rls(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     await manager.initialize()
     await _cleanup(dsn, account_id, other_account)
@@ -424,7 +407,7 @@ async def test_postgres_consent_revocation_retries_incomplete_provider_deletion(
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/{sample_id}",
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     await manager.initialize()
     await _cleanup(dsn, account_id)
@@ -489,7 +472,7 @@ async def test_postgres_consent_revocation_waits_for_orphan_sample_reconciliatio
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/{sample_id}",
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     await manager.initialize()
     await _cleanup(dsn, account_id)
@@ -559,7 +542,7 @@ async def test_postgres_enrollment_retry_reuses_persisted_provider_result(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     await manager.initialize()
     await _cleanup(dsn, account_id)
@@ -658,8 +641,8 @@ async def test_postgres_enrollment_retry_reuses_persisted_provider_result(
         item for item in pending if item.enrollment_key == "postgres-stable-enrollment-ambiguous"
     )
     recovered = ProviderVoice(
-        voice_id=f"qwen-audio-3.1-tts-flash-{ambiguous.provider_prefix}-abc123",
-        target_model="qwen-audio-3.1-tts-flash",
+        voice_id=f"cosyvoice-v3.5-flash-clone-{ambiguous.provider_prefix}",
+        target_model="cosyvoice-v3.5-flash",
     )
     reconciled = await manager.reconcile_enrollment(
         account_id=account_id,
@@ -700,7 +683,7 @@ async def test_postgres_revocation_during_enrollment_tracks_failed_late_deletion
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     await manager.initialize()
     await _cleanup(dsn, account_id)
@@ -731,9 +714,7 @@ async def test_postgres_revocation_during_enrollment_tracks_failed_late_deletion
         await enrollment
 
     profile = (await manager.profiles(account_id=account_id))[0]
-    expected_voice_id = (
-        f"qwen-audio-3.1-tts-flash-m{enrolling.profile_id.replace('-', '')[:9]}-abc123"
-    )
+    expected_voice_id = f"cosyvoice-v3.5-flash-clone-m{enrolling.profile_id.replace('-', '')[:9]}"
     assert provider.deleted == [expected_voice_id]
     assert profile.status == "revoked"
     assert profile.deletion_status == "failed"
@@ -822,7 +803,7 @@ async def test_postgres_keeps_one_active_clone_per_custom_persona(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model="qwen-audio-3.1-tts-flash",
+        target_model="cosyvoice-v3.5-flash",
     )
     try:
         await manager.initialize()

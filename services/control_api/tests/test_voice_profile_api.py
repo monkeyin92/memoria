@@ -11,7 +11,6 @@ import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from services.archive.object_store import EncryptedLocalObjectStore
-from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.main import create_app
 from services.digital_self.domain import (
     DigitalSelfManifest,
@@ -38,9 +37,6 @@ from services.voice_profile.testing_audio import (
     voice_sample_wav,
     wav_bytes,
 )
-
-PERSONAL_VOICE_ID = f"{TTS_MODEL}-owner01-abc123"
-PERSONAL_VOICE_SHA256 = hashlib.sha256(PERSONAL_VOICE_ID.encode()).hexdigest()
 
 
 def _voice_sample(duration_ms: int = 12_000) -> bytes:
@@ -96,40 +92,39 @@ class LegacyResolutionStub:
         assert account_id
         return VoiceResolution(
             mode="active",
-            profile_id="account-active-profile",
-            provider=TTS_PROVIDER,
+            profile_id="legacy-cosyvoice-profile",
+            provider="alibaba_model_studio",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
-            voice_id=PERSONAL_VOICE_ID,
+            model="cosyvoice-v3.5-flash",
+            resource_id="cosyvoice-v3.5-flash",
+            voice_id="cosyvoice-v3.5-flash-clone-owner001",
         )
 
 
 class ActivationStub:
-    def __init__(self, provider: str, target_model: str) -> None:
+    def __init__(self) -> None:
         self.called = False
-        self.provider = provider
-        self.target_model = target_model
 
     async def activate(self, *, account_id: str, profile_id: str) -> None:
         self.called = True
         raise AssertionError(f"unexpected activation: {account_id=} {profile_id=}")
 
-    async def consent(self, *, account_id: str) -> None:
-        del account_id
-
     async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
         del account_id
-        return (_voice_profile("legacy-clone-profile", self.provider, self.target_model),)
+        return (
+            _voice_profile(
+                "legacy-cosyvoice-profile", "alibaba_model_studio", "cosyvoice-v3.5-flash"
+            ),
+        )
 
 
-class CurrentCloneActivationStub:
+class DoubaoActivationStub:
     def __init__(self) -> None:
         self.called = False
         self.profile = _voice_profile(
-            "qwen-personal-profile",
-            TTS_PROVIDER,
-            TTS_MODEL,
+            "doubao-personal-profile",
+            "volcengine_doubao",
+            "seed-icl-2.0",
         )
 
     async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
@@ -196,7 +191,7 @@ class ProviderDeletionConfirmationStub:
             }
         )
         return replace(
-            _voice_profile(profile_id, TTS_PROVIDER, TTS_MODEL),
+            _voice_profile(profile_id, "volcengine_doubao", "seed-icl-2.0"),
             status="revoked",
             deletion_status="completed",
             revoked_at=datetime.now(UTC),
@@ -226,7 +221,7 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
-    monkeypatch.setenv("TTS_PROVIDER", "qwen_audio")
+    monkeypatch.setenv("TTS_PROVIDER", "cosyvoice")
 
 
 async def _verified_adult_headers(
@@ -292,10 +287,10 @@ def _legacy_version(access: LegacyAccessSnapshot, *, voice_id: str) -> DigitalSe
                 voice_profile=VoiceProfileManifestRef(
                     profile_id="voice-profile-1",
                     version_number=3,
-                    provider=TTS_PROVIDER,
-                    target_model=TTS_MODEL,
-                    resource_id=TTS_MODEL,
-                    provider_expires_at=None,
+                    provider="volcengine_doubao",
+                    target_model="seed-icl-2.0",
+                    resource_id="seed-icl-2.0",
+                    provider_expires_at="2027-07-23T00:00:00+00:00",
                     speaker_sha256=hashlib.sha256(voice_id.encode()).hexdigest(),
                 ),
             ),
@@ -307,7 +302,7 @@ def _legacy_version(access: LegacyAccessSnapshot, *, voice_id: str) -> DigitalSe
 
 def _add_legacy_voice_session(app: object, access: LegacyAccessSnapshot) -> str:
     voice = _legacy_version(
-        access, voice_id=PERSONAL_VOICE_ID
+        access, voice_id="provider-secret-id"
     ).manifest.source_summary.voice_profile
     assert voice is not None
     session_id = "legacy-voice-session"
@@ -351,9 +346,9 @@ def _add_legacy_voice_session(app: object, access: LegacyAccessSnapshot) -> str:
         voice_provider_expires_at=voice.provider_expires_at if access.voice_allowed else None,
         voice_speaker_sha256=voice.speaker_sha256 if access.voice_allowed else None,
         fallback_voice_profile_id="warm_companion",
-        fallback_voice_provider=TTS_PROVIDER,
-        fallback_voice_model=TTS_MODEL,
-        fallback_voice_resource_id=TTS_MODEL,
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
     )
     return session_id
 
@@ -388,7 +383,7 @@ async def test_manual_provider_cleanup_requires_dedicated_token_and_is_audited(
     app.state.voice_profile_manager = manager
     body = {
         "account_id": "voice-owner",
-        "evidence_reference": "model-studio-console-ticket/cleanup-001",
+        "evidence_reference": "doubao-console-ticket/cleanup-001",
     }
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -410,17 +405,18 @@ async def test_manual_provider_cleanup_requires_dedicated_token_and_is_audited(
         {
             "account_id": "voice-owner",
             "profile_id": "personal-v1",
-            "evidence_reference": "model-studio-console-ticket/cleanup-001",
+            "evidence_reference": "doubao-console-ticket/cleanup-001",
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_legacy_active_clone_resolves_to_selected_designed_companion(
+async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
     app = create_app()
     app.state.voice_profile_manager = LegacyResolutionStub()
 
@@ -459,10 +455,10 @@ async def test_legacy_active_clone_resolves_to_selected_designed_companion(
     assert resolved.json() == {
         "mode": "designed",
         "profile_id": "bright_peer",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "designed",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
         "speaker_sha256": None,
     }
@@ -475,16 +471,16 @@ async def test_legacy_bio_marker_no_longer_binds_a_personal_clone(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    voice_id = PERSONAL_VOICE_ID
+    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
     app.state.voice_profile_manager = FrozenPreviewResolutionStub(
         VoiceResolution(
             mode="active",
             profile_id="voice-profile-personal",
             version_number=2,
-            provider=TTS_PROVIDER,
+            provider="alibaba_model_studio",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
+            model="cosyvoice-v3.5-flash",
+            resource_id="cosyvoice-v3.5-flash",
             voice_id=voice_id,
         )
     )
@@ -544,16 +540,18 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    expires_at = "2027-07-23T00:00:00+00:00"
     manager = FrozenPreviewResolutionStub(
         VoiceResolution(
             mode="active",
             profile_id="voice-profile-1",
             version_number=3,
-            provider=TTS_PROVIDER,
+            provider="volcengine_doubao",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
-            voice_id=PERSONAL_VOICE_ID,
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="provider-secret-id",
+            provider_expires_at=datetime.fromisoformat(expires_at),
         )
     )
     app.state.voice_profile_manager = manager
@@ -585,15 +583,17 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
             self_preview_perspective="owner",
             voice_profile_id="voice-profile-1",
             voice_profile_version=3,
-            voice_provider=TTS_PROVIDER,
-            voice_model=TTS_MODEL,
-            voice_resource_id=TTS_MODEL,
-            voice_provider_expires_at=None,
-            voice_speaker_sha256=PERSONAL_VOICE_SHA256,
+            voice_provider="volcengine_doubao",
+            voice_model="seed-icl-2.0",
+            voice_resource_id="seed-icl-2.0",
+            voice_provider_expires_at=expires_at,
+            voice_speaker_sha256=(
+                "5235c7027839d3b116078b4f0f00e87c91437c81836a347f3c2a8f48e56f9558"
+            ),
             fallback_voice_profile_id="bright_peer",
-            fallback_voice_provider=TTS_PROVIDER,
-            fallback_voice_model=TTS_MODEL,
-            fallback_voice_resource_id=TTS_MODEL,
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
         )
         exact = await client.post(
             "/v1/voices/session-resolution",
@@ -604,11 +604,12 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
             mode="active",
             profile_id="voice-profile-1",
             version_number=4,
-            provider=TTS_PROVIDER,
+            provider="volcengine_doubao",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
-            voice_id=f"{TTS_MODEL}-owner01-def456",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="new-provider-secret-id",
+            provider_expires_at=datetime.fromisoformat(expires_at),
         )
         mismatch = await client.post(
             "/v1/voices/session-resolution",
@@ -619,20 +620,20 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
     assert exact.json() == {
         "mode": "active",
         "profile_id": "voice-profile-1",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "personal",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
-        "voice_id": PERSONAL_VOICE_ID,
-        "speaker_sha256": PERSONAL_VOICE_SHA256,
+        "model": "seed-icl-2.0",
+        "resource_id": "seed-icl-2.0",
+        "voice_id": "provider-secret-id",
+        "speaker_sha256": ("5235c7027839d3b116078b4f0f00e87c91437c81836a347f3c2a8f48e56f9558"),
     }
     assert mismatch.json() == {
         "mode": "designed",
         "profile_id": "bright_peer",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "designed",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
         "speaker_sha256": None,
     }
@@ -659,7 +660,7 @@ async def test_legacy_voice_resolution_revalidates_frozen_access_and_selects_aut
     app = create_app()
     access = _legacy_access(voice_allowed=voice_allowed)
     legacy = LegacyAccessStub(access)
-    voice_id = PERSONAL_VOICE_ID
+    voice_id = "provider-secret-id"
     app.state.legacy_registry = legacy
     app.state.digital_self_registry = LegacyVersionStub(_legacy_version(access, voice_id=voice_id))
     app.state.voice_profile_manager = FrozenPreviewResolutionStub(
@@ -667,11 +668,12 @@ async def test_legacy_voice_resolution_revalidates_frozen_access_and_selects_aut
             mode="active",
             profile_id=resolved_profile_id,
             version_number=3,
-            provider=TTS_PROVIDER,
+            provider="volcengine_doubao",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
             voice_id=voice_id,
+            provider_expires_at=datetime.fromisoformat("2027-07-23T00:00:00+00:00"),
         )
     )
     session_id = _add_legacy_voice_session(app, access)
@@ -712,18 +714,19 @@ async def test_legacy_voice_resolution_fails_closed_when_live_access_is_unavaila
     legacy = LegacyAccessStub(access)
     app.state.legacy_registry = legacy
     app.state.digital_self_registry = LegacyVersionStub(
-        _legacy_version(access, voice_id=PERSONAL_VOICE_ID)
+        _legacy_version(access, voice_id="provider-secret-id")
     )
     app.state.voice_profile_manager = FrozenPreviewResolutionStub(
         VoiceResolution(
             mode="active",
             profile_id="voice-profile-1",
             version_number=3,
-            provider=TTS_PROVIDER,
+            provider="volcengine_doubao",
             voice_kind="personal",
-            model=TTS_MODEL,
-            resource_id=TTS_MODEL,
-            voice_id=PERSONAL_VOICE_ID,
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="provider-secret-id",
+            provider_expires_at=datetime.fromisoformat("2027-07-23T00:00:00+00:00"),
         )
     )
     session_id = _add_legacy_voice_session(app, access)
@@ -744,82 +747,70 @@ async def test_legacy_voice_resolution_fails_closed_when_live_access_is_unavaila
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("provider", "target_model"),
-    (
-        ("alibaba_model_studio", "cosyvoice-v3.5-flash"),
-        ("volcengine_doubao", "seed-icl-2.0"),
-    ),
-)
-async def test_activation_rejects_legacy_clone_until_it_is_re_recorded(
+async def test_doubao_runtime_rejects_new_cosyvoice_clone_activation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    provider: str,
-    target_model: str,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
     app = create_app()
-    manager = ActivationStub(provider, target_model)
+    manager = ActivationStub()
     app.state.voice_profile_manager = manager
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         identity = (
             await client.post(
                 "/v1/auth/register",
-                json={"username": "legacy-clone-owner", "password": "safe-password"},
+                json={"username": "doubao-voice-owner", "password": "safe-password"},
             )
         ).json()
         headers = await _verified_adult_headers(
             app,
             client,
             user_id=identity["user_id"],
-            username="legacy-clone-owner",
+            username="doubao-voice-owner",
         )
-        listing = await client.get("/v1/voices/profiles", headers=headers)
         response = await client.post(
-            "/v1/voices/profiles/legacy-clone-profile/activate",
+            "/v1/voices/profiles/legacy-cosyvoice-profile/activate",
             headers=headers,
         )
 
-    assert listing.status_code == 200
-    assert [item["reenrollment_required"] for item in listing.json()["items"]] == [True]
     assert response.status_code == 409
-    assert response.json()["detail"] == "这个声音基于旧的语音模型，需要重新录制后才能使用"
+    assert response.json()["detail"] == "当前豆包语音链路不支持激活历史 CosyVoice 克隆音色"
     assert not manager.called
 
 
 @pytest.mark.asyncio
-async def test_current_qwen_audio_personal_clone_activation_is_allowed(
+async def test_doubao_runtime_allows_seed_icl_personal_clone_activation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
     app = create_app()
-    manager = CurrentCloneActivationStub()
+    manager = DoubaoActivationStub()
     app.state.voice_profile_manager = manager
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         identity = (
             await client.post(
                 "/v1/auth/register",
-                json={"username": "qwen-clone-owner", "password": "safe-password"},
+                json={"username": "doubao-seed-icl-owner", "password": "safe-password"},
             )
         ).json()
         headers = await _verified_adult_headers(
             app,
             client,
             user_id=identity["user_id"],
-            username="qwen-clone-owner",
+            username="doubao-seed-icl-owner",
         )
         response = await client.post(
-            "/v1/voices/profiles/qwen-personal-profile/activate",
+            "/v1/voices/profiles/doubao-personal-profile/activate",
             headers=headers,
         )
 
     assert response.status_code == 200
-    assert response.json()["provider"] == TTS_PROVIDER
-    assert response.json()["target_model"] == TTS_MODEL
-    assert response.json()["reenrollment_required"] is False
+    assert response.json()["provider"] == "volcengine_doubao"
     assert manager.called
 
 
@@ -849,7 +840,7 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
         provider=provider,
         sample_url_factory=signer.url,
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -967,8 +958,6 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert enrolled.status_code == 201
     assert profile["status"] == "candidate"
     assert profile["quality_status"] == "pending"
-    assert profile["target_model"] == TTS_MODEL
-    assert profile["reenrollment_required"] is False
     assert "provider_voice_id" not in profile
     assert listing.json()["consent"]["policy_version"] == "voice-clone-v1"
     assert provider_sample.status_code == 200
@@ -980,7 +969,7 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert all(preview.content == b"RIFF-preview" for preview in previews)
     assert {item["model"] for item in preview_renderer.requests} == {
         None,
-        TTS_MODEL,
+        "cosyvoice-v3.5-flash",
     }
     candidate_preview_voice_id = next(
         item["voice_id"] for item in preview_renderer.requests if item["model"] is not None
@@ -992,10 +981,10 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert resolved.json() == {
         "mode": "designed",
         "profile_id": "warm_companion",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "designed",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
         "speaker_sha256": None,
     }
@@ -1004,10 +993,10 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert fallback.json() == {
         "mode": "designed",
         "profile_id": "warm_companion",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "designed",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
         "speaker_sha256": None,
     }
@@ -1015,10 +1004,10 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert designed.json() == {
         "mode": "designed",
         "profile_id": "warm_companion",
-        "provider": TTS_PROVIDER,
+        "provider": "volcengine_doubao",
         "voice_kind": "designed",
-        "model": TTS_MODEL,
-        "resource_id": TTS_MODEL,
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
         "speaker_sha256": None,
     }
@@ -1046,7 +1035,7 @@ async def test_voice_profile_revocation_returns_503_until_provider_cleanup_compl
             f"https://control.test/v1/voices/provider-samples/{sample_id}"
         ),
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1114,7 +1103,7 @@ async def test_voice_consent_revocation_returns_503_until_provider_cleanup_compl
             f"https://control.test/v1/voices/provider-samples/{sample_id}"
         ),
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1208,7 +1197,7 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
         provider=ProviderStub(),
         sample_url_factory=signer.url,
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1375,7 +1364,7 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
         provider=ProviderStub(),
         sample_url_factory=signer.url,
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1457,7 +1446,7 @@ async def test_a_recording_that_cannot_be_cloned_is_refused_with_actionable_copy
         provider=ProviderStub(),
         sample_url_factory=signer.url,
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
     silent = wav_bytes(silent_audio(duration_ms=15_000))
     undecodable = b"RIFF" + b"\x01\x02" * 16_000
@@ -1531,7 +1520,7 @@ async def test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read(
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
         provider_region="cn-beijing",
-        target_model=TTS_MODEL,
+        target_model="cosyvoice-v3.5-flash",
     )
     app.state.voice_profile_manager = manager
 

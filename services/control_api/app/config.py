@@ -26,7 +26,6 @@ from services.common.security_constants import (
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
     DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
-from services.common.voice_identity import PERSONAL_VOICE_MODEL
 from services.evolution.release_policy import parse_runtime_prompt_families
 
 _SUBSCRIBE_TEMPLATE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -615,7 +614,7 @@ class ControlSettings(BaseSettings):
         default="cn-beijing",
         alias="MEMORIA_VOICE_PROVIDER_REGION",
     )
-    voice_clone_provider: Literal["alibaba_model_studio"] = Field(
+    voice_clone_provider: Literal["alibaba_model_studio", "volcengine_doubao"] = Field(
         default="alibaba_model_studio",
         alias="MEMORIA_VOICE_CLONE_PROVIDER",
     )
@@ -630,15 +629,52 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S",
     )
     voice_target_model: str = Field(
-        default=PERSONAL_VOICE_MODEL,
+        default="cosyvoice-v3.5-flash",
         alias="MEMORIA_VOICE_TARGET_MODEL",
     )
+    doubao_voice_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_DOUBAO_VOICE_API_KEY",
+    )
+    doubao_voice_clone_url: str = Field(
+        default="https://openspeech.bytedance.com/api/v3/tts/voice_clone",
+        alias="MEMORIA_DOUBAO_VOICE_CLONE_URL",
+    )
+    doubao_voice_query_url: str = Field(
+        default="https://openspeech.bytedance.com/api/v3/tts/get_voice",
+        alias="MEMORIA_DOUBAO_VOICE_QUERY_URL",
+    )
+    doubao_voice_clone_poll_interval_s: float = Field(
+        default=1.0,
+        ge=0.05,
+        le=30.0,
+        alias="MEMORIA_DOUBAO_VOICE_CLONE_POLL_INTERVAL_S",
+    )
+    doubao_voice_synth_ready_id_mode: Literal[
+        "unverified", "custom_speaker_id", "response_field"
+    ] = Field(
+        default="unverified",
+        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE",
+    )
+    doubao_voice_synth_ready_id_field: str = Field(
+        default="",
+        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_FIELD",
+    )
+    doubao_voice_expires_at_field: str = Field(
+        default="",
+        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD",
+    )
+    doubao_voice_expires_at_format: Literal["epoch_ms", "rfc3339"] = Field(
+        default="epoch_ms",
+        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
+    )
+
     llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"] = Field(
         default="qwen",
         alias="LLM_PROVIDER",
     )
-    tts_provider: Literal["qwen_audio"] = Field(
-        default="qwen_audio",
+    tts_provider: Literal["cosyvoice", "doubao"] = Field(
+        default="doubao",
         alias="TTS_PROVIDER",
     )
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
@@ -1635,8 +1671,23 @@ class ControlSettings(BaseSettings):
             self.voice_object_endpoint.strip() and not voice_access_key
         ):
             raise ValueError("production requires a complete voice object credential pair")
-        if self.voice_target_model != PERSONAL_VOICE_MODEL:
-            raise ValueError(f"voice cloning requires the {PERSONAL_VOICE_MODEL} target")
+        if self.voice_clone_provider == "alibaba_model_studio":
+            if not self.voice_target_model.startswith("cosyvoice-v3.5-"):
+                raise ValueError("CosyVoice voice cloning requires a CosyVoice v3.5 target")
+        else:
+            if self.voice_target_model != "seed-icl-2.0":
+                raise ValueError("Doubao voice cloning requires seed-icl-2.0")
+            if not self.doubao_voice_api_key.get_secret_value().strip():
+                raise ValueError("Doubao voice cloning requires an independent API key")
+            if self.doubao_voice_synth_ready_id_mode == "unverified":
+                raise ValueError("Doubao voice cloning requires a smoke-verified synth ID mapping")
+            if (
+                self.doubao_voice_synth_ready_id_mode == "response_field"
+                and not self.doubao_voice_synth_ready_id_field.strip()
+            ):
+                raise ValueError("Doubao response-field synth ID mapping requires a field path")
+            if not self.doubao_voice_expires_at_field.strip():
+                raise ValueError("Doubao voice cloning requires a provider expiry field path")
         archive_object_key = self.archive_object_encryption_key.get_secret_value()
         if not archive_object_key or not self.archive_object_key_version.strip():
             raise ValueError("production requires encrypted archive object storage")

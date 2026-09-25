@@ -39,6 +39,8 @@ COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_
 # the source file's mode is not something a build may depend on.
 COPY --chmod=0644 scripts/verify_agent_release_artifact.py ./scripts/verify_agent_release_artifact.py
 # Reviewed runtime voice maps (no secrets).
+COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
+COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 COPY infra/kws/keywords.txt ./infra/kws/keywords.txt
 
 # COPY preserves the build host's file modes, and a checkout made under a

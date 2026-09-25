@@ -55,15 +55,7 @@ function clampCloneDuration(durationMs) {
 function voiceCloneStatusLabel(payload) {
   if (!payload) return "暂时读不到自定义声音状态。";
   const items = Array.isArray(payload.items) ? payload.items : [];
-  const current = items.filter((item) => item.reenrollment_required !== true);
-  // 旧语音模型（豆包 / CosyVoice v3.5）生成的声音在新模型上不能用，服务端会回落到人格声音。
-  if (
-    !current.some((item) => ["active", "enrolling", "candidate"].includes(item.status))
-    && items.some((item) => item.reenrollment_required === true && item.status === "active")
-  ) {
-    return "语音模型升级了，之前的声音暂时用不了，现在先用人格原本的声音。重新录一段，大约一分钟就能换回你的声音。";
-  }
-  if (current.some((item) => item.status === "active")) {
+  if (items.some((item) => item.status === "active")) {
     return "自定义声音已就绪。下次在设备上说话就会用；听着不像，再录一段即可。";
   }
   if (items.some((item) => item.status === "enrolling")) {
@@ -875,10 +867,7 @@ Page({
   async loadVoiceCloneStatus() {
     try {
       let payload = await api.listVoiceProfiles();
-      // 旧模型的候选声音不能再接到设备上，只能重新录。
-      const pending = (payload.items || []).find(
-        (item) => item.status === "candidate" && item.reenrollment_required !== true,
-      );
+      const pending = (payload.items || []).find((item) => item.status === "candidate");
       if (pending?.profile_id) {
         try {
           await api.readyVoiceForDevice(pending.profile_id);
