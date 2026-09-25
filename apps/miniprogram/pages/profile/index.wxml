@@ -1,4 +1,5 @@
-<view class="page-shell">
+<view class="page-shell theme-dark">
+  <page-backdrop theme="night"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">我的</text>
     <text class="page-lede">设备与记录，登录后跟随账号。</text>
@@ -34,9 +35,7 @@
     <!-- L2 功能层：入口列表 -->
     <view class="list">
       <view class="list-row" bindtap="openCompanion">
-        <view class="row-icon">
-          <svg viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 15a5.5 5.5 0 0 1 11 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </view>
+        <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">{{personaHeadline}}</text>
           <text class="row-meta">人格与声音。下次唤醒才会换成对应声音</text>
@@ -47,9 +46,7 @@
 
     <view class="list">
       <view class="list-row" bindtap="openDevice">
-        <view class="row-icon">
-          <svg viewBox="0 0 18 18" fill="none"><rect x="3" y="2.5" width="12" height="13" rx="3" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="12.5" r="1.2" fill="currentColor"/></svg>
-        </view>
+        <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">我的设备</text>
           <text class="row-meta">{{deviceBindingDetail}}</text>
@@ -78,9 +75,7 @@
         bindtap="retryDeviceBindingSync"
       >重新同步设备</button>
       <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
-        <view class="row-icon">
-          <svg viewBox="0 0 18 18" fill="none"><path d="M9 2.5l6 2.5v4c0 3.5-2.5 5.8-6 6.5-3.5-.7-6-3-6-6.5v-4l6-2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        </view>
+        <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
         <view class="row-copy">
             <text class="row-title">家庭与监护</text>
             <text class="row-meta">成长小结与监护授权</text>
@@ -88,9 +83,7 @@
         <text class="row-chevron">›</text>
       </view>
       <view wx:if="{{digitalSelfEntryAllowed}}" class="list-row" bindtap="openDigitalSelf">
-        <view class="row-icon">
-          <svg viewBox="0 0 18 18" fill="none"><path d="M4 2.5h8L14.5 5v10.5h-10v-13z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6.5 8h5M6.5 11h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </view>
+        <view class="row-icon"><glass-icon name="memory" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">我的记忆档案</text>
           <text class="row-meta">只保留你确认的事</text>
@@ -109,9 +102,7 @@
         <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#326e70" />
       </view>
       <view wx:if="{{rawVoiceEntryAllowed}}" class="list-row" bindtap="openPrivacy">
-        <view class="row-icon">
-          <svg viewBox="0 0 18 18" fill="none"><rect x="3" y="7" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5"/></svg>
-        </view>
+        <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">隐私与数据</text>
           <text class="row-meta">授权、声音样本、导出与删除</text>
@@ -122,7 +113,10 @@
 
     <!-- L2 功能层：声音复刻卡 -->
     <view wx:if="{{voiceCloneAllowed}}" class="l2-card">
-      <text class="l2-card-title">自定义人格与声音</text>
+      <view class="card-lead">
+        <glass-icon name="wave" size="80"></glass-icon>
+        <text class="l2-card-title">自定义人格与声音</text>
+      </view>
       <text class="l2-card-sub">对话只在机器人上进行。自定义人格用你写的名字说话，并在声音就绪后用你的声音。</text>
       <view class="list-row" bindtap="openCustomPersona">
         <view class="row-copy">

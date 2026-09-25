@@ -1,4 +1,5 @@
 <view class="page-shell">
+  <page-backdrop theme="mist"></page-backdrop>
   <view class="nav-back" bindtap="goBack"><text>‹ 我的</text></view>
 
   <!-- L1 情感层 -->
@@ -9,7 +10,7 @@
         <text class="mem-hero-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
         <text class="mem-hero-sub">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与伙伴的对话原文。'}}</text>
       </view>
-      <face-badge role="starlight" size="sm"></face-badge>
+      <glass-icon name="family" size="112"></glass-icon>
     </view>
   </view>
 
@@ -39,7 +40,10 @@
   <block wx:elif="{{role === 'guardian'}}">
     <!-- L2 功能层：绑定卡 -->
     <view class="l2-card">
-      <text class="l2-card-title">绑定家人的设备</text>
+      <view class="card-lead">
+        <glass-icon name="family" size="72"></glass-icon>
+        <text class="l2-card-title">绑定家人的设备</text>
+      </view>
       <text class="l2-card-sub">打开家人的「我的」，复制「账号编号」后填在这里。生成的 8 位码由家人本人确认。</text>
       <text class="field-label">家人账号编号</text>
       <input class="field-input" value="{{minorUserId}}" placeholder="家人账号编号" bindinput="onMinorUserId" />
@@ -145,6 +149,7 @@
     <view wx:elif="{{summaryState === 'empty'}}" class="l2-card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
     <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
       <view class="kept-head">
+        <glass-icon name="chart" size="72"></glass-icon>
         <text class="l2-card-title">家人的成长小结 · 本周</text>
         <text class="pill pill-teal">不含对话原文</text>
       </view>
@@ -160,7 +165,10 @@
     </view>
 
     <view wx:if="{{crisisPush.enabled}}" class="l2-card">
-      <text class="l2-card-title">微信安全提醒</text>
+      <view class="card-lead">
+        <glass-icon name="bell" size="72"></glass-icon>
+        <text class="l2-card-title">微信安全提醒</text>
+      </view>
       <text class="l2-card-sub">{{crisisPush.explanation}}</text>
       <button size="mini" bindtap="enableCrisisPush">开启一次提醒</button>
     </view>

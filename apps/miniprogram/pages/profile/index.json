@@ -1,6 +1,15 @@
 {
   "navigationBarTitleText": "我的",
   "usingComponents": {
-    "face-badge": "/components/face-badge/index"
-  }
+    "face-badge": "/components/face-badge/index",
+    "page-backdrop": "/components/page-backdrop/index",
+    "glass-icon": "/components/glass-icon/index",
+    "device-screen": "/components/device-screen/index"
+  },
+  "navigationBarBackgroundColor": "#020920",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#020920",
+  "backgroundColorTop": "#020920",
+  "backgroundColorBottom": "#0E184F",
+  "backgroundTextStyle": "light"
 }

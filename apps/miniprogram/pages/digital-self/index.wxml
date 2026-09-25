@@ -1,4 +1,5 @@
 <view class="page-shell">
+  <page-backdrop theme="warm"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
   <view class="page-head">
     <text class="page-title">记忆档案</text>
@@ -6,7 +7,7 @@
   </view>
 
   <view class="role-tint-card ds-hero" data-role="starlight">
-    <face-badge role="starlight" size="lg"></face-badge>
+    <glass-icon name="memory" size="176"></glass-icon>
     <view class="ds-copy">
       <text class="ds-num">{{dimensions.length}}</text>
       <text class="ds-sub">档案累计 · 版本 {{versions.length}}</text>

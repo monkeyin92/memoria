@@ -1,4 +1,5 @@
-<view class="page-shell">
+<view class="page-shell theme-dark">
+  <page-backdrop theme="sky"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">你好，欢迎来到 Memoria</text>
     <text class="page-lede">把设备连好，再慢慢留下日常。</text>
@@ -11,7 +12,7 @@
           <text class="mem-hero-title">记住哪些事，由你决定。</text>
           <text class="mem-hero-sub">在设备上记录，在这里确认与整理。</text>
         </view>
-        <face-badge role="starlight" size="md" breathe="{{true}}"></face-badge>
+        <device-screen online="{{true}}" size="200"></device-screen>
       </view>
       <view class="home-hero-foot">
         <text>登录后查看设备和今天记下的内容</text>
@@ -64,6 +65,30 @@
     </view>
 
     <block wx:else>
+      <view class="status-chips">
+        <view class="status-chip" bindtap="openDevice">
+          <glass-icon name="device" size="56"></glass-icon>
+          <view class="status-chip-copy">
+            <text class="status-chip-label">设备</text>
+            <text class="status-chip-value">{{online ? '在线' : '离线'}}</text>
+          </view>
+        </view>
+        <view class="status-chip" bindtap="openPendingMemory">
+          <glass-icon name="check" size="56"></glass-icon>
+          <view class="status-chip-copy">
+            <text class="status-chip-label">待你确认</text>
+            <text class="status-chip-value">{{pendingCount || 0}} 条</text>
+          </view>
+        </view>
+        <view class="status-chip" bindtap="openMemory">
+          <glass-icon name="memory" size="56"></glass-icon>
+          <view class="status-chip-copy">
+            <text class="status-chip-label">每日摘要</text>
+            <text class="status-chip-value">{{dailySummaryText || todayTitle ? '已整理' : '暂无'}}</text>
+          </view>
+        </view>
+      </view>
+
       <view class="mem-hero" data-role="{{heroRoleId}}">
         <view class="mem-hero-row">
           <view class="pill {{online ? '' : 'pill-amber'}}">
@@ -78,7 +103,7 @@
             <text class="mem-hero-sub">{{personaName}} · {{personaVoice}}在陪你</text>
             <text class="mem-hero-sub">{{heroCaption}}</text>
           </view>
-          <face-badge role="{{heroRoleId}}" size="md" breathe="{{true}}"></face-badge>
+          <device-screen online="{{online}}" size="220"></device-screen>
         </view>
         <view class="home-hero-foot">
           <text>{{heroFoot}}</text>
@@ -88,6 +113,7 @@
 
       <view wx:if="{{pendingCount}}" class="l2-card home-todo">
         <view class="home-todo-head" bindtap="toggleTodo">
+          <glass-icon name="check" size="80"></glass-icon>
           <view class="home-todo-copy">
             <text class="l2-card-title">待确认的记忆 <text class="count-badge">{{pendingCount}}</text></text>
             <text class="l2-card-sub">{{pendingCount}} 条内容，等你确认</text>
@@ -112,6 +138,7 @@
       </view>
       <view wx:if="{{dailySummaryText || todayTitle}}" class="l2-card home-recap">
         <view class="home-recap-meta">
+          <glass-icon name="memory" size="64"></glass-icon>
           <text class="home-recap-time">{{todayMeta}}</text>
           <text class="pill pill-neutral">AI 整理</text>
         </view>

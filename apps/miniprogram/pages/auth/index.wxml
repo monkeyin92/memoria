@@ -1,23 +1,24 @@
 <view class="page-shell auth-wrap">
+  <page-backdrop theme="warm"></page-backdrop>
   <view class="mem-hero auth-hero" data-role="starlight">
     <view class="auth-copy">
       <text class="eyebrow auth-copy-line">家庭桌面陪伴终端</text>
       <text class="page-title auth-copy-line">先打个招呼，&#10;再慢慢认识。</text>
     </view>
-    <face-badge role="starlight" size="lg"></face-badge>
+    <view class="auth-device"><device-screen online="{{true}}" size="240"></device-screen></view>
   </view>
 
   <view class="auth-points">
     <view class="auth-point">
-      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <glass-icon name="shield" size="56"></glass-icon>
       <text class="auth-point-text">对话经云端安全处理，只为你服务</text>
     </view>
     <view class="auth-point">
-      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <glass-icon name="memory" size="56"></glass-icon>
       <text class="auth-point-text">记忆档案由你掌控，随时查看</text>
     </view>
     <view class="auth-point">
-      <view class="inline-icon"><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4" /><path d="M5.5 8.2l1.8 1.8 3.4-3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <glass-icon name="export" size="56"></glass-icon>
       <text class="auth-point-text">支持导出与删除，删除可证明</text>
     </view>
   </view>

@@ -1,0 +1,86 @@
+.ds {
+  position: relative;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 4.5%;
+  background: linear-gradient(150deg, #a6acb3 0%, #43474d 24%, #1a1c20 56%, #33373d 82%, #858a91 100%);
+  box-shadow: 0 24rpx 48rpx rgba(4, 10, 24, 0.38), inset 0 2rpx 2rpx rgba(255, 255, 255, 0.45);
+}
+
+.ds-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 42%, #0d1a26 0%, #030405 70%);
+  box-shadow: inset 0 0 0 3rpx #0b0c0e;
+}
+
+.ds-cam {
+  position: absolute;
+  top: 6%;
+  left: 50%;
+  width: 5%;
+  height: 5.3%;
+  margin-left: -2.5%;
+  border-radius: 50%;
+  background: #15181c;
+  box-shadow: inset 0 0 0 2rpx #2a2f35;
+}
+
+.ds-face {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 34%;
+  height: 28%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22%;
+}
+
+.ds-eye {
+  width: 13%;
+  height: 100%;
+  border-radius: 999rpx;
+  background: #8ff3ff;
+  box-shadow: 0 0 18rpx rgba(96, 232, 255, 0.85), 0 0 36rpx rgba(96, 232, 255, 0.35);
+  animation: dsBlink 4.6s ease-in-out infinite;
+}
+
+.ds-smile {
+  position: absolute;
+  left: 50%;
+  top: 66%;
+  width: 16%;
+  height: 8%;
+  margin-left: -8%;
+  border-bottom: 5rpx solid rgba(143, 243, 255, 0.75);
+  border-radius: 0 0 999rpx 999rpx;
+}
+
+.ds-glare {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0) 38%);
+}
+
+.ds-off .ds-eye {
+  height: 12%;
+  background: #4b5864;
+  box-shadow: none;
+  animation: none;
+}
+
+.ds-off .ds-smile {
+  border-bottom-color: #3a4450;
+}
+
+@keyframes dsBlink {
+  0%, 44%, 50%, 100% { transform: scaleY(1); }
+  47% { transform: scaleY(0.12); }
+}
