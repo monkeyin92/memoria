@@ -2,11 +2,11 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-25 19:31（CST）整栈发布 `20260925-full-stack-v1`（main `064ed61`，保留豆包 TTS）；5 个角色镜像全部切换，media-edge 与数据层未动；readiness `ready`、定时刷新 `Result=success`、外部 8443 就绪 200。详见下方 2026-09-25 整栈发布一节。
+- **最近生产收据**：2026-09-25 23:54（CST）control-api 单组件发布 `20260925-device-mascot-sync`（main `9f02619`，PR #40：小程序选伙伴驱动设备 + `display-profile` 接口）；其余容器仍是 19:31 整栈发布 `20260925-full-stack-v1`（main `064ed61`，保留豆包 TTS）。详见下方两节。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260925-full-stack-v1` | `sha256:de49180970f509223aa050f47da0042d1279cfea80641d36a0d6b859df2c6c0b`（本地 image id） | `064ed611c266be12b18097380a01b5efec4e9b7d` | `20260925-full-stack-v1` / `064ed611c266be12b18097380a01b5efec4e9b7d` | healthy | 0 | `2026-09-25T11:30:37Z` | `/opt/memoria/releases/20260925-full-stack-v1/.cutover/` | `memoria-control-api:rollback-20260925-full-stack-v1-pre`（= `20260925-confirm-bound-subject`） |
+| Control API | `memoria-control-api:20260925-device-mascot-sync` | `sha256:c23eef1402fd7b6f568bb75e0f38fe4ace09268116a65c676b615b88431e6ba1`（本地 image id） | `9f02619cdf6fcf16e982ec2deaae10f1436e5968` | stack `20260925-full-stack-v1` / `064ed611c266be12b18097380a01b5efec4e9b7d`（组件发布不改栈身份） | healthy | 0 | `2026-09-25T15:54:06Z` | `/opt/memoria/component-releases/20260925-device-mascot-sync/`（root-only） | `memoria-control-api:rollback-20260925-device-mascot-sync-pre-control`（= `20260925-full-stack-v1`，`sha256:de491809…`） |
 | Agent / Bridge | `memoria-agent:20260925-full-stack-v1` | `sha256:14ea91080c785cfef804081770891f1400b3a21ce64cdaec0e4c74128a34c890`（本地 image id） | `064ed611c266be12b18097380a01b5efec4e9b7d` | `20260925-full-stack-v1` / `064ed611c266be12b18097380a01b5efec4e9b7d` | healthy | 0 each | `2026-09-25T11:30:52Z` | `/opt/memoria/releases/20260925-full-stack-v1/.cutover/` | `memoria-agent:rollback-20260925-full-stack-v1-pre`（= `20260924-d1d2-evidence-floor`） |
 | Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260925-full-stack-v1` | `sha256:a684de19…` / `sha256:b99584b4…` / `sha256:1e950444…`（本地 image id） | `064ed611c266be12b18097380a01b5efec4e9b7d` | `20260925-full-stack-v1` / `064ed611c266be12b18097380a01b5efec4e9b7d` | healthy | 0 each | `2026-09-25T11:30:27Z`–`11:31:27Z` | `/opt/memoria/releases/20260925-full-stack-v1/.cutover/` | 各自 `rollback-20260925-full-stack-v1-pre` tag |
 | Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
@@ -17,6 +17,15 @@
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界已通过；工具查询最终回答未完成，TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
+
+## 2026-09-25 control-api 发布 20260925-device-mascot-sync（设备屏伙伴同步）
+
+- **范围**：tag `20260925-device-mascot-sync` → main `9f02619`（PR #40 合并提交）。只动 control-api：`services/control_api/*` 内的选伙伴→设备人格同步（`companion_device_sync.py`、`routes/memory.py`、`routes/persona_assignment.py`）与设备签名只读接口 `GET /v1/devices/{id}/display-profile`（`device_display_profile.py`、`routes/device_onboarding.py`）。共享代码 `services/device_fleet`、`services/common` 未改，依赖输入未变，无 schema/nginx 变更。
+- **执行**：`deploy_control_component.sh` dry-run PASS → `--cutover` PASS（候选镜像 build + artifact verify、权威 PG schema/RLS 校验、`resolve_target_images` 解析到候选、单容器重建）。基座 `memoria-control-api:20260925-full-stack-v1`（`sha256:de491809…`，revision `064ed61`）。
+- **切后**：control-api healthy、restarts=0、StartedAt `2026-09-25T15:54:06Z`；agent、bridge、两个 gateway、media-edge 的 uptime 未变；外部 `https://aigcnice.com:8443/memoria-api/health/ready` 200；新接口无证书请求返回 401 `device_certificate_required`（符合契约）。
+- **真机**：开发板（固件含伙伴吉祥物与 display-profile 轮询，见「屏幕：伙伴吉祥物」一节）在发布后首次空闲轮询即从星澜切到账号所选桃喜；复位后开机直接显示桃喜，激活后 1 s 轮询 `Display profile companion=taoxi version=f11c258e317b23d9`，此后每 20 s 一次 HTTPS 200、版本不变不再打日志。
+- **小程序**：体验版 `0.2.20260925.3`（main `9f02619`，Node 24.16.0 上传；Node 25 不受 miniprogram-ci 支持）已上传，提交审核/正式发布需在公众平台手动完成。
+- **回滚**：切回 `memoria-control-api:rollback-20260925-device-mascot-sync-pre-control`（即 full-stack-v1 镜像）；接口与同步均为增量，旧固件忽略，回滚无数据迁移。未实跑。
 
 ## 2026-09-25 整栈发布 20260925-full-stack-v1（保留豆包 TTS）
 
@@ -372,8 +381,8 @@ uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
 
 ## 屏幕：伙伴吉祥物（替换白描对话脸，2026-09-25）
 
-- **状态**：`code=done`（overlay 新增 `memoria_mascot_{pack,scene,display}`、patch `0026`、`memoria_display_hooks`，白描脸源文件与测试已删除）；`wired=开发板已刷`（app `0x20000` + assets `0x800000`，identity/nvs/otadata 未动；刷前回读备份在 `firmware/esp32/artifacts/backups/pre-mascot-20260925/device-readback/`，stub 读 `0x322000` 起会断，需 `--no-stub`）；`enabled=设备端已启用、display-profile 待 control-api 发布`；`hardware_verified=false`（串口只证明启动、解码 139 ms、空闲约 240 重绘/分钟、每次约 8 ms 纯合成；画面需亲眼确认）。
-- **手机同步链路**：小程序保存 `companion_id` → control-api 为该账号作为 owner/admin 的每个 active binding 的 primary subject 写 persona assignment（幂等、失败只记日志、`next_session` 投影，不打断进行中的回复）→ 设备空闲时每 20 s 签名 `GET /v1/devices/{id}/display-profile`（与 activation-manifest 同签名对象，仅 path 不同；409=未绑定）→ `display_version` 变化即换装并写 NVS `memoria_ui/companion`。只需重新发布 **control-api** 镜像，无 schema/nginx 变更；未发布前设备日志每 20 s 一条 404 警告，无功能影响。
+- **状态**：`code=done`（overlay 新增 `memoria_mascot_{pack,scene,display}`、patch `0026`、`memoria_display_hooks`，白描脸源文件与测试已删除）；`wired=开发板已刷`（app `0x20000` + assets `0x800000`，identity/nvs/otadata 未动；刷前回读备份在 `firmware/esp32/artifacts/backups/pre-mascot-20260925/device-readback/`，stub 读 `0x322000` 起会断，需 `--no-stub`）；`enabled=true`（control-api `20260925-device-mascot-sync` 已上线，真机首轮轮询已切换伙伴）；`hardware_verified=false`（串口只证明启动、解码 139 ms、空闲约 240 重绘/分钟、每次约 8 ms 纯合成；画面需亲眼确认）。
+- **手机同步链路**：小程序保存 `companion_id` → control-api 为该账号作为 owner/admin 的每个 active binding 的 primary subject 写 persona assignment（幂等、失败只记日志、`next_session` 投影，不打断进行中的回复）→ 设备空闲时每 20 s 签名 `GET /v1/devices/{id}/display-profile`（与 activation-manifest 同签名对象，仅 path 不同；409=未绑定）→ `display_version` 变化即换装并写 NVS `memoria_ui/companion`。已随 control-api `20260925-device-mascot-sync` 上线（无 schema/nginx 变更）。
 - **注意**：「我的」页每次保存都带 `companion_id`，会把设备页对主使用人单独分配的人格改回账号伙伴（一对一产品下符合"选TA陪伴为准"）；若要只在值变化时同步，改 `companion_device_sync.py` 一处即可。
 - **构建**：`common.sh` 现导出 `IDF_COMPONENT_CHECK_NEW_VERSION=0`；否则组件管理器读取 registry 最新 esp_video 的 esp_h264 规则，CMake 连跑两次后报 `Missing required kconfig option after retry`。全新 clone + `apply-overlay.sh`（0001–0026 全部干净应用）+ `build.sh` + `check-overlay.sh` 已通过；app `0x325850`（剩 20%），assets 5.8 MB / 8 MB。
 
