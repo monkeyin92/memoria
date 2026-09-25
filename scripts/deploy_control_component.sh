@@ -131,6 +131,9 @@ fi
 # The overlay replaces all services/packages because Control imports shared
 # authorities. Files outside this explicit release-tool/runtime boundary are a
 # separate component and fail closed rather than being silently omitted.
+# Session Runtime code runs only inside the Control API process (no other image
+# imports it), so it ships with Control; its PostgreSQL schema does not, because
+# this tool never upgrades schema.
 scope_changes="$(
   git -C "$ROOT" diff --name-only "$base_commit" "$expected_commit" -- \
     services packages scripts infra
@@ -139,7 +142,10 @@ scope_rejections=()
 while IFS= read -r changed; do
   [[ -z "$changed" ]] && continue
   case "$changed" in
-    services/control_api/*|services/archive/*)
+    services/session_runtime/*.sql)
+      scope_rejections+=("$changed")
+      ;;
+    services/control_api/*|services/archive/*|services/session_runtime/*)
       ;;
     scripts/deploy_control_component.sh|scripts/verify_control_release_artifact.py|scripts/resolve_target_images.py|scripts/mark_readiness.py|scripts/rebuild_memory_projections.py|scripts/verify_authoritative_postgres.sh|scripts/tests/test_control_release_contract.py|scripts/tests/test_verify_control_release_artifact.py|scripts/tests/test_resolve_target_images.py)
       ;;
