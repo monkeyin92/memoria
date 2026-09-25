@@ -596,32 +596,6 @@ button[disabled] {
 .fold-summary { display: block; padding: 24rpx 0; color: #50575d; color: var(--text-secondary); font-size: 26rpx; }
 .diagnostic { padding-bottom: 24rpx; color: #50575d; color: var(--text-secondary); font-size: 24rpx; line-height: 1.7; }
 
-/* ---------- FaceBadge 表情脸 ---------- */
-.face-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border-radius: 30%;
-  background: #dde6f5;
-  background: var(--role-soft);
-  border: 1rpx solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 12rpx 28rpx rgba(34, 52, 84, 0.14), inset 0 2rpx 0 rgba(255, 255, 255, 0.9);
-  overflow: hidden;
-}
-.face-badge svg { width: 76%; height: 76%; display: block; }
-.fb-xs { width: 48rpx; height: 48rpx; }
-.fb-sm { width: 80rpx; height: 80rpx; }
-.fb-md { width: 144rpx; height: 144rpx; }
-.fb-lg { width: 192rpx; height: 192rpx; }
-.fb-xl { width: 240rpx; height: 240rpx; }
-.face-on-light {
-  background: #ffffff;
-  box-shadow: 0 4px 20px rgba(61, 90, 128, 0.18);
-}
-.fb-breathe { animation: fbFloat 3s ease-in-out infinite; }
-@keyframes fbFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8rpx); } }
-
 /* ---------- 角色卡 ---------- */
 .role-card {
   box-sizing: border-box;

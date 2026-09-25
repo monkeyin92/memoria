@@ -12,7 +12,7 @@
           <text class="mem-hero-title">记住哪些事，由你决定。</text>
           <text class="mem-hero-sub">在设备上记录，在这里确认与整理。</text>
         </view>
-        <device-screen online="{{true}}" size="200"></device-screen>
+        <face-badge role="starlight" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
       </view>
       <view class="home-hero-foot">
         <text>登录后查看设备和今天记下的内容</text>
@@ -103,7 +103,7 @@
             <text class="mem-hero-sub">{{personaName}} · {{personaVoice}}在陪你</text>
             <text class="mem-hero-sub">{{heroCaption}}</text>
           </view>
-          <device-screen online="{{online}}" size="220"></device-screen>
+          <face-badge role="{{heroRoleId}}" size="hero" plain="{{true}}" animated="{{true}}" dim="{{!online}}"></face-badge>
         </view>
         <view class="home-hero-foot">
           <text>{{heroFoot}}</text>

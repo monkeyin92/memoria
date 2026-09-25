@@ -12,7 +12,7 @@
     >
       <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal companion-current">当前伙伴</view>
       <view class="companion-face">
-        <face-badge role="{{item.id}}" size="lg" breathe="{{profile.companion_id === item.id}}"></face-badge>
+        <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{profile.companion_id === item.id}}"></face-badge>
       </view>
       <text class="role-card-name">{{item.name}}</text>
       <text class="role-card-tagline">{{item.tagline}} · {{item.voiceName}}</text>
