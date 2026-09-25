@@ -330,9 +330,11 @@ async def test_expired_control_profile_renews_on_the_same_session(
     assert renewed.expires_at == later + _TTL
     assert renewed.binding_id == first.binding_id
     assert renewed.binding_version == first.binding_version
-    # Like the in-memory control, an expired subject is not carried forward.
-    assert renewed.active_subject_id is None
-    assert renewed.speaker_state.value == "unconfirmed"
+    # The expired profile's subject is not carried forward; the renewal
+    # confirms the one-to-one binding's sole subject again from the binding.
+    assert first.active_subject_id == _OWNER
+    assert renewed.active_subject_id == _OWNER
+    assert renewed.speaker_state.value == "confirmed"
 
     # The renewed profile is served until it expires in turn.
     assert await _read(control, later + timedelta(minutes=2)) == renewed

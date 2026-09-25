@@ -10,6 +10,24 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SpeakerStateValue,
 )
 
+#: The app/control path confirms the one person a one-to-one binding serves.
+#: The app user is authenticated, but nobody's voice or presence is verified:
+#: this only records that the binding names exactly one subject.
+SOLE_BOUND_SUBJECT_REASON = "sole_bound_subject"
+
+
+def sole_bound_subject_id(binding: BindingSnapshot) -> str | None:
+    """The binding's only primary subject, or ``None`` when it is not one-to-one.
+
+    ``family_shared`` bindings serve several people and never qualify, nor
+    does any binding with zero or several primary subjects.
+    """
+    if binding.declared_mode == "family_shared":
+        return None
+    if len(binding.primary_subject_ids) != 1:
+        return None
+    return binding.primary_subject_ids[0]
+
 
 @dataclass(frozen=True, slots=True)
 class SubjectCandidate:
@@ -38,6 +56,9 @@ class ResolveSubjectCommand:
     device_id: str
     candidates: tuple[SubjectCandidate, ...] = ()
     app_claimed_subject_id: str | None = None
+    # The control path asks to confirm the binding's sole subject; ignored
+    # unless the binding is one-to-one (see ``sole_bound_subject_id``).
+    sole_bound_subject: bool = False
     multiple_speakers: bool = False
     offline: bool = False
 
@@ -89,6 +110,18 @@ class SubjectResolver:
                 speaker_confidence=None,
                 service_mode="family_shared",
                 reason_code="app_subject_confirmed",
+                requires_confirmation=False,
+            )
+        if command.sole_bound_subject:
+            sole = sole_bound_subject_id(binding)
+            if sole is None:
+                return self._unknown("binding_not_one_to_one")
+            return SubjectResolution(
+                active_subject_id=sole,
+                speaker_state="confirmed",
+                speaker_confidence=None,
+                service_mode="family_shared",
+                reason_code=SOLE_BOUND_SUBJECT_REASON,
                 requires_confirmation=False,
             )
         candidates = sorted(command.candidates, key=lambda item: item.confidence, reverse=True)

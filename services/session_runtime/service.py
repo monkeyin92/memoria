@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import cast
+from typing import Final, cast
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import (
@@ -57,6 +57,7 @@ from services.policy.evidence import (
     ConsentEvidencePort,
     ConsentSnapshotEvidencePort,
     RelationshipEvidencePort,
+    active_relationship_for,
 )
 from services.policy.postgres_receipt_repository import (
     ConnectionBoundPolicyReceiptRepository,
@@ -95,6 +96,11 @@ from services.session_runtime.subject_resolver import (
 
 _DEFAULT_PROFILE_TTL = timedelta(minutes=5)
 _MAX_PROFILE_TTL = timedelta(seconds=86_400)
+#: Who may confirm and read consent for a sole subject other than themself.
+#: Mirrors the relations ``consent_discover_action_fence`` accepts for an
+#: actor that is not the subject; any other actor would make the discovery
+#: raise, so the control path leaves the subject unconfirmed instead.
+_SOLE_SUBJECT_PROXY_RELATIONS: Final[frozenset[str]] = frozenset({"guardian_of"})
 _NO_EXPIRY_SENTINEL = datetime(9999, 12, 31, tzinfo=UTC)
 
 
@@ -124,6 +130,10 @@ class StartPersistentSessionCommand:
     now: datetime
     requested_capabilities: tuple[CapabilityValue, ...] = ("chat",)
     candidates: tuple[SubjectCandidate, ...] = ()
+    # The app/control path confirms the binding's sole subject (one-to-one
+    # bindings only; see ``sole_bound_subject_id``).  Never set by the
+    # device media path, which names its subject explicitly.
+    confirm_sole_bound_subject: bool = False
     multiple_speakers: bool = False
     offline: bool = False
     # Per-session profile lifetime override. Only the direct hardware media
@@ -918,6 +928,64 @@ class PostgresSessionRuntimeService:
             requires_confirmation=True,
         )
 
+    async def _resolve_sole_bound_subject(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        actor_id: str,
+        binding: _LockedBinding,
+        now: datetime,
+    ) -> SubjectResolution:
+        """Confirm a one-to-one binding's subject for the control path.
+
+        Only when the binding names exactly one primary subject (never
+        ``family_shared``) and the actor holds the same subject-switch
+        authority an explicit app confirmation needs.  Anything else stays an
+        unconfirmed, unknown-safe resolution; Policy/Consent still decide
+        every capability of the confirmed subject.
+        """
+        resolution = self._subject_resolver.resolve(
+            ResolveSubjectCommand(
+                device_id=binding.evidence.device_id,
+                sole_bound_subject=True,
+            ),
+            binding=binding.snapshot,
+        )
+        subject_id = resolution.active_subject_id
+        if subject_id is None:
+            return resolution
+        if subject_id != actor_id and not any(
+            relationship.source_person_id == actor_id
+            for relation_type in _SOLE_SUBJECT_PROXY_RELATIONS
+            for relationship in active_relationship_for(
+                relation_type, subject_id, now, binding.relationships
+            )
+        ):
+            return SubjectResolution(
+                active_subject_id=None,
+                speaker_state="unconfirmed",
+                speaker_confidence=None,
+                service_mode="unknown_safe",
+                reason_code="sole_bound_subject_relationship_missing",
+                requires_confirmation=True,
+            )
+        if not await self._identity.can_switch_subject(
+            connection,
+            actor_id=actor_id,
+            device_id=binding.evidence.device_id,
+            binding_version=binding.evidence.version,
+            subject_id=subject_id,
+        ):
+            return SubjectResolution(
+                active_subject_id=None,
+                speaker_state="unconfirmed",
+                speaker_confidence=None,
+                service_mode="unknown_safe",
+                reason_code="sole_bound_subject_not_authorized",
+                requires_confirmation=True,
+            )
+        return resolution
+
     async def binding_snapshot(
         self,
         *,
@@ -1019,15 +1087,25 @@ class PostgresSessionRuntimeService:
         device_trust: str,
         profile_ttl: timedelta | None = None,
     ) -> RuntimeProfileSignedV2:
-        resolution = self._subject_resolver.resolve(
-            ResolveSubjectCommand(
-                device_id=command.device_id,
-                candidates=command.candidates,
-                multiple_speakers=command.multiple_speakers,
-                offline=command.offline,
-            ),
-            binding=binding.snapshot,
-        )
+        if command.confirm_sole_bound_subject and not (
+            command.multiple_speakers or command.offline or command.candidates
+        ):
+            resolution = await self._resolve_sole_bound_subject(
+                connection,
+                actor_id=command.actor_id,
+                binding=binding,
+                now=command.now,
+            )
+        else:
+            resolution = self._subject_resolver.resolve(
+                ResolveSubjectCommand(
+                    device_id=command.device_id,
+                    candidates=command.candidates,
+                    multiple_speakers=command.multiple_speakers,
+                    offline=command.offline,
+                ),
+                binding=binding.snapshot,
+            )
         resolution = self._normalize_subject_resolution(
             binding=binding,
             resolution=resolution,
@@ -1069,6 +1147,11 @@ class PostgresSessionRuntimeService:
                 "requested_capabilities": list(command.requested_capabilities),
                 "multiple_speakers": command.multiple_speakers,
                 "offline": command.offline,
+                **(
+                    {"confirm_sole_bound_subject": True}
+                    if command.confirm_sole_bound_subject
+                    else {}
+                ),
             }
         )
         replay = await self._store.prepare_initial(
@@ -1541,6 +1624,7 @@ class PostgresSessionRuntimeService:
         session_id: str,
         now: datetime,
         requested_capabilities: tuple[CapabilityValue, ...],
+        confirm_sole_bound_subject: bool = False,
     ) -> RuntimeProfileSignedV2:
         """Reissue an expired profile in place on the same active Session.
 
@@ -1548,9 +1632,10 @@ class PostgresSessionRuntimeService:
         re-locks the binding as ``actor_id``, re-reads Device trust, re-runs
         Policy/Consent derivation, signs a new profile id and advances the
         session epoch and every generation/tool fence through the same CAS
-        persistence and outbox path as a subject switch.  Like the in-memory
-        control, an expired profile does not carry its subject forward: the
-        renewed profile is unconfirmed until the subject is confirmed again.
+        persistence and outbox path as a subject switch.  An expired profile
+        never carries its subject forward: the renewed profile is unconfirmed
+        unless ``confirm_sole_bound_subject`` re-confirms a one-to-one
+        binding's subject under the current binding and authority.
 
         A superseded binding, a revoked device or a closed Session still fail
         closed.  Two concurrent renewals race on the rotation CAS; the loser
@@ -1598,6 +1683,7 @@ class PostgresSessionRuntimeService:
                 current_context=current_context,
                 idempotency_seed=f"renew:{current.runtime_profile_id}",
                 unresolved_event_type="profile_rotated",
+                confirm_sole_bound_subject=confirm_sole_bound_subject,
             )
         except SessionRuntimeConflict:
             # The rotation CAS admits one renewal per expired profile; the
@@ -1618,6 +1704,7 @@ class PostgresSessionRuntimeService:
         current_context: SessionRuntimeContext,
         idempotency_seed: str,
         unresolved_event_type: str,
+        confirm_sole_bound_subject: bool = False,
     ) -> RuntimeProfileSignedV2:
         try:
             async with self._store.action_transaction(
@@ -1661,6 +1748,13 @@ class PostgresSessionRuntimeService:
                             app_claimed_subject_id=command.subject_id,
                         ),
                         binding=binding.snapshot,
+                    )
+                elif confirm_sole_bound_subject and command.claimed_subject_id is None:
+                    resolution = await self._resolve_sole_bound_subject(
+                        connection,
+                        actor_id=command.actor_id,
+                        binding=binding,
+                        now=command.now,
                     )
                 else:
                     resolution = SubjectResolution(
