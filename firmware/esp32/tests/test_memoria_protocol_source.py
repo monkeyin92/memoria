@@ -1492,7 +1492,8 @@ def test_network_disconnect_actively_recovers_the_same_session() -> None:
     assert "StartListening(" not in touch
     assert "MuteImuForTouch()" in touch
     assert "SetEmotion(" not in touch
-    assert "Device shake ignored" in board_source
+    # A shake only makes the companion dizzy; it is never a pat or a chat.
+    assert "dizzy companion, no chat" in board_source
     assert '#include "memoria_pat.h"' in board_source
     assert "memoria::PatDetector detector" in board_source
     assert "Device pat ignored (touch rumble" in board_source
