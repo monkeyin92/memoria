@@ -1,0 +1,57 @@
+--- a/main/display/lcd_display.h
++++ b/main/display/lcd_display.h
+@@ -59,8 +59,8 @@
+ 
+     // Set whether to hide chat messages/subtitles
+     void SetHideSubtitle(bool hide);
+-    bool ShowQrCode(const std::string& payload, const char* caption);
+-    void ClearQrCode();
++    virtual bool ShowQrCode(const std::string& payload, const char* caption);
++    virtual void ClearQrCode();
+ };
+ 
+ // SPI LCD display
+--- a/main/display/lcd_display.cc
++++ b/main/display/lcd_display.cc
+@@ -102,8 +102,13 @@
+                              int width, int height, int offset_x, int offset_y, bool mirror_x,
+                              bool mirror_y, bool swap_xy)
+     : LcdDisplay(panel_io, panel, width, height) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    // Memoria boots into a dark screen that its boot animation lights up.
++    std::vector<uint16_t> buffer(width_, 0x0000);
++#else
+     // draw white
+     std::vector<uint16_t> buffer(width_, 0xFFFF);
++#endif
+     for (int y = 0; y < height_; y++) {
+         esp_lcd_panel_draw_bitmap(panel_, 0, y, width_, y + 1, buffer.data());
+     }
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -38,6 +38,7 @@
+             "memoria/memoria_wake_word.cc"
+             "memoria/memoria_protocol.cc"
+             "memoria/memoria_bootstrap.cc"
++            "memoria/memoria_display_hooks.cc"
+             "mcp_server.cc"
+             "system_info.cc"
+             "application.cc"
+@@ -306,6 +307,8 @@
+     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
++    # Companion mascot packs and the boot wordmark (build_mascot_pack.py).
++    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets")
+ elseif(CONFIG_BOARD_TYPE_ESP_SENSAIRSHUTTLE)
+     set(BOARD_DIR "espressif/esp-sensairshuttle")
+     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
+@@ -1252,6 +1255,8 @@
+     # Add default assets extra files if defined
+     if(DEFAULT_ASSETS_EXTRA_FILES)
+         list(APPEND BUILD_ARGS "--extra_files" "${DEFAULT_ASSETS_EXTRA_FILES}")
++        file(GLOB DEFAULT_ASSETS_EXTRA_DEPENDENCIES CONFIGURE_DEPENDS "${DEFAULT_ASSETS_EXTRA_FILES}/*")
++        list(APPEND DEFAULT_ASSETS_DEPENDENCIES ${DEFAULT_ASSETS_EXTRA_DEPENDENCIES})
+     endif()
+ 
+     list(APPEND BUILD_ARGS "--esp_sr_model_path" "${ESP_SR_MODEL_PATH}")

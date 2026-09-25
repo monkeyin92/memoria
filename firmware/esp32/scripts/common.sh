@@ -130,6 +130,11 @@ configure_idf_python_env() {
         export IDF_PYTHON_ENV_PATH="$environment_path"
     fi
     export PATH="$(dirname "$python_bin"):$PATH"
+    # dependencies.lock is the pin. The component manager's new-version check
+    # reads the registry's latest manifests, and esp_video's newer esp_h264
+    # rule names a Kconfig option the pinned tree lacks, which makes CMake
+    # re-run twice and fail ("Missing required kconfig option after retry").
+    export IDF_COMPONENT_CHECK_NEW_VERSION=0
 }
 
 overlay_hash() {

@@ -16,7 +16,9 @@
 #include "display/lcd_display.h"
 #include "http.h"
 #include "memoria_audio_frame.h"
+#include "application.h"
 #include "memoria_bootstrap.h"
+#include "memoria_display_hooks.h"
 #include "memoria_wake_word.h"
 #include "sodium.h"
 #include "web_socket.h"
@@ -30,6 +32,8 @@ constexpr int kSessionReadyTimeoutMs = 10000;
 constexpr int64_t kTransportPingIntervalUs = 30LL * 1000LL * 1000LL;
 constexpr int64_t kTransportPongTimeoutUs = 10LL * 1000LL * 1000LL;
 constexpr uint32_t kActivationRetryDelayMs = 5000;
+// The phone's companion pick reaches an idle device within one poll.
+constexpr uint32_t kDisplayProfilePollMs = 20000;
 constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate24k = 24000;
 constexpr uint32_t kDownlinkSampleRate16k = 16000;
@@ -310,6 +314,11 @@ MemoriaProtocol::~MemoriaProtocol() {
         vTaskDelete(activation_retry_task_);
         activation_retry_task_ = nullptr;
     }
+    if (display_profile_task_ != nullptr &&
+        display_profile_task_ != xTaskGetCurrentTaskHandle()) {
+        vTaskDelete(display_profile_task_);
+        display_profile_task_ = nullptr;
+    }
     CloseAudioChannel(false);
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
@@ -343,6 +352,7 @@ bool MemoriaProtocol::Start() {
     // A successful retry may be the first activation after nearby bootstrap.
     // Clear its BLE/QR surface before advertising normal conversation state.
     MemoriaBootstrap::GetInstance().Stop();
+    StartDisplayProfilePoll();
     if (on_connected_ != nullptr) {
         on_connected_();
     }
@@ -384,6 +394,7 @@ void MemoriaProtocol::RunActivationRetry() {
         if (result == ESP_OK) {
             MemoriaBootstrap::GetInstance().Stop();
             ESP_LOGI(kTag, "Activation completed after nearby bootstrap");
+            StartDisplayProfilePoll();
             if (on_connected_ != nullptr) {
                 on_connected_();
             }
@@ -391,6 +402,49 @@ void MemoriaProtocol::RunActivationRetry() {
         }
         ESP_LOGW(kTag, "Activation retry pending, code=%s", esp_err_to_name(result));
     }
+}
+
+void MemoriaProtocol::StartDisplayProfilePoll() {
+    if (display_profile_task_ != nullptr) {
+        return;
+    }
+    const BaseType_t created = xTaskCreate(&MemoriaProtocol::DisplayProfileTask,
+                                           "memoria_display_profile", 8192, this, 2,
+                                           &display_profile_task_);
+    if (created != pdPASS) {
+        display_profile_task_ = nullptr;
+        ESP_LOGE(kTag, "Unable to start display profile poll");
+    }
+}
+
+void MemoriaProtocol::DisplayProfileTask(void* context) {
+    auto* protocol = static_cast<MemoriaProtocol*>(context);
+    std::string applied_version;
+    bool polled = false;
+    while (protocol != nullptr) {
+        // Only while idle: a conversation must never share the radio with a
+        // cosmetic poll, and the next idle moment is soon enough.
+        if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+            polled = true;
+            const std::string base = !protocol->activation_.control_api_url.empty()
+                                         ? protocol->activation_.control_api_url
+                                         : protocol->identity_.control_api_url();
+            MemoriaActivationClient client(protocol->identity_);
+            DisplayProfile profile;
+            const esp_err_t result = client.FetchDisplayProfile(base, &profile);
+            if (result == ESP_OK && profile.display_version != applied_version) {
+                applied_version = profile.display_version;
+                ESP_LOGI(kTag, "Display profile companion=%s version=%s",
+                         profile.companion_id.c_str(), profile.display_version.c_str());
+                PublishCompanion(profile.companion_id.c_str());
+            } else if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(kTag, "Display profile poll failed, code=%s", esp_err_to_name(result));
+            }
+        }
+        // Right after activation the device is not idle yet; check back soon.
+        vTaskDelay(pdMS_TO_TICKS(polled ? kDisplayProfilePollMs : 3000));
+    }
+    vTaskDelete(nullptr);
 }
 
 bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {

@@ -8,14 +8,28 @@ never falls back to an in-memory or client-supplied authority.
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.control_api.app.database import MemoryStore
+from services.control_api.app.device_display_profile import (
+    DisplayBindingUnavailable,
+    display_binding,
+    resolve_device_display_profile,
+)
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
-from services.device_fleet.bootstrap_domain import OnboardingError, b64url_decode
+from services.device_fleet.bootstrap_domain import (
+    BindingConflict,
+    OnboardingError,
+    b64url_decode,
+)
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
+from services.identity.domain import IdentityAccessDeniedError, IdentityNotFoundError
+from services.identity.service import IdentityService
 
 router = APIRouter(tags=["device-onboarding"])
 
@@ -339,6 +353,76 @@ def get_device_activation_manifest(
         return manifest
     except OnboardingError as error:
         raise _http_error(error) from error
+
+
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+@router.get("/v1/devices/{device_id}/display-profile")
+async def get_device_display_profile(
+    device_id: str,
+    request: Request,
+    response: Response,
+    certificate_id: Annotated[str | None, Header(alias="X-Device-Certificate-ID")] = None,
+    device_signature: Annotated[str | None, Header(alias="X-Device-Signature")] = None,
+) -> dict[str, object]:
+    """The companion a bound device shows while idle.
+
+    Authenticated exactly like the activation manifest (same headers, same
+    signed ``{certificate_id, device_id, method, path}`` object, only the path
+    differs) and strictly read-only, because the firmware polls it.
+    """
+    if not certificate_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "device_certificate_required"},
+            headers=_NO_STORE,
+        )
+    try:
+        signature = _device_signature(device_signature)
+        bound = await asyncio.to_thread(
+            display_binding,
+            _service(request),
+            device_id=device_id,
+            certificate_id=certificate_id,
+            request_signature=signature,
+        )
+    except OnboardingError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code},
+            headers=_NO_STORE,
+        ) from error
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), **_NO_STORE}
+        raise
+    identity = getattr(request.app.state, "identity_service", None)
+    if not isinstance(identity, IdentityService):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "identity_authority_unavailable"},
+            headers=_NO_STORE,
+        )
+    store = getattr(request.app.state, "memory_store", None)
+    try:
+        profile = await resolve_device_display_profile(
+            identity=identity,
+            profiles=store if isinstance(store, MemoryStore) else None,
+            device_id=device_id,
+            actor_id=bound["actor_id"],
+            subject_id=bound["subject_id"],
+            now=datetime.now(UTC),
+        )
+    except (DisplayBindingUnavailable, IdentityNotFoundError, IdentityAccessDeniedError) as exc:
+        # Fleet says bound but Identity has no active binding this device's
+        # account can see: report it the way the manifest reports "unbound".
+        raise HTTPException(
+            status_code=409,
+            detail={"code": BindingConflict.code},
+            headers=_NO_STORE,
+        ) from exc
+    response.headers.update(_NO_STORE)
+    return profile.to_wire()
 
 
 @router.post("/v1/devices/{device_id}/activation-ack")

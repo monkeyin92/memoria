@@ -24,7 +24,8 @@
 #include "i2c_device.h"
 #include "touch.h"
 #include "memoria_bootstrap.h"
-#include "memoria_face_display.h"
+#include "memoria_display_hooks.h"
+#include "memoria_mascot_display.h"
 #include "memoria_pat.h"
 #include "settings.h"
 
@@ -455,10 +456,9 @@ private:
     Cst816s* cst816s_;
     Charge* charge_;
     Button boot_button_;
-    LcdDisplay* display_ = nullptr;
+    MemoriaMascotDisplay* display_ = nullptr;
     PwmBacklight* backlight_ = nullptr;
     esp_timer_handle_t touchpad_timer_;
-    esp_timer_handle_t pat_restore_timer_ = nullptr;
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
     TaskHandle_t imu_task_handle_ = nullptr;
@@ -489,58 +489,27 @@ private:
     // BMI270 has no haptic motor. A body tap is a short accel impulse, not
     // conversation start, screen tap rumble, or a sustained shake. The pulse
     // classifier lives in memoria_pat.h so host tests can feed IMU sequences.
+    // Both gestures only animate the companion locally; neither starts a chat.
     static constexpr int64_t kTouchImuMuteMs = 400;
-    static constexpr uint64_t kPatFaceHoldUs = 1500 * 1000;
-
-    static void PatRestoreCallback(void* arg) {
-        auto* self = static_cast<MemoriaEspVocat*>(arg);
-        if (self == nullptr) {
-            return;
-        }
-        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
-            return;
-        }
-        auto* display = self->GetDisplay();
-        if (display != nullptr) {
-            display->SetEmotion("neutral");
-        }
-    }
-
-    void EnsurePatRestoreTimer() {
-        if (pat_restore_timer_ != nullptr) {
-            return;
-        }
-        const esp_timer_create_args_t args = {
-            .callback = &MemoriaEspVocat::PatRestoreCallback,
-            .arg = this,
-            .dispatch_method = ESP_TIMER_TASK,
-            .name = "vocat_pat_restore",
-            .skip_unhandled_events = true,
-        };
-        if (esp_timer_create(&args, &pat_restore_timer_) != ESP_OK) {
-            pat_restore_timer_ = nullptr;
-            ESP_LOGW(TAG, "pat restore timer unavailable");
-        }
-    }
 
     void OnDevicePat(int score) {
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();
         ESP_LOGI(TAG, "Device pat detected (score: %d) state=%d", score,
                  static_cast<int>(state));
-        if (state != kDeviceStateIdle) {
+        if (state != kDeviceStateIdle || display_ == nullptr) {
             return;
         }
-        auto* display = GetDisplay();
-        if (display == nullptr) {
+        display_->Pat();  // a happy hop
+    }
+
+    void OnDeviceShake(int score) {
+        const auto state = Application::GetInstance().GetDeviceState();
+        ESP_LOGI(TAG, "Device shake (score: %d): dizzy companion, no chat", score);
+        if (state != kDeviceStateIdle || display_ == nullptr) {
             return;
         }
-        EnsurePatRestoreTimer();
-        display->SetEmotion("surprised");
-        if (pat_restore_timer_ != nullptr) {
-            esp_timer_stop(pat_restore_timer_);
-            esp_timer_start_once(pat_restore_timer_, kPatFaceHoldUs);
-        }
+        display_->Shake();
     }
 
     static void imu_event_task(void* arg) {
@@ -574,7 +543,7 @@ private:
                 if (result.kind == memoria::PatKind::kPat) {
                     self->OnDevicePat(result.peak);
                 } else if (result.kind == memoria::PatKind::kShake) {
-                    ESP_LOGI(TAG, "Device shake ignored (score: %d)", result.peak);
+                    self->OnDeviceShake(result.peak);
                 } else if (result.kind == memoria::PatKind::kTouchRumble) {
                     ESP_LOGI(TAG, "Device pat ignored (touch rumble, score: %d)",
                              result.peak);
@@ -900,11 +869,25 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        display_ = new MemoriaFaceDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
-                                          DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                          DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        display_ = new MemoriaMascotDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                            DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
+                                            DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
         backlight_ = new PwmBacklight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
-        backlight_->RestoreBrightness();
+        display_->SetBacklight(backlight_);
+        if (display_->animated()) {
+            // Light the panel only once the boot animation's first frame is
+            // on it; the backlight's own ramp then fades the picture in.
+            display_->SetOnFirstFrame([this]() { backlight_->RestoreBrightness(); });
+        } else {
+            backlight_->RestoreBrightness();
+        }
+        // The phone's companion pick arrives through the display-profile poll.
+        memoria::SetCompanionSink([](const char* companion_id) {
+            auto* display = static_cast<MemoriaMascotDisplay*>(Board::GetInstance().GetDisplay());
+            if (display != nullptr) {
+                display->SetCompanion(companion_id);
+            }
+        });
     }
 
     void InitializeButtons() {
@@ -971,11 +954,6 @@ private:
 
 public:
     ~MemoriaEspVocat() {
-        if (pat_restore_timer_ != nullptr) {
-            esp_timer_stop(pat_restore_timer_);
-            esp_timer_delete(pat_restore_timer_);
-            pat_restore_timer_ = nullptr;
-        }
         if (charge_task_handle_ != nullptr) {
             vTaskDelete(charge_task_handle_);
         }

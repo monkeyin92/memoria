@@ -187,6 +187,7 @@ private:
     std::function<void(uint32_t volume_limit, uint32_t screen_brightness)>
         on_device_settings_received_;
     TaskHandle_t activation_retry_task_ = nullptr;
+    TaskHandle_t display_profile_task_ = nullptr;
 
     // Session/epoch scoped state; reset by ResetSessionState().
     uint32_t stream_epoch_ = 0;
@@ -241,6 +242,9 @@ private:
     void StartActivationRetry();
     void RunActivationRetry();
     static void ActivationRetryTask(void* context);
+    // Keeps the screen's companion in step with the account's pick.
+    void StartDisplayProfilePoll();
+    static void DisplayProfileTask(void* context);
     bool CreateMediaSession(MediaSession* session);
     bool HandleServerText(const char* data, size_t size);
     bool HandleDownlink(const uint8_t* data, size_t size);

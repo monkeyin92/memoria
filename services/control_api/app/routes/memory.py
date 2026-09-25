@@ -20,6 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from services.common.companions import COMPANION_IDS
 from services.common.redaction import redact_pii
 from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.companion_device_sync import (
+    apply_companion_to_bound_devices,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import (
     MemoryStore,
@@ -493,7 +496,7 @@ def get_profile(
 
 
 @router.put("/profile/{user_id}", response_model=ProfileRecord)
-def update_profile(
+async def update_profile(
     user_id: str,
     body: ProfileUpdate,
     request: Request,
@@ -507,8 +510,26 @@ def update_profile(
     for field in ("display_name", "bio"):
         if field in values:
             values[field] = redact_pii(str(values[field]))
-    return _store(request).update_profile(
-        user_id=require_matching_user(clean_user_id, user),
+    account_id = require_matching_user(clean_user_id, user)
+    record = _store(request).update_profile(
+        user_id=account_id,
         values=values,
         now=_utc_now(),
     )
+    companion_id = values.get("companion_id")
+    if isinstance(companion_id, str):
+        # The picker is authoritative for the devices this account runs: the
+        # saved companion becomes their primary subject's persona from the next
+        # conversation on.  Reconciling on every save that carries the field is
+        # idempotent and heals a device that missed an earlier pick; it never
+        # fails the profile save itself.
+        try:
+            await apply_companion_to_bound_devices(
+                request,
+                account_id=account_id,
+                companion_id=companion_id,
+                now=datetime.now(UTC),
+            )
+        except Exception:
+            logger.exception("companion device sync failed after profile save")
+    return record

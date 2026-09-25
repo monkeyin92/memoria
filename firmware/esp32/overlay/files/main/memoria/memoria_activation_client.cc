@@ -382,7 +382,7 @@ bool VerifyManifest(const DeviceIdentity& identity,
     return now >= issued - 300 && now < expires;
 }
 
-std::string BuildManifestRequestPayload(const DeviceIdentity& identity) {
+std::string BuildSignedGetPayload(const DeviceIdentity& identity, const std::string& path) {
     cJSON* root = cJSON_CreateObject();
     if (root == nullptr) {
         return {};
@@ -391,7 +391,6 @@ std::string BuildManifestRequestPayload(const DeviceIdentity& identity) {
     cJSON_AddStringToObject(root, "certificate_id", identity.certificate_id().c_str());
     cJSON_AddStringToObject(root, "device_id", identity.device_id().c_str());
     cJSON_AddStringToObject(root, "method", "GET");
-    const std::string path = "/v1/devices/" + identity.device_id() + "/activation-manifest";
     cJSON_AddStringToObject(root, "path", path.c_str());
     std::string payload;
     CanonicalJson(root, &payload);
@@ -444,12 +443,12 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     if (profile == nullptr || !identity_.loaded()) {
         return ESP_ERR_INVALID_ARG;
     }
-    const std::string request_payload = BuildManifestRequestPayload(identity_);
+    const std::string path = "/v1/devices/" + identity_.device_id() + "/activation-manifest";
+    const std::string request_payload = BuildSignedGetPayload(identity_, path);
     const std::string request_signature = SignedRequestHeader(identity_, request_payload);
     if (request_payload.empty() || request_signature.empty()) {
         return ESP_FAIL;
     }
-    const std::string path = "/v1/devices/" + identity_.device_id() + "/activation-manifest";
     std::string response;
     int manifest_status = 0;
     if (!HttpRequest("GET", JoinUrl(identity_.control_api_url(), path),
@@ -509,6 +508,38 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     runtime.SetInt("activation_v", profile->activation_version);
     ESP_LOGI(kTag, "Activation acknowledged, version=%ld",
              static_cast<long>(profile->activation_version));
+    return ESP_OK;
+}
+
+esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& control_api_url,
+                                                       DisplayProfile* profile) {
+    if (profile == nullptr || !identity_.loaded() || control_api_url.empty()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const std::string path = "/v1/devices/" + identity_.device_id() + "/display-profile";
+    const std::string request_payload = BuildSignedGetPayload(identity_, path);
+    const std::string request_signature = SignedRequestHeader(identity_, request_payload);
+    if (request_payload.empty() || request_signature.empty()) {
+        return ESP_FAIL;
+    }
+    std::string response;
+    int status = 0;
+    if (!HttpRequest("GET", JoinUrl(control_api_url, path),
+                     {{"X-Device-Certificate-ID", identity_.certificate_id()},
+                      {"X-Device-Signature", request_signature}},
+                     {}, &response, &status)) {
+        return status == 409 ? ESP_ERR_INVALID_STATE : ESP_FAIL;
+    }
+    ScopedJson root{cJSON_ParseWithLength(response.data(), response.size())};
+    std::string companion_id;
+    std::string display_version;
+    if (root.value == nullptr || !RequiredString(root.value, "companion_id", &companion_id, 32) ||
+        !RequiredString(root.value, "display_version", &display_version, 64)) {
+        ESP_LOGE(kTag, "Display profile response invalid");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    profile->companion_id = std::move(companion_id);
+    profile->display_version = std::move(display_version);
     return ESP_OK;
 }
 

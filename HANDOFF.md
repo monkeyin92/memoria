@@ -370,20 +370,24 @@ uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
 - 去重后新唤醒事件为 0，原 TV=1 为上一试次滞后重复；但 TV 133.038s 内 idle=0，约 92.382s 为 speaking/KWS off；small_talk 124.471s 内 idle≈100.909s，quiet 300.001s 均为日志可见 idle。不能据此报电视/多人各两分钟有效零误唤醒，配置日志也不自动证明整窗 detector 持续启用。
 - `092dcf4` 已有门控/去重初修，仍存在本轮复现的曝光高估与 fixture/CI 缺口（见 P2-05）。先修工具再按多次冷启动、随机/交错增益、真实音源/物理距离预定义协议采数；本轮无设备新数据，不改 `advertised_duplex_level` / `aec_reference_verified`。
 
-## 屏幕表情：对话脸
+## 屏幕：伙伴吉祥物（替换白描对话脸，2026-09-25）
 
-当前是 360 圆屏黑底白描 v3；`code/wired/enabled` 有既有证据，`hardware_verified=false`，仍缺待机脸和五表情照片。权威几何在 `memoria_face.cc`；预览 `outputs/firmware-face-v3-20260909/sheet.png` 只作对照。
+- **状态**：`code=done`（overlay 新增 `memoria_mascot_{pack,scene,display}`、patch `0026`、`memoria_display_hooks`，白描脸源文件与测试已删除）；`wired=开发板已刷`（app `0x20000` + assets `0x800000`，identity/nvs/otadata 未动；刷前回读备份在 `firmware/esp32/artifacts/backups/pre-mascot-20260925/device-readback/`，stub 读 `0x322000` 起会断，需 `--no-stub`）；`enabled=设备端已启用、display-profile 待 control-api 发布`；`hardware_verified=false`（串口只证明启动、解码 139 ms、空闲约 240 重绘/分钟、每次约 8 ms 纯合成；画面需亲眼确认）。
+- **手机同步链路**：小程序保存 `companion_id` → control-api 为该账号作为 owner/admin 的每个 active binding 的 primary subject 写 persona assignment（幂等、失败只记日志、`next_session` 投影，不打断进行中的回复）→ 设备空闲时每 20 s 签名 `GET /v1/devices/{id}/display-profile`（与 activation-manifest 同签名对象，仅 path 不同；409=未绑定）→ `display_version` 变化即换装并写 NVS `memoria_ui/companion`。只需重新发布 **control-api** 镜像，无 schema/nginx 变更；未发布前设备日志每 20 s 一条 404 警告，无功能影响。
+- **注意**：「我的」页每次保存都带 `companion_id`，会把设备页对主使用人单独分配的人格改回账号伙伴（一对一产品下符合"选TA陪伴为准"）；若要只在值变化时同步，改 `companion_device_sync.py` 一处即可。
+- **构建**：`common.sh` 现导出 `IDF_COMPONENT_CHECK_NEW_VERSION=0`；否则组件管理器读取 registry 最新 esp_video 的 esp_h264 规则，CMake 连跑两次后报 `Missing required kconfig option after retry`。全新 clone + `apply-overlay.sh`（0001–0026 全部干净应用）+ `build.sh` + `check-overlay.sh` 已通过；app `0x325850`（剩 20%），assets 5.8 MB / 8 MB。
 
-| 助手实际表达 | 期望表情 | 照片 |
-| --- | --- | --- |
-| 待机/回复结束 | neutral 月牙眼、短平嘴 | idle.jpg |
-| 祝贺、开心 | happy | happy.jpg |
-| 关怀 | loving | loving.jpg |
-| 遗憾、抱歉 | sad | sad.jpg |
-| 惊讶 | surprised 杏仁瞳孔、小 O | surprised.jpg |
-| 思考 | thinking | thinking.jpg |
+| 看什么 | 期望 |
+| --- | --- |
+| 开机 | 黑屏→暖光球→光圈展开→`memoria` 字标→伙伴弹入落地→眨眼→挥手；无白屏闪烁 |
+| 待机 | 呼吸、2.4–5.6 s 眨眼、20–38 s 一次小动作；3 分钟后瞌睡且背光变暗 |
+| 拍一下 / 摇晃 | 开心跳 / 晕乎乎；都不开麦 |
+| 唤醒后 | 聆听姿势 + 光环呼吸；说完后思考姿势 + 彗星光环 |
+| 说话 | 服务端心情对应姿势 + 口型开合；结束后心情停约 2 s |
+| 未绑定 | 白色圆角二维码卡片可扫、上方「你好，我是星澜」 |
+| 小程序换伙伴 | 空闲 ≤20 s 内挥手换装，下一轮对话换声音；重启后保持 |
 
-以同代 `assistant_expression→screen.expression` 和串口 `emotion` 为准，不从用户原话猜脸；未知表情回 neutral。照片连同 fence 存入本次 ignored 验收目录。说完/断线/中断清除表情；待机点屏、摇晃不开麦，短拍只短暂惊讶；说话中 BOOT/触摸硬停。不回归项和六张照片均亲眼确认后才签收；回滚只用上节唯一 app，不再保留旧表情专用回滚命令。
+以同代 `assistant_expression→screen.expression` 和串口 `MemoriaMascot: emotion=` 为准。照片存入本次 ignored 验收目录，全部亲眼确认后才签收 `hardware_verified`；回滚 = 用回读备份写回 `0x20000` 与 `0x800000`。
 
 ## 永久运维参考与历史归档
 

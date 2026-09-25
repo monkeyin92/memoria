@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.companion_device_sync import project_persona_change
 from services.control_api.app.multi_subject_runtime import (
     MultiSubjectRuntimeControl,
     PostgresMultiSubjectRuntimeControl,
@@ -134,6 +135,12 @@ async def set_persona_assignment(
         raise _forbidden("subject_switch_forbidden") from exc
     except IdentityNotFoundError as exc:
         raise _binding_not_found() from exc
+    # The write has committed.  Rotate and project the device profile with
+    # next-session semantics so the device picks the persona up without a
+    # live reply being cut; a deferred projection never fails the write.
+    await project_persona_change(
+        request, device_id=device_id, actor_id=user.user_id, now=now
+    )
     return record.to_dict()
 
 
@@ -180,6 +187,10 @@ async def delete_persona_assignment(
         raise _forbidden("subject_switch_forbidden") from exc
     except IdentityNotFoundError as exc:
         raise _binding_not_found() from exc
+    if removed:
+        await project_persona_change(
+            request, device_id=device_id, actor_id=user.user_id, now=now
+        )
     return {"removed": removed, "effective": manifest.persona_assignment_id}
 
 
