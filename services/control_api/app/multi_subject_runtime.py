@@ -57,7 +57,9 @@ _DEFAULT_PERSONA_ASSIGNMENT_ID = "starlight:v1"
 # session_id and fences every Session to one binding version, so the control
 # Session is keyed by binding and actor: a rebind lands on a fresh Session
 # instead of a permanently stale one, and two accounts on one device never
-# collide on a primary key.  Only control Sessions renew in place on expiry;
+# collide on a primary key.  A control Session confirms the sole subject of a
+# one-to-one binding when it starts and when it renews; ``family_shared`` and
+# multi-subject bindings stay unconfirmed until someone confirms a subject.  Only control Sessions renew in place on expiry;
 # an explicitly named non-control Session (for example a device media
 # Session) keeps strict expiry.
 _CONTROL_SESSION_PREFIX = "device-control:"
@@ -709,6 +711,7 @@ class PostgresMultiSubjectRuntimeControl:
                         requested_capabilities=_REQUESTED_CAPABILITIES,
                         multiple_speakers=multiple_speakers,
                         offline=offline,
+                        confirm_sole_bound_subject=True,
                     )
                 )
             except SessionRuntimeConflict as exc:
@@ -719,12 +722,14 @@ class PostgresMultiSubjectRuntimeControl:
             if not self.is_control_session(resolved_session_id):
                 raise
             # Renewal re-locks the binding, re-derives Policy and advances
-            # the epoch; the renewed profile is already current.
+            # the epoch; the renewed profile is already current.  A
+            # one-to-one binding's sole subject is confirmed again.
             return await self.sessions.renew(
                 actor_id=actor_id,
                 session_id=resolved_session_id,
                 now=now,
                 requested_capabilities=_REQUESTED_CAPABILITIES,
+                confirm_sole_bound_subject=True,
             )
         if current.device_id != device_id:
             raise PersistentSessionDenied("Session device does not match request")
