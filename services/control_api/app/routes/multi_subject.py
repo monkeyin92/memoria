@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
@@ -70,6 +72,25 @@ from services.session_runtime.service import (
 )
 
 router = APIRouter(tags=["multi-subject"])
+logger = logging.getLogger(__name__)
+
+# Session Runtime denials carry free-text messages (and, from the binding lock,
+# raw PostgreSQL error text).  Clients get only a fixed reason code from this
+# allowlist or a bare snake_case code (Device trust reasons); the full message
+# goes to the server log so the next denial is diagnosable.
+_SESSION_DENIAL_REASONS: dict[str, str] = {
+    "runtime profile is expired": "profile_expired",
+    "runtime profile signature is invalid": "profile_signature_invalid",
+    "session binding is no longer active": "binding_superseded",
+    "Session binding is stale": "binding_stale",
+    "Session device does not match request": "session_device_mismatch",
+    "active actor/device binding is unavailable": "binding_unavailable",
+    "binding authority fence mismatch": "binding_fence_mismatch",
+    "subject switch authority denied": "subject_switch_denied",
+    "active subject is not a binding member": "subject_not_member",
+    "session is closed": "session_closed",
+}
+_SNAKE_CASE_REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 PrimaryRelationship = Literal["self", "guardian_of", "child_of", "family_member_of"]
 
@@ -267,6 +288,33 @@ def _binding_forbidden() -> HTTPException:
 
 def _binding_not_found() -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "binding_not_found"})
+
+
+def _session_denied(
+    exc: PersistentSessionDenied,
+    *,
+    code: str,
+    route: str,
+    actor_id: str,
+    device_id: str | None = None,
+    session_id: str | None = None,
+) -> HTTPException:
+    message = str(exc)
+    reason = _SESSION_DENIAL_REASONS.get(message)
+    if reason is None:
+        reason = message if _SNAKE_CASE_REASON.fullmatch(message) else "denied"
+    logger.warning(
+        "session runtime denied route=%s code=%s reason=%s device_id=%s "
+        "session_id=%s actor_id=%s message=%r",
+        route,
+        code,
+        reason,
+        device_id,
+        session_id,
+        actor_id,
+        message,
+    )
+    return HTTPException(status_code=403, detail={"code": code, "reason": reason})
 
 
 async def _account_person(
@@ -716,9 +764,13 @@ async def get_device_runtime_profile(
             detail={"code": "runtime_profile_not_found"},
         ) from exc
     except PersistentSessionDenied as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "runtime_profile_rejected"},
+        raise _session_denied(
+            exc,
+            code="runtime_profile_rejected",
+            route="device_runtime_profile",
+            actor_id=user.user_id,
+            device_id=device_id,
+            session_id=session_id,
         ) from exc
     except PersistentSessionUnavailable as exc:
         raise HTTPException(
@@ -773,9 +825,13 @@ async def resolve_session_subject(
             detail={"code": "runtime_profile_not_found"},
         ) from exc
     except PersistentSessionDenied as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "subject_resolution_forbidden"},
+        raise _session_denied(
+            exc,
+            code="subject_resolution_forbidden",
+            route="resolve_subject",
+            actor_id=user.user_id,
+            device_id=body.device_id,
+            session_id=body.session_id,
         ) from exc
     except PersistentSessionUnavailable as exc:
         raise HTTPException(
@@ -836,9 +892,12 @@ async def switch_active_subject(
             detail={"code": "runtime_profile_not_found"},
         ) from exc
     except PersistentSessionDenied as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "subject_switch_forbidden"},
+        raise _session_denied(
+            exc,
+            code="subject_switch_forbidden",
+            route="switch_active_subject",
+            actor_id=user.user_id,
+            session_id=session_id,
         ) from exc
     except PersistentSessionUnavailable as exc:
         raise HTTPException(
