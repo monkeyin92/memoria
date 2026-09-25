@@ -472,30 +472,26 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    subject_id = current_setting('app.memory.actor_subject_id', true)
-                    OR resource_owner_id = current_setting('app.memory.actor_subject_id', true)
+                    subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                    OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
                 OR (
                     -- Guardian/legacy grant read (fifth review): the service
                     -- sets these contexts ONLY after authoritative grant
                     -- verification; the scope is pinned so a grant can never
                     -- read outside its scope.
-                    resource_owner_id = current_setting(
-                        'app.memory.grant_owner_id', true
-                    )
-                    AND scope = current_setting('app.memory.grant_scope', true)
+                    resource_owner_id = NULLIF(current_setting('app.memory.grant_owner_id', true), '')
+                    AND scope = NULLIF(current_setting('app.memory.grant_scope', true), '')
                 )
             );
 
@@ -503,15 +499,11 @@ BEGIN
         CREATE POLICY memory_records_insert ON memory_records FOR INSERT
             TO memoria_memory_api, memoria_memory_worker, memoria_memory_owner
             WITH CHECK (
-                subject_id = current_setting('app.memory.subject_id', true)
-                AND created_by_actor_id = current_setting(
-                    'app.memory.actor_subject_id', true
-                )
+                subject_id = NULLIF(current_setting('app.memory.subject_id', true), '')
+                AND created_by_actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 AND (
                     family_space_id IS NULL
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -520,32 +512,26 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    subject_id = current_setting('app.memory.actor_subject_id', true)
-                    OR resource_owner_id = current_setting('app.memory.actor_subject_id', true)
+                    subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                    OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 )
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             )
             WITH CHECK (
-                subject_id = current_setting('app.memory.subject_id', true)
-                AND created_by_actor_id = current_setting(
-                    'app.memory.actor_subject_id', true
-                )
+                subject_id = NULLIF(current_setting('app.memory.subject_id', true), '')
+                AND created_by_actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -594,15 +580,13 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -610,7 +594,7 @@ BEGIN
         CREATE POLICY memory_proposals_insert ON memory_shared_proposals FOR INSERT
             TO memoria_memory_api, memoria_memory_worker
             WITH CHECK (
-                proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
 
         DROP POLICY IF EXISTS memory_proposals_update ON memory_shared_proposals;
@@ -618,28 +602,24 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             )
             WITH CHECK (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -659,14 +639,14 @@ BEGIN
         CREATE POLICY memory_votes_insert ON memory_shared_votes FOR INSERT
             TO memoria_memory_api, memoria_memory_worker
             WITH CHECK (
-                subject_id = current_setting('app.memory.actor_subject_id', true)
+                subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
 
         DROP POLICY IF EXISTS memory_votes_update ON memory_shared_votes;
         CREATE POLICY memory_votes_update ON memory_shared_votes FOR UPDATE
             TO memoria_memory_api, memoria_memory_worker
-            USING (subject_id = current_setting('app.memory.actor_subject_id', true))
-            WITH CHECK (subject_id = current_setting('app.memory.actor_subject_id', true));
+            USING (subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), ''))
+            WITH CHECK (subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), ''));
 
         -- P1-7: outbox/audit split by command - API may only append inside
         -- its atomic transactions; the worker polls/updates the outbox and
@@ -740,9 +720,9 @@ SET search_path = pg_catalog, public
 SET lock_timeout = '5s'
 AS $$
 DECLARE
-    v_actor TEXT := current_setting('app.memory.actor_subject_id', true);
-    v_subject TEXT := current_setting('app.memory.subject_id', true);
-    v_family TEXT := current_setting('app.memory.family_space_id', true);
+    v_actor TEXT := NULLIF(current_setting('app.memory.actor_subject_id', true), '');
+    v_subject TEXT := NULLIF(current_setting('app.memory.subject_id', true), '');
+    v_family TEXT := NULLIF(current_setting('app.memory.family_space_id', true), '');
 BEGIN
     IF v_actor IS NULL OR v_actor = '' THEN
         RAISE EXCEPTION 'memory_sensitive_commit: actor context missing (fail closed)';

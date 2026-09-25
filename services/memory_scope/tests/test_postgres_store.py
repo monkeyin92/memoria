@@ -695,3 +695,102 @@ async def test_postgres_sensitive_commit_function_and_rls_isolation(
     finally:
         await store.close()
         await executor_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.environ.get("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN to run the PostgreSQL contract",
+)
+async def test_postgres_personal_read_after_family_read_on_pooled_connection(
+    pg_env: tuple[str, str, str, str, str],
+) -> None:
+    """A transaction-local ``set_config`` leaves the GUC defined as '' on
+    the connection after commit, so ``current_setting(..., true)`` returns
+    '' - not NULL - in every later transaction on that pooled connection.
+    The personal (family_space_id IS NULL) branch of the RLS policy must
+    treat '' as "no family context" or personal records vanish."""
+    api_dsn, _worker_dsn, _action_executor_dsn, admin_db_dsn, password = pg_env
+    store = await _initialize_store(api_dsn, admin_db_dsn, password)
+    try:
+        # Pin the store to ONE pooled connection so every operation below
+        # reuses the same backend session.
+        await store._require_pool().close()  # noqa: SLF001
+        store._pool = await asyncpg.create_pool(  # noqa: SLF001
+            api_dsn, min_size=1, max_size=1
+        )
+        async with store._require_pool().acquire() as connection:  # noqa: SLF001
+            backend_pid = await connection.fetchval("SELECT pg_backend_pid()")
+
+        now = datetime.now(UTC)
+        await store.persist_record(
+            MemoryRecord(
+                record_id="pg-personal",
+                scope=MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE,
+                subject_id="person-a",
+                resource_owner_id="person-a",
+                source_evidence_ids=("evidence-1",),
+                policy_receipt_id="receipt-personal",
+                consent_snapshot_id="consent-1",
+                created_by_actor_id="person-a",
+                created_at=now,
+            ),
+            actor_family_space_id=None,
+        )
+        await store.persist_record(
+            MemoryRecord(
+                record_id="pg-family",
+                scope=MemoryScope.MEMORY_SCOPE_FAMILY_SHARED,
+                subject_id="person-a",
+                resource_owner_id="person-a",
+                family_space_id="family-1",
+                co_subject_ids=("person-b",),
+                source_evidence_ids=("evidence-1",),
+                policy_receipt_id="receipt-family",
+                consent_snapshot_id="consent-1",
+                created_by_actor_id="person-a",
+                created_at=now,
+            ),
+            actor_family_space_id="family-1",
+        )
+
+        # Family-space read sets app.memory.family_space_id on the
+        # connection for that transaction only.
+        family_view = await store.get_record(
+            "pg-family",
+            actor_subject_id="person-a",
+            actor_family_space_id="family-1",
+        )
+        assert family_view is not None
+
+        # Precondition: same backend, and the setting now reads as '' (not
+        # NULL) outside the transaction that set it.
+        async with store._require_pool().acquire() as connection:  # noqa: SLF001
+            assert await connection.fetchval("SELECT pg_backend_pid()") == backend_pid
+            assert (
+                await connection.fetchval(
+                    "SELECT current_setting('app.memory.family_space_id', true)"
+                )
+                == ""
+            )
+
+        # Personal read on the SAME connection sees the personal record.
+        personal_view = await store.get_record(
+            "pg-personal", actor_subject_id="person-a"
+        )
+        assert personal_view is not None
+        assert personal_view.family_space_id is None
+        listed = await store.list_records_for_subject(
+            "person-a", actor_subject_id="person-a"
+        )
+        assert [record.record_id for record in listed] == ["pg-personal"]
+
+        # The empty leftover still grants no family access.
+        assert (
+            await store.get_record("pg-family", actor_subject_id="person-a")
+            is None
+        )
+        async with store._require_pool().acquire() as connection:  # noqa: SLF001
+            assert await connection.fetchval("SELECT pg_backend_pid()") == backend_pid
+    finally:
+        await store.close()
