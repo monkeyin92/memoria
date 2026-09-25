@@ -166,13 +166,6 @@ DESIGNED_VOICE_SPEAKERS: Final[dict[str, str]] = {
 
 COMPANION_IDS: Final[frozenset[str]] = frozenset(COMPANION_VOICE_PROFILES)
 
-#: Built-in companions that ship on-device mascot art.  The tutor personas
-#: (zhiyao, yanxi) and custom personas have none, so a device display falls
-#: back to one of these.
-MASCOT_COMPANION_IDS: Final[frozenset[str]] = frozenset(
-    {"starlight", "taoxi", "mianmian", "axu", "xuanmo"}
-)
-
 
 def companion_definition(companion_id: object) -> CompanionDefinition | None:
     if not isinstance(companion_id, str):

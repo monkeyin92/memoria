@@ -17,16 +17,36 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from services.common.companions import DEFAULT_COMPANION_ID, MASCOT_COMPANION_IDS
+from services.common.companions import DEFAULT_COMPANION_ID
 from services.control_api.app.multi_subject_runtime import _persona_assignment_for
 from services.control_api.app.session_companion import CUSTOM_PERSONA_PREFIX
+from services.device_fleet.bootstrap_domain import (
+    BindingConflict,
+    BindingRecord,
+    DeviceLifecycle,
+    DeviceNotFound,
+    DeviceRecord,
+    DeviceRevoked,
+    InvalidDeviceProof,
+    public_key_from_bytes,
+    verify_signed_payload,
+)
+from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.identity.domain import (
     IdentityAccessDeniedError,
     IdentityNotFoundError,
 )
 from services.identity.service import IdentityService
+
+#: Built-in companions that ship on-device mascot art.  The tutor personas
+#: (zhiyao, yanxi) and custom personas have none, so a device display falls
+#: back to one of these.  Kept here rather than in services/common so the
+#: Control component can ship without touching code other images import.
+MASCOT_COMPANION_IDS: frozenset[str] = frozenset(
+    {"starlight", "taoxi", "mianmian", "axu", "xuanmo"}
+)
 
 DISPLAY_PROFILE_SCHEMA_VERSION = 1
 _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
@@ -34,6 +54,68 @@ _DISPLAY_VERSION_DOMAIN = b"memoria-device-display-profile-v1\0"
 
 class DisplayBindingUnavailable(LookupError):
     """The device is bound in the fleet but Identity has no active binding."""
+
+
+def display_request_payload(*, device_id: str, certificate_id: str) -> dict[str, object]:
+    """The object a device signs for the poll: the manifest's shape, this path.
+
+    The signature binds method, exact path, device and certificate, so a
+    manifest signature never authenticates this endpoint or the reverse.
+    """
+    return {
+        "method": "GET",
+        "path": f"/v1/devices/{device_id}/display-profile",
+        "device_id": device_id,
+        "certificate_id": certificate_id,
+    }
+
+
+def display_binding(
+    service: DeviceOnboardingService,
+    *,
+    device_id: str,
+    certificate_id: str,
+    request_signature: bytes | None,
+) -> dict[str, str]:
+    """Authenticate a display poll and say who the bound device serves.
+
+    Same checks, in the same order, as
+    ``DeviceOnboardingService.get_activation_manifest`` (certificate, lifecycle,
+    signature) but strictly read-only: no download mark, no counter, no audit
+    row, so a device may poll it every few seconds.
+    """
+    store = service.store
+    device = cast(DeviceRecord | None, store.get_device(device_id))  # type: ignore[attr-defined]
+    if device is None:
+        raise DeviceNotFound()
+    if device.certificate_id != certificate_id:
+        raise InvalidDeviceProof("certificate does not belong to device")
+    if device.lifecycle_status is DeviceLifecycle.REVOKED:
+        raise DeviceRevoked()
+    if device.lifecycle_status is not DeviceLifecycle.BOUND:
+        raise BindingConflict("device is not bound")
+    if request_signature is None and not service.offline_mock:
+        raise InvalidDeviceProof("device request signature is required")
+    if request_signature is not None:
+        verify_signed_payload(
+            public_key=public_key_from_bytes(device.public_key),
+            payload=display_request_payload(device_id=device_id, certificate_id=certificate_id),
+            signature=request_signature,
+        )
+    if device.actor_id is None or device.binding_id is None:
+        raise BindingConflict("device has no active binding")
+    binding = cast(BindingRecord | None, store.get_binding(device.binding_id))  # type: ignore[attr-defined]
+    subject_id = (
+        str(binding.initialization.primary_subject.get("person_id", ""))
+        if binding is not None
+        else ""
+    )
+    return {
+        "device_id": device.device_id,
+        "actor_id": device.actor_id,
+        "binding_id": device.binding_id,
+        "subject_id": subject_id,
+    }
 
 
 class _ProfileReader(Protocol):
@@ -51,8 +133,7 @@ class DeviceDisplayProfile:
     def display_version(self) -> str:
         """Short, opaque, and different whenever the shown companion changes."""
         digest = hashlib.sha256(
-            _DISPLAY_VERSION_DOMAIN
-            + f"{self.binding_id}\0{self.companion_id}".encode()
+            _DISPLAY_VERSION_DOMAIN + f"{self.binding_id}\0{self.companion_id}".encode()
         ).hexdigest()
         return digest[:16]
 
@@ -90,9 +171,7 @@ async def mascot_for_persona(
             )
         except (IdentityNotFoundError, IdentityAccessDeniedError):
             record = None
-        base = _mascot_or_none(
-            record.fallback_designed_voice if record is not None else None
-        )
+        base = _mascot_or_none(record.fallback_designed_voice if record is not None else None)
         if base is not None:
             return base
     if profiles is not None:
@@ -113,9 +192,7 @@ async def resolve_device_display_profile(
     now: datetime,
 ) -> DeviceDisplayProfile:
     """The companion the device's next session would show for its subject."""
-    manifest = await identity.get_active_manifest(
-        device_id, now, actor_person_id=actor_id
-    )
+    manifest = await identity.get_active_manifest(device_id, now, actor_person_id=actor_id)
     if manifest is None:
         raise DisplayBindingUnavailable(device_id)
     primary = tuple(sorted(manifest.primary_subject_ids))

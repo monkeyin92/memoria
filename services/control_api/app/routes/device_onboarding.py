@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_display_profile import (
     DisplayBindingUnavailable,
+    display_binding,
     resolve_device_display_profile,
 )
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
@@ -380,7 +381,8 @@ async def get_device_display_profile(
     try:
         signature = _device_signature(device_signature)
         bound = await asyncio.to_thread(
-            _service(request).get_display_binding,
+            display_binding,
+            _service(request),
             device_id=device_id,
             certificate_id=certificate_id,
             request_signature=signature,
