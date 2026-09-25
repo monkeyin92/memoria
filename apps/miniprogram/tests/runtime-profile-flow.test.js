@@ -529,6 +529,28 @@ test("requireRuntimeCapability gates all five capabilities fail-closed", async (
   }
 });
 
+test("requireRuntimeCapability accepts the runtime-profile-v2 wire the server signs", async () => {
+  bindDevice();
+  // 服务端（RuntimeProfileSignedV2）签发的真实形状：obligations 是结构化 code+params。
+  const params = { max_session_seconds: null, retention_ttl_seconds: null, quiet_hours: null, extras: [] };
+  const gate = api.requireRuntimeCapability("memory_recall_private", { sessionId: "ses_gate_v2" });
+  resolveRequest(
+    0,
+    validWireProfile({
+      signature_schema: "runtime-profile-v2",
+      session_id: "ses_gate_v2",
+      runtime_profile_id: "rp_gate_v2",
+      capabilities: ["chat", "memory_recall_private"],
+      obligations: [{ code: "WRITE_POLICY_RECEIPT", params }],
+      policy_receipt_ids: ["da0e35a9-555e-4ef1-95a7-5b9f770d3649"],
+    }),
+  );
+  const result = await gate;
+  assert.equal(result.allowed, true);
+  assert.equal(result.reason, "allowed");
+  assert.deepEqual(result.profile.obligations, [{ code: "WRITE_POLICY_RECEIPT", params }]);
+});
+
 test("requireRuntimeCapability denies every capability without a binding or profile", async () => {
   binding.clearBindingManifest();
   for (const capability of binding.SENSITIVE_CAPABILITIES) {

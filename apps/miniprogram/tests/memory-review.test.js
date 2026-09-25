@@ -429,19 +429,20 @@ test("a failed confirmation does not locally upgrade the candidate", async () =>
   });
 });
 
-test("memory page requests neither private review interface without the capability", async () => {
+test("a profile without memory_recall_private no longer hides either review interface", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/memory/index");
     const page = instantiate(definition);
     let memoryCalls = 0;
     let reviewCalls = 0;
+    let gateCalls = 0;
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
       isAuthEpochCurrent: () => true,
-      requireRuntimeCapability: async () => ({
-        allowed: false,
-        reason: "capability_missing",
-      }),
+      requireRuntimeCapability: async () => {
+        gateCalls += 1;
+        return { allowed: false, reason: "capability_missing" };
+      },
       getMemoryDays: async () => {
         memoryCalls += 1;
         return { items: [] };
@@ -450,15 +451,14 @@ test("memory page requests neither private review interface without the capabili
         reviewCalls += 1;
         return { actual_heard: [], memory_candidates: [], confirmed_memories: [] };
       },
+      getConversationSessions: async () => ({ items: [] }),
     });
     try {
       await page.loadDays();
-      assert.equal(memoryCalls, 0, "未授权时不得请求私人回顾日数据");
-      assert.equal(reviewCalls, 0, "未授权时不得请求 conversation review");
-      assert.deepEqual(page.data.heardTurns, []);
-      assert.deepEqual(page.data.memoryCandidates, []);
-      assert.deepEqual(page.data.confirmedMemories, []);
-      assert.ok(page.data.error.includes("尚未开放"));
+      assert.equal(gateCalls, 0);
+      assert.equal(memoryCalls, 1);
+      assert.equal(reviewCalls, 1);
+      assert.equal(page.data.error, "");
     } finally {
       restore();
     }

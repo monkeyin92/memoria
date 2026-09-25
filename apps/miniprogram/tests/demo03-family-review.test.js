@@ -141,7 +141,7 @@ function todayKey(date = new Date()) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-test("home today count uses gated session reads and composes the daily summary", async () => {
+test("home today count uses session reads and composes the daily summary", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
     const page = instantiate(definition);
@@ -481,29 +481,28 @@ test("an older home flow cannot overwrite the latest private summary", async () 
   });
 });
 
-test("home refuses private reads without the capability", async () => {
+test("home reads the daily summary without consulting the Runtime Profile", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
     const page = instantiate(definition);
     let memoryCalls = 0;
-    let sessionCalls = 0;
+    let gateCalls = 0;
     const restore = stubApi({
-      requireRuntimeCapability: async () => ({ allowed: false, reason: "capability_missing" }),
+      requireRuntimeCapability: async () => {
+        gateCalls += 1;
+        return { allowed: false, reason: "capability_missing" };
+      },
       getMemoryDays: async () => {
         memoryCalls += 1;
         return { items: [] };
       },
-      getConversationSessions: async () => {
-        sessionCalls += 1;
-        return { items: [] };
-      },
+      getConversationReview: async () => ({ memory_candidates: [] }),
+      getConversationSessions: async () => ({ items: [] }),
     });
     try {
-      const result = await page._loadToday({ user_id: "person_owner" });
-      assert.equal(memoryCalls, 0);
-      assert.equal(sessionCalls, 0);
-      assert.equal(result.todayCount, 0);
-      assert.equal(result.dailySummaryText, "");
+      await page._loadToday({ user_id: "person_owner" });
+      assert.equal(gateCalls, 0);
+      assert.equal(memoryCalls, 1);
     } finally {
       restore();
     }

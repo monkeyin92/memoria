@@ -10,7 +10,6 @@ const {
 const { greetingFor, formatDateLabel } = require("../../utils/greeting");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel } = require("../../utils/subject-label");
-const contracts = require("../../utils/multi-subject-contracts");
 
 function todayKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -392,8 +391,7 @@ Page({
       dailySummaryText: "",
     };
     if (!identity) return empty;
-    const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
-    if (!gate.allowed) return empty;
+    // 每日摘要是账号自己的回顾，服务端按登录账号鉴权，不走 Runtime Profile 门禁。
     const [daysResult, reviewResult, sessionsResult] = await Promise.all([
       api.getMemoryDays(identity.user_id, 7),
       api.getConversationReview(),

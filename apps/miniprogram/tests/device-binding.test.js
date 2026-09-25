@@ -475,6 +475,118 @@ test("expired or future-issued runtime profiles fail closed", () => {
   );
 });
 
+function obligationSpec(code, params = {}) {
+  return {
+    code,
+    params: {
+      max_session_seconds: null,
+      retention_ttl_seconds: null,
+      quiet_hours: null,
+      extras: [],
+      ...params,
+    },
+  };
+}
+
+test("runtime-profile-v2 with structured obligations (current server wire) is accepted", () => {
+  // 与 control_api GET /v1/devices/{id}/runtime-profile 对一对一绑定设备的真实响应同形。
+  const unknownSafe = binding.normalizeRuntimeProfile(
+    validUnknownSafeProfile({
+      signature_schema: "runtime-profile-v2",
+      obligations: [
+        obligationSpec("DO_NOT_PERSIST"),
+        obligationSpec("DO_NOT_WRITE_LEARNING_PROGRESS"),
+        obligationSpec("NO_MODEL_TRAINING"),
+        obligationSpec("REQUIRE_SPEAKER_CONFIRMATION"),
+      ],
+      policy_receipt_ids: ["da0e35a9-555e-4ef1-95a7-5b9f770d3649"],
+    }),
+  );
+  assert.equal(unknownSafe.valid, true, unknownSafe.fail_reasons.join("; "));
+  assert.equal(unknownSafe.signature_schema, "runtime-profile-v2");
+  assert.deepEqual(unknownSafe.capabilities, ["chat", "english_practice"]);
+
+  const confirmed = binding.normalizeRuntimeProfile(
+    validRuntimeProfile({
+      signature_schema: "runtime-profile-v2",
+      obligations: [
+        obligationSpec("RETENTION_TTL", { retention_ttl_seconds: 86400 }),
+        obligationSpec("QUIET_HOURS", { quiet_hours: ["22:00", "07:00"] }),
+        obligationSpec("QUIET_HOURS", { quiet_hours: ["21:00", "07:00"] }),
+      ],
+    }),
+  );
+  assert.equal(confirmed.valid, true, confirmed.fail_reasons.join("; "));
+  // 规范化结果保留 canonical wire，缓存重放后仍能重新通过校验。
+  assert.equal(
+    binding.normalizeRuntimeProfile(binding.runtimeProfileWirePayload(confirmed)).valid,
+    true,
+  );
+});
+
+test("runtime-profile-v2 obligations must be well-formed specs matching the schema", () => {
+  const cases = [
+    ["v2 仍用字符串义务", { signature_schema: "runtime-profile-v2", obligations: ["DO_NOT_PERSIST"] }],
+    ["v1 却用结构化义务", { obligations: [obligationSpec("REQUIRE_SPEAKER_CONFIRMATION")] }],
+    [
+      "未知义务 code",
+      { signature_schema: "runtime-profile-v2", obligations: [obligationSpec("GRANT_ADMIN")] },
+    ],
+    [
+      "params 额外字段",
+      {
+        signature_schema: "runtime-profile-v2",
+        obligations: [obligationSpec("RETENTION_TTL", { admin: true })],
+      },
+    ],
+    [
+      "params 缺字段",
+      {
+        signature_schema: "runtime-profile-v2",
+        obligations: [{ code: "RETENTION_TTL", params: { retention_ttl_seconds: 1 } }],
+      },
+    ],
+    [
+      "quiet_hours 非法",
+      {
+        signature_schema: "runtime-profile-v2",
+        obligations: [obligationSpec("QUIET_HOURS", { quiet_hours: ["25:00", "07:00"] })],
+      },
+    ],
+    [
+      "整项重复",
+      {
+        signature_schema: "runtime-profile-v2",
+        obligations: [obligationSpec("NO_MODEL_TRAINING"), obligationSpec("NO_MODEL_TRAINING")],
+      },
+    ],
+    ["未知 schema", { signature_schema: "runtime-profile-v3" }],
+  ];
+  for (const [label, overrides] of cases) {
+    const profile = binding.normalizeRuntimeProfile(validRuntimeProfile(overrides));
+    assert.equal(profile.valid, false, `${label} 应 fail closed`);
+    assert.deepEqual(profile.capabilities, []);
+  }
+  const missingDoNotPersist = binding.normalizeRuntimeProfile(
+    validUnknownSafeProfile({
+      signature_schema: "runtime-profile-v2",
+      obligations: [obligationSpec("NO_MODEL_TRAINING")],
+    }),
+  );
+  assert.equal(missingDoNotPersist.valid, false, "v2 unknown_safe 仍必须带 DO_NOT_PERSIST");
+});
+
+test("a freshly issued profile tolerates small phone/server clock skew", () => {
+  const now = Date.now();
+  const profile = binding.normalizeRuntimeProfile(
+    validRuntimeProfile({
+      issued_at: new Date(now + 5_000).toISOString(),
+      expires_at: new Date(now + 300_000).toISOString(),
+    }),
+  );
+  assert.equal(profile.valid, true, profile.fail_reasons.join("; "));
+});
+
 test("signature shape errors fail closed (TLS boundary + envelope only, no HMAC key)", () => {
   for (const signature of [undefined, "", "ABC", "z".repeat(64), "a".repeat(63), 42, null]) {
     const profile = binding.normalizeRuntimeProfile(validRuntimeProfile({ signature }));

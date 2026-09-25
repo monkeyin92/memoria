@@ -92,50 +92,71 @@ function stubApi(overrides) {
   };
 }
 
-test("memory page denies private recall when memory_recall_private is not granted", async () => {
+test("memory page loads the owner's own recap without consulting the Runtime Profile", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/memory/index");
     const page = instantiate(definition);
     let memoryCalls = 0;
+    let gateCalls = 0;
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
       isAuthEpochCurrent: () => true,
-      requireRuntimeCapability: async () => ({
-        allowed: false,
-        reason: "capability_missing",
-      }),
+      requireRuntimeCapability: async () => {
+        gateCalls += 1;
+        return { allowed: false, reason: "capability_missing" };
+      },
       getMemoryDays: async () => {
         memoryCalls += 1;
         return { items: [] };
       },
+      getConversationReview: async () => ({
+        actual_heard: [],
+        memory_candidates: [],
+        confirmed_memories: [],
+      }),
+      getConversationSessions: async () => ({ items: [] }),
     });
     try {
       await page.loadDays();
-      assert.equal(memoryCalls, 0, "未授权时不得请求私人回顾数据");
-      assert.equal(page.data.days.length, 0);
-      assert.ok(page.data.error.includes("尚未开放"));
+      // 一对一：登录账号就是使用者本人，回顾由服务端按账号鉴权。
+      assert.equal(gateCalls, 0, "回顾不再走 Runtime Profile 门禁");
+      assert.equal(memoryCalls, 1);
+      assert.equal(page.data.error, "");
     } finally {
       restore();
     }
   });
 });
 
-test("memory page summarize action is refused without the capability", async () => {
+test("memory page summarize action does not consult the Runtime Profile", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/memory/index");
     const page = instantiate(definition);
     let summarizeCalls = 0;
+    let gateCalls = 0;
     const restore = stubApi({
-      requireLogin: async () => true,
-      requireRuntimeCapability: async () => ({ allowed: false, reason: "no_binding" }),
+      currentIdentity: () => ({ user_id: "person_owner" }),
+      isAuthEpochCurrent: () => true,
+      hasAuthenticatedSession: () => true,
+      requireRuntimeCapability: async () => {
+        gateCalls += 1;
+        return { allowed: false, reason: "capability_missing" };
+      },
       summarizeDay: async () => {
         summarizeCalls += 1;
       },
+      getMemoryDays: async () => ({ items: [] }),
+      getConversationReview: async () => ({
+        actual_heard: [],
+        memory_candidates: [],
+        confirmed_memories: [],
+      }),
+      getConversationSessions: async () => ({ items: [] }),
     });
     try {
       await page.summarizeSelectedDay();
-      assert.equal(summarizeCalls, 0);
-      assert.ok(page.data.error.includes("绑定设备"));
+      assert.equal(gateCalls, 0);
+      assert.equal(summarizeCalls, 1);
     } finally {
       restore();
     }
@@ -271,14 +292,13 @@ test("guardian refresh is gated by guardian_summary_view", async () => {
   });
 });
 
-test("profile stats stay zero and no private recall request without the capability", async () => {
+test("profile stats stay zero and no private recall request without a device binding", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/profile/index");
     const page = instantiate(definition);
     let memoryCalls = 0;
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
-      requireRuntimeCapability: async () => ({ allowed: false, reason: "no_binding" }),
       getMemoryDays: async () => {
         memoryCalls += 1;
         return { items: [] };
