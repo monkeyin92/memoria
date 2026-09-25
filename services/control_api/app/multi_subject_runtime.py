@@ -622,8 +622,14 @@ class PostgresMultiSubjectRuntimeControl:
         device_id: str,
         *,
         now: datetime,
+        actor_person_id: str,
     ) -> BindingManifest:
-        manifest = await self.identity.get_active_manifest(device_id, now)
+        # Production Identity is PostgreSQL with FORCE RLS: a read without an
+        # identity actor sees no binding rows at all, so the lookup must run as
+        # the requesting account (the same visibility the binding APIs use).
+        manifest = await self.identity.get_active_manifest(
+            device_id, now, actor_person_id=actor_person_id
+        )
         if manifest is None:
             raise IdentityNotFoundError(f"device {device_id} has no active binding")
         return manifest
@@ -635,7 +641,9 @@ class PostgresMultiSubjectRuntimeControl:
         user_id: str,
         now: datetime,
     ) -> BindingManifest:
-        manifest = await self.active_manifest(device_id, now=now)
+        manifest = await self.active_manifest(
+            device_id, now=now, actor_person_id=user_id
+        )
         if not MultiSubjectRuntimeControl._is_binding_member(manifest, user_id):
             raise IdentityAccessDeniedError(
                 f"user {user_id} has no role on device {device_id}"
@@ -771,6 +779,7 @@ class PostgresMultiSubjectRuntimeControl:
         candidates = await self._candidates(
             manifest,
             hint=client_claimed_person_id,
+            actor_id=actor_id,
         )
         confirmed = (
             profile.active_subject_id is not None
@@ -859,6 +868,7 @@ class PostgresMultiSubjectRuntimeControl:
         manifest: BindingManifest,
         *,
         hint: str | None,
+        actor_id: str,
     ) -> list[dict[str, object]]:
         member_ids = MultiSubjectRuntimeControl._member_subject_ids(manifest)
         if hint is not None and hint in member_ids:
@@ -870,7 +880,9 @@ class PostgresMultiSubjectRuntimeControl:
             ordered = member_ids
         result: list[dict[str, object]] = []
         for person_id in ordered:
-            person = await self.identity.get_person(person_id)
+            person = await self.identity.get_person(
+                person_id, actor_person_id=actor_id
+            )
             result.append(
                 {
                     "person_id": person.person_id,
