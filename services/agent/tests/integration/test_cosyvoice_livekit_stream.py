@@ -8,6 +8,11 @@ from livekit.agents import APIConnectOptions
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
+from services.common.voice_identity import TTS_MODEL
+
+BASELINE_VOICE = DESIGNED_VOICE_SPEAKERS["warm_companion"]
+CLONE_VOICE = "qwen-audio-3.1-tts-flash-owner001-abc123"
 
 
 @pytest.mark.asyncio
@@ -96,15 +101,16 @@ async def test_livekit_stream_clone_failure_replays_buffer_with_baseline_voice()
             CosyVoiceConfig(
                 api_key="test",
                 ws_url=srv.ws_url,
-                model="cosyvoice-v3.5-flash",
-                voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+                voice=BASELINE_VOICE,
                 pool_size=1,
                 first_audio_timeout_s=0.05,
             )
         )
         tts.apply_voice_profile(
-            model="cosyvoice-v3.5-flash",
-            voice="cosyvoice-v3.5-flash-clone-owner001",
+            model=TTS_MODEL,
+            voice=CLONE_VOICE,
+            profile_id="pv_owner001",
+            voice_kind="personal",
         )
         async with tts.stream(
             conn_options=APIConnectOptions(max_retry=1, retry_interval=0.01)
@@ -115,8 +121,8 @@ async def test_livekit_stream_clone_failure_replays_buffer_with_baseline_voice()
 
         assert events
         assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
-            "cosyvoice-v3.5-flash-clone-owner001",
-            "cosyvoice-v3.5-flash-vd-warmboy-baseline",
+            CLONE_VOICE,
+            BASELINE_VOICE,
         ]
         await tts.aclose()
     finally:
@@ -152,14 +158,15 @@ async def test_livekit_stream_never_retries_whole_sentence_after_audio_output() 
             CosyVoiceConfig(
                 api_key="test",
                 ws_url=srv.ws_url,
-                model="cosyvoice-v3.5-flash",
-                voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+                voice=BASELINE_VOICE,
                 pool_size=1,
             )
         )
         tts.apply_voice_profile(
-            model="cosyvoice-v3.5-flash",
-            voice="cosyvoice-v3.5-flash-clone-owner001",
+            model=TTS_MODEL,
+            voice=CLONE_VOICE,
+            profile_id="pv_owner001",
+            voice_kind="personal",
         )
         stream = tts.stream(conn_options=APIConnectOptions(max_retry=1))
         stream.push_text("已经开始播放的句子不能整句重来")
@@ -173,7 +180,7 @@ async def test_livekit_stream_never_retries_whole_sentence_after_audio_output() 
         assert len(srv.run_requests) == 1
         assert (
             srv.run_requests[0]["payload"]["parameters"]["voice"]
-            == "cosyvoice-v3.5-flash-clone-owner001"
+            == CLONE_VOICE
         )
         await tts.aclose()
     finally:

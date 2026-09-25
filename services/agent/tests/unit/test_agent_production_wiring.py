@@ -59,6 +59,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
 from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -363,7 +364,7 @@ def _plan_for_fence(
         voice_target=ResponseVoiceTarget(
             kind="companion",
             profile_id="warm_companion",
-            model="seed-tts-2.0",
+            model=TTS_MODEL,
         ),
         provenance=ResponseProvenance(
             planner_policy_version="digital-self-response-planner-v2",
@@ -1661,8 +1662,8 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
     runtime.set_target_speaker_focus(True)
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -1704,8 +1705,8 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
         llm_provider="qwen",
         llm_model="qwen-plus",
-        tts_provider="doubao",
-        tts_model="seed-tts-2.0",
+        tts_provider=TTS_PROVIDER,
+        tts_model=TTS_MODEL,
     )
     monkeypatch.setattr(
         agent_mod.Agent.default,
@@ -1928,9 +1929,9 @@ async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bi
             style_version=None,
             references=(
                 ("fallback_voice_profile_id", "bright_peer"),
-                ("fallback_voice_provider", "volcengine_doubao"),
-                ("fallback_voice_model", "seed-tts-2.0"),
-                ("fallback_voice_resource_id", "seed-tts-2.0"),
+                ("fallback_voice_provider", TTS_PROVIDER),
+                ("fallback_voice_model", TTS_MODEL),
+                ("fallback_voice_resource_id", TTS_MODEL),
                 ("legacy_voice_allowed", False),
             ),
             capabilities=(("conversation", True),),
@@ -1939,7 +1940,7 @@ async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bi
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="wrong-designed-profile",
-        current_model="seed-tts-2.0",
+        current_model=TTS_MODEL,
         current_voice="wrong-speaker",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
@@ -1997,9 +1998,9 @@ async def test_live_lookup_does_not_start_when_generation_voice_cannot_bind() ->
             style_version=None,
             references=(
                 ("fallback_voice_profile_id", "not-approved"),
-                ("fallback_voice_provider", "volcengine_doubao"),
-                ("fallback_voice_model", "seed-tts-2.0"),
-                ("fallback_voice_resource_id", "seed-tts-2.0"),
+                ("fallback_voice_provider", TTS_PROVIDER),
+                ("fallback_voice_model", TTS_MODEL),
+                ("fallback_voice_resource_id", TTS_MODEL),
                 ("legacy_voice_allowed", False),
             ),
             capabilities=(("conversation", True),),
@@ -2008,7 +2009,7 @@ async def test_live_lookup_does_not_start_when_generation_voice_cannot_bind() ->
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="wrong-designed-profile",
-        current_model="seed-tts-2.0",
+        current_model=TTS_MODEL,
         current_voice="wrong-speaker",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
@@ -2052,8 +2053,8 @@ async def test_runtime_close_is_terminal_and_leaves_no_delegation_task() -> None
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2119,8 +2120,8 @@ async def test_live_lookup_starts_on_the_bound_generation() -> None:
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2168,8 +2169,8 @@ def test_companion_realigns_wrong_designed_tts_before_binding() -> None:
 
     class AligningTTS:
         current_voice_profile_id = "bright_peer"
-        current_model = "seed-tts-2.0"
-        current_voice = "zh_female_tianmeitaozi_uranus_bigtts"
+        current_model = TTS_MODEL
+        current_voice = "longhua_v3.1"
         current_voice_kind = "designed"
 
         def bind_fence(self, _fence: GenerationFence) -> None:
@@ -2192,12 +2193,12 @@ def test_companion_realigns_wrong_designed_tts_before_binding() -> None:
     assert snapshot.profile_id == "warm_companion"
 
 
-def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> None:
+def test_companion_frozen_personal_clone_binds_without_voice_clone_use() -> None:
     import hashlib
 
-    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    voice_id = "qwen-audio-3.1-tts-flash-owner001-abc123"
     speaker_sha256 = hashlib.sha256(voice_id.encode()).hexdigest()
-    runtime = DuplexRuntime.create(session_id="companion-cosyvoice-clone-bind")
+    runtime = DuplexRuntime.create(session_id="companion-personal-clone-bind")
     bind_owner_policy(
         runtime,
         policy_version="test-policy",
@@ -2217,14 +2218,14 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
                     {
                         "voice_profile_id": "voice-profile-personal",
                         "voice_profile_version": "2",
-                        "voice_provider": "alibaba_model_studio",
-                        "voice_model": "cosyvoice-v3.5-flash",
-                        "voice_resource_id": "cosyvoice-v3.5-flash",
+                        "voice_provider": TTS_PROVIDER,
+                        "voice_model": TTS_MODEL,
+                        "voice_resource_id": TTS_MODEL,
                         "voice_speaker_sha256": speaker_sha256,
                         "fallback_voice_profile_id": "bright_peer",
-                        "fallback_voice_provider": "volcengine_doubao",
-                        "fallback_voice_model": "seed-tts-2.0",
-                        "fallback_voice_resource_id": "seed-tts-2.0",
+                        "fallback_voice_provider": TTS_PROVIDER,
+                        "fallback_voice_model": TTS_MODEL,
+                        "fallback_voice_resource_id": TTS_MODEL,
                     }.items()
                 )
             ),
@@ -2232,7 +2233,7 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="voice-profile-personal",
-        current_model="cosyvoice-v3.5-flash",
+        current_model=TTS_MODEL,
         current_voice=voice_id,
         current_voice_kind="personal",
         apply_voice_profile=lambda **_kwargs: None,
@@ -2244,7 +2245,7 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id == "voice-profile-personal"
-    assert snapshot.resource_id == "cosyvoice-v3.5-flash"
+    assert snapshot.resource_id == TTS_MODEL
     assert snapshot.voice_kind == "personal"
 
 
@@ -2287,8 +2288,8 @@ async def test_identity_rotation_still_binds_companion_generation_voice() -> Non
     assert runtime.mode_policy.companion_style_id == "starlight"
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2311,9 +2312,9 @@ def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() 
                 sorted(
                     {
                         "fallback_voice_profile_id": "bright_peer",
-                        "fallback_voice_provider": "volcengine_doubao",
-                        "fallback_voice_model": "seed-tts-2.0",
-                        "fallback_voice_resource_id": "seed-tts-2.0",
+                        "fallback_voice_provider": TTS_PROVIDER,
+                        "fallback_voice_model": TTS_MODEL,
+                        "fallback_voice_resource_id": TTS_MODEL,
                     }.items()
                 )
             ),
@@ -2323,8 +2324,8 @@ def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() 
     )
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="bright_peer",
-        current_model="seed-tts-2.0",
-        current_voice="zh_female_tianmeitaozi_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longhua_v3.1",
         current_voice_kind="designed",
     )
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
@@ -2333,7 +2334,7 @@ def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() 
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id == "bright_peer"
-    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.resource_id == TTS_MODEL
 
 
 def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> None:
@@ -2341,8 +2342,8 @@ def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> No
     runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
     )
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
@@ -2351,7 +2352,7 @@ def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> No
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id is None
-    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.resource_id == TTS_MODEL
     assert snapshot.voice_kind == "designed"
 
 
@@ -2363,8 +2364,8 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2405,8 +2406,8 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
         runtime=runtime,
         llm_provider="qwen",
         llm_model="qwen-plus",
-        tts_provider="doubao",
-        tts_model="seed-tts-2.0",
+        tts_provider=TTS_PROVIDER,
+        tts_model=TTS_MODEL,
     )
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
     chat_ctx = llm.ChatContext.empty()
@@ -2448,8 +2449,8 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
     runtime.tts = SimpleNamespace(
         current_voice_profile_id="warm_companion",
-        current_model="seed-tts-2.0",
-        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_model=TTS_MODEL,
+        current_voice="longanyang_v3.1",
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
@@ -2496,8 +2497,8 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
         runtime=runtime,
         llm_provider="qwen",
         llm_model="qwen-plus",
-        tts_provider="doubao",
-        tts_model="seed-tts-2.0",
+        tts_provider=TTS_PROVIDER,
+        tts_model=TTS_MODEL,
     )
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
     chat_ctx = llm.ChatContext.empty()
@@ -3639,7 +3640,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 ) -> None:
     from services.agent.src import mode_policy_client, policy_runtime_wiring
     from services.agent.src.mode_policy_client import ModePolicy
-    from services.agent.src.providers import deepseek, doubao_tts, funasr_stt, vosk_kws
+    from services.agent.src.providers import cosyvoice_tts, deepseek, funasr_stt, vosk_kws
 
     fake_tts = _FakeTTS()
     fake_stt = SimpleNamespace(pcm_observer=None)
@@ -3657,7 +3658,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         "interaction-policy-material-that-is-long-enough",
     )
 
-    class FakeDoubao:
+    class FakeQwenAudioTTS:
         @classmethod
         def from_env(cls) -> _FakeTTS:
             return fake_tts
@@ -3709,7 +3710,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         async def aclose(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeDoubao)
+    monkeypatch.setattr(cosyvoice_tts, "CosyVoiceTTS", FakeQwenAudioTTS)
     monkeypatch.setattr(funasr_stt, "FunASRSTT", FakeFun)
     monkeypatch.setattr(vosk_kws, "VoskKeywordSpotter", FakeKeywordSpotter)
     monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)

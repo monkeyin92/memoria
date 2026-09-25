@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 from services.common.companions import COMPANIONS, CompanionDefinition
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.companion_delivery import freeze_companion_delivery
 from services.control_api.app.mode_policy import companion_personal_voice_contract_valid
 from services.voice_profile.domain import VoiceResolution
@@ -62,22 +63,22 @@ class _ResolutionStub:
         return self.resolution
 
 
-def _cosyvoice_resolution() -> VoiceResolution:
+def _qwen_clone_resolution() -> VoiceResolution:
     return VoiceResolution(
         mode="active",
         profile_id="voice-profile-personal",
         version_number=2,
-        provider="alibaba_model_studio",
+        provider=TTS_PROVIDER,
         voice_kind="personal",
-        model="cosyvoice-v3.5-flash",
-        resource_id="cosyvoice-v3.5-flash",
-        voice_id="cosyvoice-v3.5-flash-clone-owner001",
+        model=TTS_MODEL,
+        resource_id=TTS_MODEL,
+        voice_id=f"{TTS_MODEL}-owner01-abc123",
     )
 
 
 @pytest.mark.asyncio
 async def test_catalog_companion_does_not_freeze_a_personal_clone() -> None:
-    manager = _ResolutionStub(_cosyvoice_resolution())
+    manager = _ResolutionStub(_qwen_clone_resolution())
     frozen = await freeze_companion_delivery(
         companion=COMPANIONS["taoxi"],
         session_focus="chat",
@@ -94,8 +95,8 @@ async def test_catalog_companion_does_not_freeze_a_personal_clone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback() -> None:
-    manager = _ResolutionStub(_cosyvoice_resolution())
+async def test_custom_persona_freezes_a_qwen_audio_clone_with_designed_fallback() -> None:
+    manager = _ResolutionStub(_qwen_clone_resolution())
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
         session_focus="chat",
@@ -105,41 +106,60 @@ async def test_custom_persona_freezes_a_cosyvoice_clone_with_designed_fallback()
     )
 
     assert companion_personal_voice_contract_valid(frozen) is True
-    assert frozen.voice_provider == "alibaba_model_studio"
-    assert frozen.voice_model == "cosyvoice-v3.5-flash"
+    assert frozen.voice_provider == TTS_PROVIDER
+    assert frozen.voice_model == TTS_MODEL
+    assert frozen.voice_resource_id == TTS_MODEL
+    # Qwen-Audio clones carry no provider expiry.
+    assert frozen.voice_provider_expires_at is None
     assert frozen.fallback_voice_profile_id == "bright_peer"
-    assert frozen.fallback_voice_model == "seed-tts-2.0"
+    assert frozen.fallback_voice_provider == TTS_PROVIDER
+    assert frozen.fallback_voice_model == TTS_MODEL
     # The clone is looked up in this persona's dimension, not the account's.
     assert manager.seen_personas == [_CUSTOM_PERSONA_ID]
 
 
 @pytest.mark.asyncio
-async def test_custom_persona_freezes_a_doubao_icl_clone() -> None:
-    expires = datetime(2027, 7, 23, tzinfo=UTC)
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-personal",
+            version_number=3,
+            provider="volcengine_doubao",
+            voice_kind="personal",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="S_personal_custom",
+            provider_expires_at=datetime(2027, 7, 23, tzinfo=UTC),
+        ),
+        VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-personal",
+            version_number=2,
+            provider="alibaba_model_studio",
+            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            resource_id="cosyvoice-v3.5-flash",
+            voice_id="cosyvoice-v3.5-flash-clone-owner001",
+        ),
+    ],
+)
+async def test_custom_persona_never_freezes_a_legacy_clone(
+    resolution: VoiceResolution,
+) -> None:
     frozen = await freeze_companion_delivery(
         companion=_CUSTOM,
         session_focus="chat",
         account_id="owner-a",
         store=_AdultStore(),
-        voice_manager=_ResolutionStub(
-            VoiceResolution(
-                mode="active",
-                profile_id="voice-profile-personal",
-                version_number=3,
-                provider="volcengine_doubao",
-                voice_kind="personal",
-                model="seed-icl-2.0",
-                resource_id="seed-icl-2.0",
-                voice_id="S_personal_custom",
-                provider_expires_at=expires,
-            )
-        ),
+        voice_manager=_ResolutionStub(resolution),
     )
 
-    assert companion_personal_voice_contract_valid(frozen) is True
-    assert frozen.voice_provider == "volcengine_doubao"
-    assert frozen.voice_model == "seed-icl-2.0"
-    assert frozen.voice_provider_expires_at == expires.isoformat()
+    assert companion_personal_voice_contract_valid(frozen) is False
+    assert frozen.voice_profile_id is None
+    assert frozen.voice_provider is None
+    assert frozen.voice_speaker_sha256 is None
 
 
 @pytest.mark.asyncio
@@ -149,7 +169,7 @@ async def test_minor_keeps_designed_companion_voice() -> None:
         session_focus="chat",
         account_id="child-a",
         store=_MinorStore(),
-        voice_manager=_ResolutionStub(_cosyvoice_resolution()),
+        voice_manager=_ResolutionStub(_qwen_clone_resolution()),
     )
 
     assert frozen.voice_profile_id is None

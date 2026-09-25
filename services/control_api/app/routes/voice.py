@@ -31,6 +31,7 @@ from services.common.companions import (
     DESIGNED_VOICE_MODEL,
     designed_voice_profile,
 )
+from services.common.voice_identity import TTS_PROVIDER, is_current_voice_identity
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_capability_for_subject,
@@ -170,6 +171,11 @@ def _profile_payload(profile: VoiceProfile) -> dict[str, Any]:
         "provider": profile.provider,
         "provider_region": profile.provider_region,
         "target_model": profile.target_model,
+        # Clones bound to Doubao / CosyVoice v3.5 cannot speak on the current
+        # model; the client asks the owner to record a new sample.
+        "reenrollment_required": not is_current_voice_identity(
+            profile.provider, profile.target_model, profile.target_model
+        ),
         "status": profile.status,
         "evaluation_status": profile.evaluation_status,
         "quality_status": profile.quality_status,
@@ -654,17 +660,15 @@ async def activate_profile(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
     require_capability_for_subject(user, "voice_clone", store=_store(request))
-    settings = cast(ControlSettings, request.app.state.settings)
-    if settings.tts_provider == "doubao":
-        profiles = await _manager(request).profiles(account_id=user.user_id)
-        legacy = next((profile for profile in profiles if profile.profile_id == profile_id), None)
-        if legacy is not None and (
-            legacy.provider != "volcengine_doubao" or legacy.target_model != "seed-icl-2.0"
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="当前豆包语音链路不支持激活历史 CosyVoice 克隆音色",
-            )
+    profiles = await _manager(request).profiles(account_id=user.user_id)
+    legacy = next((profile for profile in profiles if profile.profile_id == profile_id), None)
+    if legacy is not None and not is_current_voice_identity(
+        legacy.provider, legacy.target_model, legacy.target_model
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="这个声音基于旧的语音模型，需要重新录制后才能使用",
+        )
     try:
         profile = await _manager(request).activate(
             account_id=user.user_id,
@@ -807,7 +811,7 @@ async def session_resolution(
             return {
                 "mode": "designed",
                 "profile_id": designed_profile,
-                "provider": "volcengine_doubao",
+                "provider": TTS_PROVIDER,
                 "voice_kind": "designed",
                 "model": DESIGNED_VOICE_MODEL,
                 "resource_id": DESIGNED_VOICE_MODEL,
@@ -921,7 +925,7 @@ async def session_resolution(
             }
         if (
             frozen.fallback_voice_profile_id is not None
-            and frozen.fallback_voice_provider == "volcengine_doubao"
+            and frozen.fallback_voice_provider == TTS_PROVIDER
             and frozen.fallback_voice_model == DESIGNED_VOICE_MODEL
             and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
         ):

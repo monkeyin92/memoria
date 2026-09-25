@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, Literal, cast
 
 from services.common.companions import COMPANION_STYLE_VERSION, CompanionDefinition
+from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_MODEL, TTS_PROVIDER
 from services.tutor.domain import SESSION_FOCUSES, SessionFocus
 
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
@@ -527,10 +528,13 @@ def _personal_voice_contract_valid(frozen: FrozenMode) -> bool:
         _present(frozen.voice_profile_id)
         and frozen.voice_profile_version is not None
         and frozen.voice_profile_version > 0
-        and frozen.voice_provider == "volcengine_doubao"
-        and frozen.voice_model == "seed-icl-2.0"
-        and frozen.voice_resource_id == "seed-icl-2.0"
-        and _utc_timestamp(frozen.voice_provider_expires_at)
+        and frozen.voice_provider == TTS_PROVIDER
+        and frozen.voice_model == PERSONAL_VOICE_MODEL
+        and frozen.voice_resource_id == PERSONAL_VOICE_MODEL
+        and (
+            frozen.voice_provider_expires_at is None
+            or _utc_timestamp(frozen.voice_provider_expires_at)
+        )
         and _sha256(frozen.voice_speaker_sha256)
     )
 
@@ -545,22 +549,15 @@ def companion_personal_voice_contract_valid(frozen: FrozenMode) -> bool:
         and frozen.voice_profile_version is not None
         and frozen.voice_profile_version > 0
         and _sha256(frozen.voice_speaker_sha256)
-        and frozen.fallback_voice_provider == "volcengine_doubao"
-        and frozen.fallback_voice_model == "seed-tts-2.0"
-        and frozen.fallback_voice_resource_id == "seed-tts-2.0"
+        and frozen.fallback_voice_provider == TTS_PROVIDER
+        and frozen.fallback_voice_model == TTS_MODEL
+        and frozen.fallback_voice_resource_id == TTS_MODEL
         and _present(frozen.fallback_voice_profile_id)
     ):
         return False
-    if (
-        frozen.voice_provider == "volcengine_doubao"
-        and frozen.voice_model == "seed-icl-2.0"
-        and frozen.voice_resource_id == "seed-icl-2.0"
-    ):
-        return _utc_timestamp(frozen.voice_provider_expires_at)
     return bool(
-        frozen.voice_provider == "alibaba_model_studio"
-        and isinstance(frozen.voice_model, str)
-        and frozen.voice_model.startswith("cosyvoice-v3.5-")
+        frozen.voice_provider == TTS_PROVIDER
+        and frozen.voice_model == PERSONAL_VOICE_MODEL
         and frozen.voice_resource_id == frozen.voice_model
         and (frozen.voice_provider_expires_at is None or _utc_timestamp(frozen.voice_provider_expires_at))
     )
@@ -580,9 +577,9 @@ def _voice_contract_valid(frozen: FrozenMode) -> bool:
     personal_complete = _personal_voice_contract_valid(frozen)
     fallback_complete = (
         _present(frozen.fallback_voice_profile_id)
-        and frozen.fallback_voice_provider == "volcengine_doubao"
-        and frozen.fallback_voice_model == "seed-tts-2.0"
-        and frozen.fallback_voice_resource_id == "seed-tts-2.0"
+        and frozen.fallback_voice_provider == TTS_PROVIDER
+        and frozen.fallback_voice_model == TTS_MODEL
+        and frozen.fallback_voice_resource_id == TTS_MODEL
     )
     return bool(
         fallback_complete

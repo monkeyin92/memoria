@@ -296,9 +296,9 @@ async def test_owner_preview_grant_freezes_self_preview_session_and_is_one_time(
     assert interaction["owner_projection_eligible"] is False
     assert interaction["companion_style_id"] is None
     assert interaction["fallback_voice_profile_id"] == "warm_companion"
-    assert interaction["fallback_voice_provider"] == "volcengine_doubao"
-    assert interaction["fallback_voice_model"] == "seed-tts-2.0"
-    assert interaction["fallback_voice_resource_id"] == "seed-tts-2.0"
+    assert interaction["fallback_voice_provider"] == "alibaba_model_studio"
+    assert interaction["fallback_voice_model"] == "qwen-audio-3.1-tts-flash"
+    assert interaction["fallback_voice_resource_id"] == "qwen-audio-3.1-tts-flash"
     assert replay.status_code == 409
     assert second_grant.status_code == 201
     assert legacy_direct_grant.status_code == 409

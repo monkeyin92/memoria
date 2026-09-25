@@ -301,8 +301,9 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
                 profile_id, account_id, sample_id, version_number, provider,
                 provider_region, target_model, provider_voice_id, status,
                 created_at, updated_at
-            ) VALUES ($1, $2, $3, 1, 'cosyvoice', 'cn-beijing',
-                      'cosyvoice-v3.5-flash', 'provider-secret-id', 'candidate', $4, $4)
+            ) VALUES ($1, $2, $3, 1, 'alibaba_model_studio', 'cn-beijing',
+                      'qwen-audio-3.1-tts-flash', 'qwen-audio-3.1-tts-flash-secret-id',
+                      'candidate', $4, $4)
             """,
             voice_profile,
             account_id,
@@ -515,7 +516,7 @@ async def test_postgres_deletion_saga_removes_rows_objects_and_provider_voice(
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
         provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
+        target_model="qwen-audio-3.1-tts-flash",
     )
     await voice.initialize()
     await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")

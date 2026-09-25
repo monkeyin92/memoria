@@ -205,6 +205,13 @@ def pcm_duration_ms(pcm_bytes: bytes, *, sample_rate: int = 24000, num_channels:
     return int(samples * 1000 / sample_rate)
 
 
+# Qwen-Audio 3.1 appends silence after the last word (measured 290 ms and
+# 450 ms on 2026-09-24): words that end inside that tail are already on the
+# playback clock. Stretching them to the PCM length would push every word
+# into the silence and over-claim what the listener heard.
+TRAILING_SILENCE_MAX_MS = 800
+
+
 def scale_word_timestamps(
     words: tuple[TimedWord, ...],
     *,
@@ -221,7 +228,8 @@ def scale_word_timestamps(
     if last_end <= 0:
         return (), "degraded"
     err = abs(last_end - pcm_duration_ms_value)
-    if err <= 120:
+    trailing_silence = pcm_duration_ms_value - last_end
+    if err <= 120 or 0 < trailing_silence <= TRAILING_SILENCE_MAX_MS:
         scaled = tuple(
             TimedWord(
                 text=w.text,
@@ -232,9 +240,9 @@ def scale_word_timestamps(
             for w in words
         )
         return scaled, "ok"
-    # Always linear-stretch to PCM when off by more than 120ms so Adaptive
-    # Interruption / HeardTextTracker stay aligned with real playback. Designed
-    # v3.5 voices often trail ~0.5s; still usable after scale.
+    # Timestamps that overrun the audio (CosyVoice v3.5 trailed ~0.5 s) are
+    # stretched onto the PCM so Adaptive Interruption / HeardTextTracker stay
+    # aligned with real playback.
     factor = pcm_duration_ms_value / last_end
     scaled = tuple(
         TimedWord(

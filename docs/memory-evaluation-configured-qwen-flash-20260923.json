@@ -1,0 +1,560 @@
+{
+  "adapter": "memoria-sqlite-configured",
+  "receipt_scope": "parent_baseline",
+  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "case_count": 7,
+  "cases": [
+    {
+      "case_id": "demo-student-math-weakness",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-math-001"
+          ],
+          "actual_valid_from": "2026-08-20T11:10:00+00:00",
+          "expected_source_event_ids": [
+            "demo-math-001"
+          ],
+          "expected_valid_from": "2026-08-20T11:10:00+00:00",
+          "key": "demo-math-weakness",
+          "matched": true,
+          "matched_item_id": "ad0c1523-ebe8-5e81-a695-1dbfd6d08e51",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-student-math",
+          "body": "数学应用题",
+          "item_id": "a4b4fa9c-5add-539d-8b81-172f00017c05",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-math-002"
+          ],
+          "status": "confirmed",
+          "title": "数学应用题",
+          "valid_from": "2026-09-03T10:40:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "我今天又练习了数学应用题。",
+          "item_id": "4336e606-2953-5013-bee0-e67a0451f6fd",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-math-002"
+          ],
+          "status": "confirmed",
+          "title": "我今天又练习了数学应用题。",
+          "valid_from": "2026-09-03T10:40:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "分数应用题",
+          "item_id": "1f1be742-1314-56cc-8c14-4778cd7e6919",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-math-001"
+          ],
+          "status": "confirmed",
+          "title": "分数应用题",
+          "valid_from": "2026-08-20T11:10:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "数学应用题",
+          "item_id": "f7da17a2-1adf-52b9-a1ee-622ac83f733e",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-math-001"
+          ],
+          "status": "confirmed",
+          "title": "数学应用题",
+          "valid_from": "2026-08-20T11:10:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "我今天练习了数学应用题，分数应用题还是薄弱点。",
+          "item_id": "ad0c1523-ebe8-5e81-a695-1dbfd6d08e51",
+          "kind": "claim",
+          "matched_expected_key": "demo-math-weakness",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-math-001"
+          ],
+          "status": "confirmed",
+          "title": "我今天练习了数学应用题，分数应用题还是薄弱点。",
+          "valid_from": "2026-08-20T11:10:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "今天又练习了数学应用题",
+          "item_id": "a7438a99-4505-5645-b5f5-db8cd6555ad5",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "demo-math-002"
+          ],
+          "status": "confirmed",
+          "title": "今天又练习了数学应用题",
+          "valid_from": "2026-09-03T10:40:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-student-math",
+          "body": "今天练习了数学应用题，分数应用题还是薄弱点。",
+          "item_id": "82e75108-6e53-565a-910c-81e84166e4fa",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "demo-math-001"
+          ],
+          "status": "confirmed",
+          "title": "今天练习了数学应用题，分数应用题还是薄弱点。",
+          "valid_from": "2026-08-20T11:10:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 7,
+      "queries": [
+        {
+          "query_id": "demo-math-followup",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:a4b4fa9c-5add-539d-8b81-172f00017c05",
+            "unmatched:4336e606-2953-5013-bee0-e67a0451f6fd",
+            "unmatched:1f1be742-1314-56cc-8c14-4778cd7e6919",
+            "unmatched:f7da17a2-1adf-52b9-a1ee-622ac83f733e",
+            "demo-math-weakness",
+            "unmatched:a7438a99-4505-5645-b5f5-db8cd6555ad5",
+            "unmatched:82e75108-6e53-565a-910c-81e84166e4fa"
+          ],
+          "relevant_keys": [
+            "demo-math-weakness"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "demo-student-learning-preference",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-learning-001"
+          ],
+          "actual_valid_from": "2026-09-01T09:30:00+00:00",
+          "expected_source_event_ids": [
+            "demo-learning-001"
+          ],
+          "expected_valid_from": "2026-09-01T09:30:00+00:00",
+          "key": "demo-learning-preference",
+          "matched": true,
+          "matched_item_id": "d324af2f-55c0-53bf-a19f-3222513ee05f",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-student-learning",
+          "body": "学习时我喜欢先跟读，再自己说一遍",
+          "item_id": "d324af2f-55c0-53bf-a19f-3222513ee05f",
+          "kind": "claim",
+          "matched_expected_key": "demo-learning-preference",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-learning-001"
+          ],
+          "status": "confirmed",
+          "title": "学习时我喜欢先跟读，再自己说一遍",
+          "valid_from": "2026-09-01T09:30:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "demo-learning-day3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "demo-learning-preference"
+          ],
+          "relevant_keys": [
+            "demo-learning-preference"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "demo-student-reading-preference",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-reading-001"
+          ],
+          "actual_valid_from": "2026-08-28T11:00:00+00:00",
+          "expected_source_event_ids": [
+            "demo-reading-001"
+          ],
+          "expected_valid_from": "2026-08-28T11:00:00+00:00",
+          "key": "demo-reading-preference",
+          "matched": true,
+          "matched_item_id": "b5d598eb-c345-5a82-b232-85a0243f3885",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-student-reading",
+          "body": "喜欢阅读",
+          "item_id": "b5d598eb-c345-5a82-b232-85a0243f3885",
+          "kind": "claim",
+          "matched_expected_key": "demo-reading-preference",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-reading-001"
+          ],
+          "status": "candidate",
+          "title": "喜欢阅读",
+          "valid_from": "2026-08-28T11:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "demo-reading-day7",
+          "recall_at_10": 0.0,
+          "recall_at_5": 0.0,
+          "recalled_keys": [],
+          "relevant_keys": [
+            "demo-reading-preference"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "demo-student-unsupported-sensitive",
+      "expected": [],
+      "extracted": [],
+      "matched_projection_count": 0,
+      "predicted_count": 0,
+      "queries": [
+        {
+          "query_id": "demo-sensitive-day3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "demo-elder-park-walk",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-park-001"
+          ],
+          "actual_valid_from": "2026-09-05T02:20:00+00:00",
+          "expected_source_event_ids": [
+            "demo-park-001"
+          ],
+          "expected_valid_from": "2026-09-05T02:20:00+00:00",
+          "key": "demo-park-walk",
+          "matched": true,
+          "matched_item_id": "35331969-f0eb-59fd-88cc-7724b919ee18",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-elder-park",
+          "body": "我今天去公园散步了。",
+          "item_id": "35331969-f0eb-59fd-88cc-7724b919ee18",
+          "kind": "claim",
+          "matched_expected_key": "demo-park-walk",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-park-001"
+          ],
+          "status": "confirmed",
+          "title": "我今天去公园散步了。",
+          "valid_from": "2026-09-05T02:20:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-park",
+          "body": "公园",
+          "item_id": "b93b18c3-d335-53a0-ad4b-d9cee6683bd3",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-park-001"
+          ],
+          "status": "confirmed",
+          "title": "公园",
+          "valid_from": "2026-09-05T02:20:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-park",
+          "body": "去公园散步了",
+          "item_id": "b96402a1-4109-57b3-9117-ecbbea96a483",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "demo-park-001"
+          ],
+          "status": "confirmed",
+          "title": "去公园散步了",
+          "valid_from": "2026-09-05T02:20:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 3,
+      "queries": [
+        {
+          "query_id": "demo-park-day2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "demo-park-walk",
+            "unmatched:b93b18c3-d335-53a0-ad4b-d9cee6683bd3",
+            "unmatched:b96402a1-4109-57b3-9117-ecbbea96a483"
+          ],
+          "relevant_keys": [
+            "demo-park-walk"
+          ]
+        }
+      ],
+      "scenario": "episodic_recall"
+    },
+    {
+      "case_id": "demo-elder-factory-story",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-story-001"
+          ],
+          "actual_valid_from": "2026-09-01T07:00:00+00:00",
+          "expected_source_event_ids": [
+            "demo-story-001"
+          ],
+          "expected_valid_from": "2026-09-01T07:00:00+00:00",
+          "key": "demo-factory-30y",
+          "matched": true,
+          "matched_item_id": "e0f6b196-19f9-5fb5-8e61-494a2dbf5846",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-elder-story",
+          "body": "纺织厂",
+          "item_id": "e0f6b196-19f9-5fb5-8e61-494a2dbf5846",
+          "kind": "claim",
+          "matched_expected_key": "demo-factory-30y",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-story-001"
+          ],
+          "status": "confirmed",
+          "title": "纺织厂",
+          "valid_from": "2026-09-01T07:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-story",
+          "body": "30年",
+          "item_id": "8b2f930b-4fb3-51d3-9757-29eb9a2f23c5",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-story-001"
+          ],
+          "status": "confirmed",
+          "title": "30年",
+          "valid_from": "2026-09-01T07:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-story",
+          "body": "我在纺织厂工作了30年。",
+          "item_id": "ee18db0f-b2cc-5cfd-9a0b-9f35657cdbb7",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-story-001"
+          ],
+          "status": "confirmed",
+          "title": "我在纺织厂工作了30年。",
+          "valid_from": "2026-09-01T07:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-story",
+          "body": "在纺织厂工作了30年",
+          "item_id": "642e7b4d-51d6-5ffd-b48e-7b9501ebbb25",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "demo-story-001"
+          ],
+          "status": "confirmed",
+          "title": "在纺织厂工作了30年",
+          "valid_from": "2026-09-01T07:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "demo-story-day5",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "demo-factory-30y",
+            "unmatched:8b2f930b-4fb3-51d3-9757-29eb9a2f23c5",
+            "unmatched:ee18db0f-b2cc-5cfd-9a0b-9f35657cdbb7",
+            "unmatched:642e7b4d-51d6-5ffd-b48e-7b9501ebbb25"
+          ],
+          "relevant_keys": [
+            "demo-factory-30y"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "demo-elder-son-visit",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "demo-son-001"
+          ],
+          "actual_valid_from": "2026-09-03T12:10:00+00:00",
+          "expected_source_event_ids": [
+            "demo-son-001"
+          ],
+          "expected_valid_from": "2026-09-03T12:10:00+00:00",
+          "key": "demo-son-not-visiting",
+          "matched": true,
+          "matched_item_id": "ed785d66-8346-55b2-a690-b199efab0257",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "demo-elder-son",
+          "body": "我的儿子好久没来看我了",
+          "item_id": "ed785d66-8346-55b2-a690-b199efab0257",
+          "kind": "claim",
+          "matched_expected_key": "demo-son-not-visiting",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "demo-son-001"
+          ],
+          "status": "confirmed",
+          "title": "我的儿子好久没来看我了",
+          "valid_from": "2026-09-03T12:10:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "demo-elder-son",
+          "body": "我的儿子好久没来看我了",
+          "item_id": "8c337e33-1b19-5191-b38f-982de014ead5",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "demo-son-001"
+          ],
+          "status": "confirmed",
+          "title": "我的儿子好久没来看我了",
+          "valid_from": "2026-09-03T12:10:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "demo-son-day3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "demo-son-not-visiting",
+            "unmatched:8c337e33-1b19-5191-b38f-982de014ead5"
+          ],
+          "relevant_keys": [
+            "demo-son-not-visiting"
+          ]
+        }
+      ],
+      "scenario": "comfort_recall"
+    }
+  ],
+  "dataset_version": "demo-scenarios-zh-v1",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 1.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 0.8,
+    "extraction_precision": 0.3333333333333333,
+    "extraction_recall": 1.0,
+    "input_tokens": 6595,
+    "latency_p50_ms": 2.018366940319538,
+    "latency_p95_ms": 7.166045717895031,
+    "ndcg_at_10": 0.7695504010335059,
+    "output_tokens": 1955,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 0.8571428571428571,
+    "recall_at_5": 0.8571428571428571,
+    "source_attribution_accuracy": 1.0,
+    "temporal_accuracy": 1.0,
+    "token_cost": 8550
+  },
+  "scenario_coverage": [
+    "cross_session_followup",
+    "episodic_recall",
+    "comfort_recall"
+  ]
+}

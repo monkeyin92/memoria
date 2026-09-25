@@ -1,0 +1,1494 @@
+{
+  "adapter": "memoria-sqlite-rules",
+  "receipt_scope": "parent_baseline",
+  "source_commit": "3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948",
+  "case_count": 16,
+  "cases": [
+    {
+      "case_id": "exact-fact-hangzhou",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-exact-001"
+          ],
+          "actual_valid_from": "2026-07-01T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-exact-001"
+          ],
+          "expected_valid_from": "2026-07-01T01:00:00+00:00",
+          "key": "exact-hangzhou",
+          "matched": true,
+          "matched_item_id": "690bcac8-98f0-58b8-afab-68a8cc2e832f",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我在杭州读过大学。",
+          "item_id": "690bcac8-98f0-58b8-afab-68a8cc2e832f",
+          "kind": "claim",
+          "matched_expected_key": "exact-hangzhou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-exact-001"
+          ],
+          "status": "confirmed",
+          "title": "我在杭州读过大学。",
+          "valid_from": "2026-07-01T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我在杭州读过大学。",
+          "item_id": "453016e8-6d01-5a83-877f-69f582307784",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-exact-001"
+          ],
+          "status": "confirmed",
+          "title": "我在杭州读过大学。",
+          "valid_from": "2026-07-01T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "exact-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "exact-hangzhou",
+            "unmatched:453016e8-6d01-5a83-877f-69f582307784"
+          ],
+          "relevant_keys": [
+            "exact-hangzhou"
+          ]
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "paraphrase-food-preference",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-paraphrase-001"
+          ],
+          "actual_valid_from": "2026-07-02T04:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-paraphrase-001"
+          ],
+          "expected_valid_from": null,
+          "key": "avoid-coriander",
+          "matched": true,
+          "matched_item_id": "22e7d463-788a-5aaf-b386-e30e8bd36dd5",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我吃饭时不喜欢香菜。",
+          "item_id": "22e7d463-788a-5aaf-b386-e30e8bd36dd5",
+          "kind": "claim",
+          "matched_expected_key": "avoid-coriander",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-paraphrase-001"
+          ],
+          "status": "confirmed",
+          "title": "我吃饭时不喜欢香菜。",
+          "valid_from": "2026-07-02T04:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我吃饭时不喜欢香菜。",
+          "item_id": "e19aa0fd-2786-5fc3-a773-daead7d7656b",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-paraphrase-001"
+          ],
+          "status": "confirmed",
+          "title": "我吃饭时不喜欢香菜。",
+          "valid_from": "2026-07-02T04:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "paraphrase-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "avoid-coriander",
+            "unmatched:e19aa0fd-2786-5fc3-a773-daead7d7656b"
+          ],
+          "relevant_keys": [
+            "avoid-coriander"
+          ]
+        }
+      ],
+      "scenario": "paraphrase"
+    },
+    {
+      "case_id": "person-alias-mother",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-alias-001"
+          ],
+          "actual_valid_from": null,
+          "expected_source_event_ids": [
+            "eval-alias-001"
+          ],
+          "expected_valid_from": null,
+          "key": "mother-li-mei",
+          "matched": true,
+          "matched_item_id": "799262dc-5f9f-594d-b622-297c1731a9d7",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "mother 李梅 妈妈 母亲 阿梅",
+          "item_id": "799262dc-5f9f-594d-b622-297c1731a9d7",
+          "kind": "person",
+          "matched_expected_key": "mother-li-mei",
+          "memory_kind": "relationship",
+          "source_event_ids": [
+            "eval-alias-001"
+          ],
+          "status": "candidate",
+          "title": "李梅",
+          "valid_from": null,
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我妈妈叫李梅，家里人也叫她阿梅。",
+          "item_id": "ac683eb4-95f0-5438-8ba0-023bc58d0b71",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-alias-001"
+          ],
+          "status": "candidate",
+          "title": "我妈妈叫李梅，家里人也叫她阿梅。",
+          "valid_from": "2026-07-03T10:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我妈妈叫李梅，家里人也叫她阿梅。",
+          "item_id": "664d1c42-7ff9-51ef-8103-941e8139446b",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-alias-001"
+          ],
+          "status": "candidate",
+          "title": "我妈妈叫李梅，家里人也叫她阿梅。",
+          "valid_from": "2026-07-03T10:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "mother 妈妈 李梅 母亲 阿梅",
+          "item_id": "799262dc-5f9f-594d-b622-297c1731a9d7",
+          "kind": "person",
+          "matched_expected_key": null,
+          "memory_kind": "relationship",
+          "source_event_ids": [
+            "eval-alias-001"
+          ],
+          "status": "candidate",
+          "title": "李梅",
+          "valid_from": null,
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "alias-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "mother-li-mei",
+            "unmatched:ac683eb4-95f0-5438-8ba0-023bc58d0b71",
+            "unmatched:664d1c42-7ff9-51ef-8103-941e8139446b"
+          ],
+          "relevant_keys": [
+            "mother-li-mei"
+          ]
+        }
+      ],
+      "scenario": "person_alias"
+    },
+    {
+      "case_id": "temporal-hospital-followup",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-time-001"
+          ],
+          "actual_valid_from": "2026-07-10T02:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-time-001"
+          ],
+          "expected_valid_from": null,
+          "key": "hospital-followup",
+          "matched": true,
+          "matched_item_id": "dc71f961-f063-55ad-9fbb-07373f7cad95",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "7月18日我要陪妈妈去医院复诊。",
+          "item_id": "66585107-da6d-59b0-b347-f4fdc0699486",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-time-001"
+          ],
+          "status": "confirmed",
+          "title": "7月18日我要陪妈妈去医院复诊。",
+          "valid_from": "2026-07-10T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "7月18日我要陪妈妈去医院复诊。",
+          "item_id": "dc71f961-f063-55ad-9fbb-07373f7cad95",
+          "kind": "episode",
+          "matched_expected_key": "hospital-followup",
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-time-001"
+          ],
+          "status": "confirmed",
+          "title": "7月18日我要陪妈妈去医院复诊。",
+          "valid_from": "2026-07-10T02:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "time-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:66585107-da6d-59b0-b347-f4fdc0699486",
+            "hospital-followup"
+          ],
+          "relevant_keys": [
+            "hospital-followup"
+          ]
+        }
+      ],
+      "scenario": "temporal_question"
+    },
+    {
+      "case_id": "current-and-historical-city",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-city-old"
+          ],
+          "actual_valid_from": "2024-06-01T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-city-old"
+          ],
+          "expected_valid_from": "2024-06-01T01:00:00+00:00",
+          "key": "historical-suzhou",
+          "matched": true,
+          "matched_item_id": "276f9322-9928-56dd-bd34-d36a9ce76302",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        },
+        {
+          "actual_source_event_ids": [
+            "eval-city-current"
+          ],
+          "actual_valid_from": "2026-07-11T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-city-current"
+          ],
+          "expected_valid_from": "2026-07-11T01:00:00+00:00",
+          "key": "current-hangzhou",
+          "matched": true,
+          "matched_item_id": "6f4920d2-d83d-55fd-b745-da3ac9259519",
+          "source_attribution_passed": true,
+          "temporal_passed": true
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我现在住在杭州。",
+          "item_id": "6f4920d2-d83d-55fd-b745-da3ac9259519",
+          "kind": "claim",
+          "matched_expected_key": "current-hangzhou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-city-current"
+          ],
+          "status": "confirmed",
+          "title": "我现在住在杭州。",
+          "valid_from": "2026-07-11T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "2024年我住在苏州。",
+          "item_id": "276f9322-9928-56dd-bd34-d36a9ce76302",
+          "kind": "claim",
+          "matched_expected_key": "historical-suzhou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-city-old"
+          ],
+          "status": "confirmed",
+          "title": "2024年我住在苏州。",
+          "valid_from": "2024-06-01T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我现在住在杭州。",
+          "item_id": "2abd071e-5d72-530d-b0e0-2394c3e98c1d",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-city-current"
+          ],
+          "status": "confirmed",
+          "title": "我现在住在杭州。",
+          "valid_from": "2026-07-11T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "2024年我住在苏州。",
+          "item_id": "dbed930d-0661-5353-b847-0028a4e77469",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-city-old"
+          ],
+          "status": "confirmed",
+          "title": "2024年我住在苏州。",
+          "valid_from": "2024-06-01T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "current-city-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "current-hangzhou",
+            "unmatched:2abd071e-5d72-530d-b0e0-2394c3e98c1d",
+            "historical-suzhou",
+            "unmatched:dbed930d-0661-5353-b847-0028a4e77469"
+          ],
+          "relevant_keys": [
+            "current-hangzhou",
+            "historical-suzhou"
+          ]
+        }
+      ],
+      "scenario": "current_vs_historical"
+    },
+    {
+      "case_id": "episodic-project-acceptance",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-episode-001"
+          ],
+          "actual_valid_from": "2026-07-17T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-episode-001"
+          ],
+          "expected_valid_from": null,
+          "key": "project-acceptance",
+          "matched": true,
+          "matched_item_id": "81ed6464-6c9d-5bcc-8718-d9c956cbb09a",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "item_id": "6d356636-d251-5749-9d03-af051ec5018b",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-episode-001"
+          ],
+          "status": "confirmed",
+          "title": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "valid_from": "2026-07-17T12:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "item_id": "81ed6464-6c9d-5bcc-8718-d9c956cbb09a",
+          "kind": "episode",
+          "matched_expected_key": "project-acceptance",
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-episode-001"
+          ],
+          "status": "confirmed",
+          "title": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "valid_from": "2026-07-17T12:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "item_id": "081d52db-d475-5e0e-a126-8385d97a8a82",
+          "kind": "knowledge",
+          "matched_expected_key": null,
+          "memory_kind": "procedural",
+          "source_event_ids": [
+            "eval-episode-001"
+          ],
+          "status": "confirmed",
+          "title": "这段经历或原则是什么？",
+          "valid_from": "2026-07-17T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 3,
+      "queries": [
+        {
+          "query_id": "episode-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:6d356636-d251-5749-9d03-af051ec5018b",
+            "project-acceptance",
+            "unmatched:081d52db-d475-5e0e-a126-8385d97a8a82"
+          ],
+          "relevant_keys": [
+            "project-acceptance"
+          ]
+        }
+      ],
+      "scenario": "episodic_recall"
+    },
+    {
+      "case_id": "repeated-episode-campus-startup",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-repeat-001"
+          ],
+          "actual_valid_from": "2026-07-12T02:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-repeat-001",
+            "eval-repeat-002"
+          ],
+          "expected_valid_from": null,
+          "key": "campus-startup-episode",
+          "matched": true,
+          "matched_item_id": "8f1c025a-161b-58b3-8310-e22d420164d9",
+          "source_attribution_passed": false,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "item_id": "c6957dcc-9e30-50fd-9bc9-6b586ee364b0",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-repeat-002"
+          ],
+          "status": "confirmed",
+          "title": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "valid_from": "2026-07-20T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "大学时我和老王做过校园外卖创业。",
+          "item_id": "2218987e-1743-57bf-9b37-acbd7c59b88d",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-repeat-001"
+          ],
+          "status": "confirmed",
+          "title": "大学时我和老王做过校园外卖创业。",
+          "valid_from": "2026-07-12T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "item_id": "653e35b8-173c-5aac-9863-cc29214abf8c",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-repeat-002"
+          ],
+          "status": "confirmed",
+          "title": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "valid_from": "2026-07-20T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "大学时我和老王做过校园外卖创业。",
+          "item_id": "8f1c025a-161b-58b3-8310-e22d420164d9",
+          "kind": "episode",
+          "matched_expected_key": "campus-startup-episode",
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-repeat-001"
+          ],
+          "status": "confirmed",
+          "title": "大学时我和老王做过校园外卖创业。",
+          "valid_from": "2026-07-12T02:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "item_id": "65bd4c89-0ad6-52fe-88a8-56c6ae3263a0",
+          "kind": "knowledge",
+          "matched_expected_key": null,
+          "memory_kind": "procedural",
+          "source_event_ids": [
+            "eval-repeat-002"
+          ],
+          "status": "confirmed",
+          "title": "这段经历或原则是什么？",
+          "valid_from": "2026-07-20T02:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 5,
+      "queries": [
+        {
+          "query_id": "repeat-query",
+          "recall_at_10": 0.0,
+          "recall_at_5": 0.0,
+          "recalled_keys": [
+            "unmatched:65bd4c89-0ad6-52fe-88a8-56c6ae3263a0",
+            "unmatched:c6957dcc-9e30-50fd-9bc9-6b586ee364b0",
+            "unmatched:653e35b8-173c-5aac-9863-cc29214abf8c"
+          ],
+          "relevant_keys": [
+            "campus-startup-episode"
+          ]
+        }
+      ],
+      "scenario": "repeated_episode"
+    },
+    {
+      "case_id": "conflicting-mother-age",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "actual_valid_from": "2026-07-20T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "expected_valid_from": null,
+          "key": "mother-age-60",
+          "matched": true,
+          "matched_item_id": "6e5e779a-77ab-5d63-ad70-603235371eb1",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "eval-conflict-002"
+          ],
+          "actual_valid_from": "2026-07-21T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-conflict-002"
+          ],
+          "expected_valid_from": null,
+          "key": "mother-age-61",
+          "matched": true,
+          "matched_item_id": "8b1f5b56-7459-5d85-9ef0-80a19d770126",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "61",
+          "item_id": "8b1f5b56-7459-5d85-9ef0-80a19d770126",
+          "kind": "claim",
+          "matched_expected_key": "mother-age-61",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-conflict-002"
+          ],
+          "status": "candidate",
+          "title": "61",
+          "valid_from": "2026-07-21T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "60",
+          "item_id": "6e5e779a-77ab-5d63-ad70-603235371eb1",
+          "kind": "claim",
+          "matched_expected_key": "mother-age-60",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "status": "candidate",
+          "title": "60",
+          "valid_from": "2026-07-20T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "mother 李梅 妈妈 母亲",
+          "item_id": "799262dc-5f9f-594d-b622-297c1731a9d7",
+          "kind": "person",
+          "matched_expected_key": null,
+          "memory_kind": "relationship",
+          "source_event_ids": [
+            "eval-conflict-001",
+            "eval-conflict-002"
+          ],
+          "status": "candidate",
+          "title": "李梅",
+          "valid_from": null,
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我母亲李梅今年61岁了。",
+          "item_id": "c5856833-42d6-5d90-a608-e2367cfe8152",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-conflict-002"
+          ],
+          "status": "candidate",
+          "title": "我母亲李梅今年61岁了。",
+          "valid_from": "2026-07-21T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我妈妈叫李梅，今年60岁。",
+          "item_id": "203c61fc-90ac-5274-8d85-c309f4cdf1ba",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "status": "candidate",
+          "title": "我妈妈叫李梅，今年60岁。",
+          "valid_from": "2026-07-20T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我母亲李梅今年61岁了。",
+          "item_id": "091e8584-e906-5cf2-8be9-e22f36700d32",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-conflict-002"
+          ],
+          "status": "candidate",
+          "title": "我母亲李梅今年61岁了。",
+          "valid_from": "2026-07-21T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我妈妈叫李梅，今年60岁。",
+          "item_id": "14111310-edae-5298-a590-474cf73dbc5c",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "status": "candidate",
+          "title": "我妈妈叫李梅，今年60岁。",
+          "valid_from": "2026-07-20T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "mother 妈妈 李梅 母亲",
+          "item_id": "799262dc-5f9f-594d-b622-297c1731a9d7",
+          "kind": "person",
+          "matched_expected_key": null,
+          "memory_kind": "relationship",
+          "source_event_ids": [
+            "eval-conflict-001"
+          ],
+          "status": "candidate",
+          "title": "李梅",
+          "valid_from": null,
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 8,
+      "queries": [
+        {
+          "query_id": "conflict-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "conflicting_fact"
+    },
+    {
+      "case_id": "user-corrected-decision-rule",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-correction-001"
+          ],
+          "actual_valid_from": "2026-07-22T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-correction-001"
+          ],
+          "expected_valid_from": null,
+          "key": "corrected-two-days",
+          "matched": true,
+          "matched_item_id": "28459beb-318a-5fb6-a337-6618299697d4",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我认为做重大决定前应该等两天。",
+          "item_id": "28459beb-318a-5fb6-a337-6618299697d4",
+          "kind": "claim",
+          "matched_expected_key": "corrected-two-days",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-correction-001"
+          ],
+          "status": "confirmed",
+          "title": "我认为做重大决定前应该等两天。",
+          "valid_from": "2026-07-22T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "correction-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "corrected-two-days"
+          ],
+          "relevant_keys": [
+            "corrected-two-days"
+          ]
+        }
+      ],
+      "scenario": "user_correction"
+    },
+    {
+      "case_id": "retracted-food-allergy",
+      "expected": [],
+      "extracted": [],
+      "matched_projection_count": 0,
+      "predicted_count": 0,
+      "queries": [
+        {
+          "query_id": "retract-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "retracted_memory"
+    },
+    {
+      "case_id": "procedural-project-retro",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-procedure-001"
+          ],
+          "actual_valid_from": "2026-07-23T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-procedure-001"
+          ],
+          "expected_valid_from": null,
+          "key": "retro-procedure",
+          "matched": true,
+          "matched_item_id": "0e3fd63d-d154-53a2-a44d-e3f395d6afee",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "item_id": "f37334c2-b980-5391-9030-84e9a06a55eb",
+          "kind": "claim",
+          "matched_expected_key": null,
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-procedure-001"
+          ],
+          "status": "confirmed",
+          "title": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "valid_from": "2026-07-23T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "item_id": "d10d9279-8f35-56d3-b10c-96a13632c8c8",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-procedure-001"
+          ],
+          "status": "confirmed",
+          "title": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "valid_from": "2026-07-23T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "item_id": "0e3fd63d-d154-53a2-a44d-e3f395d6afee",
+          "kind": "knowledge",
+          "matched_expected_key": "retro-procedure",
+          "memory_kind": "procedural",
+          "source_event_ids": [
+            "eval-procedure-001"
+          ],
+          "status": "confirmed",
+          "title": "这段经历或原则是什么？",
+          "valid_from": "2026-07-23T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 3,
+      "queries": [
+        {
+          "query_id": "procedure-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "unmatched:f37334c2-b980-5391-9030-84e9a06a55eb",
+            "unmatched:d10d9279-8f35-56d3-b10c-96a13632c8c8",
+            "retro-procedure"
+          ],
+          "relevant_keys": [
+            "retro-procedure"
+          ]
+        }
+      ],
+      "scenario": "procedural_knowledge"
+    },
+    {
+      "case_id": "relationship-medical-boundary",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-boundary-001"
+          ],
+          "actual_valid_from": "2026-07-24T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-boundary-001"
+          ],
+          "expected_valid_from": null,
+          "key": "wang-qiang-boundary",
+          "matched": true,
+          "matched_item_id": "3a98b241-20e9-538c-b9f7-a5ba56944bf9",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "同事王强的病情不要向其他人提起。",
+          "item_id": "3a98b241-20e9-538c-b9f7-a5ba56944bf9",
+          "kind": "claim",
+          "matched_expected_key": "wang-qiang-boundary",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-boundary-001"
+          ],
+          "status": "confirmed",
+          "title": "同事王强的病情不要向其他人提起。",
+          "valid_from": "2026-07-24T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "同事王强的病情不要向其他人提起。",
+          "item_id": "85b19c92-5919-5385-a8d9-66f753c58dc8",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-boundary-001"
+          ],
+          "status": "confirmed",
+          "title": "同事王强的病情不要向其他人提起。",
+          "valid_from": "2026-07-24T01:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "boundary-owner-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "wang-qiang-boundary",
+            "unmatched:85b19c92-5919-5385-a8d9-66f753c58dc8"
+          ],
+          "relevant_keys": [
+            "wang-qiang-boundary"
+          ]
+        }
+      ],
+      "scenario": "relationship_boundary"
+    },
+    {
+      "case_id": "cross-account-private-city",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-isolation-a"
+          ],
+          "actual_valid_from": "2026-07-25T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-isolation-a"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-a-dali",
+          "matched": true,
+          "matched_item_id": "93ec1b73-5151-50a1-8417-3a4897d612a0",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "eval-isolation-b"
+          ],
+          "actual_valid_from": "2026-07-25T01:05:00+00:00",
+          "expected_source_event_ids": [
+            "eval-isolation-b"
+          ],
+          "expected_valid_from": null,
+          "key": "owner-b-lhasa",
+          "matched": true,
+          "matched_item_id": "99c4170e-ae4d-5e09-a71d-75e3a36a9b6a",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我的秘密旅行目的地是大理。",
+          "item_id": "93ec1b73-5151-50a1-8417-3a4897d612a0",
+          "kind": "claim",
+          "matched_expected_key": "owner-a-dali",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-isolation-a"
+          ],
+          "status": "confirmed",
+          "title": "我的秘密旅行目的地是大理。",
+          "valid_from": "2026-07-25T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我的秘密旅行目的地是大理。",
+          "item_id": "4b4797ae-b912-5953-bb5b-29b9f652b88d",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-isolation-a"
+          ],
+          "status": "confirmed",
+          "title": "我的秘密旅行目的地是大理。",
+          "valid_from": "2026-07-25T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "我的秘密旅行目的地是拉萨。",
+          "item_id": "99c4170e-ae4d-5e09-a71d-75e3a36a9b6a",
+          "kind": "claim",
+          "matched_expected_key": "owner-b-lhasa",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-isolation-b"
+          ],
+          "status": "confirmed",
+          "title": "我的秘密旅行目的地是拉萨。",
+          "valid_from": "2026-07-25T01:05:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-b",
+          "body": "我的秘密旅行目的地是拉萨。",
+          "item_id": "a3755c10-c932-59ed-81e0-bfa5a1f04b9e",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-isolation-b"
+          ],
+          "status": "confirmed",
+          "title": "我的秘密旅行目的地是拉萨。",
+          "valid_from": "2026-07-25T01:05:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "isolation-query-a",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "owner-a-dali",
+            "unmatched:4b4797ae-b912-5953-bb5b-29b9f652b88d"
+          ],
+          "relevant_keys": [
+            "owner-a-dali"
+          ]
+        }
+      ],
+      "scenario": "cross_account_isolation"
+    },
+    {
+      "case_id": "cross-session-nanjing-trip",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-cross-session-trip"
+          ],
+          "actual_valid_from": "2026-07-30T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-cross-session-trip"
+          ],
+          "expected_valid_from": null,
+          "key": "nanjing-trip-plan",
+          "matched": true,
+          "matched_item_id": "673df256-ef8a-5e75-9ebf-cc3c55fd07fa",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "eval-cross-session-overtime"
+          ],
+          "actual_valid_from": "2026-08-06T13:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-cross-session-overtime"
+          ],
+          "expected_valid_from": null,
+          "key": "same-week-overtime",
+          "matched": true,
+          "matched_item_id": "28896607-cddd-584d-8b34-b2ecfab2a510",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "今天加班到很晚。",
+          "item_id": "28896607-cddd-584d-8b34-b2ecfab2a510",
+          "kind": "claim",
+          "matched_expected_key": "same-week-overtime",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-cross-session-overtime"
+          ],
+          "status": "confirmed",
+          "title": "今天加班到很晚。",
+          "valid_from": "2026-08-06T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "下次旅行想去南京。",
+          "item_id": "673df256-ef8a-5e75-9ebf-cc3c55fd07fa",
+          "kind": "claim",
+          "matched_expected_key": "nanjing-trip-plan",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-cross-session-trip"
+          ],
+          "status": "confirmed",
+          "title": "下次旅行想去南京。",
+          "valid_from": "2026-07-30T12:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "今天加班到很晚。",
+          "item_id": "10dad518-49a8-5bb8-ae9e-e2c17391938f",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-cross-session-overtime"
+          ],
+          "status": "confirmed",
+          "title": "今天加班到很晚。",
+          "valid_from": "2026-08-06T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "下次旅行想去南京。",
+          "item_id": "73fb9ca3-b62e-54a2-b577-42a425086d76",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-cross-session-trip"
+          ],
+          "status": "confirmed",
+          "title": "下次旅行想去南京。",
+          "valid_from": "2026-07-30T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 4,
+      "queries": [
+        {
+          "query_id": "last-week-chat-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "nanjing-trip-plan",
+            "unmatched:73fb9ca3-b62e-54a2-b577-42a425086d76"
+          ],
+          "relevant_keys": [
+            "nanjing-trip-plan"
+          ]
+        }
+      ],
+      "scenario": "cross_session_followup"
+    },
+    {
+      "case_id": "paraphrase-followup-cat-allergy",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-paraphrase-followup-001"
+          ],
+          "actual_valid_from": "2026-07-08T11:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-paraphrase-followup-001"
+          ],
+          "expected_valid_from": null,
+          "key": "zhou-cat-allergy",
+          "matched": true,
+          "matched_item_id": "b8594eb1-518a-5a4c-b118-6bf5419f93c3",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "我儿子小周对猫毛过敏。",
+          "item_id": "b8594eb1-518a-5a4c-b118-6bf5419f93c3",
+          "kind": "claim",
+          "matched_expected_key": "zhou-cat-allergy",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-paraphrase-followup-001"
+          ],
+          "status": "confirmed",
+          "title": "我儿子小周对猫毛过敏。",
+          "valid_from": "2026-07-08T11:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我儿子小周对猫毛过敏。",
+          "item_id": "bf5ce8ff-bc78-5c67-a31d-9fe69e23880a",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-paraphrase-followup-001"
+          ],
+          "status": "confirmed",
+          "title": "我儿子小周对猫毛过敏。",
+          "valid_from": "2026-07-08T11:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 2,
+      "queries": [
+        {
+          "query_id": "paraphrase-followup-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "zhou-cat-allergy",
+            "unmatched:bf5ce8ff-bc78-5c67-a31d-9fe69e23880a"
+          ],
+          "relevant_keys": [
+            "zhou-cat-allergy"
+          ]
+        }
+      ],
+      "scenario": "paraphrase_followup"
+    },
+    {
+      "case_id": "comfort-recall-project-rejection",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "eval-comfort-hard-day"
+          ],
+          "actual_valid_from": "2026-07-17T13:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-comfort-hard-day"
+          ],
+          "expected_valid_from": null,
+          "key": "project-rejected",
+          "matched": true,
+          "matched_item_id": "22bccd0c-795c-5aae-90f1-bf13bdb8a841",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        },
+        {
+          "actual_source_event_ids": [
+            "eval-comfort-city"
+          ],
+          "actual_valid_from": "2026-07-11T01:00:00+00:00",
+          "expected_source_event_ids": [
+            "eval-comfort-city"
+          ],
+          "expected_valid_from": null,
+          "key": "comfort-distractor-hangzhou",
+          "matched": true,
+          "matched_item_id": "a31e8687-dc23-5a44-98bf-e489ace97345",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五项目验收被否了，我当时很难过。",
+          "item_id": "22bccd0c-795c-5aae-90f1-bf13bdb8a841",
+          "kind": "claim",
+          "matched_expected_key": "project-rejected",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-comfort-hard-day"
+          ],
+          "status": "confirmed",
+          "title": "上周五项目验收被否了，我当时很难过。",
+          "valid_from": "2026-07-17T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我现在住在杭州。",
+          "item_id": "a31e8687-dc23-5a44-98bf-e489ace97345",
+          "kind": "claim",
+          "matched_expected_key": "comfort-distractor-hangzhou",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "eval-comfort-city"
+          ],
+          "status": "confirmed",
+          "title": "我现在住在杭州。",
+          "valid_from": "2026-07-11T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五项目验收被否了，我当时很难过。",
+          "item_id": "e276137e-c837-5052-b81a-d9d6cba63e35",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-comfort-hard-day"
+          ],
+          "status": "confirmed",
+          "title": "上周五项目验收被否了，我当时很难过。",
+          "valid_from": "2026-07-17T13:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "我现在住在杭州。",
+          "item_id": "b00eaf28-90cf-524d-9dea-f88600b1deb6",
+          "kind": "episode",
+          "matched_expected_key": null,
+          "memory_kind": "episodic",
+          "source_event_ids": [
+            "eval-comfort-city"
+          ],
+          "status": "confirmed",
+          "title": "我现在住在杭州。",
+          "valid_from": "2026-07-11T01:00:00+00:00",
+          "valid_to": null
+        },
+        {
+          "account_id": "eval-owner-a",
+          "body": "上周五项目验收被否了，我当时很难过。",
+          "item_id": "0e5489ac-1b5b-5c9d-90d4-7df58a0498de",
+          "kind": "knowledge",
+          "matched_expected_key": null,
+          "memory_kind": "procedural",
+          "source_event_ids": [
+            "eval-comfort-hard-day"
+          ],
+          "status": "confirmed",
+          "title": "这段经历或原则是什么？",
+          "valid_from": "2026-07-17T13:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 2,
+      "predicted_count": 5,
+      "queries": [
+        {
+          "query_id": "comfort-query",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "project-rejected",
+            "unmatched:e276137e-c837-5052-b81a-d9d6cba63e35",
+            "unmatched:0e5489ac-1b5b-5c9d-90d4-7df58a0498de"
+          ],
+          "relevant_keys": [
+            "project-rejected"
+          ]
+        }
+      ],
+      "scenario": "comfort_recall"
+    }
+  ],
+  "dataset_version": "memory-eval-zh-v1",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 1.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 1.0,
+    "extraction_precision": 0.39215686274509803,
+    "extraction_recall": 1.0,
+    "input_tokens": 0,
+    "latency_p50_ms": 1.0087499395012856,
+    "latency_p95_ms": 2.8866250067949295,
+    "ndcg_at_10": 0.8590438584406034,
+    "output_tokens": 0,
+    "paraphrase_followup_recall_at_5": 1.0,
+    "recall_at_10": 0.9375,
+    "recall_at_5": 0.9375,
+    "source_attribution_accuracy": 0.95,
+    "temporal_accuracy": 1.0,
+    "token_cost": 0
+  },
+  "scenario_coverage": [
+    "exact_fact",
+    "paraphrase",
+    "person_alias",
+    "temporal_question",
+    "current_vs_historical",
+    "episodic_recall",
+    "repeated_episode",
+    "conflicting_fact",
+    "user_correction",
+    "retracted_memory",
+    "procedural_knowledge",
+    "relationship_boundary",
+    "cross_account_isolation",
+    "cross_session_followup",
+    "paraphrase_followup",
+    "comfort_recall"
+  ]
+}

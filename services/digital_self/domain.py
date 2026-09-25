@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
+from services.common.voice_identity import is_current_voice_identity
 from services.self_model.domain import CognitiveClaimType, DecisionKind
 
 VersionStatus = Literal["draft", "testing", "approved", "frozen", "revoked"]
@@ -113,7 +114,7 @@ class VoiceProfileManifestRef:
     provider: str
     target_model: str
     resource_id: str
-    provider_expires_at: str
+    provider_expires_at: str | None
     speaker_sha256: str
 
     def __post_init__(self) -> None:
@@ -121,16 +122,24 @@ class VoiceProfileManifestRef:
             raise ValueError("voice profile ref requires profile_id")
         if self.version_number < 1:
             raise ValueError("voice profile ref version_number must be >= 1")
-        if self.provider != "volcengine_doubao":
+        current = is_current_voice_identity(self.provider, self.target_model, self.resource_id)
+        # Manifests are immutable: refs compiled for Doubao clones must still
+        # decode, although sessions no longer speak with them.
+        legacy_doubao = (
+            self.provider == "volcengine_doubao"
+            and self.target_model == "seed-icl-2.0"
+            and self.resource_id == "seed-icl-2.0"
+        )
+        if not (current or legacy_doubao):
             raise ValueError("voice profile ref provider is unsupported")
-        if self.target_model != "seed-icl-2.0":
-            raise ValueError("voice profile ref target_model is unsupported")
-        if self.resource_id != "seed-icl-2.0":
-            raise ValueError("voice profile ref resource_id is unsupported")
         if len(self.speaker_sha256) != 64 or any(
             char not in "0123456789abcdef" for char in self.speaker_sha256
         ):
             raise ValueError("voice profile ref speaker digest must be lowercase SHA-256")
+        if self.provider_expires_at is None:
+            if legacy_doubao:
+                raise ValueError("Doubao voice profile ref requires an expiry")
+            return
         try:
             expires_at = datetime.fromisoformat(self.provider_expires_at)
         except (TypeError, ValueError) as exc:

@@ -24,6 +24,12 @@ FunASREventType = Literal[
 ]
 
 
+# Qwen-Audio 3.1 ASR speaks the same run-task/continue-task protocol as
+# fun-asr-realtime and adds a selectable server VAD model.
+QWEN_AUDIO_31_ASR_PREFIX = "qwen-audio-3.1-asr-"
+QWEN_AUDIO_31_ASR_VAD_MODELS = frozenset({"near_meeting_16k", "far_field_meeting_16k"})
+
+
 @dataclass(frozen=True, slots=True)
 class FunASRSentence:
     sentence_id: int
@@ -39,6 +45,11 @@ class FunASRSentence:
     # for provider silence, so it must never outrank a real provider final on
     # the same audio (see ASRResult.rescue_synthesized).
     rescue_synthesized: bool = False
+    # Uplink energy of the rescued PCM segment (int16 RMS / peak), carried so
+    # consumers can tell a rescue transcript of real speech from one decoded
+    # out of near-silence.  None for provider finals.
+    rescue_rms: int | None = None
+    rescue_peak_abs: int | None = None
 
 
 def sentence_to_asr_result(
@@ -98,6 +109,8 @@ def sentence_to_asr_result(
         stream_epoch=stream_epoch,
         word_timings=word_timings,
         rescue_synthesized=sentence.rescue_synthesized,
+        rescue_rms=sentence.rescue_rms,
+        rescue_peak_abs=sentence.rescue_peak_abs,
     )
 
 
@@ -177,6 +190,7 @@ def build_run_task(
     context: list[dict[str, object]] | None = None,
     vocabulary_id: str | None = None,
     speech_noise_threshold: float | None = None,
+    vad_model: str | None = None,
 ) -> dict[str, Any]:
     tid = task_id or str(uuid.uuid4())
     parameters: dict[str, object] = {
@@ -191,6 +205,10 @@ def build_run_task(
         parameters["vocabulary_id"] = vocabulary_id
     if speech_noise_threshold is not None:
         parameters["speech_noise_threshold"] = speech_noise_threshold
+    if vad_model and model.startswith(QWEN_AUDIO_31_ASR_PREFIX):
+        # Only the Qwen-Audio 3.1 ASR models accept ``vad_model``; the
+        # provider default is ``far_field_meeting_16k``.
+        parameters["vad_model"] = vad_model
     return {
         "header": {
             "action": "run-task",

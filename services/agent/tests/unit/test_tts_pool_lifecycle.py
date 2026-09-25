@@ -1,27 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import struct
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
 import pytest
-from services.agent.src.observability.metrics import MetricsRegistry
-from services.agent.src.providers import doubao_tts
 from services.agent.src.providers.cosyvoice_tts import (
     CosyVoiceConfig,
     CosyVoicePool,
 )
 from services.agent.src.providers.cosyvoice_tts import (
     PooledConnection as CosyVoiceConnection,
-)
-from services.agent.src.providers.doubao_tts import (
-    DoubaoTTSConfig,
-    DoubaoTTSPool,
-)
-from services.agent.src.providers.doubao_tts import (
-    PooledConnection as DoubaoConnection,
 )
 from websockets.protocol import State
 
@@ -35,155 +25,11 @@ class FakeWebSocket:
         return None
 
     async def recv(self) -> bytes:
-        connect_id = b"fake-connection"
-        payload = b"{}"
-        return (
-            b"\x11\x94\x10\x00"
-            + struct.pack(">iI", doubao_tts.EventType.CONNECTION_STARTED, len(connect_id))
-            + connect_id
-            + struct.pack(">I", len(payload))
-            + payload
-        )
+        return b""
 
     async def close(self) -> None:
         self.closed = True
         self.state = State.CLOSED
-
-
-def _doubao_pool() -> tuple[DoubaoTTSPool, DoubaoConnection]:
-    ws = FakeWebSocket()
-    pool = DoubaoTTSPool(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            pool_size=1,
-        )
-    )
-    return pool, DoubaoConnection(ws=ws, conn_id="doubao-test")  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_doubao_pool_reports_active_connections_and_refill_reconnects() -> None:
-    pool = DoubaoTTSPool(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            pool_size=1,
-        ),
-        metrics=MetricsRegistry(),
-    )
-    ws = FakeWebSocket()
-    conn = DoubaoConnection(ws=ws, conn_id="doubao-test")  # type: ignore[arg-type]
-    pool._all[conn.conn_id] = conn
-    pool._report_connection_opened(conn)
-
-    assert pool.metrics.get("provider_ws_active", {"provider": "tts"}) == 1
-
-    async def refill() -> None:
-        pool._all[conn.conn_id] = conn
-        pool._available.put_nowait(conn)
-        pool.metrics.inc_provider_ws_reconnect("tts")
-        pool._report_connection_opened(conn)
-
-    pool._refill_one = refill
-    await pool.discard(conn, reason="error")
-    await asyncio.sleep(0)
-
-    assert pool.metrics.get("provider_ws_reconnect_total", {"provider": "tts"}) == 1
-    assert pool.metrics.get("provider_ws_active", {"provider": "tts"}) == 1
-
-
-@pytest.mark.asyncio
-async def test_doubao_active_connections_are_aggregated_across_pools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def connect(*_args: object, **_kwargs: object) -> FakeWebSocket:
-        return FakeWebSocket()
-
-    monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
-    metrics = MetricsRegistry()
-    config = DoubaoTTSConfig(
-        api_key="test",
-        speaker="zh_male_yangguangqingnian_uranus_bigtts",
-        pool_size=1,
-    )
-    first = DoubaoTTSPool(config, metrics=metrics)
-    second = DoubaoTTSPool(config, metrics=metrics)
-
-    await first.warm()
-    await second.warm()
-    assert metrics.get("provider_ws_active", {"provider": "tts"}) == 2
-
-    await first.aclose()
-    assert metrics.get("provider_ws_active", {"provider": "tts"}) == 1
-    await second.aclose()
-    assert metrics.get("provider_ws_active", {"provider": "tts"}) == 0
-
-
-@pytest.mark.asyncio
-async def test_doubao_release_removes_a_socket_already_marked_closed() -> None:
-    metrics = MetricsRegistry()
-    pool = DoubaoTTSPool(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            pool_size=1,
-        ),
-        metrics=metrics,
-    )
-    conn = DoubaoConnection(ws=FakeWebSocket(), conn_id="closed")  # type: ignore[arg-type]
-    conn.closed = True
-    pool._all[conn.conn_id] = conn
-    pool._report_connection_opened(conn)
-
-    async def no_refill() -> None:
-        return None
-
-    pool._refill_one = no_refill
-    await pool.release(conn)
-
-    assert pool._all == {}
-    assert metrics.get("provider_ws_active", {"provider": "tts"}) == 0
-
-
-@pytest.mark.asyncio
-async def test_doubao_acquire_replaces_a_server_expired_pooled_connection() -> None:
-    metrics = MetricsRegistry()
-    pool = DoubaoTTSPool(
-        DoubaoTTSConfig(
-            api_key="test",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            pool_size=1,
-        ),
-        metrics=metrics,
-    )
-    # Doubao closes idle sockets with a 1000 frame; only ws.state records it.
-    expired = DoubaoConnection(ws=FakeWebSocket(), conn_id="expired")  # type: ignore[arg-type]
-    expired.ws.state = State.CLOSED  # type: ignore[attr-defined]
-    replacement = DoubaoConnection(ws=FakeWebSocket(), conn_id="fresh")  # type: ignore[arg-type]
-    pool._all[expired.conn_id] = expired
-    await pool._available.put(expired)
-
-    async def open_replacement() -> DoubaoConnection:
-        pool._all[replacement.conn_id] = replacement
-        return replacement
-
-    async def no_refill() -> None:
-        return None
-
-    pool._open = open_replacement
-    pool._refill_one = no_refill
-
-    acquired = await pool.acquire(wait_s=0)
-
-    assert acquired is replacement
-    assert expired.conn_id not in pool._all
-    assert metrics.get("tts_connections_discarded_total", {"reason": "expired"}) == 1
-    # A retired idle socket is lifecycle, not a provider fault.
-    assert pool._breaker.consecutive_failures == 0
-    assert pool._breaker.state == "closed"
-
-    await pool.aclose()
 
 
 def _cosyvoice_pool() -> tuple[CosyVoicePool, CosyVoiceConnection]:
@@ -192,10 +38,7 @@ def _cosyvoice_pool() -> tuple[CosyVoicePool, CosyVoiceConnection]:
     return pool, CosyVoiceConnection(ws=ws, conn_id="cosyvoice-test")  # type: ignore[arg-type]
 
 
-_POOL_FACTORIES: tuple[Callable[[], tuple[Any, Any]], ...] = (
-    _doubao_pool,
-    _cosyvoice_pool,
-)
+_POOL_FACTORIES: tuple[Callable[[], tuple[Any, Any]], ...] = (_cosyvoice_pool,)
 
 
 @pytest.mark.asyncio
@@ -365,36 +208,6 @@ async def test_burst_connection_is_closed_instead_of_becoming_idle(
 
     await pool.release(held)
     assert pool.available_approx == 1
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
-async def test_doubao_cancelled_open_closes_connected_websocket(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entered = asyncio.Event()
-
-    class HangingWebSocket(FakeWebSocket):
-        async def recv(self) -> bytes:
-            entered.set()
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-
-    ws = HangingWebSocket()
-
-    async def connect(*_args: object, **_kwargs: object) -> HangingWebSocket:
-        return ws
-
-    monkeypatch.setattr(doubao_tts.websockets, "connect", connect)
-    pool, _ = _doubao_pool()
-    warm = asyncio.create_task(pool.warm(1))
-    await entered.wait()
-    warm.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await warm
-
-    assert ws.closed
     await pool.aclose()
 
 

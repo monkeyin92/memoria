@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from services.archive.domain import EvidenceEvent
 from services.archive.life_archive import LifeArchive
+from services.archive.object_store import EncryptedLocalObjectStore
 from services.digital_self.compiler import (
     canonical_json_bytes,
     canonical_manifest_bytes,
@@ -31,6 +33,8 @@ from services.digital_self.domain import (
 from services.digital_self.registry import DigitalSelfRegistry
 from services.governance.account_data import SqliteAccountRepository
 from services.self_model.registry import SelfModelRegistry
+from services.voice_profile.cosyvoice_enrollment import UnavailableVoiceEnrollmentProvider
+from services.voice_profile.manager import VoiceProfileManager
 
 _OCCURRED_AT = datetime(2026, 7, 22, 8, 0, tzinfo=UTC)
 
@@ -958,3 +962,149 @@ async def test_rollback_of_v1_creates_v3_without_mutating_old_bytes(tmp_path: Pa
     assert reloaded.manifest.schema_version == "digital-self-manifest-v1"
     assert canonical_manifest_bytes(reloaded.manifest) == legacy_bytes
     assert reloaded.manifest_sha256 == legacy_digest
+
+
+def _seed_active_voice_clone(
+    path: Path,
+    *,
+    account_id: str,
+    provider: str,
+    target_model: str,
+    provider_voice_id: str,
+    provider_expires_at: datetime | None,
+) -> None:
+    VoiceProfileManager.sqlite(
+        path,
+        object_store=EncryptedLocalObjectStore(
+            root=path.parent / "voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-key-v1",
+        ),
+        provider=UnavailableVoiceEnrollmentProvider(),
+        sample_url_factory=lambda sample_id: f"https://control.test/{sample_id}",
+        provider_region="cn-beijing",
+        target_model="qwen-audio-3.1-tts-flash",
+    ).initialize()
+    now = _OCCURRED_AT.isoformat()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO voice_clone_consents (
+                account_id, policy_version, granted_at, grant_event_id
+            ) VALUES (?, 'voice-clone-v1', ?, 'consent-event')
+            """,
+            (account_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO voice_profiles (
+                profile_id, account_id, sample_id, version_number, provider,
+                provider_region, target_model, provider_voice_id, status,
+                evaluation_status, quality_status, provider_expires_at,
+                created_at, updated_at, activated_at
+            ) VALUES ('voice-profile-1', ?, 'voice-sample-1', 1, ?, 'cn-beijing',
+                      ?, ?, 'active', 'passed', 'passed', ?, ?, ?, ?)
+            """,
+            (
+                account_id,
+                provider,
+                target_model,
+                provider_voice_id,
+                provider_expires_at.isoformat() if provider_expires_at is not None else None,
+                now,
+                now,
+                now,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_expires_at",
+    [None, datetime(2099, 1, 1, tzinfo=UTC)],
+    ids=["no-expiry", "future-expiry"],
+)
+async def test_build_binds_the_active_current_model_clone(
+    tmp_path: Path,
+    provider_expires_at: datetime | None,
+) -> None:
+    path = tmp_path / "memoria.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    await _seed_sources(path)
+    _seed_active_voice_clone(
+        path,
+        account_id="owner-account",
+        provider="alibaba_model_studio",
+        target_model="qwen-audio-3.1-tts-flash",
+        provider_voice_id="qwen-audio-3.1-tts-flash-owner01-abc123",
+        provider_expires_at=provider_expires_at,
+    )
+
+    version = await registry.build(account_id="owner-account")
+
+    voice_profile = version.manifest.source_summary.voice_profile
+    assert voice_profile is not None
+    assert voice_profile.profile_id == "voice-profile-1"
+    assert (voice_profile.provider, voice_profile.target_model, voice_profile.resource_id) == (
+        "alibaba_model_studio",
+        "qwen-audio-3.1-tts-flash",
+        "qwen-audio-3.1-tts-flash",
+    )
+    assert voice_profile.provider_expires_at == (
+        provider_expires_at.isoformat() if provider_expires_at is not None else None
+    )
+    assert voice_profile.speaker_sha256 == sha256_hex(
+        b"qwen-audio-3.1-tts-flash-owner01-abc123"
+    )
+    assert "qwen-audio-3.1-tts-flash-owner01-abc123" not in str(version.manifest)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "target_model", "provider_voice_id", "provider_expires_at"),
+    [
+        (
+            "volcengine_doubao",
+            "seed-icl-2.0",
+            "S_legacyDoubaoSpeaker",
+            datetime(2099, 1, 1, tzinfo=UTC),
+        ),
+        (
+            "alibaba_model_studio",
+            "cosyvoice-v3.5-flash",
+            "cosyvoice-v3.5-flash-owner01-abc123",
+            None,
+        ),
+        (
+            "alibaba_model_studio",
+            "qwen-audio-3.1-tts-flash",
+            "qwen-audio-3.1-tts-flash-owner01-abc123",
+            datetime(2000, 1, 1, tzinfo=UTC),
+        ),
+    ],
+    ids=["legacy-doubao", "legacy-cosyvoice", "expired-current"],
+)
+async def test_build_never_binds_legacy_or_expired_clones(
+    tmp_path: Path,
+    provider: str,
+    target_model: str,
+    provider_voice_id: str,
+    provider_expires_at: datetime | None,
+) -> None:
+    path = tmp_path / "memoria.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    await _seed_sources(path)
+    _seed_active_voice_clone(
+        path,
+        account_id="owner-account",
+        provider=provider,
+        target_model=target_model,
+        provider_voice_id=provider_voice_id,
+        provider_expires_at=provider_expires_at,
+    )
+
+    version = await registry.build(account_id="owner-account")
+
+    assert version.manifest.source_summary.voice_profile is None

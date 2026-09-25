@@ -54,6 +54,7 @@ from services.common.companions import (
     designed_voice_speaker_sha256,
 )
 from services.common.realtime_information import current_local_time
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     AccountOperationGate,
@@ -124,8 +125,6 @@ from services.persona.rules import trusted_uncertain_profile
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
 _LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
-_DOUBAO_TTS_PROVIDER = "volcengine_doubao"
-_DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 MAX_RAW_VOICE_WAV_BYTES = 2 * 1024 * 1024
 MAX_RAW_VOICE_BASE64_CHARS = ((MAX_RAW_VOICE_WAV_BYTES + 2) // 3) * 4
 SESSION_BOUND_EVENT_TYPES = frozenset(
@@ -429,7 +428,7 @@ class ResponseProvenanceCreate(BaseModel):
         max_length=128,
     )
     actual_voice_profile_version: int | None = Field(default=None, ge=1)
-    actual_voice_resource_id: Literal["seed-tts-2.0", "seed-icl-2.0"] | None = None
+    actual_voice_resource_id: str | None = Field(default=None, max_length=128)
     actual_voice_provider_expires_at: str | None = Field(
         default=None,
         min_length=1,
@@ -493,19 +492,19 @@ class ResponseProvenanceCreate(BaseModel):
             self.actual_voice_resource_id is None or self.actual_voice_speaker_sha256 is None
         ):
             raise ValueError("actual voice resource and digest are required")
-        if self.actual_voice_resource_id == _DOUBAO_PERSONAL_VOICE_MODEL and (
-            self.actual_voice_profile_id is None
-            or self.actual_voice_profile_version is None
-            or self.actual_voice_provider_expires_at is None
-        ):
-            raise ValueError("personal voice provenance requires version and expiry")
-        if self.actual_voice_resource_id == DESIGNED_VOICE_MODEL and (
-            self.actual_voice_profile_version is not None
-            or self.actual_voice_provider_expires_at is not None
+        if has_actual_voice and self.actual_voice_resource_id != TTS_MODEL:
+            raise ValueError("actual voice resource is not the current tts model")
+        # Designed and personal voices share one model: a personal snapshot is
+        # the one that carries a profile version (Qwen clones have no expiry).
+        if self.actual_voice_profile_version is not None and self.actual_voice_profile_id is None:
+            raise ValueError("personal voice provenance requires a profile")
+        if (
+            self.actual_voice_profile_version is None
+            and self.actual_voice_provider_expires_at is not None
         ):
             raise ValueError("designed voice provenance cannot claim personal metadata")
         if has_actual_voice and (
-            self.tts_provider != _DOUBAO_TTS_PROVIDER
+            self.tts_provider != TTS_PROVIDER
             or self.tts_model != self.actual_voice_resource_id
         ):
             raise ValueError("actual voice snapshot does not match the tts runtime")
@@ -717,7 +716,8 @@ def _canonical_actual_voice(
         valid = (
             expected_profile is not None
             and profile_id == expected_profile
-            and submitted.tts_provider == _DOUBAO_TTS_PROVIDER
+            and profile_version is None
+            and submitted.tts_provider == TTS_PROVIDER
             and resource_id == DESIGNED_VOICE_MODEL
             and speaker_sha256 == designed_voice_speaker_sha256(expected_profile)
         )
@@ -734,7 +734,6 @@ def _canonical_actual_voice(
             and submitted.tts_model == frozen.voice_model
             and frozen.voice_resource_id is not None
             and resource_id == frozen.voice_resource_id
-            and frozen.voice_provider_expires_at is not None
             and provider_expires_at == frozen.voice_provider_expires_at
             and frozen.voice_speaker_sha256 is not None
             and speaker_sha256 == frozen.voice_speaker_sha256
@@ -742,6 +741,7 @@ def _canonical_actual_voice(
         safe_baseline = (
             frozen.fallback_voice_profile_id is not None
             and profile_id == frozen.fallback_voice_profile_id
+            and profile_version is None
             and frozen.fallback_voice_provider is not None
             and submitted.tts_provider == frozen.fallback_voice_provider
             and frozen.fallback_voice_model is not None
@@ -2895,7 +2895,7 @@ async def search_memories(
     valid_at: datetime | None = None,
     sensitivity: Annotated[list[MemorySensitivity] | None, Query()] = None,
     conflict_state: Annotated[list[ConflictState] | None, Query()] = None,
-    include_candidates: bool = True,
+    include_candidates: bool = False,
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,

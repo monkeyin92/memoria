@@ -5830,7 +5830,7 @@ async def test_tts_failure_before_first_frame_returns_device_session_to_listenin
 
             async def chunks() -> AsyncIterator[MediaReplyChunk]:
                 self.attempted.set()
-                raise RuntimeError("Doubao TTS connection closed before first audio")
+                raise RuntimeError("TTS connection closed before first audio")
                 yield  # pragma: no cover - unreachable async-generator marker
 
             return chunks()
@@ -7373,6 +7373,84 @@ async def test_device_low_energy_rescue_close_rejection_does_not_request_standby
         assert context.conversation_close_endpoint_pinned is None
         assert context.turn_endpoint_sample is None
         assert context.standby_requested is False
+    finally:
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rescue_rms", "rescue_peak_abs", "expect_close"),
+    [
+        (389, 2_616, False),
+        (3_263, 32_768, True),
+    ],
+    ids=["room-noise-rescue", "owner-speech-rescue"],
+)
+async def test_device_straddling_rescue_farewell_needs_speech_energy(
+    rescue_rms: int,
+    rescue_peak_abs: int,
+    expect_close: bool,
+) -> None:
+    """A rescue farewell decoded from room noise must not end the session.
+
+    Run 2026-09-24 session b18fede9: a weather answer waited behind noise
+    VAD, SenseVoice turned the noise into three characters (rms 389, peak
+    2616, FunASR silent), the straddle recovery honoured it as a farewell,
+    and the pending answer was cancelled before its first frame.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity(f"device-straddle-rescue-close-{rescue_rms}")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry._get_or_create(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        context.asr.mark_committed(64_000)
+        context.runtime.commit_media_speech_range(
+            stream_epoch=identity.stream_epoch,
+            start_sample=0,
+            end_sample=64_000,
+        )
+        from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+
+        farewell = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="0",
+            revision=1,
+            capture_start_sample=40_000,
+            capture_end_sample=160_000,
+            text="拜拜。",
+            is_final=True,
+            rescue_synthesized=True,
+            rescue_rms=rescue_rms,
+            rescue_peak_abs=rescue_peak_abs,
+        )
+        decision = await registry._accept_asr_result_decision(
+            identity.session_id,
+            farewell,
+        )
+
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+        if expect_close:
+            assert context.conversation_close_endpoint_pinned == 160_000
+        else:
+            assert context.conversation_close_endpoint_pinned is None
+            assert context.turn_endpoint_sample is None
+            assert context.standby_requested is False
     finally:
         await registry._finalize_session(identity.session_id)
 
@@ -9622,6 +9700,105 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
         ) == 1
         assert context.turn_start_sample is None
         assert context.runtime.fence.turn_id == fence.turn_id
+    finally:
+        provider.release.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text_evidence", [False, True], ids=["room-noise", "owner-partial"])
+async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    text_evidence: bool,
+) -> None:
+    """Room-noise VAD bursts must not starve a ready tool answer.
+
+    Run 2026-09-24 session b18fede9: the weather answer was ready 2 s after
+    the filler, but three noise VAD bursts (FunASR and rescue both empty)
+    kept one empty pending turn open for ~8 s; each vad.start reset the
+    2.5 s tail.  The cap retires such an evidence-less turn and resumes the
+    answer, while any text evidence leaves the user's turn in charge.
+    """
+
+    from services.agent.src.voice_core import media_session_turns
+
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        # Only the cap may release the floor inside this test's window.
+        turn_endpoint_grace_s=60,
+        turn_endpoint_absolute_timeout_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity(f"qa-evidence-less-hold-{text_evidence}")
+    session = bridge.bridge.open(identity)
+
+    async def vad(name: str, sample: int, *, final: bool) -> None:
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=0,
+                segment_id=f"noise-{name}",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=sample,
+                capture_end_sample=sample + 1,
+                final=final,
+                voiced_end_sample=sample if final else None,
+            ),
+        )
+
+    try:
+        context, fence = await _qa_commit_question_then_finish_ack_playback(
+            registry, identity, bridge, provider, session, "今天南京天气怎么样"
+        )
+        claim = context.delegation_output_claims[fence]
+        registry._clear_pending_turn_state(context)
+        await vad("start-1", 640, final=False)
+        assert not context.runtime.output_floor_allows_assistant
+        if text_evidence:
+            context.pending_partial = ASRResult(
+                stream_epoch=identity.stream_epoch,
+                task_epoch=1,
+                sentence_id="owner-partial",
+                revision=1,
+                capture_start_sample=640,
+                capture_end_sample=1_600,
+                text="我还想问",
+                is_final=False,
+            )
+        assert await registry.generate_reply(identity.session_id, "今天南京天气怎么样", fence)
+        frame_count = len(bridge.frames)
+        provider.release.set()
+        await _wait_until(lambda: claim.state is not DelegationOutputState.OWNED)
+        assert context.evidence_less_hold_since is not None
+        # Noise keeps re-opening the same empty turn faster than any tail.
+        for index, sample in enumerate((1_280, 1_920, 2_560, 3_200, 3_840), start=1):
+            await asyncio.sleep(0.1)
+            await vad(f"end-{index}", sample, final=True)
+            await asyncio.sleep(0.05)
+            await vad(f"start-{index + 1}", sample + 160, final=False)
+
+        if text_evidence:
+            await asyncio.sleep(0.5)
+            assert not context.runtime.output_floor_allows_assistant
+            assert context.turn_start_sample is not None
+            assert not provider.deep_started.is_set()
+            assert len(bridge.frames) == frame_count
+            assert context.evidence_less_hold_since is None
+        else:
+            await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+            await _wait_until(lambda: len(bridge.frames) > frame_count)
+            assert context.evidence_less_hold_since is None
+            assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
+            assert context.runtime.fence.turn_id == fence.turn_id
     finally:
         provider.release.set()
         await registry._finalize_session(identity.session_id)

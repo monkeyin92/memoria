@@ -13,7 +13,6 @@ from services.agent.src.generation_output_policy import (
 )
 from services.agent.src.mode_policy_client import ModePolicy, ModePolicyClient
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
-from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.voice_profile_client import (
     VoiceProfileClient,
     VoiceProfileClientConfig,
@@ -34,14 +33,14 @@ def _self_preview_policy(*, fallback_profile_id: str = "bright_peer") -> ModePol
             sorted(
                 {
                     "voice_profile_id": "voice-profile-personal",
-                    "voice_provider": "volcengine_doubao",
-                    "voice_model": "seed-icl-2.0",
-                    "voice_resource_id": "seed-icl-2.0",
-                    "voice_speaker_sha256": _speaker_sha256("S_personal_synth_ready"),
+                    "voice_provider": "alibaba_model_studio",
+                    "voice_model": "qwen-audio-3.1-tts-flash",
+                    "voice_resource_id": "qwen-audio-3.1-tts-flash",
+                    "voice_speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-owner01-synthready"),
                     "fallback_voice_profile_id": fallback_profile_id,
-                    "fallback_voice_provider": "volcengine_doubao",
-                    "fallback_voice_model": "seed-tts-2.0",
-                    "fallback_voice_resource_id": "seed-tts-2.0",
+                    "fallback_voice_provider": "alibaba_model_studio",
+                    "fallback_voice_model": "qwen-audio-3.1-tts-flash",
+                    "fallback_voice_resource_id": "qwen-audio-3.1-tts-flash",
                 }.items()
             )
         ),
@@ -54,17 +53,17 @@ def _legacy_policy(*, voice_allowed: bool) -> ModePolicy:
     references: dict[str, str | bool | None] = {
         "voice_profile_id": "voice-profile-personal" if voice_allowed else None,
         "voice_profile_version": "3" if voice_allowed else None,
-        "voice_provider": "volcengine_doubao" if voice_allowed else None,
-        "voice_model": "seed-icl-2.0" if voice_allowed else None,
-        "voice_resource_id": "seed-icl-2.0" if voice_allowed else None,
+        "voice_provider": "alibaba_model_studio" if voice_allowed else None,
+        "voice_model": "qwen-audio-3.1-tts-flash" if voice_allowed else None,
+        "voice_resource_id": "qwen-audio-3.1-tts-flash" if voice_allowed else None,
         "voice_provider_expires_at": ("2027-07-23T00:00:00+00:00" if voice_allowed else None),
         "voice_speaker_sha256": (
-            _speaker_sha256("S_personal_synth_ready") if voice_allowed else None
+            _speaker_sha256("qwen-audio-3.1-tts-flash-owner01-synthready") if voice_allowed else None
         ),
         "fallback_voice_profile_id": "bright_peer",
-        "fallback_voice_provider": "volcengine_doubao",
-        "fallback_voice_model": "seed-tts-2.0",
-        "fallback_voice_resource_id": "seed-tts-2.0",
+        "fallback_voice_provider": "alibaba_model_studio",
+        "fallback_voice_model": "qwen-audio-3.1-tts-flash",
+        "fallback_voice_resource_id": "qwen-audio-3.1-tts-flash",
         "legacy_voice_allowed": voice_allowed,
     }
     return ModePolicy(
@@ -90,12 +89,12 @@ async def test_resolution_sends_only_session_id_and_caches_active_profile() -> N
             json={
                 "mode": "active",
                 "profile_id": "voice-profile-001",
-                "provider": "volcengine_doubao",
+                "provider": "alibaba_model_studio",
                 "voice_kind": "personal",
-                "model": "seed-icl-2.0",
-                "resource_id": "seed-icl-2.0",
-                "voice_id": "S_voice_profile_001",
-                "speaker_sha256": _speaker_sha256("S_voice_profile_001"),
+                "model": "qwen-audio-3.1-tts-flash",
+                "resource_id": "qwen-audio-3.1-tts-flash",
+                "voice_id": "qwen-audio-3.1-tts-flash-profile1-001",
+                "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-profile1-001"),
             },
         )
 
@@ -117,9 +116,9 @@ async def test_resolution_sends_only_session_id_and_caches_active_profile() -> N
     }
     assert profile is not None
     assert profile.profile_id == "voice-profile-001"
-    assert profile.voice_id == "S_voice_profile_001"
+    assert profile.voice_id == "qwen-audio-3.1-tts-flash-profile1-001"
     assert profile.voice_kind == "personal"
-    assert profile.resource_id == "seed-icl-2.0"
+    assert profile.resource_id == "qwen-audio-3.1-tts-flash"
 
 
 @pytest.mark.asyncio
@@ -127,12 +126,12 @@ async def test_resolver_failure_evicts_cached_personal_voice_immediately() -> No
     response = {
         "mode": "active",
         "profile_id": "voice-profile-001",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "seed-icl-2.0",
-        "resource_id": "seed-icl-2.0",
-        "voice_id": "S_voice_profile_001",
-        "speaker_sha256": _speaker_sha256("S_voice_profile_001"),
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
+        "voice_id": "qwen-audio-3.1-tts-flash-profile1-001",
+        "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-profile1-001"),
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -159,12 +158,12 @@ async def test_resolver_failure_evicts_cached_personal_voice_immediately() -> No
                 {
                     "mode": "active",
                     "profile_id": "voice-profile-001",
-                    "provider": "volcengine_doubao",
+                    "provider": "alibaba_model_studio",
                     "voice_kind": "personal",
-                    "model": "seed-icl-2.0",
-                    "resource_id": "seed-icl-2.0",
-                    "voice_id": "S_voice_profile_001",
-                    "speaker_sha256": _speaker_sha256("S_voice_profile_001"),
+                    "model": "qwen-audio-3.1-tts-flash",
+                    "resource_id": "qwen-audio-3.1-tts-flash",
+                    "voice_id": "qwen-audio-3.1-tts-flash-profile1-001",
+                    "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-profile1-001"),
                 }
             )
             assert await client.refresh(session_id="session-001")
@@ -197,12 +196,12 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
             json={
                 "mode": "active",
                 "profile_id": "voice-profile-personal",
-                "provider": "volcengine_doubao",
+                "provider": "alibaba_model_studio",
                 "voice_kind": "personal",
-                "model": "seed-icl-2.0",
-                "resource_id": "seed-icl-2.0",
-                "voice_id": "S_personal_synth_ready",
-                "speaker_sha256": _speaker_sha256("S_personal_synth_ready"),
+                "model": "qwen-audio-3.1-tts-flash",
+                "resource_id": "qwen-audio-3.1-tts-flash",
+                "voice_id": "qwen-audio-3.1-tts-flash-owner01-synthready",
+                "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-owner01-synthready"),
             },
         )
 
@@ -214,13 +213,7 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
             assert await client.refresh(session_id="session-personal")
             _apply_cached_voice_profile(
@@ -243,7 +236,7 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
             )
 
             assert client.cached(session_id="session-personal") is None
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "longhua_v3.1"
             assert tts.current_voice_profile_id == "bright_peer"
             assert tts.current_voice_kind == "designed"
         finally:
@@ -251,7 +244,7 @@ async def test_http_5xx_evicts_cached_personal_voice_and_restores_baseline() -> 
 
 
 @pytest.mark.asyncio
-async def test_cosyvoice_clone_is_not_applied_on_doubao_tts() -> None:
+async def test_clone_bound_to_a_retired_model_is_rejected_and_baseline_kept() -> None:
     voice_id = "cosyvoice-v3.5-flash-clone-owner001"
 
     def handler(_: httpx.Request) -> httpx.Response:
@@ -277,15 +270,11 @@ async def test_cosyvoice_clone_is_not_applied_on_doubao_tts() -> None:
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
-            assert await client.refresh(session_id="session-legacy")
+            # A CosyVoice v3.5 clone cannot speak on Qwen-Audio 3.1: the session
+            # speaks with its frozen persona fallback instead.
+            assert not await client.refresh(session_id="session-legacy")
             _apply_cached_voice_profile(
                 tts_plugin=tts,
                 client=client,
@@ -294,7 +283,8 @@ async def test_cosyvoice_clone_is_not_applied_on_doubao_tts() -> None:
                 policy=_self_preview_policy(),
             )
             assert tts.current_voice_kind == "designed"
-            assert tts.current_voice_profile_id == "warm_companion"
+            assert tts.current_voice_profile_id == "bright_peer"
+            assert tts.current_voice == "longhua_v3.1"
         finally:
             await tts.aclose()
 
@@ -311,12 +301,12 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
             json={
                 "mode": "active",
                 "profile_id": "voice-profile-personal",
-                "provider": "volcengine_doubao",
+                "provider": "alibaba_model_studio",
                 "voice_kind": "personal",
-                "model": "seed-icl-2.0",
-                "resource_id": "seed-icl-2.0",
-                "voice_id": "S_personal_synth_ready",
-                "speaker_sha256": _speaker_sha256("S_personal_synth_ready"),
+                "model": "qwen-audio-3.1-tts-flash",
+                "resource_id": "qwen-audio-3.1-tts-flash",
+                "voice_id": "qwen-audio-3.1-tts-flash-owner01-synthready",
+                "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-owner01-synthready"),
             },
         )
 
@@ -328,13 +318,7 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
             assert await client.refresh(session_id="session-legacy")
             _apply_cached_voice_profile(
@@ -357,7 +341,7 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
             )
             assert client.cached(session_id="session-legacy") is None
             assert tts.current_voice_profile_id == "bright_peer"
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "longhua_v3.1"
             assert tts.current_voice_kind == "designed"
         finally:
             await tts.aclose()
@@ -369,9 +353,10 @@ async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fall
         ("provider", None),
         ("voice_kind", None),
         ("voice_kind", "designed"),
-        ("model", "seed-tts-2.0"),
-        ("resource_id", "seed-tts-2.0"),
-        ("voice_id", "zh_male_yangguangqingnian_uranus_bigtts"),
+        ("model", "seed-icl-2.0"),
+        ("resource_id", "cosyvoice-v3.5-flash"),
+        ("voice_id", "longanyang_v3.1"),
+        ("voice_id", "cosyvoice-v3.5-flash-clone-owner001"),
     ),
 )
 @pytest.mark.asyncio
@@ -382,12 +367,12 @@ async def test_personal_voice_requires_exact_provider_marker_and_clone_resource(
     payload: dict[str, object] = {
         "mode": "active",
         "profile_id": "voice-profile-personal",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "seed-icl-2.0",
-        "resource_id": "seed-icl-2.0",
-        "voice_id": "S_personal_synth_ready",
-        "speaker_sha256": _speaker_sha256("S_personal_synth_ready"),
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
+        "voice_id": "qwen-audio-3.1-tts-flash-owner01-synthready",
+        "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-owner01-synthready"),
     }
     payload[field] = value
 
@@ -414,10 +399,10 @@ async def test_designed_companion_voice_resolves_from_approved_local_registry() 
             json={
                 "mode": "designed",
                 "profile_id": "bright_peer",
-                "provider": "volcengine_doubao",
+                "provider": "alibaba_model_studio",
                 "voice_kind": "designed",
-                "model": "seed-tts-2.0",
-                "resource_id": "seed-tts-2.0",
+                "model": "qwen-audio-3.1-tts-flash",
+                "resource_id": "qwen-audio-3.1-tts-flash",
                 "voice_id": None,
                 "speaker_sha256": None,
             },
@@ -436,8 +421,8 @@ async def test_designed_companion_voice_resolves_from_approved_local_registry() 
 
     assert profile is not None
     assert profile.profile_id == "bright_peer"
-    assert profile.model == "seed-tts-2.0"
-    assert profile.voice_id == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert profile.model == "qwen-audio-3.1-tts-flash"
+    assert profile.voice_id == "longhua_v3.1"
 
 
 @pytest.mark.asyncio
@@ -445,11 +430,11 @@ async def test_active_personal_voice_rejects_forged_speaker_digest() -> None:
     payload = {
         "mode": "active",
         "profile_id": "voice-profile-personal",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "seed-icl-2.0",
-        "resource_id": "seed-icl-2.0",
-        "voice_id": "S_personal_synth_ready",
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
+        "voice_id": "qwen-audio-3.1-tts-flash-owner01-synthready",
         "speaker_sha256": "f" * 64,
     }
     async with httpx.AsyncClient(
@@ -472,10 +457,10 @@ async def test_voice_resolution_rejects_missing_digest_field() -> None:
     payload = {
         "mode": "designed",
         "profile_id": "bright_peer",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "designed",
-        "model": "seed-tts-2.0",
-        "resource_id": "seed-tts-2.0",
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
         "voice_id": None,
     }
     async with httpx.AsyncClient(
@@ -493,7 +478,7 @@ async def test_voice_resolution_rejects_missing_digest_field() -> None:
 
 
 @pytest.mark.asyncio
-async def test_doubao_resolver_failure_restores_selected_companion_voice() -> None:
+async def test_resolver_failure_restores_selected_companion_voice() -> None:
     failing = False
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -504,10 +489,10 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             json={
                 "mode": "designed",
                 "profile_id": "bright_peer",
-                "provider": "volcengine_doubao",
+                "provider": "alibaba_model_studio",
                 "voice_kind": "designed",
-                "model": "seed-tts-2.0",
-                "resource_id": "seed-tts-2.0",
+                "model": "qwen-audio-3.1-tts-flash",
+                "resource_id": "qwen-audio-3.1-tts-flash",
                 "voice_id": None,
                 "speaker_sha256": None,
             },
@@ -521,13 +506,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
 
         assert await client.refresh(session_id="session-taoxi")
         _apply_cached_voice_profile(
@@ -535,7 +514,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             client=client,
             session_id="session-taoxi",
         )
-        assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+        assert tts.current_voice == "longhua_v3.1"
 
         failing = True
         assert not await client.refresh(session_id="session-taoxi")
@@ -545,7 +524,7 @@ async def test_doubao_resolver_failure_restores_selected_companion_voice() -> No
             session_id="session-taoxi",
         )
 
-        assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+        assert tts.current_voice == "longhua_v3.1"
         await tts.aclose()
 
 
@@ -558,10 +537,10 @@ async def test_self_preview_applies_selected_designed_fallback_from_resolver() -
                 json={
                     "mode": "designed",
                     "profile_id": "bright_peer",
-                    "provider": "volcengine_doubao",
+                    "provider": "alibaba_model_studio",
                     "voice_kind": "designed",
-                    "model": "seed-tts-2.0",
-                    "resource_id": "seed-tts-2.0",
+                    "model": "qwen-audio-3.1-tts-flash",
+                    "resource_id": "qwen-audio-3.1-tts-flash",
                     "voice_id": None,
                     "speaker_sha256": None,
                 },
@@ -575,13 +554,7 @@ async def test_self_preview_applies_selected_designed_fallback_from_resolver() -
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
             assert await client.refresh(session_id="self-preview-fallback")
             _apply_cached_voice_profile(
@@ -593,64 +566,52 @@ async def test_self_preview_applies_selected_designed_fallback_from_resolver() -
             )
 
             assert tts.current_voice_profile_id == "bright_peer"
-            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice == "longhua_v3.1"
             assert tts.current_voice_kind == "designed"
         finally:
             await tts.aclose()
 
 
 @pytest.mark.asyncio
-async def test_doubao_applied_profile_does_not_replace_configured_baseline() -> None:
-    tts = DoubaoTTS(
-        DoubaoTTSConfig(
-            api_key="test",
-            voice_profile="warm_companion",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-        )
-    )
+async def test_applied_profile_does_not_replace_configured_baseline() -> None:
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
 
     tts.apply_voice_profile(
-        model="seed-tts-2.0",
-        voice="zh_female_tianmeitaozi_uranus_bigtts",
+        model="qwen-audio-3.1-tts-flash",
+        voice="longhua_v3.1",
     )
-    assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+    assert tts.current_voice == "longhua_v3.1"
     tts.use_baseline_voice()
 
-    assert tts.current_voice == "zh_male_yangguangqingnian_uranus_bigtts"
+    assert tts.current_voice == "longanyang_v3.1"
     await tts.aclose()
 
 
 @pytest.mark.asyncio
-async def test_doubao_accepts_only_explicit_personal_clone_resolution() -> None:
-    tts = DoubaoTTS(
-        DoubaoTTSConfig(
-            api_key="test",
-            voice_profile="warm_companion",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-        )
-    )
+async def test_tts_accepts_only_explicit_personal_clone_resolution() -> None:
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
     try:
         tts.apply_voice_profile(
-            model="seed-icl-2.0",
-            resource_id="seed-icl-2.0",
-            voice="S_personal_synth_ready",
+            model="qwen-audio-3.1-tts-flash",
+            resource_id="qwen-audio-3.1-tts-flash",
+            voice="qwen-audio-3.1-tts-flash-owner01-synthready",
             profile_id="voice-profile-personal",
-            provider="volcengine_doubao",
+            provider="alibaba_model_studio",
             voice_kind="personal",
         )
 
-        assert tts.current_model == "seed-icl-2.0"
-        assert tts.current_voice == "S_personal_synth_ready"
+        assert tts.current_model == "qwen-audio-3.1-tts-flash"
+        assert tts.current_voice == "qwen-audio-3.1-tts-flash-owner01-synthready"
         assert tts.current_voice_profile_id == "voice-profile-personal"
         assert tts.current_voice_kind == "personal"
 
         with pytest.raises(ValueError):
             tts.apply_voice_profile(
-                model="seed-icl-2.0",
-                resource_id="seed-icl-2.0",
+                model="qwen-audio-3.1-tts-flash",
+                resource_id="qwen-audio-3.1-tts-flash",
                 voice="arbitrary-speaker",
                 profile_id=None,
-                provider="volcengine_doubao",
+                provider="alibaba_model_studio",
                 voice_kind="personal",
             )
     finally:
@@ -662,12 +623,12 @@ async def test_companion_mode_never_applies_a_personal_clone() -> None:
     payload = {
         "mode": "active",
         "profile_id": "voice-profile-personal",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "seed-icl-2.0",
-        "resource_id": "seed-icl-2.0",
-        "voice_id": "S_personal_companion_rejected",
-        "speaker_sha256": _speaker_sha256("S_personal_companion_rejected"),
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
+        "voice_id": "qwen-audio-3.1-tts-flash-companion-rejected",
+        "speaker_sha256": _speaker_sha256("qwen-audio-3.1-tts-flash-companion-rejected"),
     }
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
@@ -679,13 +640,7 @@ async def test_companion_mode_never_applies_a_personal_clone() -> None:
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
             assert await client.refresh(session_id="companion-personal")
             _apply_cached_voice_profile(
@@ -695,7 +650,7 @@ async def test_companion_mode_never_applies_a_personal_clone() -> None:
                 mode="companion",
             )
 
-            assert tts.current_model == "seed-tts-2.0"
+            assert tts.current_model == "qwen-audio-3.1-tts-flash"
             assert tts.current_voice_profile_id == "warm_companion"
             assert tts.current_voice_kind == "designed"
         finally:
@@ -730,15 +685,15 @@ def _companion_clone_policy(*, provider: str, model: str, voice_id: str) -> Mode
         "voice_profile_version": 2,
         "voice_provider": provider,
         "voice_model": model,
-        "voice_resource_id": model if provider == "alibaba_model_studio" else "seed-icl-2.0",
+        "voice_resource_id": model if provider == "alibaba_model_studio" else "qwen-audio-3.1-tts-flash",
         "voice_provider_expires_at": (
             None if provider == "alibaba_model_studio" else "2027-07-23T00:00:00+00:00"
         ),
         "voice_speaker_sha256": _speaker_sha256(voice_id),
         "fallback_voice_profile_id": "bright_peer",
-        "fallback_voice_provider": "volcengine_doubao",
-        "fallback_voice_model": "seed-tts-2.0",
-        "fallback_voice_resource_id": "seed-tts-2.0",
+        "fallback_voice_provider": "alibaba_model_studio",
+        "fallback_voice_model": "qwen-audio-3.1-tts-flash",
+        "fallback_voice_resource_id": "qwen-audio-3.1-tts-flash",
         "capabilities": {
             "conversation": True,
             "private_memory": True,
@@ -757,19 +712,19 @@ def _companion_clone_policy(*, provider: str, model: str, voice_id: str) -> Mode
 
 @pytest.mark.asyncio
 async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None:
-    voice_id = "S_personal_companion_allowed"
+    voice_id = "qwen-audio-3.1-tts-flash-companion-allowed"
     policy = _companion_clone_policy(
-        provider="volcengine_doubao",
-        model="seed-icl-2.0",
+        provider="alibaba_model_studio",
+        model="qwen-audio-3.1-tts-flash",
         voice_id=voice_id,
     )
     payload = {
         "mode": "active",
         "profile_id": "voice-profile-personal",
-        "provider": "volcengine_doubao",
+        "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "seed-icl-2.0",
-        "resource_id": "seed-icl-2.0",
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
         "voice_id": voice_id,
         "speaker_sha256": _speaker_sha256(voice_id),
     }
@@ -783,13 +738,7 @@ async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None
             ),
             client=http_client,
         )
-        tts = DoubaoTTS(
-            DoubaoTTSConfig(
-                api_key="test",
-                voice_profile="warm_companion",
-                speaker="zh_male_yangguangqingnian_uranus_bigtts",
-            )
-        )
+        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
         try:
             assert await client.refresh(session_id="companion-clone")
             _apply_cached_voice_profile(
@@ -807,7 +756,7 @@ async def test_companion_mode_applies_a_matching_frozen_personal_clone() -> None
                     policy,
                     personal_voice_permitted=True,
                     profile_id="voice-profile-personal",
-                    resource_id="seed-icl-2.0",
+                    resource_id="qwen-audio-3.1-tts-flash",
                     speaker_sha256=_speaker_sha256(voice_id),
                     voice_kind="personal",
                 )
@@ -866,13 +815,7 @@ async def test_wake_aligns_tts_to_the_frozen_catalog_companion() -> None:
             },
         }
     )
-    tts = DoubaoTTS(
-        DoubaoTTSConfig(
-            api_key="test",
-            voice_profile="warm_companion",
-            speaker="zh_male_yangguangqingnian_uranus_bigtts",
-        )
-    )
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="test", ws_url="wss://example", pool_size=0))
     try:
         align_tts_voice_to_policy(tts, policy, personal_voice_permitted=False)
         assert tts.current_voice_profile_id == "bright_peer"
@@ -882,15 +825,15 @@ async def test_wake_aligns_tts_to_the_frozen_catalog_companion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_profile_client_accepts_a_cosyvoice_personal_clone() -> None:
-    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+async def test_voice_profile_client_accepts_a_qwen_audio_personal_clone() -> None:
+    voice_id = "qwen-audio-3.1-tts-flash-owner001-abc123"
     payload = {
         "mode": "active",
         "profile_id": "voice-profile-personal",
         "provider": "alibaba_model_studio",
         "voice_kind": "personal",
-        "model": "cosyvoice-v3.5-flash",
-        "resource_id": "cosyvoice-v3.5-flash",
+        "model": "qwen-audio-3.1-tts-flash",
+        "resource_id": "qwen-audio-3.1-tts-flash",
         "voice_id": voice_id,
         "speaker_sha256": _speaker_sha256(voice_id),
     }
@@ -917,27 +860,26 @@ async def test_tts_switches_to_approved_clone_and_restores_exact_baseline() -> N
     config = CosyVoiceConfig(
         api_key="test",
         ws_url="wss://example.test",
-        model="cosyvoice-v3.5-flash",
-        voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+        voice="longanyang_v3.1",
         rate=1.0,
     )
     tts = CosyVoiceTTS(config)
 
     tts.apply_voice_profile(
-        model="cosyvoice-v3.5-flash",
-        voice="cosyvoice-v3.5-flash-clone-owner001",
+        model="qwen-audio-3.1-tts-flash",
+        voice="qwen-audio-3.1-tts-flash-owner001-abc123",
         profile_id="voice-profile-personal",
         provider="alibaba_model_studio",
         voice_kind="personal",
-        resource_id="cosyvoice-v3.5-flash",
+        resource_id="qwen-audio-3.1-tts-flash",
     )
-    assert tts.current_voice == "cosyvoice-v3.5-flash-clone-owner001"
+    assert tts.current_voice == "qwen-audio-3.1-tts-flash-owner001-abc123"
     assert tts.current_voice_kind == "personal"
     assert tts.current_voice_profile_id == "voice-profile-personal"
     assert tts.current_rate == 1.0
     tts.use_baseline_voice()
 
-    assert tts.current_model == "cosyvoice-v3.5-flash"
-    assert tts.current_voice == "cosyvoice-v3.5-flash-vd-warmboy-baseline"
+    assert tts.current_model == "qwen-audio-3.1-tts-flash"
+    assert tts.current_voice == "longanyang_v3.1"
     assert tts.current_rate == 1.0
     await tts.aclose()

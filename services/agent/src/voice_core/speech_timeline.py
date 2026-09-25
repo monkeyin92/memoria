@@ -137,6 +137,9 @@ class ASRResult:
     # even when the rescue interval is longer (mid-utterance rescue fires while
     # the VAD segment is still open and would otherwise win on span alone).
     rescue_synthesized: bool = False
+    # Energy of the rescued PCM segment; None unless ``rescue_synthesized``.
+    rescue_rms: int | None = field(default=None, compare=False)
+    rescue_peak_abs: int | None = field(default=None, compare=False)
     timing_evidence: ASRTimingEvidence = field(init=False)
     # Reconnected providers can trim an expanded sentence to a new tail. Keep
     # the provider sentence id for reconciliation while giving that tail its

@@ -78,6 +78,11 @@ class MediaOutputDispatchMixin:
         metrics: MetricsRegistry
         _sessions: dict[str, _MediaVoiceSession]
         output_generation_timeout_s: float
+
+        def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
+
+        @staticmethod
+        def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None: ...
         delegation_initial_decision_timeout_s: float
 
         def _event_versions(
@@ -545,7 +550,9 @@ class MediaOutputDispatchMixin:
                 work.fence,
                 work.intent.kind,
             )
+            self._arm_evidence_less_floor_hold(context)
             return True
+        self._clear_evidence_less_floor_hold(context)
         owner = context.output_owner
         if owner is not None:
             if (

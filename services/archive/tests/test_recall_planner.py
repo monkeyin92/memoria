@@ -222,6 +222,18 @@ def test_distress_query_adds_a_closed_emotion_synonym() -> None:
     assert plan.text.startswith("我有点难受")
 
 
+def test_distress_paraphrase_expands_to_the_target_emotion_lexeme() -> None:
+    plan = RecallPlanner.plan(
+        query="我最近有点撑不住了，你还记得什么吗？",
+        now=_NOW,
+    )
+
+    assert plan.entity_ids == ()
+    assert "撑不住" in plan.text
+    assert "想哭" in plan.text
+    assert plan.occurred_after is None
+
+
 def test_avoidance_question_expands_to_preference_wording() -> None:
     """An avoidance question shares no surface with the memory that answers it."""
 
@@ -235,6 +247,7 @@ def test_avoidance_question_expands_to_preference_wording() -> None:
     # appended so the confirmed "我吃饭时不喜欢香菜。" is reachable.
     assert "避开" in plan.text
     assert "不喜欢" in plan.text
+    assert "吃不了" in plan.text
     assert plan.entity_ids == ()
     assert plan.occurred_after is None
 

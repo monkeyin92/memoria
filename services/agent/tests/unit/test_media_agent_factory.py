@@ -14,6 +14,7 @@ from services.agent.src.orchestration.handlers import SpeechSynthesisRequest
 from services.agent.src.response_planner_client import ResponsePlanFetch
 from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 from services.agent.src.voice_core.media_protocol import SessionIdentity
+from services.common.voice_identity import TTS_MODEL
 
 
 @pytest.mark.asyncio
@@ -80,9 +81,10 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
             closed.append("search")
 
     class TTS:
+        sample_rate = 24000
         current_voice_profile_id = "warm_companion"
-        current_model = "seed-tts-2.0"
-        current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
+        current_model = TTS_MODEL
+        current_voice = "longanyang_v3.1"
         current_voice_kind = "designed"
 
         def __init__(self) -> None:
@@ -116,7 +118,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         "build_realtime_search_resolver",
         lambda **_kwargs: Resolver(),
     )
-    monkeypatch.setattr(factory_module.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
+    monkeypatch.setattr(factory_module.CosyVoiceTTS, "from_env", classmethod(lambda cls: TTS()))
     monkeypatch.setattr(
         factory_module.FunASRConfig,
         "from_env",
@@ -154,8 +156,6 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         llm_fast_model="deepseek-v4-flash",
         llm_api_key="secret",
         llm_base_url="https://llm.example/v1",
-        doubao_tts_resource_id="seed-tts-2.0",
-        doubao_tts_sample_rate=24000,
         internal_token=lambda capability: {
             "interaction_policy": "p" * 32,
             "response_plan": "r" * 32,
@@ -274,12 +274,13 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
 
     class TTS:
         pool = None
+        sample_rate = 24000
 
         async def aclose(self) -> None:
             return None
 
     runtime = Runtime()
-    monkeypatch.setattr(factory_module.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
+    monkeypatch.setattr(factory_module.CosyVoiceTTS, "from_env", classmethod(lambda cls: TTS()))
     monkeypatch.setattr(
         factory_module,
         "build_language_model_handler",
@@ -342,8 +343,6 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         settings=SimpleNamespace(
             llm_provider="test",
             llm_fast_model="test",
-            doubao_tts_resource_id="test",
-            doubao_tts_sample_rate=24000,
         ),
         llm_factory=object(),
         archive_sink=Archive(),  # type: ignore[arg-type]

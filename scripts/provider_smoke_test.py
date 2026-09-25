@@ -13,16 +13,15 @@ from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
+from services.agent.src.providers.cosyvoice_protocol import (
+    TRAILING_SILENCE_MAX_MS,
+    pcm_duration_ms,
+)
+from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.deepseek import (
     DeepSeekClient,
     DeepSeekConfig,
     filter_content_for_tts,
-)
-from services.agent.src.providers.doubao_protocol import pcm_duration_ms
-from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
-from services.agent.src.providers.doubao_voice_catalog import (
-    DOUBAO_TTS_MODEL,
-    DOUBAO_VOICE_CATALOG,
 )
 from services.agent.src.providers.funasr_protocol import timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
@@ -31,6 +30,8 @@ from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
     InterruptSemanticClassifierConfig,
 )
+from services.agent.src.providers.qwen_voice_catalog import QWEN_VOICE_CATALOG
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 
 DEFAULT_DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
 
@@ -39,7 +40,7 @@ def _dashscope_ws_url() -> str:
     return os.getenv("DASHSCOPE_WS_URL", DEFAULT_DASHSCOPE_WS_URL)
 
 
-def _validate_doubao_result(
+def _validate_tts_result(
     pcm: bytes,
     words: tuple[TimedWord, ...],
     *,
@@ -49,96 +50,85 @@ def _validate_doubao_result(
 ) -> None:
     if sample_rate != 24_000 or num_channels != 1:
         raise AssertionError(
-            "Doubao PCM contract must be 24000 Hz mono, "
+            "Qwen-Audio TTS PCM contract must be 24000 Hz mono, "
             f"got {sample_rate} Hz/{num_channels} channels"
         )
     if not pcm:
-        raise AssertionError("Doubao returned no PCM")
+        raise AssertionError("Qwen-Audio TTS returned no PCM")
     if len(pcm) % 2:
-        raise AssertionError("Doubao PCM is not frame-aligned signed 16-bit little-endian")
+        raise AssertionError("Qwen-Audio TTS PCM is not frame-aligned signed 16-bit little-endian")
     if not words:
-        raise AssertionError("Doubao returned no word timestamps")
+        raise AssertionError("Qwen-Audio TTS returned no word timestamps")
     if alignment_status not in {"ok", "scaled"}:
-        raise AssertionError(f"Doubao word timestamp alignment is {alignment_status}")
+        raise AssertionError(f"Qwen-Audio TTS word timestamp alignment is {alignment_status}")
     previous = -1
     for word in words:
         begin_ms = word.begin_ms
         end_ms = word.end_ms
         if begin_ms < previous or end_ms < begin_ms:
-            raise AssertionError("Doubao word timestamps are not monotonic")
+            raise AssertionError("Qwen-Audio TTS word timestamps are not monotonic")
         previous = end_ms
     duration_ms = pcm_duration_ms(pcm, sample_rate=sample_rate)
-    if abs(previous - duration_ms) > 300:
+    # Audio may run past the last word by the model's trailing silence, but
+    # timestamps must never overrun the audio.
+    if previous > duration_ms + 120 or duration_ms - previous > TRAILING_SILENCE_MAX_MS:
         raise AssertionError(
-            f"Doubao alignment differs from PCM duration by {abs(previous - duration_ms)} ms"
+            "Qwen-Audio TTS alignment differs from PCM duration by "
+            f"{duration_ms - previous} ms"
         )
 
 
-async def smoke_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
-    cfg = DoubaoTTSConfig.from_env({**os.environ, "DOUBAO_TTS_POOL_SIZE": "1"})
-    tts = DoubaoTTS(cfg)
+async def smoke_qwen_tts() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
+    cfg = CosyVoiceConfig.from_env({**os.environ, "COSYVOICE_POOL_SIZE": "1"})
+    tts = CosyVoiceTTS(cfg)
     try:
         await tts.pool.warm(1)
         result = await tts.synthesize_stream_text(
-            ["你好，", "这是豆包实时语音测试。"],
-            fence=GenerationFence("provider-smoke-doubao", 1, 1, 0),
+            ["你好，", "这是实时语音测试。"],
+            fence=GenerationFence("provider-smoke-tts", 1, 1, 0),
         )
-        _validate_doubao_result(
+        _validate_tts_result(
             result.pcm,
             result.words,
             sample_rate=cfg.sample_rate,
             num_channels=1,
             alignment_status=result.alignment_status,
         )
-
         samples = [(result.pcm, ("实时语音测试",), ())]
-        style_alignment: list[str] = []
-        if cfg.style_control_enabled:
-            styled_text = "我在这里，慢慢说就好。"
-            reference_markers = ("今天有点难过", "想找人聊聊")
-            for index, voice in enumerate(DOUBAO_VOICE_CATALOG, 2):
-                fence = GenerationFence(
-                    f"provider-smoke-doubao-style-{voice.profile_id}",
-                    index,
-                    index,
-                    0,
-                )
-                tts.apply_voice_profile(
-                    model=DOUBAO_TTS_MODEL,
-                    resource_id=DOUBAO_TTS_MODEL,
-                    voice=voice.speaker_id,
-                    profile_id=voice.profile_id,
-                    provider="volcengine_doubao",
-                    voice_kind="designed",
-                )
-                tts.bind_fence(fence)
-                tts.apply_speech_plan(
-                    emotion="sad",
-                    rate=0.95,
-                    instruction="温柔关切地承接，略带伤感，但不要播报腔。",
-                    pitch=-1,
-                    reference_contexts=("用户：今天有点难过，想找人聊聊。",),
-                    fence=fence,
-                )
-                styled = await tts.synthesize_stream_text([styled_text], fence=fence)
-                _validate_doubao_result(
-                    styled.pcm,
-                    styled.words,
-                    sample_rate=cfg.sample_rate,
-                    num_channels=1,
-                    alignment_status=styled.alignment_status,
-                )
-                style_alignment.append(f"{voice.profile_id}:{styled.alignment_status}")
-                samples.append((styled.pcm, ("在这里", "慢慢说"), reference_markers))
+        # Every persona voice must exist on the model: a vendor rename would
+        # otherwise surface only as a silent fallback in a live session.
+        voice_alignment: list[str] = []
+        for index, voice in enumerate(QWEN_VOICE_CATALOG, 2):
+            fence = GenerationFence(f"provider-smoke-tts-{voice.profile_id}", index, index, 0)
+            tts.apply_voice_profile(
+                model=TTS_MODEL,
+                resource_id=TTS_MODEL,
+                voice=voice.speaker_id,
+                profile_id=voice.profile_id,
+                provider=TTS_PROVIDER,
+                voice_kind="designed",
+            )
+            tts.bind_fence(fence)
+            tts.apply_speech_plan(emotion="sad", rate=0.95, fence=fence)
+            styled = await tts.synthesize_stream_text(["我在这里，慢慢说就好。"], fence=fence)
+            _validate_tts_result(
+                styled.pcm,
+                styled.words,
+                sample_rate=cfg.sample_rate,
+                num_channels=1,
+                alignment_status=styled.alignment_status,
+            )
+            voice_alignment.append(f"{voice.profile_id}:{styled.alignment_status}")
+            samples.append((styled.pcm, ("在这里", "慢慢说"), ()))
 
-        session_started = asyncio.Event()
+        task_started = asyncio.Event()
         tts.set_trace_callback(
             lambda name, _status, _detail: (
-                session_started.set() if name == "doubao_session_started" else None
+                task_started.set() if name == "cosyvoice_task_started" else None
             )
         )
         cancel = asyncio.Event()
-        cancel_fence = GenerationFence("provider-smoke-doubao-cancel", 8, 8, 0)
+        cancel_fence = GenerationFence("provider-smoke-tts-cancel", 8, 8, 0)
         cancel_count = tts.pool.metrics.get(
             "tts_connections_discarded_total",
             {"reason": "cancel"},
@@ -151,53 +141,36 @@ async def smoke_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]
             )
         )
         try:
-            await asyncio.wait_for(
-                session_started.wait(),
-                timeout=cfg.connect_timeout_s + 1,
-            )
-            active = next(iter(tts.pool.active_by_fence.values()), None)
-            if active is None or not active.session_id:
-                raise AssertionError("Doubao cancel probe found no active session")
+            await asyncio.wait_for(task_started.wait(), timeout=cfg.connect_timeout_s + 1)
+            if not tts.pool.active_by_fence:
+                raise AssertionError("TTS cancel probe found no active task")
             cancel.set()
-            canceled = await asyncio.wait_for(
-                cancel_task,
-                timeout=cfg.connect_timeout_s + 1,
-            )
+            canceled = await asyncio.wait_for(cancel_task, timeout=cfg.connect_timeout_s + 1)
         finally:
             if not cancel_task.done():
                 cancel.set()
                 cancel_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await cancel_task
-        if not canceled.discarded:
-            raise AssertionError("Doubao cancel probe did not discard the active session")
-        if not active.cancel_sent:
-            raise AssertionError("Doubao cancel probe did not write CancelSession")
-        if not active.closed or any(
-            connection is active for connection in tts.pool.active_by_fence.values()
-        ):
-            raise AssertionError("Doubao cancel probe did not evict the active connection")
+        if not canceled.discarded or tts.pool.active_by_fence:
+            raise AssertionError("TTS cancel probe did not discard the active connection")
         if (
-            tts.pool.metrics.get(
-                "tts_connections_discarded_total",
-                {"reason": "cancel"},
-            )
+            tts.pool.metrics.get("tts_connections_discarded_total", {"reason": "cancel"})
             != cancel_count + 1
         ):
-            raise AssertionError("Doubao cancel probe did not send CancelSession")
+            raise AssertionError("TTS cancel probe did not record the cancel discard")
     finally:
         await tts.aclose()
     print(
-        f"Doubao smoke: PASS (model={cfg.resource_id} voice={cfg.speaker} "
-        "pcm_s16le/24000Hz/mono + timestamps + CancelSession/eviction"
-        f" + style_context={'all_5_voices' if cfg.style_control_enabled else 'off'}"
-        f" alignment={','.join(style_alignment) if style_alignment else 'baseline'})"
+        f"Qwen-Audio TTS smoke: PASS (model={cfg.model} voice={cfg.voice} "
+        "pcm_s16le/24000Hz/mono + timestamps + cancel/eviction"
+        f" + persona_voices={','.join(voice_alignment)})"
     )
     resampled = []
     for pcm, expected_markers, forbidden_markers in samples:
         pcm_16k = audioop.ratecv(pcm, 2, 1, cfg.sample_rate, 16000, None)[0]
         if len(pcm_16k) % 2:
-            raise AssertionError("Doubao resampled PCM is not frame-aligned signed 16-bit")
+            raise AssertionError("TTS resampled PCM is not frame-aligned signed 16-bit")
         resampled.append((pcm_16k, expected_markers, forbidden_markers))
     return resampled
 
@@ -365,23 +338,15 @@ async def main() -> int:
         return 1 if required else 0
     settings = AgentSettings()
     missing = [name for name in ("DASHSCOPE_API_KEY",) if not os.getenv(name)]
-    has_doubao_auth = bool(os.getenv("DOUBAO_TTS_API_KEY")) or bool(
-        os.getenv("DOUBAO_TTS_APP_ID") and os.getenv("DOUBAO_TTS_ACCESS_TOKEN")
-    )
-    if not has_doubao_auth:
-        missing.append("DOUBAO_TTS_AUTH")
     if settings.llm_provider == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
         missing.append("DEEPSEEK_API_KEY")
     if missing:
         message = "provider_smoke_test SKIP: missing " + ", ".join(missing)
         print(message)
         return 1 if required else 0
-    if required and os.getenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").lower() != "true":
-        print("provider_smoke_test FAIL: Doubao style control is required but disabled")
-        return 1
     try:
         await smoke_realtime_search(settings)
-        samples = await smoke_doubao()
+        samples = await smoke_qwen_tts()
         for pcm_16k, expected_markers, forbidden_markers in samples:
             await smoke_funasr(
                 pcm_16k,
@@ -395,7 +360,7 @@ async def main() -> int:
         return 1
     print(
         "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, "
-        f"{llm_label}, Doubao, InterruptSemantic"
+        f"{llm_label}, QwenAudioTTS, InterruptSemantic"
     )
     return 0
 

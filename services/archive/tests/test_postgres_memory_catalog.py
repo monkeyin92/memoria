@@ -299,6 +299,7 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
                 account_id=account_id,
                 speaker_class="owner",
                 text="城市经历",
+                include_candidates=True,
             )
         )
         vectors = await connection.fetch(
@@ -363,7 +364,12 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
 
         report = await catalog.compile_pending(limit=1000)
         result = await catalog.search(
-            MemorySearchQuery(account_id=account_id, speaker_class="owner", text="家训")
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="家训",
+                include_candidates=True,
+            )
         )
 
         assert report.compiled_events >= 1
@@ -432,7 +438,12 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
         await old_catalog.compile_pending(limit=1000)
 
         result = await upgraded_catalog.search(
-            MemorySearchQuery(account_id=account_id, speaker_class="owner", text="家训")
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="家训",
+                include_candidates=True,
+            )
         )
 
         assert result.items
@@ -593,11 +604,19 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
         )
 
     report = await catalog.compile_pending(limit=1000)
+    default_search = await catalog.search(
+        MemorySearchQuery(
+            account_id=account_id,
+            speaker_class="owner",
+            text="家训",
+        )
+    )
     search = await catalog.search(
         MemorySearchQuery(
             account_id=account_id,
             speaker_class="owner",
             text="家训",
+            include_candidates=True,
         )
     )
     guest_search = await catalog.search(
@@ -643,6 +662,7 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
 
     assert report.compiled_events >= 3
     assert report.ignored_events >= 1
+    assert default_search.items == ()
     assert search.items[0].source_event_id == "postgres-memory-0"
     assert guest_search.items == ()
     assert [(item.display_name, item.relationship_to_owner) for item in people] == [
@@ -754,6 +774,15 @@ async def test_postgres_person_alias_is_recallable_and_status_gated() -> None:
             )
         )
         assert context.items == ()
+
+        default_search = await catalog.search(
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text="阿梅是谁？",
+            )
+        )
+        assert default_search.items == ()
 
         search = await catalog.search(
             MemorySearchQuery(

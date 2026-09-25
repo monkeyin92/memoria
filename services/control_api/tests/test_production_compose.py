@@ -152,7 +152,7 @@ def test_miniprogram_media_route_is_explicitly_legacy_rollback_only() -> None:
     https = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     smoke = (ROOT / "scripts" / "smoke_server_deployment.sh").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
 
     assert media.count("location = /memoria-mini-media/v1/mini-program/media {") == 1
     assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
@@ -354,7 +354,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
 
 
 def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:
-    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
 
     assert "DATA_COMPOSE_DIR=/opt/memoria/current/infra" in runbook
     network_create = "docker compose -f docker-compose.production.yml create --no-build"
@@ -398,7 +398,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
     assert "-e MEMORIA_PROVIDER_SMOKE_REQUIRED=true" in script
     assert 'provider_output="$(run_required_provider_smoke 2>&1)"' in script
-    assert "Doubao, InterruptSemantic" in script
+    assert "QwenAudioTTS, InterruptSemantic" in script
+    assert "Doubao" not in script
     assert 'agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"' in script
     assert '"$agent_env"' in script
     assert "run_agent -m scripts.verify_env" in script
@@ -442,7 +443,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
 
 def test_memory_projection_rebuild_uses_the_control_api_module_entrypoint() -> None:
-    archive_runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
+    archive_runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
     production_runbook = archive_runbook
     module_entrypoint = "-m scripts.rebuild_memory_projections --confirm-rebuild"
 
@@ -467,7 +468,7 @@ def test_current_compose_never_builds_the_removed_web_client() -> None:
     assert "Dockerfile.web" not in compose
 
 
-def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_previews() -> None:
+def test_runtime_images_include_shared_services_without_retired_voice_registries() -> None:
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
@@ -477,15 +478,10 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     # a transitive runtime module.
     assert "COPY services ./services" in agent_dockerfile
     assert delta_builder.count("COPY services ./services") == 3
-    doubao_registry = "COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json"
-    cosyvoice_registry = (
-        "COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json"
-    )
-    assert doubao_registry in agent_dockerfile
-    assert doubao_registry in delta_builder
-    assert cosyvoice_registry in agent_dockerfile
-    assert cosyvoice_registry in control_dockerfile
-    assert delta_builder.count(cosyvoice_registry) == 2
+    # Qwen-Audio system voices are fixed in code; the Doubao and CosyVoice
+    # voice registries are no longer shipped in any image.
+    for image_recipe in (agent_dockerfile, control_dockerfile, delta_builder):
+        assert "infra/voices" not in image_recipe
     assert "COPY infra/kws/keywords.txt ./infra/kws/keywords.txt" in delta_builder
     assert "COPY services/speaker_model /app/services/speaker_model" in delta_builder
     for dependency_input in (
@@ -539,7 +535,7 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "trap rollback ERR" in deploy
     assert "runtime changes escape the Agent component" in deploy
     assert "packages/*|services/common/*)" in deploy
-    assert "infra/voices/*|infra/kws/*|infra/Dockerfile.agent)" in deploy
+    assert "infra/kws/*|infra/Dockerfile.agent)" in deploy
     assert "scripts/verify_env.py|scripts/livekit_smoke_test.py" in deploy
     assert "compose_sha256=$compose_sha" in deploy
     assert "Compose base snapshot was pruned" in deploy
@@ -700,6 +696,20 @@ def test_production_example_declares_control_only_object_read_keyrings() -> None
     assert "MEMORIA_ARCHIVE_OBJECT_READ_KEYS=" in example
 
 
+def test_production_example_pins_the_qwen_audio_tts_identity() -> None:
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+    values = dict(
+        line.split("=", 1)
+        for line in example.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+
+    assert values["TTS_PROVIDER"] == "qwen_audio"
+    assert values["MEMORIA_VOICE_CLONE_PROVIDER"] == "alibaba_model_studio"
+    assert values["MEMORIA_VOICE_TARGET_MODEL"] == "qwen-audio-3.1-tts-flash"
+    assert not [key for key in values if "DOUBAO" in key]
+
+
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
     control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
         {
@@ -731,11 +741,9 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_PERSONA_ENABLED": "false",
             "MEMORIA_VOICE_PROFILE_ENABLED": "false",
             "DASHSCOPE_API_KEY": "dashscope",
-            "TTS_PROVIDER": "doubao",
-            "DOUBAO_TTS_APP_ID": "doubao-app-id",
-            "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
-            "DOUBAO_TTS_CONNECT_TIMEOUT_S": "5",
-            "DOUBAO_TTS_STYLE_CONTROL_ENABLED": "true",
+            "TTS_PROVIDER": "qwen_audio",
+            "COSYVOICE_CONNECT_TIMEOUT_S": "5",
+            "COSYVOICE_POOL_SIZE": "2",
             "FUNASR_MODEL": "fun-asr-realtime",
             "FUNASR_CONTEXT_ENABLED": "false",
             "FUNASR_VOCABULARY_ID": "vocab-control-commands",
@@ -748,16 +756,13 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["WECHAT_MINIPROGRAM_APPSECRET"] == "wechat-secret"
     assert control["MEMORIA_WECHAT_IDENTITY_SECRET"] == "wechat-identity-secret"
     assert control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"] == "speaker-model-token"
-    assert control["TTS_PROVIDER"] == "doubao"
-    assert agent["TTS_PROVIDER"] == "doubao"
+    assert control["TTS_PROVIDER"] == "qwen_audio"
+    assert agent["TTS_PROVIDER"] == "qwen_audio"
     assert agent["DASHSCOPE_API_KEY"] == "dashscope"
-    assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
-    assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
-    assert agent["DOUBAO_TTS_CONNECT_TIMEOUT_S"] == "5"
-    assert agent["DOUBAO_TTS_STYLE_CONTROL_ENABLED"] == "true"
-    assert "DOUBAO_TTS_APP_ID" not in control
-    assert "DOUBAO_TTS_ACCESS_TOKEN" not in control
-    assert "DOUBAO_TTS_API_KEY" not in control
+    assert agent["COSYVOICE_CONNECT_TIMEOUT_S"] == "5"
+    assert agent["COSYVOICE_POOL_SIZE"] == "2"
+    assert "COSYVOICE_CONNECT_TIMEOUT_S" not in control
+    assert "COSYVOICE_POOL_SIZE" not in control
     assert speaker_model == {"MEMORIA_SPEAKER_MODEL_TOKEN": "speaker-model-token"}
     assert media_edge == {}
 
@@ -958,36 +963,23 @@ def test_production_env_split_rejects_unused_doubao_secret_key() -> None:
 
 
 @pytest.mark.parametrize(
-    "auth",
+    "retired",
     [
-        {
-            "DOUBAO_TTS_API_KEY": "api-key",
-            "DOUBAO_TTS_APP_ID": "app-id",
-            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
-        },
-        {"DOUBAO_TTS_APP_ID": "app-id"},
-        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+        {"DOUBAO_TTS_API_KEY": "api-key"},
+        {"DOUBAO_TTS_APP_ID": "app-id", "DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+        {"MEMORIA_DOUBAO_VOICE_API_KEY": "clone-key"},
+        {"DOUBAO_TTS_VOICE_REGISTRY": "/app/infra/voices/doubao_voice_ids.json"},
     ],
 )
-def test_production_env_split_rejects_ambiguous_or_partial_doubao_auth(
-    auth: dict[str, str],
+def test_production_env_split_rejects_every_retired_doubao_key(
+    retired: dict[str, str],
 ) -> None:
-    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
-        split_env(auth)
+    with pytest.raises(ValueError) as caught:
+        split_env({"TTS_PROVIDER": "qwen_audio", **retired})
 
-
-@pytest.mark.parametrize("runtime_secret", ["DOUBAO_TTS_API_KEY", "DOUBAO_TTS_ACCESS_TOKEN"])
-def test_production_env_split_rejects_shared_clone_and_runtime_tts_secret(
-    runtime_secret: str,
-) -> None:
-    values = {
-        "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
-        runtime_secret: "shared-key",
-    }
-    if runtime_secret == "DOUBAO_TTS_ACCESS_TOKEN":
-        values["DOUBAO_TTS_APP_ID"] = "doubao-app-id"
-    with pytest.raises(ValueError, match="must be independent"):
-        split_env(values)
+    message = str(caught.value)
+    assert message == "retired Doubao keys must not be deployed: " + ", ".join(sorted(retired))
+    assert all(value not in message for value in retired.values())
 
 
 def test_production_env_split_rejects_the_legacy_all_access_token() -> None:
@@ -1019,7 +1011,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     legacy = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
 
     # Direct device WSS is published loopback-only to a NEW media-edge port and
     # never reuses the legacy gateway port 8793.

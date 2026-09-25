@@ -58,6 +58,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 media_pb2: Any = _media_pb2
 
+# Speech evidence a rejected rescue final must carry before its farewell may
+# end the session.  The rescue entry gate (SenseVoice min_rms/min_peak_abs)
+# only screens out digital silence; room noise sits far above it.  Run
+# 2026-09-24 session b18fede9: while a weather answer waited, SenseVoice
+# decoded three characters from room noise (rms 389, peak 2616; FunASR
+# silent) and the farewell cancelled the answer.  Real owner speech in the
+# same run measured rms >= 2812 with clipped peaks.  Dropping a real but
+# quiet farewell only defers standby to the owner-silence timeout; honouring
+# a hallucinated one loses the pending reply, so this gate leans to reject.
+_CLOSE_RECOVERY_MIN_RESCUE_RMS = 1_000
+_CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
+
 
 def _preferred_clock_fact_text(
     context: _MediaVoiceSession,
@@ -498,10 +510,12 @@ class MediaSessionCommitMixin:
         ):
             logger.warning(
                 "media close recovery rejected: low-energy rescue final "
-                "session=%s text_len=%s reason=%s",
+                "session=%s text_len=%s reason=%s rescue_rms=%s rescue_peak_abs=%s",
                 session_id,
                 len(text),
                 reason.value,
+                result.rescue_rms,
+                result.rescue_peak_abs,
             )
             return
         committed = context.asr.last_committed_sample
@@ -630,13 +644,28 @@ class MediaSessionCommitMixin:
         result: ASRResult,
         reason: ASRDecisionReason,
     ) -> bool:
-        """Reject only overlap rescue finals proven to come from near-silence."""
+        """Reject rescue farewells whose audio lacks speech evidence.
+
+        Both recovered rejection shapes qualify: a straddling rescue final is
+        just as unverified as an overlapping one.  Prefer the energy measured
+        on the rescued segment itself; the provider's current task snapshot
+        is a fallback that may already describe a later task.
+        """
 
         if (
-            reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+            reason
+            not in (
+                ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
+                ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING,
+            )
             or not result.rescue_synthesized
         ):
             return False
+        if result.rescue_rms is not None and result.rescue_peak_abs is not None:
+            return (
+                result.rescue_rms < _CLOSE_RECOVERY_MIN_RESCUE_RMS
+                and result.rescue_peak_abs < _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS
+            )
         snapshot_getter = getattr(context.provider, "current_asr_audio_task_snapshot", None)
         snapshot = snapshot_getter() if callable(snapshot_getter) else None
         if snapshot is None or snapshot.task_epoch != result.task_epoch:

@@ -226,6 +226,7 @@ async def test_owner_evidence_builds_traceable_timeline_and_knowledge_while_gues
             account_id="account-memory",
             speaker_class="owner",
             text="家训",
+            include_candidates=True,
         )
     )
     guest_search = await catalog.search(
@@ -351,6 +352,125 @@ async def test_claim_review_controls_context_and_retraction_propagates_to_search
         ("episode", "confirmed"),
     }
     assert after_retract.items == ()
+
+
+@pytest.mark.asyncio
+async def test_search_defaults_to_confirmed_non_conflicting_claims(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "candidate-search.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(archive, event_id="search-age-60", text="请记住我今年60岁。")
+    await _record(archive, event_id="search-age-61", text="请记住我今年61岁。", minute=1)
+    catalog = MemoryCatalog.sqlite(path, extractor=SingleValueClaimExtractor())
+    await catalog.compile_pending()
+
+    default_search = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+        )
+    )
+    candidate_search = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+            include_candidates=True,
+        )
+    )
+
+    assert default_search.items == ()
+    assert {
+        (item.source_event_id, item.status, item.conflict_state)
+        for item in candidate_search.items
+    } == {
+        ("search-age-60", "candidate", "active"),
+        ("search-age-61", "candidate", "active"),
+    }
+
+    claims = {
+        item.source_event_id: item.item_id
+        for item in await catalog.review_queue(account_id="account-memory")
+    }
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claims["search-age-60"],
+            action="confirm",
+        )
+    )
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claims["search-age-61"],
+            action="dispute",
+        )
+    )
+
+    conflicted_default = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+        )
+    )
+    conflicted_context = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+            include_candidates=True,
+        )
+    )
+    conflicted_opt_in = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+            include_candidates=True,
+        )
+    )
+
+    assert conflicted_default.items == ()
+    assert conflicted_context.items == ()
+    assert {
+        (item.source_event_id, item.status, item.conflict_state)
+        for item in conflicted_opt_in.items
+    } == {
+        ("search-age-60", "confirmed", "active"),
+        ("search-age-61", "disputed", "active"),
+    }
+
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claims["search-age-61"],
+            action="retract",
+        )
+    )
+    resolved_default = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+        )
+    )
+    resolved_context = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            kinds=("claim",),
+        )
+    )
+
+    assert [(item.source_event_id, item.status, item.conflict_state) for item in resolved_default.items] == [
+        ("search-age-60", "confirmed", "none")
+    ]
+    assert [(item.source_event_id, item.status) for item in resolved_context.items] == [
+        ("search-age-60", "confirmed")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1227,6 +1347,7 @@ async def test_failed_compilation_retries_idempotently_without_duplicate_project
             speaker_class="owner",
             text="先听完",
             kinds=("claim",),
+            include_candidates=True,
         )
     )
 
@@ -1326,6 +1447,7 @@ async def test_related_turns_share_an_episode_but_keep_individual_evidence(
                 account_id="account-memory",
                 speaker_class="owner",
                 kinds=("episode",),
+                include_candidates=True,
             )
         )
     ).items[0]

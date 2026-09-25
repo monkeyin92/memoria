@@ -27,7 +27,7 @@ def _profile(
         "version_number": 1,
         "provider": "alibaba_model_studio",
         "provider_region": "cn-beijing",
-        "target_model": "cosyvoice-v3.5-flash",
+        "target_model": "qwen-audio-3.1-tts-flash",
         "provider_voice_id": provider_voice_id,
         "status": status,
         "evaluation_status": "pending",

@@ -13,6 +13,7 @@ from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.common.companions import designed_voice_speaker_sha256
+from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -62,15 +63,15 @@ def _self_preview_voice_policy() -> ModePolicy:
                 {
                     "voice_profile_id": "personal-voice-1",
                     "voice_profile_version": "1",
-                    "voice_provider": "volcengine_doubao",
-                    "voice_model": "seed-icl-2.0",
-                    "voice_resource_id": "seed-icl-2.0",
-                    "voice_provider_expires_at": "2026-08-01T00:00:00+00:00",
+                    "voice_provider": TTS_PROVIDER,
+                    "voice_model": TTS_MODEL,
+                    "voice_resource_id": TTS_MODEL,
+                    "voice_provider_expires_at": None,
                     "voice_speaker_sha256": "a" * 64,
                     "fallback_voice_profile_id": "bright_peer",
-                    "fallback_voice_provider": "volcengine_doubao",
-                    "fallback_voice_model": "seed-tts-2.0",
-                    "fallback_voice_resource_id": "seed-tts-2.0",
+                    "fallback_voice_provider": TTS_PROVIDER,
+                    "fallback_voice_model": TTS_MODEL,
+                    "fallback_voice_resource_id": TTS_MODEL,
                 }.items()
             )
         ),
@@ -90,17 +91,17 @@ def _legacy_voice_policy(*, voice_allowed: bool) -> ModePolicy:
                 {
                     "voice_profile_id": "personal-voice-1" if voice_allowed else None,
                     "voice_profile_version": "1" if voice_allowed else None,
-                    "voice_provider": "volcengine_doubao" if voice_allowed else None,
-                    "voice_model": "seed-icl-2.0" if voice_allowed else None,
-                    "voice_resource_id": "seed-icl-2.0" if voice_allowed else None,
+                    "voice_provider": TTS_PROVIDER if voice_allowed else None,
+                    "voice_model": TTS_MODEL if voice_allowed else None,
+                    "voice_resource_id": TTS_MODEL if voice_allowed else None,
                     "voice_provider_expires_at": (
                         "2026-08-01T00:00:00+00:00" if voice_allowed else None
                     ),
                     "voice_speaker_sha256": "a" * 64 if voice_allowed else None,
                     "fallback_voice_profile_id": "bright_peer",
-                    "fallback_voice_provider": "volcengine_doubao",
-                    "fallback_voice_model": "seed-tts-2.0",
-                    "fallback_voice_resource_id": "seed-tts-2.0",
+                    "fallback_voice_provider": TTS_PROVIDER,
+                    "fallback_voice_model": TTS_MODEL,
+                    "fallback_voice_resource_id": TTS_MODEL,
                     "legacy_voice_allowed": voice_allowed,
                 }.items()
             )
@@ -281,14 +282,14 @@ def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
     assert runtime.bind_generation_voice(
         fence,
         profile_id="warm_companion",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=speaker_sha256,
         voice_kind="designed",
     )
     snapshot = runtime.generation_voice_for(fence)
     assert snapshot is not None
     assert snapshot.profile_id == "warm_companion"
-    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.resource_id == TTS_MODEL
     assert snapshot.voice_kind == "designed"
     assert snapshot.speaker_sha256 == speaker_sha256
     assert not hasattr(snapshot, "speaker")
@@ -297,7 +298,7 @@ def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
     assert not runtime.bind_generation_voice(
         stale,
         profile_id="stale",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="b" * 64,
         voice_kind="designed",
     )
@@ -325,35 +326,42 @@ def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallb
     assert not runtime.bind_generation_voice(
         fence,
         profile_id="personal-voice-1",
-        resource_id="seed-icl-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="b" * 64,
         voice_kind="personal",
     )
     assert runtime.bind_generation_voice(
         fence,
         profile_id="personal-voice-1",
-        resource_id="seed-icl-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="a" * 64,
         voice_kind="personal",
     )
     assert not runtime.bind_generation_voice(
         fence,
+        profile_id="personal-voice-1",
+        resource_id=TTS_MODEL,
+        speaker_sha256="a" * 64,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
         profile_id="warm_companion",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="c" * 64,
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
         fence,
         profile_id=None,
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="c" * 64,
         voice_kind="designed",
     )
     assert runtime.bind_generation_voice(
         fence,
         profile_id="bright_peer",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=designed_voice_speaker_sha256("bright_peer") or "",
         voice_kind="designed",
     )
@@ -378,21 +386,21 @@ def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fall
     assert runtime.bind_generation_voice(
         fence,
         profile_id="personal-voice-1",
-        resource_id="seed-icl-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="a" * 64,
         voice_kind="personal",
     )
     assert runtime.bind_generation_voice(
         fence,
         profile_id="bright_peer",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=designed_voice_speaker_sha256("bright_peer") or "",
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
         fence,
         profile_id="other-designed",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="b" * 64,
         voice_kind="designed",
     )
@@ -401,7 +409,7 @@ def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fall
     assert not runtime.bind_generation_voice(
         fence,
         profile_id="personal-voice-1",
-        resource_id="seed-icl-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="a" * 64,
         voice_kind="personal",
     )
@@ -417,7 +425,7 @@ def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() 
     assert runtime.bind_generation_voice(
         fence,
         profile_id=None,
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
@@ -429,21 +437,21 @@ def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() 
     assert not runtime.bind_generation_voice(
         fence,
         profile_id="warm_companion",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
         fence,
         profile_id=None,
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256="f" * 64,
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
         fence,
         profile_id="personal-voice-1",
-        resource_id="seed-icl-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="personal",
     )
@@ -462,7 +470,7 @@ def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() 
     assert not privileged_runtime.bind_generation_voice(
         privileged_runtime.fence,
         profile_id=None,
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
@@ -471,7 +479,7 @@ def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() 
     assert not runtime.bind_generation_voice(
         fence,
         profile_id=None,
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
@@ -495,25 +503,25 @@ def test_companion_without_style_binds_catalog_designed_voice() -> None:
     assert runtime.bind_generation_voice(
         runtime.fence,
         profile_id="warm_companion",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
         runtime.fence,
         profile_id="not-a-catalog-voice",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=approved_hash,
         voice_kind="designed",
     )
 
 
-def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> None:
+def test_companion_frozen_personal_clone_binds_without_voice_clone_use() -> None:
     from dataclasses import replace
 
-    voice_id = "cosyvoice-v3.5-flash-clone-owner001"
+    voice_id = "qwen-audio-3.1-tts-flash-owner001-abc123"
     speaker_sha256 = hashlib.sha256(voice_id.encode()).hexdigest()
-    runtime = DuplexRuntime.create(session_id="session-companion-cosyvoice-clone")
+    runtime = DuplexRuntime.create(session_id="session-companion-personal-clone")
     bind_owner_policy(runtime, include_voice_clone=False)
     runtime.set_mode_policy(
         replace(
@@ -523,14 +531,14 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
                     {
                         "voice_profile_id": "voice-profile-personal",
                         "voice_profile_version": "2",
-                        "voice_provider": "alibaba_model_studio",
-                        "voice_model": "cosyvoice-v3.5-flash",
-                        "voice_resource_id": "cosyvoice-v3.5-flash",
+                        "voice_provider": TTS_PROVIDER,
+                        "voice_model": TTS_MODEL,
+                        "voice_resource_id": TTS_MODEL,
                         "voice_speaker_sha256": speaker_sha256,
                         "fallback_voice_profile_id": "bright_peer",
-                        "fallback_voice_provider": "volcengine_doubao",
-                        "fallback_voice_model": "seed-tts-2.0",
-                        "fallback_voice_resource_id": "seed-tts-2.0",
+                        "fallback_voice_provider": TTS_PROVIDER,
+                        "fallback_voice_model": TTS_MODEL,
+                        "fallback_voice_resource_id": TTS_MODEL,
                     }.items()
                 )
             ),
@@ -540,7 +548,7 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
     assert runtime.bind_generation_voice(
         fence,
         profile_id="voice-profile-personal",
-        resource_id="cosyvoice-v3.5-flash",
+        resource_id=TTS_MODEL,
         speaker_sha256=speaker_sha256,
         voice_kind="personal",
     )

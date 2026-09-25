@@ -90,6 +90,8 @@ class MediaSessionInputMixin:
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
+        def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
+
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
         async def _retire_prepare_retry_before_new_vad(
@@ -185,6 +187,10 @@ class MediaSessionInputMixin:
         context.turn_retire_sample = None
         context.turn_endpoint_grace_deadline = None
         context.turn_endpoint_tail_deadline = None
+        if context.evidence_less_hold_since is not None:
+            # Resumed VAD resets the tail timeout above, but may only nudge,
+            # never lift, the cap on output waiting behind an empty turn.
+            self._arm_evidence_less_floor_hold(context)
         context.turn_start_sample = min(
             segment.capture_start_sample,
             context.turn_start_sample

@@ -40,6 +40,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     install_receipt_verifier,
 )
 from services.common.companions import designed_voice_speaker_sha256
+from services.common.voice_identity import TTS_MODEL
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -300,7 +301,7 @@ async def test_epoch_keyed_permission_caches_never_hit_old_subject(
     assert runtime.bind_generation_voice(
         old_fence,
         profile_id="warm_companion",
-        resource_id="seed-tts-2.0",
+        resource_id=TTS_MODEL,
         speaker_sha256=designed_voice_speaker_sha256("warm_companion") or "",
         voice_kind="designed",
     )
