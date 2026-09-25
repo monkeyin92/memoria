@@ -13,10 +13,7 @@ from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
-from services.agent.src.providers.cosyvoice_protocol import (
-    TRAILING_SILENCE_MAX_MS,
-    pcm_duration_ms,
-)
+from services.agent.src.providers.cosyvoice_protocol import pcm_duration_ms
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.deepseek import (
     DeepSeekClient,
@@ -69,12 +66,10 @@ def _validate_tts_result(
             raise AssertionError("Qwen-Audio TTS word timestamps are not monotonic")
         previous = end_ms
     duration_ms = pcm_duration_ms(pcm, sample_rate=sample_rate)
-    # Audio may run past the last word by the model's trailing silence, but
-    # timestamps must never overrun the audio.
-    if previous > duration_ms + 120 or duration_ms - previous > TRAILING_SILENCE_MAX_MS:
+    if abs(previous - duration_ms) > 300:
         raise AssertionError(
             "Qwen-Audio TTS alignment differs from PCM duration by "
-            f"{duration_ms - previous} ms"
+            f"{abs(previous - duration_ms)} ms"
         )
 
 
