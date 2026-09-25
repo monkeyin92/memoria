@@ -241,20 +241,43 @@ def compile_harness(work: pathlib.Path) -> pathlib.Path:
     source.write_text(HARNESS)
     binary = work / "harness"
     subprocess.run(
-        [compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", f"-I{BOARD_DIR}", str(source),
-         str(BOARD_DIR / "memoria_mascot_pack.cc"), str(BOARD_DIR / "memoria_mascot_scene.cc"),
-         "-lz", "-o", str(binary)],
+        [
+            compiler,
+            "-std=c++17",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            f"-I{BOARD_DIR}",
+            str(source),
+            str(BOARD_DIR / "memoria_mascot_pack.cc"),
+            str(BOARD_DIR / "memoria_mascot_scene.cc"),
+            "-lz",
+            "-o",
+            str(binary),
+        ],
         check=True,
     )
     return binary
 
 
-def run(binary: pathlib.Path, work: pathlib.Path, fps: int, frames_path: str,
-        timeline: list[tuple[int, str, str]] = TIMELINE, first: str = "starlight") -> dict:
+def run(
+    binary: pathlib.Path,
+    work: pathlib.Path,
+    fps: int,
+    frames_path: str,
+    timeline: list[tuple[int, str, str]] = TIMELINE,
+    first: str = "starlight",
+) -> dict:
     script = work / "timeline.txt"
-    script.write_text("".join(f"{ms} {cmd} {arg}\n".replace(" \n", "\n") for ms, cmd, arg in timeline))
-    result = subprocess.run([str(binary), str(ASSETS_DIR), str(script), frames_path, str(fps), first],
-                            capture_output=True, text=True)
+    script.write_text(
+        "".join(f"{ms} {cmd} {arg}\n".replace(" \n", "\n") for ms, cmd, arg in timeline)
+    )
+    result = subprocess.run(
+        [str(binary), str(ASSETS_DIR), str(script), frames_path, str(fps), first],
+        capture_output=True,
+        text=True,
+    )
     if result.returncode not in (0, 3):
         raise SystemExit(f"harness failed ({result.returncode}): {result.stderr}")
     return json.loads(result.stdout)
@@ -311,9 +334,27 @@ def main() -> int:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
         proc = subprocess.Popen(
-            [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
-             f"{SIZE}x{SIZE}", "-r", str(args.fps), "-i", "-", "-pix_fmt", "yuv420p", "-crf", "18",
-             str(out / "scene.mp4")],
+            [
+                ffmpeg,
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-s",
+                f"{SIZE}x{SIZE}",
+                "-r",
+                str(args.fps),
+                "-i",
+                "-",
+                "-pix_fmt",
+                "yuv420p",
+                "-crf",
+                "18",
+                str(out / "scene.mp4"),
+            ],
             stdin=subprocess.PIPE,
         )
         assert proc.stdin is not None

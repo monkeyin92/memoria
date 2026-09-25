@@ -39,7 +39,9 @@ BLINK_MOODS = ("default", "sad", "surprised", "thinking", "listening")
 # Moods the device can show while speaking; each gets an alternate mouth.
 TALK_MOODS = ("default", "happy", "sad", "surprised", "thinking")
 # Frames whose mouth is already open: their talk frame closes it instead.
-OPEN_MOUTH = {("taoxi", "default")} | {(c, m) for c in COMPANION_IDS for m in ("happy", "surprised")}
+OPEN_MOUTH = {("taoxi", "default")} | {
+    (c, m) for c in COMPANION_IDS for m in ("happy", "surprised")
+}
 SIZE = 512
 EDIT_SIZE = 1024
 
@@ -107,7 +109,9 @@ def cmd_jobs(work: pathlib.Path, only: set[str] | None = None) -> None:
 
     def add(name: str, prompt: str, ref: str) -> None:
         if only is None or name in only:
-            jobs.append([str(work / "raw" / f"{name}.png"), f"{EDIT_SIZE}x{EDIT_SIZE}", prompt, ref])
+            jobs.append(
+                [str(work / "raw" / f"{name}.png"), f"{EDIT_SIZE}x{EDIT_SIZE}", prompt, ref]
+            )
 
     for companion in COMPANION_IDS:
         for mood in BLINK_MOODS:
@@ -145,8 +149,16 @@ def _scaled(edit_full: Image.Image, scale: float) -> np.ndarray:
 def _shift(image: np.ndarray, dx: int, dy: int) -> np.ndarray:
     out = np.zeros_like(image)
     height, width = image.shape[:2]
-    ys, yd = (slice(0, height - dy), slice(dy, height)) if dy >= 0 else (slice(-dy, height), slice(0, height + dy))
-    xs, xd = (slice(0, width - dx), slice(dx, width)) if dx >= 0 else (slice(-dx, width), slice(0, width + dx))
+    ys, yd = (
+        (slice(0, height - dy), slice(dy, height))
+        if dy >= 0
+        else (slice(-dy, height), slice(0, height + dy))
+    )
+    xs, xd = (
+        (slice(0, width - dx), slice(dx, width))
+        if dx >= 0
+        else (slice(-dx, width), slice(0, width + dx))
+    )
     out[yd, xd] = image[ys, xs]
     return out
 
@@ -236,7 +248,9 @@ def composite_one(source_path: pathlib.Path, edit_path: pathlib.Path) -> tuple[I
 
     out = source.copy()
     out[..., :3] = source[..., :3] * (1.0 - mask) + edit[..., :3] * mask
-    residual = float(np.abs(_luma(edit[..., :3]) - source_luma)[interior & (mask[..., 0] < 0.05)].mean())
+    residual = float(
+        np.abs(_luma(edit[..., :3]) - source_luma)[interior & (mask[..., 0] < 0.05)].mean()
+    )
     stats = {
         "scale": scale,
         "shift": (dx, dy),
@@ -267,16 +281,34 @@ def cmd_composite(work: pathlib.Path, names: list[str] | None = None) -> None:
             print(name, stats)
         name = f"{companion}_greeting"
         if (not names or name in names) and (raw / f"{name}.png").exists():
-            greeting = Image.open(raw / f"{name}.png").convert("RGBA").resize((SIZE, SIZE), Image.LANCZOS)
+            greeting = (
+                Image.open(raw / f"{name}.png").convert("RGBA").resize((SIZE, SIZE), Image.LANCZOS)
+            )
             greeting.save(target_dir / "greeting.png", optimize=True)
             print(name, "saved")
     (work / "composite-report.json").write_text(json.dumps(report, indent=2))
 
 
 def cmd_sheet(out: pathlib.Path) -> None:
-    columns = ["default", "default-blink", "default-talk", "happy", "happy-talk", "sad", "sad-blink",
-               "sad-talk", "surprised", "surprised-blink", "surprised-talk", "thinking",
-               "thinking-blink", "thinking-talk", "listening", "listening-blink", "greeting"]
+    columns = [
+        "default",
+        "default-blink",
+        "default-talk",
+        "happy",
+        "happy-talk",
+        "sad",
+        "sad-blink",
+        "sad-talk",
+        "surprised",
+        "surprised-blink",
+        "surprised-talk",
+        "thinking",
+        "thinking-blink",
+        "thinking-talk",
+        "listening",
+        "listening-blink",
+        "greeting",
+    ]
     cell = 150
     sheet = Image.new("RGB", (cell * len(columns), cell * len(COMPANION_IDS)), (238, 230, 218))
     for row, companion in enumerate(COMPANION_IDS):

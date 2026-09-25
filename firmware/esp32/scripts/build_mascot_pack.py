@@ -38,8 +38,14 @@ BOARD_DIR = HERE.parents[1] / "overlay" / "files" / "main" / "boards" / "memoria
 OUT_DIR = BOARD_DIR / "assets"
 BRAND_FONT_CANDIDATES = (
     # Montserrat is OFL-licensed and ships with the LVGL component.
-    HERE.parents[1] / ".cache" / "upstream" / "managed_components" / "lvgl__lvgl" / "scripts"
-    / "built_in_font" / "Montserrat-Medium.ttf",
+    HERE.parents[1]
+    / ".cache"
+    / "upstream"
+    / "managed_components"
+    / "lvgl__lvgl"
+    / "scripts"
+    / "built_in_font"
+    / "Montserrat-Medium.ttf",
 )
 
 MAGIC = b"MMP1"
@@ -125,7 +131,9 @@ def _quantize(pixels: np.ndarray, keep: np.ndarray | None = None) -> tuple[np.nd
     if chosen.shape[0] == 0:
         return indices.reshape(height, width), np.zeros((0, 4), dtype=np.uint8)
     strip = Image.fromarray(chosen.reshape(1, -1, 4), "RGBA")
-    quantized = strip.quantize(colors=255, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    quantized = strip.quantize(
+        colors=255, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE
+    )
     palette = np.asarray(quantized.getpalette(rawmode="RGBA"), dtype=np.uint8).reshape(-1, 4)
     used = np.asarray(quantized, dtype=np.uint8).reshape(-1)
     count = int(used.max()) + 1
@@ -135,7 +143,9 @@ def _quantize(pixels: np.ndarray, keep: np.ndarray | None = None) -> tuple[np.nd
 
 def _encode(indices: np.ndarray, palette: np.ndarray) -> tuple[bytes, bytes]:
     colours = _rgb565(palette[:, :3])
-    table = b"".join(struct.pack("<HBB", int(c), int(a), 0) for c, a in zip(colours, palette[:, 3], strict=True))
+    table = b"".join(
+        struct.pack("<HBB", int(c), int(a), 0) for c, a in zip(colours, palette[:, 3], strict=True)
+    )
     return table, zlib.compress(indices.tobytes(), 9)
 
 
@@ -177,12 +187,16 @@ def build_companion(companion: str) -> bytes:
             indices, palette = _quantize(crop, keep=~changed[y0:y1, x0:x1])
             base_id = FRAME_ID[base]
         table, stream = _encode(indices, palette)
-        entries.append((FRAME_ID[name], base_id, len(palette), x0, y0, x1 - x0, y1 - y0, len(stream)))
+        entries.append(
+            (FRAME_ID[name], base_id, len(palette), x0, y0, x1 - x0, y1 - y0, len(stream))
+        )
         blobs.append(table + stream)
 
     offset = HEADER.size + ENTRY.size * len(entries)
     table_bytes = b""
-    for (frame_id, base_id, colours, x, y, w, h, stream_size), blob in zip(entries, blobs, strict=True):
+    for (frame_id, base_id, colours, x, y, w, h, stream_size), blob in zip(
+        entries, blobs, strict=True
+    ):
         palette_bytes = colours * 4
         table_bytes += ENTRY.pack(frame_id, base_id, colours, x, y, w, h, offset, stream_size, 0)
         offset += palette_bytes + stream_size
@@ -204,6 +218,40 @@ def build_companion(companion: str) -> bytes:
         b"\0" * 12,
     )
     return header + table_bytes + b"".join(blobs)
+
+
+def decode_frames(data: bytes) -> tuple[tuple, dict[str, np.ndarray]]:
+    """Unpack a pack into its header and every frame as a CANVAS RGBA image.
+
+    Patch frames are composed over their base exactly like the firmware, so
+    the result is what the device would draw.
+    """
+    header = HEADER.unpack_from(data, 0)
+    frames: dict[str, np.ndarray] = {}
+    entries = [ENTRY.unpack_from(data, HEADER.size + i * ENTRY.size) for i in range(header[2])]
+    names = [name for name, _ in FRAMES]
+    for frame_id, base_id, colours, x, y, w, h, offset, stream_size, _ in sorted(
+        entries, key=lambda entry: entry[1] != 0xFF
+    ):
+        raw = np.frombuffer(data[offset : offset + colours * 4], dtype=np.uint8).reshape(-1, 4)
+        rgb565 = raw[:, 0].astype(np.uint16) | (raw[:, 1].astype(np.uint16) << 8)
+        palette = np.zeros((256, 4), dtype=np.uint8)
+        palette[:colours, 0] = ((rgb565 >> 11) & 0x1F) * 255 // 31
+        palette[:colours, 1] = ((rgb565 >> 5) & 0x3F) * 255 // 63
+        palette[:colours, 2] = (rgb565 & 0x1F) * 255 // 31
+        palette[:colours, 3] = raw[:, 2]
+        stream = data[offset + colours * 4 : offset + colours * 4 + stream_size]
+        indices = np.frombuffer(zlib.decompress(stream), dtype=np.uint8).reshape(h, w)
+        canvas = (
+            np.zeros((CANVAS, CANVAS, 4), dtype=np.uint8)
+            if base_id == 0xFF
+            else frames[names[base_id]].copy()
+        )
+        region = canvas[y : y + h, x : x + w]
+        keep = indices == KEEP_INDEX
+        region[~keep] = palette[indices[~keep]]
+        frames[names[frame_id]] = canvas
+    return header, frames
 
 
 BRAND_MAGIC = b"MMA1"
@@ -251,8 +299,12 @@ def build_all(out_dir: pathlib.Path, font_path: pathlib.Path | None) -> dict[str
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", type=pathlib.Path, default=OUT_DIR)
-    parser.add_argument("--font", type=pathlib.Path, default=None,
-                        help="TTF for the boot wordmark (default: LVGL's Montserrat-Medium)")
+    parser.add_argument(
+        "--font",
+        type=pathlib.Path,
+        default=None,
+        help="TTF for the boot wordmark (default: LVGL's Montserrat-Medium)",
+    )
     args = parser.parse_args()
     font = args.font or next((path for path in BRAND_FONT_CANDIDATES if path.exists()), None)
     if font is None:

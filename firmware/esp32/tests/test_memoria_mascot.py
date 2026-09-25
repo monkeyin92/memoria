@@ -42,7 +42,9 @@ def _load_module(name: str, path: pathlib.Path):
 def preview():
     if shutil.which("clang++") is None and shutil.which("g++") is None:
         pytest.skip("host C++ compiler unavailable")
-    return _load_module("preview_memoria_mascot", FIRMWARE_ROOT / "scripts" / "preview_memoria_mascot.py")
+    return _load_module(
+        "preview_memoria_mascot", FIRMWARE_ROOT / "scripts" / "preview_memoria_mascot.py"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -105,7 +107,9 @@ def test_conversation_states_pick_their_poses(harness) -> None:
 
 
 def test_pat_hops_happy_and_shake_goes_dizzy(harness) -> None:
-    stats = _play(harness, [(0, "phase", "idle"), (1000, "pat", ""), (4000, "shake", ""), (8000, "end", "")])
+    stats = _play(
+        harness, [(0, "phase", "idle"), (1000, "pat", ""), (4000, "shake", ""), (8000, "end", "")]
+    )
     assert HAPPY in _frames_between(stats, 1000, 1400)
     assert DIZZY in _frames_between(stats, 4000, 6000)
     assert _frames_between(stats, 7200, 8000) <= {DEFAULT, DEFAULT_BLINK}
@@ -131,21 +135,48 @@ def test_companion_switch_arrives_waving(harness) -> None:
 
 @pytest.mark.parametrize("companion", COMPANIONS)
 def test_every_companion_pack_loads_and_renders(harness, companion: str) -> None:
-    stats = _play(harness, [(0, "phase", "idle"), (600, "phase", "speaking"), (2000, "end", "")], first=companion)
+    stats = _play(
+        harness,
+        [(0, "phase", "idle"), (600, "phase", "speaking"), (2000, "end", "")],
+        first=companion,
+    )
     assert stats["mismatches"] == 0
     assert NONE not in _frames_between(stats, 0, 2000)
 
 
-def test_mascot_packs_are_rebuilt_from_the_source_art(tmp_path: pathlib.Path) -> None:
+def test_mascot_packs_match_the_source_art() -> None:
+    """The shipped packs must be built from the current source art.
+
+    Pillow's resize and palette quantisation differ slightly between x86 and
+    ARM, so a rebuild is not byte-identical across machines. Instead every
+    frame the device would draw is compared with the source PNG: a stale pack
+    (art changed, packer not rerun) is far outside the quantisation error.
+    """
     pytest.importorskip("PIL")
-    pytest.importorskip("numpy")
+    np = pytest.importorskip("numpy")
     builder = _load_module("build_mascot_pack", FIRMWARE_ROOT / "scripts" / "build_mascot_pack.py")
-    builder.build_all(tmp_path, None)
     for companion in COMPANIONS:
         name = f"mascot_{companion}.mmp"
-        assert (tmp_path / name).read_bytes() == (ASSETS_DIR / name).read_bytes(), (
-            f"{name} is stale; run scripts/build_mascot_pack.py"
-        )
+        header, frames = builder.decode_frames((ASSETS_DIR / name).read_bytes())
+        assert set(frames) == {frame for frame, _ in builder.FRAMES}, name
+        theme = builder.THEMES[companion]
+        assert header[8] == theme["soft"] and header[9] == theme["ink"], name
+        for frame, drawn in frames.items():
+            source = builder._load(companion, frame).astype(np.int16)
+            error = np.abs(drawn.astype(np.int16) - source)
+            covered = (source[..., 3] > 32) | (drawn[..., 3] > 32)
+            visible = (source[..., 3] > 32) & (drawn[..., 3] > 32)
+            assert visible.sum() > 1000, f"{name}:{frame} is empty"
+            colour_error = float(error[visible][:, :3].mean())
+            alpha_error = float(error[..., 3].mean())
+            # Quantisation leaves < 0.01% of pixels off by more than 48; even a
+            # changed mouth alone moves > 0.2%, so this catches stale patches.
+            outliers = float((error.max(axis=2)[covered] > 48).mean())
+            assert colour_error < 10.0 and alpha_error < 3.0 and outliers < 5e-4, (
+                f"{name}:{frame} differs from the source art (colour {colour_error:.1f}, "
+                f"alpha {alpha_error:.1f}, outliers {outliers:.2%}); "
+                "run scripts/build_mascot_pack.py"
+            )
 
 
 def test_pack_budget_fits_the_assets_partition() -> None:
@@ -155,8 +186,12 @@ def test_pack_budget_fits_the_assets_partition() -> None:
 
 
 def test_compositor_stays_free_of_esp_dependencies() -> None:
-    for name in ("memoria_mascot_pack.h", "memoria_mascot_pack.cc", "memoria_mascot_scene.h",
-                 "memoria_mascot_scene.cc"):
+    for name in (
+        "memoria_mascot_pack.h",
+        "memoria_mascot_pack.cc",
+        "memoria_mascot_scene.h",
+        "memoria_mascot_scene.cc",
+    ):
         source = (BOARD_DIR / name).read_text(encoding="utf-8")
         for forbidden in ("esp_", "lvgl", "lv_", "freertos"):
             assert forbidden not in source, f"{name} must stay host-compilable"
@@ -169,7 +204,9 @@ def test_board_wires_the_mascot_display() -> None:
     assert not (BOARD_DIR / "memoria_face.cc").exists()
     # The backlight comes up on the boot animation's first frame, not over
     # the panel's power-on noise.
-    creation = board[board.index("new MemoriaMascotDisplay(") : board.index("void InitializeButtons()")]
+    creation = board[
+        board.index("new MemoriaMascotDisplay(") : board.index("void InitializeButtons()")
+    ]
     assert "SetOnFirstFrame" in creation
     assert creation.index("SetOnFirstFrame") < creation.index("RestoreBrightness")
     assert "SetCompanionSink" in creation
@@ -215,7 +252,10 @@ def test_display_profile_poll_follows_the_phone_pick() -> None:
 def test_patch_adds_assets_hooks_and_overridable_qr() -> None:
     patch = PATCH.read_text(encoding="utf-8")
     assert '+            "memoria/memoria_display_hooks.cc"' in patch
-    assert '+    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets")' in patch
+    assert (
+        '+    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/memoria/esp-vocat/assets")'
+        in patch
+    )
     assert "+    virtual bool ShowQrCode(" in patch
     assert "+    virtual void ClearQrCode();" in patch
     assert "+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT" in patch
