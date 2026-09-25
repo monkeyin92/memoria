@@ -6,16 +6,25 @@
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260925-runtime-profile-renewal` | `sha256:c41dfc4e63692090dde9500e348ca4a329a9430be824a56b8dfa57d0ebf89bba`（本地 image id） | `85aa729d5a50f467b5c9aa478df7a6268783bfd2` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | `2026-09-25T09:41:39Z` | `/opt/memoria/component-releases/20260925-runtime-profile-renewal/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260925-runtime-profile-renewal-pre-control`（= `20260925-control-binding-actor`，`e6ab586`） |
+| Control API | `memoria-control-api:20260925-confirm-bound-subject` | `sha256:a4714cfaf102580fd3c4795c471219ab320909e2b674910339b0adbe8ebb4283`（本地 image id） | `d522426ab3cecbcf9610bcefec588d01e319d2a3` | `20260901-0945-wake-word-whitelist` / `7ca3d4ec531305d968d67ef1bb13b944e566e4cf` | healthy | 0 | `2026-09-25T10:20:35Z` | `/opt/memoria/component-releases/20260925-confirm-bound-subject/CUTOVER_RESULT.txt` | `memoria-control-api:rollback-20260925-confirm-bound-subject-pre-control`（= `20260925-runtime-profile-renewal`，`85aa729`） |
 | Agent / Bridge | `memoria-agent:20260924-d1d2-evidence-floor` | `sha256:c5c11cb79740cfa96fd05edc0ba68d658b5ee39003e6837bb415b202ca789e2a` | `3eede2f53a94493bb2754c2bc01973adcd072d6c` | same frozen identity | healthy | 0 each | approximately `2026-09-24T14:51:55Z`（token 轮换重建，镜像未变） | `/opt/memoria/component-releases/20260924-d1d2-evidence-floor/CUTOVER_RESULT.txt` | `memoria-agent:rollback-20260924-d1d2-evidence-floor-pre`（`agent-component.rollback.override.yml`） |
 | Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
 
 - **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，不能作为当前候选代码已部署或已完整验证的证明。
-- **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 为 `memoria-control-api:20260925-runtime-profile-renewal`（= 旧 `ee57ad4` + binding 查询 hotfix + Runtime Profile 原地续期，仍不含 main 上未部署的服务端改动，TTS 仍为 Doubao）。
+- **控制面冻结身份**：`20260901-0945-wake-word-whitelist`（commit `7ca3d4ec`）；这是为保持心跳与 readiness 一致的临时对齐值，不代表候选代码的真实发布身份已经收敛。线上 control-api 为 `memoria-control-api:20260925-confirm-bound-subject`（= 旧 `ee57ad4` + binding 查询 hotfix + Runtime Profile 原地续期 + 控制面确认唯一绑定主体，仍不含 main 上未部署的服务端改动，TTS 仍为 Doubao）。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界已通过；工具查询最终回答未完成，TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
+
+## 2026-09-25 控制面确认一对一绑定的唯一主体上线
+
+- **产品决定（用户 2026-09-25）**：小程序控制会话直接确认一对一绑定的唯一使用人，不再停在 `unconfirmed`/`unknown_safe`。
+- **实现**：`sole_bound_subject_id()`（恰好一个 primary subject 且非 `family_shared`）；控制会话 start 与 renew 时确认，事件记 `reason_code=sole_bound_subject`（不冒充 `app_confirm` 或声纹）。确认他人（孩子/老人）须 binding 上有 active 关系（main：`guardian_of`/`delegate_for`；hotfix 线仅 `guardian_of`），并要求与 app 显式确认同样的 subject-switch 权限，否则保持未确认。app 路径不设 `device_bound`：监护人的 app 会话不等于孩子本人，监护人/子女拿不到对方私人记忆。能力仍全部由 policy/consent 决定，无 contract/schema 变更。
+- **发布**：tag `20260925-confirm-bound-subject` → `d522426`（hotfix 线 = `85aa729` + 1 提交，control_api+session_runtime 真实 PG 821 passed）；dry-run PASS → cutover PASS，healthy、restarts=0。
+- **线上复核**：同一控制会话续期到 epoch 3，`speaker_state=confirmed`、`service_mode=adult_companion`，能力 `chat`/`tutor`/`english_practice`，客户端校验 valid。
+- **门禁入口仍不会打开**：`memory_recall_private` 需要已验证成人 + 该 binding 的记忆 consent grant + 设备证书/attestation 有效；hotfix 线没有 main 的 consent grant 写入（`services/consent/bound_subject.py` 与其 SQL），线上无 grant，需整栈发布 + consent schema 升级 + 存量 binding 回填。`guardian_summary_view` 需 active `guardian_of` + 对应 consent，两条线都没有写入方。`digital_self_preview`/`raw_audio_retention`/`voice_profile_create`/`voice_clone_use` 属于动作时决策（`PROFILE_ISSUE_DEFERRED_CAPABILITIES`），永远不出现在 runtime profile，小程序这几个入口按 profile 能力门禁的写法需要改。
+- **hotfix 线既有缺陷（未修）**：binding 上存在 receipt 不依赖的 active 关系时，profile 签发 503 `current exact policy fence is invalid`；main 已在 `_PostgresIdentityRelationshipAuthority` 修复，线上当前未命中。
 
 ## 2026-09-25 Control API Runtime Profile 原地续期上线
 
