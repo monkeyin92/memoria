@@ -108,6 +108,14 @@ class PersistentSessionDenied(PermissionError):
     """The authenticated actor/binding cannot create this Session."""
 
 
+class PersistentSessionExpired(PersistentSessionDenied):
+    """The stored profile is past its use window; only renewal may reissue it.
+
+    It stays a ``PersistentSessionDenied`` so every existing caller keeps
+    failing closed; callers that own renewal catch this narrower type.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class StartPersistentSessionCommand:
     session_id: str
@@ -1431,7 +1439,7 @@ class PostgresSessionRuntimeService:
     ) -> None:
         self._require_profile_signature(profile)
         if now < profile.issued_at or now >= profile.expires_at:
-            raise PersistentSessionDenied("runtime profile is expired")
+            raise PersistentSessionExpired("runtime profile is expired")
 
     async def _load_active_profile_context(
         self,
@@ -1537,6 +1545,123 @@ class PostgresSessionRuntimeService:
             session_id=command.session_id,
             now=command.now,
         )
+        return await self._rotate(
+            command,
+            requested=requested,
+            current=current,
+            current_context=current_context,
+            idempotency_seed=(
+                f"switch:{current.runtime_profile_id}:"
+                f"{command.subject_id or command.claimed_subject_id or 'unknown'}"
+            ),
+            unresolved_event_type="epoch_bumped",
+        )
+
+    async def session_state(self, *, actor_id: str, session_id: str) -> str | None:
+        """Lifecycle state of an actor-visible Session, in any state.
+
+        ``current()`` sees only active Sessions.  A start that reuses the id
+        of a closed Session would replay its idempotency record and hand back
+        the closed Session's last profile, so callers that start on a miss
+        check here first.
+        """
+        try:
+            async with self._store.read_transaction(actor_id=actor_id) as connection:
+                stored = await self._store.context_any_state(
+                    connection,
+                    session_id=session_id,
+                )
+        except asyncpg.PostgresError as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if stored is None or stored[0].actor_id != actor_id:
+            return None
+        return stored[1]
+
+    async def renew(
+        self,
+        *,
+        actor_id: str,
+        session_id: str,
+        now: datetime,
+        requested_capabilities: tuple[CapabilityValue, ...],
+    ) -> RuntimeProfileSignedV2:
+        """Reissue an expired profile in place on the same active Session.
+
+        Renewal is an ordinary profile rotation (``profile_rotated``): it
+        re-locks the binding as ``actor_id``, re-reads Device trust, re-runs
+        Policy/Consent derivation, signs a new profile id and advances the
+        session epoch and every generation/tool fence through the same CAS
+        persistence and outbox path as a subject switch.  Like the in-memory
+        control, an expired profile does not carry its subject forward: the
+        renewed profile is unconfirmed until the subject is confirmed again.
+
+        A superseded binding, a revoked device or a closed Session still fail
+        closed.  Two concurrent renewals race on the rotation CAS; the loser
+        returns the winner's live profile instead of a second one.
+        """
+        requested = tuple(
+            capability
+            for capability in requested_capabilities
+            if capability in PROFILE_ISSUE_SESSION_CAPABILITIES
+        )
+        if not requested:
+            raise PersistentSessionDenied("no Session capability was requested")
+        try:
+            async with self._store.read_transaction(actor_id=actor_id) as connection:
+                current, current_context = await self._load_active_profile_context(
+                    connection,
+                    session_id=session_id,
+                )
+                self._require_profile_signature(current)
+                still_current = await self._store.binding_is_current(
+                    connection,
+                    device_id=current.device_id,
+                    binding_id=current.binding_id,
+                    binding_version=current.binding_version,
+                    now=now,
+                )
+        except asyncpg.PostgresError as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if not still_current:
+            raise PersistentSessionDenied("session binding is no longer active")
+        if current.issued_at <= now < current.expires_at:
+            # Another caller already renewed this Session.
+            return current
+        try:
+            return await self._rotate(
+                SwitchPersistentSubjectCommand(
+                    session_id=session_id,
+                    actor_id=actor_id,
+                    subject_id=None,
+                    now=now,
+                    requested_capabilities=requested,
+                ),
+                requested=requested,
+                current=current,
+                current_context=current_context,
+                idempotency_seed=f"renew:{current.runtime_profile_id}",
+                unresolved_event_type="profile_rotated",
+            )
+        except SessionRuntimeConflict:
+            # The rotation CAS admits one renewal per expired profile; the
+            # loser serves the profile the winner committed.
+            renewed, _context = await self.current(
+                actor_id=actor_id,
+                session_id=session_id,
+                now=now,
+            )
+            return renewed
+
+    async def _rotate(
+        self,
+        command: SwitchPersistentSubjectCommand,
+        *,
+        requested: tuple[CapabilityValue, ...],
+        current: RuntimeProfileSignedV2,
+        current_context: SessionRuntimeContext,
+        idempotency_seed: str,
+        unresolved_event_type: str,
+    ) -> RuntimeProfileSignedV2:
         try:
             async with self._store.action_transaction(
                 actor_id=command.actor_id,
@@ -1614,17 +1739,14 @@ class PostgresSessionRuntimeService:
                     requested=requested,
                     device_trust=trust.trust,
                     now=command.now,
-                    idempotency_seed=(
-                        f"switch:{current.runtime_profile_id}:"
-                        f"{command.subject_id or command.claimed_subject_id or 'unknown'}"
-                    ),
+                    idempotency_seed=idempotency_seed,
                     generation_id=current_context.generation_id + 1,
                     turn_id=current_context.turn_id + 1,
                     tool_epoch=current_context.tool_epoch + 1,
                     event_type=(
                         "subject_switched"
                         if resolution.active_subject_id is not None
-                        else "epoch_bumped"
+                        else unresolved_event_type
                     ),
                     profile_ttl=rotation_ttl,
                     event_payload={
@@ -2835,6 +2957,7 @@ def build_postgres_session_runtime_service(
 
 __all__ = [
     "PersistentSessionDenied",
+    "PersistentSessionExpired",
     "PersistentSessionUnavailable",
     "SessionCloseResult",
     "PostgresSessionRuntimeService",

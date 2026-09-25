@@ -7,6 +7,7 @@ policy evaluation, signing, and session-epoch fencing stay one deep module.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +26,7 @@ from services.identity.domain import (
 )
 from services.identity.service import IdentityService
 from services.policy.engine import Capability, PolicyDecision, PolicyEngine
+from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.profile_service import (
     InMemoryRuntimeAuthority,
     PersonaAssignment,
@@ -37,6 +39,7 @@ from services.session_runtime.profile_service import (
 )
 from services.session_runtime.service import (
     PersistentSessionDenied,
+    PersistentSessionExpired,
     PersistentSessionNotFound,
     PostgresSessionRuntimeService,
     StartPersistentSessionCommand,
@@ -49,6 +52,16 @@ _REQUESTED_CAPABILITIES: tuple[Capability, ...] = tuple(
 )
 
 _DEFAULT_PERSONA_ASSIGNMENT_ID = "starlight:v1"
+
+# App-facing control Sessions.  The PostgreSQL authority never reuses a
+# session_id and fences every Session to one binding version, so the control
+# Session is keyed by binding and actor: a rebind lands on a fresh Session
+# instead of a permanently stale one, and two accounts on one device never
+# collide on a primary key.  Only control Sessions renew in place on expiry;
+# an explicitly named non-control Session (for example a device media
+# Session) keeps strict expiry.
+_CONTROL_SESSION_PREFIX = "device-control:"
+_SESSION_ID_MAX_LENGTH = 128
 
 
 def _persona_assignment(assignment_id: str) -> PersonaAssignment:
@@ -665,7 +678,11 @@ class PostgresMultiSubjectRuntimeControl:
             user_id=actor_id,
             now=now,
         )
-        resolved_session_id = session_id or self.default_session_id(device_id)
+        resolved_session_id = session_id or self.control_session_id(
+            device_id,
+            binding_id=manifest.binding_id,
+            actor_id=actor_id,
+        )
         try:
             current, _context = await self.sessions.current(
                 actor_id=actor_id,
@@ -673,20 +690,42 @@ class PostgresMultiSubjectRuntimeControl:
                 now=now,
             )
         except PersistentSessionNotFound:
-            current = await self.sessions.start(
-                StartPersistentSessionCommand(
-                    session_id=resolved_session_id,
-                    actor_id=actor_id,
-                    device_id=device_id,
-                    expected_binding_version=manifest.binding_version,
-                    idempotency_key=f"control-profile:{resolved_session_id}",
-                    now=now,
-                    requested_capabilities=_REQUESTED_CAPABILITIES,
-                    multiple_speakers=multiple_speakers,
-                    offline=offline,
+            if await self.sessions.session_state(
+                actor_id=actor_id,
+                session_id=resolved_session_id,
+            ) is not None:
+                # Session ids are never reused: a closed or failed Session
+                # stays closed instead of replaying its last profile.
+                raise PersistentSessionDenied("session is closed") from None
+            try:
+                return await self.sessions.start(
+                    StartPersistentSessionCommand(
+                        session_id=resolved_session_id,
+                        actor_id=actor_id,
+                        device_id=device_id,
+                        expected_binding_version=manifest.binding_version,
+                        idempotency_key=f"control-profile:{resolved_session_id}",
+                        now=now,
+                        requested_capabilities=_REQUESTED_CAPABILITIES,
+                        multiple_speakers=multiple_speakers,
+                        offline=offline,
+                    )
                 )
+            except SessionRuntimeConflict as exc:
+                # The id exists but is no longer active (closed or failed):
+                # session ids are never reused, so this Session stays closed.
+                raise PersistentSessionDenied("session is closed") from exc
+        except PersistentSessionExpired:
+            if not self.is_control_session(resolved_session_id):
+                raise
+            # Renewal re-locks the binding, re-derives Policy and advances
+            # the epoch; the renewed profile is already current.
+            return await self.sessions.renew(
+                actor_id=actor_id,
+                session_id=resolved_session_id,
+                now=now,
+                requested_capabilities=_REQUESTED_CAPABILITIES,
             )
-            return current
         if current.device_id != device_id:
             raise PersistentSessionDenied("Session device does not match request")
         if (
@@ -767,7 +806,11 @@ class PostgresMultiSubjectRuntimeControl:
             user_id=actor_id,
             now=now,
         )
-        resolved_session_id = session_id or self.default_session_id(device_id)
+        resolved_session_id = session_id or self.control_session_id(
+            device_id,
+            binding_id=manifest.binding_id,
+            actor_id=actor_id,
+        )
         profile = await self.ensure_profile(
             device_id=device_id,
             session_id=resolved_session_id,
@@ -834,15 +877,27 @@ class PostgresMultiSubjectRuntimeControl:
         actor_id: str,
         now: datetime,
     ) -> RuntimeProfileSignedV2:
-        return await self.sessions.switch_subject(
-            SwitchPersistentSubjectCommand(
-                session_id=session_id,
+        command = SwitchPersistentSubjectCommand(
+            session_id=session_id,
+            actor_id=actor_id,
+            subject_id=subject_id,
+            now=now,
+            requested_capabilities=_REQUESTED_CAPABILITIES,
+        )
+        try:
+            return await self.sessions.switch_subject(command)
+        except PersistentSessionExpired:
+            if not self.is_control_session(session_id):
+                raise
+            # Confirming a subject on an expired control Session: renew it
+            # first, then apply the confirmation as the next rotation.
+            await self.sessions.renew(
                 actor_id=actor_id,
-                subject_id=subject_id,
+                session_id=session_id,
                 now=now,
                 requested_capabilities=_REQUESTED_CAPABILITIES,
             )
-        )
+            return await self.sessions.switch_subject(command)
 
     async def decide(
         self,
@@ -912,6 +967,22 @@ class PostgresMultiSubjectRuntimeControl:
     @staticmethod
     def default_session_id(device_id: str) -> str:
         return MultiSubjectRuntimeControl.default_session_id(device_id)
+
+    @staticmethod
+    def control_session_id(device_id: str, *, binding_id: str, actor_id: str) -> str:
+        """The app-facing control Session of one actor on one binding."""
+        actor_key = hashlib.sha256(actor_id.encode("utf-8")).hexdigest()[:16]
+        session_id = f"{_CONTROL_SESSION_PREFIX}{device_id}:{binding_id}:{actor_key}"
+        if len(session_id) <= _SESSION_ID_MAX_LENGTH:
+            return session_id
+        digest = hashlib.sha256(
+            f"{device_id}\x00{binding_id}\x00{actor_id}".encode()
+        ).hexdigest()
+        return f"{_CONTROL_SESSION_PREFIX}{digest}"
+
+    @staticmethod
+    def is_control_session(session_id: str) -> bool:
+        return session_id.startswith(_CONTROL_SESSION_PREFIX)
 
     @staticmethod
     def serialize_profile(
