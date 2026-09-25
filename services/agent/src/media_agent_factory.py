@@ -30,6 +30,7 @@ from services.agent.src.orchestration.handlers import (
 )
 from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS
+from services.agent.src.providers.doubao_tts import DoubaoTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
@@ -55,7 +56,6 @@ from services.agent.src.voice_profile_client import (
     VoiceProfileClient,
     VoiceProfileClientConfig,
 )
-from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class ProductionMediaSessionFactory:
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
             raise ValueError("production media session requires a session id")
-        tts = CosyVoiceTTS.from_env()
+        tts = DoubaoTTS.from_env()
         runtime: DuplexRuntime | None = None
         owned: list[object] = []
         try:
@@ -149,6 +149,7 @@ class ProductionMediaSessionFactory:
                 owned.append(close_intent_classifier)
             mode_policy_client = await self._bind_mode_policy(runtime)
             owned.append(mode_policy_client)
+            tts = await self._maybe_use_cosyvoice_clone_tts(runtime, tts)
 
             async def _refresh_profile() -> VerifiedRuntimeProfile | None:
                 policy = await mode_policy_client.fetch(session_id=runtime.session_id)
@@ -203,8 +204,8 @@ class ProductionMediaSessionFactory:
                 fast_model_warmer=warmer if callable(warmer) else None,
                 llm_provider=self.settings.llm_provider,
                 llm_model=self.settings.llm_fast_model,
-                tts_provider=TTS_PROVIDER,
-                tts_model=TTS_MODEL,
+                tts_provider="volcengine_doubao",
+                tts_model=self.settings.doubao_tts_resource_id,
             )
             handler = _SessionLanguageModel(
                 agent,
@@ -221,7 +222,7 @@ class ProductionMediaSessionFactory:
                 speech_synthesis=cast(SpeechSynthesisHandler, tts),
                 config=ExistingVoiceProviderConfig(
                     sample_rate=asr_config.sample_rate,
-                    output_sample_rate=int(tts.sample_rate),
+                    output_sample_rate=int(self.settings.doubao_tts_sample_rate),
                 ),
                 metrics=GLOBAL_METRICS,
                 owns_speech_synthesis=True,
@@ -391,6 +392,23 @@ class ProductionMediaSessionFactory:
             policy=runtime.mode_policy,
         )
         return client
+
+    async def _maybe_use_cosyvoice_clone_tts(self, runtime: DuplexRuntime, tts: Any) -> Any:
+        if dict(runtime.mode_policy.references).get("voice_provider") != "alibaba_model_studio":
+            return tts
+        if not frozen_companion_clone_permitted(runtime.mode_policy):
+            return tts
+        close_tts = getattr(tts, "aclose", None)
+        if callable(close_tts):
+            with contextlib.suppress(Exception):
+                await close_tts()
+        clone_tts = CosyVoiceTTS.from_env()
+        runtime.tts = clone_tts
+        warm = getattr(getattr(clone_tts, "pool", None), "warm", None)
+        if callable(warm):
+            with contextlib.suppress(Exception):
+                await warm()
+        return clone_tts
 
     async def _bind_archive(self, runtime: DuplexRuntime) -> None:
         sink = self.archive_sink

@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from services.agent.src.observability.metrics import GLOBAL_METRICS
-from services.agent.src.providers import cosyvoice_tts, funasr_stt, handlers
+from services.agent.src.providers import doubao_tts, funasr_stt, handlers
 from services.agent.src.providers.handlers import (
     build_realtime_search_resolver,
     build_voice_provider_handlers,
@@ -122,13 +122,19 @@ def test_default_provider_factories_share_exported_process_metrics(
         classmethod(lambda cls: funasr_stt.FunASRConfig(api_key="test", ws_url="ws://asr")),
     )
     monkeypatch.setattr(
-        cosyvoice_tts.CosyVoiceConfig,
+        doubao_tts.DoubaoTTSConfig,
         "from_env",
-        classmethod(lambda cls: cosyvoice_tts.CosyVoiceConfig(api_key="test", ws_url="ws://tts")),
+        classmethod(
+            lambda cls: doubao_tts.DoubaoTTSConfig(
+                api_key="test",
+                ws_url="ws://tts",
+                speaker="test",
+            )
+        ),
     )
 
     assert funasr_stt.FunASRSTT.from_env().metrics is GLOBAL_METRICS
-    assert cosyvoice_tts.CosyVoiceTTS.from_env().pool.metrics is GLOBAL_METRICS
+    assert doubao_tts.DoubaoTTS.from_env().pool.metrics is GLOBAL_METRICS
 
 
 def test_realtime_search_resolver_uses_isolated_qwen_settings(

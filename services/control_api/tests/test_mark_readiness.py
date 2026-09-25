@@ -39,7 +39,7 @@ def test_mark_and_check_use_control_env_secret_and_release_metadata(
                 "llm_provider": "deepseek",
                 "release_tag": "release-test-a",
                 "tts": {
-                    "provider": "qwen_audio",
+                    "provider": "doubao",
                     "audio": True,
                     "word_timestamps": True,
                 },

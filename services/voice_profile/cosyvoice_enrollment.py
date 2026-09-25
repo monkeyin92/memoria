@@ -1,4 +1,4 @@
-"""DashScope voice-enrollment HTTP adapter (Qwen-Audio 3.1 TTS clones)."""
+"""CosyVoice voice-enrollment HTTP adapter."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import httpx
 
-from services.common.voice_identity import PERSONAL_VOICE_MODEL
 from services.voice_profile.domain import ProviderVoice
 
 
@@ -42,8 +41,8 @@ class CosyVoiceEnrollmentClient:
         prefix: str,
         sample_url: str,
     ) -> ProviderVoice:
-        if target_model != PERSONAL_VOICE_MODEL:
-            raise ValueError(f"voice clone target must be {PERSONAL_VOICE_MODEL}")
+        if not target_model.startswith("cosyvoice-v3.5-"):
+            raise ValueError("voice clone target must be a CosyVoice v3.5 model")
         if not prefix.isalnum() or not 1 <= len(prefix) <= 10:
             raise ValueError("voice clone prefix must contain 1..10 letters or digits")
         sample = httpx.URL(sample_url)
@@ -68,10 +67,6 @@ class CosyVoiceEnrollmentClient:
             raise RuntimeError("CosyVoice enrollment response is missing voice_id")
         if not isinstance(returned_model, str) or returned_model != target_model:
             raise RuntimeError("CosyVoice enrollment returned an unexpected target model")
-        # DashScope names clones "{target_model}-{prefix}-{id}"; a voice bound
-        # to another model would not synthesize on ours.
-        if not voice_id.startswith(f"{target_model}-{prefix}-"):
-            raise RuntimeError("voice enrollment returned a voice for another model")
         return ProviderVoice(voice_id=voice_id, target_model=returned_model)
 
     async def delete_voice(self, *, voice_id: str) -> None:

@@ -8,7 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from services.agent.src.config import AgentSettings
+from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 from services.device_media_gateway.config import DeviceMediaGatewaySettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
@@ -23,15 +23,14 @@ _AGENT_EXTRA_KEYS = frozenset(
         "DEEPSEEK_FAST_MAX_TOKENS",
         "DEEPSEEK_FAST_TEMPERATURE",
         "DEEPSEEK_FAST_TOTAL_TIMEOUT_S",
-        # Qwen-Audio TTS tuning; the model and voices are fixed in code.
-        "COSYVOICE_CONNECT_TIMEOUT_S",
-        "COSYVOICE_FIRST_AUDIO_TIMEOUT_S",
-        "COSYVOICE_HARD_DEADLINE_S",
-        "COSYVOICE_POOL_SIZE",
-        "COSYVOICE_RATE",
-        "COSYVOICE_TOTAL_TIMEOUT_S",
-        "COSYVOICE_VOICE_PROFILE",
-        "COSYVOICE_VOLUME",
+        "DOUBAO_TTS_CONNECT_TIMEOUT_S",
+        "DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S",
+        "DOUBAO_TTS_LOUDNESS_RATE",
+        "DOUBAO_TTS_PITCH",
+        "DOUBAO_TTS_SPEECH_RATE",
+        "DOUBAO_TTS_STYLE_CONTROL_ENABLED",
+        "DOUBAO_TTS_TOTAL_TIMEOUT_S",
+        "DOUBAO_TTS_VOICE_REGISTRY",
         "ENDPOINTING_ALPHA",
         "ENDPOINTING_MAX_DELAY_S",
         "ENDPOINTING_MIN_DELAY_S",
@@ -156,10 +155,22 @@ def split_env(
     dict[str, str],
     dict[str, str],
 ]:
-    stale_doubao = sorted(key for key in values if "DOUBAO" in key)
-    if stale_doubao:
-        # The Doubao TTS stack is gone; its credentials must not be deployed.
-        raise ValueError("retired Doubao keys must not be deployed: " + ", ".join(stale_doubao))
+    if "DOUBAO_TTS_SECRET_KEY" in values:
+        raise ValueError("DOUBAO_TTS_SECRET_KEY is not used and must not be deployed")
+    validate_doubao_auth(
+        api_key=values.get("DOUBAO_TTS_API_KEY", ""),
+        app_id=values.get("DOUBAO_TTS_APP_ID", ""),
+        access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
+        required=False,
+    )
+    clone_key = values.get("MEMORIA_DOUBAO_VOICE_API_KEY", "").strip()
+    runtime_tts_secrets = {
+        values.get("DOUBAO_TTS_API_KEY", "").strip(),
+        values.get("DOUBAO_TTS_ACCESS_TOKEN", "").strip(),
+    }
+    runtime_tts_secrets.discard("")
+    if clone_key and clone_key in runtime_tts_secrets:
+        raise ValueError("Doubao voice clone and runtime TTS credentials must be independent")
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")

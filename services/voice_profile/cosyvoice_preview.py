@@ -1,4 +1,4 @@
-"""On-demand Qwen-Audio TTS preview renderer; preview audio is not persisted."""
+"""On-demand CosyVoice preview renderer; preview audio is not persisted."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import wave
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS
-from services.agent.src.providers.qwen_voice_catalog import catalog_by_id
 from services.voice_profile.domain import VoicePreviewUnavailableError
 
 
@@ -28,15 +27,7 @@ class CosyVoicePreviewRenderer:
         try:
             tts = CosyVoiceTTS.from_env()
             if model is not None and voice_id is not None:
-                designed = any(
-                    spec.speaker_id == voice_id for spec in catalog_by_id().values()
-                )
-                tts.apply_voice_profile(
-                    model=model,
-                    voice=voice_id,
-                    profile_id=None if designed else "preview",
-                    voice_kind="designed" if designed else "personal",
-                )
+                tts.apply_voice_profile(model=model, voice=voice_id)
             result = await tts.synthesize_stream_text(
                 [text.strip()],
                 fence=GenerationFence(

@@ -191,7 +191,7 @@ while IFS= read -r changed; do
     packages/*|services/common/*)
       # Covered by the whole-tree component overlay; nothing goes stale.
       ;;
-    infra/kws/*|infra/Dockerfile.agent)
+    infra/voices/*|infra/kws/*|infra/Dockerfile.agent)
       scope_rejections+=("$changed")
       ;;
     scripts/verify_env.py|scripts/livekit_smoke_test.py|scripts/provider_smoke_test.py|scripts/run_media_slo_reporter.py|scripts/media_runtime_smoke.py)

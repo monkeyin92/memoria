@@ -9,11 +9,6 @@ from livekit.agents import APIConnectionError
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoicePool, CosyVoiceTTS
 from services.agent.tests.integration.mock_servers import MockCosyVoiceServer
-from services.common.companions import DESIGNED_VOICE_SPEAKERS
-from services.common.voice_identity import TTS_MODEL
-
-BASELINE_VOICE = DESIGNED_VOICE_SPEAKERS["warm_companion"]
-CLONE_VOICE = "qwen-audio-3.1-tts-flash-owner001-abc123"
 
 
 @pytest.mark.asyncio
@@ -116,16 +111,15 @@ async def test_clone_failure_before_audio_falls_back_to_designed_baseline_once()
         cfg = CosyVoiceConfig(
             api_key="test",
             ws_url=srv.ws_url,
-            voice=BASELINE_VOICE,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
             pool_size=1,
             first_audio_timeout_s=0.05,
         )
         tts = CosyVoiceTTS(cfg)
         tts.apply_voice_profile(
-            model=TTS_MODEL,
-            voice=CLONE_VOICE,
-            profile_id="pv_owner001",
-            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
         )
 
         result = await tts.synthesize_stream_text(
@@ -135,8 +129,8 @@ async def test_clone_failure_before_audio_falls_back_to_designed_baseline_once()
 
         assert result.pcm
         assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
-            CLONE_VOICE,
-            BASELINE_VOICE,
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-vd-warmboy-baseline",
         ]
         await tts.aclose()
     finally:
@@ -151,15 +145,14 @@ async def test_clone_task_failure_before_audio_also_falls_back_to_baseline() -> 
         cfg = CosyVoiceConfig(
             api_key="test",
             ws_url=srv.ws_url,
-            voice=BASELINE_VOICE,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
             pool_size=1,
         )
         tts = CosyVoiceTTS(cfg)
         tts.apply_voice_profile(
-            model=TTS_MODEL,
-            voice=CLONE_VOICE,
-            profile_id="pv_owner001",
-            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
         )
 
         result = await tts.synthesize_stream_text(
@@ -169,8 +162,8 @@ async def test_clone_task_failure_before_audio_also_falls_back_to_baseline() -> 
 
         assert result.pcm
         assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
-            CLONE_VOICE,
-            BASELINE_VOICE,
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-vd-warmboy-baseline",
         ]
         await tts.aclose()
     finally:
@@ -185,7 +178,8 @@ async def test_direct_synthesis_keeps_the_voice_selected_before_pool_wait() -> N
         cfg = CosyVoiceConfig(
             api_key="test",
             ws_url=srv.ws_url,
-            voice="qwen-audio-3.1-tts-flash-owner001-before-wait",
+            model="cosyvoice-v3.5-flash",
+            voice="clone-before-wait",
             pool_size=1,
         )
         pool = CosyVoicePool(cfg)
@@ -200,19 +194,15 @@ async def test_direct_synthesis_keeps_the_voice_selected_before_pool_wait() -> N
         )
         await asyncio.sleep(0)
         tts.apply_voice_profile(
-            model=TTS_MODEL,
-            voice="qwen-audio-3.1-tts-flash-owner001-after-wait",
-            profile_id="pv_owner001",
-            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            voice="clone-after-wait",
         )
         await pool.release(held)
 
         result = await synthesis
 
         assert result.pcm
-        assert srv.run_requests[-1]["payload"]["parameters"]["voice"] == (
-            "qwen-audio-3.1-tts-flash-owner001-before-wait"
-        )
+        assert srv.run_requests[-1]["payload"]["parameters"]["voice"] == "clone-before-wait"
         await tts.aclose()
     finally:
         srv.stop()
@@ -354,15 +344,14 @@ async def test_clone_missing_timestamps_retries_without_changing_voice() -> None
         cfg = CosyVoiceConfig(
             api_key="test",
             ws_url=srv.ws_url,
-            voice=BASELINE_VOICE,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
             pool_size=1,
         )
         tts = CosyVoiceTTS(cfg)
         tts.apply_voice_profile(
-            model=TTS_MODEL,
-            voice=CLONE_VOICE,
-            profile_id="pv_owner001",
-            voice_kind="personal",
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
         )
 
         result = await tts.synthesize_stream_text(
@@ -374,8 +363,8 @@ async def test_clone_missing_timestamps_retries_without_changing_voice() -> None
         assert result.words
         assert srv.connections == 2
         assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
-            CLONE_VOICE,
-            CLONE_VOICE,
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-clone-owner001",
         ]
         await tts.aclose()
     finally:

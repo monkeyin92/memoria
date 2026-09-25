@@ -1,0 +1,12 @@
+{
+  "target_model": "cosyvoice-v3.5-flash",
+  "updated_at": null,
+  "voices": {
+    "warm_companion": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-warmboy-REPLACE_ME",
+      "display_name": "暖阳青年",
+      "prefix": "warmboy",
+      "note": "Run scripts/design_cosyvoice_voices.py and copy real voice_id here."
+    }
+  }
+}

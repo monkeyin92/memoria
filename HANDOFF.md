@@ -17,6 +17,11 @@
 - **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)。
 
+## 2026-09-25 main 回退 Qwen-Audio TTS 迁移（生产暂留豆包）
+
+- **产品决定（用户 2026-09-25）**：生产暂留 Doubao TTS，Qwen-Audio 3.1 TTS 迁移（PR #28 的 `457d669`、`d6bd536`）回退待重新评估；重新启用 = revert 回退提交。分支 `revert/keep-doubao-tts`（未合并、未发布）。
+- **影响**：main 整栈发布不再切换 TTS，Agent/Control 的 TTS 与复刻配置和线上 `3eede2f`/`d522426` 一致，现有 CosyVoice/豆包复刻继续可用、无 `reenrollment_required`；整栈发布仍需 schema 升级与两个 memory maintenance secret（见下节「暂缓的整栈发布」）。
+
 ## 2026-09-25 控制面确认一对一绑定的唯一主体上线
 
 - **产品决定（用户 2026-09-25）**：小程序控制会话直接确认一对一绑定的唯一使用人，不再停在 `unconfirmed`/`unknown_safe`。

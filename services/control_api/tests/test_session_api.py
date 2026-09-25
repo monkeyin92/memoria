@@ -842,7 +842,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         "llm_provider": "bailian_deepseek",
         "release_tag": "release-test-a",
         "tts": {
-            "provider": "qwen_audio",
+            "provider": "doubao",
             "audio": True,
             "word_timestamps": True,
         },
@@ -862,7 +862,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         missing_timestamps = await client.post(
             "/internal/readiness/smokes",
             headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
-            json={**mark_body, "tts": {"provider": "qwen_audio", "audio": True}},
+            json={**mark_body, "tts": {"provider": "doubao", "audio": True}},
         )
         failed_timestamps = await client.post(
             "/internal/readiness/smokes",
@@ -870,7 +870,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
             json={
                 **mark_body,
                 "tts": {
-                    "provider": "qwen_audio",
+                    "provider": "doubao",
                     "audio": True,
                     "word_timestamps": False,
                 },
@@ -882,7 +882,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
             json={
                 **mark_body,
                 "tts": {
-                    "provider": "doubao",
+                    "provider": "cosyvoice",
                     "audio": True,
                     "word_timestamps": True,
                 },
@@ -909,7 +909,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         "passed": True,
     }
     assert ready.json()["checks"]["tts"] == {
-        "provider": "qwen_audio",
+        "provider": "doubao",
         "audio": True,
         "word_timestamps": True,
     }
@@ -928,7 +928,7 @@ async def test_readiness_evidence_survives_restart_and_is_release_bound(
         "llm_provider": "bailian_deepseek",
         "release_tag": "release-test-a",
         "tts": {
-            "provider": "qwen_audio",
+            "provider": "doubao",
             "audio": True,
             "word_timestamps": True,
         },

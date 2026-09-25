@@ -72,7 +72,9 @@ def _env_values(path: Path) -> dict[str, str]:
     }
 
 
-def _upgrade_inputs() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+def _upgrade_inputs(
+    auth: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     legacy = {
         "ENVIRONMENT": "production",
         "DEPLOYMENT_PROFILE": "cn_self_hosted",
@@ -91,14 +93,23 @@ def _upgrade_inputs() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         "ENDPOINTING_MIN_DELAY_S": "1.50",
         "ENDPOINTING_MAX_DELAY_S": "2.20",
         "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
-        "TTS_PROVIDER": "qwen_audio",
-        "COSYVOICE_SAMPLE_RATE": "24000",
+        "TTS_PROVIDER": "doubao",
+        "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
+        "DOUBAO_TTS_SAMPLE_RATE": "24000",
         "MEMORIA_AUTH_SECRET": "auth-secret-material-that-is-long-enough",
         "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
         "WECHAT_MINIPROGRAM_APPID": "wx-test",
         "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
         "QWEN_OMNI_PLUS_VAD_THRESHOLD": "ignored-legacy-key",
     }
+    legacy.update(
+        auth
+        if auth is not None
+        else {
+            "DOUBAO_TTS_APP_ID": "doubao-app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
+        }
+    )
     postgres = {
         password_env: f"{role}-pass" for password_env, role in EXPECTED_PASSWORD_ROLES.items()
     }
@@ -256,6 +267,7 @@ def test_endpointing_defaults_match_operator_templates() -> None:
 
 def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent() -> None:
     legacy, postgres, minio = _upgrade_inputs()
+    legacy["DOUBAO_TTS_SECRET_KEY"] = "not-a-websocket-credential"
     archive_read_keys = {"archive-v1": Fernet.generate_key().decode("ascii")}
     voice_read_keys = {"voice-v1": Fernet.generate_key().decode("ascii")}
     legacy["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] = json.dumps(archive_read_keys)
@@ -275,10 +287,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == json.dumps(archive_read_keys)
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == json.dumps(voice_read_keys)
-    assert control["TTS_PROVIDER"] == "qwen_audio"
-    assert agent["TTS_PROVIDER"] == "qwen_audio"
-    assert control["MEMORIA_VOICE_CLONE_PROVIDER"] == "alibaba_model_studio"
-    assert control["MEMORIA_VOICE_TARGET_MODEL"] == "qwen-audio-3.1-tts-flash"
+    assert control["TTS_PROVIDER"] == "doubao"
+    assert agent["TTS_PROVIDER"] == "doubao"
     assert agent["MEMORIA_ARCHIVE_SINK_ENABLED"] == "true"
     assert agent["MEMORIA_PERSONA_ENABLED"] == "true"
     assert agent["MEMORIA_VOICE_PROFILE_ENABLED"] == "true"
@@ -298,7 +308,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert control["MEMORIA_MEMORY_EXTRACTION_MODEL"] == "qwen-flash"
     assert control["CRISIS_SEMANTIC_TIMEOUT_S"] == "0.8"
     assert "CRISIS_SEMANTIC_ENABLED" not in agent
-    assert agent["COSYVOICE_SAMPLE_RATE"] == "24000"
+    assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
+    assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
     assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
@@ -315,13 +326,18 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert device_gateway["LIVEKIT_API_SECRET"] == gateway["LIVEKIT_API_SECRET"]
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_JWT_SECRET" not in agent
-    assert "COSYVOICE_SAMPLE_RATE" not in control
+    assert "DOUBAO_TTS_APP_ID" not in control
+    assert "DOUBAO_TTS_ACCESS_TOKEN" not in control
     assert "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY" not in agent
     assert "MEMORIA_VOICE_OBJECT_SECRET_KEY" not in agent
     assert "MEMORIA_ARCHIVE_OBJECT_READ_KEYS" not in agent
     assert "MEMORIA_VOICE_SAMPLE_READ_KEYS" not in agent
     assert "MEMORIA_ARCHIVE_OBJECT_READ_KEYS" not in speaker_model
     assert "MEMORIA_VOICE_SAMPLE_READ_KEYS" not in speaker_model
+    assert all(
+        "DOUBAO_TTS_SECRET_KEY" not in service_env
+        for service_env in (control, agent, speaker_model, gateway, media_edge)
+    )
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in control
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in agent
     assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == control["MEMORIA_AGENT_HEARTBEAT_TOKEN"]
@@ -373,6 +389,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
         "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY",
         "MEMORIA_VOICE_OBJECT_SECRET_KEY",
         "DASHSCOPE_API_KEY",
+        "DOUBAO_TTS_API_KEY",
+        "DOUBAO_TTS_ACCESS_TOKEN",
     ):
         assert forbidden not in gateway
 
@@ -545,76 +563,124 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
     )
 
 
+def test_upgrade_env_rejects_missing_doubao_authentication() -> None:
+    legacy, postgres, minio = _upgrade_inputs({})
+
+    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260721-missing-doubao-auth",
+        )
+
+
 @pytest.mark.parametrize(
-    "retired",
+    "auth",
     [
         {
-            "TTS_PROVIDER": "doubao",
-            "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
-            "DOUBAO_TTS_SAMPLE_RATE": "24000",
+            "DOUBAO_TTS_API_KEY": "doubao-api-key",
             "DOUBAO_TTS_APP_ID": "doubao-app-id",
             "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
-            "DOUBAO_TTS_API_KEY": "doubao-api-key",
-            "DOUBAO_TTS_SECRET_KEY": "not-a-websocket-credential",
-            "DOUBAO_TTS_VOICE_REGISTRY": "/app/infra/voices/doubao_voice_ids.json",
+        },
+        {"DOUBAO_TTS_APP_ID": "doubao-app-id"},
+        {"DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token"},
+    ],
+)
+def test_upgrade_env_rejects_ambiguous_or_half_configured_doubao_authentication(
+    auth: dict[str, str],
+) -> None:
+    legacy, postgres, minio = _upgrade_inputs(auth)
+
+    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260721-half-doubao-auth",
+        )
+
+
+def test_upgrade_env_accepts_doubao_api_key_authentication() -> None:
+    legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "doubao-api-key"})
+
+    control, agent, _, _, _, _ = prepare(
+        legacy=legacy,
+        postgres=postgres,
+        minio=minio,
+        release_tag="20260721-doubao-api-key",
+    )
+
+    assert agent["DOUBAO_TTS_API_KEY"] == "doubao-api-key"
+    assert "DOUBAO_TTS_API_KEY" not in control
+    assert "DOUBAO_TTS_APP_ID" not in agent
+    assert "DOUBAO_TTS_ACCESS_TOKEN" not in agent
+
+
+def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> None:
+    legacy, postgres, minio = _upgrade_inputs()
+    legacy.update(
+        {
             "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
             "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
             "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
             "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
             "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
-        },
+        }
+    )
+
+    control, agent, speaker_model, _, _, _ = prepare(
+        legacy=legacy,
+        postgres=postgres,
+        minio=minio,
+        release_tag="20260723-doubao-clone",
+    )
+
+    assert control["MEMORIA_DOUBAO_VOICE_API_KEY"] == "control-only-clone-key"
+    assert control["MEMORIA_VOICE_CLONE_PROVIDER"] == "volcengine_doubao"
+    assert control["MEMORIA_VOICE_TARGET_MODEL"] == "seed-icl-2.0"
+    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in agent
+    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in speaker_model
+
+
+def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key() -> None:
+    legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "shared-key"})
+    legacy.update(
         {
-            "TTS_PROVIDER": "cosyvoice",
-            "MEMORIA_VOICE_CLONE_PROVIDER": "alibaba_model_studio",
-            "MEMORIA_VOICE_TARGET_MODEL": "cosyvoice-v3.5-flash",
-        },
-    ],
-)
-def test_upgrade_env_retires_doubao_and_cosyvoice_tts_configuration(
-    retired: dict[str, str],
-) -> None:
+            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
+            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
+            "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
+            "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
+            "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
+        }
+    )
+
+    with pytest.raises(ValueError, match="must be independent"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260723-doubao-shared-key",
+        )
+
+
+def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping() -> None:
     legacy, postgres, minio = _upgrade_inputs()
-    legacy.update(retired)
-
-    envs = prepare(
-        legacy=legacy,
-        postgres=postgres,
-        minio=minio,
-        release_tag="20260924-retired-tts",
-    )
-    control, agent = envs[0], envs[1]
-
-    assert control["TTS_PROVIDER"] == "qwen_audio"
-    assert agent["TTS_PROVIDER"] == "qwen_audio"
-    assert control["MEMORIA_VOICE_CLONE_PROVIDER"] == "alibaba_model_studio"
-    assert control["MEMORIA_VOICE_TARGET_MODEL"] == "qwen-audio-3.1-tts-flash"
-    assert all("DOUBAO" not in key for service_env in envs for key in service_env)
-
-
-def test_upgrade_env_routes_qwen_audio_tts_tuning_to_agent_only() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
-    tuning = {
-        "COSYVOICE_CONNECT_TIMEOUT_S": "1.5",
-        "COSYVOICE_FIRST_AUDIO_TIMEOUT_S": "2.5",
-        "COSYVOICE_POOL_SIZE": "2",
-        "COSYVOICE_RATE": "1.0",
-        "COSYVOICE_VOICE_PROFILE": "warm_companion",
-    }
-    legacy.update(tuning)
-
-    control, agent, speaker_model, gateway, _, _ = prepare(
-        legacy=legacy,
-        postgres=postgres,
-        minio=minio,
-        release_tag="20260924-qwen-audio-tuning",
+    legacy.update(
+        {
+            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
+            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
+            "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
+        }
     )
 
-    assert {key: agent[key] for key in tuning} == tuning
-    assert all(
-        key not in service_env
-        for key in tuning
-        for service_env in (control, speaker_model, gateway)
-    )
+    with pytest.raises(ValueError, match="smoke-verified synth ID mapping"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260723-doubao-unverified",
+        )
 
 
 def test_upgrade_env_direct_voice_core_generates_complete_direct_bundle(

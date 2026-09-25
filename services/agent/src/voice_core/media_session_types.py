@@ -70,7 +70,7 @@ class MediaReplyChunk:
 
 
 class MediaVoiceProvider(Protocol):
-    """Provider-neutral adapter implemented by the FunASR/Qwen wiring."""
+    """Provider-neutral adapter implemented by FunASR/Qwen/Doubao wiring."""
 
     async def ingest_audio(
         self,

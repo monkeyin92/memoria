@@ -40,7 +40,6 @@ from services.common.realtime_information import (
     realtime_instruction,
 )
 from services.common.redaction import redact_pii
-from services.common.voice_identity import TTS_PROVIDER
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     require_capability_for_account_id,
@@ -1530,7 +1529,7 @@ def _frozen_personal_voice_matches(
 def _frozen_fallback_voice_matches(frozen: FrozenMode) -> bool:
     return (
         frozen.fallback_voice_profile_id is not None
-        and frozen.fallback_voice_provider == TTS_PROVIDER
+        and frozen.fallback_voice_provider == "volcengine_doubao"
         and frozen.fallback_voice_model == DESIGNED_VOICE_MODEL
         and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
     )

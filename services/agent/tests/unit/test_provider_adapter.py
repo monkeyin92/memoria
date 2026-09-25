@@ -25,7 +25,6 @@ from services.agent.src.voice_core.provider_adapter import (
     build_production_provider_factory,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult
-from services.common.voice_identity import TTS_MODEL
 
 
 async def _collect(stream: AsyncIterator[Any]) -> list[Any]:
@@ -475,9 +474,9 @@ class FakeProductionLLM:
 class FakeProductionTTS:
     instances: list[FakeProductionTTS] = []
 
-    def __init__(self, config: Any, pool: Any = None) -> None:
+    def __init__(self, config: Any, *, metrics: Any = None) -> None:
         self.config = config
-        self.pool = pool
+        self.metrics = metrics
         self.fence: GenerationFence | None = None
         self.closed = False
         type(self).instances.append(self)
@@ -1640,13 +1639,13 @@ async def test_generation_eviction_floor_is_epoch_scoped() -> None:
 async def test_production_provider_factory_owns_session_tts_and_uses_injected_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.agent.src.providers import cosyvoice_tts, funasr_stt
+    from services.agent.src.providers import doubao_tts, funasr_stt
 
     asr_config = funasr_stt.FunASRConfig(api_key="asr-key", ws_url="ws://asr")
-    tts_config = cosyvoice_tts.CosyVoiceConfig(
-        api_key="tts-key",
+    tts_config = doubao_tts.DoubaoTTSConfig(
         ws_url="ws://tts",
-        pool_size=0,
+        api_key="tts-key",
+        speaker="speaker",
     )
     monkeypatch.setattr(
         funasr_stt.FunASRConfig,
@@ -1654,11 +1653,11 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
         classmethod(lambda cls: asr_config),
     )
     monkeypatch.setattr(
-        cosyvoice_tts.CosyVoiceConfig,
+        doubao_tts.DoubaoTTSConfig,
         "from_env",
         classmethod(lambda cls: tts_config),
     )
-    monkeypatch.setattr(cosyvoice_tts, "CosyVoiceTTS", FakeProductionTTS)
+    monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeProductionTTS)
     monkeypatch.setenv("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY", "fake.module:build")
     monkeypatch.setattr(
         "services.agent.src.voice_core.provider_adapter.importlib.import_module",
@@ -1681,12 +1680,7 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
 
     assert first.speech_synthesis is not second.speech_synthesis
     assert first.asr_session_factory().metrics is GLOBAL_METRICS
-    first_tts = cast(FakeProductionTTS, first.speech_synthesis)
-    second_tts = cast(FakeProductionTTS, second.speech_synthesis)
-    assert first_tts.pool.metrics is GLOBAL_METRICS
-    assert first_tts.pool is not second_tts.pool
-    assert first_tts.config.model == TTS_MODEL
-    assert first_tts.config is not tts_config
+    assert cast(FakeProductionTTS, first.speech_synthesis).metrics is GLOBAL_METRICS
     fence = GenerationFence(first_identity.session_id, 1, 1, 0)
     await first.start_delegation("你好", fence)
     assert cast(FakeLLM, first.language_model).delegations == [("你好", fence)]
@@ -1735,7 +1729,7 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
 def test_production_provider_factory_fails_closed_without_production_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.agent.src.providers import cosyvoice_tts, funasr_stt
+    from services.agent.src.providers import doubao_tts, funasr_stt
 
     monkeypatch.setattr(
         funasr_stt.FunASRConfig,
@@ -1748,13 +1742,13 @@ def test_production_provider_factory_fails_closed_without_production_keys(
         ),
     )
     monkeypatch.setattr(
-        cosyvoice_tts.CosyVoiceConfig,
+        doubao_tts.DoubaoTTSConfig,
         "from_env",
         classmethod(
-            lambda cls: cosyvoice_tts.CosyVoiceConfig(
-                api_key="tts-key",
+            lambda cls: doubao_tts.DoubaoTTSConfig(
                 ws_url="wss://tts.example/ws",
-                pool_size=0,
+                api_key="tts-key",
+                speaker="speaker",
             )
         ),
     )
@@ -1772,45 +1766,6 @@ def test_production_provider_factory_fails_closed_without_production_keys(
         lambda _name: SimpleNamespace(build=lambda _settings: lambda _identity: FakeLLM()),
     )
     with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
-        build_production_provider_factory(cast(Any, settings))
-
-    monkeypatch.setattr(
-        funasr_stt.FunASRConfig,
-        "from_env",
-        classmethod(
-            lambda cls: funasr_stt.FunASRConfig(
-                api_key="asr-key",
-                ws_url="wss://asr.example/ws",
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        cosyvoice_tts.CosyVoiceConfig,
-        "from_env",
-        classmethod(
-            lambda cls: cosyvoice_tts.CosyVoiceConfig(
-                api_key="tts-key",
-                ws_url="wss://tts.example/ws",
-                voice="",
-                pool_size=0,
-            )
-        ),
-    )
-    with pytest.raises(ValueError, match="COSYVOICE_VOICE"):
-        build_production_provider_factory(cast(Any, settings))
-
-    monkeypatch.setattr(
-        cosyvoice_tts.CosyVoiceConfig,
-        "from_env",
-        classmethod(
-            lambda cls: cosyvoice_tts.CosyVoiceConfig(
-                api_key="tts-key",
-                ws_url="ws://tts.example/ws",
-                pool_size=0,
-            )
-        ),
-    )
-    with pytest.raises(ValueError, match="WSS endpoints"):
         build_production_provider_factory(cast(Any, settings))
 
 

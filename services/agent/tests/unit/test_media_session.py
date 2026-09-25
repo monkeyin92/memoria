@@ -5830,7 +5830,7 @@ async def test_tts_failure_before_first_frame_returns_device_session_to_listenin
 
             async def chunks() -> AsyncIterator[MediaReplyChunk]:
                 self.attempted.set()
-                raise RuntimeError("TTS connection closed before first audio")
+                raise RuntimeError("Doubao TTS connection closed before first audio")
                 yield  # pragma: no cover - unreachable async-generator marker
 
             return chunks()

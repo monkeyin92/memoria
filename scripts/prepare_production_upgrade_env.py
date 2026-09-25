@@ -15,8 +15,8 @@ from services.agent.src.config import (
     SELF_HOSTED_ENDPOINTING_MIN_DELAY_S,
     SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S,
     AgentSettings,
+    validate_doubao_auth,
 )
-from services.common.voice_identity import PERSONAL_VOICE_MODEL, TTS_PROVIDER
 from services.control_api.app.config import ControlSettings
 from services.device_media_gateway.config import DeviceMediaGatewaySettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
@@ -152,6 +152,12 @@ def prepare(
         | set(_MEDIA_EDGE_EXTRA_KEYS)
     )
     values = {key: value for key, value in legacy.items() if key in known}
+    validate_doubao_auth(
+        api_key=values.get("DOUBAO_TTS_API_KEY", ""),
+        app_id=values.get("DOUBAO_TTS_APP_ID", ""),
+        access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
+        required=True,
+    )
     dashscope_key = _required(values, "DASHSCOPE_API_KEY")
     _required(values, "WECHAT_MINIPROGRAM_APPID")
     _required(values, "WECHAT_MINIPROGRAM_APPSECRET")
@@ -160,6 +166,13 @@ def prepare(
     archive_secret = _required(minio, "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY")
     voice_access = _required(minio, "MEMORIA_VOICE_OBJECT_ACCESS_KEY")
     voice_secret = _required(minio, "MEMORIA_VOICE_OBJECT_SECRET_KEY")
+    voice_clone_provider = (
+        values.get("MEMORIA_VOICE_CLONE_PROVIDER", "alibaba_model_studio").strip()
+        or "alibaba_model_studio"
+    )
+    default_voice_target = (
+        "seed-icl-2.0" if voice_clone_provider == "volcengine_doubao" else "cosyvoice-v3.5-flash"
+    )
     public_base_url = _required(values, "PUBLIC_BASE_URL")
     runtime_profile_signing_secret = _keep_or_create(
         values,
@@ -347,11 +360,11 @@ def prepare(
             "MEMORIA_VOICE_OBJECT_ACCESS_KEY": voice_access,
             "MEMORIA_VOICE_OBJECT_SECRET_KEY": voice_secret,
             "MEMORIA_VOICE_OBJECT_PREFIX": "voice-clone",
-            # Clones enroll against the synthesis model; legacy Doubao /
-            # CosyVoice v3.5 targets are not carried forward.
-            "MEMORIA_VOICE_CLONE_PROVIDER": TTS_PROVIDER,
-            "MEMORIA_VOICE_TARGET_MODEL": PERSONAL_VOICE_MODEL,
-            "TTS_PROVIDER": "qwen_audio",
+            "MEMORIA_VOICE_CLONE_PROVIDER": voice_clone_provider,
+            "MEMORIA_VOICE_TARGET_MODEL": values.get(
+                "MEMORIA_VOICE_TARGET_MODEL", default_voice_target
+            ).strip()
+            or default_voice_target,
             "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": _keep_or_create(
                 values, "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY", _fernet_key
             ),

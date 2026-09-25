@@ -488,11 +488,7 @@ def _voice_profile_ref(value: object) -> VoiceProfileManifestRef | None:
         provider=str(value["provider"]),
         target_model=str(value["target_model"]),
         resource_id=str(value["resource_id"]),
-        provider_expires_at=(
-            None
-            if value.get("provider_expires_at") is None
-            else str(value["provider_expires_at"])
-        ),
+        provider_expires_at=str(value["provider_expires_at"]),
         speaker_sha256=str(value["speaker_sha256"]),
     )
 

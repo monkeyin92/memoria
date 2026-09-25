@@ -15,7 +15,6 @@ import asyncpg
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
 from services.archive.object_store import ObjectRef, ObjectStore
-from services.common.voice_identity import is_current_voice_identity
 from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderSample,
@@ -821,7 +820,7 @@ class PostgresVoiceProfileManager:
             await self._require_consent(connection, account_id)
             row = await connection.fetchrow(
                 """
-                SELECT trial.*, profile.provider, profile.target_model, profile.provider_voice_id,
+                SELECT trial.*, profile.target_model, profile.provider_voice_id,
                        profile.status, profile.provider_expires_at
                 FROM voice_blind_trials AS trial
                 JOIN voice_profiles AS profile ON profile.profile_id = trial.profile_id
@@ -835,12 +834,6 @@ class PostgresVoiceProfileManager:
                 raise EvidenceNotFoundError(trial_id)
             if row["status"] not in {"candidate", "active"} or not row["provider_voice_id"]:
                 raise EvaluationRequiredError("blind trial candidate is unavailable")
-            if not is_current_voice_identity(
-                row["provider"], row["target_model"], row["target_model"]
-            ):
-                raise EvaluationRequiredError(
-                    "this voice must be re-recorded for the current model"
-                )
             expires_at = cast(datetime | None, row["provider_expires_at"])
             if expires_at is not None and expires_at <= datetime.now(UTC):
                 raise EvaluationRequiredError("blind trial candidate has expired")
@@ -1101,12 +1094,10 @@ class PostgresVoiceProfileManager:
                     "a passed candidate evaluation, a passed provider quality "
                     "measurement, or a passed sample validation is required"
                 )
-            if not is_current_voice_identity(
-                row["provider"], row["target_model"], row["target_model"]
-            ):
-                # Clones bind to their enrollment model; Doubao and CosyVoice
-                # v3.5 clones cannot speak on Qwen-Audio 3.1 and must be re-recorded.
-                raise EvaluationRequiredError("this voice must be re-recorded for the current model")
+            if row["provider"] == "volcengine_doubao":
+                expires_at = cast(datetime | None, row["provider_expires_at"])
+                if not row["provider_voice_id"] or expires_at is None or expires_at <= now:
+                    raise EvaluationRequiredError("an unexpired Doubao provider voice is required")
             event = self._event(
                 account_id,
                 "voice_profile.activated",
@@ -1171,7 +1162,7 @@ class PostgresVoiceProfileManager:
         if consent is None or row is None or row["provider_voice_id"] is None:
             return VoiceResolution(mode="fallback")
         expires = cast(datetime | None, row["provider_expires_at"])
-        if not is_current_voice_identity(row["provider"], row["target_model"], row["target_model"]):
+        if row["provider"] == "volcengine_doubao" and expires is None:
             return VoiceResolution(mode="fallback")
         if expires is not None and expires <= datetime.now(UTC):
             return VoiceResolution(mode="fallback")
@@ -1322,8 +1313,6 @@ class PostgresVoiceProfileManager:
             raise EvidenceNotFoundError(profile_id)
         if row["status"] not in {"candidate", "active"} or row["provider_voice_id"] is None:
             raise EvaluationRequiredError("only a usable voice profile can be previewed")
-        if not is_current_voice_identity(row["provider"], row["target_model"], row["target_model"]):
-            raise EvaluationRequiredError("this voice must be re-recorded for the current model")
         expires = cast(datetime | None, row["provider_expires_at"])
         if expires is not None and expires <= datetime.now(UTC):
             raise EvaluationRequiredError("expired voice profile cannot be previewed")

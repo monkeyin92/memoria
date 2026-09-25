@@ -10,7 +10,6 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponsePlannerClientConfig,
 )
-from services.common.voice_identity import TTS_MODEL, TTS_PROVIDER
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -59,7 +58,7 @@ def _plan_payload(**overrides: object) -> dict[str, object]:
         "voice_target": {
             "kind": "companion",
             "profile_id": "warm_companion",
-            "model": TTS_MODEL,
+            "model": "seed-tts-2.0",
         },
         "provenance": {
             "planner_policy_version": "digital-self-response-planner-v2",
@@ -579,8 +578,8 @@ def test_archive_payload_contains_only_bounded_ids_and_model_metadata() -> None:
         fence=plan.fence,
         llm_provider="qwen",
         llm_model="qwen-plus",
-        tts_provider=TTS_PROVIDER,
-        tts_model=TTS_MODEL,
+        tts_provider="doubao",
+        tts_model="seed-tts-2.0",
         actual_voice_profile_id=None,
     )
 
@@ -630,8 +629,8 @@ def test_evolution_artifact_is_strictly_parsed_and_preserved_in_archive_provenan
         fence=plan.fence,
         llm_provider="qwen",
         llm_model="qwen-plus",
-        tts_provider=TTS_PROVIDER,
-        tts_model=TTS_MODEL,
+        tts_provider="doubao",
+        tts_model="seed-tts-2.0",
         actual_voice_profile_id=None,
     )
 

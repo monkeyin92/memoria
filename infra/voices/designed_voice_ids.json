@@ -1,0 +1,46 @@
+{
+  "target_model": "cosyvoice-v3.5-flash",
+  "voices": {
+    "warm_companion": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-warmboy-5bc70207040843ceb18b1d64a3811083",
+      "display_name": "暖阳青年",
+      "prefix": "warmboy",
+      "voice_prompt": "青年男性，大约22到28岁，音色中等偏亮、圆润干净，语速中等，吐字清晰自然。整体像阳光、友善、可靠的同龄朋友，适合一对一中文陪伴闲聊，不要播音腔，不要浮夸。",
+      "target_model": "cosyvoice-v3.5-flash",
+      "created_at": "2026-07-18T15:58:54Z"
+    },
+    "soft_confidante": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-softgirl-70faf21b20444a7da5c55c43c15d7e6d",
+      "display_name": "温柔知己",
+      "prefix": "softgirl",
+      "voice_prompt": "青年女性，大约24到32岁，中音偏柔、音色圆润温暖，语速略慢于日常，吐字清楚。情感平静治愈、善于倾听，适合安慰与深夜谈心，不要娇喘感，不要过度甜美，不要播音腔。",
+      "target_model": "cosyvoice-v3.5-flash",
+      "created_at": "2026-07-18T15:59:41Z"
+    },
+    "calm_guide": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-calmguide-ad80b67ce15e4991b23d9266a08eb2a5",
+      "display_name": "沉稳向导",
+      "prefix": "calmguide",
+      "voice_prompt": "青年到中年男性，大约28到38岁，中低音、沉稳有磁性但不浑浊，语速平稳略慢，吐字清晰利落。像靠谱的规划搭档，适合说明步骤与安排计划，冷静但不生硬，不要新闻播报腔。",
+      "target_model": "cosyvoice-v3.5-flash",
+      "created_at": "2026-07-18T15:59:52Z"
+    },
+    "bright_peer": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-brightpeer-cbc3aed6b7bb4cfa9a6efce4935ed1cc",
+      "display_name": "元气搭子",
+      "prefix": "brightpeer",
+      "voice_prompt": "青年女性，大约20到28岁，音调偏高但不过尖，音色清脆轻快，语速略快、上扬自然。像活力满满的同龄搭子，适合轻松吐槽与日常闲聊，不要儿童音，不要喊麦感。",
+      "target_model": "cosyvoice-v3.5-flash",
+      "created_at": "2026-07-18T16:00:01Z"
+    },
+    "low_magnetic": {
+      "voice_id": "cosyvoice-v3.5-flash-vd-lowmag-d7ef7983a45447a59fb4893e95ea0563",
+      "display_name": "低音笃定",
+      "prefix": "lowmag",
+      "voice_prompt": "青年男性，大约25到35岁，低音、厚实有质感，语速中等偏慢，气息稳定，吐字清楚。整体笃定、包容、有安全感，适合认真对话与情绪托底，不要夸张低沉，不要反派感。",
+      "target_model": "cosyvoice-v3.5-flash",
+      "created_at": "2026-07-18T16:00:12Z"
+    }
+  },
+  "updated_at": "2026-07-18T16:00:12Z"
+}

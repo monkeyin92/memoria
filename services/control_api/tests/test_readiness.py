@@ -308,7 +308,7 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         "llm_provider": "bailian_deepseek",
         "release_tag": "release-readiness-test",
         "tts": {
-            "provider": "qwen_audio",
+            "provider": "doubao",
             "audio": True,
             "word_timestamps": True,
         },

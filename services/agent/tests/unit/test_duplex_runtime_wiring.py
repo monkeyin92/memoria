@@ -14,7 +14,6 @@ from livekit.agents import StopResponse, llm
 from services.agent.src.agent import DuplexVoiceAgent, _heard_only_chat_context
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
-from services.agent.src.orchestration.prosody import cosyvoice_instruction
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
     SpeakerVerifier,
@@ -26,6 +25,8 @@ from services.agent.src.orchestration.utterance_router import (
     UtteranceIntent,
 )
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
+from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
 from services.agent.src.runtime_speaker import KeywordSpotterBinding
 from services.agent.src.session_entrypoint import (
@@ -2962,7 +2963,7 @@ async def test_runtime_applies_one_ephemeral_emotion_decision_per_generation(
     observations = [event for event in published if event["type"] == "emotion_observation"]
     assert [event["label"] for event in observations] == ["neutral", "sad"]
     # The user-facing label stays conservative; delivery can still become supportive.
-    assert tts.current_instruction == cosyvoice_instruction("neutral", freeform=True)
+    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
     assert tts.current_rate == 0.98
     assert all(turn.role != "emotion" for turn in runtime.orchestrator.context.turns)
     assert "emotion_observation label=sad provider_label=sad" in caplog.text
@@ -2971,6 +2972,37 @@ async def test_runtime_applies_one_ephemeral_emotion_decision_per_generation(
         "rate=0.98 pitch=0 delivery=supportive"
     ) in caplog.text
     assert "最近有点累" not in caplog.text
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_passes_only_same_scope_actual_heard_context_to_doubao() -> None:
+    tts = DoubaoTTS(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker=catalog_by_id()["warm_companion"].speaker_id,
+            style_control_enabled=True,
+            pool_size=0,
+        )
+    )
+    runtime = DuplexRuntime.create(session_id="tts-context-session", tts=tts)
+    context = runtime.orchestrator.context
+    context.add_user("主人说了私密安排", speaker_scope="owner")
+    context.commit_assistant_heard("主人专属回复", speaker_scope="owner")
+    context.add_user("我们刚才在聊咖啡", speaker_scope="public")
+    context.commit_assistant_heard("你想学点咖啡可以说哪一种", speaker_scope="public")
+    await runtime.orchestrator.ready()
+
+    await runtime.on_turn_committed("如何用英语点一杯拿铁")
+
+    assert len(tts.current_context_texts) == 1
+    reference = tts.current_context_texts[0]
+    assert "语音要求：" in reference
+    assert "用户：我们刚才在聊咖啡" in reference
+    assert "助手：你想学点咖啡可以说哪一种" in reference
+    assert "用户：如何用英语点一杯拿铁" in reference
+    assert "主人说了私密安排" not in reference
+    assert "主人专属回复" not in reference
     await runtime.close()
 
 
@@ -2988,7 +3020,7 @@ async def test_runtime_uses_happy_delivery_only_for_safe_laughter_context() -> N
     await runtime.on_turn_committed("哈哈，我把单词读错得太离谱了")
 
     assert runtime.speech_plan.delivery_mode == "light_laughter"
-    assert tts.current_instruction == cosyvoice_instruction("happy", freeform=True)
+    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是happy。"
 
     runtime.observe_acoustic_emotion(
         "happy",
@@ -2998,7 +3030,7 @@ async def test_runtime_uses_happy_delivery_only_for_safe_laughter_context() -> N
     await runtime.on_turn_committed("哈哈，其实我刚刚出车祸了")
 
     assert runtime.speech_plan.delivery_mode == "supportive"
-    assert tts.current_instruction == cosyvoice_instruction("neutral", freeform=True)
+    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
     await runtime.close()
 
 
@@ -3037,7 +3069,7 @@ async def test_late_emotion_result_cannot_style_the_next_turn() -> None:
     runtime.observe_acoustic_emotion("happy", text="第一轮", turn_id=1)
     await runtime.on_turn_committed("第二轮没有情绪自述")
 
-    assert tts.current_instruction == cosyvoice_instruction("neutral", freeform=True)
+    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
     await runtime.close()
 
 

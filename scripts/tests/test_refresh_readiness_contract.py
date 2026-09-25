@@ -41,14 +41,3 @@ def test_compose_render_failure_is_reported_instead_of_masked() -> None:
     assert 'sed \'s/^/  compose: /\' "$compose_stderr" >&2' in script
     assert "compose config did not render JSON" in script
     assert "json.load(sys.stdin).get" not in script
-
-
-def test_provider_smoke_expects_the_qwen_audio_tts_stack() -> None:
-    script = _script()
-
-    assert (
-        'provider_expected="provider_smoke_test PASS: FunASR, QwenRealtimeSearch, '
-        '$llm_label, QwenAudioTTS, InterruptSemantic"'
-    ) in script
-    # Doubao TTS is retired; a readiness refresh must not accept its smoke line.
-    assert "Doubao" not in script
