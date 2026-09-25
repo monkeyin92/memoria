@@ -2179,7 +2179,7 @@ class PostgresGuardianStore:
             "tutor_practice_sessions": list(
                 data.get("tutor_practice_sessions") or []
             ),
-            "tutor_study_progress": data.get("tutor_study_progress"),
+            "tutor_study_progress": list(data.get("tutor_study_progress") or []),
             "tutor_practice_evidence": list(
                 data.get("tutor_practice_evidence") or []
             ),

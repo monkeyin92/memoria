@@ -209,8 +209,11 @@ UPDATE tutor_practice_sessions SET actor_id = account_id WHERE actor_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tutor_practice_subject_updated
 ON tutor_practice_sessions(subject_id, updated_at DESC);
 
+-- Study progress is one projection per subject (unique subject_id); the acting
+-- owner account_id is an ordinary column, so one owner can hold progress for
+-- several subjects.
 CREATE TABLE IF NOT EXISTS tutor_study_progress (
-    account_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
     subject_id TEXT,
     actor_id TEXT,
     practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
@@ -231,6 +234,33 @@ UPDATE tutor_study_progress SET actor_id = account_id WHERE actor_id IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tutor_progress_subject
 ON tutor_study_progress(subject_id) WHERE subject_id IS NOT NULL;
+
+-- In-place rekey: installs created before the per-subject model keyed the
+-- table by account_id, so a second subject under the same owner failed the
+-- insert.  Only that exact legacy key is dropped; every row is kept.
+DO $tutor_progress_rekey$
+DECLARE
+    legacy_key NAME;
+BEGIN
+    SELECT con.conname INTO legacy_key
+    FROM pg_constraint con
+    JOIN pg_attribute att
+      ON att.attrelid = con.conrelid AND att.attname = 'account_id'
+    WHERE con.conrelid = 'public.tutor_study_progress'::regclass
+      AND con.contype = 'p'
+      AND con.conkey = ARRAY[att.attnum];
+    IF legacy_key IS NOT NULL THEN
+        EXECUTE format(
+            'ALTER TABLE public.tutor_study_progress DROP CONSTRAINT %I',
+            legacy_key
+        );
+    END IF;
+END
+$tutor_progress_rekey$;
+ALTER TABLE tutor_study_progress ALTER COLUMN account_id SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tutor_progress_account
+ON tutor_study_progress(account_id);
 
 CREATE TABLE IF NOT EXISTS tutor_practice_evidence (
     event_id TEXT PRIMARY KEY,
@@ -558,16 +588,15 @@ BEGIN
                 ORDER BY created_at, session_id
             ) row
         ), '[]'::jsonb),
-        'tutor_study_progress', (
-            SELECT to_jsonb(row)
+        'tutor_study_progress', COALESCE((
+            SELECT jsonb_agg(to_jsonb(row))
             FROM (
                 SELECT * FROM tutor_study_progress
                 WHERE account_id = target_account_id
                    OR actor_id = target_account_id
                 ORDER BY subject_id IS NULL, subject_id
-                LIMIT 1
             ) row
-        ),
+        ), '[]'::jsonb),
         'tutor_practice_evidence', COALESCE((
             SELECT jsonb_agg(to_jsonb(row))
             FROM (
