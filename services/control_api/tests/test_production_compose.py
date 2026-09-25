@@ -1028,6 +1028,9 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     # never reuses the legacy gateway port 8793.
     assert "127.0.0.1:8794:8082" in edge
     assert 'MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"' in edge
+    # The edge serves only Direct Device WSS; the compose file, not a host-side
+    # /tmp override, turns it on for the media-runtime profile.
+    assert 'MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"' in edge
     assert "profiles:\n      - media-runtime" in edge
     assert "include /etc/nginx/snippets/memoria-device-edge.conf;" in https_conf
     assert "include /etc/nginx/snippets/memoria-device-media.conf;" in https_conf

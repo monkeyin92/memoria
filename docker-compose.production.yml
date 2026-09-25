@@ -432,6 +432,10 @@ services:
       MEDIA_EDGE_VOICE_CORE_ADDR: "voice-core-media-bridge:7001"
       MEDIA_EDGE_VOICE_CORE_REQUIRED: "true"
       MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"
+      # Direct Device WSS is the only media ingress left on the edge (WebRTC was
+      # removed), and production refuses to start without it. Pin it here so the
+      # live value no longer depends on a host-side /tmp compose override.
+      MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"
     expose:
       - "8080"
       - "8081"
