@@ -2589,7 +2589,12 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
     from services.control_api.app.multi_subject_runtime import (
         PostgresMultiSubjectRuntimeControl,
     )
-    from services.identity.domain import BindingManifest, ManifestRole, PersonSubject
+    from services.identity.domain import (
+        BindingManifest,
+        IdentityNotFoundError,
+        ManifestRole,
+        PersonSubject,
+    )
     from services.session_runtime.service import (
         build_postgres_session_runtime_service,
     )
@@ -2678,14 +2683,23 @@ async def test_real_pg_control_routes_share_start_current_resolve_and_switch_aut
             #: keeps this in step with ``identity_persona_assignments``.
             persona_overrides: tuple[object, ...] = ()
 
+            # Production Identity runs with FORCE RLS: a read without an
+            # identity actor sees no rows, so the view refuses it too.
             async def get_active_manifest(
                 self,
                 device_id: str,
                 _now: datetime | None = None,
+                actor_person_id: str | None = None,
             ) -> BindingManifest | None:
+                if actor_person_id is None:
+                    return None
                 return manifest if device_id == manifest.device_id else None
 
-            async def get_person(self, person_id: str) -> PersonSubject:
+            async def get_person(
+                self, person_id: str, actor_person_id: str | None = None
+            ) -> PersonSubject:
+                if actor_person_id is None:
+                    raise IdentityNotFoundError(f"person {person_id} is not visible")
                 return people[person_id]
 
             async def list_persona_assignments(
