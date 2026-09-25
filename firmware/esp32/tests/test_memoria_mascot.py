@@ -20,7 +20,7 @@ FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 BOARD_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 ASSETS_DIR = BOARD_DIR / "assets"
 MEMORIA_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "memoria"
-PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0026-memoria-mascot-display.patch"
+PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0027-memoria-mascot-display.patch"
 COMPANIONS = ("starlight", "taoxi", "mianmian", "axu", "xuanmo")
 
 # MascotFrame ids (memoria_mascot_pack.h); 19 = kCount means "no mascot drawn".
