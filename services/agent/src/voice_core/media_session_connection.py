@@ -263,7 +263,6 @@ class MediaSessionConnectionMixin:
             else context.playback.current_fence or context.runtime.fence
         )
         await self._cancel_reply_task(context, output_fence)
-        context.runtime.orchestrator.delegation.set_output_intent_observer(None)
         if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
             context.turn_endpoint_task.cancel()
         if context.turn_endpoint_timeout_handle is not None:

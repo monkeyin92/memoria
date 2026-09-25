@@ -123,7 +123,17 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
         "MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS",
         "MEDIA_EDGE_VOICE_CORE_REQUIRED",
         "MEDIA_EDGE_VOICE_CORE_SERVER_NAME",
+        # Still routed so a stale MEDIA_EDGE_WEBRTC_ENABLED=true fails the
+        # edge startup instead of silently expecting the removed terminator.
         "MEDIA_EDGE_WEBRTC_ENABLED",
+    }
+)
+
+# Keys of removed features. Existing operator env files may still carry them,
+# so they are accepted but routed to no service.
+_RETIRED_KEYS = frozenset(
+    {
+        "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
         "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
         "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
@@ -223,7 +233,14 @@ def split_env(
     gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
     device_gateway_keys = _aliases(DeviceMediaGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
     media_edge_keys = set(_MEDIA_EDGE_EXTRA_KEYS)
-    known = control_keys | agent_keys | gateway_keys | device_gateway_keys | media_edge_keys
+    known = (
+        control_keys
+        | agent_keys
+        | gateway_keys
+        | device_gateway_keys
+        | media_edge_keys
+        | set(_RETIRED_KEYS)
+    )
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"unrouted production env keys: {', '.join(unknown)}")

@@ -52,7 +52,6 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_grpc_enabled is False
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
-    assert s.media_bridge_go_shadow_enabled is False
     assert s.media_output_generation_timeout_s == 45.0
     assert s.media_owner_silence_timeout_s == 30.0
     assert s.media_max_user_speech_duration_s == 60.0
@@ -128,7 +127,8 @@ def test_media_bridge_limits_and_tls_paths_are_loaded(
     assert settings.media_bridge_mtls is True
     assert settings.media_bridge_max_pending_audio_frames == 64
     assert settings.media_bridge_max_pending_messages == 256
-    assert settings.media_bridge_go_shadow_enabled is True
+    # The retired Go-shadow flag is ignored (extra="ignore"), never loaded.
+    assert not hasattr(settings, "media_bridge_go_shadow_enabled")
     assert settings.media_max_user_speech_duration_s == 42.5
 
 

@@ -157,7 +157,6 @@ class MediaTurnEndpointMixin:
             self,
             context: _MediaVoiceSession,
             *,
-            session_id: str,
             stream_epoch: int,
             start_sample: int,
             end_sample: int,
@@ -1094,7 +1093,6 @@ class MediaTurnEndpointMixin:
             return False
         await self._commit_media_input_range(
             context,
-            session_id=context.identity.session_id,
             stream_epoch=stream_epoch,
             start_sample=start_sample,
             end_sample=endpoint_sample,

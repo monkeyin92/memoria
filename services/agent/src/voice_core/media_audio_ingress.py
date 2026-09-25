@@ -19,7 +19,7 @@ from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap, maybe_create_tap
 from services.agent.src.voice_core.media_protocol import AudioFrame
 from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
-from services.agent.src.voice_core.speech_timeline import ASRResult, asr_result_to_segment
+from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.src.voice_core.two_stage_denoiser import (
     TwoStageDenoiser,
     TwoStageDenoisingConfig,
@@ -544,15 +544,8 @@ class MediaAudioIngress:
             return
         if isinstance(provider_task_epoch, bool) or not isinstance(provider_task_epoch, int):
             raise RuntimeError("media provider returned an invalid ASR task epoch")
-        previous_task_epoch = context.asr.latest_authoritative_task_epoch
         if not context.asr.observe_task(provider_task_epoch):
             raise RuntimeError("media provider ASR task epoch moved backwards")
-        if provider_task_epoch > previous_task_epoch:
-            await self._host.bridge.emit_speech_task_started(
-                context.identity.session_id,
-                provider_task_epoch,
-                context.runtime.speech_timeline,
-            )
 
     async def _accept_provider_results(
         self,
@@ -590,7 +583,7 @@ class MediaAudioIngress:
                 if confidence is not None:
                     confidence = max(0.0, confidence * 0.75)
                 result = replace(result, confidence=confidence, loss_concealed=True)
-            decision = await self._host._accept_asr_result_decision(
+            await self._host._accept_asr_result_decision(
                 context.identity.session_id,
                 result,
             )
@@ -604,15 +597,6 @@ class MediaAudioIngress:
                     context.stream_epoch,
                 )
                 return
-            shadow_result = decision.accepted or result
-            await self._host.bridge.emit_speech_segment_decision(
-                context.identity.session_id,
-                asr_result_to_segment(shadow_result, session_id=context.identity.session_id),
-                authoritative_accepted=decision.accepted is not None,
-                authoritative_reason=decision.reason.value,
-                timeline=context.runtime.speech_timeline,
-                latest_task_epoch=context.asr.latest_authoritative_task_epoch,
-            )
         if not observe_task_before_results:
             await self._observe_provider_task(context)
 

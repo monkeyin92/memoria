@@ -36,8 +36,8 @@ func (f Fence) Equal(other Fence) bool {
 }
 
 // AudioFrame carries a bounded 16-bit PCM payload and absolute capture range.
-// The HTTP reference edge uses base64; a native WebRTC adapter decodes its
-// RTP/Opus input before handing PCM to this Voice Core seam.
+// The HTTP reference edge uses base64; the device WSS terminator decodes its
+// Opus input before handing PCM to this Voice Core seam.
 type AudioFrame struct {
 	SessionID          string `json:"session_id"`
 	StreamEpoch        uint64 `json:"stream_epoch"`

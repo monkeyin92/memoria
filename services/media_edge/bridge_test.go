@@ -117,22 +117,21 @@ func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToC
 func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *testing.T) {
 	service := &fakeVoiceCore{
 		received: make(chan *mediav1.MediaToCore, 1), requestedAuthority: make(chan mediav1.InteractionAuthority, 1),
-		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 		helloReceived:      make(chan *mediav1.SessionHello, 1),
 	}
 	bridge, cleanup := newBufconnBridge(t, service)
 	defer cleanup()
-	bridge.interactionAuthority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	session, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requested := <-service.requestedAuthority; requested != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
+	if requested := <-service.requestedAuthority; requested != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE {
 		t.Fatalf("unexpected requested authority: %v", requested)
 	}
-	if session.InteractionAuthority() != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
+	if session.InteractionAuthority() != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE {
 		t.Fatalf("effective authority was not retained: %v", session.InteractionAuthority())
 	}
 	hello := <-service.helloReceived
@@ -227,35 +226,28 @@ func TestVoiceCoreBridgeHandshakeTimeoutCancelsUnacceptedStream(t *testing.T) {
 	}
 }
 
-func TestVoiceCoreSessionDropsStaleShadowWithoutPoisoningAuthoritativeEvents(t *testing.T) {
+func TestVoiceCoreSessionDropsShadowWithoutPoisoningAuthoritativeEvents(t *testing.T) {
 	identity := BridgeIdentity{
 		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 1,
 	}
 	session := &VoiceCoreSession{
 		identity:             identity,
-		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 	}
-	observation := func(sequence, shadowSequence uint64, value *mediav1.SessionIdentity) *mediav1.CoreToMedia {
-		return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-			ShadowObservation: &mediav1.ShadowObservation{
-				Identity: value, Sequence: sequence, ShadowSequence: shadowSequence,
-				ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			},
-		}}
+	observation := &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
+		ShadowObservation: &mediav1.ShadowObservation{
+			Identity: identity.proto(), Sequence: 5, ShadowSequence: 0,
+			ContractVersion: "media-v1-a6a", CandidateOnly: true,
+		},
+	}}
+	if err := session.validateCoreEvent(observation); !errors.Is(err, errDropShadowObservation) {
+		t.Fatalf("shadow observation was not classified as a lossy drop: %v", err)
 	}
-	if err := session.validateCoreEvent(observation(1, 0, identity.proto())); err != nil {
-		t.Fatalf("valid shadow observation failed: %v", err)
-	}
-	if err := session.validateCoreEvent(observation(2, 0, identity.proto())); !errors.Is(err, errDropShadowObservation) {
-		t.Fatalf("duplicate shadow sequence was not classified as a lossy drop: %v", err)
-	}
-	other := identity.proto()
-	other.SessionId = "other"
-	if err := session.validateCoreEvent(observation(2, 1, other)); !errors.Is(err, errDropShadowObservation) {
-		t.Fatalf("mismatched shadow identity was not classified as a lossy drop: %v", err)
+	if session.hasEventSequence {
+		t.Fatal("dropped shadow observation advanced the authoritative event sequence")
 	}
 	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Transcript{
-		Transcript: &mediav1.TranscriptEvent{Identity: identity.proto(), Sequence: 3},
+		Transcript: &mediav1.TranscriptEvent{Identity: identity.proto(), Sequence: 1},
 	}}); err != nil {
 		t.Fatalf("shadow drop poisoned the next authoritative event: %v", err)
 	}
@@ -291,7 +283,7 @@ func TestVoiceCoreSessionAdmitsOnlyCurrentPythonRealtimeEffects(t *testing.T) {
 	fence := Fence{SessionID: "s", TurnID: 4, GenerationID: 5, ToolEpoch: 6}
 	session := &VoiceCoreSession{
 		identity: identity, current: fence,
-		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 	}
 	effect := func(sequence uint64) *mediav1.RealtimeEffect {
 		return &mediav1.RealtimeEffect{
@@ -350,7 +342,7 @@ func TestVoiceCoreSessionDropsStaleFloorEpochWithoutLosingConversationClose(t *t
 	fence := Fence{SessionID: "s", TurnID: 4, GenerationID: 5, ToolEpoch: 6}
 	session := &VoiceCoreSession{
 		identity: identity, current: fence,
-		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 	}
 	floor := func(sequence, epoch uint64) *mediav1.CoreToMedia {
 		return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_FloorEffect{
@@ -389,17 +381,22 @@ func TestVoiceCoreSessionDropsStaleFloorEpochWithoutLosingConversationClose(t *t
 	}
 }
 
-func TestVoiceCoreBridgeFailsClosedForUnprovenGoAuthority(t *testing.T) {
-	service := &fakeVoiceCore{
-		received:           make(chan *mediav1.MediaToCore, 1),
-		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE,
-	}
-	bridge, cleanup := newBufconnBridge(t, service)
-	defer cleanup()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if _, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000)); err == nil {
-		t.Fatal("bridge accepted unproven Go authority")
+func TestVoiceCoreBridgeFailsClosedForUnsupportedGoAuthority(t *testing.T) {
+	for _, authority := range []mediav1.InteractionAuthority{
+		mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE,
+		mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+	} {
+		service := &fakeVoiceCore{
+			received:           make(chan *mediav1.MediaToCore, 1),
+			effectiveAuthority: authority,
+		}
+		bridge, cleanup := newBufconnBridge(t, service)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if _, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000)); err == nil {
+			t.Errorf("bridge accepted unsupported %v", authority)
+		}
+		cancel()
+		cleanup()
 	}
 }
 

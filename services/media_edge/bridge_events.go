@@ -192,23 +192,11 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		return s.acceptEventSequence(transcript.GetSequence())
 	}
-	if observation := event.GetShadowObservation(); observation != nil {
-		if s.interactionAuthority != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW ||
-			!s.identity.equal(observation.GetIdentity()) || !observation.GetCandidateOnly() ||
-			observation.GetContractVersion() != shadowA6AContractVersion {
-			return errDropShadowObservation
-		}
-		s.stateMu.Lock()
-		defer s.stateMu.Unlock()
-		if (s.hasEventSequence && observation.GetSequence() <= s.lastEventSequence) ||
-			(s.hasShadowSequence && observation.GetShadowSequence() <= s.lastShadowSequence) {
-			return errDropShadowObservation
-		}
-		s.lastEventSequence = observation.GetSequence()
-		s.hasEventSequence = true
-		s.lastShadowSequence = observation.GetShadowSequence()
-		s.hasShadowSequence = true
-		return nil
+	if event.GetShadowObservation() != nil {
+		// The edge only negotiates Python authority. Shadow observations are
+		// candidate-only telemetry with no consumer on this edge; drop them
+		// without advancing any sequence gate.
+		return errDropShadowObservation
 	}
 	if state := event.GetState(); state != nil {
 		if !s.identity.equal(state.GetIdentity()) {

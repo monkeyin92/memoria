@@ -36,7 +36,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 ## 技术栈与目录
 
 - Python 3.12、uv、FastAPI、LiveKit Agents、FunASR、百炼兼容 LLM、豆包 Seed-TTS。
-- Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge、Pion WebRTC。
+- Go Media Edge：设备 WSS、generation fence、gRPC Voice Core bridge。
 - PostgreSQL 17 + pgvector、Redis、MinIO。
 - 微信小程序：`apps/miniprogram`；ESP32 overlay：`firmware/esp32`。
 - 共享契约：`packages/contracts`；Media Edge/Voice Core proto：`packages/proto`。

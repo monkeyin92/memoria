@@ -21,8 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pion/webrtc/v4"
-
 	mediaedge "memoria/services/media_edge"
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
@@ -404,24 +402,31 @@ func envBool(name string) bool {
 	return err == nil && value
 }
 
-// requestedWebRTCEnabled keeps the existing production WebRTC behavior as
-// the default, while allowing an explicitly device-only Edge process to avoid
-// depending on TURN/WHIP configuration it cannot serve. Production may only
-// disable WebRTC when the Direct Device WSS listener is requested; malformed
-// values fail closed instead of silently selecting either media path.
-func requestedWebRTCEnabled(production bool, deviceWSSRequested bool) (bool, error) {
+// rejectRemovedWebRTC keeps stale WebRTC environment harmless while refusing
+// a configuration that still expects the removed WHIP/WebRTC terminator. The
+// Direct Device WSS listener is the only media path this process serves.
+func rejectRemovedWebRTC() error {
 	raw := strings.TrimSpace(os.Getenv("MEDIA_EDGE_WEBRTC_ENABLED"))
 	if raw == "" {
-		return true, nil
+		return nil
 	}
 	enabled, err := strconv.ParseBool(raw)
 	if err != nil {
-		return false, errors.New("invalid MEDIA_EDGE_WEBRTC_ENABLED")
+		return errors.New("invalid MEDIA_EDGE_WEBRTC_ENABLED")
 	}
-	if production && !enabled && !deviceWSSRequested {
-		return false, errors.New("production may disable WebRTC only when Direct Device WSS is enabled")
+	if enabled {
+		return errors.New("MEDIA_EDGE_WEBRTC_ENABLED=true is no longer supported: the WHIP/WebRTC terminator was removed; unset it and use Direct Device WSS")
 	}
-	return enabled, nil
+	return nil
+}
+
+// requireDirectDeviceWSS fails closed when production would start without its
+// only media listener.
+func requireDirectDeviceWSS(production, deviceWSSRequested bool) error {
+	if production && !deviceWSSRequested {
+		return errors.New("production media edge requires MEDIA_EDGE_DEVICE_WSS_ENABLED=true; Direct Device WSS is the only media path")
+	}
+	return nil
 }
 
 func envDuration(name string, fallback time.Duration) time.Duration {
@@ -432,74 +437,18 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 	return time.Duration(value) * time.Millisecond
 }
 
-func requestedInteractionAuthority() (mediav1.InteractionAuthority, error) {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERACTION_AUTHORITY"))) {
+// validateInteractionAuthority accepts only Python authority. The Go shadow
+// actor has been removed and Go authority was never promoted, so either value
+// is a startup error rather than a silent downgrade.
+func validateInteractionAuthority() error {
+	switch value := strings.ToLower(strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERACTION_AUTHORITY"))); value {
 	case "", "python", "python_authoritative":
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
-	case "go_shadow":
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW, nil
-	case "go_authoritative":
-		// A6 is intentionally unavailable until parity/SLO/rollback evidence is
-		// wired as a separate promotion gate.
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
+		return nil
+	case "go_shadow", "go_authoritative":
+		return fmt.Errorf("MEDIA_EDGE_INTERACTION_AUTHORITY=%s is not supported; use python_authoritative", value)
 	default:
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED,
-			fmt.Errorf("invalid MEDIA_EDGE_INTERACTION_AUTHORITY")
+		return fmt.Errorf("invalid MEDIA_EDGE_INTERACTION_AUTHORITY")
 	}
-}
-
-func buildWebRTCConfig(production bool) (mediaedge.WebRTCTerminatorConfig, error) {
-	var iceServers []webrtc.ICEServer
-	if raw := strings.TrimSpace(os.Getenv("MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON")); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &iceServers); err != nil {
-			return mediaedge.WebRTCTerminatorConfig{}, fmt.Errorf("invalid MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON: %w", err)
-		}
-	}
-	var publicIPs []string
-	for _, value := range strings.Split(os.Getenv("MEDIA_EDGE_WEBRTC_PUBLIC_IPS"), ",") {
-		if value = strings.TrimSpace(value); value != "" {
-			publicIPs = append(publicIPs, value)
-		}
-	}
-	portMin := envInt("MEDIA_EDGE_WEBRTC_UDP_PORT_MIN", 0)
-	portMax := envInt("MEDIA_EDGE_WEBRTC_UDP_PORT_MAX", 0)
-	if (portMin == 0) != (portMax == 0) || portMin > portMax || portMax > 65535 {
-		return mediaedge.WebRTCTerminatorConfig{}, errors.New("WebRTC UDP port range must provide valid min and max values")
-	}
-	hasTURN := false
-	for _, server := range iceServers {
-		for _, url := range server.URLs {
-			hasTURN = hasTURN || strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:")
-		}
-	}
-	if production && !hasTURN && (len(publicIPs) == 0 || portMin == 0) {
-		return mediaedge.WebRTCTerminatorConfig{}, errors.New("production WebRTC requires TURN or public IP plus a bounded UDP port range")
-	}
-	settingEngine := webrtc.SettingEngine{}
-	if portMin > 0 {
-		if err := settingEngine.SetEphemeralUDPPortRange(uint16(portMin), uint16(portMax)); err != nil {
-			return mediaedge.WebRTCTerminatorConfig{}, err
-		}
-	}
-	if len(publicIPs) > 0 {
-		if err := settingEngine.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
-			External:        publicIPs,
-			AsCandidateType: webrtc.ICECandidateTypeHost,
-			Mode:            webrtc.ICEAddressRewriteReplace,
-		}); err != nil {
-			return mediaedge.WebRTCTerminatorConfig{}, fmt.Errorf("configure public ICE address rewrite: %w", err)
-		}
-	}
-	configuration := webrtc.Configuration{ICEServers: iceServers}
-	if production && hasTURN {
-		configuration.ICETransportPolicy = webrtc.ICETransportPolicyRelay
-	}
-	return mediaedge.WebRTCTerminatorConfig{
-		API:                   webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)),
-		Configuration:         configuration,
-		RequireRelayCandidate: production && hasTURN,
-		OnError:               func(err error) { log.Printf("media edge WebRTC error: %v", err) },
-	}, nil
 }
 
 func buildVoiceCoreBridge() (*mediaedge.VoiceCoreBridgeSupervisor, error) {
@@ -529,8 +478,7 @@ func buildVoiceCoreBridge() (*mediaedge.VoiceCoreBridgeSupervisor, error) {
 		}
 		tlsConfig = &loaded
 	}
-	interactionAuthority, err := requestedInteractionAuthority()
-	if err != nil {
+	if err := validateInteractionAuthority(); err != nil {
 		return nil, err
 	}
 	connectTimeout := envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second)
@@ -538,7 +486,6 @@ func buildVoiceCoreBridge() (*mediaedge.VoiceCoreBridgeSupervisor, error) {
 		context.Background(),
 		mediaedge.VoiceCoreBridgeConfig{
 			Address: address, TLS: tlsConfig, AllowInsecureDevelopment: allowInsecure,
-			InteractionAuthority: interactionAuthority,
 		},
 		connectTimeout,
 	)
@@ -677,27 +624,11 @@ func main() {
 	server.InternalControlToken = strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
 	deviceWSSRequested := envBool("MEDIA_EDGE_DEVICE_WSS_ENABLED")
-	webRTCEnabled, err := requestedWebRTCEnabled(production, deviceWSSRequested)
-	if err != nil {
+	if err := rejectRemovedWebRTC(); err != nil {
 		log.Fatal(err)
 	}
-	var terminator *mediaedge.WebRTCTerminator
-	if webRTCEnabled {
-		webrtcConfig, configErr := buildWebRTCConfig(production)
-		if configErr != nil {
-			log.Fatal(configErr)
-		}
-		terminator, err = mediaedge.NewWebRTCTerminator(server, verifier, webrtcConfig)
-		if err != nil {
-			log.Fatal(err)
-		}
-		server.WHIPHandler = terminator.Handler()
-		server.DownlinkSenderFactory = terminator.DownlinkSender
-		server.DownlinkReadyProbe = terminator.Ready
-		server.SessionCloseHook = terminator.CloseSession
-		server.RequireExternalDownlinkSender = production
-	} else {
-		log.Printf("media edge WebRTC disabled; serving Direct Device WSS only")
+	if err := requireDirectDeviceWSS(production, deviceWSSRequested); err != nil {
+		log.Fatal(err)
 	}
 	voiceCore, err := buildVoiceCoreBridge()
 	if err != nil {
@@ -706,45 +637,6 @@ func main() {
 	if voiceCore != nil {
 		server.ReadyProbe = voiceCore.Ready
 		server.BridgeMetricsWriter = voiceCore.WriteMetrics
-		if terminator != nil {
-			server.BridgeFactory = func(request mediaedge.OpenSessionRequest, session *mediaedge.Session, sender mediaedge.DownlinkSender) (*mediaedge.VoiceCoreMediaRuntime, error) {
-				handshakeCtx, cancel := context.WithTimeout(context.Background(), envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second))
-				defer cancel()
-				clientType := request.ClientType
-				if clientType == "" {
-					clientType = session.ClientTypeValue()
-				}
-				_, accountID, deviceID, streamEpoch := session.IdentitySnapshot()
-				core, err := voiceCore.ConnectWithHandshakeContext(
-					context.Background(),
-					handshakeCtx,
-					mediaedge.BridgeIdentity{
-						SessionID: request.SessionID, AccountID: accountID, DeviceID: deviceID,
-						ClientType: clientType, StreamEpoch: streamEpoch,
-						SubjectID: request.SubjectID, BindingID: request.BindingID,
-						BindingVersion:        request.BindingVersion,
-						RuntimeProfileVersion: request.RuntimeProfileVersion,
-						AudioMode:             request.AudioMode,
-					},
-					mediaedge.BridgeAudioFormat{Encoding: mediav1.AudioEncoding_AUDIO_ENCODING_PCM_S16LE, SampleRate: 16_000, Channels: 1, FrameMS: 20},
-					mediaedge.BridgeAudioFormat{Encoding: mediav1.AudioEncoding_AUDIO_ENCODING_PCM_S16LE, SampleRate: 24_000, Channels: 1, FrameMS: 20},
-				)
-				if err != nil {
-					return nil, err
-				}
-				onError := func(bridgeErr error) {
-					log.Printf("media edge Voice Core stream failed session=%s err=%v", request.SessionID, bridgeErr)
-					terminator.HandleBridgeError(request, bridgeErr)
-				}
-				if sender != nil {
-					return mediaedge.NewVoiceCoreMediaRuntimeWithDownlinkSender(
-						context.Background(), session, core, sender,
-						func(event *mediav1.CoreToMedia) { terminator.ForwardCoreEvent(request, event) }, onError,
-					)
-				}
-				return mediaedge.NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, onError)
-			}
-		}
 		log.Printf("media edge Voice Core bridge enabled address=%s", strings.TrimSpace(os.Getenv("MEDIA_EDGE_VOICE_CORE_ADDR")))
 	} else {
 		log.Printf("media edge running provider-neutral HTTP reference; Voice Core bridge is not configured")
@@ -851,9 +743,6 @@ func main() {
 		}
 	case <-stopContext.Done():
 		server.Draining.Store(true)
-		if terminator != nil {
-			_ = terminator.Close()
-		}
 		_ = server.Close()
 		if voiceCore != nil {
 			_ = voiceCore.Close()

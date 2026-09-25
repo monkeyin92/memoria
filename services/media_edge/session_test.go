@@ -192,7 +192,7 @@ func TestSessionPlayoutBufferRestartsAtZeroAfterGenerationChange(t *testing.T) {
 			if err := session.AcceptDownlink(old); err != nil {
 				t.Fatal(err)
 			}
-			session.MirrorPlayback(old.FrameSamples, current)
+			session.RecordPlayback(old.FrameSamples, current)
 
 			next := test.transition(t, session, current)
 			fresh := testFrame("playout", 1, 0, next.GenerationID)
@@ -226,8 +226,8 @@ func TestSessionCountsRealPlayoutUnderrunTransitions(t *testing.T) {
 	if err := session.AcceptDownlink(first); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPlayback(first.FrameSamples, fence)
-	session.MirrorPlayback(first.FrameSamples, fence)
+	session.RecordPlayback(first.FrameSamples, fence)
+	session.RecordPlayback(first.FrameSamples, fence)
 	if got := session.Stats().PlayoutUnderruns; got != 1 {
 		t.Fatalf("repeated empty-buffer ACK counted %d underruns, want 1", got)
 	}
@@ -237,7 +237,7 @@ func TestSessionCountsRealPlayoutUnderrunTransitions(t *testing.T) {
 	if err := session.AcceptDownlink(second); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPlayback(second.CaptureStartSample+second.FrameSamples, fence)
+	session.RecordPlayback(second.CaptureStartSample+second.FrameSamples, fence)
 	if got := session.Stats().PlayoutUnderruns; got != 2 {
 		t.Fatalf("buffer refill did not re-arm underrun detection: got %d", got)
 	}
@@ -262,7 +262,7 @@ func TestSessionDoesNotCountCompletedFinalFrameAsPlayoutUnderrun(t *testing.T) {
 	if err := session.AcceptDownlink(final); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPlayback(final.FrameSamples, fence)
+	session.RecordPlayback(final.FrameSamples, fence)
 
 	if got := session.Stats().PlayoutUnderruns; got != 0 {
 		t.Fatalf("natural final playout counted %d underruns", got)

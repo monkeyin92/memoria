@@ -14,7 +14,7 @@ import (
 )
 
 // CoreMediaStream is implemented by VoiceCoreSession and by deterministic
-// local fakes.  A real WHIP/WebRTC adapter only needs to provide this contract.
+// local fakes.  A media transport adapter only needs to provide this contract.
 type CoreMediaStream interface {
 	SendAudio(AudioFrame) error
 	Recv() (*mediav1.CoreToMedia, error)
@@ -64,27 +64,22 @@ type stopAttempt struct {
 
 // VoiceCoreMediaRuntime owns one session's edge↔core forwarding loop.
 type VoiceCoreMediaRuntime struct {
-	session            *Session
-	core               CoreMediaStream
-	onEvent            func(*mediav1.CoreToMedia)
-	onError            func(error)
-	downlinkSender     DownlinkSender
-	ctx                context.Context
-	cancel             context.CancelFunc
-	done               chan error
-	once               sync.Once
-	uplinkMu           sync.Mutex
-	stopMu             sync.Mutex
-	pendingStopID      string
-	pendingStop        stopAttempt
-	keywordMu          sync.Mutex
-	sentKeywordFences  map[string]Fence
-	sentKeywordOrder   []string
-	lastShadowSequence uint64
-	hasShadowSequence  bool
-	resyncShadowSpeech bool
-	resyncShadowOutput bool
-	resyncShadowFloor  bool
+	session           *Session
+	core              CoreMediaStream
+	onEvent           func(*mediav1.CoreToMedia)
+	onError           func(error)
+	downlinkSender    DownlinkSender
+	ctx               context.Context
+	cancel            context.CancelFunc
+	done              chan error
+	once              sync.Once
+	uplinkMu          sync.Mutex
+	stopMu            sync.Mutex
+	pendingStopID     string
+	pendingStop       stopAttempt
+	keywordMu         sync.Mutex
+	sentKeywordFences map[string]Fence
+	sentKeywordOrder  []string
 }
 
 func NewVoiceCoreMediaRuntime(
@@ -138,18 +133,6 @@ func newVoiceCoreMediaRuntime(
 
 func (r *VoiceCoreMediaRuntime) HasDownlinkSender() bool { return r.downlinkSender != nil }
 
-func (r *VoiceCoreMediaRuntime) InteractionAuthority() mediav1.InteractionAuthority {
-	provider, ok := r.core.(interactionAuthorityStream)
-	if !ok {
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
-	}
-	authority, err := normalizeEffectiveInteractionAuthority(provider.InteractionAuthority())
-	if err != nil {
-		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
-	}
-	return authority
-}
-
 func (r *VoiceCoreMediaRuntime) SendVAD(
 	sample, voicedEnd uint64,
 	probability, rms, noiseFloor float32,
@@ -159,11 +142,7 @@ func (r *VoiceCoreMediaRuntime) SendVAD(
 	if !ok {
 		return fmt.Errorf("voice-core stream does not support VAD events")
 	}
-	if err := sender.SendVadWithVoicedEnd(sample, voicedEnd, probability, rms, noiseFloor, start); err != nil {
-		return err
-	}
-	r.session.MirrorVAD(start, sample)
-	return nil
+	return sender.SendVadWithVoicedEnd(sample, voicedEnd, probability, rms, noiseFloor, start)
 }
 
 func (r *VoiceCoreMediaRuntime) SendPlaybackProgress(progress PlaybackProgress) error {
@@ -174,7 +153,7 @@ func (r *VoiceCoreMediaRuntime) SendPlaybackProgress(progress PlaybackProgress) 
 	if err := sender.SendPlaybackProgress(progress); err != nil {
 		return err
 	}
-	r.session.MirrorPlayback(
+	r.session.RecordPlayback(
 		progress.RenderedSampleEnd,
 		Fence{
 			SessionID:    progress.SessionID,

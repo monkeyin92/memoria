@@ -1146,7 +1146,7 @@ async def test_media_asr_dedup_retains_the_most_recent_128_keys() -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_epoch_provider_callback_cannot_update_speaker_or_shadow() -> None:
+async def test_old_epoch_provider_callback_cannot_update_speaker() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -1171,23 +1171,9 @@ async def test_old_epoch_provider_callback_cannot_update_speaker_or_shadow() -> 
                 ),
             )
 
-    class ShadowCapturingBridge(MediaBridgeGrpcServer):
-        def __init__(self) -> None:
-            super().__init__()
-            self.shadow_segments: list[SpeechSegment] = []
-
-        async def emit_speech_segment_decision(
-            self,
-            _session_id: str,
-            segment: SpeechSegment,
-            **_kwargs: Any,
-        ) -> bool:
-            self.shadow_segments.append(segment)
-            return True
-
     identity = SessionIdentity("old-epoch-callback", stream_epoch=1)
     provider = BlockingProvider()
-    bridge = ShadowCapturingBridge()
+    bridge = MediaBridgeGrpcServer()
     runtime = DuplexRuntime.create(session_id=identity.session_id)
     speaker_pcm: list[bytes] = []
     runtime.feed_speaker_pcm = speaker_pcm.append  # type: ignore[method-assign]
@@ -1210,7 +1196,6 @@ async def test_old_epoch_provider_callback_cannot_update_speaker_or_shadow() -> 
     await asyncio.wait_for(callback, timeout=1)
 
     assert speaker_pcm == []
-    assert bridge.shadow_segments == []
     await runtime.close()
     await provider.close(identity)
 
@@ -3337,51 +3322,6 @@ async def test_connected_reconnect_provider_reset_failure_retires_both_epochs() 
 
 
 @pytest.mark.asyncio
-async def test_registry_observes_real_runtime_output_intent_admission() -> None:
-    class CapturingBridge(MediaBridgeGrpcServer):
-        def __init__(self) -> None:
-            super().__init__()
-            self.output_admissions: list[OutputIntentAdmission] = []
-
-        def emit_output_intent_decision(
-            self,
-            _session_id: str,
-            admission: OutputIntentAdmission,
-        ) -> bool:
-            self.output_admissions.append(admission)
-            return True
-
-    bridge = CapturingBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: FakeMediaProvider(),
-    )
-    registry.install()
-    identity = SessionIdentity("runtime-output-observer")
-    context = await registry._get_or_create(identity)
-    fence = context.runtime.fence
-    intent = context.runtime.orchestrator.delegation.bridge_acknowledgement(
-        BRIDGE_PHRASES[0],
-        fence=fence,
-        context_version=0,
-        expires_at_ms=2_000,
-        now_ms=1_000,
-    )
-
-    assert context.runtime.orchestrator.delegation.admit_output_intent(
-        intent,
-        current_fence=fence,
-        current_context_version=0,
-        floor_allows_output=True,
-        now_ms=1_500,
-    )
-    assert len(bridge.output_admissions) == 1
-    assert bridge.output_admissions[0].accepted is True
-    await context.runtime.close()
-    await context.provider.close(identity)
-
-
-@pytest.mark.asyncio
 async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     class CapturingBridge(MediaBridgeGrpcServer):
         def __init__(self) -> None:
@@ -3389,14 +3329,6 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
             self.output_admissions: list[OutputIntentAdmission] = []
             self.frames: list[object] = []
             self.runtime_events: list[tuple[str, dict[str, object]]] = []
-
-        def emit_output_intent_decision(
-            self,
-            _session_id: str,
-            admission: OutputIntentAdmission,
-        ) -> bool:
-            self.output_admissions.append(admission)
-            return True
 
         async def emit_pcm(self, _session_id: str, frame: object) -> bool:
             self.frames.append(frame)
@@ -3427,6 +3359,9 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     identity = SessionIdentity("main-output-owner")
     session = bridge.bridge.open(identity)
     context = await registry._get_or_create(identity)
+    context.runtime.orchestrator.delegation.set_output_intent_observer(
+        bridge.output_admissions.append
+    )
     fence = await context.runtime.on_turn_committed("你好")
     context.playback.start(fence)
 
@@ -3587,14 +3522,6 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
             self.output_admissions: list[OutputIntentAdmission] = []
             self.frames: list[object] = []
 
-        def emit_output_intent_decision(
-            self,
-            _session_id: str,
-            admission: OutputIntentAdmission,
-        ) -> bool:
-            self.output_admissions.append(admission)
-            return True
-
         async def emit_pcm(self, _session_id: str, frame: object) -> bool:
             self.frames.append(frame)
             return True
@@ -3615,6 +3542,9 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
     )
     registry.install()
     context = await registry._get_or_create(identity)
+    context.runtime.orchestrator.delegation.set_output_intent_observer(
+        bridge.output_admissions.append
+    )
     fence = await context.runtime.on_turn_committed("你好")
     assert fence.session_epoch == 7
     context.playback.start(fence)
@@ -4874,12 +4804,7 @@ async def test_media_registry_lets_the_shared_agent_prepare_a_committed_turn() -
     class CapturingBridge(MediaBridgeGrpcServer):
         def __init__(self) -> None:
             super().__init__()
-            self.context_versions: list[int] = []
             self.committed_context_versions: list[int] = []
-
-        async def emit_context_activated(self, _session_id: str, context_version: int) -> bool:
-            self.context_versions.append(context_version)
-            return True
 
         async def emit_event(
             self,
@@ -4950,7 +4875,6 @@ async def test_media_registry_lets_the_shared_agent_prepare_a_committed_turn() -
     assert fence is not None and fence.matches(runtime.fence)
     assert provider.prepared == ["帮我制定计划"]
     assert runtime.orchestrator.context_version_for_fence(fence) == 1
-    assert bridge.context_versions == [1]
     assert bridge.committed_context_versions == [1]
     await runtime.close()
 
@@ -14422,7 +14346,7 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
 @pytest.mark.asyncio
 async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> None:
     provider = FakeMediaProvider()
-    bridge = MediaBridgeGrpcServer(allow_go_shadow=True)
+    bridge = MediaBridgeGrpcServer()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -14463,6 +14387,11 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         )
         accepted = await asyncio.wait_for(call.read(), timeout=1)
         assert accepted.accepted.identity.session_id == session_identity.session_id
+        # A Go-shadow request degrades to the only supported authority.
+        assert (
+            accepted.accepted.interaction_authority
+            == media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
+        )
         await requests.put(
             media_pb2.MediaToCore(
                 vad=media_pb2.VadEvent(
@@ -14491,15 +14420,6 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         assert floor.floor_effect.expires_at_ms > 0
         transcript = await _next_event(call, "transcript")
         assert transcript.transcript.text == "你好"
-        for _ in range(4):
-            shadow = await _next_event(call, "shadow_observation")
-            if shadow.shadow_observation.WhichOneof("input") == "speech_segment":
-                break
-        else:
-            raise AssertionError("bridge did not emit the ASR speech segment shadow")
-        assert shadow.shadow_observation.authoritative_timeline.latest_task_epoch == 1
-        assert shadow.shadow_observation.speech_segment.segment_id == "fake-sentence"
-        assert len(shadow.shadow_observation.speech_segment.text_sha256) == 32
         assert provider.audio_calls == [0]
 
         await requests.put(
@@ -14512,15 +14432,6 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
                     voiced_end_sample=2,
                 )
             )
-        )
-        committed_timeline = await _next_event(call, "shadow_observation")
-        assert committed_timeline.shadow_observation.speech_commit.committed_sample == 2
-        assert committed_timeline.shadow_observation.authoritative_timeline.segments == []
-        context_observation = await _next_event(call, "shadow_observation")
-        assert context_observation.shadow_observation.WhichOneof("input") == "context_activated"
-        assert (
-            context_observation.shadow_observation.context_activated.context_version
-            == context_observation.shadow_observation.authoritative_context_version
         )
         started = await _next_event(call, "generation")
         assert started.generation.generation_id == 1
@@ -14679,8 +14590,6 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
         def __init__(self) -> None:
             super().__init__()
             self.transcripts: list[SpeechSegment] = []
-            self.task_starts: list[int] = []
-            self.segment_decisions: list[tuple[int, bool, str]] = []
 
         async def emit_transcript(
             self,
@@ -14694,31 +14603,6 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
         ) -> bool:
             _ = turn_id, speaker_class, task_epoch, context_version
             self.transcripts.append(segment)
-            return True
-
-        async def emit_speech_task_started(
-            self,
-            _session_id: str,
-            task_epoch: int,
-            _timeline: Any,
-        ) -> bool:
-            self.task_starts.append(task_epoch)
-            return True
-
-        async def emit_speech_segment_decision(
-            self,
-            _session_id: str,
-            segment: SpeechSegment,
-            *,
-            authoritative_accepted: bool,
-            authoritative_reason: str,
-            timeline: Any,
-            latest_task_epoch: int,
-        ) -> bool:
-            _ = timeline, latest_task_epoch
-            self.segment_decisions.append(
-                (segment.provider_task_epoch, authoritative_accepted, authoritative_reason)
-            )
             return True
 
     asr = ReconnectingASR()
@@ -14744,8 +14628,6 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
     context = registry._sessions[identity.session_id]
     assert context.asr.latest_authoritative_task_epoch == 2
     assert bridge.transcripts == []
-    assert bridge.task_starts == [2]
-    assert bridge.segment_decisions == [(1, False, "stale_task_epoch")]
     assert context.runtime.speech_timeline.pending == ()
     await context.runtime.close()
     await provider.close(identity)
@@ -14794,79 +14676,6 @@ async def test_registry_forwards_only_normalized_watermark_tail() -> None:
         )
         == "你好 世界"
     )
-
-
-@pytest.mark.asyncio
-async def test_registry_shadows_the_normalized_watermark_tail() -> None:
-    first = ASRResult(1, "sentence", 1, 0, 320, "你好", True)
-    extension = ASRResult(
-        2,
-        "sentence",
-        1,
-        0,
-        800,
-        "你好世界",
-        True,
-        word_timings=(
-            ASRWordTiming("你", 0, 160),
-            ASRWordTiming("好", 160, 320),
-            ASRWordTiming("世", 320, 560),
-            ASRWordTiming("界", 560, 800),
-        ),
-    )
-
-    class WatermarkProvider(FakeMediaProvider):
-        async def ingest_audio(
-            self,
-            _identity: SessionIdentity,
-            frame: AudioFrame,
-        ) -> Sequence[ASRResult]:
-            self.audio_calls.append(frame.sequence)
-            return (first,) if frame.sequence == 0 else (extension,)
-
-    class CapturingBridge(MediaBridgeGrpcServer):
-        def __init__(self) -> None:
-            super().__init__()
-            self.shadow_segments: list[SpeechSegment] = []
-
-        async def emit_speech_segment_decision(
-            self,
-            _session_id: str,
-            segment: SpeechSegment,
-            **_kwargs: Any,
-        ) -> bool:
-            self.shadow_segments.append(segment)
-            return True
-
-    identity = SessionIdentity("registry-shadow-normalized-tail")
-    provider = WatermarkProvider()
-    bridge = CapturingBridge()
-    registry = MediaVoiceCoreRegistry(
-        bridge=bridge,
-        provider_factory=lambda _identity: provider,
-    )
-    registry.install()
-    session = bridge.bridge.open(identity)
-    await registry.on_audio_frame(
-        session,
-        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
-    )
-    context = registry._sessions[identity.session_id]
-    context.asr.mark_committed(320)
-    await registry.on_audio_frame(
-        session,
-        AudioFrame(identity, 1, 320, 480, b"\x00\x00" * 480),
-    )
-
-    assert [
-        (item.capture_start_sample, item.capture_end_sample, item.text)
-        for item in bridge.shadow_segments
-    ] == [
-        (0, 320, "你好"),
-        (320, 800, "世界"),
-    ]
-    await context.runtime.close()
-    await provider.close(identity)
 
 
 @pytest.mark.asyncio

@@ -208,17 +208,6 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			s.openMu.Unlock()
 		}
 		writeStatus(w, http.StatusOK, map[string]any{"session_id": id, "stream_epoch": epoch})
-	case "shadow":
-		if r.Method != http.MethodGet {
-			writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		snapshot, available := session.ShadowSnapshot()
-		if !available {
-			writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "shadow snapshot unavailable"})
-			return
-		}
-		writeStatus(w, http.StatusOK, snapshot)
 	case "stop":
 		if r.Method != http.MethodPost {
 			writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
