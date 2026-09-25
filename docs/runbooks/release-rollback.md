@@ -29,20 +29,33 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 
 ## 完整制品上传与校验
 
-构建机生成 portable verifier 和绑定 source/images 的 manifest：
+构建机先从干净 tag 生成 source/images，再生成 portable verifier 和绑定 source/images 的 manifest；上传脚本要求 `source.tar.sha256` 与 `images.tar.sha256` 成对存在：
 
 ~~~bash
+docker save -o "$ARTIFACT_DIR/images.tar" \
+  memoria-agent:$RELEASE_TAG memoria-control-api:$RELEASE_TAG \
+  memoria-device-media-gateway:$RELEASE_TAG memoria-miniprogram-gateway:$RELEASE_TAG \
+  memoria-speaker-model:$RELEASE_TAG
+python3 scripts/verify_release_source.py \
+  --expected-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG" \
+  --create-archive "$ARTIFACT_DIR/source.tar"
 uv run python scripts/package_release_verifier.py \
+  --expected-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG" \
   --output "$ARTIFACT_DIR/release-verifier.pyz"
 uv run python scripts/create_release_manifest.py \
   --release-tag "$RELEASE_TAG" --expected-commit "$SOURCE_COMMIT" \
   --source-archive "$ARTIFACT_DIR/source.tar" \
   --images-archive "$ARTIFACT_DIR/images.tar" \
   --output "$ARTIFACT_DIR/release-manifest.json"
+for artifact in source.tar images.tar; do
+  (cd "$ARTIFACT_DIR" && sha256sum "$artifact" > "$artifact.sha256")
+done
 for artifact in source.tar images.tar release-manifest.json release-verifier.pyz; do
   (cd "$ARTIFACT_DIR" && sha256sum "$artifact")
 done
 ~~~
+
+macOS 构建机没有 `sha256sum` 时用 `shasum -a 256`（输出格式相同）。
 
 `images.tar + images.tar.sha256` 必须成对上传。先 dry-run，再 seeded upload；不要对 basis 使用 `rsync --inplace`，失败不得污染不可变基座。
 
@@ -55,7 +68,7 @@ scripts/upload_release_artifacts.sh \
   --release-tag "$RELEASE_TAG" --base-tag "$BASE_TAG"
 ~~~
 
-构建机可信摘要须经已认证运维通道提供；先验 verifier/manifest，再运行 verifier，成功后才解包：
+构建机可信摘要须经已认证运维通道提供；先验 verifier/manifest，再运行 verifier（导入前），`docker load` 后再带 `--verify-imported-images` 复验，成功后才解包。`source.tar` 带 `memoria/` 前缀，解包到发布目录时去掉一层：
 
 ~~~bash
 : "${MEMORIA_RELEASE_VERIFIER_SHA256:?required}"
@@ -64,9 +77,15 @@ printf '%s  %s\n' "$MEMORIA_RELEASE_VERIFIER_SHA256" "$UPLOAD_DIR/release-verifi
 printf '%s  %s\n' "$MEMORIA_RELEASE_MANIFEST_SHA256" "$UPLOAD_DIR/release-manifest.json" | sha256sum -c -
 python3 "$UPLOAD_DIR/release-verifier.pyz" \
   --manifest "$UPLOAD_DIR/release-manifest.json" --artifact-dir "$UPLOAD_DIR" \
+  --expected-tag "$RELEASE_TAG" --expected-commit "$SOURCE_COMMIT"
+docker load -i "$UPLOAD_DIR/images.tar"
+python3 "$UPLOAD_DIR/release-verifier.pyz" \
+  --manifest "$UPLOAD_DIR/release-manifest.json" --artifact-dir "$UPLOAD_DIR" \
   --expected-tag "$RELEASE_TAG" --expected-commit "$SOURCE_COMMIT" \
   --verify-imported-images
-tar --extract --file "$UPLOAD_DIR/source.tar" --directory "$CANDIDATE_DIR"
+install -d -o root -g root -m 0755 "/opt/memoria/releases/$RELEASE_TAG"
+tar --extract --file "$UPLOAD_DIR/source.tar" \
+  --directory "/opt/memoria/releases/$RELEASE_TAG" --strip-components=1 --no-same-owner
 ~~~
 
 不允许手工 retag 未绑定 manifest 的模型镜像。切流后运行 `scripts/smoke_server_deployment.sh`、真实 provider smoke、健康/私有 readiness/外部路由和延迟复核。
