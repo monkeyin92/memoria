@@ -7,6 +7,7 @@ never fall back to ``USING (true)`` RLS.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -126,10 +127,11 @@ def test_postgres_schema_family_policy_requires_context_for_family_rows() -> Non
     # The lenient form `OR current_setting('app.memory.family_space_id', true) IS NULL`
     # inside the AND(...) of memory_records is gone: the only IS NULL escape
     # allowed pairs family_space_id IS NULL with context IS NULL.
-    assert (
-        "OR current_setting('app.memory.family_space_id', true) IS NULL"
-        not in schema
-    )
+    for lenient in (
+        "OR current_setting('app.memory.family_space_id', true) IS NULL",
+        "OR NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL",
+    ):
+        assert lenient not in schema
     # Proposals (family NOT NULL) always require a matching context.
     proposals_select = schema[
         schema.index("memory_proposals_select") :
@@ -137,8 +139,8 @@ def test_postgres_schema_family_policy_requires_context_for_family_rows() -> Non
     ]
     compact = " ".join(proposals_select.split())
     assert (
-        "family_space_id = current_setting(" in compact
-        and "'app.memory.family_space_id', true )" in compact
+        "family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')"
+        in compact
     )
     # Grant-aware read branch exists and pins owner + scope.
     assert "app.memory.grant_owner_id" in schema
@@ -150,6 +152,26 @@ def test_postgres_schema_family_policy_requires_context_for_family_rows() -> Non
     assert "jsonb_typeof(co_subject_ids) = 'array'" in schema
     assert "jsonb_typeof(source_evidence_ids) = 'array'" in schema
     assert "jsonb_typeof(payload) = 'object'" in schema
+
+
+def test_postgres_schema_app_context_reads_treat_empty_as_unset() -> None:
+    """A transaction-local ``set_config`` leaves the GUC defined as '' on the
+    pooled connection after commit, so a bare ``current_setting(..., true)``
+    is '' (not NULL) in later transactions.  Every app.memory.* read must
+    fold '' back to NULL or personal rows vanish on a reused connection."""
+    schema = (
+        Path(__file__).resolve().parents[1] / "postgres_schema.sql"
+    ).read_text(encoding="utf-8")
+    compact = " ".join(schema.split())
+    bare = re.findall(
+        r"(?<!NULLIF\()current_setting\( ?'app\.memory\.[a-z_]+'", compact
+    )
+    assert bare == []
+    assert (
+        "family_space_id IS NULL AND"
+        " NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL"
+        in compact
+    )
 
 
 def test_shared_proposal_binding_version_is_required() -> None:
