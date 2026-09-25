@@ -1,4 +1,5 @@
 <view class="page-shell">
+  <page-backdrop theme="warm"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
   <view class="page-head">
     <text class="page-title">绑定设备</text>
@@ -184,7 +185,7 @@
   <!-- 步骤 5：完成徽章 -->
   <block wx:if="{{step === 'done'}}">
     <view class="l2-card done-card">
-      <face-badge role="starlight" size="lg"></face-badge>
+      <view class="done-device"><device-screen online="{{true}}" size="220"></device-screen></view>
       <text class="done-badge">已提交初始化</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>

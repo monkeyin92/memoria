@@ -1,3 +1,7 @@
+page {
+  background: #0E184F;
+}
+
 .device-header {
   padding: 8rpx 0 12rpx;
 }
@@ -17,7 +21,7 @@
 /* L2 音量卡：复用全局 l2-card / slider，只补数字与刻度 */
 .volume-num {
   flex-shrink: 0;
-  color: #172f43;
+  color: #ffffff;
   font-size: 40rpx;
   font-weight: 600;
 }
@@ -27,14 +31,14 @@
   align-items: center;
   justify-content: space-between;
   margin-top: 8rpx;
-  color: #93a1ab;
+  color: rgba(236, 242, 250, 0.55);
   font-size: 22rpx;
 }
 
 /* L3 行内数值：唤醒词当前值 */
 .row-value {
   flex-shrink: 0;
-  color: #5c6b76;
+  color: rgba(236, 242, 250, 0.74);
   font-size: 26rpx;
 }
 
@@ -55,7 +59,7 @@
 }
 
 .summary-key {
-  color: #596a78;
+  color: rgba(236, 242, 250, 0.6);
 }
 
 .summary-value {
@@ -72,22 +76,27 @@
   min-height: 112rpx;
   margin-top: 16rpx;
   padding: 20rpx 24rpx;
-  border: 2rpx solid #dfe6ea;
+  border: 2rpx solid rgba(255, 255, 255, 0.12);
   border-radius: 28rpx;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .sheet-opt.on {
-  border-color: #326e70;
-  background: #e3edec;
+  border-color: #9fe3d8;
+  background: rgba(143, 214, 203, 0.16);
 }
 
 .sheet-opt .opt-check {
   display: none;
   flex-shrink: 0;
-  color: #326e70;
+  color: #9fe3d8;
 }
 
 .sheet-opt.on .opt-check {
   display: block;
 }
+
+.sheet-opt .choice-radio { border-color: rgba(255, 255, 255, 0.3); }
+.sheet-opt.on .choice-radio { border-color: #9fe3d8; background: #9fe3d8; box-shadow: inset 0 0 0 8rpx #16202e; }
+
+.hero-pills .pill-teal { color: #9fe3d8; }

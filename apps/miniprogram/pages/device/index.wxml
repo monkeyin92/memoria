@@ -1,4 +1,5 @@
-<view class="page-shell">
+<view class="page-shell theme-dark">
+  <page-backdrop theme="night"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
@@ -54,8 +55,7 @@
             <text class="mem-hero-title">{{devicePlaceName}}</text>
             <text class="mem-hero-sub">{{onlineLabel}} · {{currentUserLabel}}正在使用</text>
           </view>
-          <face-badge wx:if="{{profile && profile.persona && profile.persona.persona_id}}" role="{{profile.persona.persona_id}}" size="sm"></face-badge>
-          <face-badge wx:else role="starlight" size="sm"></face-badge>
+          <device-screen online="{{online}}" size="180"></device-screen>
         </view>
         <view class="hero-pills">
           <view class="pill {{online ? '' : 'pill-amber'}}">
@@ -86,22 +86,21 @@
       <!-- L2 功能层：音量 -->
       <view class="l2-card" wx:if="{{settings}}">
         <view class="setting-row">
+          <glass-icon name="volume" size="80"></glass-icon>
           <view class="row-copy">
             <text class="l2-card-title">设备音量</text>
             <text class="l2-card-sub">在机器人上说话的声音大小</text>
           </view>
           <text class="volume-num">{{settings.volume_limit}}%</text>
         </view>
-        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#326e70" block-color="#172f43" />
+        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#9fe3d8" backgroundColor="#34425c" block-color="#ffffff" block-size="24" />
         <view class="slider-scale"><text>安静</text><text>响亮</text></view>
       </view>
 
       <!-- L3 信息层：角色与声音 / 唤醒词 / 网络 -->
       <view class="list">
         <view class="list-row" bindtap="openCompanion">
-          <view class="row-icon">
-            <svg viewBox="0 0 18 18" fill="none"><circle cx="9" cy="6" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 15a5.5 5.5 0 0 1 11 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </view>
+          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">角色与声音</text>
             <text class="row-meta">{{personaName}} · {{personaVoice}}</text>
@@ -109,9 +108,7 @@
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" bindtap="openWakeSheet">
-          <view class="row-icon">
-            <svg viewBox="0 0 18 18" fill="none"><path d="M3 7v4h3l4 3.5v-11L6 7H3z" fill="currentColor"/><path d="M12.5 5.5a4.5 4.5 0 0 1 0 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </view>
+          <view class="row-icon"><glass-icon name="mic" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">唤醒词</text>
             <text class="row-meta">叫它一声，它就应你</text>
@@ -120,6 +117,7 @@
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" bindtap="{{online ? '' : 'showConnectionHelp'}}">
+          <view class="row-icon"><glass-icon name="wifi" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">网络连接</text>
             <text class="row-meta">{{online ? '家庭网络已连接' : '等待重新连接'}}</text>
@@ -142,6 +140,7 @@
           <button class="secondary-button" bindtap="saveSubjectAlias">保存备注</button>
         </view>
         <view class="list-row" bindtap="openGuardian">
+          <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">家庭成员</text>
             <text class="row-meta">邀请与权限分别管理</text>
@@ -194,12 +193,14 @@
           <text wx:if="{{ageError}}" class="error-text">{{ageError}}</text>
         </block>
         <view class="list-row" bindtap="openOnboarding">
+          <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">添加其他设备</text>
           </view>
           <text class="row-chevron">›</text>
         </view>
         <view class="list-row" bindtap="openReprovision">
+          <view class="row-icon"><glass-icon name="bluetooth" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">重新配网</text>
             <text class="row-meta">只更新 Wi-Fi，不解除绑定</text>
@@ -327,9 +328,7 @@
       <!-- 设备信息诊断折叠面板 -->
       <view class="fold">
         <view class="list-row" bindtap="toggleDiag">
-          <view class="row-icon">
-            <svg viewBox="0 0 18 18" fill="none"><rect x="2.5" y="2.5" width="13" height="13" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M6 9h6M9 6v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </view>
+          <view class="row-icon"><glass-icon name="receipt" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">设备信息与诊断</text>
           </view>

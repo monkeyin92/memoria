@@ -1,0 +1,3 @@
+<view class="pb" aria-hidden="true">
+  <image class="pb-img" src="{{src}}" mode="aspectFill"></image>
+</view>

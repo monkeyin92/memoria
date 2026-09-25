@@ -1,8 +1,16 @@
 {
   "navigationBarTitleText": "首页",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark",
+  "backgroundTextStyle": "light",
   "usingComponents": {
-    "face-badge": "/components/face-badge/index"
-  }
+    "face-badge": "/components/face-badge/index",
+    "page-backdrop": "/components/page-backdrop/index",
+    "glass-icon": "/components/glass-icon/index",
+    "device-screen": "/components/device-screen/index"
+  },
+  "navigationBarBackgroundColor": "#224371",
+  "navigationBarTextStyle": "white",
+  "backgroundColor": "#224371",
+  "backgroundColorTop": "#224371",
+  "backgroundColorBottom": "#CFE3F2"
 }

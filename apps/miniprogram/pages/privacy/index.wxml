@@ -1,4 +1,5 @@
 <view class="page-shell">
+  <page-backdrop theme="mist"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
   <view class="page-head">
     <text class="page-title">隐私授权</text>
@@ -8,7 +9,8 @@
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
   <view class="l2-card">
-    <view class="auth-card-head">
+    <view class="auth-card-head auth-card-head-icon">
+      <glass-icon name="wave" size="72"></glass-icon>
       <text class="l2-card-title">{{consent ? '原始语音归档已授权' : '原始语音归档'}}</text>
       <switch checked="{{consent ? true : false}}" color="#326e70" bindchange="onRawAudioSwitch" aria-label="原始语音归档" />
     </view>
@@ -23,7 +25,8 @@
   </view>
 
   <view class="l2-card">
-    <view class="auth-card-head">
+    <view class="auth-card-head auth-card-head-icon">
+      <glass-icon name="memory" size="72"></glass-icon>
       <text class="l2-card-title">记忆档案</text>
       <switch checked="{{memoryOn}}" color="#326e70" bindchange="onMemorySwitch" aria-label="记忆档案" />
     </view>
@@ -35,7 +38,8 @@
   </view>
 
   <view class="l2-card">
-    <view class="auth-card-head">
+    <view class="auth-card-head auth-card-head-icon">
+      <glass-icon name="mic" size="72"></glass-icon>
       <text class="l2-card-title">声音样本</text>
       <switch checked="{{voiceOn}}" color="#326e70" bindchange="onVoiceSwitch" aria-label="声音样本" />
     </view>

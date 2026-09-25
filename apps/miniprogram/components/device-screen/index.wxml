@@ -1,0 +1,11 @@
+<view class="ds {{online ? 'ds-on' : 'ds-off'}}" style="width: {{size}}rpx; height: {{size * 0.94}}rpx; border-radius: {{size * 0.3}}rpx;" aria-hidden="true">
+  <view class="ds-screen" style="border-radius: {{size * 0.26}}rpx;">
+    <view class="ds-cam"></view>
+    <view class="ds-face">
+      <view class="ds-eye"></view>
+      <view class="ds-eye"></view>
+    </view>
+    <view class="ds-smile"></view>
+    <view class="ds-glare"></view>
+  </view>
+</view>

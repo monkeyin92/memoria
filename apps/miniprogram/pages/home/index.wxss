@@ -1,6 +1,10 @@
+page {
+  background: #CFE3F2;
+}
+
 .home-hero-main {
-  align-items: flex-start;
-  margin-top: 16rpx;
+  align-items: center;
+  margin-top: 20rpx;
 }
 
 .home-hero-copy {
@@ -45,8 +49,8 @@
   width: 56rpx;
   height: 56rpx;
   border-radius: 50%;
-  background: #eef1f5;
-  color: #596a78;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(236, 242, 250, 0.74);
   transition: transform 250ms;
 }
 
@@ -66,6 +70,7 @@
 }
 
 .home-recap-time {
-  color: #596a78;
+  flex: 1;
+  color: rgba(236, 242, 250, 0.74);
   font-size: 24rpx;
 }

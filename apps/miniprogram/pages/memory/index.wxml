@@ -1,4 +1,5 @@
 <view class="page-shell">
+  <page-backdrop theme="warm"></page-backdrop>
   <text class="page-title">回顾</text>
   <text class="page-lede">留下一些事，也可以选择不留。</text>
 
@@ -20,7 +21,7 @@
       <button class="primary-button memory-summarize" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新选中日期的回顾</button>
       <button class="secondary-button memory-share" open-type="share" data-date="{{selectedDate}}">分享选中日期的回顾</button>
       <view wx:if="{{!days.length}}" class="l2-card memory-empty">
-        <face-badge role="mianmian" size="xl" breathe="{{true}}"></face-badge>
+        <glass-icon name="memory" size="176"></glass-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
         <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
         <text class="caption">在设备上说几句后，再回来看看。AI 整理可能有偏差，打开回顾可以查看来源。</text>
@@ -107,14 +108,15 @@
         </view>
       </block>
       <view wx:else class="l2-card memory-empty">
-        <face-badge role="mianmian" size="xl" breathe="{{true}}"></face-badge>
+        <glass-icon name="memory" size="176"></glass-icon>
         <text class="l2-card-title">{{memoryFilter === 'pending' ? '待确认内容已处理完' : '这里还没有内容'}}</text>
         <text class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="openArchive">查看我的记忆档案</button>
         </view>
       </view>
-      <view class="list-row" bindtap="openArchive">
+      <view class="l2-card list-row memory-archive-row" bindtap="openArchive">
+        <view class="row-icon"><glass-icon name="memory" size="72"></glass-icon></view>
         <view class="row-copy">
           <text class="row-title">查看我的记忆档案</text>
           <text class="row-meta">已确认的偏好、来源与版本</text>
