@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import cast
+from typing import Final, cast
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import (
@@ -58,6 +58,7 @@ from services.policy.evidence import (
     ConsentEvidencePort,
     ConsentSnapshotEvidencePort,
     RelationshipEvidencePort,
+    active_relationship_for,
 )
 from services.policy.postgres_receipt_repository import (
     ConnectionBoundPolicyReceiptRepository,
@@ -97,6 +98,11 @@ from services.session_runtime.subject_resolver import (
 
 _DEFAULT_PROFILE_TTL = timedelta(minutes=5)
 _MAX_PROFILE_TTL = timedelta(seconds=86_400)
+#: Who may confirm and read consent for a sole subject other than themself.
+#: Mirrors the relations ``consent_discover_action_fence`` accepts for an
+#: actor that is not the subject; any other actor would make the discovery
+#: raise, so the control path leaves the subject unconfirmed instead.
+_SOLE_SUBJECT_PROXY_RELATIONS: Final[frozenset[str]] = frozenset({"guardian_of", "delegate_for"})
 _NO_EXPIRY_SENTINEL = datetime(9999, 12, 31, tzinfo=UTC)
 
 
@@ -962,6 +968,7 @@ class PostgresSessionRuntimeService:
         *,
         actor_id: str,
         binding: _LockedBinding,
+        now: datetime,
     ) -> SubjectResolution:
         """Confirm a one-to-one binding's subject for the control path.
 
@@ -981,6 +988,21 @@ class PostgresSessionRuntimeService:
         subject_id = resolution.active_subject_id
         if subject_id is None:
             return resolution
+        if subject_id != actor_id and not any(
+            relationship.source_person_id == actor_id
+            for relation_type in _SOLE_SUBJECT_PROXY_RELATIONS
+            for relationship in active_relationship_for(
+                relation_type, subject_id, now, binding.relationships
+            )
+        ):
+            return SubjectResolution(
+                active_subject_id=None,
+                speaker_state="unconfirmed",
+                speaker_confidence=None,
+                service_mode="unknown_safe",
+                reason_code="sole_bound_subject_relationship_missing",
+                requires_confirmation=True,
+            )
         if not await self._identity.can_switch_subject(
             connection,
             actor_id=actor_id,
@@ -1106,6 +1128,7 @@ class PostgresSessionRuntimeService:
                 connection,
                 actor_id=command.actor_id,
                 binding=binding,
+                now=command.now,
             )
         else:
             resolution = self._subject_resolver.resolve(
@@ -1774,6 +1797,7 @@ class PostgresSessionRuntimeService:
                         connection,
                         actor_id=command.actor_id,
                         binding=binding,
+                        now=command.now,
                     )
                 else:
                     resolution = SubjectResolution(

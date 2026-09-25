@@ -528,3 +528,48 @@ async def test_family_shared_stays_unconfirmed(
         "binding_not_one_to_one",
         "binding_not_one_to_one",
     ]
+
+
+@requires_postgres
+@pytest.mark.asyncio
+async def test_a_proxy_without_an_active_relationship_leaves_the_subject_unconfirmed(
+    postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811
+) -> None:
+    store, bootstrap_dsn = postgres_runtime_with_consent
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        # A parent_for_child binding whose guardianship was never attested
+        # (or is still a pending one-sided declaration).
+        await _seed_delegated_binding(
+            admin,
+            actor_id="parent-9",
+            subject_id="child-9",
+            device_id="dev-unattested",
+            binding_id="b-unattested",
+            declared_mode="parent_for_child",
+            subject_category="minor",
+            age_band="under_14",
+        )
+        await _seed_verified_device(
+            admin, device_id="dev-unattested", binding_id="b-unattested", now=datetime.now(UTC)
+        )
+    finally:
+        await admin.close()
+    manifest = _manifest(
+        mode="parent_for_child",
+        owner="parent-9",
+        subject="child-9",
+        device_id="dev-unattested",
+        binding_id="b-unattested",
+        guardian=True,
+    )
+    profile = await _read(_control(store, manifest), manifest)
+    assert _shape(profile) == {
+        "active_subject_id": None,
+        "speaker_state": "unconfirmed",
+        "service_mode": "unknown_safe",
+        "capabilities": ["chat", "english_practice"],
+    }
+    assert await _event_reasons(bootstrap_dsn, profile.session_id) == [
+        "sole_bound_subject_relationship_missing"
+    ]
