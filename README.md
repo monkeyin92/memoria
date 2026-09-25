@@ -100,6 +100,8 @@ uv run python scripts/generate_multi_subject_contracts.py --check
 node --test apps/miniprogram/tests/*.test.js
 ```
 
+增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
+
 只要出现旧 generation/tool epoch 误播、主人数据越权、危机回复被普通提示覆盖或危机事件未进入监护通知 outbox，发布结论必须是 REJECT。
 
 ## 产品与数据边界
