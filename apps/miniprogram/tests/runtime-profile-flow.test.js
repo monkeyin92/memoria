@@ -496,7 +496,7 @@ test("rebinding to a new manifest version clears in-memory guards", async () => 
   assert.equal(profile.runtime_profile_id, "rp_rebound");
 });
 
-test("requireRuntimeCapability gates all five capabilities fail-closed", async () => {
+test("requireRuntimeCapability gates profile-listed capabilities and defers action-time ones", async () => {
   bindDevice();
   const five = [
     "voice_profile_create",
@@ -519,9 +519,12 @@ test("requireRuntimeCapability gates all five capabilities fail-closed", async (
     );
   }
   const results = await Promise.all(requests);
+  // 声纹登记、数字分身、原始语音是动作时决策，已确认的有效 profile 即放行入口；
+  // 监护小结与私人回顾必须由 profile 列出。
+  const actionTime = new Set(["voice_profile_create", "digital_self_preview", "raw_audio_retention"]);
   for (let index = 0; index < five.length; index += 1) {
-    if (index === 1) {
-      assert.equal(results[index].allowed, true, `${five[index]} 应放行`);
+    if (actionTime.has(five[index])) {
+      assert.equal(results[index].allowed, true, `${five[index]} 应放行到动作接口`);
     } else {
       assert.equal(results[index].allowed, false, `${five[index]} 未授权应拒绝`);
       assert.equal(results[index].reason, "capability_missing");

@@ -334,6 +334,44 @@ const SENSITIVE_CAPABILITIES = Object.freeze([
   contracts.Capability.MemoryRecallPrivate,
 ]);
 
+/*
+ * 动作时决策的能力（服务端 PROFILE_ISSUE_DEFERRED_CAPABILITIES）。签发 Runtime
+ * Profile 时还没有动作/资源事实，服务端按设计从不把它们列进 capabilities，
+ * 而是在真正执行动作时由 action authorizer 判定。客户端因此只要求 profile
+ * 本身有效就放行入口，是否允许交给动作接口的服务端结果。
+ * 与服务端集合的一致性由 tests/sensitive-entry-gates.test.js 钉住。
+ */
+const ACTION_TIME_CAPABILITIES = Object.freeze([
+  contracts.Capability.MemoryCapture,
+  contracts.Capability.MemoryPromotion,
+  contracts.Capability.FamilySharedMemoryProposal,
+  contracts.Capability.FamilySharedMemoryApproval,
+  contracts.Capability.FamilySharedMemoryPromotion,
+  contracts.Capability.VoiceProfileCreate,
+  contracts.Capability.VoiceCloneUse,
+  contracts.Capability.DigitalSelfPreview,
+  contracts.Capability.LegacyGrantCreate,
+  contracts.Capability.Payment,
+  contracts.Capability.RawAudioRetention,
+  contracts.Capability.ModelTrainingContribution,
+  contracts.Capability.CrisisNotification,
+  contracts.Capability.DeviceOwnershipTransfer,
+]);
+
+// 入口是否可以打开：profile 必须有效。动作时决策的能力不看 capabilities，
+// 但只在主体已确认、非降级时才露出入口，未成年服务模式下的禁用能力仍不露出。
+function entryAllowed(profile, capability) {
+  if (!profile || profile.valid !== true || !Array.isArray(profile.capabilities)) return false;
+  if (!ACTION_TIME_CAPABILITIES.includes(capability)) {
+    return profile.capabilities.includes(capability);
+  }
+  if (profile.degraded) return false;
+  return !(
+    profile.service_mode === contracts.ServiceMode.StudentMinor &&
+    MINOR_FORBIDDEN_CAPABILITIES.includes(capability)
+  );
+}
+
 function entryForCapability(capability) {
   return SENSITIVE_ENTRIES.find((entry) => entry.capability === capability) || null;
 }
@@ -1191,9 +1229,7 @@ function normalizeSubjectResolution(payload) {
 
 /* 敏感入口由服务端 capabilities 驱动（D-07）：能力未授予就不展示。 */
 function sensitiveEntriesFor(runtimeProfile) {
-  const capabilities =
-    runtimeProfile && runtimeProfile.valid === true ? runtimeProfile.capabilities : [];
-  return SENSITIVE_ENTRIES.filter((entry) => capabilities.includes(entry.capability));
+  return SENSITIVE_ENTRIES.filter((entry) => entryAllowed(runtimeProfile, entry.capability));
 }
 
 /* unknown_safe / 未确认说话人的可解释降级说明（§4.3）。 */
@@ -1510,6 +1546,7 @@ module.exports = {
   AGE_BAND_LABELS,
   SENSITIVE_ENTRIES,
   SENSITIVE_CAPABILITIES,
+  ACTION_TIME_CAPABILITIES,
   MINOR_FORBIDDEN_CAPABILITIES,
   MINOR_FORBIDDEN_MODES,
   buildBindingRequest,
@@ -1520,6 +1557,7 @@ module.exports = {
   runtimeProfileWirePayload,
   canonicalWireJson,
   hasCapability,
+  entryAllowed,
   sensitiveCapabilitiesFor,
   isNewerRuntimeProfile,
   sensitiveEntriesFor,

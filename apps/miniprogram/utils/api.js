@@ -11,6 +11,7 @@ const {
   saveCachedRuntimeProfile,
   clearCachedRuntimeProfile,
   canonicalWireJson,
+  entryAllowed,
 } = require("./device-binding");
 const {
   normalizeIntrospectResponse,
@@ -1281,7 +1282,8 @@ async function requireRuntimeCapability(capability, { sessionId = null } = {}) {
     if (profile.valid !== true) {
       return { allowed: false, reason: "invalid_profile", profile };
     }
-    if (!profile.capabilities.includes(capability)) {
+    // 动作时决策的能力不会出现在 profile 里，由动作接口的服务端结果决定。
+    if (!entryAllowed(profile, capability)) {
       return { allowed: false, reason: "capability_missing", profile };
     }
     return { allowed: true, reason: "allowed", profile };

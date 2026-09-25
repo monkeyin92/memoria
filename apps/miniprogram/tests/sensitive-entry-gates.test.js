@@ -314,7 +314,7 @@ test("profile stats stay zero and no private recall request without a device bin
   });
 });
 
-test("profile sensitive entry flags come only from the runtime profile capabilities", async () => {
+test("profile entry flags: profile-listed from capabilities, action-time from a confirmed profile", async () => {
   await withWx(async () => {
     binding.saveBindingManifest(
       canonicalManifest({
@@ -348,8 +348,9 @@ test("profile sensitive entry flags come only from the runtime profile capabilit
       const state = await page.loadRuntimeCapabilities();
       assert.equal(state.speakerEntryAllowed, true);
       assert.equal(state.guardianEntryAllowed, true);
-      assert.equal(state.digitalSelfEntryAllowed, false);
-      assert.equal(state.rawVoiceEntryAllowed, false);
+      // 动作时决策：已确认的有效 profile 即露出入口，由服务端动作接口决定。
+      assert.equal(state.digitalSelfEntryAllowed, true);
+      assert.equal(state.rawVoiceEntryAllowed, true);
       assert.equal(state.hasRuntimeProfile, true);
       // 内置人格不得被当成自定义人格 id 交给克隆接口。
       assert.equal(state.customPersonaId, "");
