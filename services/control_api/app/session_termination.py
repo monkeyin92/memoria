@@ -106,6 +106,27 @@ class AccountSessionTerminator:
         return len(sessions)
 
 
+    async def terminate_subject(self, subject_id: str) -> int:
+        """Close only the device sessions serving one bound subject.
+
+        Their owner's own sessions stay up: deleting a child's data must not
+        sign the parent out.
+        """
+        session_ids = await asyncio.to_thread(
+            self._store.open_device_media_session_ids, subject_id=subject_id
+        )
+        closed_at = datetime.now(UTC).isoformat()
+        for session_id in session_ids:
+            await asyncio.to_thread(
+                self._store.close_device_media_session,
+                session_id=session_id,
+                reason="subject_data_deleted",
+                closed_at=closed_at,
+            )
+        await self._connections.close_sessions(set(session_ids))
+        return len(session_ids)
+
+
 class LiveKitRoomCloser:
     def __init__(self, settings: ControlSettings) -> None:
         self._settings = settings

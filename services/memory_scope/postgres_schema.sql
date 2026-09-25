@@ -43,6 +43,14 @@ BEGIN
         CREATE ROLE memoria_action_executor
             LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
     END IF;
+    -- Governance maintenance login: holds NO table privilege, only EXECUTE
+    -- on the subject-erasure ports below.
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'memoria_memory_maintenance'
+    ) THEN
+        CREATE ROLE memoria_memory_maintenance
+            LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
     IF current_user <> 'memoria_memory_owner' THEN
         EXECUTE format('GRANT memoria_memory_owner TO %I', current_user);
     END IF;
@@ -57,8 +65,11 @@ ALTER ROLE memoria_memory_worker
     LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 ALTER ROLE memoria_action_executor
     LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+ALTER ROLE memoria_memory_maintenance
+    LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
 GRANT USAGE, CREATE ON SCHEMA public TO memoria_memory_owner;
+GRANT USAGE ON SCHEMA public TO memoria_memory_maintenance;
 -- The bootstrap/migration role grants the owner only the narrow Session
 -- receipt lookup used by the capture SECURITY DEFINER function.  This must
 -- happen before SET ROLE below because the action-policy bridge is owned by
@@ -284,24 +295,115 @@ ON memory_audit_events(record_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_audit_proposal
 ON memory_audit_events(proposal_id, created_at);
 
--- Append-only guards: nobody may update or delete durable rows.
+-- Append-only guards: nobody may update or delete durable rows.  The one
+-- exception is a DELETE issued by ``memory_subject_erase`` (governance
+-- erasure of one bound subject, below): the guards honour it only while the
+-- statement runs as the schema owner AND the erase target is set, and only
+-- for rows that name that target.  ``memory_subject_erase`` sets the target
+-- on entry and clears it before returning (an error rolls it back), and no
+-- other owner-run function deletes or updates these tables, so a runtime
+-- login setting the target by hand still runs as itself, never the owner.
+CREATE OR REPLACE FUNCTION memory_subject_erase_target() RETURNS TEXT
+LANGUAGE plpgsql VOLATILE
+SET search_path = pg_catalog, public
+AS $memory_subject_erase_target$
+BEGIN
+    IF current_user <> 'memoria_memory_owner' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NULLIF(current_setting('app.memory.subject_erase', true), '');
+END
+$memory_subject_erase_target$;
+
+-- A proposal is the subject's when it names them as proposer or co-subject.
+CREATE OR REPLACE FUNCTION memory_subject_erase_names_proposal(
+    p_proposal_id TEXT,
+    p_subject_id TEXT
+) RETURNS BOOLEAN
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, public
+AS $memory_subject_erase_names_proposal$
+BEGIN
+    RETURN p_proposal_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM memory_shared_proposals p
+        WHERE p.proposal_id = p_proposal_id
+          AND (
+            p.proposer_subject_id = p_subject_id
+            OR p.co_subject_ids @> to_jsonb(p_subject_id)
+          )
+    );
+END
+$memory_subject_erase_names_proposal$;
+
+-- A record is the subject's when it names them in ANY attribution column,
+-- came from one of their proposals, or cites their capture evidence (the
+-- subject export rule: a merged projection is removed, never kept).
+CREATE OR REPLACE FUNCTION memory_subject_erase_names_record(
+    p_record_id TEXT,
+    p_subject_id TEXT
+) RETURNS BOOLEAN
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, public
+AS $memory_subject_erase_names_record$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM memory_records r
+        WHERE r.record_id = p_record_id
+          AND (
+            r.subject_id = p_subject_id
+            OR r.resource_owner_id = p_subject_id
+            OR r.created_by_actor_id = p_subject_id
+            OR r.co_subject_ids @> to_jsonb(p_subject_id)
+            OR memory_subject_erase_names_proposal(
+                r.shared_proposal_id, p_subject_id
+            )
+            OR r.source_evidence_ids ?| ARRAY(
+                SELECT e.evidence_id FROM memory_capture_evidence e
+                WHERE e.subject_id = p_subject_id
+            )
+          )
+    );
+END
+$memory_subject_erase_names_record$;
+
 CREATE OR REPLACE FUNCTION memory_records_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    v_target TEXT := memory_subject_erase_target();
 BEGIN
+    IF TG_OP = 'DELETE' AND v_target IS NOT NULL
+       AND memory_subject_erase_names_record(OLD.record_id, v_target) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'memory_records is append-only';
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION memory_status_events_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    v_target TEXT := memory_subject_erase_target();
 BEGIN
+    IF TG_OP = 'DELETE' AND v_target IS NOT NULL
+       AND memory_subject_erase_names_record(OLD.record_id, v_target) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'memory_status_events is append-only';
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION memory_votes_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    v_target TEXT := memory_subject_erase_target();
 BEGIN
+    IF TG_OP = 'DELETE' AND v_target IS NOT NULL
+       AND (
+            OLD.subject_id = v_target
+            OR memory_subject_erase_names_proposal(OLD.proposal_id, v_target)
+       ) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'memory_shared_votes is append-only';
 END;
 $$;
@@ -370,30 +472,26 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    subject_id = current_setting('app.memory.actor_subject_id', true)
-                    OR resource_owner_id = current_setting('app.memory.actor_subject_id', true)
+                    subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                    OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
                 OR (
                     -- Guardian/legacy grant read (fifth review): the service
                     -- sets these contexts ONLY after authoritative grant
                     -- verification; the scope is pinned so a grant can never
                     -- read outside its scope.
-                    resource_owner_id = current_setting(
-                        'app.memory.grant_owner_id', true
-                    )
-                    AND scope = current_setting('app.memory.grant_scope', true)
+                    resource_owner_id = NULLIF(current_setting('app.memory.grant_owner_id', true), '')
+                    AND scope = NULLIF(current_setting('app.memory.grant_scope', true), '')
                 )
             );
 
@@ -401,15 +499,11 @@ BEGIN
         CREATE POLICY memory_records_insert ON memory_records FOR INSERT
             TO memoria_memory_api, memoria_memory_worker, memoria_memory_owner
             WITH CHECK (
-                subject_id = current_setting('app.memory.subject_id', true)
-                AND created_by_actor_id = current_setting(
-                    'app.memory.actor_subject_id', true
-                )
+                subject_id = NULLIF(current_setting('app.memory.subject_id', true), '')
+                AND created_by_actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 AND (
                     family_space_id IS NULL
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -418,32 +512,26 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    subject_id = current_setting('app.memory.actor_subject_id', true)
-                    OR resource_owner_id = current_setting('app.memory.actor_subject_id', true)
+                    subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
+                    OR resource_owner_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 )
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             )
             WITH CHECK (
-                subject_id = current_setting('app.memory.subject_id', true)
-                AND created_by_actor_id = current_setting(
-                    'app.memory.actor_subject_id', true
-                )
+                subject_id = NULLIF(current_setting('app.memory.subject_id', true), '')
+                AND created_by_actor_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                 AND (
                     (
                         family_space_id IS NULL
-                        AND current_setting('app.memory.family_space_id', true) IS NULL
+                        AND NULLIF(current_setting('app.memory.family_space_id', true), '') IS NULL
                     )
-                    OR family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    OR family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -492,15 +580,13 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -508,7 +594,7 @@ BEGIN
         CREATE POLICY memory_proposals_insert ON memory_shared_proposals FOR INSERT
             TO memoria_memory_api, memoria_memory_worker
             WITH CHECK (
-                proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
 
         DROP POLICY IF EXISTS memory_proposals_update ON memory_shared_proposals;
@@ -516,28 +602,24 @@ BEGIN
             TO memoria_memory_api, memoria_memory_worker
             USING (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             )
             WITH CHECK (
                 (
-                    proposer_subject_id = current_setting('app.memory.actor_subject_id', true)
+                    proposer_subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     OR co_subject_ids @> to_jsonb(
-                        current_setting('app.memory.actor_subject_id', true)
+                        NULLIF(current_setting('app.memory.actor_subject_id', true), '')
                     )
                 )
                 AND (
-                    family_space_id = current_setting(
-                        'app.memory.family_space_id', true
-                    )
+                    family_space_id = NULLIF(current_setting('app.memory.family_space_id', true), '')
                 )
             );
 
@@ -557,14 +639,14 @@ BEGIN
         CREATE POLICY memory_votes_insert ON memory_shared_votes FOR INSERT
             TO memoria_memory_api, memoria_memory_worker
             WITH CHECK (
-                subject_id = current_setting('app.memory.actor_subject_id', true)
+                subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), '')
             );
 
         DROP POLICY IF EXISTS memory_votes_update ON memory_shared_votes;
         CREATE POLICY memory_votes_update ON memory_shared_votes FOR UPDATE
             TO memoria_memory_api, memoria_memory_worker
-            USING (subject_id = current_setting('app.memory.actor_subject_id', true))
-            WITH CHECK (subject_id = current_setting('app.memory.actor_subject_id', true));
+            USING (subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), ''))
+            WITH CHECK (subject_id = NULLIF(current_setting('app.memory.actor_subject_id', true), ''));
 
         -- P1-7: outbox/audit split by command - API may only append inside
         -- its atomic transactions; the worker polls/updates the outbox and
@@ -638,9 +720,9 @@ SET search_path = pg_catalog, public
 SET lock_timeout = '5s'
 AS $$
 DECLARE
-    v_actor TEXT := current_setting('app.memory.actor_subject_id', true);
-    v_subject TEXT := current_setting('app.memory.subject_id', true);
-    v_family TEXT := current_setting('app.memory.family_space_id', true);
+    v_actor TEXT := NULLIF(current_setting('app.memory.actor_subject_id', true), '');
+    v_subject TEXT := NULLIF(current_setting('app.memory.subject_id', true), '');
+    v_family TEXT := NULLIF(current_setting('app.memory.family_space_id', true), '');
 BEGIN
     IF v_actor IS NULL OR v_actor = '' THEN
         RAISE EXCEPTION 'memory_sensitive_commit: actor context missing (fail closed)';
@@ -2219,5 +2301,219 @@ GRANT EXECUTE ON FUNCTION memory_shared_action_withdraw(JSONB)
     TO memoria_action_executor;
 GRANT EXECUTE ON FUNCTION memory_shared_action_promote(JSONB)
     TO memoria_action_executor;
+
+
+-- ---------------------------------------------------------------------------
+-- Subject erasure (governance, 2026-09-25).
+--
+-- A child or elder with no account is stored under the binding owner's
+-- account and attributed by ``subject_id``.  Erasing that person is the ONLY
+-- path that removes rows from this append-only store: records, status events
+-- and votes are deleted (the immutability guards above honour exactly this
+-- call), proposals naming the subject are deleted rather than scrubbed (a
+-- scrubbed pending proposal could still be promoted), and outbox/audit rows
+-- keep their ids but lose their payload.  A shared record that only lists the
+-- subject as a co-subject is deleted as a whole: its content is one jointly
+-- confirmed text that cannot be split per person, and dropping the subject
+-- from ``co_subject_ids`` would keep their words while erasing the only
+-- attribution that could find them again.  Pending outbox rows are marked
+-- processed so a scrubbed stub is never dispatched; copies already streamed
+-- to Redis cannot be recalled and are reported as ``memory_outbox_dispatched``.
+-- Membership snapshots keep the subject's id: they are content-free rosters
+-- whose canonical hash the family fences verify, and they expire on their own.
+--
+-- Callable only by the ``memoria_memory_maintenance`` login, which holds no
+-- table privilege.  Idempotent: a repeat call finds nothing left to change.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION memory_subject_erase(p_subject_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+SET lock_timeout = '5s'
+AS $memory_subject_erase$
+DECLARE
+    v_proposals TEXT[];
+    v_evidence_ids TEXT[];
+    v_records TEXT[];
+    v_status_events INTEGER;
+    v_records_deleted INTEGER;
+    v_votes INTEGER;
+    v_proposals_deleted INTEGER;
+    v_evidence INTEGER;
+    v_outbox INTEGER;
+    v_outbox_dispatched INTEGER;
+    v_audit INTEGER;
+    v_subject_json JSONB := jsonb_build_object('s', p_subject_id);
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory subject erasure requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    IF p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128 THEN
+        RAISE EXCEPTION 'memory subject erasure needs a bounded subject id'
+            USING ERRCODE = 'MC403';
+    END IF;
+    -- Live only for this call: cleared before returning, and rolled back
+    -- with the (sub)transaction when anything below raises.
+    PERFORM set_config('app.memory.subject_erase', p_subject_id, true);
+
+    SELECT COALESCE(array_agg(p.proposal_id), ARRAY[]::TEXT[]) INTO v_proposals
+    FROM (
+        SELECT proposal_id FROM memory_shared_proposals
+        WHERE proposer_subject_id = p_subject_id
+           OR co_subject_ids @> to_jsonb(p_subject_id)
+        ORDER BY proposal_id
+        FOR UPDATE
+    ) p;
+    SELECT COALESCE(array_agg(evidence_id), ARRAY[]::TEXT[]) INTO v_evidence_ids
+    FROM memory_capture_evidence WHERE subject_id = p_subject_id;
+    -- The index-friendly form of memory_subject_erase_names_record; the
+    -- delete guard re-checks every row with the function itself.
+    SELECT COALESCE(array_agg(r.record_id), ARRAY[]::TEXT[]) INTO v_records
+    FROM (
+        SELECT record_id FROM memory_records
+        WHERE subject_id = p_subject_id
+           OR resource_owner_id = p_subject_id
+           OR created_by_actor_id = p_subject_id
+           OR co_subject_ids @> to_jsonb(p_subject_id)
+           OR shared_proposal_id = ANY(v_proposals)
+           OR source_evidence_ids ?| v_evidence_ids
+        ORDER BY record_id
+        FOR UPDATE
+    ) r;
+
+    DELETE FROM memory_status_events WHERE record_id = ANY(v_records);
+    GET DIAGNOSTICS v_status_events = ROW_COUNT;
+    DELETE FROM memory_records WHERE record_id = ANY(v_records);
+    GET DIAGNOSTICS v_records_deleted = ROW_COUNT;
+    DELETE FROM memory_shared_votes
+    WHERE subject_id = p_subject_id OR proposal_id = ANY(v_proposals);
+    GET DIAGNOSTICS v_votes = ROW_COUNT;
+    DELETE FROM memory_shared_proposals WHERE proposal_id = ANY(v_proposals);
+    GET DIAGNOSTICS v_proposals_deleted = ROW_COUNT;
+    DELETE FROM memory_capture_evidence WHERE subject_id = p_subject_id;
+    GET DIAGNOSTICS v_evidence = ROW_COUNT;
+
+    WITH scrubbed AS (
+        UPDATE memory_outbox o
+        SET payload = '{}'::JSONB, status = 'processed'
+        FROM (
+            SELECT outbox_id, status AS prior_status FROM memory_outbox
+            WHERE payload <> '{}'::JSONB
+              AND (
+                jsonb_path_exists(payload, 'lax $.** ? (@ == $s)', v_subject_json)
+                OR payload ->> 'record_id' = ANY(v_records)
+                OR payload ->> 'proposal_id' = ANY(v_proposals)
+              )
+            FOR UPDATE
+        ) target
+        WHERE o.outbox_id = target.outbox_id
+        RETURNING target.prior_status
+    )
+    SELECT count(*), count(*) FILTER (WHERE prior_status = 'processed')
+    INTO v_outbox, v_outbox_dispatched
+    FROM scrubbed;
+
+    UPDATE memory_audit_events
+    SET payload = '{}'::JSONB
+    WHERE payload <> '{}'::JSONB
+      AND (
+        subject_id = p_subject_id
+        OR actor_subject_id = p_subject_id
+        OR record_id = ANY(v_records)
+        OR proposal_id = ANY(v_proposals)
+        OR jsonb_path_exists(payload, 'lax $.** ? (@ == $s)', v_subject_json)
+      );
+    GET DIAGNOSTICS v_audit = ROW_COUNT;
+
+    INSERT INTO memory_audit_events (
+        event_id, action, actor_subject_id, subject_id, record_id,
+        proposal_id, payload, created_at
+    ) VALUES (
+        'memory.subject.erased:' || p_subject_id, 'memory.subject.erased',
+        'governance', p_subject_id, NULL, NULL, '{}'::JSONB,
+        CURRENT_TIMESTAMP
+    ) ON CONFLICT (event_id) DO NOTHING;
+    PERFORM set_config('app.memory.subject_erase', '', true);
+
+    RETURN jsonb_build_object(
+        'memory_status_events', v_status_events,
+        'memory_records', v_records_deleted,
+        'memory_shared_votes', v_votes,
+        'memory_shared_proposals', v_proposals_deleted,
+        'memory_capture_evidence', v_evidence,
+        'memory_outbox', v_outbox,
+        'memory_outbox_dispatched', v_outbox_dispatched,
+        'memory_audit_events', v_audit
+    );
+END
+$memory_subject_erase$;
+
+-- Rows still naming the subject that erasure would change; all zero when done.
+CREATE OR REPLACE FUNCTION memory_subject_remaining(p_subject_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $memory_subject_remaining$
+DECLARE
+    v_subject_json JSONB := jsonb_build_object('s', p_subject_id);
+BEGIN
+    IF NOT pg_has_role(session_user, 'memoria_memory_maintenance', 'member') THEN
+        RAISE EXCEPTION 'memory subject erasure requires the maintenance role'
+            USING ERRCODE = 'MC403';
+    END IF;
+    RETURN jsonb_build_object(
+        'memory_records', (
+            SELECT count(*) FROM memory_records
+            WHERE memory_subject_erase_names_record(record_id, p_subject_id)
+        ),
+        'memory_status_events', (
+            SELECT count(*) FROM memory_status_events
+            WHERE memory_subject_erase_names_record(record_id, p_subject_id)
+        ),
+        'memory_shared_proposals', (
+            SELECT count(*) FROM memory_shared_proposals
+            WHERE proposer_subject_id = p_subject_id
+               OR co_subject_ids @> to_jsonb(p_subject_id)
+        ),
+        'memory_shared_votes', (
+            SELECT count(*) FROM memory_shared_votes
+            WHERE subject_id = p_subject_id
+               OR memory_subject_erase_names_proposal(proposal_id, p_subject_id)
+        ),
+        'memory_capture_evidence', (
+            SELECT count(*) FROM memory_capture_evidence
+            WHERE subject_id = p_subject_id
+        ),
+        'memory_outbox', (
+            SELECT count(*) FROM memory_outbox
+            WHERE payload <> '{}'::JSONB
+              AND jsonb_path_exists(payload, 'lax $.** ? (@ == $s)', v_subject_json)
+        ),
+        'memory_audit_events', (
+            SELECT count(*) FROM memory_audit_events
+            WHERE payload <> '{}'::JSONB
+              AND (
+                subject_id = p_subject_id
+                OR actor_subject_id = p_subject_id
+                OR jsonb_path_exists(payload, 'lax $.** ? (@ == $s)', v_subject_json)
+              )
+        )
+    );
+END
+$memory_subject_remaining$;
+
+REVOKE ALL ON FUNCTION memory_subject_erase(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION memory_subject_remaining(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION memory_subject_erase(TEXT)
+    TO memoria_memory_maintenance;
+GRANT EXECUTE ON FUNCTION memory_subject_remaining(TEXT)
+    TO memoria_memory_maintenance;
 
 RESET ROLE;

@@ -209,8 +209,11 @@ UPDATE tutor_practice_sessions SET actor_id = account_id WHERE actor_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tutor_practice_subject_updated
 ON tutor_practice_sessions(subject_id, updated_at DESC);
 
+-- Study progress is one projection per subject (unique subject_id); the acting
+-- owner account_id is an ordinary column, so one owner can hold progress for
+-- several subjects.
 CREATE TABLE IF NOT EXISTS tutor_study_progress (
-    account_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
     subject_id TEXT,
     actor_id TEXT,
     practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
@@ -231,6 +234,33 @@ UPDATE tutor_study_progress SET actor_id = account_id WHERE actor_id IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tutor_progress_subject
 ON tutor_study_progress(subject_id) WHERE subject_id IS NOT NULL;
+
+-- In-place rekey: installs created before the per-subject model keyed the
+-- table by account_id, so a second subject under the same owner failed the
+-- insert.  Only that exact legacy key is dropped; every row is kept.
+DO $tutor_progress_rekey$
+DECLARE
+    legacy_key NAME;
+BEGIN
+    SELECT con.conname INTO legacy_key
+    FROM pg_constraint con
+    JOIN pg_attribute att
+      ON att.attrelid = con.conrelid AND att.attname = 'account_id'
+    WHERE con.conrelid = 'public.tutor_study_progress'::regclass
+      AND con.contype = 'p'
+      AND con.conkey = ARRAY[att.attnum];
+    IF legacy_key IS NOT NULL THEN
+        EXECUTE format(
+            'ALTER TABLE public.tutor_study_progress DROP CONSTRAINT %I',
+            legacy_key
+        );
+    END IF;
+END
+$tutor_progress_rekey$;
+ALTER TABLE tutor_study_progress ALTER COLUMN account_id SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tutor_progress_account
+ON tutor_study_progress(account_id);
 
 CREATE TABLE IF NOT EXISTS tutor_practice_evidence (
     event_id TEXT PRIMARY KEY,
@@ -295,7 +325,9 @@ CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
         ON DELETE CASCADE,
     guardian_user_id TEXT NOT NULL,
     channel TEXT NOT NULL CHECK (channel = 'wechat_subscription'),
-    status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'delivered', 'failed', 'no_subscription')
+    ),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     created_at TIMESTAMPTZ NOT NULL,
     delivered_at TIMESTAMPTZ,
@@ -309,8 +341,62 @@ CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
     )
 );
 
+-- Push delivery state (forward-only upgrade of an existing outbox).  The
+-- lease columns are only written by the maintenance-owned delivery functions
+-- below; ``reserved_template_id`` records that this row already consumed one
+-- subscribe-message acceptance, so a reclaim never consumes a second one.
+ALTER TABLE guardian_notification_outbox
+    ADD COLUMN IF NOT EXISTS claimed_by TEXT CHECK (
+        claimed_by IS NULL OR char_length(claimed_by) BETWEEN 1 AND 128
+    ),
+    ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS reserved_template_id TEXT CHECK (
+        reserved_template_id IS NULL
+        OR reserved_template_id ~ '^[A-Za-z0-9_-]{1,128}$'
+    );
+
+DO $guardian_outbox_status$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'guardian_notification_outbox'::regclass
+          AND conname = 'guardian_notification_outbox_status_check'
+          AND pg_get_constraintdef(oid) LIKE '%no_subscription%'
+    ) THEN
+        ALTER TABLE guardian_notification_outbox
+            DROP CONSTRAINT IF EXISTS guardian_notification_outbox_status_check;
+        ALTER TABLE guardian_notification_outbox
+            ADD CONSTRAINT guardian_notification_outbox_status_check CHECK (
+                status IN ('pending', 'delivered', 'failed', 'no_subscription')
+            );
+    END IF;
+END
+$guardian_outbox_status$;
+
 CREATE INDEX IF NOT EXISTS idx_guardian_notification_recipient_status
 ON guardian_notification_outbox(guardian_user_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_guardian_notification_push_claim
+ON guardian_notification_outbox(created_at, notification_id)
+WHERE status = 'pending';
+
+-- One-time WeChat subscribe-message acceptances per guardian and template.
+-- ``openid`` is the send address, written only from a server-side
+-- jscode2session exchange that matched the guardian's bound WeChat identity.
+CREATE TABLE IF NOT EXISTS guardian_push_subscriptions (
+    guardian_user_id TEXT NOT NULL CHECK (
+        char_length(guardian_user_id) BETWEEN 1 AND 128
+    ),
+    template_id TEXT NOT NULL CHECK (template_id ~ '^[A-Za-z0-9_-]{1,128}$'),
+    openid TEXT CHECK (openid IS NULL OR char_length(openid) BETWEEN 1 AND 128),
+    remaining INTEGER NOT NULL DEFAULT 0 CHECK (remaining BETWEEN 0 AND 20),
+    last_result TEXT NOT NULL CHECK (last_result IN ('accept', 'reject', 'ban')),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (guardian_user_id, template_id),
+    CHECK (remaining = 0 OR openid IS NOT NULL)
+);
 
 CREATE OR REPLACE FUNCTION guardian_link_core_immutable_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $guardian_link_immutable$
@@ -405,6 +491,34 @@ CREATE TRIGGER guardian_notification_outbox_delete_guard
 BEFORE DELETE ON guardian_notification_outbox
 FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
 
+DROP TRIGGER IF EXISTS guardian_push_subscriptions_delete_guard
+ON guardian_push_subscriptions;
+CREATE TRIGGER guardian_push_subscriptions_delete_guard
+BEFORE DELETE ON guardian_push_subscriptions
+FOR EACH ROW EXECUTE FUNCTION guardian_delete_guard();
+
+-- Delivery only settles state: the recipient and the event a notification
+-- belongs to can never be rewritten by an UPDATE.
+CREATE OR REPLACE FUNCTION guardian_notification_core_immutable_guard()
+RETURNS TRIGGER LANGUAGE plpgsql AS $guardian_notification_immutable$
+BEGIN
+    IF NEW.notification_id IS DISTINCT FROM OLD.notification_id
+       OR NEW.crisis_event_id IS DISTINCT FROM OLD.crisis_event_id
+       OR NEW.guardian_user_id IS DISTINCT FROM OLD.guardian_user_id
+       OR NEW.channel IS DISTINCT FROM OLD.channel
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'guardian notification identity is immutable';
+    END IF;
+    RETURN NEW;
+END
+$guardian_notification_immutable$;
+
+DROP TRIGGER IF EXISTS guardian_notification_core_immutable
+ON guardian_notification_outbox;
+CREATE TRIGGER guardian_notification_core_immutable
+BEFORE UPDATE ON guardian_notification_outbox
+FOR EACH ROW EXECUTE FUNCTION guardian_notification_core_immutable_guard();
+
 CREATE OR REPLACE FUNCTION tutor_authority_columns_guard()
 RETURNS TRIGGER LANGUAGE plpgsql AS $tutor_authority$
 BEGIN
@@ -474,16 +588,15 @@ BEGIN
                 ORDER BY created_at, session_id
             ) row
         ), '[]'::jsonb),
-        'tutor_study_progress', (
-            SELECT to_jsonb(row)
+        'tutor_study_progress', COALESCE((
+            SELECT jsonb_agg(to_jsonb(row))
             FROM (
                 SELECT * FROM tutor_study_progress
                 WHERE account_id = target_account_id
                    OR actor_id = target_account_id
                 ORDER BY subject_id IS NULL, subject_id
-                LIMIT 1
             ) row
-        ),
+        ), '[]'::jsonb),
         'tutor_practice_evidence', COALESCE((
             SELECT jsonb_agg(to_jsonb(row))
             FROM (
@@ -569,6 +682,179 @@ BEGIN
         'tutor_commit_outbox', (
             SELECT count(*) FROM tutor_commit_outbox
             WHERE subject_id = target_account_id OR actor_id = target_account_id
+        )
+    ) INTO result;
+    RETURN result;
+END
+$maintenance$;
+
+-- Subject-scoped deletion: one bound subject (a child or elder with no
+-- account) inside the binding owner's account.  Same role discipline as the
+-- account-scope functions above: SECURITY DEFINER under the maintenance role,
+-- which alone may open the scope flags.  A tutor row is the subject's only
+-- when it names the subject AND the owner, so the owner's own practice and
+-- another subject's practice stay.  Crisis rows carry no account: the crisis
+-- evidence is stored under the subject's own id.  Person consents are never
+-- touched (they are the consent audit) and neither is the guardian-side
+-- subscribe-message ledger.
+--
+-- The event-id function returns the subject's tutor archive evidence ids:
+-- tutor practice is archived under the owner account, and rows archived
+-- before the projection carried subject_id can only be found through these
+-- tables, so the ids must be read before the rows are deleted.
+CREATE OR REPLACE FUNCTION guardian_subject_scope_tutor_event_ids(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS TEXT[]
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    result TEXT[];
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    SELECT COALESCE(array_agg(DISTINCT ids.event_id), ARRAY[]::TEXT[])
+    INTO result
+    FROM (
+        SELECT event_id FROM tutor_practice_evidence
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT event_id FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT archive_payload_json->>'event_id' FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        UNION
+        SELECT jsonb_array_elements_text(event_ids_json) FROM tutor_practice_sessions
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        UNION
+        SELECT jsonb_array_elements_text(source_event_ids_json) FROM tutor_study_progress
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+    ) ids(event_id)
+    WHERE COALESCE(ids.event_id, '') <> '';
+    RETURN result;
+END
+$maintenance$;
+
+CREATE OR REPLACE FUNCTION guardian_subject_scope_delete(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    deleted JSONB;
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    PERFORM set_config('app.guardian_account_deletion', '1', true);
+    WITH removed_notifications AS (
+        DELETE FROM guardian_notification_outbox outbox
+        USING guardian_crisis_events crisis
+        WHERE outbox.crisis_event_id = crisis.crisis_event_id
+          AND crisis.minor_user_id = target_subject_id
+        RETURNING 1
+    ), removed_sessions AS (
+        DELETE FROM tutor_practice_sessions
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        RETURNING 1
+    ), removed_progress AS (
+        DELETE FROM tutor_study_progress
+        WHERE subject_id = target_subject_id
+          AND (account_id = target_account_id OR actor_id = target_account_id)
+        RETURNING 1
+    ), removed_evidence AS (
+        DELETE FROM tutor_practice_evidence
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        RETURNING 1
+    ), removed_outbox AS (
+        DELETE FROM tutor_commit_outbox
+        WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        RETURNING 1
+    )
+    SELECT jsonb_build_object(
+        'guardian_notifications', (SELECT count(*) FROM removed_notifications),
+        'tutor_practice_sessions', (SELECT count(*) FROM removed_sessions),
+        'tutor_study_progress', (SELECT count(*) FROM removed_progress),
+        'tutor_practice_evidence', (SELECT count(*) FROM removed_evidence),
+        'tutor_commit_outbox', (SELECT count(*) FROM removed_outbox)
+    ) INTO deleted;
+    -- The crisis rows go after their notifications have: the outbox rows'
+    -- USING join must still see the event they belong to.
+    WITH removed_crisis AS (
+        DELETE FROM guardian_crisis_events
+        WHERE minor_user_id = target_subject_id
+        RETURNING 1
+    )
+    SELECT deleted || jsonb_build_object(
+        'crisis_events', (SELECT count(*) FROM removed_crisis)
+    ) INTO deleted;
+    RETURN deleted;
+END
+$maintenance$;
+
+CREATE OR REPLACE FUNCTION guardian_subject_scope_remaining(
+    target_account_id TEXT,
+    target_subject_id TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $maintenance$
+DECLARE
+    result JSONB;
+BEGIN
+    IF COALESCE(btrim(target_account_id), '') = ''
+       OR COALESCE(btrim(target_subject_id), '') = ''
+       OR target_account_id = target_subject_id THEN
+        RAISE EXCEPTION 'subject scope requires a distinct owner account and subject';
+    END IF;
+    PERFORM set_config('memoria.allow_account_scope', '1', true);
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    SELECT jsonb_build_object(
+        'crisis_events', (
+            SELECT count(*) FROM guardian_crisis_events
+            WHERE minor_user_id = target_subject_id
+        ),
+        'guardian_notifications', (
+            SELECT count(*) FROM guardian_notification_outbox outbox
+            JOIN guardian_crisis_events crisis
+              ON crisis.crisis_event_id = outbox.crisis_event_id
+            WHERE crisis.minor_user_id = target_subject_id
+        ),
+        'tutor_practice_sessions', (
+            SELECT count(*) FROM tutor_practice_sessions
+            WHERE subject_id = target_subject_id
+              AND (account_id = target_account_id OR actor_id = target_account_id)
+        ),
+        'tutor_study_progress', (
+            SELECT count(*) FROM tutor_study_progress
+            WHERE subject_id = target_subject_id
+              AND (account_id = target_account_id OR actor_id = target_account_id)
+        ),
+        'tutor_practice_evidence', (
+            SELECT count(*) FROM tutor_practice_evidence
+            WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        ),
+        'tutor_commit_outbox', (
+            SELECT count(*) FROM tutor_commit_outbox
+            WHERE subject_id = target_subject_id AND actor_id = target_account_id
+        ),
+        -- Purged by the corpus retention service (object first, then the
+        -- row is marked deleted); only live samples count as remaining.
+        'corpus_samples', (
+            SELECT count(*) FROM guardian_corpus_samples
+            WHERE minor_user_id = target_subject_id AND deleted_at IS NULL
         )
     ) INTO result;
     RETURN result;
@@ -819,6 +1105,196 @@ BEGIN
 END
 $notification_enqueue_declared$;
 
+-- Crisis push delivery.  These SECURITY DEFINER functions are owned by the
+-- maintenance role and executable ONLY by the worker role; the API role can
+-- neither claim a notification nor read a stored openid.  Each opens the
+-- maintenance scope (to read the event) and the dedicated delivery scope
+-- (the only UPDATE path on the outbox) for its own transaction.
+CREATE OR REPLACE FUNCTION guardian_crisis_push_claim(
+    p_worker_id TEXT,
+    p_now TIMESTAMPTZ,
+    p_limit INTEGER,
+    p_lease_seconds INTEGER,
+    p_max_attempts INTEGER,
+    p_max_age_seconds INTEGER
+) RETURNS TABLE (
+    notification_id UUID,
+    crisis_event_id UUID,
+    guardian_user_id TEXT,
+    minor_user_id TEXT,
+    occurred_at TIMESTAMPTZ,
+    attempts INTEGER
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $crisis_push_claim$
+#variable_conflict use_column
+BEGIN
+    IF p_worker_id IS NULL OR char_length(p_worker_id) NOT BETWEEN 1 AND 128
+       OR p_now IS NULL
+       OR p_limit NOT BETWEEN 1 AND 100
+       OR p_lease_seconds NOT BETWEEN 5 AND 600
+       OR p_max_attempts NOT BETWEEN 1 AND 10
+       OR p_max_age_seconds NOT BETWEEN 60 AND 604800 THEN
+        RAISE EXCEPTION 'crisis push claim arguments are invalid';
+    END IF;
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    PERFORM set_config('memoria.guardian_push_delivery_scope', '1', true);
+    UPDATE guardian_notification_outbox AS stale
+    SET status = 'failed', last_error_code = 'attempts_exhausted',
+        claimed_by = NULL, lease_until = NULL, next_attempt_at = NULL
+    WHERE stale.status = 'pending'
+      AND stale.attempts >= p_max_attempts
+      AND (stale.lease_until IS NULL OR stale.lease_until < p_now);
+    RETURN QUERY
+    WITH claimed AS (
+        UPDATE guardian_notification_outbox AS o
+        SET claimed_by = p_worker_id,
+            attempts = o.attempts + 1,
+            lease_until = p_now + make_interval(secs => p_lease_seconds)
+        WHERE o.notification_id IN (
+            SELECT candidate.notification_id
+            FROM guardian_notification_outbox candidate
+            WHERE candidate.status = 'pending'
+              AND candidate.channel = 'wechat_subscription'
+              AND candidate.attempts < p_max_attempts
+              AND candidate.created_at >= p_now - make_interval(secs => p_max_age_seconds)
+              AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at <= p_now)
+              AND (candidate.lease_until IS NULL OR candidate.lease_until < p_now)
+            ORDER BY candidate.created_at, candidate.notification_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT p_limit
+        )
+        RETURNING o.notification_id, o.crisis_event_id, o.guardian_user_id,
+                  o.attempts, o.created_at
+    )
+    SELECT claimed.notification_id, claimed.crisis_event_id,
+           claimed.guardian_user_id, crisis.minor_user_id,
+           crisis.occurred_at, claimed.attempts
+    FROM claimed
+    JOIN guardian_crisis_events crisis
+      ON crisis.crisis_event_id = claimed.crisis_event_id
+    ORDER BY claimed.created_at, claimed.notification_id;
+END
+$crisis_push_claim$;
+
+CREATE OR REPLACE FUNCTION guardian_crisis_push_reserve(
+    p_notification_id UUID,
+    p_worker_id TEXT,
+    p_template_id TEXT,
+    p_now TIMESTAMPTZ
+) RETURNS TEXT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $crisis_push_reserve$
+DECLARE
+    v_guardian_user_id TEXT;
+    v_reserved_template_id TEXT;
+    v_openid TEXT;
+BEGIN
+    IF p_template_id IS NULL OR p_template_id !~ '^[A-Za-z0-9_-]{1,128}$' THEN
+        RAISE EXCEPTION 'crisis push template id is invalid';
+    END IF;
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    PERFORM set_config('memoria.guardian_push_delivery_scope', '1', true);
+    SELECT outbox.guardian_user_id, outbox.reserved_template_id
+    INTO v_guardian_user_id, v_reserved_template_id
+    FROM guardian_notification_outbox outbox
+    WHERE outbox.notification_id = p_notification_id
+      AND outbox.status = 'pending'
+      AND outbox.claimed_by = p_worker_id
+      AND outbox.lease_until >= p_now
+    FOR UPDATE;
+    IF v_guardian_user_id IS NULL THEN
+        RAISE EXCEPTION 'crisis push claim is not held';
+    END IF;
+    IF v_reserved_template_id = p_template_id THEN
+        SELECT subscription.openid INTO v_openid
+        FROM guardian_push_subscriptions subscription
+        WHERE subscription.guardian_user_id = v_guardian_user_id
+          AND subscription.template_id = p_template_id;
+        RETURN v_openid;
+    END IF;
+    UPDATE guardian_push_subscriptions subscription
+    SET remaining = subscription.remaining - 1, updated_at = p_now
+    WHERE subscription.guardian_user_id = v_guardian_user_id
+      AND subscription.template_id = p_template_id
+      AND subscription.remaining > 0
+      AND subscription.openid IS NOT NULL
+    RETURNING subscription.openid INTO v_openid;
+    IF v_openid IS NULL THEN
+        RETURN NULL;
+    END IF;
+    UPDATE guardian_notification_outbox
+    SET reserved_template_id = p_template_id
+    WHERE notification_id = p_notification_id;
+    RETURN v_openid;
+END
+$crisis_push_reserve$;
+
+CREATE OR REPLACE FUNCTION guardian_crisis_push_complete(
+    p_notification_id UUID,
+    p_worker_id TEXT,
+    p_outcome TEXT,
+    p_error_code TEXT,
+    p_retry_delay_seconds INTEGER,
+    p_exhaust_subscription BOOLEAN,
+    p_now TIMESTAMPTZ
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $crisis_push_complete$
+DECLARE
+    v_guardian_user_id TEXT;
+    v_reserved_template_id TEXT;
+BEGIN
+    IF p_outcome IS NULL
+       OR p_outcome NOT IN ('delivered', 'no_subscription', 'failed', 'retry')
+       OR (p_error_code IS NOT NULL AND char_length(p_error_code) NOT BETWEEN 1 AND 96)
+       OR (p_outcome = 'retry' AND (
+            p_retry_delay_seconds IS NULL
+            OR p_retry_delay_seconds NOT BETWEEN 1 AND 3600
+       ))
+       OR p_now IS NULL THEN
+        RAISE EXCEPTION 'crisis push completion arguments are invalid';
+    END IF;
+    PERFORM set_config('memoria.guardian_maintenance_scope', '1', true);
+    PERFORM set_config('memoria.guardian_push_delivery_scope', '1', true);
+    SELECT outbox.guardian_user_id, outbox.reserved_template_id
+    INTO v_guardian_user_id, v_reserved_template_id
+    FROM guardian_notification_outbox outbox
+    WHERE outbox.notification_id = p_notification_id
+      AND outbox.status = 'pending'
+      AND outbox.claimed_by = p_worker_id
+    FOR UPDATE;
+    IF v_guardian_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    IF v_reserved_template_id IS NOT NULL
+       AND (p_outcome IN ('failed', 'retry') OR COALESCE(p_exhaust_subscription, FALSE)) THEN
+        UPDATE guardian_push_subscriptions subscription
+        SET remaining = CASE
+                WHEN COALESCE(p_exhaust_subscription, FALSE) THEN 0
+                ELSE LEAST(subscription.remaining + 1, 20)
+            END,
+            updated_at = p_now
+        WHERE subscription.guardian_user_id = v_guardian_user_id
+          AND subscription.template_id = v_reserved_template_id;
+    END IF;
+    UPDATE guardian_notification_outbox
+    SET status = CASE WHEN p_outcome = 'retry' THEN 'pending' ELSE p_outcome END,
+        delivered_at = CASE WHEN p_outcome = 'delivered' THEN p_now ELSE NULL END,
+        last_error_code = CASE WHEN p_outcome = 'delivered' THEN NULL ELSE p_error_code END,
+        claimed_by = NULL,
+        lease_until = NULL,
+        reserved_template_id = NULL,
+        next_attempt_at = CASE
+            WHEN p_outcome = 'retry'
+            THEN p_now + make_interval(secs => p_retry_delay_seconds)
+            ELSE NULL
+        END
+    WHERE notification_id = p_notification_id;
+    RETURN TRUE;
+END
+$crisis_push_complete$;
+
 ALTER TABLE guardian_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_person_consents ENABLE ROW LEVEL SECURITY;
@@ -829,6 +1305,7 @@ ALTER TABLE tutor_practice_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE guardian_push_subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE guardian_links FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_consents FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_person_consents FORCE ROW LEVEL SECURITY;
@@ -839,6 +1316,7 @@ ALTER TABLE tutor_practice_evidence FORCE ROW LEVEL SECURITY;
 ALTER TABLE tutor_commit_outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_crisis_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE guardian_notification_outbox FORCE ROW LEVEL SECURITY;
+ALTER TABLE guardian_push_subscriptions FORCE ROW LEVEL SECURITY;
 
 DO $guardian_policy$
 BEGIN
@@ -854,6 +1332,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON tutor_commit_outbox TO memoria_guardian;
         GRANT SELECT, INSERT ON guardian_crisis_events TO memoria_guardian;
         GRANT SELECT ON guardian_notification_outbox TO memoria_guardian;
+        GRANT SELECT, INSERT, UPDATE ON guardian_push_subscriptions TO memoria_guardian;
 
         -- The maintenance role is the only role allowed to perform an
         -- account-wide guardian export/deletion or retention sweep.  The API
@@ -862,7 +1341,8 @@ BEGIN
             GRANT SELECT, INSERT, UPDATE, DELETE
                 ON guardian_links, guardian_consents, guardian_person_consents,
                    guardian_corpus_samples,
-                   guardian_crisis_events, guardian_notification_outbox
+                   guardian_crisis_events, guardian_notification_outbox,
+                   guardian_push_subscriptions
                 TO memoria_guardian_maintenance;
         END IF;
 
@@ -1338,6 +1818,65 @@ BEGIN
                 )
             );
 
+        -- The delivery functions are the only UPDATE path on the outbox for the
+        -- maintenance role: the ordinary policy's WITH CHECK never admits a
+        -- maintenance write, and this scope flag is set only inside the
+        -- maintenance-owned delivery functions (current_user check below).
+        DROP POLICY IF EXISTS guardian_crisis_push_delivery
+            ON guardian_notification_outbox;
+        CREATE POLICY guardian_crisis_push_delivery ON guardian_notification_outbox
+            FOR UPDATE TO memoria_guardian_maintenance
+            USING (
+                current_user = 'memoria_guardian_maintenance'
+                AND COALESCE(
+                    current_setting('memoria.guardian_push_delivery_scope', true),
+                    ''
+                ) = '1'
+            )
+            WITH CHECK (
+                current_user = 'memoria_guardian_maintenance'
+                AND COALESCE(
+                    current_setting('memoria.guardian_push_delivery_scope', true),
+                    ''
+                ) = '1'
+            );
+
+        -- A guardian reads and writes only its own subscribe-message ledger,
+        -- in its own actor == subject context.  The maintenance scope serves
+        -- delivery settlement and account export/deletion.
+        DROP POLICY IF EXISTS guardian_controller_push_subscriptions
+            ON guardian_push_subscriptions;
+        CREATE POLICY guardian_controller_push_subscriptions ON guardian_push_subscriptions
+            TO memoria_guardian, memoria_guardian_maintenance
+            USING (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            )
+            WITH CHECK (
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                    AND guardian_user_id = current_setting('memoria.guardian_subject_id', true)
+                )
+            );
+
         -- Account governance and outbox delivery run through dedicated
         -- LOGIN/NOBYPASSRLS roles.  The API role (memoria_guardian) receives
         -- NO EXECUTE grant on any of these SECURITY DEFINER functions, so it
@@ -1370,6 +1909,35 @@ BEGIN
                 TO memoria_guardian;
             ALTER FUNCTION guardian_enqueue_declared_notification(UUID, UUID, TEXT, TIMESTAMPTZ)
                 OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_crisis_push_claim(
+                TEXT, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER
+            ) FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_crisis_push_reserve(
+                UUID, TEXT, TEXT, TIMESTAMPTZ
+            ) FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_crisis_push_complete(
+                UUID, TEXT, TEXT, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ
+            ) FROM PUBLIC;
+            ALTER FUNCTION guardian_crisis_push_claim(
+                TEXT, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER
+            ) OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_crisis_push_reserve(
+                UUID, TEXT, TEXT, TIMESTAMPTZ
+            ) OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_crisis_push_complete(
+                UUID, TEXT, TEXT, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ
+            ) OWNER TO memoria_guardian_maintenance;
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_worker') THEN
+                GRANT EXECUTE ON FUNCTION guardian_crisis_push_claim(
+                    TEXT, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER
+                ) TO memoria_guardian_worker;
+                GRANT EXECUTE ON FUNCTION guardian_crisis_push_reserve(
+                    UUID, TEXT, TEXT, TIMESTAMPTZ
+                ) TO memoria_guardian_worker;
+                GRANT EXECUTE ON FUNCTION guardian_crisis_push_complete(
+                    UUID, TEXT, TEXT, TEXT, INTEGER, BOOLEAN, TIMESTAMPTZ
+                ) TO memoria_guardian_worker;
+            END IF;
             REVOKE EXECUTE ON FUNCTION guardian_tutor_account_scope_export(TEXT)
                 FROM PUBLIC;
             REVOKE EXECUTE ON FUNCTION guardian_tutor_account_scope_delete(TEXT)
@@ -1381,6 +1949,18 @@ BEGIN
             ALTER FUNCTION guardian_tutor_account_scope_delete(TEXT)
                 OWNER TO memoria_guardian_maintenance;
             ALTER FUNCTION guardian_tutor_account_scope_remaining(TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_tutor_event_ids(TEXT, TEXT)
+                FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_delete(TEXT, TEXT)
+                FROM PUBLIC;
+            REVOKE EXECUTE ON FUNCTION guardian_subject_scope_remaining(TEXT, TEXT)
+                FROM PUBLIC;
+            ALTER FUNCTION guardian_subject_scope_tutor_event_ids(TEXT, TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_subject_scope_delete(TEXT, TEXT)
+                OWNER TO memoria_guardian_maintenance;
+            ALTER FUNCTION guardian_subject_scope_remaining(TEXT, TEXT)
                 OWNER TO memoria_guardian_maintenance;
         END IF;
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian_worker') THEN

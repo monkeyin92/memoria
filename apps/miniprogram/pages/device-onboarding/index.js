@@ -1,5 +1,4 @@
 const { requireLogin } = require("../../utils/auth-gate");
-const api = require("../../utils/api");
 const { OnboardingController } = require("../../utils/device-onboarding/onboarding-controller");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { isActivationReady } = require("../../utils/device-onboarding/contracts");
@@ -133,20 +132,8 @@ Page({
       progressIndex: progressIndexValue,
       progressRows: progressRows(snapshot.progressSteps, progressIndexValue),
     });
-    if (snapshot.state === "complete") this._ensureSpeakerEnrollmentIntent();
-  },
-
-  async _ensureSpeakerEnrollmentIntent() {
-    if (this._speakerIntentRequested) return;
-    this._speakerIntentRequested = true;
-    try {
-      const status = await api.getSpeakerEnrollmentStatus();
-      const state = status?.enrollment?.state;
-      if (state === "active" || state === "requested") return;
-      await api.createSpeakerEnrollmentIntent();
-    } catch {
-      this._speakerIntentRequested = false;
-    }
+    // 使用人身份来自设备绑定，不做声音身份识别；完成设置后不再自动发起
+    // speaker enrollment intent。
   },
 
   _clearWifiPassword() {

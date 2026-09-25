@@ -103,6 +103,10 @@ NOT_GRANTABLE: frozenset[str] = frozenset({"crisis_notification"})
 #: Relationship types that authorize guardian grants (rule 3).
 GUARDIAN_RELATION_TYPES: frozenset[str] = frozenset({"guardian_of", "parent_of"})
 
+#: What an adult child may consent to on behalf of the elderly parent a device
+#: serves: that parent's own memory on that device, and nothing sensitive.
+DELEGATE_WHITELIST: frozenset[str] = frozenset({"memory_capture", "memory_recall_private"})
+
 
 class ConsentDeniedError(PermissionError):
     """A consent rule rejected the operation (fail closed)."""
@@ -201,6 +205,26 @@ def _guardian_relationship(
     return None
 
 
+def _delegate_relationship(
+    *,
+    actor_id: str,
+    subject_id: str,
+    binding: BindingEvidence,
+    relationships: tuple[RelationshipEvidence, ...],
+    now: datetime,
+) -> RelationshipEvidence | None:
+    for relationship in relationships:
+        if (
+            relationship.relation_type == "delegate_for"
+            and relationship.is_active_at(now)
+            and relationship.source_person_id == actor_id
+            and relationship.target_person_id == subject_id
+            and relationship.binding_id == binding.binding_id
+        ):
+            return relationship
+    return None
+
+
 def verify_grant(
     *,
     offer: ConsentOffer,
@@ -213,7 +237,16 @@ def verify_grant(
     """Evaluate rules 1-4 over payloads already verified by a resolver."""
     if subject.subject_category == "unknown":
         raise ConsentDeniedError("unknown_subject", "subject category is unknown")
-    if subject.age_evidence_status != "verified":
+    guardian_declared_minor = (
+        subject.subject_category == "minor"
+        and subject.age_evidence_status == "unverified"
+        and actor_kind == "guardian"
+        and offer.capability in GUARDIAN_WHITELIST
+    )
+    if subject.age_evidence_status != "verified" and not guardian_declared_minor:
+        # A child's age is what the guardian declared: nobody can verify it on
+        # the child's behalf, and a declared minor only ever gets the stricter
+        # minor rules. Every other grant still needs verified age evidence.
         raise ConsentDeniedError(
             "age_evidence_unverified", "verified age evidence is required for any grant"
         )
@@ -246,7 +279,7 @@ def verify_grant(
         raise ConsentDeniedError(
             "family_admin_cannot_grant", "family_admin is not a data subject proxy"
         )
-    if kind not in {"subject", "guardian"}:
+    if kind not in {"subject", "guardian", "delegate"}:
         raise ConsentDeniedError("actor_kind_not_authorized", f"actor kind {kind!r} cannot grant")
 
     if kind == "subject":
@@ -254,6 +287,35 @@ def verify_grant(
             raise ConsentDeniedError(
                 "subject_claim_mismatch",
                 "subject grant requires actor == subject == resource owner",
+            )
+    elif kind == "delegate":
+        # An adult child consenting for the elderly parent a device serves.
+        # Recorded as a delegate grant, never as the parent's own consent.
+        if offer.resource_owner_id != offer.subject_id:
+            raise ConsentDeniedError(
+                "resource_owner_mismatch", "delegate grants require resource_owner == subject"
+            )
+        if subject.subject_category != "adult":
+            raise ConsentDeniedError(
+                "delegate_adult_only", "delegates may only grant for an adult subject"
+            )
+        if offer.capability not in DELEGATE_WHITELIST:
+            raise ConsentDeniedError(
+                "delegate_whitelist_only", f"{offer.capability} is outside the delegate whitelist"
+            )
+        if (
+            _delegate_relationship(
+                actor_id=offer.actor_id,
+                subject_id=offer.subject_id,
+                binding=binding,
+                relationships=relationships,
+                now=now,
+            )
+            is None
+        ):
+            raise ConsentDeniedError(
+                "relationship_not_active",
+                "an active matching delegate relationship is required",
             )
     else:
         if offer.resource_owner_id != offer.subject_id:
@@ -301,9 +363,8 @@ def verify_grant(
             raise ConsentDeniedError(
                 "guardian_whitelist_only", f"{offer.capability} is outside the guardian whitelist"
             )
-    else:
-        if kind != "subject":
-            raise ConsentDeniedError("adult_self_grant_only", "adult consents are self-grant only")
+    elif kind not in {"subject", "delegate"}:
+        raise ConsentDeniedError("adult_self_grant_only", "adult consents are self-grant only")
 
     if offer.capability == "voice_profile_create":
         # voice_profile_create = voice-print enrollment (NOT cloning).
@@ -329,13 +390,21 @@ def verify_revocation(
         raise ConsentDeniedError(
             "family_admin_cannot_grant", "family_admin cannot operate consents"
         )
-    if actor_kind not in {"subject", "guardian"}:
+    if actor_kind not in {"subject", "guardian", "delegate"}:
         raise ConsentDeniedError(
             "actor_kind_not_authorized", f"actor kind {actor_kind!r} cannot act"
         )
     if actor_kind == "subject":
         if actor_id != evidence.subject_id:
             raise ConsentDeniedError("revoke_subject_only", "only the subject may revoke")
+        return
+    if actor_kind == "delegate":
+        # A delegate can always withdraw what they granted, even after the
+        # device is unbound; they can never touch the subject's own consents.
+        if evidence.actor_kind != "delegate" or evidence.actor_id != actor_id:
+            raise ConsentDeniedError(
+                "delegate_revoke_scope", "delegates may only revoke consents they granted"
+            )
         return
     if evidence.actor_kind != "guardian":
         raise ConsentDeniedError(

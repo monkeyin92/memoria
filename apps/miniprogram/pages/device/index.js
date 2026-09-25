@@ -8,11 +8,7 @@ const {
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
-const {
-  devicePlaceName,
-  deviceStatusSummary,
-  presentSpeakerCandidates,
-} = require("../../utils/device-status");
+const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
 
@@ -295,6 +291,10 @@ Page({
     wakeSheetVisible: false,
     wakeSheetIndex: 0,
     diagExpanded: false,
+    unbindSheetVisible: false,
+    unbindPurgeChoice: "",
+    unbinding: false,
+    unbindError: "",
   },
 
   onLoad() {
@@ -384,6 +384,10 @@ Page({
       bargeInOptions: ALL_BARGE_IN_OPTIONS,
       bargeInChecked: {},
       allowedAudioModesLabel: "",
+      unbindSheetVisible: false,
+      unbindPurgeChoice: "",
+      unbinding: false,
+      unbindError: "",
     });
   },
 
@@ -525,7 +529,8 @@ Page({
         }
       }
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
-      const candidates = presentSpeakerCandidates(resolution?.candidate_subjects || []);
+      // 候选只用于多成员绑定的「此刻是谁在用」选择，不展示任何声音匹配度。
+      const candidates = resolution?.candidate_subjects || [];
       const summary = deviceStatusSummary(activation, profile, diagnostics);
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
@@ -719,6 +724,74 @@ Page({
     wx.navigateTo({ url: `/pages/device-onboarding/index?mode=reprovision${query}` });
   },
 
+  /*
+   * 解除绑定：先说明会停止记忆，再让用户在「保留数据」与「同时删除」之间
+   * 明确二选一；选删除还要再确认一次。服务端按 purge_subject_data 执行。
+   */
+  openUnbindSheet() {
+    if (!this.data.binding?.device_id) return;
+    this.setData({ unbindSheetVisible: true, unbindPurgeChoice: "", unbindError: "" });
+  },
+
+  closeUnbindSheet() {
+    if (this.data.unbinding) return;
+    this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "", unbindError: "" });
+  },
+
+  pickUnbindChoice(event) {
+    const choice = event.currentTarget.dataset.choice;
+    if (choice !== "keep" && choice !== "purge") return;
+    this.setData({ unbindPurgeChoice: choice, unbindError: "" });
+  },
+
+  _confirmPurge() {
+    return new Promise((resolve) => {
+      wx.showModal({
+        title: "确认删除 TA 的数据？",
+        content: "TA 的记忆和对话数据会被永久删除，重新绑定也无法恢复。",
+        confirmText: "删除",
+        confirmColor: "#b3261e",
+        cancelText: "再想想",
+        success: (result) => resolve(Boolean(result?.confirm)),
+        fail: () => resolve(false),
+      });
+    });
+  },
+
+  async confirmUnbind() {
+    const { binding, unbinding, unbindPurgeChoice } = this.data;
+    if (unbinding || !binding?.device_id) return;
+    if (unbindPurgeChoice !== "keep" && unbindPurgeChoice !== "purge") {
+      this.setData({ unbindError: "请先选择是否删除 TA 的数据。" });
+      return;
+    }
+    const purgeSubjectData = unbindPurgeChoice === "purge";
+    if (purgeSubjectData && !(await this._confirmPurge())) return;
+    const authEpoch = api.currentAuthEpoch();
+    this.setData({ unbinding: true, unbindError: "" });
+    try {
+      const result = await api.unbindDevice(binding.device_id, { purgeSubjectData });
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
+      // 删除分步执行、可续跑；未跑完时服务端返回 pending，后台会继续删完。
+      const purgePending = purgeSubjectData && result?.subject_deletion === "pending";
+      wx.showToast({
+        title: !purgeSubjectData
+          ? "已解除绑定"
+          : purgePending
+            ? "已解除绑定，数据正在删除"
+            : "已解除绑定并删除数据",
+        icon: "none",
+      });
+      await this.loadDevice();
+    } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      this.setData({ unbindError: error?.message || "解除绑定失败，请稍后重试。" });
+    } finally {
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ unbinding: false });
+    }
+  },
+
   selectCandidate(event) {
     const personId = event.currentTarget.dataset.personId;
     if (!personId) return;
@@ -734,7 +807,7 @@ Page({
     const { selectedCandidateId, switching, profile, resolution } = this.data;
     if (switching || !selectedCandidateId) return;
     if (!(resolution?.allowed_confirmation_methods || []).includes("app_confirm")) {
-      this.setData({ error: "当前会话需要通过语音确认身份，暂时不能在应用里切换。" });
+      this.setData({ error: "当前会话暂不支持在应用里切换使用人。" });
       return;
     }
     if (!profile?.session_id) {
@@ -786,9 +859,7 @@ Page({
         }
       }
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(api.currentAuthEpoch())) return;
-      const candidates = presentSpeakerCandidates(
-        resolutionNext ? resolutionNext.candidate_subjects || [] : [],
-      );
+      const candidates = resolutionNext ? resolutionNext.candidate_subjects || [] : [];
       const speakerLabel = currentUserLabel(nextProfile, candidates);
       const subjectAliasLabel = readSubjectLabel(this.data.binding);
       this.setData({

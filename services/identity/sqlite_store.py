@@ -722,6 +722,41 @@ class SqliteIdentityStore:
             if audit_event is not None:
                 _insert_audit(connection, audit_event)
 
+    async def redact_bound_subject(
+        self,
+        *,
+        person_id: str,
+        display_name: str,
+        updated_at: datetime,
+        audit_event: AuditEvent,
+        actor_person_id: str,
+    ) -> None:
+        del actor_person_id
+        self._ready()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                """
+                UPDATE identity_persons
+                SET display_name = ?, status = 'disabled', updated_at = ?
+                WHERE person_id = ?
+                """,
+                (display_name, _ts(updated_at, field="updated_at"), person_id),
+            )
+            if updated.rowcount != 1:
+                raise IdentityNotFoundError(f"person {person_id} does not exist")
+            # Earlier audit rows copied the whole person, name included.
+            connection.execute(
+                """
+                UPDATE identity_audit_events
+                SET payload_json = json_set(payload_json, '$.display_name', ?)
+                WHERE (person_id = ? OR subject_person_id = ?)
+                  AND json_extract(payload_json, '$.display_name') IS NOT NULL
+                """,
+                (display_name, person_id, person_id),
+            )
+            _insert_audit(connection, audit_event)
+
     async def get_person(
         self,
         person_id: str,

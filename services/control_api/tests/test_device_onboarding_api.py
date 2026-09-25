@@ -52,7 +52,6 @@ from services.session_runtime.service import (
     PersistentSessionUnavailable,
     StartPersistentSessionCommand,
 )
-from services.session_runtime.subject_resolver import SubjectCandidate
 
 
 def _app(service: DeviceOnboardingService | None, actor: str = "person_a") -> FastAPI:
@@ -932,9 +931,9 @@ async def test_direct_device_media_session_never_touches_livekit(
         authority.profile.model_dump(mode="json")
     )
     assert response["runtime_profile_version"] == claims["runtime_profile_version"]
-    assert authority.started[0].candidates == (
-        SubjectCandidate(subject_id="person_a", confidence=1.0),
-    )
+    # The device names the one person it serves; no synthetic voice candidate.
+    assert authority.started[0].device_bound_subject_id == "person_a"
+    assert authority.started[0].candidates == ()
     voice_session = memory.get_voice_session_by_id(session_id=response["session_id"])
     assert voice_session is not None
     assert voice_session["room_name"] == f"voice-{response['session_id']}"
@@ -1257,15 +1256,16 @@ async def test_direct_device_media_session_creates_authority_before_ticket_and_p
         assert session_response.status_code == 200, session_response.text
         response = session_response.json()
         session_id = str(response["session_id"])
-        # The authority start precedes ticket issuance and carries the
-        # server-verified binding primary subject as the resolution candidate.
+        # The authority start precedes ticket issuance and names the
+        # server-verified binding primary subject as the device's own subject.
         assert len(authority.started) == 1
         command = authority.started[0]
         assert command.device_id == "dev_test_01"
         assert command.actor_id == "person_a"
         assert command.expected_binding_version == int(manifest["binding_version"])
-        assert command.requested_capabilities == ("chat",)
-        assert command.candidates == (SubjectCandidate(subject_id="person_a", confidence=1.0),)
+        assert command.requested_capabilities == ("chat", "memory_recall_private")
+        assert command.device_bound_subject_id == "person_a"
+        assert command.candidates == ()
         assert authority.profile is not None
         # Ticket claims must exactly equal the authoritative profile facts.
         claims = jwt.decode(

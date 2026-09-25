@@ -62,6 +62,11 @@ from services.control_api.app.account_gate import (
     require_capability_for_subject,
     require_writable_account,
 )
+from services.control_api.app.bound_subject import (
+    DEVICE_BOUND_SUBJECT_UNVERIFIED,
+    claims_device_bound_subject,
+    runtime_profile_trusts_bound_subject,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy, SpeakerClass
@@ -1900,6 +1905,7 @@ async def append_session_event(
                 status_code=409,
                 detail={"code": "turn_event_conflict"},
             )
+    current_profile: dict[str, Any] | None = None
     if assistant_event and parent is not None:
         if values["subject_id"] is not None and values["subject_id"] != parent.subject_id:
             raise HTTPException(status_code=409, detail={"code": "parent_subject_mismatch"})
@@ -1916,6 +1922,7 @@ async def append_session_event(
         profile = await _current_persistent_runtime_profile(
             request, session, session_id=body.session_id
         )
+        current_profile = profile
         if any(
             memory_write_fence[field] != profile.get(field)
             for field in (
@@ -1924,6 +1931,24 @@ async def append_session_event(
             )
         ):
             raise HTTPException(status_code=409, detail={"code": "archive_subject_fence_stale"})
+    subject_deletion = getattr(request.app.state, "subject_deletion", None)
+    if (
+        values["subject_id"] is not None
+        and subject_deletion is not None
+        and subject_deletion.is_subject_deleting(
+            account_id=account_id, subject_id=values["subject_id"]
+        )
+    ):
+        # Their data is being erased: nothing new may land behind the sweep.
+        raise HTTPException(status_code=409, detail={"code": "subject_deletion_in_progress"})
+    if claims_device_bound_subject(
+        body.speaker_class, reason_code
+    ) and not runtime_profile_trusts_bound_subject(
+        current_profile, subject_id=values["subject_id"]
+    ):
+        # Owner data authority from the binding needs the same fenced profile
+        # that names the subject; without it the claim is a bare assertion.
+        raise HTTPException(status_code=409, detail={"code": DEVICE_BOUND_SUBJECT_UNVERIFIED})
     try:
         subject_category, memory_consent_active = await _speaker_retention_inputs(
             request, account_id=account_id, subject_id=values["subject_id"]

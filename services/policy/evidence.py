@@ -23,7 +23,7 @@ type ConsentStatusValue = Literal[
     "active", "revoked", "expired", "disputed", "superseded"
 ]
 type ConsentActorKindValue = Literal[
-    "subject", "guardian", "family_admin", "service", "other"
+    "subject", "guardian", "delegate", "family_admin", "service", "other"
 ]
 type RelationshipStatusValue = Literal[
     "pending", "active", "suspended", "revoked", "expired", "disputed"

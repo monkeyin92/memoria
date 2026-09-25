@@ -193,9 +193,15 @@ def test_discovery_function_pins_session_role_and_locks_heads(
     assert "session_user <> 'memoria_action_executor'" in body
     assert "identity_binding_visible(p_actor_id, p_binding_id)" in body
     assert "identity_binding_visible(p_subject_id, p_binding_id)" in body
+    flat = " ".join(body.split())
+    # A guardian for a child, or an adult child as delegate for an elder.
     assert (
-        "identity_relationship_active(\n                p_actor_id, p_subject_id,"
-        in body
+        "identity_relationship_active( p_actor_id, p_subject_id, 'guardian_of', p_now )"
+        in flat
+    )
+    assert (
+        "identity_relationship_active( p_actor_id, p_subject_id, 'delegate_for', p_now )"
+        in flat
     )
     assert "p_resource_owner_id is distinct from p_subject_id" in body
     assert "authenticated action context mismatch" in body

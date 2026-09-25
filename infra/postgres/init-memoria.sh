@@ -19,6 +19,7 @@ set -eu
 : "${MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD:?MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD is required}"
 : "${MEMORIA_DB_MEMORY_API_PASSWORD:?MEMORIA_DB_MEMORY_API_PASSWORD is required}"
 : "${MEMORIA_DB_MEMORY_WORKER_PASSWORD:?MEMORIA_DB_MEMORY_WORKER_PASSWORD is required}"
+: "${MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD:?MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD is required}"
 
 psql \
   --set=ON_ERROR_STOP=1 \
@@ -40,6 +41,7 @@ psql \
   --set=session_maintenance_password="$MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD" \
   --set=memory_api_password="$MEMORIA_DB_MEMORY_API_PASSWORD" \
   --set=memory_worker_password="$MEMORIA_DB_MEMORY_WORKER_PASSWORD" \
+  --set=memory_maintenance_password="$MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD" \
   --username "$POSTGRES_USER" \
   --dbname postgres <<'SQL'
 SELECT format(
@@ -287,6 +289,21 @@ SELECT format(
 )
 \gexec
 
+-- Subject erasure only (memory_subject_erase); never an API or worker DSN.
+SELECT format(
+    'CREATE ROLE memoria_memory_maintenance LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'memory_maintenance_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'memoria_memory_maintenance'
+)
+\gexec
+SELECT format(
+    'ALTER ROLE memoria_memory_maintenance WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'memory_maintenance_password'
+)
+\gexec
+
 SELECT 'CREATE DATABASE memoria OWNER memoria_app'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'memoria')
 \gexec
@@ -310,7 +327,8 @@ GRANT CONNECT ON DATABASE memoria TO
     memoria_session_worker,
     memoria_session_maintenance,
     memoria_memory_api,
-    memoria_memory_worker;
+    memoria_memory_worker,
+    memoria_memory_maintenance;
 
 \connect memoria
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -354,7 +372,8 @@ GRANT USAGE ON SCHEMA public TO
     memoria_session_worker,
     memoria_session_maintenance,
     memoria_memory_api,
-    memoria_memory_worker;
+    memoria_memory_worker,
+    memoria_memory_maintenance;
 REVOKE CREATE ON SCHEMA public FROM
     memoria_compiler,
     memoria_evolution,
@@ -372,5 +391,6 @@ REVOKE CREATE ON SCHEMA public FROM
     memoria_session_worker,
     memoria_session_maintenance,
     memoria_memory_api,
-    memoria_memory_worker;
+    memoria_memory_worker,
+    memoria_memory_maintenance;
 SQL

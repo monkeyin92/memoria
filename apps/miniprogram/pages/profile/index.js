@@ -9,7 +9,6 @@ const defaultProfile = {
   display_name: "新朋友",
   auto_summary: true,
   gentle_reminders: false,
-  reject_non_owner_voice: true,
   companion_id: defaultCompanionId,
   subject_category: null,
 };
@@ -282,20 +281,12 @@ function formatDeliveredCapabilityRows(payload) {
     { label: "微信已绑定", value: payload.wechat_bound ? "是" : "否" },
     { label: "手机号已验证", value: payload.wechat_phone_verified ? "是" : "否" },
     {
-      label: "主人声纹",
-      value: `${payload.speaker_profiles_active ?? 0} 个活跃`,
-    },
-    {
       label: "档案活跃天数",
       value: String(payload.memory_days_with_activity ?? 0),
     },
     {
       label: "档案消息条数",
       value: String(payload.total_messages ?? 0),
-    },
-    {
-      label: "访客声纹拦截",
-      value: payload.reject_non_owner_voice ? "开启" : "关闭",
     },
     {
       label: "半双工口径",
@@ -335,7 +326,6 @@ Page({
     isMinor: false,
     personaHeadline: `${companionById(defaultCompanionId).name}，你的日常角色`,
     accountId: "",
-    speakerEnrollmentHint: "识别身份，不等同于自定义声音",
     hasRuntimeProfile: false,
     runtimeCapabilities: [],
     speakerEntryAllowed: false,
@@ -343,9 +333,6 @@ Page({
     guardianEntryAllowed: false,
     rawVoiceEntryAllowed: false,
     profileUnavailableReason: "",
-    speakerEnrollmentState: "blocked",
-    speakerEnrollmentBlockReason: "",
-    speakerEnrollmentProfileCount: 0,
     deliveredCapabilities: [],
     deliveredCapabilitiesLoading: false,
     customPersonaId: "",
@@ -458,10 +445,6 @@ Page({
       guardianEntryAllowed: false,
       rawVoiceEntryAllowed: false,
       profileUnavailableReason: "",
-      speakerEnrollmentState: "blocked",
-      speakerEnrollmentBlockReason: "",
-      speakerEnrollmentRemediationSteps: [],
-      speakerEnrollmentProfileCount: 0,
       deliveredCapabilities: [],
       deliveredCapabilitiesLoading: false,
       customPersonaId: "",
@@ -632,21 +615,15 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const [capabilityState, speakerState, voiceCloneState] = await Promise.all([
+      // 使用人身份来自设备绑定，这里不再读取说话人识别（speaker enrollment）状态。
+      const [capabilityState, voiceCloneState] = await Promise.all([
         this.loadRuntimeCapabilities(),
-        this.loadSpeakerEnrollmentStatus(),
         this.loadVoiceCloneStatus(),
       ]);
       const customPersonaState = capabilityState.customPersonaId
         ? await this.loadCustomPersonaLabel(capabilityState.customPersonaId)
         : { customPersonaId: "", customPersonaLabel: "" };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const speakerHint = {
-        active: "已允许用于识别本人，可随时在设备上重新录制",
-        pending: "上一版声纹还没生效。请唤醒设备，按提示再说几句话。",
-        requested: "已记录授权。唤醒设备，按提示说几句话即可。手机不录音。",
-        required: "在设备上完成，不在手机采集",
-      }[speakerState.speakerEnrollmentState] || speakerState.speakerEnrollmentBlockReason || "识别身份，不等同于自定义声音";
       const companion = companionById(profile.companion_id);
       this.setData({
         profile,
@@ -656,9 +633,7 @@ Page({
         customPersonaLabel: customPersonaState.customPersonaLabel,
         personaHeadline: `${companion.name}，你的日常角色`,
         accountId: identity.user_id,
-        speakerEnrollmentHint: speakerHint,
         ...capabilityState,
-        ...speakerState,
       });
       // 声音复刻进度单独写回：轮询与进入页面共用同一套变更判断。
       this._applyVoiceCloneState(voiceCloneState);
@@ -669,50 +644,6 @@ Page({
       this.setData({ error: error?.message || "个人资料无法加载。" });
     } finally {
       if (api.isAuthEpochCurrent(authEpoch)) this.setData({ loading: false });
-    }
-  },
-
-  async loadSpeakerEnrollmentStatus() {
-    try {
-      const status = await api.getSpeakerEnrollmentStatus();
-      const enrollment = status?.enrollment || {};
-      const blockReason = {
-        account_not_registered: "当前账户还没有完成注册。",
-        subject_category_unavailable: "服务端还没有确认当前主体，需先完成主体资料认证。",
-        subject_capability_forbidden: "当前主体尚未满足主人声纹所需的已验证成人条件。",
-        minor_forbidden: "未成年人主体不能登记主人声纹。",
-      }[status?.block_code] || "服务端暂未授权主人声纹能力。";
-      return {
-        speakerEnrollmentState: enrollment.state || "blocked",
-        speakerEnrollmentBlockReason:
-          enrollment.state === "blocked" ? blockReason : "",
-        speakerEnrollmentRemediationSteps: status?.remediation?.steps || [],
-        speakerEnrollmentProfileCount: Number(enrollment.profile_count || 0),
-      };
-    } catch (error) {
-      return {
-        speakerEnrollmentState: "blocked",
-        speakerEnrollmentBlockReason: error?.message || "主人声纹状态暂时无法获取。",
-        speakerEnrollmentProfileCount: 0,
-      };
-    }
-  },
-
-  async startSpeakerEnrollment() {
-    if (!(await requireLogin({ reason: "start_speaker_enrollment" }))) return;
-    const binding = readBindingManifest();
-    if (!binding || typeof binding.device_id !== "string") {
-      wx.showToast({ title: "请先绑定设备", icon: "none" });
-      this.openDevice();
-      return;
-    }
-    try {
-      await api.createSpeakerEnrollmentIntent();
-      wx.showToast({ title: "请唤醒设备说话", icon: "success" });
-      const status = await this.loadSpeakerEnrollmentStatus();
-      this.setData(status);
-    } catch (error) {
-      wx.showToast({ title: error?.message || "暂时无法请求设备登记", icon: "none" });
     }
   },
 

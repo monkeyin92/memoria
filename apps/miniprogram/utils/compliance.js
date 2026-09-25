@@ -7,7 +7,7 @@ const PRODUCT_POSITIONING =
   "Memoria 是家庭桌面档案终端：在设备上使用，在手机上查看和管理。";
 const AI_DISCLOSURE =
   "设备回应由人工智能生成，会在交互中明确标识。";
-const TRAINING_DEFAULT_OFF = "你的对话与声纹默认不用于模型训练。";
+const TRAINING_DEFAULT_OFF = "你的对话与声音默认不用于模型训练。";
 const MINOR_RESTRICTIONS =
   "未成年人账号不提供虚拟亲属或伴侣角色，敏感能力由服务端按主体授权。";
 

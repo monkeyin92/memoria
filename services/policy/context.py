@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from packages.contracts.generated.python.multi_subject_contracts import (
     AgeBandValue,
@@ -277,6 +277,9 @@ def _validate_evidence_tuple(
     return result
 
 
+
+type SubjectPresence = Literal["resolved", "device_bound"]
+
 @dataclass(frozen=True, slots=True)
 class PolicyContext:
     """Strictly validated decision context (public class name preserved).
@@ -329,6 +332,11 @@ class PolicyContext:
     approval_evidence: tuple[ApprovalEvidencePort, ...] = ()
     capture_evidence: tuple[CaptureEvidencePort, ...] = ()
     proposal_evidence: ProposalEvidencePort | None = None
+    # ``device_bound``: the subject is the one person the device is bound to and
+    # is the one talking on it, so the device session acts for that subject
+    # even though the binding owner's account opened it. ``resolved`` covers
+    # every other resolution (self account, app claim, voice match).
+    subject_presence: SubjectPresence = "resolved"
 
     def __post_init__(self) -> None:
         _validate_id(self.actor_id, "actor_id")
@@ -388,6 +396,15 @@ class PolicyContext:
             "speaker_state",
             frozenset({"unknown", "unconfirmed", "confirmed"}),
         )
+        _validate_enum(
+            self.subject_presence,
+            "subject_presence",
+            frozenset({"resolved", "device_bound"}),
+        )
+        if self.subject_presence == "device_bound" and (
+            self.subject_id is None or self.speaker_state != "confirmed"
+        ):
+            raise ValueError("a device-bound subject must be a confirmed subject")
         if not isinstance(self.relationship_roles, frozenset) or any(
             not isinstance(role, str) for role in self.relationship_roles
         ):
@@ -847,6 +864,10 @@ def context_hash(context: PolicyContext) -> str:
         "proposal_evidence": proposal_entry,
     }
     ordered = {key: payload[key] for key in CANONICAL_FIELD_ORDER}
+    if context.subject_presence != "resolved":
+        # Added after the contract hash list froze: hashed only when it is not
+        # the default, so every receipt issued before it keeps its hash.
+        ordered["subject_presence"] = context.subject_presence
     encoded = json.dumps(ordered, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
     )

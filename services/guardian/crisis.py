@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
 
-NotificationStatus = Literal["pending", "delivered", "failed"]
+NotificationStatus = Literal["pending", "delivered", "failed", "no_subscription"]
 
 
 @dataclass(frozen=True, slots=True)

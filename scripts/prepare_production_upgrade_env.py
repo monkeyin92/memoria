@@ -331,7 +331,7 @@ def prepare(
             ),
             "MEMORIA_SPEAKER_EMBEDDING_URL": ("http://speaker-model:8001/v1/embeddings/speaker"),
             "MEMORIA_SPEAKER_EMBEDDING_MODEL": _MODEL_VERSION,
-            "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "true",
+            "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "false",
             "MEMORIA_SPEAKER_AUTHORITY_URL": ("http://control-api:8000/v1/speakers/classify"),
             "MEMORIA_SPEAKER_AUTHORITY_TIMEOUT_S": "0.4",
             "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": _keep_or_create(

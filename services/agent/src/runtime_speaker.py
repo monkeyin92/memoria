@@ -26,6 +26,7 @@ from services.agent.src.orchestration.interaction_plane import (
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
+    normalize_short,
 )
 from services.agent.src.orchestration.orchestrator import Orchestrator
 from services.agent.src.orchestration.speaker_verify import (
@@ -46,10 +47,17 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
-from services.speaker.domain import SpeakerDecision, permissions_for_speaker
+from services.speaker.domain import (
+    DEVICE_BOUND_SUBJECT_MODEL,
+    DEVICE_BOUND_SUBJECT_REASON,
+    SpeakerDecision,
+    permissions_for_speaker,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
+
+    from services.agent.src.mode_policy_client import ModePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +70,10 @@ KEYWORD_SPOTTER_MIN_PCM_MS = 80
 POST_PLAYBACK_SPEAKER_UNTRUSTED_MS = 2_000
 POST_PLAYBACK_SPEAKER_PREROLL_MS = 400
 POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
+# A farewell heard this soon after playback that the robot itself just said is
+# its own tail, not the user: short phrases such as 再见 fall under the
+# 4-character text-echo floor, and with no voiceprint nothing else rejects them.
+POST_PLAYBACK_CLOSE_ECHO_GUARD_MS = 3_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +123,7 @@ class DuplexSpeakerMixin:
         _target_focus_pending_epoch: int | None
         _target_speaker_interrupt: Callable[[], Awaitable[None]] | None
         _device_conversation_controls_enabled: bool
+        _played_assistant_text: str
         _sticky_interrupt_epoch: int | None
         _sticky_interrupt_route: UtteranceRoute | None
         _sticky_interrupt_text: str
@@ -135,10 +148,15 @@ class DuplexSpeakerMixin:
         _enroll_started_mono: float
         _last_enroll_progress_speech_ms: int
         _set_interruption_min_words: Callable[[int], None] | None
+        _mode_policy: ModePolicy
 
         # Core runtime methods consumed by this mixin.
         @property
         def fence(self) -> GenerationFence: ...
+
+        def profile_permits(
+            self, fence: GenerationFence, *, capability: str | None = None
+        ) -> bool: ...
 
         def decide_interaction(
             self, snapshot: InteractionSnapshot
@@ -548,6 +566,23 @@ class DuplexSpeakerMixin:
             return False
         return decision.quality_score < POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY
 
+    def _close_phrase_is_playback_echo(
+        self,
+        text: str,
+        *,
+        now_ns: int | None = None,
+    ) -> bool:
+        if not self._device_conversation_controls_enabled:
+            return False
+        completed_ns = self._last_playback_completed_ns
+        if completed_ns is None:
+            return False
+        elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
+        if not 0 <= elapsed_ms <= POST_PLAYBACK_CLOSE_ECHO_GUARD_MS:
+            return False
+        phrase = normalize_short(text)
+        return bool(phrase) and phrase in normalize_short(self._played_assistant_text)
+
     def _uncertain_speaker_decision(self, reason: str) -> SpeakerDecision:
         return SpeakerDecision(
             classification="uncertain",
@@ -681,10 +716,48 @@ class DuplexSpeakerMixin:
             durable=True,
         )
 
+    def _device_bound_subject_decision(self) -> SpeakerDecision | None:
+        """Owner data authority for the one person this device is bound to.
+
+        Only when no voiceprint runs on a device conversation: the signed
+        Runtime Profile must confirm its active subject outside unknown_safe
+        and grant ``memory_recall_private`` for the current fence. Control API
+        re-checks the same profile before it honours the claim.
+        """
+
+        if self._speaker_classifier is not None or not self._device_conversation_controls_enabled:
+            return None
+        verified = self._mode_policy.runtime_profile
+        if verified is None:
+            return None
+        profile = verified.profile
+        if (
+            profile.speaker_state != "confirmed"
+            or profile.active_subject_id is None
+            or profile.service_mode == "unknown_safe"
+            or not self.profile_permits(self.fence, capability="memory_recall_private")
+        ):
+            return None
+        return SpeakerDecision(
+            classification="owner",
+            score=None,
+            quality_score=0.0,
+            reason_code=DEVICE_BOUND_SUBJECT_REASON,
+            model_version=DEVICE_BOUND_SUBJECT_MODEL,
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("owner"),
+        )
+
     async def await_speaker_classification(self) -> SpeakerDecision:
         self._start_speaker_classification()
         task = self._speaker_classification_task
         if task is None:
+            bound = self._device_bound_subject_decision()
+            if bound is not None:
+                self._speaker_decision = bound
+                self._speaker_class = "owner"
+                return bound
             decision = self._uncertain_speaker_decision(
                 "authority_unconfigured" if self._speaker_classifier is None else "no_audio"
             )

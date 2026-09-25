@@ -171,7 +171,7 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   const page = await bootSelfUseReady("阿宁");
   const offers = page.data.offers;
   assert.equal(offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked, true);
-  assert.equal(offers.find((offer) => offer.id === "offer_self_voice_profile_v1").checked, true);
+  assert.equal(offers.some((offer) => offer.id === "offer_self_voice_profile_v1"), false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_raw_audio_v1").checked, false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_voice_clone_v1").checked, false);
   assert.equal(offers.find((offer) => offer.id === "offer_self_digital_self_v1").checked, false);
@@ -196,10 +196,7 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
     memory_level: "personal",
     interview_frequency: "low",
   });
-  assert.deepEqual(payload.consent_offer_ids, [
-    "offer_self_memory_retention_v1",
-    "offer_self_voice_profile_v1",
-  ]);
+  assert.deepEqual(payload.consent_offer_ids, ["offer_self_memory_retention_v1"]);
   assert.ok(!Object.prototype.hasOwnProperty.call(payload, "policy_version"));
   assert.equal(readSubjectLabel(page.data.manifest), "阿宁");
 });
@@ -239,17 +236,57 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     display_name: "小乐",
     age_band: "under_14",
   });
-  assert.equal(payload.service_preferences.memory_level, "growth_summary");
+  // 长期记忆默认不勾选，也不是完成绑定的前提。
+  assert.equal(payload.service_preferences.memory_level, "none");
   assert.equal(payload.service_preferences.max_session_minutes, 30);
   assert.deepEqual(payload.service_preferences.quiet_hours, {
     start: "21:00",
     end: "07:00",
   });
   assert.ok(payload.consent_offer_ids.includes("offer_minor_voice_session_v1"));
-  assert.ok(payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
+  assert.ok(!payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
   assert.ok(payload.consent_offer_ids.includes("offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
+});
+
+test("minor long-term memory defaults unticked and sends memory_level none", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  const memoryOffer = page.data.offers.find(
+    (offer) => offer.id === "offer_minor_memory_retention_v1",
+  );
+  assert.equal(memoryOffer.checked, false);
+  assert.equal(memoryOffer.requiresParentSelfAcceptance, false);
+  assert.ok(!page.data.acceptedOfferIds.includes("offer_minor_memory_retention_v1"));
+
+  page.setData({ "form.childNickname": "小乐" });
+  page.goToReview();
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  const payload = lastWxRequest.data;
+  assert.equal(payload.service_preferences.memory_level, "none");
+  assert.ok(!payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
+});
+
+test("ticking minor long-term memory sends memory_level growth_summary", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  page.setData({ "form.childNickname": "小乐" });
+  page.goToReview();
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_minor_memory_retention_v1" } } });
+  assert.ok(page.data.acceptedOfferIds.includes("offer_minor_memory_retention_v1"));
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  const payload = lastWxRequest.data;
+  assert.equal(payload.service_preferences.memory_level, "growth_summary");
+  assert.ok(payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
+
+  // 再取消勾选，memory_level 跟着回到 none。
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_minor_memory_retention_v1" } } });
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  await page.submitBinding();
+  assert.equal(lastWxRequest.data.service_preferences.memory_level, "none");
 });
 
 test("parent_for_child can reuse an existing linked child profile", async () => {
@@ -298,20 +335,26 @@ test("late child-profile lookup is ignored after switching away from parent_for_
   }
 });
 
-test("child_for_parent never submits parent self-acceptance and keeps admin scope", async () => {
+test("child_for_parent defaults proxy memory consent off and keeps admin scope", async () => {
   const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
-  assert.match(template, /需要父母本人确认/);
-  assert.match(template, /不会代替父母开启/);
+  assert.match(template, /由你代父母决定/);
+  assert.match(template, /由你代父母同意，可随时在小程序里撤回/);
+  // 代为同意必须如实表述，不能声称父母本人已经确认。
+  assert.doesNotMatch(template, /父母本人已确认|父母已同意/);
 
   nextResponse = successResponse(defaultManifestResponse("child_for_parent"));
   const page = await bootToMode("child_for_parent");
-  const parentOffers = page.data.offers.filter((offer) => offer.requiresParentSelfAcceptance);
-  assert.equal(parentOffers.length, 2);
-  for (const offer of parentOffers) {
-    assert.equal(offer.checked, false);
-    page.toggleOffer({ currentTarget: { dataset: { id: offer.id } } });
-    assert.ok(!page.data.acceptedOfferIds.includes(offer.id));
-  }
+  assert.equal(page.data.offers.some((offer) => offer.requiresParentSelfAcceptance), false);
+  assert.equal(
+    page.data.offers.some((offer) => offer.id === "offer_senior_service_acceptance_v1"),
+    false,
+  );
+  const memoryOffer = page.data.offers.find(
+    (offer) => offer.id === "offer_senior_memory_retention_v1",
+  );
+  assert.equal(memoryOffer.checked, false);
+  assert.equal(memoryOffer.proxyConsent, true);
+  assert.match(memoryOffer.label, /我代父母同意/);
 
   page.setData({ "form.parentNickname": "妈妈" });
   page.goToReview();
@@ -330,6 +373,21 @@ test("child_for_parent never submits parent self-acceptance and keeps admin scop
     age_band: "adult",
   });
   assert.equal(readSubjectLabel(page.data.manifest), "妈妈");
+});
+
+test("child_for_parent binder can tick proxy memory consent on the parent's behalf", async () => {
+  nextResponse = successResponse(defaultManifestResponse("child_for_parent"));
+  const page = await bootToMode("child_for_parent");
+  page.setData({ "form.parentNickname": "妈妈" });
+  page.goToReview();
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_senior_memory_retention_v1" } } });
+  assert.ok(page.data.acceptedOfferIds.includes("offer_senior_memory_retention_v1"));
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  const payload = lastWxRequest.data;
+  assert.ok(payload.consent_offer_ids.includes("offer_senior_memory_retention_v1"));
+  // 父母模式沿用现有 memory_level 字段与取值（none / personal）。
+  assert.equal(payload.service_preferences.memory_level, "personal");
 });
 
 test("family_shared flow keeps extra members off the binding request", async () => {

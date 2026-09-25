@@ -96,6 +96,9 @@ def _production_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_MEMORY_WORKER_DATABASE_URL": (
             "postgresql://memoria_memory_worker:test@db/memoria"
         ),
+        "MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL": (
+            "postgresql://memoria_memory_maintenance:test@db/memoria"
+        ),
         "MEMORIA_MEMORY_SCHEMA_MANAGED_EXTERNALLY": "true",
         "MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL": (
             "postgresql://postgres_admin:test@db/memoria"

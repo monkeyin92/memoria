@@ -377,6 +377,61 @@ $consent_authorize$;
 ALTER FUNCTION consent_authorize(TEXT, TEXT, TEXT, TEXT)
     OWNER TO memoria_consent_owner;
 
+-- Bound-subject provisioning (2026-09-25).  A device serves the one person it
+-- is bound to; the binding owner's accepted offer is that person's standing
+-- consent.  The consent role may map exactly (actor, subject, binding) when
+-- Identity itself shows the binding serves the subject and the actor either
+-- is the subject or holds the attested guardian_of / delegate_for AND owns
+-- the binding.  Nothing else can reach consent_authorize.
+CREATE OR REPLACE FUNCTION consent_authorize_bound_subject(
+    p_actor_id TEXT,
+    p_subject_id TEXT,
+    p_binding_id TEXT,
+    p_now TIMESTAMPTZ
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $consent_authorize_bound_subject$
+BEGIN
+    IF session_user <> 'memoria_consent' THEN
+        RAISE EXCEPTION 'bound-subject provisioning requires the consent role';
+    END IF;
+    IF p_actor_id IS NULL OR btrim(p_actor_id) = ''
+       OR char_length(p_actor_id) > 128
+       OR p_subject_id IS NULL OR btrim(p_subject_id) = ''
+       OR char_length(p_subject_id) > 128
+       OR p_binding_id IS NULL OR btrim(p_binding_id) = ''
+       OR char_length(p_binding_id) > 128
+       OR p_now IS NULL THEN
+        RAISE EXCEPTION 'actor, subject, binding and time are required';
+    END IF;
+    -- Identity's own boolean authority functions (consent owner holds only
+    -- EXECUTE on them, never table visibility).
+    IF NOT identity_binding_visible(p_subject_id, p_binding_id)
+       OR NOT identity_binding_visible(p_actor_id, p_binding_id)
+       OR (
+           p_actor_id <> p_subject_id
+           AND NOT identity_relationship_active(
+               p_actor_id, p_subject_id, 'guardian_of', p_now
+           )
+           AND NOT identity_relationship_active(
+               p_actor_id, p_subject_id, 'delegate_for', p_now
+           )
+       ) THEN
+        RAISE EXCEPTION 'binding does not let this actor consent for this subject';
+    END IF;
+    INSERT INTO public.consent_authorization (
+        db_role, actor_id, subject_id, binding_id
+    ) VALUES
+        ('memoria_consent', p_actor_id, p_subject_id, p_binding_id),
+        ('memoria_policy_projector', p_actor_id, p_subject_id, p_binding_id)
+    ON CONFLICT DO NOTHING;
+END
+$consent_authorize_bound_subject$;
+ALTER FUNCTION consent_authorize_bound_subject(TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    OWNER TO memoria_consent_owner;
+
 -- Existing-head lock used by the transaction-bound authorizer.  Missing heads
 -- remain missing (fail closed); this read seam never creates authority state.
 CREATE OR REPLACE FUNCTION consent_lock_authority_head(
@@ -593,9 +648,16 @@ BEGIN
         RAISE EXCEPTION 'subject is not an active binding role';
     END IF;
     IF p_subject_id IS NOT NULL AND p_actor_id <> p_subject_id THEN
+        -- A guardian for a child, or (2026-09-25) an adult child as delegate
+        -- for the elderly parent their device serves.
         IF p_resource_owner_id IS DISTINCT FROM p_subject_id
-           OR NOT identity_relationship_active(
-                p_actor_id, p_subject_id, 'guardian_of', p_now
+           OR NOT (
+                identity_relationship_active(
+                    p_actor_id, p_subject_id, 'guardian_of', p_now
+                )
+                OR identity_relationship_active(
+                    p_actor_id, p_subject_id, 'delegate_for', p_now
+                )
            ) THEN
             RAISE EXCEPTION 'actor cannot discover subject consent';
         END IF;
@@ -1302,6 +1364,10 @@ REVOKE ALL ON FUNCTION consent_authorize(TEXT, TEXT, TEXT, TEXT)
     FROM memoria_consent, memoria_consent_outbox, memoria_consent_audit;
 GRANT EXECUTE ON FUNCTION consent_authorize(TEXT, TEXT, TEXT, TEXT)
     TO memoria_consent_owner;
+REVOKE ALL ON FUNCTION consent_authorize_bound_subject(TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION consent_authorize_bound_subject(TEXT, TEXT, TEXT, TIMESTAMPTZ)
+    TO memoria_consent;
 
 REVOKE ALL ON FUNCTION consent_claim_outbox(TEXT, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION consent_complete_outbox(TEXT, TEXT) FROM PUBLIC;

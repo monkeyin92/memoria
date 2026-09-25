@@ -1718,7 +1718,9 @@ def _run_plan(
 # indexes and append-only triggers).  A target created here must behave exactly
 # like one created by the real adapter, so the schema is copied instead of
 # re-derived; ``memory_type`` is validated by the planner, not by a CHECK the
-# adapter does not have.
+# adapter does not have.  The delete triggers call the adapter's erase-permit
+# function, which this seam never registers: it never deletes, and a delete on
+# its connection fails closed.
 _TARGET_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS memory_records (
     record_id TEXT PRIMARY KEY,
@@ -1770,6 +1772,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_memory_records_no_delete
 BEFORE DELETE ON memory_records
+WHEN NOT memory_subject_erase_permits('record', OLD.record_id, NULL)
 BEGIN
     SELECT RAISE(ABORT, 'memory_records is append-only');
 END;
@@ -1782,6 +1785,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_memory_status_events_no_delete
 BEFORE DELETE ON memory_status_events
+WHEN NOT memory_subject_erase_permits('record', OLD.record_id, NULL)
 BEGIN
     SELECT RAISE(ABORT, 'memory_status_events is append-only');
 END;

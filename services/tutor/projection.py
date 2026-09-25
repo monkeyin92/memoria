@@ -89,6 +89,10 @@ async def _deliver_one(
             else None
         ),
         payload=dict(payload["payload"]),
+        # The subject the practice is attributed to: the owner account's
+        # archive row must name them, or a bound subject's practice can only
+        # be found (and deleted) through the guardian store's tutor rows.
+        subject_id=item.subject_id,
     )
     try:
         await archive.record(event)

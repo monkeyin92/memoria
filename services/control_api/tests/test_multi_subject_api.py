@@ -1385,18 +1385,18 @@ async def test_plain_member_can_confirm_self_but_not_switch_others(
 
 
 @pytest.mark.asyncio
-async def test_parent_for_child_binding_records_only_a_guardian_declaration(
+async def test_parent_for_child_binding_attests_the_guardianship(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    """A guardian declaration is recorded as a declaration, never as verification.
+    """The binding owner's declaration is the guardianship, recorded as theirs.
 
-    The subject is created by this call and has no account, so nothing can
-    confirm the target endpoint. The API must therefore leave the
-    ``guardian_of`` relationship pending with only the guardian's own
-    confirmation, must not bind a ``wechat_identity`` guardian link or any
-    consent to it, and must expose the declaration to the notification path
-    under its own name.
+    Product decision (2026-09-25): a phone-verified adult who binds a device
+    for a child with no account and declares guardianship is that child's
+    guardian. The child cannot confirm an endpoint, so the relationship is
+    active on the guardian's attestation alone and says so: no confirmation
+    is attributed to the child, no guardian link is manufactured, and memory
+    consent exists only when the guardian ticked it.
     """
 
     app = _env(monkeypatch, tmp_path, "guardian-declaration")
@@ -1453,24 +1453,25 @@ async def test_parent_for_child_binding_records_only_a_guardian_declaration(
         assert declaration.relation_type == "guardian_of"
         assert declaration.source_person_id == owner["user_id"]
         assert declaration.target_person_id == child_id
-        assert declaration.status == "pending"
+        assert declaration.status == "active"
         assert declaration.confirmed_by_source_at is not None
         assert declaration.confirmed_by_target_at is None
-        assert declaration.established_evidence_id == "guardian_declaration_v1:device_binding"
+        assert declaration.established_evidence_id == "guardian_attestation_v1:device_binding"
 
-        # No audit row may attribute a confirmation to the subject.
+        # Only the guardian's own attestation is audited; nothing is
+        # attributed to the child.
         identity_db = tmp_path / "guardian-declaration-identity.sqlite3"
         with sqlite3.connect(identity_db) as connection:
-            confirmations = connection.execute(
+            actions = connection.execute(
                 """
-                SELECT actor_person_id FROM identity_audit_events
-                WHERE action = 'relationship.confirm'
+                SELECT action, actor_person_id FROM identity_audit_events
+                WHERE action IN ('relationship.attest', 'relationship.confirm')
                 """
             ).fetchall()
-        assert confirmations, "the guardian's own confirmation must be audited"
-        assert {row[0] for row in confirmations} == {owner["user_id"]}
+        assert actions == [("relationship.attest", owner["user_id"])]
 
-        # The declaration must not manufacture a guardian link or a consent.
+        # The attestation must not manufacture a guardian link, and memory
+        # consent exists only when the guardian ticked it (not here).
         guardian_store = app.state.guardian_store
         assert (
             await guardian_store.active_link(
