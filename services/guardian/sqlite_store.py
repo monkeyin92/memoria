@@ -87,6 +87,23 @@ CREATE TABLE IF NOT EXISTS guardian_notification_outbox (
 );
 """
 
+# Study progress is one projection per subject (unique ``subject_id``); the
+# acting owner ``account_id`` is an ordinary column, so one owner can hold
+# progress for several subjects.  Shared with the in-place rekey migration.
+_TUTOR_STUDY_PROGRESS_COLUMNS = """(
+    account_id TEXT NOT NULL,
+    subject_id TEXT,
+    actor_id TEXT,
+    practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
+    active_days_json TEXT NOT NULL,
+    current_streak_days INTEGER NOT NULL DEFAULT 0 CHECK (current_streak_days >= 0),
+    weak_points_json TEXT NOT NULL,
+    mastered_skills_json TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL,
+    last_practiced_at TEXT,
+    rebuilt_at TEXT NOT NULL
+)"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS guardian_links (
     link_id TEXT PRIMARY KEY,
@@ -208,19 +225,7 @@ CREATE TABLE IF NOT EXISTS tutor_practice_sessions (
 CREATE INDEX IF NOT EXISTS idx_tutor_practice_account_updated
 ON tutor_practice_sessions(account_id, updated_at DESC);
 
-CREATE TABLE IF NOT EXISTS tutor_study_progress (
-    account_id TEXT PRIMARY KEY,
-    subject_id TEXT,
-    actor_id TEXT,
-    practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
-    active_days_json TEXT NOT NULL,
-    current_streak_days INTEGER NOT NULL DEFAULT 0 CHECK (current_streak_days >= 0),
-    weak_points_json TEXT NOT NULL,
-    mastered_skills_json TEXT NOT NULL,
-    source_event_ids_json TEXT NOT NULL,
-    last_practiced_at TEXT,
-    rebuilt_at TEXT NOT NULL
-);
+CREATE TABLE IF NOT EXISTS tutor_study_progress """ + _TUTOR_STUDY_PROGRESS_COLUMNS + """;
 
 CREATE TABLE IF NOT EXISTS tutor_practice_evidence (
     event_id TEXT PRIMARY KEY,
@@ -475,10 +480,17 @@ class SqliteGuardianStore:
         connection.execute(
             "UPDATE tutor_study_progress SET actor_id = account_id WHERE actor_id IS NULL"
         )
+        SqliteGuardianStore._rekey_tutor_study_progress(connection)
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_tutor_progress_subject
             ON tutor_study_progress(subject_id) WHERE subject_id IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tutor_progress_account
+            ON tutor_study_progress(account_id)
             """
         )
         connection.executescript(
@@ -537,6 +549,50 @@ class SqliteGuardianStore:
             END;
             """
         )
+
+    @staticmethod
+    def _rekey_tutor_study_progress(connection: sqlite3.Connection) -> None:
+        """Drop the legacy ``account_id`` primary key, keeping every row.
+
+        SQLite cannot drop a primary key in place, so the table is rebuilt in
+        one write transaction.  The key is re-checked under the writer lock so
+        a concurrent initializer that already rekeyed the table is a no-op.
+        The rebuild drops the table's indexes and triggers; the caller
+        recreates them with ``IF NOT EXISTS`` afterwards.
+        """
+
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            primary_key = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(tutor_study_progress)")
+                if int(row["pk"])
+            }
+            if primary_key == {"account_id"}:
+                columns = (
+                    "account_id, subject_id, actor_id, practiced_seconds, "
+                    "active_days_json, current_streak_days, weak_points_json, "
+                    "mastered_skills_json, source_event_ids_json, "
+                    "last_practiced_at, rebuilt_at"
+                )
+                connection.execute(
+                    "CREATE TABLE tutor_study_progress_rekeyed "
+                    + _TUTOR_STUDY_PROGRESS_COLUMNS
+                )
+                connection.execute(
+                    f"INSERT INTO tutor_study_progress_rekeyed({columns}) "  # noqa: S608
+                    f"SELECT {columns} FROM tutor_study_progress"
+                )
+                connection.execute("DROP TABLE tutor_study_progress")
+                connection.execute(
+                    "ALTER TABLE tutor_study_progress_rekeyed RENAME TO tutor_study_progress"
+                )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, timeout=5)
@@ -2358,15 +2414,17 @@ class SqliteGuardianStore:
                     (account_id, account_id),
                 ).fetchall()
             ]
-            progress = connection.execute(
-                """
-                SELECT * FROM tutor_study_progress
-                WHERE account_id = ? OR actor_id = ?
-                ORDER BY subject_id IS NULL, subject_id
-                LIMIT 1
-                """,
-                (account_id, account_id),
-            ).fetchone()
+            study_progress = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM tutor_study_progress
+                    WHERE account_id = ? OR actor_id = ?
+                    ORDER BY subject_id IS NULL, subject_id
+                    """,
+                    (account_id, account_id),
+                ).fetchall()
+            ]
             practice_evidence = [
                 dict(row)
                 for row in connection.execute(
@@ -2443,7 +2501,7 @@ class SqliteGuardianStore:
             "consents": consents,
             "person_consents": person_consents,
             "tutor_practice_sessions": practice_sessions,
-            "tutor_study_progress": dict(progress) if progress is not None else None,
+            "tutor_study_progress": study_progress,
             "tutor_practice_evidence": practice_evidence,
             "tutor_commit_outbox": commit_outbox,
             "crisis_events": crisis_events,

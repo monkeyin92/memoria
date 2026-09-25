@@ -607,7 +607,7 @@ async def test_self_subject_practice_flow_is_server_scored_and_one_time(
     assert progress.json()["subject_id"] == identity["user_id"]
     assert stored is not None
     assert stored.source_event_ids
-    assert exported["tutor_study_progress"] is not None
+    assert len(exported["tutor_study_progress"]) == 1
     assert len(exported["tutor_practice_sessions"]) == 1
 
 

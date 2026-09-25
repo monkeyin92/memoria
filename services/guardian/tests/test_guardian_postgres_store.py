@@ -933,7 +933,7 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
         # Account-scoped export still sees the subject's rows (actor match).
         exported = await store.export_for_account(account_id="actor-a")
         assert len(exported["tutor_practice_sessions"]) == 1
-        assert exported["tutor_study_progress"] is not None
+        assert len(exported["tutor_study_progress"]) == 1
         assert "person_consents" in exported
         assert {row["event_id"] for row in exported["tutor_practice_evidence"]} == {
             "tutor-pg-evidence-a",
@@ -959,6 +959,225 @@ async def test_postgres_tutor_rows_are_subject_scoped_and_rls_enforced() -> None
         assert again["tutor_practice_evidence"] == 0
         assert again["tutor_commit_outbox"] == 0
         assert await store.remaining_account_rows(account_id="actor-a") == {}
+    finally:
+        if store is not None:
+            await store.close()
+        if admin_db is not None:
+            await admin_db.close()
+        try:
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1",
+                database,
+            )
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database}"')
+        finally:
+            if maintenance_role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian_maintenance")
+            if worker_role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian_worker")
+            if role_created:
+                await admin.execute("DROP ROLE IF EXISTS memoria_guardian")
+            await admin.close()
+
+
+def _two_subject_progress(
+    subject_id: str,
+    *,
+    practiced_seconds: int,
+    now: datetime,
+) -> StudyProgress:
+    return StudyProgress(
+        subject_id=subject_id,
+        actor_id="actor-a",
+        practiced_seconds=practiced_seconds,
+        active_days=(now.date(),),
+        current_streak_days=1,
+        weak_points=(("past-story", 1),),
+        mastered_skills=(),
+        source_event_ids=(f"{subject_id}:turn-1",),
+        last_practiced_at=now,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL guardian contract",
+)
+@pytest.mark.parametrize("account_keyed_install", [False, True])
+async def test_postgres_one_owner_holds_progress_for_two_subjects(
+    account_keyed_install: bool,
+) -> None:
+    """Progress is per subject; the legacy account key is dropped in place."""
+
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_tutor_rekey_{uuid.uuid4().hex[:10]}"
+    admin = await asyncpg.connect(admin_dsn)
+    admin_db: asyncpg.Connection | None = None
+    role_created, maintenance_role_created, worker_role_created = False, False, False
+    store: PostgresGuardianStore | None = None
+    now = datetime.now(UTC)
+    try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+        dsn = _postgres_dsn(admin_dsn, database=database)
+        (
+            role_created,
+            maintenance_role_created,
+            worker_role_created,
+        ) = await _ensure_roles(admin, database=database)
+        admin_db = await asyncpg.connect(dsn)
+        if account_keyed_install:
+            # The shape every install had before the rekey: one row per
+            # acting account, plus a quarantined pre-subject-contract row.
+            await admin_db.execute(
+                """
+                CREATE TABLE tutor_study_progress (
+                    account_id TEXT PRIMARY KEY,
+                    subject_id TEXT,
+                    actor_id TEXT,
+                    practiced_seconds INTEGER NOT NULL DEFAULT 0,
+                    active_days_json JSONB NOT NULL,
+                    current_streak_days INTEGER NOT NULL DEFAULT 0,
+                    weak_points_json JSONB NOT NULL,
+                    mastered_skills_json JSONB NOT NULL,
+                    source_event_ids_json JSONB NOT NULL,
+                    last_practiced_at TIMESTAMPTZ,
+                    rebuilt_at TIMESTAMPTZ NOT NULL
+                );
+                CREATE UNIQUE INDEX idx_tutor_progress_subject
+                ON tutor_study_progress(subject_id) WHERE subject_id IS NOT NULL;
+                """
+            )
+            for account_id, subject_id, actor_id, seconds in (
+                ("actor-a", "subject-a", "actor-a", 600),
+                ("legacy-account", None, None, 120),
+            ):
+                await admin_db.execute(
+                    """
+                    INSERT INTO tutor_study_progress(
+                        account_id, subject_id, actor_id, practiced_seconds,
+                        active_days_json, current_streak_days, weak_points_json,
+                        mastered_skills_json, source_event_ids_json, rebuilt_at
+                    ) VALUES ($1, $2, $3, $4, '[]', 0, '[]', '[]', '[]', $5)
+                    """,
+                    account_id,
+                    subject_id,
+                    actor_id,
+                    seconds,
+                    now,
+                )
+        store = PostgresGuardianStore(
+            dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian",
+                password="api-role-password",
+            ),
+            bootstrap_dsn=dsn,
+            maintenance_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_maintenance",
+                password="maintenance-role-password",
+            ),
+            worker_dsn=_role_dsn(
+                admin_dsn,
+                database=database,
+                role="memoria_guardian_worker",
+                password="worker-role-password",
+            ),
+        )
+        await store.initialize()
+        # The schema is re-applied on every deploy; a second apply on the
+        # rekeyed table must be a no-op.
+        await admin_db.execute(
+            Path(__file__).parents[1].joinpath("postgres_schema.sql").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        primary_keys = await admin_db.fetchval(
+            """
+            SELECT count(*) FROM pg_constraint
+            WHERE conrelid = 'public.tutor_study_progress'::regclass
+              AND contype = 'p'
+            """
+        )
+        account_not_null = await admin_db.fetchval(
+            """
+            SELECT attnotnull FROM pg_attribute
+            WHERE attrelid = 'public.tutor_study_progress'::regclass
+              AND attname = 'account_id'
+            """
+        )
+        assert primary_keys == 0
+        assert account_not_null is True
+        if account_keyed_install:
+            legacy_rows = await admin_db.fetch(
+                """
+                SELECT account_id, subject_id, actor_id, practiced_seconds
+                FROM tutor_study_progress ORDER BY account_id
+                """
+            )
+            assert [tuple(row) for row in legacy_rows] == [
+                ("actor-a", "subject-a", "actor-a", 600),
+                ("legacy-account", None, "legacy-account", 120),
+            ]
+
+        await store.save_study_progress(
+            _two_subject_progress("subject-b", practiced_seconds=300, now=now),
+            rebuilt_at=now,
+        )
+        await store.save_study_progress(
+            _two_subject_progress("subject-a", practiced_seconds=900, now=now),
+            rebuilt_at=now,
+        )
+        first = await store.study_progress(subject_id="subject-a")
+        second = await store.study_progress(subject_id="subject-b")
+        assert first is not None and first.practiced_seconds == 900
+        assert second is not None and second.practiced_seconds == 300
+        assert first.actor_id == second.actor_id == "actor-a"
+
+        # The subject RLS scope still isolates each subject's row, and the
+        # authority guard still rejects a row without a subject.
+        async with admin_db.transaction():
+            await admin_db.execute("SET LOCAL ROLE memoria_guardian")
+            await admin_db.execute("SET LOCAL memoria.subject_id = 'subject-b'")
+            scoped = await admin_db.fetch(
+                "SELECT subject_id FROM tutor_study_progress"
+            )
+        assert [row["subject_id"] for row in scoped] == ["subject-b"]
+        with pytest.raises(asyncpg.RaiseError, match="tutor authority columns"):
+            await admin_db.execute(
+                """
+                INSERT INTO tutor_study_progress(
+                    account_id, subject_id, actor_id, active_days_json,
+                    weak_points_json, mastered_skills_json,
+                    source_event_ids_json, rebuilt_at
+                ) VALUES ('actor-a', NULL, 'actor-a', '[]', '[]', '[]', '[]', now())
+                """
+            )
+
+        exported = await store.export_for_account(account_id="actor-a")
+        assert [row["subject_id"] for row in exported["tutor_study_progress"]] == [
+            "subject-a",
+            "subject-b",
+        ]
+        assert await store.remaining_account_rows(account_id="actor-a") == {
+            "tutor_study_progress": 2
+        }
+        deleted = await store.delete_for_account(account_id="actor-a")
+        assert deleted["tutor_study_progress"] == 2
+        assert await store.remaining_account_rows(account_id="actor-a") == {}
+        if account_keyed_install:
+            # The quarantined row stays reachable only on the account paths.
+            legacy_export = await store.export_for_account(account_id="legacy-account")
+            assert [
+                row["subject_id"] for row in legacy_export["tutor_study_progress"]
+            ] == [None]
+            assert await store.remaining_account_rows(
+                account_id="legacy-account"
+            ) == {"tutor_study_progress": 1}
     finally:
         if store is not None:
             await store.close()
