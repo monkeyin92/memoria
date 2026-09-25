@@ -397,22 +397,30 @@ cd firmware/esp32
 
 默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 
-### 屏幕表情（对话脸）
+### 屏幕：伙伴吉祥物（替换原白描对话脸）
 
-360x360 圆屏不再显示 64px 黄色 Noto emoji，改为黑底白描对话脸：签名是嘴，鼻子是两眼与嘴之间的米粒点，闭眼仍是月牙，睁眼是杏仁白眼加挖空瞳孔（不是实心白圆）。几何以 `overlay/files/main/boards/memoria/esp-vocat/memoria_face.cc` 为准：眼心 `±0.30R, y=-0.20R`，眼半宽 `0.205R`，鼻 `y=0.07R`，嘴 `y=0.27R`。点缀按需出现：开心四角星、心疼灰调红晕、难过泪、尴尬汗珠。`memoria_face_display.cc` 把渲染结果作为 LVGL 容器的 `bg_image_src`（360x360 RGB565，PSRAM），`content_`/`top_bar_` 背景透明，字幕与状态文字仍画在脸之上；同时把板卡钉到 **dark** 主题（浅色主题会把黑字画到黑屏上）。缓冲分配失败时回退上游彩色 emoji 路径。面部不绑定唤醒名。
+360x360 圆屏显示账号所选伙伴（星澜/桃喜/绵绵/阿序/玄墨）的毛绒吉祥物，像 Muse Charm 一样是一个"活着"的角色，而不是表情符号：
 
-服务端 `screen.expression` 六种情绪映射为 `neutral`（待命月牙+平嘴+鼻点）、`happy`（外眼角上挑的眯眼+四角星+笑嘴）、`sad`（外眼角下垂+泪+撇嘴）、`surprised`（杏仁白眼+瞳孔+小 O）、`loving`（内倾月牙+灰调红晕）、`thinking`（杏仁上移偏右+思考点）。固件另有 `embarrassed`（汗珠，不再 alias 到 happy）、`wink`（左右不对称）、`speaking`（扁圆开口 viseme）。别名 `idle/sleepy→neutral`、`laughing/funny/…→happy`、`crying/angry→sad`、`shocked→surprised`、`caring→loving`、`curious/confused→thinking`、`winking→wink`、`talking→speaking`，未知名字回落 `neutral`，不会再出现黄色 emoji。`surprised`/`thinking`/`speaking` 睁眼，每 4–7 秒眨一次。
+- **场景**：伙伴主题色的径向渐变背景（有序抖动，RGB565 无色带）+ 地面柔影 + 角色 + 圆屏边缘的状态光环。聆听=光环呼吸，思考/连接中=彗星光环旋转，说话=光环随口型轻微明暗。
+- **角色行为**：待机呼吸、随机眨眼（含双眨）、说话时口型开合（每个心情有独立张嘴帧）、心情切换时"压扁-弹起"、被拍一下开心跳、摇晃后晕乎乎、空闲时偶尔小动作（开心/思考/挥手）、闲置 3 分钟打瞌睡并调暗背光、回复结束后心情停留约 2 秒。
+- **开机**：黑屏 → 暖光光球 → 光圈扩散展开场景 → `memoria` 字标淡入淡出 → 伙伴从底部弹入落地 → 眨眼 → 挥手问好。背光在第一帧画好后才渐亮（不再闪白屏）。未绑定时中间是白色圆角二维码卡片，上方「你好，我是…」，边缘光环呼吸。
+- **文字**：状态只在需要时出现在顶部（连接中、配网、错误、待机时钟）；字幕是底部半透明胶囊；版本号/UA/品牌通知不再上屏。
+- **手机同步**：小程序「选TA陪伴」保存后，control-api 同时把该伙伴写成设备主使用人的人格（声音从下一轮对话起切换）；设备空闲时每 20 秒用设备签名调用 `GET /v1/devices/{id}/display-profile`，`display_version` 变化即挥手换装，并写入 NVS（重启后直接显示）。
+
+实现分三层：`memoria_mascot_pack.{h,cc}`（帧包解码）与 `memoria_mascot_scene.{h,cc}`（行为状态机 + 行缓冲合成，只重绘变化矩形并裁到圆内）不依赖 ESP-IDF/LVGL；`memoria_mascot_display.{h,cc}` 接 LVGL、设备状态、QR 卡片与背光。动画任务优先级 2（低于全部音频任务），按场景自适应 12.5–25 fps；真机空闲约 240 次重绘/分钟、每次约 8 ms 纯合成。
+
+美术：`apps/miniprogram/assets/companions/<id>/` 的 8 个心情帧之外，`*-blink`、`*-talk`、`greeting` 由 `design-preview/memoria-v2/tools/device_frames.py` 生成（图像编辑只改眼/嘴，再对齐并只把变化区域合成回原帧，其余像素逐位不变）。`firmware/esp32/scripts/build_mascot_pack.py` 打包成 `assets/mascot_<id>.mmp`（每个 110–180 KB，调色板 + zlib，眨眼/口型帧只存差异补丁）和 `brand_mark.mma`，由 patch `0026` 放进 assets 分区。
 
 离线预览与回归（不需要硬件）：
 
 ```bash
-uv run python firmware/esp32/scripts/preview_memoria_face.py --out .tmp-face/out
-uv run pytest firmware/esp32/tests/test_memoria_face.py -q
+uv run python firmware/esp32/scripts/preview_memoria_mascot.py --out .tmp-mascot
+uv run pytest firmware/esp32/tests/test_memoria_mascot.py -q
 ```
 
-预览脚本编译的是固件同一份 `memoria_face.cc`，因此设计稿与固件输出不会漂移。对照图在 `outputs/firmware-face-v3-20260909/`。
+预览编译的是固件同一份合成器，输出 `scene.mp4`、`sheet.png` 与逐帧"增量重绘 = 全量重绘"的校验；改了源美术后先重跑 `build_mascot_pack.py`，测试会比对帧包字节。
 
-真机验收（刷机命令、五种表情怎么问、串口收据、证据目录和回填字段）见 `HANDOFF.md` 的「屏幕表情：对话脸」runbook；`hardware_verified` 在亲眼确认前保持 false。
+真机验收要看：开机动画、待机呼吸/眨眼、拍一下、摇晃、聆听光环、思考彗星、说话口型、未绑定二维码卡片、小程序换伙伴后 20 秒内设备换装（需先发布含 display-profile 的 control-api）。
 
 Mac 进入下载模式：按住 BOOT，轻按 RESET，松开 RESET，再松开 BOOT，然后重试。monitor 使用 `Ctrl+]` 退出。
 
