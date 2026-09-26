@@ -121,7 +121,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - media-edge 下次发布：新镜像含 PR #42 的启动收紧（`MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative`、生产未开设备 WSS 均拒绝启动）；compose 已固定 `MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"`，发布后把易失的 `/tmp/media-runtime.override.yml` 移出 compose 链。发布须另获授权。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - persona 死链路已删（2026-09-26）：agent 侧 `MEMORIA_PERSONA_{ENABLED,CAPSULE_URL,READ_TOKEN,TIMEOUT_S,CACHE_TTL_S}` 配置与校验、控制面 `/v1/persona/session-capsule` 端点及 `persona_read` 内部 token（生产要求的能力 token 由十个降为九个）、env 模板与升级生成脚本中的对应项；`split_production_env.py` 接受但不分发这些已退役变量，现有 env 文件无需改动。人格学习测试改为经 `persona_engine.capsule` 读取（与现役 response-plan 同一路径）。
-- 同类残留待删：控制面 `/v1/archive/session-context` 的调用方是早已删除的 agent MemoryContextClient，`memory_read` 内部 token 只服务该端点；`.env.example` 中的 `MEMORIA_MEMORY_CONTEXT_*` 已随本次删除。删除端点时同步退役 `MEMORIA_MEMORY_READ_TOKEN`。
+- session-context 死链路已删（2026-09-26）：控制面 `/v1/archive/session-context`（调用方是早已删除的 agent MemoryContextClient）及其专用 `memory_read` 内部 token（生产要求的能力 token 再降为八个）；`MEMORIA_MEMORY_READ_TOKEN` 从 env 模板与升级生成脚本移除，`split_production_env.py` 接受但不分发。记忆目录 `context()` 仍由 response-plan 与评测使用，保留；原经该端点覆盖的主体隔离断言改由 response-plan/context-prefetch 两条现役路径承担。
 - 完成条件：脚本入库且两处缺陷有回归（已达成）；下次整栈发布使用仓库版本；media-edge 发布与 `/tmp` 移除有切流收据；旧媒体链有明确决定并按决定执行。
 
 ## P2：质量增强与后续能力

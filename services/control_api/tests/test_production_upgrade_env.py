@@ -290,14 +290,15 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert control["TTS_PROVIDER"] == "doubao"
     assert agent["TTS_PROVIDER"] == "doubao"
     assert agent["MEMORIA_ARCHIVE_SINK_ENABLED"] == "true"
-    retired_persona_capsule_keys = {
+    retired_context_fetch_keys = {
+        "MEMORIA_MEMORY_READ_TOKEN",
         "MEMORIA_PERSONA_ENABLED",
         "MEMORIA_PERSONA_CAPSULE_URL",
         "MEMORIA_PERSONA_READ_TOKEN",
         "MEMORIA_PERSONA_TIMEOUT_S",
         "MEMORIA_PERSONA_CACHE_TTL_S",
     }
-    assert retired_persona_capsule_keys.isdisjoint({*control, *agent})
+    assert retired_context_fetch_keys.isdisjoint({*control, *agent})
     assert agent["MEMORIA_VOICE_PROFILE_ENABLED"] == "true"
     assert agent["ENDPOINTING_MIN_DELAY_S"] == "1.50"
     assert agent["ENDPOINTING_MAX_DELAY_S"] == "2.20"

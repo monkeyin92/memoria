@@ -722,7 +722,6 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_VOICE_SAMPLE_URL_SECRET": "voice-url",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": "archive-write-token",
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": "agent-heartbeat-token",
-            "MEMORIA_MEMORY_READ_TOKEN": "memory-read-token",
             "MEMORIA_VOICE_RESOLUTION_TOKEN": "voice-resolution-token",
             "MEMORIA_VOICE_CLEANUP_TOKEN": "voice-cleanup-token",
             "MEMORIA_INTERACTION_POLICY_TOKEN": "interaction-policy-token",
@@ -761,13 +760,11 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert agent["MEMORIA_ARCHIVE_WRITE_TOKEN"] == "archive-write-token"
     assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
     assert control["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
-    assert control["MEMORIA_MEMORY_READ_TOKEN"] == "memory-read-token"
     assert control["MEMORIA_VOICE_RESOLUTION_TOKEN"] == "voice-resolution-token"
     assert control["MEMORIA_VOICE_CLEANUP_TOKEN"] == "voice-cleanup-token"
     assert control["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
     for disabled_capability in (
-        "MEMORIA_MEMORY_READ_TOKEN",
         "MEMORIA_VOICE_RESOLUTION_TOKEN",
         "MEMORIA_VOICE_CLEANUP_TOKEN",
     ):
@@ -1152,7 +1149,8 @@ def test_target_image_resolver_requires_an_explicit_candidate_identity() -> None
     )
 
 
-RETIRED_PERSONA_CAPSULE_KEYS = (
+RETIRED_CONTEXT_FETCH_KEYS = (
+    "MEMORIA_MEMORY_READ_TOKEN",
     "MEMORIA_PERSONA_ENABLED",
     "MEMORIA_PERSONA_CAPSULE_URL",
     "MEMORIA_PERSONA_READ_TOKEN",
@@ -1161,9 +1159,10 @@ RETIRED_PERSONA_CAPSULE_KEYS = (
 )
 
 
-def test_old_env_with_persona_capsule_keys_still_splits_and_routes_them_nowhere() -> None:
-    # The agent-side capsule fetch and /v1/persona/session-capsule were removed
-    # on 2026-09-26; live operator env files still carry these keys.
+def test_old_env_with_retired_context_fetch_keys_still_splits_and_routes_them_nowhere() -> None:
+    # The agent-side persona capsule fetch, /v1/persona/session-capsule and
+    # /v1/archive/session-context were removed on 2026-09-26; live operator env
+    # files still carry these keys.
     routed_sets = split_env(
         {
             "ENVIRONMENT": "production",
@@ -1175,18 +1174,19 @@ def test_old_env_with_persona_capsule_keys_still_splits_and_routes_them_nowhere(
             "MEMORIA_PERSONA_TIMEOUT_S": "0.3",
             "MEMORIA_PERSONA_CACHE_TTL_S": "60",
             "MEMORIA_PERSONA_STRUCTURING_MODEL": "qwen-flash",
+            "MEMORIA_MEMORY_READ_TOKEN": "memory-read-token-material-that-is-long",
         }
     )
     control = routed_sets[0]
-    for retired in RETIRED_PERSONA_CAPSULE_KEYS:
+    for retired in RETIRED_CONTEXT_FETCH_KEYS:
         for routed in routed_sets:
             assert retired not in routed
     # Persona structuring is a live Control setting and keeps routing.
     assert control["MEMORIA_PERSONA_STRUCTURING_MODEL"] == "qwen-flash"
 
 
-def test_env_templates_drop_the_persona_capsule_keys() -> None:
+def test_env_templates_drop_the_retired_context_fetch_keys() -> None:
     for template in (ROOT / ".env.example", ROOT / "infra" / "memoria.env.production.example"):
         text = template.read_text(encoding="utf-8")
-        for key in RETIRED_PERSONA_CAPSULE_KEYS:
+        for key in RETIRED_CONTEXT_FETCH_KEYS:
             assert f"\n{key}=" not in text, f"{key} still in {template.name}"

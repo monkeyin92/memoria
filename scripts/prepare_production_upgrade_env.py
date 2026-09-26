@@ -303,7 +303,6 @@ def prepare(
                 _token,
             ),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": _token(),
-            "MEMORIA_MEMORY_READ_TOKEN": _token(),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": _token(),
             "MEMORIA_VOICE_CLEANUP_TOKEN": _token(),
             "MEMORIA_INTERACTION_POLICY_TOKEN": _token(),

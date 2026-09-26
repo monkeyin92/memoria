@@ -1051,7 +1051,6 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         ),
         "MEMORIA_ARCHIVE_WRITE_TOKEN": "test-archive-write-material-long-enough",
         "MEMORIA_AGENT_HEARTBEAT_TOKEN": "test-heartbeat-material-that-is-long-enough",
-        "MEMORIA_MEMORY_READ_TOKEN": "test-memory-read-material-long-enough",
         "MEMORIA_VOICE_RESOLUTION_TOKEN": "test-voice-resolve-material-long-enough",
         "MEMORIA_VOICE_CLEANUP_TOKEN": "test-voice-cleanup-material-long-enough",
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",
@@ -1176,21 +1175,21 @@ def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None
 def test_production_requires_a_response_plan_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_RESPONSE_PLAN_TOKEN="")
 
-    with pytest.raises(ValueError, match="nine capability-scoped"):
+    with pytest.raises(ValueError, match="eight capability-scoped"):
         settings.validate_production()
 
 
 def test_production_requires_an_evolution_control_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_CONTROL_TOKEN="")
 
-    with pytest.raises(ValueError, match="nine capability-scoped"):
+    with pytest.raises(ValueError, match="eight capability-scoped"):
         settings.validate_production()
 
 
 def test_production_requires_an_evolution_validator_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_VALIDATOR_TOKEN="")
 
-    with pytest.raises(ValueError, match="nine capability-scoped"):
+    with pytest.raises(ValueError, match="eight capability-scoped"):
         settings.validate_production()
 
 
@@ -1247,7 +1246,6 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
         MEMORIA_ARCHIVE_WRITE_TOKEN=shared,
         MEMORIA_AGENT_HEARTBEAT_TOKEN=shared,
-        MEMORIA_MEMORY_READ_TOKEN=shared,
         MEMORIA_VOICE_RESOLUTION_TOKEN=shared,
         MEMORIA_VOICE_CLEANUP_TOKEN=shared,
         MEMORIA_INTERACTION_POLICY_TOKEN=shared,
@@ -1273,7 +1271,6 @@ def test_production_requires_an_independent_message_idempotency_secret() -> None
         MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=auth_secret,
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-that-is-long-enough",
         MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
-        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-that-is-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-that-is-long-enough",
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-that-is-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-that-is-long-enough",
@@ -1297,7 +1294,6 @@ def test_production_rejects_the_development_message_idempotency_secret() -> None
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
         MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
-        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",

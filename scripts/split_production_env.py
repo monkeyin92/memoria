@@ -136,6 +136,9 @@ _RETIRED_KEYS = frozenset(
         "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
         # The agent-side persona capsule fetch and its control endpoint were
         # removed on 2026-09-26; persona reaches the agent via response-plan.
+        # /v1/archive/session-context and its memory_read token were removed
+        # on 2026-09-26; its only caller was the deleted MemoryContextClient.
+        "MEMORIA_MEMORY_READ_TOKEN",
         "MEMORIA_PERSONA_CACHE_TTL_S",
         "MEMORIA_PERSONA_CAPSULE_URL",
         "MEMORIA_PERSONA_ENABLED",

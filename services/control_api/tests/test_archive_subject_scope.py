@@ -196,47 +196,6 @@ async def test_revoked_consent_blocks_every_private_read_exit(
 
 
 @pytest.mark.asyncio
-async def test_session_context_uses_current_authority_and_not_the_managing_account(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register_verified_adult(client, app, username="scope-context")
-        headers = {"Authorization": f"Bearer {owner['access_token']}"}
-        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        app.state.session_runtime_service = object()
-
-        async def current(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"active_subject_id": "other-adult", "subject_category": "adult"}
-
-        seen: list[str | None] = []
-
-        async def record_people(**kwargs: Any) -> tuple[()]:
-            seen.append(kwargs.get("subject_id"))
-            return ()
-
-        async def record_context(query: Any) -> Any:
-            from services.archive.memory_domain import MemorySearchResult
-
-            seen.append(getattr(query, "subject_id", None))
-            return MemorySearchResult()
-
-        from services.control_api.app.routes import interaction
-        monkeypatch.setattr(interaction, "_current_persistent_runtime_profile", current)
-        monkeypatch.setattr(app.state.memory_catalog, "people", record_people)
-        monkeypatch.setattr(app.state.memory_catalog, "context", record_context)
-        result = await client.post(
-            "/v1/archive/session-context", headers=INTERNAL,
-            json={"session_id": session["session_id"], "speaker_class": "owner", "topic": "记忆"},
-        )
-        assert result.status_code == 200, result.text
-        assert result.json() == {"items": []}
-        assert seen == ["other-adult", "other-adult"]
-        assert owner["user_id"] not in seen
-
-
-@pytest.mark.asyncio
 async def test_session_archive_checks_all_existing_runtime_identity_fences(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -514,8 +473,8 @@ async def _read_subject_memory(
     subject_category: str,
     token: dict[str, str],
     turn_id: int,
-) -> tuple[Any, Any, Any]:
-    """Read the three subject-scoped seams for one signed runtime profile."""
+) -> tuple[Any, Any]:
+    """Read the two subject-scoped memory seams for one signed runtime profile."""
 
     from services.control_api.tests.test_interaction_api import (
         _attach_signed_runtime_profile,
@@ -545,17 +504,7 @@ async def _read_subject_memory(
             "speaker_decision": body["speaker_decision"],
         },
     )
-    session_context = await client.post(
-        "/v1/archive/session-context",
-        headers=INTERNAL,
-        json={
-            "session_id": session_id,
-            "speaker_class": "owner",
-            "topic": "我喜欢什么？",
-            "limit": 10,
-        },
-    )
-    return planned, prefetched, session_context
+    return planned, prefetched
 
 
 @pytest.mark.asyncio
@@ -634,7 +583,7 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
                 )
             )
         await app.state.memory_catalog.compile_pending()
-        other_plan, other_prefetch, other_context = await _read_subject_memory(
+        other_plan, other_prefetch = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -644,7 +593,7 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
             token=token,
             turn_id=7,
         )
-        owner_plan, owner_prefetch, owner_context = await _read_subject_memory(
+        owner_plan, owner_prefetch = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -657,20 +606,12 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
 
     assert other_plan.status_code == 200, other_plan.text
     assert other_prefetch.status_code == 200, other_prefetch.text
-    assert other_context.status_code == 200, other_context.text
     assert owner_plan.status_code == 200, owner_plan.text
     assert owner_prefetch.status_code == 200, owner_prefetch.text
-    assert owner_context.status_code == 200, owner_context.text
     assert "散步" not in other_plan.text
     assert "阅读" in other_plan.text
     assert "阅读" not in owner_plan.text
     assert "散步" in owner_plan.text
-    assert {item["source_event_id"] for item in other_context.json()["items"]} == {
-        "self-claim-1"
-    }
-    assert {item["source_event_id"] for item in owner_context.json()["items"]} == {
-        "self-claim-0"
-    }
     assert seen_subjects
     assert set(seen_subjects) == {"person-other-adult", owner["user_id"]}
     del interaction
@@ -734,7 +675,7 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
             age_evidence_status="unverified",
             now=now,
         )
-        planned, prefetched, session_context = await _read_subject_memory(
+        planned, prefetched = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -746,10 +687,8 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
         )
         assert planned.status_code == 200, planned.text
         assert prefetched.status_code == 200, prefetched.text
-        assert session_context.status_code == 200, session_context.text
         assert _memory_claim_ids(planned.json()["grounded_items"]) == []
         assert _memory_claim_ids(prefetched.json()["grounded_items"]) == []
-        assert session_context.json() == {"items": []}
         assert catalog_calls["count"] == 0
         assert guardian.minor_ids
         assert set(guardian.minor_ids) == {"person-minor-child"}
@@ -767,7 +706,7 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
             ),
             actor_person_id="guardian",
         )
-        granted_plan, _, _ = await _read_subject_memory(
+        granted_plan, _ = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -786,7 +725,7 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
             revocation_evidence_event_id="revoke-minor-retention",
         )
         calls_before_revoke = catalog_calls["count"]
-        revoked_plan, revoked_prefetch, revoked_context = await _read_subject_memory(
+        revoked_plan, revoked_prefetch = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -799,10 +738,8 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
 
     assert revoked_plan.status_code == 200, revoked_plan.text
     assert revoked_prefetch.status_code == 200, revoked_prefetch.text
-    assert revoked_context.status_code == 200, revoked_context.text
     assert _memory_claim_ids(revoked_plan.json()["grounded_items"]) == []
     assert _memory_claim_ids(revoked_prefetch.json()["grounded_items"]) == []
-    assert revoked_context.json() == {"items": []}
     assert catalog_calls["count"] == calls_before_revoke
 
 
@@ -871,7 +808,7 @@ async def test_unresolved_identity_does_not_project_the_other_subject(
                 )
             )
         report = await app.state.memory_catalog.compile_pending()
-        other_plan, _, other_context = await _read_subject_memory(
+        other_plan, _ = await _read_subject_memory(
             client,
             app=app,
             user_id=str(owner["user_id"]),
@@ -891,7 +828,6 @@ async def test_unresolved_identity_does_not_project_the_other_subject(
     assert other_plan.status_code == 200, other_plan.text
     assert "散步" not in other_plan.text
     assert "阅读" not in other_plan.text
-    assert other_context.json() == {"items": []}
     import sqlite3
 
     with sqlite3.connect(app.state.memory_catalog._path) as connection:

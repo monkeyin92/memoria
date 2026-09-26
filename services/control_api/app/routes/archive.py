@@ -46,14 +46,12 @@ from services.archive.memory_write_policy import (
     explicit_remember_content,
 )
 from services.archive.object_store import ObjectRef, ObjectStore
-from services.archive.recall_planner import RecallPlanner
 from services.common.companions import (
     DEFAULT_COMPANION_ID,
     DESIGNED_VOICE_MODEL,
     designed_voice_profile,
     designed_voice_speaker_sha256,
 )
-from services.common.realtime_information import current_local_time
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     AccountOperationGate,
@@ -310,15 +308,6 @@ class SessionRawAudioCreate(SessionEvidenceEventCreate):
         if self.retention_policy != expected:
             raise ValueError("raw audio purpose and retention policy do not match")
         return self
-
-
-class SessionMemoryContextCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    session_id: str = Field(min_length=1, max_length=128)
-    speaker_class: Literal["owner", "guest", "uncertain"]
-    topic: str = Field(default="", max_length=1000)
-    limit: int = Field(default=8, ge=1, le=20)
 
 
 class ResponseSourceRefCreate(BaseModel):
@@ -1442,7 +1431,7 @@ def _schedule_low_sensitivity_persona_observation(
 
 def _require_internal_token(
     request: Request,
-    capability: Literal["archive_write", "memory_read"],
+    capability: Literal["archive_write"],
     token: str | None,
 ) -> None:
     settings = cast(ControlSettings, request.app.state.settings)
@@ -1613,13 +1602,6 @@ def _canonical_turn_eligibility(event: EvidenceEvent) -> tuple[bool, bool] | Non
     if not isinstance(nested_history, bool) or not isinstance(nested_owner_projection, bool):
         return None
     return nested_history, nested_owner_projection
-
-
-def _require_memory_read_token(
-    request: Request,
-    token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
-) -> None:
-    _require_internal_token(request, "memory_read", token)
 
 
 def _memory_capture_candidate(
@@ -2435,79 +2417,6 @@ async def append_session_raw_audio(
             "blob_archived": True,
         },
     )
-
-
-@router.post("/session-context")
-async def session_memory_context(
-    body: SessionMemoryContextCreate,
-    request: Request,
-    _: Annotated[None, Depends(_require_memory_read_token)],
-) -> dict[str, Any]:
-    session = require_active_voice_session(request, body.session_id)
-    from services.control_api.app.routes.interaction import _resolve_subject_memory_scope
-
-    scope = await _resolve_subject_memory_scope(
-        request, session_id=body.session_id, account_id=str(session["user_id"])
-    )
-    if not scope.memory_readable or scope.subject_id is None:
-        return {"items": []}
-    trusted_interaction = ModePolicy.trusted_context(
-        FrozenMode.from_session(session),
-        speaker_class=body.speaker_class,
-    )
-    if not trusted_interaction["capabilities"]["private_memory"]:
-        return {"items": []}
-    # The catalog's subject_id defaults to the whole account.  Bind it here,
-    # after the scope has already refused a missing subject, so a non-owner
-    # turn cannot fall through to the account owner's rows.
-    subject_id = scope.subject_id
-    settings = cast(ControlSettings, request.app.state.settings)
-    recall = RecallPlanner.plan(
-        query=body.topic,
-        now=current_local_time(settings.memoria_timezone),
-        people=await _catalog(request).people(
-            account_id=str(session["user_id"]), subject_id=subject_id, limit=100
-        ),
-    )
-    result = await _catalog(request).context(
-        MemorySearchQuery(
-            account_id=str(session["user_id"]),
-            subject_id=subject_id,
-            speaker_class=body.speaker_class,
-            text=recall.text,
-            entity_ids=recall.entity_ids,
-            occurred_after=recall.occurred_after,
-            occurred_before=recall.occurred_before,
-            include_candidates=False,
-            limit=body.limit,
-        )
-    )
-    return {
-        "items": [
-            {
-                "kind": item.kind,
-                "title": item.title,
-                "snippet": item.snippet,
-                "category": item.category,
-                "domain_category": item.domain_category,
-                "memory_kind": item.memory_kind,
-                "entity_ids": list(item.entity_ids),
-                "status": item.status,
-                "source_event_id": item.source_event_id,
-                "source_event_ids": list(item.source_event_ids),
-                "occurred_at": item.occurred_at.isoformat(),
-                "valid_from": item.valid_from.isoformat() if item.valid_from else None,
-                "valid_to": item.valid_to.isoformat() if item.valid_to else None,
-                "observed_at": item.observed_at.isoformat() if item.observed_at else None,
-                "stability": item.stability,
-                "salience": item.salience,
-                "sensitivity": item.sensitivity,
-                "conflict_state": item.conflict_state,
-                "score": item.score,
-            }
-            for item in result.items
-        ]
-    }
 
 
 @router.get("/timeline")
