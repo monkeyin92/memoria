@@ -58,6 +58,7 @@ async def _record_pair(
     speaker_class: str,
     event_suffix: str,
     actual_heard: bool = True,
+    subject_id: str | None = None,
 ) -> tuple[str, str, datetime]:
     occurred_at = datetime(2026, 8, 8, 8, 0, tzinfo=UTC)
     user_event_id = f"user-{event_suffix}"
@@ -66,6 +67,7 @@ async def _record_pair(
         EvidenceEvent(
             event_id=user_event_id,
             account_id=account_id,
+            subject_id=subject_id,
             event_type="speech.utterance_finalized",
             occurred_at=occurred_at,
             speaker_class=speaker_class,  # type: ignore[arg-type]
@@ -291,3 +293,40 @@ async def test_replay_skips_owner_snapshot_after_deletion_fence(
     assert result.skipped is True
     assert result.signal_id is None
     assert evaluator.inputs == []
+
+
+@pytest.mark.asyncio
+async def test_replay_skips_a_bound_subjects_turn_in_the_holders_account(
+    tmp_path: Path,
+) -> None:
+    """P2-03: a child's or elder's turns never train the account holder's evolution."""
+
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    child_user, child_assistant, _ = await _record_pair(
+        archive, account_id="owner-a", speaker_class="owner",
+        event_suffix="child", subject_id="person-child",
+    )
+    holder_user, holder_assistant, _ = await _record_pair(
+        archive, account_id="owner-a", speaker_class="owner",
+        event_suffix="holder", subject_id="owner-a",
+    )
+    store = EvolutionStore(tmp_path / "evolution.sqlite3")
+    evaluator = _StubEvaluator(_assessment())
+    worker = OfflineTrajectoryReplayWorker(
+        archive, EvolutionControlPlane(store, trusted_root_sha256="a" * 64), evaluator
+    )
+
+    child = await worker.replay(OfflineTrajectoryReplayRequest(
+        evaluation_id="child-replay", account_id="owner-a",
+        user_event_id=child_user, assistant_event_id=child_assistant,
+    ))
+    holder = await worker.replay(OfflineTrajectoryReplayRequest(
+        evaluation_id="holder-replay", account_id="owner-a",
+        user_event_id=holder_user, assistant_event_id=holder_assistant,
+    ))
+
+    assert child.skipped is True and child.signal_id is None
+    assert holder.skipped is False and holder.signal_id is not None
+    assert len(evaluator.inputs) == 1
+    assert len(store.list_signals()) == 1
+

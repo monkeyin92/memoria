@@ -2,7 +2,24 @@
 
 本文是从 `HANDOFF.md` 迁出的合规参考，保留 2026-09-20 删除范围结论和 17 表 seal 契约分析。这里记录已验证边界与已知缺口，不把 `verified_empty` 写成“已擦除”，也不把未授权的窄片实现误报为完成。
 
-## 2026-09-20 删除范围：已闭合部分与已知缺口（结论）
+## 2026-09-26 按使用人删除覆盖面复核（当前权威）
+
+按使用人删除（`services/governance/subject_deletion.py`）的覆盖面按存储逐项复核，结论取代下方 09-20 结论中已过时的部分（`memory_scope` 已由 P1-11 的维护角色函数按使用人擦除，不再是"无法物理删除"）。
+
+- **已删除并在 `verified_empty` 核对为空**：归档证据（按血缘与 `subject_id`）、转写、证据对象行、处理 outbox、编译收据、所有以 `source_event_id` 关联的投影；监护/导师与危机行；语料活行；`memory_scope` 记录、状态事件、共享提案与投票、采集证据（outbox/审计载荷清空）；人格（特征、风格统计、版本，2026-09-26 起按使用人记账并在删除末尾核对）。
+- **已删除但未在末尾复核**：归档对象（每次删除后立即回读确认）、语料对象、身份脱敏、会话终止、按 id 收集的投影（通过 `source_event_id` 间接核对）。
+- **有意保留的内容无关审计**：同意要约/证据/快照、`policy_receipts_v2`、会话 runtime profile 与事件（签名载荷只含 id、年龄段、类别与 `persona_id`，无人格文本与姓名）、身份关系与绑定、`guardian_person_consents`、删除台账本身。
+- **2026-09-26 已修复的来源**：数字分身与进化学习此前只校验"主人说话人/成年账号"，会把孩子或老人的话轮写入账号本人的数字分身快照与学习信号；现在两者只接收主体为空（早于主体归属）或等于账号本人的证据。response-plan 缓存在删除前按使用人失效。线上两张表当时为空，无存量需要清理。
+- **恢复后再删除（2026-09-26 已实现）**：删除台账在控制库，使用人数据在 PostgreSQL/MinIO；恢复数据层后必须先运行 `scripts/replay_subject_deletions.py --confirm-replay` 重放全部已完成删除，再恢复流量与重建投影（见发布运维手册）。
+- **仍存在的已知缺口（明确接受，不宣称已擦除）**：
+  1. Redis 流 `memoria:memory:events` 中已派发的载荷无法撤回，只随约 10 万条的近似裁剪老化。
+  2. 使用人显示名：`/minors/{id}/delete`（仍在服务该使用人）不脱敏身份；`device_onboarding_activations.manifest_json` 的主要使用人显示名受 `manifest_hash` 绑定且维护角色无 DELETE，未脱敏。
+  3. `session_runtime_tool_effect_intents/outbox` 的 agent 载荷可按会话归属，但现有角色无删除权限（只读 + `ON DELETE RESTRICT`）。
+  4. 仅 SQLite 部署中执行过的迁移备份表保存源行完整 JSON。
+  5. 账号本人记忆中残留的 `entity_ids` 悬空 UUID（无文本），以及由账号本人话轮建立的关于孩子的 `person_entities`/关系画像（只能按姓名关联）。
+  6. `subject_id` 为空的历史证据（早于主体列）对删除与核对都不可见；2026-09-26 线上 2336 条证据均为空主体，来自只服务账号本人的声纹时代。
+
+## 2026-09-20 删除范围：已闭合部分与已知缺口（结论）（部分已被上方 2026-09-26 复核取代）
 
 - 已闭合（有收据）：可删域按 saga 9 步推进，`verified_empty` 覆盖 `_delete_order` 内且含 `account_id` 列的表；本轮补齐 guardian 的 `tutor_practice_evidence`/`tutor_commit_outbox`（删除/计数/导出 + RLS 前置 policy + 最小授权，提交 `6e853ef`；测试含真 PG 的“另一主体行不受影响”与幂等断言）。
 - **已知合规缺口（明确记录；不做封存实现）**：① 明文残留——`memory_records.payload`、`memory_shared_proposals.content` 明文且不可就地改写，追加 tombstone **不构成擦除**；② 不可归属面四处——`memory_outbox`（无主体列）、`session_runtime_events`（`actor_id` 可空且无 subject 列）、`session_runtime_outbox`（无 subject 列）、`policy_receipts_v2.subject_id IS NULL`；③ append-only/零 DELETE 域（`memory_records`/`memory_status_events`/`memory_shared_votes`、`session_runtime_profiles`/`events`/`profile_receipts`、`policy_receipts_v2`）**无法物理删除**，且在不加迁移的前提下**无法形成可信封存标记**（`memory_status_events.status='revoked'` 非单调、后续合法事件可恢复可见性，故不能据此判 `verified_sealed`）。

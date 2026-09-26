@@ -327,6 +327,14 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
 
         exported = await client.post(f"/v1/guardian/minors/{child_id}/export", headers=headers)
         assert exported.status_code == 200, exported.text
+        from services.control_api.app.response_plan_cache import ResponsePlanCache
+
+        cache = ResponsePlanCache()
+        app.state.response_plan_cache = cache
+        child_plan = ("session-child", 1, 1, 0, "v1", child_id)
+        owner_plan = ("session-owner", 1, 1, 0, "v1", owner_id)
+        await cache.put(child_plan, "fp", {"private": "child"})
+        await cache.put(owner_plan, "fp", {"private": "owner"})
         deleted = await client.post(
             f"/v1/guardian/minors/{child_id}/delete",
             headers=headers,
@@ -334,6 +342,9 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
         )
         assert deleted.status_code == 200, deleted.text
         assert deleted.json()["status"] == "completed"
+        # The child's cached plans are gone; the owner's are untouched.
+        assert await cache.get(child_plan, "fp") is None
+        assert await cache.get(owner_plan, "fp") == {"private": "owner"}
 
 
 _ARCHIVE_TOKEN = {"X-Memoria-Internal-Token": "guardian-test-archive-token-that-is-long-enough"}

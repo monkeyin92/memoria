@@ -370,9 +370,14 @@ async def test_postgres_subjects_learn_independently_and_forget_cleanly(
     holder_traits = await engine.traits(account_id=account_id)
     with pytest.raises(ValueError):
         await engine.forget_subject(account_id=account_id, subject_id=account_id)
+    before = await engine.remaining_subject_rows(account_id=account_id, subject_id=child_id)
     deleted = await engine.forget_subject(account_id=account_id, subject_id=child_id)
     again = await engine.forget_subject(account_id=account_id, subject_id=child_id)
     assert deleted > 0 and again == 0
+    assert before["persona_traits"] > 0
+    assert await engine.remaining_subject_rows(account_id=account_id, subject_id=child_id) == {
+        "persona_traits": 0, "speech_style_stats": 0, "persona_versions": 0,
+    }
     for table in _SUBJECT_TABLES:
         assert await _count(account_id, table, child_id) == 0
     assert await engine.traits(account_id=account_id) == holder_traits

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import hmac
 import json
 import logging
-from collections import OrderedDict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -58,6 +56,10 @@ from services.control_api.app.mode_policy import (
     ModePolicy,
     companion_personal_voice_contract_valid,
 )
+from services.control_api.app.response_plan_cache import (
+    ResponsePlanCacheKey as _ResponsePlanCacheKey,
+)
+from services.control_api.app.response_plan_cache import response_plan_cache as _response_plan_cache
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -135,10 +137,8 @@ from services.tutor.turn_policy import TutorTurnPolicy, TutorUtteranceIntent
 
 router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
-_RESPONSE_PLAN_CACHE_MAX_ENTRIES = 256
 _EVOLUTION_PROTOCOL_HEADER = "X-Memoria-Evolution-Protocol"
 _EVOLUTION_PROTOCOL_V1 = "v1"
-_ResponsePlanCacheKey = tuple[str, int, int, int, str, str]
 _RECALL_CONTEXT_MAX_ITEMS = 4
 _RECALL_CONTEXT_ITEM_MAX_CHARS = 240
 _RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
@@ -167,107 +167,6 @@ def _with_fixed_reply(plan: ResponsePlan, reply: str | None) -> ResponsePlan:
     if reply is None:
         return plan
     return replace(plan, instructions=replace(plan.instructions, direct_text=reply))
-
-
-@dataclass(frozen=True)
-class _CachedResponsePlan:
-    fingerprint: str
-    payload: dict[str, Any]
-
-
-@dataclass
-class _ResponsePlanCache:
-    """Process-local first-write-wins snapshot keyed by the complete generation fence."""
-
-    max_entries: int = _RESPONSE_PLAN_CACHE_MAX_ENTRIES
-    _entries: OrderedDict[_ResponsePlanCacheKey, _CachedResponsePlan] = field(
-        default_factory=OrderedDict
-    )
-    _key_locks: dict[_ResponsePlanCacheKey, asyncio.Lock] = field(default_factory=dict)
-    _guard: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    async def lock_for(self, key: _ResponsePlanCacheKey) -> asyncio.Lock:
-        async with self._guard:
-            lock = self._key_locks.get(key)
-            if lock is None:
-                lock = asyncio.Lock()
-                self._key_locks[key] = lock
-            if len(self._key_locks) > self.max_entries * 2:
-                for candidate in tuple(self._key_locks):
-                    if candidate in self._entries:
-                        continue
-                    candidate_lock = self._key_locks[candidate]
-                    if candidate_lock.locked():
-                        continue
-                    self._key_locks.pop(candidate, None)
-                    if len(self._key_locks) <= self.max_entries:
-                        break
-            return lock
-
-    async def get(
-        self,
-        key: _ResponsePlanCacheKey,
-        fingerprint: str,
-    ) -> dict[str, Any] | None:
-        async with self._guard:
-            cached = self._entries.get(key)
-            if cached is None:
-                return None
-            if not hmac.compare_digest(cached.fingerprint, fingerprint):
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "response_plan_conflict"},
-                )
-            self._entries.move_to_end(key)
-            return copy.deepcopy(cached.payload)
-
-    async def invalidate(self, key: _ResponsePlanCacheKey) -> None:
-        """Drop one entry so a withdrawn plan stops being served and retained.
-
-        A cached payload can contain private persona/memory context.  Once the
-        read path reports that the session's authorization is gone, the entry is
-        not merely unusable, it is private data the process has no reason to keep
-        holding.
-        """
-
-        async with self._guard:
-            self._entries.pop(key, None)
-
-    async def put(
-        self,
-        key: _ResponsePlanCacheKey,
-        fingerprint: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        async with self._guard:
-            cached = self._entries.get(key)
-            if cached is not None:
-                if not hmac.compare_digest(cached.fingerprint, fingerprint):
-                    raise HTTPException(
-                        status_code=409,
-                        detail={"code": "response_plan_conflict"},
-                    )
-                self._entries.move_to_end(key)
-                return copy.deepcopy(cached.payload)
-            snapshot = copy.deepcopy(payload)
-            self._entries[key] = _CachedResponsePlan(
-                fingerprint=fingerprint,
-                payload=snapshot,
-            )
-            while len(self._entries) > self.max_entries:
-                evicted_key, _ = self._entries.popitem(last=False)
-                evicted_lock = self._key_locks.get(evicted_key)
-                if evicted_lock is not None and not evicted_lock.locked():
-                    self._key_locks.pop(evicted_key, None)
-            return copy.deepcopy(snapshot)
-
-
-def _response_plan_cache(request: Request) -> _ResponsePlanCache:
-    cache = getattr(request.app.state, "response_plan_cache", None)
-    if not isinstance(cache, _ResponsePlanCache):
-        cache = _ResponsePlanCache()
-        request.app.state.response_plan_cache = cache
-    return cache
 
 
 async def _cached_plan_is_still_authorized(

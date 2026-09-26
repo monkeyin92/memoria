@@ -417,6 +417,9 @@ class DigitalSelfRegistry:
             WHERE claim.account_id = ?
               AND claim.status = 'confirmed'
               AND source.speaker_class = 'owner'
+              -- The digital self is the account holder's: a bound child's or
+              -- elder's claims stay out. NULL predates subject attribution.
+              AND (source.subject_id IS NULL OR source.subject_id = claim.account_id)
             ORDER BY claim.claim_id
             """,
             (account_id,),

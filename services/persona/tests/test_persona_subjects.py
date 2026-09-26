@@ -380,8 +380,15 @@ async def test_forget_subject_removes_only_that_subject(tmp_path: Path) -> None:
         await engine.forget_subject(account_id=ACCOUNT, subject_id=ACCOUNT)
     with pytest.raises(ValueError):
         await engine.forget_subject(account_id=ACCOUNT, subject_id="  ")
+    before = await engine.remaining_subject_rows(account_id=ACCOUNT, subject_id=CHILD)
     deleted = await engine.forget_subject(account_id=ACCOUNT, subject_id=CHILD)
     again = await engine.forget_subject(account_id=ACCOUNT, subject_id=CHILD)
+    after = await engine.remaining_subject_rows(account_id=ACCOUNT, subject_id=CHILD)
+
+    assert before["persona_traits"] > 0
+    assert after == {"persona_traits": 0, "speech_style_stats": 0, "persona_versions": 0}
+    with pytest.raises(ValueError):
+        await engine.remaining_subject_rows(account_id=ACCOUNT, subject_id=ACCOUNT)
 
     assert deleted > 0
     assert again == 0

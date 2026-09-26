@@ -137,7 +137,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P2-03 可证明删除与导出证据链
 
 - 已完成（本地，收据见 `docs/HANDOFF-archive-0916-0923.md`）：四迁移读路径的 PG 侧对等（operator `read --postgres-dsn`，真实 PG 契约；投影侧 PG 未建表时 fail closed 不回落账号键）；PG 全 saga 删除验证（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）。
-- 待完成：真实 MinIO 版本删除（本地 Docker MinIO 对象写入不可用，需可用 MinIO 或生产环境）、真实 provider 删除（需密钥与授权）、备份「恢复后再删除」实现与期限声明、物理不可删域已决策不做封存（2026-09-20，明文残留与不可归属面为已知缺口）、结构盲区补齐（`memory_scope`/`session_runtime`/`policy_receipts_v2`/`identity_*`/`device_fleet_*`/`device_onboarding_*`/binding consent 不在删除 saga；`remaining_account_rows` 需覆盖非 `account_id` 键表。其中 `memory_scope` 的可行路径已核实：`memory_owner_records`/`memory_owner_status_events` 对 `memoria_memory_owner` 是 `FOR ALL`（`pg_has_role(...,'member')`，NOLOGIN，维护登录 `SET ROLE` 即可），RLS 层允许 owner 角色删，缺的是应用侧删除路径与清点，不是权限；开工前需先定：哪些行属于删除范围（`resource_owner_id` vs `subject_id`、`family_shared` 行的族空间归属、`co_subject_ids` 共同主体）、`memory_status_events` 先于 `memory_records` 的顺序、删除 fence 与收据/幂等语义。小程序成员主体读口（需客户端会话上下文，属 P1-03/P1-05）、生产/设备与真实机器人对话验收。
+- 已完成（2026-09-26，代码，未部署）：按使用人删除覆盖面逐存储复核并记入 `docs/compliance/delete-domains.md`；旧版“结构盲区”中 `memory_scope` 已由 P1-11 覆盖，同意/策略收据/会话 profile/身份绑定为有意保留的内容无关审计。修复：数字分身与进化学习只接收账号本人（或早于主体归属）的证据；删除末尾核对人格剩余行；删除前按使用人失效 response-plan 缓存；备份「恢复后再删除」由 `scripts/replay_subject_deletions.py` 重放全部已完成删除，已写入运维手册恢复流程。
+- 待完成：真实 MinIO 版本删除与真实 provider 删除各需一次可复现收据（需可用环境与授权）；已知缺口（Redis 已派发载荷、未脱敏的显示名与激活清单、工具效果载荷、SQLite 迁移备份、悬空实体 id、空主体历史证据）按合规文档明确接受，若要闭合需先定权限与迁移方案；小程序成员主体读口（P1-03/P1-05）；生产/设备与真实机器人对话验收。
 - 安全约束：不得默认 `account_id == subject_id`；必须有 Control 注册、active Identity person、owner evidence 和一致事件 subject；child/member 只接受唯一 lineage，foreign/inactive/ambiguous/NULL/mixed subject fail closed；源表与 `snapshot_json` 保持字节不变；rollback 只移除本 migration 行。
 - 完成条件：PG、MinIO、投影/缓存和 provider 范围一致，重试幂等、回执可查询、导出标记 AI/授权/服务提供者；保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本；真实 MinIO 与 provider 各需一次可复现收据。
 

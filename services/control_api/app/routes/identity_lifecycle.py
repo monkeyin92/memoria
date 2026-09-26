@@ -22,6 +22,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.consent.bound_subject import BoundSubjectConsentService
+from services.control_api.app.response_plan_cache import forget_subject_plans
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.governance.subject_deletion import SubjectDeletionService
 from services.governance.subject_ports import SubjectScope
@@ -666,6 +667,7 @@ async def unbind_device(
             for subject_id in manifest.primary_subject_ids:
                 if subject_id == user.user_id:
                     continue
+                await forget_subject_plans(request.app.state, subject_id)
                 try:
                     await deletion.delete_subject(
                         SubjectScope(account_id=user.user_id, subject_id=subject_id),

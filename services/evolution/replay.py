@@ -108,6 +108,11 @@ class OfflineTrajectoryReplayWorker:
                 )
                 if user_event is None or assistant_event is None:
                     raise CanonicalTrajectoryError("canonical trajectory pair was not found")
+                if user_event.subject_id not in (None, request.account_id):
+                    # Account-scoped evolution is the account holder's own
+                    # learning; a bound child's or elder's turns stored in this
+                    # account are not theirs (P2-03). NULL predates attribution.
+                    return _skipped_replay(request.evaluation_id)
                 trajectory = CanonicalTrajectory.from_events(user_event, assistant_event)
                 if self._control_plane.store.is_account_deleting(request.account_id):
                     return _skipped_replay(request.evaluation_id)

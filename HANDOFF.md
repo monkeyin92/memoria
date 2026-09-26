@@ -26,7 +26,7 @@
 - **media-edge（单独切换）**：镜像校验和与标签核对后导入；新链为新发布树 compose + `component-releases/20260926-persona-subject-v1/media-edge-component.override.yml`，不再包含 `/tmp/media-runtime.override.yml`（原文件仍在主机上，并备份在 `.cutover/`）。渲染配置核对：设备 WSS 开启、WebRTC 关闭、`python_authoritative`、端口仅 `127.0.0.1:8794`。切换后 healthy、restarts=0，设备 WSS 监听启动；公网 `memoria-device-edge` 入口未带凭证返回 401（路由到新 edge）。bridge 重启期间 media-edge 原有 gRPC 通道自动恢复（bridge 7001 上有来自 media-edge 的已建立连接）。设备当时空闲、无会话，设备重连未观察到，列入真机验收。
 - **回滚**（未实跑）：五角色 `release-ops.sh rollback`（control-api 回 mascot-sync 组件链，其余回整栈镜像，`current` 指回整栈树）；若已有孩子/老人的生效人格版本，脚本默认拒绝，`ROLLBACK_SUPERSEDE_SUBJECT_PERSONA=1` 先将其标为已取代。回滚后旧代码写入人格会因唯一约束已替换而报错（后台捕获），人格读取不受影响。media-edge 回滚：同一命令改用 `media-edge-rollback.override.yml`。schema 不回滚。
 - **下次整栈发布前**：`release_ops.sh` 常量需改为本次链：`PREV_TAG=20260926-persona-subject-v1`、`PREV_COMMIT=63cf5f8…`；control-api 现在只用整栈 compose、没有组件 override，冻结与回滚里"control-api 组件链"的写法要随之调整。
-- **真机验收清单（待执行）**：① 设备唤醒后连上新 media-edge 并完成一轮对话；② 孩子绑定的设备在家长页重开"长期记忆"开关（存量绑定不会自动获得监护小结授予），监护小结出现且只含孩子的聚合记录；③ 隔天孩子的回复体现自己的表达风格，账号本人人格不串入；④ 按孩子导出含人格计数、不含描述；⑤ P0-03 剩余矩阵与 TLS/WSS 重连观察。
+- **真机验收清单（待执行）**：⓪ 先重新绑定设备并勾选长期记忆——2026-09-26 只读核对线上最近三天没有任何 `speech.utterance_finalized`，2336 条证据全部无主体；现有测试绑定早于绑定授权，设备不会把说话人认作绑定使用人，对话不入档，人格、监护小结、按使用人删除都没有数据来源；① 设备唤醒后连上新 media-edge 并完成一轮对话；② 孩子绑定的设备在家长页重开"长期记忆"开关（存量绑定不会自动获得监护小结授予），监护小结出现且只含孩子的聚合记录；③ 隔天孩子的回复体现自己的表达风格，账号本人人格不串入；④ 按孩子导出含人格计数、不含描述；⑤ P0-03 剩余矩阵与 TLS/WSS 重连观察。
 - **本地制品**：`outputs/release/20260926-persona-subject-v1/`（ignored，约 3 GB），验收结束后可删除。
 
 ## 2026-09-26 减法整理（PR #42，已随 20260926-persona-subject-v1 上线）
