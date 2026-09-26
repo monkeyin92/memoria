@@ -122,3 +122,26 @@ async def test_observe_uses_the_binding_grant_or_the_account_consent(
     if subject_learning:
         # Another subject never borrows the account holder's persona consent.
         engine.learning_allowed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("style_only", [False, True])
+async def test_a_minor_subject_is_scheduled_for_style_only_learning(style_only: bool) -> None:
+    """P0-04 D2: the archive route marks a minor's turns style-only."""
+
+    tasks = _Tasks()
+    schedule_persona_observation(
+        _request(),
+        tasks,  # type: ignore[arg-type]
+        event=_event("person-child"),
+        duplicate=False,
+        account_write=_no_fence,
+        subject_learning_allowed=True,
+        style_only=style_only,
+    )
+    func, args, kwargs = tasks.calls[0]
+    engine = SimpleNamespace(learning_allowed=AsyncMock(return_value=False), observe=AsyncMock())
+
+    await func(args[0], engine, **kwargs)
+
+    assert engine.observe.await_args.args[0].style_only is style_only

@@ -1187,3 +1187,53 @@ async def test_capsule_respects_disable_switch_and_character_budget(tmp_path: Pa
     assert disabled.prompt_fragment == ""
     assert bounded.entries
     assert len(bounded.prompt_fragment) <= 180
+
+
+class _MixedExtractor:
+    version = "mixed-style-and-cognitive-test-extractor"
+
+    async def extract(
+        self,
+        text: str,
+        _evidence: PersonaEvidence,
+    ) -> tuple[PersonaCandidate, ...]:
+        return tuple(
+            PersonaCandidate(
+                category=category,
+                normalized_key=f"{category}:{text}",
+                description=f"{category}:{text}",
+                context="conversation",
+                counterexample="只在讨论计划时这样" if category in {"decision_habit", "value_priority"} else "",
+            )
+            for category in ("discourse_style", "decision_habit", "value_priority")
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("style_only", "expected"), [
+    (False, {"discourse_style", "decision_habit", "value_priority"}),
+    (True, {"discourse_style"}),
+])
+async def test_style_only_evidence_never_learns_decisions_or_values(
+    tmp_path: Path, style_only: bool, expected: set[str]
+) -> None:
+    """P0-04 D2: a minor's persona learns expression style only."""
+
+    path = tmp_path / "persona.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    engine = PersonaEngine.sqlite(path, extractor=_MixedExtractor())
+    await engine.grant_consent(account_id="persona-account", policy_version="persona-learning-v1")
+    await _record(archive, event_id="mixed-turn", text="我觉得先想清楚再决定。")
+
+    observed = await engine.observe(
+        PersonaEvidence(
+            account_id="persona-account",
+            source_event_id="mixed-turn",
+            learning_allowed=True,
+            style_only=style_only,
+        )
+    )
+
+    assert observed.accepted is True
+    categories = {trait.category for trait in await engine.traits(account_id="persona-account")}
+    assert categories == expected

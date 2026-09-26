@@ -38,6 +38,7 @@ from services.persona.rules import (
     PersonaExtractor,
     RuleBasedPersonaExtractor,
     exclusive_auto_promote_target,
+    learnable_candidates,
     should_auto_promote,
     trusted_uncertain_profile,
 )
@@ -226,7 +227,9 @@ class PostgresPersonaEngine:
                 evidence,
                 quality_score=(evidence.quality_score or 1.0) * prompt_factor,
             )
-        candidates = await self._extractor.extract(text, extraction_evidence)
+        candidates = learnable_candidates(
+            await self._extractor.extract(text, extraction_evidence), evidence
+        )
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, evidence.account_id)
             await self._lock_account(connection, evidence.account_id)

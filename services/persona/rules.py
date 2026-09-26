@@ -10,7 +10,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from services.persona.domain import PersonaEvidence, PersonaTraitCategory
+from services.persona.domain import (
+    LEGACY_COGNITIVE_TRAIT_CATEGORIES,
+    PersonaEvidence,
+    PersonaTraitCategory,
+)
 
 TICS = ("我觉得", "其实", "说实话", "怎么说呢", "坦白说", "总的来说")
 AUTO_PROMOTE = frozenset(
@@ -79,6 +83,18 @@ class PersonaExtractor(Protocol):
         text: str,
         evidence: PersonaEvidence,
     ) -> tuple[PersonaCandidate, ...]: ...
+
+
+def learnable_candidates(
+    candidates: tuple[PersonaCandidate, ...], evidence: PersonaEvidence
+) -> tuple[PersonaCandidate, ...]:
+    """Drop decision-habit and value-priority traits when only style may be learned."""
+
+    if not evidence.style_only:
+        return candidates
+    return tuple(
+        item for item in candidates if item.category not in LEGACY_COGNITIVE_TRAIT_CATEGORIES
+    )
 
 
 def semantic_key(text: str) -> str:

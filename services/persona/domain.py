@@ -56,6 +56,9 @@ class PersonaEvidence:
     speech_duration_ms: int | None = None
     pause_ratio: float | None = None
     quality_score: float | None = None
+    # P0-04 D2 (user decision 2026-09-26): a minor's persona learns expression
+    # style only, never decision habits or value priorities.
+    style_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not self.source_event_id.strip():

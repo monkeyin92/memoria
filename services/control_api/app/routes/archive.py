@@ -1934,29 +1934,28 @@ async def append_session_event(
     # user task succeeded.  Offline trajectory replay loads this canonical pair
     # later and appends a LearningSignal only after independent evaluation.
     _wake_compiler(request)
-    # "Long-term memory" ticked at binding is what lets another subject's persona
-    # learn; the signed profile carries it as memory_recall_private for exactly
-    # this subject.
-    subject_learning_allowed = runtime_profile_trusts_bound_subject(
-        current_profile, subject_id=event.subject_id
+    capabilities = trusted_interaction["capabilities"]
+    schedule = (
+        schedule_persona_observation
+        if capabilities["learning"]
+        else schedule_low_sensitivity_persona_observation
+        if capabilities["persona_low_sensitivity"]
+        else None
     )
-    if trusted_interaction["capabilities"]["learning"]:
-        schedule_persona_observation(
+    if schedule is not None:
+        schedule(
             request,
             background_tasks,
             event=event,
             duplicate=result.duplicate,
             account_write=_account_write,
-            subject_learning_allowed=subject_learning_allowed,
-        )
-    elif trusted_interaction["capabilities"]["persona_low_sensitivity"]:
-        schedule_low_sensitivity_persona_observation(
-            request,
-            background_tasks,
-            event=event,
-            duplicate=result.duplicate,
-            account_write=_account_write,
-            subject_learning_allowed=subject_learning_allowed,
+            # "Long-term memory" ticked at binding lets another subject's
+            # persona learn (signed as memory_recall_private for exactly this
+            # subject); a minor's persona learns style only (P0-04 D2).
+            subject_learning_allowed=runtime_profile_trusts_bound_subject(
+                current_profile, subject_id=event.subject_id
+            ),
+            style_only=subject_category == "minor",
         )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,
