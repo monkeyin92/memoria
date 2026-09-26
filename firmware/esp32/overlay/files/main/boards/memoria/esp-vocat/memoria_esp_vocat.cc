@@ -915,7 +915,12 @@ private:
         boot_button_.OnLongPress([this]() {
             const auto state = Application::GetInstance().GetDeviceState();
             if (state == kDeviceStateWifiConfiguring) {
-                GetDisplay()->ShowNotification("WiFi 配网中", 1500);
+                // Bring the binding QR (nearby Wi-Fi provisioning) back.
+                Application::GetInstance().Schedule([this]() {
+                    if (memoria::MemoriaBootstrap::GetInstance().Start(display_) != ESP_OK) {
+                        GetDisplay()->ShowNotification("WiFi 配网中", 1500);
+                    }
+                });
                 return;
             }
             if (state == kDeviceStateRecovering) {
