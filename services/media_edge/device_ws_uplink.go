@@ -281,11 +281,9 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 	if c.playbackWatermark != "exact" && !receipt.Approximate {
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("playback_watermark_precision_mismatch", false)
-		// The refusal must be deterministic on the wire. Without an explicit
-		// close frame the lane is torn down while the queued session.error is
-		// still pending, so the device can see a bare 1006 instead of why its
-		// receipt was refused. 4002 is the same non-retryable session-failure
-		// code every other refused control frame uses.
+		// closeWithCode first flushes the queued session.error (the only
+		// signal the firmware reads), then writes 4002, the same
+		// non-retryable session-failure code other refusals use.
 		c.closeWithCode(4002, "playback_watermark_precision_mismatch")
 		return false
 	}

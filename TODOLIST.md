@@ -144,7 +144,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P2-04 协议故障注入与长稳观测
 
-- 待完成：WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发/资源泄漏；查清 Go 侧控制/error 帧在 read-loop 关闭 lane 后丢失的路径；重跑当前候选 Go/Trivy。
+- 已修（2026-09-26，代码，未部署）：Go 侧控制/error 帧丢失路径已查清并修复。拒绝 hello（`invalid_hello`/`device_busy`/`runtime_unavailable`）、拒绝控制帧和 Voice Core 断流三条路径都是先把 `session.error` 入队、随即写关闭帧并清空队列，复现测试 20 次中 19–20 次设备只收到关闭帧（控制帧拒绝路径甚至没有关闭帧、直接 1006）。而固件只从 `session.error` 判断终止/可重试、从不读关闭码，于是不可重试的拒绝被当成网络断开、设备继续续连。修复：关闭前在 250ms 上限内先写完队列中的 P0 控制帧（丢弃 P1–P3、拒收新帧），再写关闭帧；回归 `services/media_edge/device_ws_close_flush_test.go` 与 lane 单测。同时修复一个既有的内存安全缺陷：连接关闭销毁 Opus 编码器时，Voice Core 接收协程可能仍在编码，main 上 `go test -race -count=10` 三轮三次在 `opus_encode` 触发 SIGBUS（生产会使 media-edge 进程崩溃）；编解码器改为加锁串行化编解码与销毁，修复后 3×10 轮零崩溃，回归 `opus_close_race_test.go`。
+- 待完成：WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发/资源泄漏；重跑当前候选 Go/Trivy；设备上验证终止性拒绝不再续连。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量/注入，不顺手改断线产品行为。
 
 ### [ ] P2-05 补齐唤醒计数，再采家庭噪声矩阵

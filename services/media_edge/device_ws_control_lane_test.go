@@ -350,3 +350,53 @@ func TestDeviceTokenBucket(t *testing.T) {
 		t.Fatal("refill did not allow a token")
 	}
 }
+
+func TestDevicePriorityLaneBeginCloseDrainsOnlyP0(t *testing.T) {
+	lane, err := newDevicePriorityLane(DefaultDeviceBackpressureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lane.close()
+	lane.enqueueAudio([]byte{1}, 1, deviceFence{GenerationID: 1}, 0, 0, 320)
+	lane.enqueueControl(1, []byte(`{"type":"generation.started"}`))
+	lane.enqueueControl(0, []byte(`{"type":"session.error"}`))
+
+	drained := lane.beginClose()
+	if again := lane.beginClose(); again != drained {
+		t.Fatal("beginClose is not idempotent")
+	}
+	lane.enqueueControl(0, []byte(`{"type":"late"}`))
+	select {
+	case <-drained:
+		t.Fatal("drained before the queued session.error was written")
+	default:
+	}
+	item, ok := lane.tryPop()
+	if !ok || string(item.payload) != `{"type":"session.error"}` {
+		t.Fatalf("closing lane popped %q ok=%v, want the queued session.error", item.payload, ok)
+	}
+	// The writer asks again after writing it; the empty lane reports drained.
+	if _, ok := lane.tryPop(); ok {
+		t.Fatal("closing lane kept P1-P3 items or accepted a late control")
+	}
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("empty closing lane did not report drained")
+	}
+}
+
+func TestDevicePriorityLaneCloseReleasesDrainWaiters(t *testing.T) {
+	lane, err := newDevicePriorityLane(DefaultDeviceBackpressureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane.enqueueControl(0, []byte(`{"type":"session.close"}`))
+	drained := lane.beginClose()
+	lane.close()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("closing the lane left a drain waiter blocked")
+	}
+}

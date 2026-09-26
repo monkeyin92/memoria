@@ -23,15 +23,20 @@ type deviceLaneItem struct {
 }
 
 type devicePriorityLane struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	queues  [4][]deviceLaneItem
-	closed  bool
-	config  DeviceBackpressureConfig
-	now     func() time.Time
-	onDrop  func(item deviceLaneItem)
-	pending int
-	notify  chan struct{}
+	mu     sync.Mutex
+	cond   *sync.Cond
+	queues [4][]deviceLaneItem
+	closed bool
+	// closing keeps only queued P0 controls for a final drain: session.error
+	// and session.close are the only way the device learns a terminal code.
+	closing     bool
+	drained     chan struct{}
+	drainedShut bool
+	config      DeviceBackpressureConfig
+	now         func() time.Time
+	onDrop      func(item deviceLaneItem)
+	pending     int
+	notify      chan struct{}
 
 	// Downlink write clock: the device's per-generation sequence/sample
 	// clock advances only with frames it actually receives, so queue drops
@@ -84,7 +89,7 @@ func (l *devicePriorityLane) currentTime() time.Time {
 func (l *devicePriorityLane) enqueue(item deviceLaneItem) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.closed {
+	if l.closed || l.closing {
 		return
 	}
 	if item.priority < 0 || item.priority > 3 {
@@ -117,7 +122,7 @@ func (l *devicePriorityLane) enqueueAudio(
 ) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.closed {
+	if l.closed || l.closing {
 		return
 	}
 	now := l.currentTime()
@@ -350,6 +355,11 @@ func (l *devicePriorityLane) tryPop() (deviceLaneItem, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.pending == 0 {
+		if l.closing {
+			// The writer only asks again after writing the previous item,
+			// so an empty closing lane means every P0 control was written.
+			l.shutDrainedLocked()
+		}
 		return deviceLaneItem{}, false
 	}
 	for priority := 0; priority < 4; priority++ {
@@ -359,7 +369,7 @@ func (l *devicePriorityLane) tryPop() (deviceLaneItem, bool) {
 		item := l.queues[priority][0]
 		l.queues[priority] = l.queues[priority][1:]
 		l.pending--
-		if l.pending > 0 {
+		if l.pending > 0 || l.closing {
 			l.signalNotifyLocked()
 		}
 		return item, true
@@ -381,8 +391,40 @@ func (l *devicePriorityLane) close() {
 	}
 	l.closed = true
 	l.pending = 0
+	l.shutDrainedLocked()
 	l.cond.Broadcast()
 	l.signalNotifyLocked()
+}
+
+// beginClose drops queued P1-P3 items, refuses new ones and returns a channel
+// that closes once the writer has written the remaining P0 controls (or the
+// lane is closed). Idempotent.
+func (l *devicePriorityLane) beginClose() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.drained != nil {
+		return l.drained
+	}
+	l.drained = make(chan struct{})
+	if l.closed {
+		l.shutDrainedLocked()
+		return l.drained
+	}
+	for priority := 1; priority < 4; priority++ {
+		l.pending -= len(l.queues[priority])
+		l.queues[priority] = nil
+	}
+	l.closing = true
+	l.cond.Broadcast()
+	l.signalNotifyLocked()
+	return l.drained
+}
+
+func (l *devicePriorityLane) shutDrainedLocked() {
+	if l.drained != nil && !l.drainedShut {
+		l.drainedShut = true
+		close(l.drained)
+	}
 }
 
 // stats returns the pending depth and the age of the oldest audio frame for

@@ -12,12 +12,16 @@ import "C"
 
 import (
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
 // opusEncoder is the smallest libopus surface required by the device WSS
-// downlink.
+// downlink. The mutex serializes encoding with destroy: the Voice Core
+// receive goroutine can still be encoding a frame when the connection closes,
+// and libopus state must not be freed under it (P2-04).
 type opusEncoder struct {
+	mu    sync.Mutex
 	value *C.OpusEncoder
 }
 
@@ -33,7 +37,12 @@ func newOpusEncoder(sampleRate, channels int) (*opusEncoder, error) {
 }
 
 func (e *opusEncoder) Encode(pcm []int16, output []byte) (int, error) {
-	if e == nil || e.value == nil || len(pcm) == 0 || len(output) == 0 {
+	if e == nil {
+		return 0, fmt.Errorf("opus encoder input is empty")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.value == nil || len(pcm) == 0 || len(output) == 0 {
 		return 0, fmt.Errorf("opus encoder input is empty")
 	}
 	n := C.opus_encode(
@@ -50,7 +59,12 @@ func (e *opusEncoder) Encode(pcm []int16, output []byte) (int, error) {
 }
 
 func (e *opusEncoder) Reset() error {
-	if e == nil || e.value == nil {
+	if e == nil {
+		return fmt.Errorf("opus encoder is closed")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.value == nil {
 		return fmt.Errorf("opus encoder is closed")
 	}
 	if code := C.memoria_opus_encoder_reset(e.value); code != C.OPUS_OK {
@@ -60,7 +74,12 @@ func (e *opusEncoder) Reset() error {
 }
 
 func (e *opusEncoder) close() {
-	if e != nil && e.value != nil {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.value != nil {
 		C.opus_encoder_destroy(e.value)
 		e.value = nil
 	}

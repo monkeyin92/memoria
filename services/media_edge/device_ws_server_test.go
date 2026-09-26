@@ -450,8 +450,8 @@ func TestDeviceWSSDirectRejectsV1Hello(t *testing.T) {
 		},
 	}
 	writeDeviceJSON(t, connection, hello)
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-		t.Fatal("direct v2 endpoint accepted a v1 hello")
+	if sessionError, _ := readSessionErrorThenClose(t, connection); sessionError.Code != "invalid_hello" {
+		t.Fatalf("v1 hello refusal = %+v, want invalid_hello", sessionError)
 	}
 }
 
@@ -769,8 +769,9 @@ func TestDeviceWSSReconnectTakesOverAndEqualEpochRejected(t *testing.T) {
 	})
 	equal, _ := env.dial(t, equalToken, "client_1")
 	writeDeviceJSON(t, equal, deviceV2Hello())
-	if _, _, err := readDeviceMessage(equal, 3*time.Second); err == nil {
-		t.Fatal("equal-epoch second connection was not closed")
+	if sessionError, _ := readSessionErrorThenClose(t, equal); sessionError.Code != "device_busy" ||
+		!sessionError.Retryable {
+		t.Fatalf("equal-epoch refusal = %+v, want retryable device_busy", sessionError)
 	}
 	if env.server.metrics.leaseRejected.Load() != 1 {
 		t.Fatalf("lease rejected metric = %d, want 1", env.server.metrics.leaseRejected.Load())
@@ -809,8 +810,8 @@ func TestDeviceWSSCrossDeviceHelloRejected(t *testing.T) {
 	hello := deviceV2Hello()
 	hello.DeviceID = "dev_other"
 	writeDeviceJSON(t, connection, hello)
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-		t.Fatal("cross-device hello was accepted")
+	if sessionError, _ := readSessionErrorThenClose(t, connection); sessionError.Code != "invalid_hello" {
+		t.Fatalf("cross-device hello refusal = %+v, want invalid_hello", sessionError)
 	}
 }
 
@@ -1189,8 +1190,8 @@ func TestDeviceWSSRejectsV1BeforeCreatingRuntime(t *testing.T) {
 		},
 	}
 	writeDeviceJSON(t, connection, hello)
-	if _, _, err := readDeviceMessage(connection, 3*time.Second); err == nil {
-		t.Fatal("direct v2 endpoint accepted a v1 hello")
+	if sessionError, _ := readSessionErrorThenClose(t, connection); sessionError.Code != "invalid_hello" {
+		t.Fatalf("v1 hello refusal = %+v, want invalid_hello", sessionError)
 	}
 	env.mu.Lock()
 	_, created := env.cores["session_1"]
