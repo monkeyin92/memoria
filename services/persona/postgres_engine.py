@@ -53,17 +53,26 @@ def _stable_uuid(kind: str, *values: object) -> uuid.UUID:
 
 
 class PostgresPersonaEngine:
-    def __init__(self, dsn: str, *, extractor: PersonaExtractor | None = None) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        extractor: PersonaExtractor | None = None,
+        pool: asyncpg.Pool | None = None,
+    ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("persona DSN must use PostgreSQL")
         self._dsn = dsn
         self._extractor = extractor or RuleBasedPersonaExtractor()
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL persona pool")
         archive_schema = (

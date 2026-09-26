@@ -39,16 +39,17 @@ _SCHEMA_PATH = Path(__file__).with_name("postgres_skill_schema.sql")
 
 
 class PostgresSkillCatalog:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: asyncpg.Pool | None = None) -> None:
         if not dsn.strip():
             raise ValueError("PostgreSQL skill catalog requires a DSN")
         self._dsn = dsn
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+        pool = self._shared_pool or await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         try:
             async with pool.acquire() as connection:
                 await connection.execute(_SCHEMA_PATH.read_text(encoding="utf-8"))

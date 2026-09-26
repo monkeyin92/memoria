@@ -39,14 +39,18 @@ class PostgresGrowthReader:
         dsn: str,
         *,
         self_model_registry: SelfModelRegistryPort | None = None,
+        pool: asyncpg.Pool | None = None,
     ) -> None:
         self._dsn = dsn
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
         self._self_model_registry = self_model_registry
 
     async def initialize(self) -> None:
         if self._pool is None:
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+            self._pool = self._shared_pool or await asyncpg.create_pool(
+                self._dsn, min_size=1, max_size=5
+            )
 
     async def close(self) -> None:
         if self._pool is not None:
