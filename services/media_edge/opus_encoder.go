@@ -15,8 +15,8 @@ import (
 	"unsafe"
 )
 
-// opusEncoder is the smallest libopus surface required by the WebRTC sender.
-// Pion currently provides the decoder but not an encoder.
+// opusEncoder is the smallest libopus surface required by the device WSS
+// downlink.
 type opusEncoder struct {
 	value *C.OpusEncoder
 }

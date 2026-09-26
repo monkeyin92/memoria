@@ -16,7 +16,6 @@ from typing import Literal
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.generation_controller import GenerationController
-from services.agent.src.voice_core.interaction_authority import InteractionAuthority
 from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope, SessionIdentity
 from services.agent.src.voice_core.speech_timeline import SpeechTimeline
 
@@ -77,7 +76,6 @@ class MediaBridgeSession:
     identity: SessionIdentity
     max_pending_audio_frames: int = 100
     traceparent: str = ""
-    interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE
     state: BridgeState = "connected"
     generation: GenerationController = field(init=False)
     timeline: SpeechTimeline = field(default_factory=SpeechTimeline)
@@ -628,7 +626,6 @@ class MediaBridgeServer:
         identity: SessionIdentity,
         *,
         traceparent: str = "",
-        interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
     ) -> MediaBridgeSession:
         if identity.session_id in self.sessions:
             raise ValueError("media session already exists")
@@ -638,7 +635,6 @@ class MediaBridgeServer:
             identity=identity,
             max_pending_audio_frames=self.max_pending_audio_frames,
             traceparent=traceparent,
-            interaction_authority=interaction_authority,
         )
         self.sessions[identity.session_id] = session
         return session

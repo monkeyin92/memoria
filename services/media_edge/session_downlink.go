@@ -67,12 +67,6 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 		return fmt.Errorf("downlink queue is full")
 	}
 	s.downlinkFrames++
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:        LiveEventAudioDownlink,
-		StreamEpoch: s.StreamEpoch,
-		Fence:       actual,
-		Audio:       true,
-	})
 	return nil
 }
 

@@ -16,10 +16,7 @@ from services.agent.src.orchestration.conversation_projection import (
     ConversationProjection,
     ProjectionPatch,
 )
-from services.agent.src.orchestration.delegation_coordinator import (
-    OutputIntentAdmission,
-    SideEffectPolicy,
-)
+from services.agent.src.orchestration.delegation_coordinator import SideEffectPolicy
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
@@ -440,11 +437,6 @@ class MediaSessionLifecycleMixin:
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
             runtime.orchestrator.delegation.queue_while_floor_blocked = True
-
-            def observe_output_intent(admission: OutputIntentAdmission) -> None:
-                self.bridge.emit_output_intent_decision(identity.session_id, admission)
-
-            runtime.orchestrator.delegation.set_output_intent_observer(observe_output_intent)
             delegation_starter = getattr(provider, "start_delegation", None)
             output_intent_acceptor = getattr(provider, "accept_output_intent", None)
             if (

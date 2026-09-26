@@ -19,6 +19,7 @@ ALLOWED_DOCS_PREFIXES = (
 )
 ALLOWED_DOCS_FILES = {
     "docs/HANDOFF-archive-before-0920.md",
+    "docs/HANDOFF-archive-0916-0923.md",
 }
 # Evaluation receipts are data, kept next to the docs that cite them.
 ALLOWED_DOCS_DATA_PATTERN = "docs/memory-evaluation-*.json"

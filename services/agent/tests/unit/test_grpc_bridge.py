@@ -7,13 +7,11 @@ import grpc
 import pytest
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.orchestration.delegation_coordinator import OutputIntentAdmission
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
-from services.agent.src.voice_core.interaction_authority import InteractionAuthority
 from services.agent.src.voice_core.media_bridge_server import PCMFrame
 from services.agent.src.voice_core.media_protocol import MediaEnvelope, SessionIdentity
-from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment, SpeechTimeline
+from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 
 
 async def _request_stream(
@@ -42,8 +40,8 @@ async def test_grpc_health_serves_voice_media_bridge() -> None:
 
 
 @pytest.mark.asyncio
-async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> None:
-    bridge = MediaBridgeGrpcServer(allow_go_shadow=True)
+async def test_bridge_stamps_versions_and_never_emits_shadow_observations() -> None:
+    bridge = MediaBridgeGrpcServer()
     port = await bridge.start("127.0.0.1:0")
     channel = grpc.aio.insecure_channel(f"127.0.0.1:{port}")
     rpc = channel.stream_stream(
@@ -54,7 +52,7 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
     call = rpc(_request_stream(requests))
     identity = media_pb2.SessionIdentity(
-        session_id="shadow-timeline",
+        session_id="bridge-versions",
         account_id="account",
         device_id="h5",
         client_type="h5",
@@ -69,10 +67,14 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
         )
     )
     accepted = await call.read()
-    assert accepted.accepted.interaction_authority == media_pb2.INTERACTION_AUTHORITY_GO_SHADOW
+    # A Go-shadow request degrades to the only supported authority.
+    assert (
+        accepted.accepted.interaction_authority
+        == media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
+    )
 
     assert await bridge.emit_event(
-        "shadow-timeline",
+        "bridge-versions",
         "audio_trace",
         {"name": "client_event_versions"},
         turn_id=1,
@@ -88,9 +90,9 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     assert client_payload["task_epoch"] == 3
     assert client_payload["context_version"] == 7
 
-    fence = GenerationFence("shadow-timeline", 1, 1, 2, 7)
+    fence = GenerationFence("bridge-versions", 1, 1, 2, 7)
     assert await bridge.emit_generation(
-        "shadow-timeline",
+        "bridge-versions",
         fence,
         action=media_pb2.GENERATION_ACTION_START,
         task_epoch=3,
@@ -101,9 +103,9 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     assert generation.generation.context_version == 7
     assert generation.generation.session_epoch == 7
     assert await bridge.emit_pcm(
-        "shadow-timeline",
+        "bridge-versions",
         PCMFrame(
-            identity=SessionIdentity("shadow-timeline", account_id="account", device_id="h5"),
+            identity=SessionIdentity("bridge-versions", account_id="account", device_id="h5"),
             turn_id=1,
             generation_id=1,
             tool_epoch=2,
@@ -121,143 +123,21 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     assert audio.audio.context_version == 7
     assert audio.audio.session_epoch == 7
 
-    timeline = SpeechTimeline()
-    timeline.add(
-        SpeechSegment(
-            session_id="shadow-timeline",
-            stream_epoch=1,
-            provider_task_epoch=2,
-            segment_id="sentence-1",
-            revision=3,
-            kind=SegmentKind.ASR_FINAL,
-            capture_start_sample=10,
-            capture_end_sample=20,
-            text="你好",
-            final=True,
-        )
-    )
-    segment = timeline.pending[0]
-    assert await bridge.emit_speech_segment_decision(
-        "shadow-timeline",
-        segment,
-        authoritative_accepted=True,
-        authoritative_reason="accepted",
-        timeline=timeline,
-        latest_task_epoch=2,
-    )
-    emitted = await call.read()
-    observation = emitted.shadow_observation
-    assert observation.identity.session_id == "shadow-timeline"
-    assert observation.identity.stream_epoch == 1
-    assert observation.contract_version == "media-v1-a6a"
-    assert observation.candidate_only is True
-    assert observation.shadow_sequence == 0
-    assert observation.speech_segment.segment_id == "sentence-1"
-    assert len(observation.speech_segment.text_sha256) == 32
-    assert "你好".encode() not in observation.SerializeToString()
-    assert observation.authoritative_timeline.latest_task_epoch == 2
-
-    assert await bridge.emit_context_activated("shadow-timeline", 7)
-    context_event = await call.read()
-    assert context_event.shadow_observation.context_activated.context_version == 7
-    intent = media_pb2.OutputIntent(
-        intent_id="deep-1",
-        session_id="shadow-timeline",
-        turn_id=1,
-        generation_id=1,
-        tool_epoch=2,
-        kind=media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
-        priority=50,
-        created_at_ms=1_000,
-        expires_at_ms=2_000,
-        floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-        context_version=7,
-        tts_source="不应进入 shadow 契约",
-    )
-    fallback = media_pb2.OutputIntent()
-    fallback.CopyFrom(intent)
-    fallback.intent_id = "deep-fallback"
-    fallback.priority = 10
-    fallback.tts_source = "也不应进入 shadow 契约"
-    assert bridge.emit_output_intent_decision(
-        "shadow-timeline",
-        OutputIntentAdmission(
-            intent=intent,
-            current_fence=GenerationFence("shadow-timeline", 1, 1, 2),
-            current_context_version=7,
-            floor_allows_output=True,
-            observed_at_ms=1_500,
-            accepted=True,
-            reason="accepted",
-            authoritative_candidate=intent,
-            authoritative_candidates=(intent, fallback),
-        ),
-    )
-    output_event = await call.read()
-    assert output_event.shadow_observation.output_intent.intent_id == "deep-1"
-    arbiter = output_event.shadow_observation.authoritative_output_arbiter
-    assert arbiter.candidate.intent_id == "deep-1"
-    assert arbiter.active_candidates_complete is True
-    assert [candidate.intent_id for candidate in arbiter.active_candidates] == [
-        "deep-1",
-        "deep-fallback",
-    ]
-    assert "不应进入 shadow 契约".encode() not in output_event.SerializeToString()
-    assert "也不应进入 shadow 契约".encode() not in output_event.SerializeToString()
-
-    assert bridge.emit_output_intent_decision(
-        "shadow-timeline",
-        OutputIntentAdmission(
-            intent=intent,
-            current_fence=GenerationFence("shadow-timeline", 1, 1, 2),
-            current_context_version=7,
-            floor_allows_output=True,
-            observed_at_ms=1_600,
-            accepted=False,
-            reason="completed",
-            consumed=True,
-        ),
-    )
-    consumed_event = await call.read()
-    consumed = consumed_event.shadow_observation
-    assert consumed.authoritative_consumed is True
-    assert consumed.authoritative_accepted is False
-    assert consumed.authoritative_output_arbiter.active_candidates_complete is True
-    assert consumed.authoritative_output_arbiter.candidate.intent_id == ""
-    assert list(consumed.authoritative_output_arbiter.active_candidates) == []
-
+    # Assistant state is delivered as a client event only; no candidate-only
+    # floor observation follows it.
     assert await bridge.emit_event(
-        "shadow-timeline",
+        "bridge-versions",
         "assistant_state",
         {"state": "speaking", "phase": "speaking"},
         turn_id=1,
         generation_id=1,
         tool_epoch=2,
     )
+    assert await bridge.emit_event("bridge-versions", "marker", {})
     state_event = await call.read()
     assert state_event.client.type == "assistant_state"
-    floor_event = await call.read()
-    floor = floor_event.shadow_observation
-    assert floor.kind == media_pb2.SHADOW_OBSERVATION_KIND_FLOOR_DECISION
-    assert floor.floor_decision.floor_state == media_pb2.FLOOR_STATE_ASSISTANT_HOLDS_FLOOR
-    assert floor.floor_decision.effect_kind == media_pb2.REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT
-    assert floor.floor_decision.generation_id == 1
-
-    assert await bridge.emit_event(
-        "shadow-timeline",
-        "assistant_state",
-        {"state": "connecting", "phase": "connecting"},
-        turn_id=1,
-        generation_id=1,
-        tool_epoch=2,
-    )
-    connecting_state = await call.read()
-    assert connecting_state.client.type == "assistant_state"
-    connecting_floor = await call.read()
-    assert (
-        connecting_floor.shadow_observation.floor_decision.effect_kind
-        == media_pb2.REALTIME_EFFECT_KIND_PAUSE_OUTPUT
-    )
+    marker_event = await call.read()
+    assert marker_event.client.type == "marker"
 
     await requests.put(None)
     assert await call.read() is grpc.aio.EOF
@@ -266,36 +146,29 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
 
 
 @pytest.mark.asyncio
-async def test_shadow_queue_overflow_never_cancels_authoritative_delivery() -> None:
-    bridge = MediaBridgeGrpcServer(max_pending_messages=1, allow_go_shadow=True)
+async def test_coalescing_overflow_never_cancels_authoritative_delivery() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=1)
     identity = SessionIdentity(
-        "shadow-overflow",
+        "coalescing-overflow",
         account_id="account",
         device_id="h5",
         stream_epoch=1,
     )
-    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
-        identity,
-        interaction_authority=InteractionAuthority.GO_SHADOW,
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection.outgoing.put_nowait(
+        media_pb2.CoreToMedia(
+            transcript=media_pb2.TranscriptEvent(turn_id=1, revision=1, text="草稿")
+        )
     )
-    assert await bridge.emit_event("shadow-overflow", "authoritative", {})
-    timeline = SpeechTimeline()
-    timeline.start_stream_epoch(1)
 
-    assert not await bridge.emit_speech_task_started("shadow-overflow", 1, timeline)
-    assert connection.dropped_shadow_observations == 1
+    # A full queue first sheds the coalescing partial transcript; the
+    # authoritative event is delivered and the transport stays open.
+    assert await bridge.emit_event("coalescing-overflow", "authoritative", {})
     assert connection.closed is False
-    assert connection.session.generation_active is True
+    assert connection.session.overflow_count == 0
+    assert connection.outgoing.qsize() == 1
     queued = connection.outgoing.get_nowait()
     assert queued.client.type == "authoritative"
-
-    assert await bridge.emit_speech_task_started("shadow-overflow", 2, timeline)
-    assert connection.outgoing.qsize() == 1
-    assert await bridge.emit_event("shadow-overflow", "still-authoritative", {})
-    assert connection.closed is False
-    assert connection.dropped_shadow_observations == 2
-    queued = connection.outgoing.get_nowait()
-    assert queued.client.type == "still-authoritative"
 
 
 @pytest.mark.asyncio
@@ -539,7 +412,7 @@ def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None
 
 @pytest.mark.asyncio
 async def test_outgoing_wire_sequence_follows_priority_drain_order() -> None:
-    bridge = MediaBridgeGrpcServer(max_pending_messages=4, allow_go_shadow=True)
+    bridge = MediaBridgeGrpcServer(max_pending_messages=4)
     identity = SessionIdentity(
         "priority-sequence",
         account_id="account",
@@ -547,15 +420,17 @@ async def test_outgoing_wire_sequence_follows_priority_drain_order() -> None:
         client_type="h5",
         stream_epoch=7,
     )
-    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
-        identity,
-        interaction_authority=InteractionAuthority.GO_SHADOW,
-    )
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
 
-    # A reliable assistant-state event also queues one coalescing shadow
-    # observation.  A later generation control is critical and therefore
-    # overtakes both.  Wire sequence must describe that actual send order,
-    # otherwise Media Edge correctly rejects the delayed smaller sequence.
+    # A coalescing partial transcript is followed by a reliable client event.
+    # A later generation control is critical and therefore overtakes both.
+    # Wire sequence must describe that actual send order, otherwise Media
+    # Edge correctly rejects the delayed smaller sequence.
+    connection.outgoing.put_nowait(
+        media_pb2.CoreToMedia(
+            transcript=media_pb2.TranscriptEvent(turn_id=1, revision=1, text="草稿")
+        )
+    )
     assert await bridge.emit_event(
         identity.session_id,
         "assistant_state",
@@ -569,35 +444,32 @@ async def test_outgoing_wire_sequence_follows_priority_drain_order() -> None:
 
     generation = connection.outgoing.get_nowait()
     client = connection.outgoing.get_nowait()
-    shadow = connection.outgoing.get_nowait()
+    transcript = connection.outgoing.get_nowait()
 
     assert generation.WhichOneof("event") == "generation"
     assert client.WhichOneof("event") == "client"
-    assert shadow.WhichOneof("event") == "shadow_observation"
+    assert transcript.WhichOneof("event") == "transcript"
+    assert connection.outgoing.empty()
     assert [
         generation.generation.sequence,
         client.client.sequence,
-        shadow.shadow_observation.sequence,
+        transcript.transcript.sequence,
     ] == [0, 1, 2]
     client_payload = json.loads(client.client.json_payload)
     assert client_payload["sequence"] == 1
     assert client_payload["event_id"].endswith(":1")
-    assert shadow.shadow_observation.shadow_sequence == 0
 
 
 @pytest.mark.asyncio
-async def test_python_executor_emits_fenced_realtime_effect_during_go_shadow() -> None:
-    bridge = MediaBridgeGrpcServer(allow_go_shadow=True)
+async def test_python_executor_emits_fenced_realtime_effect() -> None:
+    bridge = MediaBridgeGrpcServer()
     identity = SessionIdentity(
         "authoritative-effect",
         account_id="account",
         device_id="h5",
         stream_epoch=3,
     )
-    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
-        identity,
-        interaction_authority=InteractionAuthority.GO_SHADOW,
-    )
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
     fence = GenerationFence(identity.session_id, 4, 5, 6)
     assert await bridge.emit_generation(
         identity.session_id,
@@ -646,32 +518,21 @@ async def test_python_executor_emits_fenced_realtime_effect_during_go_shadow() -
         source_event_id="invalid-json-number",
         payload={"action": "duck", "gain": float("nan")},
     )
-    connection.session.interaction_authority = InteractionAuthority.GO_AUTHORITATIVE
-    assert not await bridge.emit_realtime_effect(
-        identity.session_id,
-        media_pb2.REALTIME_EFFECT_KIND_DUCK_OUTPUT,
-        fence,
-        source_event_id="wrong-executor",
-        payload={"action": "duck", "gain": 0.0},
-    )
 
     bridge._close_connection(connection)  # noqa: SLF001 - deterministic cleanup
     bridge.bridge.close(identity.session_id)
 
 
 @pytest.mark.asyncio
-async def test_python_executor_emits_typed_floor_effect_during_go_shadow() -> None:
-    bridge = MediaBridgeGrpcServer(allow_go_shadow=True)
+async def test_python_executor_emits_typed_floor_effect() -> None:
+    bridge = MediaBridgeGrpcServer()
     identity = SessionIdentity(
         "authoritative-floor",
         account_id="account",
         device_id="h5",
         stream_epoch=3,
     )
-    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
-        identity,
-        interaction_authority=InteractionAuthority.GO_SHADOW,
-    )
+    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
     fence = GenerationFence(identity.session_id, 4, 5, 6)
     assert await bridge.emit_generation(
         identity.session_id,
@@ -715,14 +576,6 @@ async def test_python_executor_emits_typed_floor_effect_during_go_shadow() -> No
         floor_epoch=2,
         fence=GenerationFence(identity.session_id, 4, 4, 6),
         source_event_id="stale",
-    )
-    connection.session.interaction_authority = InteractionAuthority.GO_AUTHORITATIVE
-    assert not await bridge.emit_floor_effect(
-        identity.session_id,
-        media_pb2.FLOOR_STATE_SILENCE,
-        floor_epoch=2,
-        fence=fence,
-        source_event_id="wrong-executor",
     )
 
     bridge._close_connection(connection)  # noqa: SLF001 - deterministic cleanup
@@ -931,35 +784,21 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("allow_go_shadow", "requested", "expected"),
+    "requested",
     (
-        (
-            False,
-            media_pb2.INTERACTION_AUTHORITY_GO_SHADOW,
-            media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
-        ),
-        (
-            True,
-            media_pb2.INTERACTION_AUTHORITY_GO_SHADOW,
-            media_pb2.INTERACTION_AUTHORITY_GO_SHADOW,
-        ),
-        (
-            True,
-            media_pb2.INTERACTION_AUTHORITY_GO_AUTHORITATIVE,
-            media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
-        ),
+        media_pb2.INTERACTION_AUTHORITY_UNSPECIFIED,
+        media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+        media_pb2.INTERACTION_AUTHORITY_GO_SHADOW,
+        media_pb2.INTERACTION_AUTHORITY_GO_AUTHORITATIVE,
+        99,
     ),
 )
-async def test_bridge_returns_the_effective_interaction_authority(
-    allow_go_shadow: bool,
-    requested: int,
-    expected: int,
-) -> None:
-    bridge = MediaBridgeGrpcServer(allow_go_shadow=allow_go_shadow)
+async def test_bridge_always_returns_python_interaction_authority(requested: int) -> None:
+    bridge = MediaBridgeGrpcServer()
     requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
     stream = bridge.connect(_request_stream(requests), None)  # type: ignore[arg-type]
     identity = media_pb2.SessionIdentity(
-        session_id=f"authority-{allow_go_shadow}-{requested}",
+        session_id=f"authority-{requested}",
         account_id="account",
         device_id="h5",
         client_type="h5",
@@ -975,15 +814,11 @@ async def test_bridge_returns_the_effective_interaction_authority(
     )
 
     accepted = await anext(stream)
-    assert accepted.accepted.interaction_authority == expected
-    session = bridge.bridge.get(identity.session_id)
-    assert session is not None
-    assert session.interaction_authority is InteractionAuthority(
-        {
-            media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE: "python_authoritative",
-            media_pb2.INTERACTION_AUTHORITY_GO_SHADOW: "go_shadow",
-        }[expected]
+    assert (
+        accepted.accepted.interaction_authority
+        == media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
     )
+    assert bridge.bridge.get(identity.session_id) is not None
 
     await requests.put(None)
     with pytest.raises(StopAsyncIteration):

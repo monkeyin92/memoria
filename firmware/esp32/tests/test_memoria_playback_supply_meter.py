@@ -29,7 +29,7 @@ import pytest
 FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 AUDIO_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "audio"
 HEADER = AUDIO_DIR / "memoria_playback_supply_meter.h"
-METER_PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0025-playback-underrun-metering.patch"
+METER_PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0026-playback-underrun-metering.patch"
 
 SUMMARY_KEYS = [
     "layer",

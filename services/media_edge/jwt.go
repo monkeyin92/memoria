@@ -96,7 +96,7 @@ func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) er
 }
 
 // ParseIdentity authenticates a bearer token and returns the identity needed
-// to create a WHIP session. Claims are decoded once to discover the expected
+// to open a media session. Claims are decoded once to discover the expected
 // identity, then VerifyIdentity validates the signature, issuer, audience,
 // expiry and every discovered field before any value is returned.
 func (v JWTVerifier) ParseIdentity(token string) (MediaTokenIdentity, error) {

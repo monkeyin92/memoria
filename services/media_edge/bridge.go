@@ -153,7 +153,7 @@ func (i BridgeIdentity) equal(other *mediav1.SessionIdentity) bool {
 	return i == wire
 }
 
-// BridgeAudioFormat is kept small so a WebRTC adapter cannot accidentally
+// BridgeAudioFormat is kept small so a media terminator cannot accidentally
 // negotiate a format that the Voice Core does not validate.
 type BridgeAudioFormat struct {
 	Encoding   mediav1.AudioEncoding
@@ -249,14 +249,6 @@ type VoiceCoreBridgeConfig struct {
 	Address                  string
 	TLS                      *BridgeTLSConfig
 	AllowInsecureDevelopment bool
-	InteractionAuthority     mediav1.InteractionAuthority
-}
-
-func normalizeRequestedInteractionAuthority(value mediav1.InteractionAuthority) mediav1.InteractionAuthority {
-	if value == mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
-		return value
-	}
-	return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
 }
 
 func normalizeEffectiveInteractionAuthority(value mediav1.InteractionAuthority) (mediav1.InteractionAuthority, error) {
@@ -265,7 +257,10 @@ func normalizeEffectiveInteractionAuthority(value mediav1.InteractionAuthority) 
 		mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE:
 		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
 	case mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW:
-		return value, nil
+		// The edge always requests Python authority and has no Go shadow
+		// actor, so a Core that selects shadow mode is misconfigured.
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+			fmt.Errorf("voice core selected Go shadow authority, which this edge does not support")
 	case mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE:
 		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 			fmt.Errorf("voice core selected Go authority before the parity gate")
@@ -331,9 +326,7 @@ func dialVoiceCoreWithIdleTimeout(
 		_ = conn.Close()
 		return nil, err
 	}
-	bridge := NewVoiceCoreBridge(conn)
-	bridge.interactionAuthority = normalizeRequestedInteractionAuthority(config.InteractionAuthority)
-	return bridge, nil
+	return NewVoiceCoreBridge(conn), nil
 }
 
 func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
@@ -350,10 +343,9 @@ func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
 
 // VoiceCoreBridge owns a gRPC connection and creates fenced sessions on it.
 type VoiceCoreBridge struct {
-	conn                 *grpc.ClientConn
-	client               mediav1.VoiceMediaBridgeClient
-	health               grpc_health_v1.HealthClient
-	interactionAuthority mediav1.InteractionAuthority
+	conn   *grpc.ClientConn
+	client mediav1.VoiceMediaBridgeClient
+	health grpc_health_v1.HealthClient
 }
 
 func NewVoiceCoreBridge(conn *grpc.ClientConn) *VoiceCoreBridge {
@@ -362,8 +354,7 @@ func NewVoiceCoreBridge(conn *grpc.ClientConn) *VoiceCoreBridge {
 	}
 	return &VoiceCoreBridge{
 		conn: conn, client: mediav1.NewVoiceMediaBridgeClient(conn),
-		health:               grpc_health_v1.NewHealthClient(conn),
-		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+		health: grpc_health_v1.NewHealthClient(conn),
 	}
 }
 
@@ -479,7 +470,7 @@ func (b *VoiceCoreBridge) ConnectWithHandshakeContext(
 			UplinkFormat:         uplink.proto(),
 			DownlinkFormat:       downlink.proto(),
 			Capabilities:         capabilities,
-			InteractionAuthority: b.interactionAuthority,
+			InteractionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 			Traceparent:          traceparent,
 		},
 	}}); err != nil {
@@ -590,11 +581,9 @@ type VoiceCoreSession struct {
 	current              Fence
 	currentActive        bool
 	lastEventSequence    uint64
-	lastShadowSequence   uint64
 	lastFloorEpoch       uint64
 	lastAudioSequence    uint64
 	hasEventSequence     bool
-	hasShadowSequence    bool
 	hasFloorEpoch        bool
 	hasAudioSequence     bool
 	requireAudioOrigin   bool

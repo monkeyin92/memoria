@@ -50,7 +50,6 @@ def _settings() -> SimpleNamespace:
         media_bridge_grpc_enabled=True,
         media_bridge_max_pending_audio_frames=8,
         media_bridge_max_pending_messages=8,
-        media_bridge_go_shadow_enabled=False,
         media_output_generation_timeout_s=45.0,
         media_owner_silence_timeout_s=30.0,
         media_max_user_speech_duration_s=60.0,

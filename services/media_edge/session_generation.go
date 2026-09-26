@@ -36,13 +36,6 @@ func (s *Session) AdvanceGeneration(fence Fence) error {
 	s.hasGenerationFinal = false
 	s.playoutUnderrunActive = false
 	s.discardStaleDownlinkLocked()
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:              LiveEventGenerationStart,
-		StreamEpoch:       s.StreamEpoch,
-		Fence:             fence,
-		Authoritative:     s.shadowAuthoritativeLocked(),
-		CompareGeneration: true,
-	})
 	// The gate remains authoritative even though stale buffered frames are
 	// retired eagerly to release bounded queue capacity.
 	return nil
@@ -93,13 +86,6 @@ func (s *Session) CancelGeneration(eventID string, expected *Fence) (current, ca
 	s.cancelResults[eventID] = cancelResult{current: current, cancelled: cancelled}
 	s.cancelResultOrder = append(s.cancelResultOrder, eventID)
 	s.discardStaleDownlinkLocked()
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:              LiveEventGenerationCancel,
-		StreamEpoch:       s.StreamEpoch,
-		Fence:             cancelled,
-		Authoritative:     s.shadowAuthoritativeLocked(),
-		CompareGeneration: true,
-	})
 	s.generationCancelLatencyMS = float64(time.Since(started)) / float64(time.Millisecond)
 	return current, cancelled, false, nil
 }
@@ -143,13 +129,6 @@ func (s *Session) ApplyCancelledGeneration(cancelled Fence) error {
 	s.hasGenerationFinal = false
 	s.playoutUnderrunActive = false
 	s.discardStaleDownlinkLocked()
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:              LiveEventGenerationCancel,
-		StreamEpoch:       s.StreamEpoch,
-		Fence:             cancelled,
-		Authoritative:     s.shadowAuthoritativeLocked(),
-		CompareGeneration: true,
-	})
 	s.generationCancelLatencyMS = float64(time.Since(started)) / float64(time.Millisecond)
 	return nil
 }
@@ -205,9 +184,8 @@ func (s *Session) withActiveGeneration(fence Fence, action func() error) error {
 // can still authoritatively say that the user holds the floor.
 func (s *Session) ApplyFloorEffect(
 	fence Fence,
-	floor ShadowFloorState,
+	floor FloorState,
 	floorEpoch uint64,
-	source string,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,18 +197,6 @@ func (s *Session) ApplyFloorEffect(
 	}
 	s.floorState = floor
 	s.floorEpoch = floorEpoch
-	authoritative := s.shadowAuthoritativeLocked()
-	authoritative.Generation = fence
-	authoritative.Floor = floor
-	authoritative.LastDecision = source
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:              LiveEventAuthoritySnapshot,
-		StreamEpoch:       s.StreamEpoch,
-		Authoritative:     authoritative,
-		CompareGeneration: true,
-		Scenario:          "floor_effect",
-		ContractVersion:   shadowA6AContractVersion,
-	})
 	return nil
 }
 
@@ -265,9 +231,7 @@ func (s *Session) Reconnect() (uint64, error) {
 		s.mu.Unlock()
 		return 0, fmt.Errorf("session cannot reconnect while %s", s.State)
 	}
-	oldActor := s.actor
 	s.StreamEpoch++
-	s.actor = NewLiveSessionActor(s.ID, s.StreamEpoch)
 	s.rotateDownlinkDeliveryLocked()
 	s.hasUplinkSequence = false
 	s.hasDownlinkSeq = false
@@ -281,7 +245,7 @@ func (s *Session) Reconnect() (uint64, error) {
 	s.generationFinalSampleEnd = 0
 	s.hasGenerationFinal = false
 	s.playoutUnderrunActive = false
-	s.floorState = ShadowFloorSilence
+	s.floorState = FloorSilence
 	s.floorEpoch = 0
 	// Stop idempotency is scoped to one transport epoch. Reusing an event id
 	// after reconnect must not replay a cancellation fence from the old clock.
@@ -289,15 +253,6 @@ func (s *Session) Reconnect() (uint64, error) {
 	s.cancelResultOrder = nil
 	epoch := s.StreamEpoch
 	s.mu.Unlock()
-	// Actor shutdown can wait for a goroutine and must never hold the session
-	// state lock. The pointer swap above fences the old actor immediately.
-	if oldActor != nil {
-		oldActor.Close()
-		snapshot := oldActor.Snapshot()
-		s.mu.Lock()
-		s.accumulateActorLocked(snapshot)
-		s.mu.Unlock()
-	}
 	return epoch, nil
 }
 
@@ -311,8 +266,7 @@ func (s *Session) Drain() {
 
 func (s *Session) Stop() {
 	s.mu.Lock()
-	actor := s.actor
-	s.actor = nil
+	defer s.mu.Unlock()
 	s.State = SessionStopped
 	if s.stoppedAt.IsZero() {
 		s.stoppedAt = time.Now()
@@ -320,12 +274,4 @@ func (s *Session) Stop() {
 	s.cancelDownlinkDeliveryLocked()
 	s.uplink.Clear()
 	s.downlink.Clear()
-	s.mu.Unlock()
-	if actor != nil {
-		actor.Close()
-		snapshot := actor.Snapshot()
-		s.mu.Lock()
-		s.accumulateActorLocked(snapshot)
-		s.mu.Unlock()
-	}
 }

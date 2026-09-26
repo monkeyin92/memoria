@@ -72,69 +72,50 @@ func (s *directFactoryVoiceCore) Connect(
 	}
 }
 
-func TestBuildWebRTCConfigFailsClosedInProduction(t *testing.T) {
-	t.Setenv("MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON", "")
-	t.Setenv("MEDIA_EDGE_WEBRTC_PUBLIC_IPS", "")
-	t.Setenv("MEDIA_EDGE_WEBRTC_UDP_PORT_MIN", "")
-	t.Setenv("MEDIA_EDGE_WEBRTC_UDP_PORT_MAX", "")
-	if _, err := buildWebRTCConfig(true); err == nil {
-		t.Fatal("production WebRTC accepted no reachable ICE configuration")
-	}
-}
-
-func TestBuildWebRTCConfigAcceptsTURNOrBoundedPublicUDP(t *testing.T) {
-	t.Run("turn", func(t *testing.T) {
-		t.Setenv("MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON", `[{"urls":["turn:turn.example:3478"],"username":"edge","credential":"secret"}]`)
-		if _, err := buildWebRTCConfig(true); err != nil {
-			t.Fatal(err)
+func TestRejectRemovedWebRTCKeepsStaleDisabledEnvHarmless(t *testing.T) {
+	for _, value := range []string{"", "false", "0"} {
+		t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", value)
+		if err := rejectRemovedWebRTC(); err != nil {
+			t.Fatalf("disabled WebRTC env %q was rejected: %v", value, err)
 		}
-	})
-	t.Run("public UDP", func(t *testing.T) {
-		t.Setenv("MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON", "")
-		t.Setenv("MEDIA_EDGE_WEBRTC_PUBLIC_IPS", "203.0.113.10")
-		t.Setenv("MEDIA_EDGE_WEBRTC_UDP_PORT_MIN", "40000")
-		t.Setenv("MEDIA_EDGE_WEBRTC_UDP_PORT_MAX", "40100")
-		if _, err := buildWebRTCConfig(true); err != nil {
-			t.Fatal(err)
-		}
-	})
-}
-
-func TestRequestedWebRTCEnabledDefaultsOnAndAllowsExplicitDeviceOnly(t *testing.T) {
-	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "")
-	enabled, err := requestedWebRTCEnabled(true, false)
-	if err != nil || !enabled {
-		t.Fatalf("unset WebRTC mode must preserve the enabled default: enabled=%v err=%v", enabled, err)
-	}
-
-	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "false")
-	enabled, err = requestedWebRTCEnabled(true, true)
-	if err != nil || enabled {
-		t.Fatalf("production Direct Device WSS could not select device-only mode: enabled=%v err=%v", enabled, err)
 	}
 }
 
-func TestRequestedWebRTCEnabledFailsClosedWithoutDirectDeviceWSS(t *testing.T) {
-	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "false")
-	if _, err := requestedWebRTCEnabled(true, false); err == nil {
-		t.Fatal("production disabled WebRTC without Direct Device WSS")
+func TestRejectRemovedWebRTCFailsClosedWhenStillEnabled(t *testing.T) {
+	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "true")
+	if err := rejectRemovedWebRTC(); err == nil || !strings.Contains(err.Error(), "no longer supported") {
+		t.Fatalf("stale WebRTC enablement did not fail startup: %v", err)
 	}
 	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "not-a-bool")
-	if _, err := requestedWebRTCEnabled(true, true); err == nil {
+	if err := rejectRemovedWebRTC(); err == nil {
 		t.Fatal("malformed WebRTC mode did not fail closed")
 	}
 }
 
-func TestRequestedInteractionAuthorityNeverEnablesUnprovenGoAuthority(t *testing.T) {
-	t.Setenv("MEDIA_EDGE_INTERACTION_AUTHORITY", "go_shadow")
-	shadow, err := requestedInteractionAuthority()
-	if err != nil || shadow.String() != "INTERACTION_AUTHORITY_GO_SHADOW" {
-		t.Fatalf("go shadow was not selectable: mode=%v err=%v", shadow, err)
+func TestRequireDirectDeviceWSSInProduction(t *testing.T) {
+	if err := requireDirectDeviceWSS(true, false); err == nil {
+		t.Fatal("production started without its only media listener")
 	}
-	t.Setenv("MEDIA_EDGE_INTERACTION_AUTHORITY", "go_authoritative")
-	authoritative, err := requestedInteractionAuthority()
-	if err != nil || authoritative.String() != "INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE" {
-		t.Fatalf("unproven Go authority did not fall back to Python: mode=%v err=%v", authoritative, err)
+	if err := requireDirectDeviceWSS(true, true); err != nil {
+		t.Fatalf("production Direct Device WSS was rejected: %v", err)
+	}
+	if err := requireDirectDeviceWSS(false, false); err != nil {
+		t.Fatalf("development reference edge was rejected: %v", err)
+	}
+}
+
+func TestValidateInteractionAuthorityOnlyAcceptsPython(t *testing.T) {
+	for _, value := range []string{"", "python", "python_authoritative", " PYTHON_AUTHORITATIVE "} {
+		t.Setenv("MEDIA_EDGE_INTERACTION_AUTHORITY", value)
+		if err := validateInteractionAuthority(); err != nil {
+			t.Fatalf("Python authority %q was rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"go_shadow", "go_authoritative", "bogus"} {
+		t.Setenv("MEDIA_EDGE_INTERACTION_AUTHORITY", value)
+		if err := validateInteractionAuthority(); err == nil {
+			t.Fatalf("unsupported interaction authority %q did not fail startup", value)
+		}
 	}
 }
 

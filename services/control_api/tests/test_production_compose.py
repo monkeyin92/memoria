@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -836,15 +835,22 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert control["STREAMCORE_KILL_SWITCH"] == "false"
     assert control["STREAMCORE_WHIP_URL"] == ""
     assert control["STREAMCORE_TOKEN_SECRET"].startswith("streamcore-")
-    assert agent["MEDIA_BRIDGE_GO_SHADOW_ENABLED"] == "false"
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert media_edge["MEDIA_EDGE_VOICE_CORE_ADDR"] == "voice-core-media-bridge:7001"
+    # A stale enable flag still reaches the edge so it can fail startup.
     assert media_edge["MEDIA_EDGE_WEBRTC_ENABLED"] == "false"
-    assert media_edge["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"] == "[]"
-    assert media_edge["MEDIA_EDGE_WEBRTC_PUBLIC_IPS"] == "198.51.100.10"
-    assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MIN"] == "40000"
-    assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MAX"] == "40100"
+    # Keys of the removed Go-shadow and WebRTC paths are accepted from old
+    # operator env files but routed nowhere.
+    for retired in (
+        "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
+        "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
+        "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
+    ):
+        for routed in (control, agent, speaker_model, gateway, device_gateway, media_edge):
+            assert retired not in routed
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
     assert control["MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET"] == (
@@ -857,7 +863,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert device_gateway == {"ENVIRONMENT": "production"}
 
 
-def test_production_example_routes_media_edge_webrtc_connectivity_config() -> None:
+def test_production_example_drops_removed_media_edge_paths() -> None:
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     media_edge = compose.split("  media-edge:\n", 1)[1]
@@ -868,16 +874,14 @@ def test_production_example_routes_media_edge_webrtc_connectivity_config() -> No
     )
 
     for key in (
+        "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
+        "MEDIA_EDGE_WEBRTC_ENABLED",
         "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
         "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
     ):
-        assert f"{key}=" in example
-    ice_servers = json.loads(values["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"])
-    assert ice_servers[0]["urls"] == ["turns:turn.example.com:5349"]
-    assert ice_servers[0]["credential"] == "replace-in-private-copy"
-    assert "terminator is linked" not in example
+        assert key not in values
     assert "/etc/memoria-media-edge.env" in media_edge
 
 
@@ -894,7 +898,6 @@ def test_production_example_keeps_streamcore_rollout_fail_closed() -> None:
     assert values["STREAMCORE_KILL_SWITCH"] == "false"
     assert values["STREAMCORE_WHIP_URL"] == ""
     assert values["STREAMCORE_TOKEN_SECRET"] == ""
-    assert values["MEDIA_BRIDGE_GO_SHADOW_ENABLED"] == "false"
     assert values["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert "STREAMCORE_TOKEN_SECRET must use the same secret as MEDIA_EDGE_JWT_SECRET" in example
 
@@ -1025,6 +1028,9 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     # never reuses the legacy gateway port 8793.
     assert "127.0.0.1:8794:8082" in edge
     assert 'MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"' in edge
+    # The edge serves only Direct Device WSS; the compose file, not a host-side
+    # /tmp override, turns it on for the media-runtime profile.
+    assert 'MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"' in edge
     assert "profiles:\n      - media-runtime" in edge
     assert "include /etc/nginx/snippets/memoria-device-edge.conf;" in https_conf
     assert "include /etc/nginx/snippets/memoria-device-media.conf;" in https_conf

@@ -4,73 +4,66 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
-
-	"google.golang.org/protobuf/proto"
 
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
 
-func TestVoiceCoreAssistantStateFeedsPythonVsGoShadowComparison(t *testing.T) {
+func TestVoiceCoreAssistantStateIsForwardedOnlyForMatchingIdentity(t *testing.T) {
 	session := runtimeSession(t, 4)
 	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 7}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	runtime := &VoiceCoreMediaRuntime{session: session}
-	payload, err := json.Marshal(map[string]any{
-		"payload": map[string]any{
-			"phase": "speaking", "state": "speaking", "tool_epoch": 7,
-		},
-	})
+	forwarded := 0
+	runtime := &VoiceCoreMediaRuntime{session: session, onEvent: func(*mediav1.CoreToMedia) { forwarded++ }}
+	payload, err := json.Marshal(map[string]any{"payload": map[string]any{"phase": "speaking"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.handleEvent(&mediav1.CoreToMedia{
 		Event: &mediav1.CoreToMedia_Client{Client: &mediav1.ClientEvent{
 			Identity: runtimeIdentity(), Type: "assistant_state", JsonPayload: payload,
-			TurnId: 1, GenerationId: 1, ToolEpoch: 7,
 		}},
-	}); err != nil {
-		t.Fatal(err)
+	}); err != nil || forwarded != 1 {
+		t.Fatalf("assistant_state was not forwarded: forwarded=%d err=%v", forwarded, err)
 	}
-	snapshot := waitForActorEvents(t, session.actor, 2)
-	if len(snapshot.RecentComparisons) != 2 {
-		t.Fatalf("python authority was not compared: %+v", snapshot)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "speaking" || comparison.ContractVersion != shadowContractVersion {
-		t.Fatalf("python/go shadow comparison is not analyzable: %+v", comparison)
-	}
-
 	if err := runtime.handleEvent(&mediav1.CoreToMedia{
 		Event: &mediav1.CoreToMedia_Client{Client: &mediav1.ClientEvent{
 			Identity: runtimeIdentity(), Type: "assistant_state", JsonPayload: []byte("{"),
 		}},
-	}); err != nil {
-		t.Fatalf("shadow parse failure affected the user path: %v", err)
+	}); err != nil || forwarded != 2 {
+		t.Fatalf("malformed assistant_state payload affected the user path: forwarded=%d err=%v", forwarded, err)
+	}
+	foreign := runtimeIdentity()
+	foreign.SessionId = "other"
+	if err := runtime.handleEvent(&mediav1.CoreToMedia{
+		Event: &mediav1.CoreToMedia_Client{Client: &mediav1.ClientEvent{
+			Identity: foreign, Type: "assistant_state", JsonPayload: payload,
+		}},
+	}); err == nil || forwarded != 2 {
+		t.Fatalf("foreign assistant_state was accepted: forwarded=%d err=%v", forwarded, err)
 	}
 }
 
-func TestPythonInteractionStateMapsEveryPublishedPhase(t *testing.T) {
-	phases := []string{
-		"connecting", "listening", "user_speaking", "backchannel", "thinking_silent",
-		"speaking", "interrupted", "tool_waiting", "recovering", "closed",
+func TestVoiceCoreMediaRuntimeIgnoresShadowObservations(t *testing.T) {
+	session := runtimeSession(t, 4)
+	defer session.Stop()
+	forwarded := 0
+	runtime := &VoiceCoreMediaRuntime{
+		session: session, core: newFakeCoreStream(),
+		onEvent: func(*mediav1.CoreToMedia) { forwarded++ },
 	}
-	for _, phase := range phases {
-		if _, _, ok := pythonInteractionState(phase); !ok {
-			t.Fatalf("published phase %q has no Go shadow mapping", phase)
-		}
+	if err := runtime.handleEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
+		ShadowObservation: &mediav1.ShadowObservation{
+			Identity: runtimeIdentity(), Sequence: 1, CandidateOnly: true,
+			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_COMMIT,
+		},
+	}}); err != nil {
+		t.Fatalf("shadow observation affected the user path: %v", err)
 	}
-	if floor, decision, ok := pythonInteractionState("connecting"); !ok ||
-		floor != ShadowFloorSilence || decision != "pause_output" {
-		t.Fatalf("connecting must be a typed pause decision: floor=%q decision=%q ok=%v", floor, decision, ok)
+	if forwarded != 0 {
+		t.Fatal("shadow observation reached the media terminator")
 	}
 }
 
@@ -282,899 +275,6 @@ func TestSessionIdentityMatchesRuntimeAuthorityFence(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestVoiceCoreMediaRuntimeMirrorsAuthoritativeSpeechTimelineInGoShadow(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-	digest := make([]byte, 32)
-	segment := &mediav1.ShadowSpeechSegment{
-		SegmentId: "sentence-1", TaskEpoch: 2, Revision: 3,
-		CaptureStartSample: 10, CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	core.events <- speechShadowObservation(0, true, segment, 2, []*mediav1.ShadowSpeechSegment{segment})
-
-	snapshot := waitForActorEvents(t, session.actor, 1)
-	if len(snapshot.SpeechTimeline.Segments) != 1 ||
-		snapshot.SpeechTimeline.Segments[0].TextSHA256 == "" ||
-		snapshot.SpeechTimeline.LatestTaskEpoch != 2 {
-		t.Fatalf("production observation did not reach the shadow timeline: %+v", snapshot)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.ContractVersion != shadowA6AContractVersion {
-		t.Fatalf("authoritative timeline did not match the Go candidate: %+v", comparison)
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeTaskStartFencesOldResultBeforeFirstNewResult(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-	digest := make([]byte, 32)
-	first := &mediav1.ShadowSpeechSegment{
-		SegmentId: "sentence-1", TaskEpoch: 1, Revision: 1,
-		CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	core.events <- speechShadowObservation(0, true, first, 1, []*mediav1.ShadowSpeechSegment{first})
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 2, ShadowSequence: 1,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind:                  mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED,
-			Input:                 &mediav1.ShadowObservation_SpeechTaskStarted{SpeechTaskStarted: &mediav1.ShadowSpeechTaskStarted{TaskEpoch: 2}},
-			AuthoritativeAccepted: true,
-			AuthoritativeTimeline: &mediav1.ShadowSpeechTimelineState{
-				LatestTaskEpoch: 2, Segments: []*mediav1.ShadowSpeechSegment{first},
-			},
-		},
-	}}
-	late := &mediav1.ShadowSpeechSegment{
-		SegmentId: "sentence-1", TaskEpoch: 1, Revision: 2,
-		CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	core.events <- speechShadowObservation(2, false, late, 2, []*mediav1.ShadowSpeechSegment{first})
-
-	snapshot := waitForActorEvents(t, session.actor, 3)
-	if snapshot.SpeechTimeline.LatestTaskEpoch != 2 ||
-		len(snapshot.SpeechTimeline.Segments) != 1 ||
-		snapshot.SpeechTimeline.Segments[0].Revision != 1 {
-		t.Fatalf("task-start fence admitted an old result: %+v", snapshot.SpeechTimeline)
-	}
-	for _, comparison := range snapshot.RecentComparisons {
-		if comparison.Mismatch {
-			t.Fatalf("Python/Go task-start decision diverged: %+v", comparison)
-		}
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeResyncsLossyShadowGapWithoutAlgorithmMismatch(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	var forwarded atomic.Int64
-	runtime, err := NewVoiceCoreMediaRuntime(
-		context.Background(), session, core,
-		func(*mediav1.CoreToMedia) { forwarded.Add(1) }, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-
-	digest := make([]byte, 32)
-	first := &mediav1.ShadowSpeechSegment{
-		SegmentId: "first", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 0, CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	missing := &mediav1.ShadowSpeechSegment{
-		SegmentId: "missing", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 20, CaptureEndSample: 40, TextSha256: digest, Final: true,
-	}
-	latest := &mediav1.ShadowSpeechSegment{
-		SegmentId: "latest", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 40, CaptureEndSample: 60, TextSha256: digest, Final: true,
-	}
-	core.events <- speechShadowObservation(0, true, first, 1, []*mediav1.ShadowSpeechSegment{first})
-	// shadow_sequence=1 was evicted by the lossy shadow queue. The next
-	// observation carries the complete Python after-state and must resync the
-	// candidate instead of recording a permanent algorithm mismatch.
-	core.events <- speechShadowObservation(2, true, latest, 1, []*mediav1.ShadowSpeechSegment{first, missing, latest})
-	// A duplicate after the gap remains a lossy drop.
-	core.events <- speechShadowObservation(2, true, latest, 1, []*mediav1.ShadowSpeechSegment{first, missing, latest})
-
-	snapshot := waitForActorEvents(t, session.actor, 2)
-	if len(snapshot.SpeechTimeline.Segments) != 3 || snapshot.ShadowMismatchTotal != 0 {
-		t.Fatalf("lossy shadow gap was not safely resynchronized: %+v", snapshot)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "shadow_transport_discontinuity" {
-		t.Fatalf("shadow gap was not explicitly classified: %+v", comparison)
-	}
-
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1}
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Generation{
-		Generation: &mediav1.GenerationControl{
-			Identity: runtimeIdentity(), TurnId: 1, GenerationId: 1,
-			Action: mediav1.GenerationAction_GENERATION_ACTION_START,
-		},
-	}}
-	waitForActorEvents(t, session.actor, 3)
-	actual, active := session.GenerationSnapshot()
-	if !active || !actual.Equal(fence) || forwarded.Load() != 1 {
-		t.Fatalf("shadow resync affected the authoritative media path: fence=%+v active=%v forwarded=%d", actual, active, forwarded.Load())
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeRetriesShadowResyncAfterActorMailboxRejectsIt(t *testing.T) {
-	session := runtimeSession(t, 4)
-	session.actor.Close()
-	session.actor = newLiveSessionActor("s", 1, 2, 1, time.Second, 100*time.Millisecond)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	digest := make([]byte, 32)
-	first := &mediav1.ShadowSpeechSegment{
-		SegmentId: "first", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 0, CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	runtime.handleShadowObservation(
-		speechShadowObservation(0, true, first, 1, []*mediav1.ShadowSpeechSegment{first}).GetShadowObservation(),
-	)
-	waitForActorEvents(t, session.actor, 1)
-
-	if err := session.actor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADStart, StreamEpoch: 1}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for session.actor.Snapshot().MailboxDepth != 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if err := session.actor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADEnd, StreamEpoch: 1}); err != nil {
-		t.Fatal(err)
-	}
-
-	latest := &mediav1.ShadowSpeechSegment{
-		SegmentId: "latest", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 20, CaptureEndSample: 40, TextSha256: digest, Final: true,
-	}
-	runtime.handleShadowObservation(
-		speechShadowObservation(2, true, latest, 1, []*mediav1.ShadowSpeechSegment{first, latest}).GetShadowObservation(),
-	)
-	if runtime.lastShadowSequence != 0 || !runtime.resyncShadowSpeech {
-		t.Fatalf(
-			"rejected resync was marked delivered: sequence=%d resync=%v",
-			runtime.lastShadowSequence,
-			runtime.resyncShadowSpeech,
-		)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeResyncsShadowDomainsIndependentlyAfterLossyGap(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-			Input: &mediav1.ShadowObservation_ContextActivated{
-				ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-			},
-			AuthoritativeAccepted:       true,
-			AuthoritativeContextVersion: 7,
-		},
-	}}
-	// shadow_sequence=1 was lost. The output observation can only restore the
-	// Output domain; Speech must remain pending until its own complete state.
-	core.events <- outputShadowObservation(2, true, fence, 7)
-
-	digest := make([]byte, 32)
-	segment := &mediav1.ShadowSpeechSegment{
-		SegmentId: "latest", TaskEpoch: 1, Revision: 1,
-		CaptureStartSample: 0, CaptureEndSample: 20, TextSha256: digest, Final: true,
-	}
-	core.events <- speechShadowObservation(3, true, segment, 1, []*mediav1.ShadowSpeechSegment{segment})
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 4, ShadowSequence: 4,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_FLOOR_DECISION,
-			Input: &mediav1.ShadowObservation_FloorDecision{
-				FloorDecision: &mediav1.ShadowFloorDecision{
-					FloorState: mediav1.FloorState_FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
-					EffectKind: mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT,
-					TurnId:     1, GenerationId: 1, ToolEpoch: 2,
-				},
-			},
-			AuthoritativeAccepted: true, AuthoritativeReason: "speaking",
-		},
-	}}
-
-	snapshot := waitForActorEvents(t, session.actor, 5)
-	if snapshot.ShadowMismatchTotal != 0 || len(snapshot.SpeechTimeline.Segments) != 1 {
-		t.Fatalf("shadow domains did not recover independently: %+v", snapshot)
-	}
-	comparisons := snapshot.RecentComparisons
-	if len(comparisons) < 4 ||
-		comparisons[len(comparisons)-2].Scenario != "shadow_transport_discontinuity" ||
-		comparisons[len(comparisons)-1].Scenario != "shadow_transport_discontinuity" ||
-		comparisons[len(comparisons)-1].Kind != LiveEventAuthoritySnapshot {
-		t.Fatalf("each recovered domain must classify the transport gap: %+v", comparisons)
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeObservesContextAndOutputIntentWithoutForwardingEffect(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	forwarded := 0
-	runtime, err := NewVoiceCoreMediaRuntime(
-		context.Background(), session, core,
-		func(*mediav1.CoreToMedia) { forwarded++ }, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-			Input: &mediav1.ShadowObservation_ContextActivated{
-				ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-			},
-			AuthoritativeAccepted:       true,
-			AuthoritativeContextVersion: 7,
-		},
-	}}
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 2, ShadowSequence: 1,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-			Input: &mediav1.ShadowObservation_OutputIntent{OutputIntent: &mediav1.ShadowOutputIntent{
-				IntentId: "deep-1", TurnId: 1, GenerationId: 1, ToolEpoch: 2,
-				Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-				Priority: 50, CreatedAtMs: 1_000, ExpiresAtMs: 2_000,
-				FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-				ContextVersion:   7,
-			}},
-			ObservedAtMs: 1_500, AuthoritativeAccepted: true,
-			AuthoritativeContextVersion: 7,
-		},
-	}}
-
-	snapshot := waitForActorEvents(t, session.actor, 3)
-	if snapshot.OutputArbiter.ContextVersion != 7 || snapshot.OutputArbiter.Candidate != nil {
-		t.Fatalf("consumed output candidate leaked into live state: %+v", snapshot.OutputArbiter)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Candidate.OutputArbiter.Candidate == nil ||
-		comparison.Candidate.OutputArbiter.Candidate.IntentID != "deep-1" {
-		t.Fatalf("output admission did not reach atomic parity: %+v", comparison)
-	}
-	if forwarded != 0 {
-		t.Fatalf("internal shadow observations were forwarded to the client: %d", forwarded)
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeAppliesAuthoritativeOutputAfterState(t *testing.T) {
-	session := runtimeSession(t, 8)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	contextObservation := &mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-		Input: &mediav1.ShadowObservation_ContextActivated{
-			ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-		},
-		AuthoritativeAccepted: true, AuthoritativeContextVersion: 7,
-	}
-	runtime.handleShadowObservation(contextObservation)
-	waitForActorEvents(t, session.actor, 2)
-	createdAt := uint64(time.Now().UnixMilli())
-	expiresAt := createdAt + 60_000
-
-	outputObservation := func(sequence uint64, accepted bool, intentID string) *mediav1.ShadowObservation {
-		inputCreatedAt := createdAt
-		authoritativeReason := "accepted"
-		if !accepted {
-			inputCreatedAt = createdAt + 1
-			authoritativeReason = "invalid_created_at"
-		}
-		winner := &mediav1.ShadowOutputIntent{
-			IntentId: "deep-winner", TurnId: 1, GenerationId: 1, ToolEpoch: 2,
-			Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-			Priority: 50, CreatedAtMs: createdAt, ExpiresAtMs: expiresAt,
-			FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-			ContextVersion:   7,
-		}
-		return &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: sequence + 1, ShadowSequence: sequence,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-			Input: &mediav1.ShadowObservation_OutputIntent{OutputIntent: &mediav1.ShadowOutputIntent{
-				IntentId: intentID, TurnId: 1, GenerationId: 1, ToolEpoch: 2,
-				Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-				Priority: 50, CreatedAtMs: inputCreatedAt, ExpiresAtMs: expiresAt,
-				FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-				ContextVersion:   7,
-			}},
-			ObservedAtMs: createdAt, AuthoritativeAccepted: accepted,
-			AuthoritativeReason: authoritativeReason, AuthoritativeContextVersion: 7,
-			AuthoritativeOutputArbiter: &mediav1.ShadowOutputArbiterState{
-				ContextVersion: 7, Candidate: winner,
-				ActiveCandidates: []*mediav1.ShadowOutputIntent{winner}, ActiveCandidatesComplete: true,
-			},
-		}
-	}
-
-	runtime.handleShadowObservation(outputObservation(1, true, "deep-winner"))
-	accepted := waitForActorEvents(t, session.actor, 3)
-	if accepted.OutputArbiter.Candidate == nil || accepted.OutputArbiter.Candidate.IntentID != "deep-winner" {
-		t.Fatalf("authoritative winner was consumed: %+v", accepted.OutputArbiter)
-	}
-	if comparison := accepted.RecentComparisons[len(accepted.RecentComparisons)-1]; comparison.Mismatch {
-		t.Fatalf("accepted output after-state diverged: %+v", comparison)
-	}
-
-	runtime.handleShadowObservation(outputObservation(2, false, "rejected-input"))
-	rejected := waitForActorEvents(t, session.actor, 4)
-	if rejected.OutputArbiter.Candidate == nil || rejected.OutputArbiter.Candidate.IntentID != "deep-winner" {
-		t.Fatalf("rejected input replaced the authoritative winner: %+v", rejected.OutputArbiter)
-	}
-	if comparison := rejected.RecentComparisons[len(rejected.RecentComparisons)-1]; comparison.Mismatch {
-		t.Fatalf("rejected output after-state diverged: %+v", comparison)
-	}
-
-	consumedObservation := outputObservation(3, false, "deep-winner")
-	consumedObservation.GetOutputIntent().CreatedAtMs = createdAt
-	consumedObservation.AuthoritativeConsumed = true
-	consumedObservation.AuthoritativeReason = "completed"
-	consumedObservation.AuthoritativeOutputArbiter = &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, ActiveCandidatesComplete: true,
-	}
-	runtime.handleShadowObservation(consumedObservation)
-	consumed := waitForActorEvents(t, session.actor, 5)
-	if consumed.OutputArbiter.Candidate != nil || len(consumed.OutputArbiter.Candidates) != 0 {
-		t.Fatalf("consumed output candidate remained active: %+v", consumed.OutputArbiter)
-	}
-	comparison := consumed.RecentComparisons[len(consumed.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "output_intent_consumed" ||
-		comparison.CandidateReason != "consume_output_intent" {
-		t.Fatalf("consumed output after-state diverged: %+v", comparison)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeRejectsInvalidConsumedOutputObservations(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	if err := session.AdvanceGeneration(Fence{SessionID: "s", TurnID: 1, GenerationID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	baseline := waitForActorEvents(t, session.actor, 1).ProcessedEvents
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := &mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-		Input: &mediav1.ShadowObservation_OutputIntent{OutputIntent: &mediav1.ShadowOutputIntent{
-			IntentId: "conversation", TurnId: 1, GenerationId: 1,
-			Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_CONVERSATION_REPLY,
-			Priority: 50, CreatedAtMs: 1_000, ExpiresAtMs: 2_000,
-			FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-			ContextVersion:   7,
-		}},
-		ObservedAtMs: 1_500, AuthoritativeConsumed: true,
-		AuthoritativeReason: "completed", AuthoritativeContextVersion: 7,
-		AuthoritativeOutputArbiter: &mediav1.ShadowOutputArbiterState{
-			ContextVersion: 7, ActiveCandidatesComplete: true,
-		},
-	}
-	tests := map[string]func(*mediav1.ShadowObservation){
-		"accepted and consumed": func(observation *mediav1.ShadowObservation) {
-			observation.AuthoritativeAccepted = true
-		},
-		"missing after-state": func(observation *mediav1.ShadowObservation) {
-			observation.AuthoritativeOutputArbiter = nil
-		},
-		"incomplete after-state": func(observation *mediav1.ShadowObservation) {
-			observation.AuthoritativeOutputArbiter.ActiveCandidatesComplete = false
-		},
-		"invalid input": func(observation *mediav1.ShadowObservation) {
-			observation.GetOutputIntent().Kind = mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_UNSPECIFIED
-		},
-		"missing observation time": func(observation *mediav1.ShadowObservation) {
-			observation.ObservedAtMs = 0
-		},
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			observation := proto.Clone(base).(*mediav1.ShadowObservation)
-			mutate(observation)
-			runtime.handleShadowObservation(observation)
-			if runtime.hasShadowSequence {
-				t.Fatal("invalid consumed observation advanced the shadow sequence")
-			}
-		})
-	}
-	time.Sleep(10 * time.Millisecond)
-	if processed := session.actor.Snapshot().ProcessedEvents; processed != baseline {
-		t.Fatalf("invalid consumed observations reached the actor: processed=%d, want %d", processed, baseline)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeResyncRestoresCompleteSameDomainFallback(t *testing.T) {
-	session := runtimeSession(t, 8)
-	defer session.Stop()
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	runtime.handleShadowObservation(&mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-		Input: &mediav1.ShadowObservation_ContextActivated{
-			ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-		},
-		AuthoritativeAccepted: true, AuthoritativeContextVersion: 7,
-	})
-	waitForActorEvents(t, session.actor, 2)
-	now := uint64(time.Now().UnixMilli())
-	fallback := &mediav1.ShadowOutputIntent{
-		IntentId: "fallback", TurnId: 1, GenerationId: 1, ToolEpoch: 2,
-		Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-		Priority: 1, CreatedAtMs: now - 1_000, ExpiresAtMs: now + 60_000,
-		FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-		ContextVersion:   7,
-	}
-	winner := proto.Clone(fallback).(*mediav1.ShadowOutputIntent)
-	winner.IntentId = "winner"
-	winner.Priority = 100
-	winner.CreatedAtMs++
-	winner.ExpiresAtMs = now + 50
-	runtime.handleShadowObservation(&mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 3, ShadowSequence: 2,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind:         mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-		Input:        &mediav1.ShadowObservation_OutputIntent{OutputIntent: winner},
-		ObservedAtMs: now, AuthoritativeAccepted: true, AuthoritativeReason: "accepted",
-		AuthoritativeContextVersion: 7,
-		AuthoritativeOutputArbiter: &mediav1.ShadowOutputArbiterState{
-			ContextVersion: 7, Candidate: winner,
-			ActiveCandidates: []*mediav1.ShadowOutputIntent{winner, fallback}, ActiveCandidatesComplete: true,
-		},
-	})
-	snapshot := waitForActorEvents(t, session.actor, 3)
-	if snapshot.OutputArbiter.Candidate == nil || snapshot.OutputArbiter.Candidate.IntentID != "winner" ||
-		len(snapshot.OutputArbiter.Candidates) != 2 {
-		t.Fatalf("complete output after-state was not restored: %+v", snapshot.OutputArbiter)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "shadow_transport_discontinuity" {
-		t.Fatalf("transport resync was counted as a mismatch: %+v", comparison)
-	}
-	time.Sleep(70 * time.Millisecond)
-	snapshot = session.actor.Snapshot()
-	if snapshot.OutputArbiter.Candidate == nil || snapshot.OutputArbiter.Candidate.IntentID != "fallback" {
-		t.Fatalf("resynced same-domain fallback was lost: %+v", snapshot.OutputArbiter)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeOutputResyncWaitsForCompleteAfterState(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.handleShadowObservation(&mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-		Input: &mediav1.ShadowObservation_ContextActivated{
-			ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-		},
-		AuthoritativeAccepted: true, AuthoritativeContextVersion: 7,
-	})
-	waitForActorEvents(t, session.actor, 2)
-
-	incomplete := outputShadowObservation(2, true, fence, 7).GetShadowObservation()
-	incomplete.AuthoritativeOutputArbiter.ActiveCandidatesComplete = false
-	incomplete.AuthoritativeOutputArbiter.ActiveCandidates = nil
-	runtime.handleShadowObservation(incomplete)
-	time.Sleep(10 * time.Millisecond)
-	if processed := session.actor.Snapshot().ProcessedEvents; processed != 2 ||
-		runtime.lastShadowSequence != 0 || !runtime.resyncShadowOutput {
-		t.Fatalf(
-			"incomplete output after-state resolved the gap: processed=%d sequence=%d resync=%v",
-			processed, runtime.lastShadowSequence, runtime.resyncShadowOutput,
-		)
-	}
-
-	runtime.handleShadowObservation(outputShadowObservation(3, true, fence, 7).GetShadowObservation())
-	snapshot := waitForActorEvents(t, session.actor, 3)
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "shadow_transport_discontinuity" ||
-		snapshot.OutputArbiter.Candidate == nil || snapshot.OutputArbiter.Candidate.IntentID != "deep-gap" ||
-		runtime.resyncShadowOutput {
-		t.Fatalf("complete output after-state did not resolve the gap: %+v", snapshot)
-	}
-}
-
-func TestShadowOutputIntentProtoPreservesFastAcknowledgementPriorityDomain(t *testing.T) {
-	fast, ok := shadowOutputIntentFromProto("s", &mediav1.ShadowOutputIntent{
-		IntentId: "fast",
-		Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
-	})
-	if !ok {
-		t.Fatal("fast acknowledgement was rejected")
-	}
-	fastRank, ok := shadowOutputDomainRank(&fast)
-	if !ok || fastRank != 4 {
-		t.Fatalf("fast acknowledgement rank=%d, ok=%v; want rank 4", fastRank, ok)
-	}
-	backchannel, ok := shadowOutputIntentFromProto("s", &mediav1.ShadowOutputIntent{
-		IntentId: "backchannel",
-		Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_BACKCHANNEL,
-	})
-	if !ok {
-		t.Fatal("backchannel was rejected")
-	}
-	backchannelRank, ok := shadowOutputDomainRank(&backchannel)
-	if !ok || backchannelRank != 3 {
-		t.Fatalf("backchannel rank=%d, ok=%v; want rank 3", backchannelRank, ok)
-	}
-	conversation, ok := shadowOutputIntentFromProto("s", &mediav1.ShadowOutputIntent{
-		IntentId: "conversation",
-		Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_CONVERSATION_REPLY,
-	})
-	if !ok || conversation.Kind != ShadowOutputConversation {
-		t.Fatalf("conversation reply was not mapped to conversation: %+v, ok=%v", conversation, ok)
-	}
-	conversationRank, ok := shadowOutputDomainRank(&conversation)
-	if !ok || conversationRank != 3 {
-		t.Fatalf("conversation reply rank=%d, ok=%v; want rank 3", conversationRank, ok)
-	}
-}
-
-func TestShadowOutputArbiterProtoValidatesCompleteCandidateSet(t *testing.T) {
-	winner := &mediav1.ShadowOutputIntent{
-		IntentId: "winner", TurnId: 1, GenerationId: 2, ToolEpoch: 3,
-		Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-		Priority: 100, CreatedAtMs: 1_000, ExpiresAtMs: 2_000,
-		FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-		ContextVersion:   7,
-	}
-	fallback := proto.Clone(winner).(*mediav1.ShadowOutputIntent)
-	fallback.IntentId = "fallback"
-	fallback.Priority = 1
-	valid := &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, Candidate: winner,
-		ActiveCandidates: []*mediav1.ShadowOutputIntent{winner, fallback}, ActiveCandidatesComplete: true,
-	}
-	state, ok := shadowOutputArbiterFromProto("s", valid)
-	if !ok || !state.CandidatesComplete || len(state.Candidates) != 2 ||
-		state.Candidate == nil || state.Candidate.IntentID != "winner" {
-		t.Fatalf("valid complete candidate set was rejected: %+v", state)
-	}
-	if !shadowOutputArbiterActiveAt(state, 1_500) || shadowOutputArbiterActiveAt(state, 999) ||
-		shadowOutputArbiterActiveAt(state, 2_000) {
-		t.Fatal("complete candidate set ignored its observation-time validity")
-	}
-
-	noncanonical := &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, Candidate: winner,
-		ActiveCandidates: []*mediav1.ShadowOutputIntent{fallback, winner}, ActiveCandidatesComplete: true,
-	}
-	if _, ok := shadowOutputArbiterFromProto("s", noncanonical); ok {
-		t.Fatal("non-canonical candidate order was accepted")
-	}
-	legacyWithList := &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, Candidate: winner,
-		ActiveCandidates: []*mediav1.ShadowOutputIntent{winner},
-	}
-	if _, ok := shadowOutputArbiterFromProto("s", legacyWithList); ok {
-		t.Fatal("incomplete state with an active list was accepted")
-	}
-	overCapacity := &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, ActiveCandidatesComplete: true,
-	}
-	for priority := maxShadowOutputPerDomain; priority >= 0; priority-- {
-		candidate := proto.Clone(winner).(*mediav1.ShadowOutputIntent)
-		candidate.IntentId = fmt.Sprintf("candidate-%d", priority)
-		candidate.Priority = uint32(priority)
-		overCapacity.ActiveCandidates = append(overCapacity.ActiveCandidates, candidate)
-	}
-	overCapacity.Candidate = overCapacity.ActiveCandidates[0]
-	if _, ok := shadowOutputArbiterFromProto("s", overCapacity); ok {
-		t.Fatal("over-capacity candidate domain was accepted")
-	}
-	empty, ok := shadowOutputArbiterFromProto("s", &mediav1.ShadowOutputArbiterState{
-		ContextVersion: 7, ActiveCandidatesComplete: true,
-	})
-	if !ok || !empty.CandidatesComplete || empty.Candidate != nil || len(empty.Candidates) != 0 {
-		t.Fatalf("complete empty candidate set was rejected: %+v", empty)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeRecordsMalformedRejectedOutputAfterState(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	if err := session.AdvanceGeneration(Fence{SessionID: "s", TurnID: 1, GenerationID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.handleShadowObservation(&mediav1.ShadowObservation{
-		Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 2,
-		ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-		Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-		Input: &mediav1.ShadowObservation_OutputIntent{OutputIntent: &mediav1.ShadowOutputIntent{
-			Kind: mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_UNSPECIFIED,
-		}},
-		AuthoritativeAccepted: false, AuthoritativeReason: "missing_intent_id",
-		ObservedAtMs: 1, AuthoritativeContextVersion: 7,
-		AuthoritativeOutputArbiter: &mediav1.ShadowOutputArbiterState{
-			ContextVersion: 7, ActiveCandidatesComplete: true,
-		},
-	})
-	snapshot := waitForActorEvents(t, session.actor, 2)
-	if snapshot.OutputArbiter.ContextVersion != 7 || snapshot.OutputArbiter.Candidate != nil {
-		t.Fatalf("malformed rejected output changed candidate state: %+v", snapshot.OutputArbiter)
-	}
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.AuthoritativeReason != "missing_intent_id" ||
-		comparison.CandidateReason != "drop_invalid_output_intent" {
-		t.Fatalf("malformed rejected output was not recorded safely: %+v", comparison)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeObservesTypedFloorDecisionWithoutExecutingEffect(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	forwarded := 0
-	runtime, err := NewVoiceCoreMediaRuntime(
-		context.Background(), session, core,
-		func(*mediav1.CoreToMedia) { forwarded++ }, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_FLOOR_DECISION,
-			Input: &mediav1.ShadowObservation_FloorDecision{
-				FloorDecision: &mediav1.ShadowFloorDecision{
-					FloorState: mediav1.FloorState_FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
-					EffectKind: mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT,
-					TurnId:     1, GenerationId: 1, ToolEpoch: 2,
-				},
-			},
-			AuthoritativeAccepted: true, AuthoritativeReason: "speaking",
-		},
-	}}
-
-	snapshot := waitForActorEvents(t, session.actor, 2)
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "floor_decision" ||
-		comparison.Candidate.Floor != ShadowFloorAssistant ||
-		comparison.Candidate.LastDecision != "enqueue_output_intent" {
-		t.Fatalf("typed floor parity was not recorded: %+v", comparison)
-	}
-	if forwarded != 0 {
-		t.Fatalf("typed shadow evidence reached the client effect path: %d", forwarded)
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVoiceCoreMediaRuntimeRecordsRejectedOutputIntentReasons(t *testing.T) {
-	session := runtimeSession(t, 4)
-	defer session.Stop()
-	fence := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, ToolEpoch: 2}
-	if err := session.AdvanceGeneration(fence); err != nil {
-		t.Fatal(err)
-	}
-	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
-	runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.Start()
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 1, ShadowSequence: 0,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
-			Input: &mediav1.ShadowObservation_ContextActivated{
-				ContextActivated: &mediav1.ShadowContextActivated{ContextVersion: 7},
-			},
-			AuthoritativeAccepted:       true,
-			AuthoritativeReason:         "context_activated",
-			AuthoritativeContextVersion: 7,
-		},
-	}}
-	core.events <- &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: 2, ShadowSequence: 1,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind: mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-			Input: &mediav1.ShadowObservation_OutputIntent{OutputIntent: &mediav1.ShadowOutputIntent{
-				IntentId: "future-deep", TurnId: 1, GenerationId: 1, ToolEpoch: 2,
-				Kind:     mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-				Priority: 50, CreatedAtMs: 2_000, ExpiresAtMs: 3_000,
-				FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-				ContextVersion:   7,
-			}},
-			ObservedAtMs: 1_500, AuthoritativeAccepted: false,
-			AuthoritativeReason: "invalid_created_at", AuthoritativeContextVersion: 7,
-		},
-	}}
-
-	snapshot := waitForActorEvents(t, session.actor, 3)
-	comparison := snapshot.RecentComparisons[len(snapshot.RecentComparisons)-1]
-	if comparison.Mismatch || comparison.Scenario != "output_intent_rejected" ||
-		comparison.AuthoritativeReason != "invalid_created_at" ||
-		comparison.CandidateReason != "drop_invalid_output_intent" {
-		t.Fatalf("rejected output intent parity was not analyzable: %+v", comparison)
-	}
-	_ = runtime.Close()
-	if err := runtime.Wait(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func speechShadowObservation(
-	shadowSequence uint64,
-	accepted bool,
-	segment *mediav1.ShadowSpeechSegment,
-	latestTaskEpoch uint64,
-	authoritative []*mediav1.ShadowSpeechSegment,
-) *mediav1.CoreToMedia {
-	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: shadowSequence + 1, ShadowSequence: shadowSequence,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind:                  mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT,
-			Input:                 &mediav1.ShadowObservation_SpeechSegment{SpeechSegment: segment},
-			AuthoritativeAccepted: accepted,
-			AuthoritativeTimeline: &mediav1.ShadowSpeechTimelineState{
-				LatestTaskEpoch: latestTaskEpoch, Segments: authoritative,
-			},
-		},
-	}}
-}
-
-func outputShadowObservation(
-	shadowSequence uint64,
-	accepted bool,
-	fence Fence,
-	contextVersion uint64,
-) *mediav1.CoreToMedia {
-	now := uint64(time.Now().UnixMilli())
-	intent := &mediav1.ShadowOutputIntent{
-		IntentId: "deep-gap", TurnId: fence.TurnID, GenerationId: fence.GenerationID,
-		ToolEpoch: fence.ToolEpoch, Kind: mediav1.OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT,
-		Priority: 50, CreatedAtMs: now - 1_000, ExpiresAtMs: now + 60_000,
-		FloorRequirement: mediav1.FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
-		ContextVersion:   contextVersion,
-	}
-	return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
-		ShadowObservation: &mediav1.ShadowObservation{
-			Identity: runtimeIdentity(), Sequence: shadowSequence + 1, ShadowSequence: shadowSequence,
-			ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
-			Kind:         mediav1.ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
-			Input:        &mediav1.ShadowObservation_OutputIntent{OutputIntent: intent},
-			ObservedAtMs: now, AuthoritativeAccepted: accepted,
-			AuthoritativeContextVersion: contextVersion,
-			AuthoritativeOutputArbiter: &mediav1.ShadowOutputArbiterState{
-				ContextVersion: contextVersion, Candidate: intent,
-				ActiveCandidates: []*mediav1.ShadowOutputIntent{intent}, ActiveCandidatesComplete: true,
-			},
-		},
-	}}
 }
 
 func TestVoiceCoreMediaRuntimeForwardsAndRetiresBoundedUplink(t *testing.T) {
@@ -1760,7 +860,7 @@ func TestVoiceCoreMediaRuntimeExecutesOnlyCurrentPythonRealtimeEffects(t *testin
 		t.Fatal(err)
 	}
 	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
+	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
 	forwarded := make(chan *mediav1.CoreToMedia, 4)
 	runtime, err := NewVoiceCoreMediaRuntime(
 		context.Background(), session, core,
@@ -1851,7 +951,7 @@ func TestVoiceCoreMediaRuntimeExecutesOnlyCurrentTypedFloorEffects(t *testing.T)
 		t.Fatal(err)
 	}
 	core := newFakeCoreStream()
-	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
+	core.authority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
 	forwarded := make(chan *mediav1.CoreToMedia, 4)
 	runtime, err := NewVoiceCoreMediaRuntime(
 		context.Background(), session, core,
@@ -1874,7 +974,7 @@ func TestVoiceCoreMediaRuntimeExecutesOnlyCurrentTypedFloorEffects(t *testing.T)
 	if err := runtime.handleEvent(effect(fence, mediav1.FloorState_FLOOR_STATE_USER_HOLDS_FLOOR, 1)); err != nil {
 		t.Fatalf("current floor effect rejected: %v", err)
 	}
-	if session.floorState != ShadowFloorUser || session.floorEpoch != 1 {
+	if session.floorState != FloorUser || session.floorEpoch != 1 {
 		t.Fatalf("typed floor was not installed: state=%q epoch=%d", session.floorState, session.floorEpoch)
 	}
 	select {
@@ -1914,7 +1014,7 @@ func TestVoiceCoreMediaRuntimeExecutesOnlyCurrentTypedFloorEffects(t *testing.T)
 	if err := runtime.handleEvent(effect(cancelled, mediav1.FloorState_FLOOR_STATE_USER_HOLDS_FLOOR, 2)); err != nil {
 		t.Fatalf("current cancelled floor effect rejected: %v", err)
 	}
-	if session.floorState != ShadowFloorUser || session.floorEpoch != 2 {
+	if session.floorState != FloorUser || session.floorEpoch != 2 {
 		t.Fatalf("cancelled fence did not retain current floor: state=%q epoch=%d", session.floorState, session.floorEpoch)
 	}
 	<-forwarded

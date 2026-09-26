@@ -2,72 +2,6 @@ from __future__ import annotations
 
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
-from services.agent.src.voice_core.interaction_authority import (
-    InteractionAuthority,
-    InteractionAuthorityState,
-    InteractionRuntime,
-    can_execute_realtime_effect,
-    interaction_authority_from_proto,
-    interaction_authority_to_proto,
-)
-
-
-def test_unspecified_and_future_authority_values_fail_closed_to_python() -> None:
-    assert interaction_authority_from_proto(0) is InteractionAuthority.PYTHON_AUTHORITATIVE
-    assert interaction_authority_from_proto(99) is InteractionAuthority.PYTHON_AUTHORITATIVE
-    assert (
-        interaction_authority_to_proto(InteractionAuthority.PYTHON_AUTHORITATIVE)
-        == media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
-    )
-
-
-def test_authority_requires_shadow_parity_and_always_supports_rollback() -> None:
-    python = InteractionAuthorityState()
-    shadow = python.transition(InteractionAuthority.GO_SHADOW)
-
-    try:
-        python.transition(InteractionAuthority.GO_AUTHORITATIVE)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("direct Python-to-Go promotion bypassed shadow")
-
-    try:
-        shadow.transition(InteractionAuthority.GO_AUTHORITATIVE)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Go promotion bypassed parity")
-
-    authoritative = shadow.transition(
-        InteractionAuthority.GO_AUTHORITATIVE,
-        shadow_parity_met=True,
-    )
-    assert authoritative.transition(InteractionAuthority.GO_SHADOW) == shadow
-    assert authoritative.transition(InteractionAuthority.PYTHON_AUTHORITATIVE) == python
-
-
-def test_go_shadow_can_compute_but_cannot_execute_effects() -> None:
-    assert can_execute_realtime_effect(
-        InteractionAuthority.GO_SHADOW,
-        producer=InteractionRuntime.PYTHON,
-        candidate_only=False,
-    )
-    assert not can_execute_realtime_effect(
-        InteractionAuthority.GO_SHADOW,
-        producer=InteractionRuntime.GO,
-        candidate_only=True,
-    )
-    assert not can_execute_realtime_effect(
-        InteractionAuthority.GO_SHADOW,
-        producer=InteractionRuntime.GO,
-        candidate_only=False,
-    )
-    assert can_execute_realtime_effect(
-        InteractionAuthority.GO_AUTHORITATIVE,
-        producer=InteractionRuntime.GO,
-        candidate_only=False,
-    )
 
 
 def test_continuous_interaction_contract_round_trip_and_wire_vector() -> None:
@@ -106,10 +40,6 @@ def test_continuous_interaction_contract_round_trip_and_wire_vector() -> None:
 def test_session_authority_fields_are_additive_and_default_safe() -> None:
     old_hello = media_pb2.SessionHello(identity=media_pb2.SessionIdentity(session_id="old"))
     assert old_hello.interaction_authority == media_pb2.INTERACTION_AUTHORITY_UNSPECIFIED
-    assert (
-        interaction_authority_from_proto(old_hello.interaction_authority)
-        is InteractionAuthority.PYTHON_AUTHORITATIVE
-    )
 
     accepted = media_pb2.SessionAccepted(
         identity=media_pb2.SessionIdentity(session_id="new"),

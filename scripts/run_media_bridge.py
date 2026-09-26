@@ -141,7 +141,6 @@ async def run() -> None:
     server = MediaBridgeGrpcServer(
         max_pending_audio_frames=settings.media_bridge_max_pending_audio_frames,
         max_pending_messages=settings.media_bridge_max_pending_messages,
-        allow_go_shadow=settings.media_bridge_go_shadow_enabled,
     )
     session_factory = _load_session_factory(settings)
     reply_delivery_reporter: ReplyDeliveryReporter | None = None

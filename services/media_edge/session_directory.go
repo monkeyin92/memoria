@@ -25,23 +25,6 @@ func (d *Directory) Put(session *Session) error {
 	return nil
 }
 
-// ReplaceNewer atomically installs a new transport epoch and returns the old
-// session for cleanup. Equal/older epochs are rejected so a retried WHIP offer
-// cannot displace an already-connected peer.
-func (d *Directory) ReplaceNewer(session *Session) (*Session, error) {
-	if session == nil || session.ID == "" {
-		return nil, fmt.Errorf("session is required")
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	old := d.sessions[session.ID]
-	if old != nil && session.StreamEpoch <= old.Epoch() {
-		return nil, fmt.Errorf("stream epoch must advance")
-	}
-	d.sessions[session.ID] = session
-	return old, nil
-}
-
 func (d *Directory) Get(id string) (*Session, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

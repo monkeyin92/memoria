@@ -484,3 +484,19 @@ func (s *DeviceWSServer) HandleBridgeError(request OpenSessionRequest, bridgeErr
 	connection.closeWithCode(1011, "voice core stream failed")
 	connection.close()
 }
+
+// realtimeEffectGain extracts the validated [0, 1] duck gain carried by a
+// Voice Core DUCK_OUTPUT realtime effect.
+func realtimeEffectGain(effect *mediav1.RealtimeEffect) (float64, bool) {
+	if effect == nil || effect.GetEffectKind() != mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_DUCK_OUTPUT {
+		return 0, false
+	}
+	var payload struct {
+		Gain *float64 `json:"gain"`
+	}
+	if err := json.Unmarshal(effect.GetPayload(), &payload); err != nil || payload.Gain == nil ||
+		*payload.Gain < 0 || *payload.Gain > 1 {
+		return 0, false
+	}
+	return *payload.Gain, true
+}

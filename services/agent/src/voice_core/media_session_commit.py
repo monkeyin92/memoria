@@ -803,7 +803,6 @@ class MediaSessionCommitMixin:
         self,
         context: _MediaVoiceSession,
         *,
-        session_id: str,
         stream_epoch: int,
         start_sample: int,
         end_sample: int,
@@ -821,12 +820,6 @@ class MediaSessionCommitMixin:
                 end_sample=retire_end,
             )
         context.asr.mark_committed(retire_end)
-        await self.bridge.emit_speech_commit(
-            session_id,
-            retire_end,
-            context.runtime.speech_timeline,
-            latest_task_epoch=context.asr.latest_authoritative_task_epoch,
-        )
 
     async def _reproject_timeline_range(
         self,
@@ -877,7 +870,6 @@ class MediaSessionCommitMixin:
             context.runtime.on_user_voice_stopped()
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -914,7 +906,6 @@ class MediaSessionCommitMixin:
         if not text:
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -936,7 +927,6 @@ class MediaSessionCommitMixin:
             )
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -1072,7 +1062,6 @@ class MediaSessionCommitMixin:
         if interaction.backchannel:
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -1084,7 +1073,6 @@ class MediaSessionCommitMixin:
         if context.runtime.assistant_speaking and not interaction.cancel_generation:
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -1103,7 +1091,6 @@ class MediaSessionCommitMixin:
         if not accepted:
             await self._commit_media_input_range(
                 context,
-                session_id=session_id,
                 stream_epoch=stream_epoch,
                 start_sample=start_sample,
                 end_sample=end_sample,
@@ -1138,7 +1125,6 @@ class MediaSessionCommitMixin:
                 if self._stream_epoch_is_current(context, stream_epoch):
                     await self._commit_media_input_range(
                         context,
-                        session_id=session_id,
                         stream_epoch=stream_epoch,
                         start_sample=start_sample,
                         end_sample=end_sample,
@@ -1165,7 +1151,6 @@ class MediaSessionCommitMixin:
                             recovered,
                             previous_phase,
                         )
-                        await self.bridge.emit_context_activated(session_id, context_version)
                         if self._stream_epoch_is_current(context, stream_epoch):
                             task_epoch, _ = self._event_versions(context, prepared_fence)
                             await self.bridge.emit_event(
@@ -1208,7 +1193,6 @@ class MediaSessionCommitMixin:
             return None, "stale_stream_epoch"
         await self._commit_media_input_range(
             context,
-            session_id=session_id,
             stream_epoch=stream_epoch,
             start_sample=start_sample,
             end_sample=end_sample,
@@ -1271,13 +1255,6 @@ class MediaSessionCommitMixin:
             committed,
             previous_phase,
         )
-        if not self._stream_epoch_is_current(context, stream_epoch):
-            await context.runtime.on_assistant_reply_aborted(
-                fence,
-                cause="stale_media_stream_epoch",
-            )
-            return None, "stale_stream_epoch"
-        await self.bridge.emit_context_activated(session_id, context_version)
         if not self._stream_epoch_is_current(context, stream_epoch):
             await context.runtime.on_assistant_reply_aborted(
                 fence,

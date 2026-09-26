@@ -40,10 +40,6 @@ func (s *Server) handler(public, internal bool) http.Handler {
 		mux.HandleFunc("/v1/media/sessions", s.sessions)
 		mux.HandleFunc("/v1/media/sessions/", s.session)
 	}
-	if public && s.WHIPHandler != nil {
-		mux.Handle("/whip", s.WHIPHandler)
-		mux.Handle("/whip/", s.WHIPHandler)
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.Requests.Add(1)
 		w.Header().Set("Cache-Control", "no-store")

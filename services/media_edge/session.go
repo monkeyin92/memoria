@@ -26,29 +26,33 @@ const (
 )
 
 type SessionStats struct {
-	State                     SessionState          `json:"state"`
-	StreamEpoch               uint64                `json:"stream_epoch"`
-	LastUplinkSequence        uint64                `json:"last_uplink_sequence"`
-	LastDownlinkSeq           uint64                `json:"last_downlink_sequence"`
-	UplinkFrames              uint64                `json:"uplink_frames"`
-	DownlinkFrames            uint64                `json:"downlink_frames"`
-	StaleFrames               uint64                `json:"stale_frames"`
-	OverflowFrames            uint64                `json:"overflow_frames"`
-	ActorMailboxDepth         int                   `json:"actor_mailbox_depth"`
-	ActorMailboxAgeMS         float64               `json:"actor_mailbox_age_ms"`
-	ActorDroppedEvents        uint64                `json:"actor_dropped_events"`
-	ActorDeadlineMisses       uint64                `json:"audio_frame_deadline_miss_total"`
-	ActorAudioFrames          uint64                `json:"actor_audio_frames"`
-	IngressQueueAgeMS         float64               `json:"ingress_queue_age_ms"`
-	EgressQueueAgeMS          float64               `json:"egress_queue_age_ms"`
-	FloorDecisionLatencyMS    float64               `json:"floor_decision_latency_ms"`
-	GenerationCancelLatencyMS float64               `json:"generation_cancel_latency_ms"`
-	PlayoutBufferMS           float64               `json:"playout_buffer_ms"`
-	PlayoutUnderruns          uint64                `json:"playout_underrun_total"`
-	SessionDurationMS         float64               `json:"session_duration_ms"`
-	ShadowMismatches          uint64                `json:"shadow_decision_mismatch_total"`
-	ShadowMismatchCounts      []ShadowMismatchCount `json:"shadow_decision_mismatch_counts,omitempty"`
+	State                     SessionState `json:"state"`
+	StreamEpoch               uint64       `json:"stream_epoch"`
+	LastUplinkSequence        uint64       `json:"last_uplink_sequence"`
+	LastDownlinkSeq           uint64       `json:"last_downlink_sequence"`
+	UplinkFrames              uint64       `json:"uplink_frames"`
+	DownlinkFrames            uint64       `json:"downlink_frames"`
+	StaleFrames               uint64       `json:"stale_frames"`
+	OverflowFrames            uint64       `json:"overflow_frames"`
+	IngressQueueAgeMS         float64      `json:"ingress_queue_age_ms"`
+	EgressQueueAgeMS          float64      `json:"egress_queue_age_ms"`
+	GenerationCancelLatencyMS float64      `json:"generation_cancel_latency_ms"`
+	PlayoutBufferMS           float64      `json:"playout_buffer_ms"`
+	PlayoutUnderruns          uint64       `json:"playout_underrun_total"`
+	SessionDurationMS         float64      `json:"session_duration_ms"`
 }
+
+// FloorState is the Python-authoritative conversational floor installed by
+// Voice Core floor effects.
+type FloorState string
+
+const (
+	FloorSilence   FloorState = "silence"
+	FloorUser      FloorState = "user_holds_floor"
+	FloorAssistant FloorState = "assistant_holds_floor"
+	FloorOverlap   FloorState = "overlap"
+	FloorUncertain FloorState = "uncertain"
+)
 
 type Session struct {
 	mu sync.Mutex
@@ -67,7 +71,7 @@ type Session struct {
 	AudioMode                  string
 	Generation                 Fence
 	generationActive           bool
-	floorState                 ShadowFloorState
+	floorState                 FloorState
 	floorEpoch                 uint64
 	State                      SessionState
 	MaxPendingFrames           int
@@ -96,8 +100,6 @@ type Session struct {
 	stoppedAt                  time.Time
 	downlinkDeliveryCtx        context.Context
 	cancelDownlinkDelivery     context.CancelFunc
-	actor                      *LiveSessionActor
-	retiredActorStats          LiveSessionSnapshot
 }
 
 // Epoch returns the authoritative stream epoch without exposing an unlocked
@@ -162,7 +164,7 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 		AudioMode:              request.AudioMode,
 		Generation:             Fence{SessionID: request.SessionID},
 		generationActive:       true,
-		floorState:             ShadowFloorSilence,
+		floorState:             FloorSilence,
 		State:                  SessionActive,
 		MaxPendingFrames:       maxPendingFrames,
 		uplink:                 newAudioRing(maxPendingFrames),
@@ -172,7 +174,6 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 		cancelDownlinkDelivery: cancelDelivery,
 		createdAt:              time.Now(),
 	}
-	session.actor = NewLiveSessionActor(session.ID, session.StreamEpoch)
 	return session, nil
 }
 
@@ -231,11 +232,6 @@ func (s *Session) AcceptUplink(frame AudioFrame) error {
 		return fmt.Errorf("uplink queue is full")
 	}
 	s.uplinkFrames++
-	s.mirrorLocked(LiveSessionEvent{
-		Kind:        LiveEventAudioUplink,
-		StreamEpoch: s.StreamEpoch,
-		Audio:       true,
-	})
 	return nil
 }
 

@@ -3,7 +3,6 @@ package mediaedge
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 	"sync/atomic"
 )
@@ -25,14 +24,13 @@ type Server struct {
 	BridgeFactory         BridgeRuntimeFactory
 	DownlinkSenderFactory DownlinkSenderFactory
 	// DownlinkReadyProbe is supplied by the same media terminator as the
-	// sender factory. A factory function alone cannot prove that its RTP/WebRTC
+	// sender factory. A factory function alone cannot prove that its
 	// transport can accept a new session.
 	DownlinkReadyProbe func() bool
 	ReadyProbe         func() bool
 	// BridgeMetricsWriter contributes process-level Voice Core channel
 	// supervision metrics to the private /metrics endpoint.
 	BridgeMetricsWriter func(io.Writer)
-	WHIPHandler         http.Handler
 	// DeviceWSS serves the hardware device endpoint /v1/device/media when
 	// configured. It owns its own ticket replay store and device leases.
 	DeviceWSS        *DeviceWSServer
@@ -52,9 +50,6 @@ type Server struct {
 	Draining                 atomic.Bool
 	Requests                 atomic.Uint64
 	RejectedFrames           atomic.Uint64
-	OpusFECFrames            atomic.Uint64
-	OpusPLCFrames            atomic.Uint64
-	OpusSilenceFrames        atomic.Uint64
 	bridgeMu                 sync.Mutex
 	openMu                   sync.Mutex
 	openSemaphore            chan struct{}
@@ -140,24 +135,6 @@ func (s *Server) installBridge(sessionID string, runtime *VoiceCoreMediaRuntime)
 	runtime.Start()
 }
 
-func (s *Server) replaceBridge(
-	sessionID string,
-	runtime *VoiceCoreMediaRuntime,
-) *VoiceCoreMediaRuntime {
-	s.bridgeMu.Lock()
-	old := s.bridges[sessionID]
-	if runtime == nil {
-		delete(s.bridges, sessionID)
-	} else {
-		s.bridges[sessionID] = runtime
-	}
-	s.bridgeMu.Unlock()
-	if runtime != nil {
-		runtime.Start()
-	}
-	return old
-}
-
 func (s *Server) removeBridge(sessionID string) *VoiceCoreMediaRuntime {
 	s.bridgeMu.Lock()
 	runtime := s.bridges[sessionID]
@@ -197,43 +174,6 @@ func (s *Server) CloseSession(sessionID string) bool {
 		}
 		return true
 	}
-}
-
-// CloseWebRTCSession prevents a delayed close from an old peer from deleting
-// the replacement epoch that now owns the same session id.
-func (s *Server) CloseWebRTCSession(request OpenSessionRequest) bool {
-	current, ok := s.Directory.Get(request.SessionID)
-	if !ok {
-		return false
-	}
-	current.lifecycleMu.Lock()
-	s.openMu.Lock()
-	latest, ok := s.Directory.Get(request.SessionID)
-	if !ok || latest != current {
-		s.openMu.Unlock()
-		current.lifecycleMu.Unlock()
-		return false
-	}
-	sessionID, accountID, deviceID, streamEpoch := current.IdentitySnapshot()
-	if sessionID != request.SessionID || accountID != request.AccountID ||
-		deviceID != request.DeviceID || streamEpoch != request.StreamEpoch ||
-		current.ClientTypeValue() != defaultClientType(request.ClientType) {
-		s.openMu.Unlock()
-		current.lifecycleMu.Unlock()
-		return false
-	}
-	detached, ok := s.detachSessionLocked(request.SessionID)
-	s.openMu.Unlock()
-	if !ok {
-		current.lifecycleMu.Unlock()
-		return false
-	}
-	s.closeDetachedSessionLocked(detached)
-	current.lifecycleMu.Unlock()
-	if s.SessionCloseHook != nil {
-		s.SessionCloseHook(detached.session.ID)
-	}
-	return true
 }
 
 type detachedSession struct {
@@ -289,117 +229,4 @@ func (s *Server) buildBridge(request OpenSessionRequest, session *Session) (*Voi
 		return nil, fmt.Errorf("bridge factory returned a nil runtime")
 	}
 	return runtime, nil
-}
-
-// OpenWebRTCSession installs a higher-epoch WHIP peer and Voice Core bridge as
-// one server-owned lifecycle. The terminator must register its exact
-// session/epoch sender before calling this method.
-type preparedWebRTCSession struct {
-	session *Session
-	runtime *VoiceCoreMediaRuntime
-}
-
-type replacedWebRTCSession struct {
-	session *Session
-	runtime *VoiceCoreMediaRuntime
-}
-
-func (s *Server) OpenWebRTCSession(request OpenSessionRequest) (*Session, error) {
-	releaseOpen, ok := s.beginOpen()
-	if !ok {
-		return nil, fmt.Errorf("media edge is draining")
-	}
-	defer releaseOpen()
-	release := s.acquireOpenSlot()
-	defer release()
-	prepared, err := s.prepareWebRTCSession(request)
-	if err != nil {
-		return nil, err
-	}
-	s.openMu.Lock()
-	replaced, err := s.installWebRTCSessionLocked(prepared)
-	s.openMu.Unlock()
-	if err != nil {
-		_ = prepared.runtime.Close()
-		prepared.session.Stop()
-		return nil, err
-	}
-	s.closeReplacedWebRTCSession(replaced)
-	return prepared.session, nil
-}
-
-func (s *Server) prepareWebRTCSession(request OpenSessionRequest) (*preparedWebRTCSession, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-	if s.Draining.Load() {
-		return nil, fmt.Errorf("media edge is draining")
-	}
-	if s.ReadyProbe != nil && !s.ReadyProbe() {
-		return nil, fmt.Errorf("voice core bridge is unavailable")
-	}
-	if !s.externalDownlinkReady() {
-		return nil, fmt.Errorf("WebRTC downlink is unavailable")
-	}
-	if s.BridgeFactory == nil || s.DownlinkSenderFactory == nil {
-		return nil, fmt.Errorf("WebRTC Voice Core bridge is unavailable")
-	}
-	if current, ok := s.Directory.Get(request.SessionID); ok {
-		sessionID, accountID, deviceID, streamEpoch := current.IdentitySnapshot()
-		if sessionID != request.SessionID || accountID != request.AccountID ||
-			deviceID != request.DeviceID || current.ClientTypeValue() != defaultClientType(request.ClientType) {
-			return nil, fmt.Errorf("WebRTC session identity changed")
-		}
-		if request.StreamEpoch <= streamEpoch {
-			return nil, fmt.Errorf("WebRTC stream epoch did not advance")
-		}
-	}
-
-	created, err := NewSession(request, s.MaxPendingFrames)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := s.buildBridge(request, created)
-	if err != nil {
-		created.Stop()
-		return nil, err
-	}
-	if runtime == nil || !runtime.HasDownlinkSender() {
-		if runtime != nil {
-			_ = runtime.Close()
-		}
-		created.Stop()
-		return nil, fmt.Errorf("WebRTC bridge has no downlink sender")
-	}
-	return &preparedWebRTCSession{session: created, runtime: runtime}, nil
-}
-
-func (s *Server) installWebRTCSessionLocked(
-	prepared *preparedWebRTCSession,
-) (*replacedWebRTCSession, error) {
-	oldSession, err := s.Directory.ReplaceNewer(prepared.session)
-	if err != nil {
-		return nil, err
-	}
-	oldRuntime := s.replaceBridge(prepared.session.ID, prepared.runtime)
-	return &replacedWebRTCSession{session: oldSession, runtime: oldRuntime}, nil
-}
-
-func (s *Server) closeReplacedWebRTCSession(replaced *replacedWebRTCSession) {
-	if replaced == nil {
-		return
-	}
-	if replaced.session != nil {
-		replaced.session.lifecycleMu.Lock()
-		defer replaced.session.lifecycleMu.Unlock()
-	}
-	if replaced.runtime != nil {
-		_ = replaced.runtime.Close()
-	}
-	if replaced.session != nil {
-		replaced.session.Stop()
-		s.metricsMu.Lock()
-		s.archiveSessionMetricsLocked(replaced.session.Stats())
-		s.metricsMu.Unlock()
-	}
 }

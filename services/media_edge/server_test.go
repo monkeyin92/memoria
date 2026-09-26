@@ -109,7 +109,7 @@ func TestPublicAndInternalHandlersSeparateOperationalRoutes(t *testing.T) {
 	}
 }
 
-func TestMetricsExposeActorShadowAndDeadlineSignals(t *testing.T) {
+func TestMetricsExposeSessionQueueAndPlayoutSignals(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 4)
 	session, err := NewSession(OpenSessionRequest{
 		SessionID: "metrics-session", AccountID: "a", DeviceID: "d", StreamEpoch: 1,
@@ -121,38 +121,25 @@ func TestMetricsExposeActorShadowAndDeadlineSignals(t *testing.T) {
 	if err := server.Directory.Put(session); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPythonInteraction(
-		ShadowFloorAssistant,
-		"enqueue_output_intent",
-		"speaking",
-		Fence{SessionID: "metrics-session"},
-	)
 	frame := testFrame("metrics-session", 1, 0, 0)
 	if err := session.AcceptDownlink(frame); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPlayback(frame.FrameSamples, Fence{SessionID: "metrics-session"})
+	session.RecordPlayback(frame.FrameSamples, Fence{SessionID: "metrics-session"})
 	if err := session.AcknowledgeDownlink(frame.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	waitForActorEvents(t, session.actor, 3)
 	recorder := httptest.NewRecorder()
 	server.metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := recorder.Body.String()
 	for _, metric := range []string{
 		"active_media_sessions 1",
-		"audio_frame_deadline_miss_total 0",
-		"audio_frame_deadline_miss_ratio 0",
-		"actor_mailbox_age_ms ",
 		"ingress_queue_age_ms 0",
 		"egress_queue_age_ms 0",
-		"floor_decision_latency_ms ",
 		"generation_cancel_latency_ms 0",
 		"playout_buffer_ms 0",
 		"playout_underrun_total 1",
 		"session_duration_ms ",
-		"# TYPE shadow_decision_mismatch_total counter",
-		`shadow_decision_mismatch_total{scenario="speaking",contract_version="media-v1-a5"} 1`,
 	} {
 		if !strings.Contains(body, metric) {
 			t.Fatalf("metrics omitted %q: %s", metric, body)
@@ -160,55 +147,7 @@ func TestMetricsExposeActorShadowAndDeadlineSignals(t *testing.T) {
 	}
 }
 
-func TestSessionShadowSnapshotHasAuthenticatedReadOnlyEndpoint(t *testing.T) {
-	t.Setenv("ENVIRONMENT", "development")
-	server := NewServer(JWTVerifier{}, 4)
-	server.AllowInsecureDevelopment = true
-	session, err := NewSession(OpenSessionRequest{
-		SessionID: "shadow-session", AccountID: "a", DeviceID: "d", StreamEpoch: 1,
-	}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Stop()
-	if err := server.Directory.Put(session); err != nil {
-		t.Fatal(err)
-	}
-	session.MirrorPythonInteraction(
-		ShadowFloorAssistant,
-		"enqueue_output_intent",
-		"speaking",
-		Fence{SessionID: "shadow-session"},
-	)
-	waitForActorEvents(t, session.actor, 1)
-
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/v1/media/sessions/shadow-session/shadow", nil)
-	server.Handler().ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("shadow endpoint status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var snapshot LiveSessionSnapshot
-	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.RecentComparisons) != 1 || len(snapshot.ShadowMismatchCounts) != 1 {
-		t.Fatalf("shadow evidence unavailable: %+v", snapshot)
-	}
-	if snapshot.ShadowMismatchCounts[0].ContractVersion != shadowContractVersion {
-		t.Fatalf("shadow contract version missing: %+v", snapshot.ShadowMismatchCounts)
-	}
-
-	writeRecorder := httptest.NewRecorder()
-	writeRequest := httptest.NewRequest(http.MethodPost, request.URL.String(), nil)
-	server.Handler().ServeHTTP(writeRecorder, writeRequest)
-	if writeRecorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("shadow endpoint accepted a write: %d", writeRecorder.Code)
-	}
-}
-
-func TestShadowMismatchCounterSurvivesReconnectAndClose(t *testing.T) {
+func TestPlayoutUnderrunCounterSurvivesReconnectCloseAndShutdown(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 4)
 	session, err := NewSession(OpenSessionRequest{
 		SessionID: "counter-session", AccountID: "a", DeviceID: "d", StreamEpoch: 1,
@@ -219,69 +158,35 @@ func TestShadowMismatchCounterSurvivesReconnectAndClose(t *testing.T) {
 	if err := server.Directory.Put(session); err != nil {
 		t.Fatal(err)
 	}
-	session.MirrorPythonInteraction(
-		ShadowFloorAssistant,
-		"enqueue_output_intent",
-		"speaking",
-		Fence{SessionID: "counter-session"},
-	)
-	waitForActorEvents(t, session.actor, 1)
-	assertMismatchCount := func(wantActive int) {
+	frame := testFrame("counter-session", 1, 0, 0)
+	if err := session.AcceptDownlink(frame); err != nil {
+		t.Fatal(err)
+	}
+	session.RecordPlayback(frame.FrameSamples, Fence{SessionID: "counter-session"})
+	assertUnderruns := func(wantActive int) {
 		t.Helper()
 		recorder := httptest.NewRecorder()
 		server.metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 		body := recorder.Body.String()
 		if !strings.Contains(body, fmt.Sprintf("active_media_sessions %d", wantActive)) ||
-			!strings.Contains(
-				body,
-				`shadow_decision_mismatch_total{scenario="speaking",contract_version="media-v1-a5"} 1`,
-			) {
-			t.Fatalf("shadow counter regressed: %s", body)
+			!strings.Contains(body, "playout_underrun_total 1\n") {
+			t.Fatalf("underrun counter regressed: %s", body)
 		}
 	}
 
-	assertMismatchCount(1)
+	assertUnderruns(1)
 	if _, err := session.Reconnect(); err != nil {
 		t.Fatal(err)
 	}
-	assertMismatchCount(1)
+	assertUnderruns(1)
 	if !server.CloseSession("counter-session") {
 		t.Fatal("session close failed")
 	}
-	assertMismatchCount(0)
-}
-
-func TestShadowMismatchCounterSurvivesServerShutdown(t *testing.T) {
-	server := NewServer(JWTVerifier{}, 4)
-	session, err := NewSession(OpenSessionRequest{
-		SessionID: "shutdown-counter", AccountID: "a", DeviceID: "d", StreamEpoch: 1,
-	}, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := server.Directory.Put(session); err != nil {
-		t.Fatal(err)
-	}
-	session.MirrorPythonInteraction(
-		ShadowFloorAssistant,
-		"enqueue_output_intent",
-		"speaking",
-		Fence{SessionID: "shutdown-counter"},
-	)
-	waitForActorEvents(t, session.actor, 1)
+	assertUnderruns(0)
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	recorder := httptest.NewRecorder()
-	server.metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	body := recorder.Body.String()
-	if !strings.Contains(body, "active_media_sessions 0") || !strings.Contains(
-		body,
-		`shadow_decision_mismatch_total{scenario="speaking",contract_version="media-v1-a5"} 1`,
-	) {
-		t.Fatalf("shutdown dropped shadow counters: %s", body)
-	}
+	assertUnderruns(0)
 }
 
 func TestServerShutdownSerializesConcurrentSessionCreation(t *testing.T) {
@@ -291,13 +196,13 @@ func TestServerShutdownSerializesConcurrentSessionCreation(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	core := newFakeCoreStream()
-	var actor *LiveSessionActor
+	var created *Session
 	server.BridgeFactory = func(
 		_ OpenSessionRequest,
 		session *Session,
 		_ DownlinkSender,
 	) (*VoiceCoreMediaRuntime, error) {
-		actor = session.actor
+		created = session
 		close(started)
 		<-release
 		return NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
@@ -332,11 +237,11 @@ func TestServerShutdownSerializesConcurrentSessionCreation(t *testing.T) {
 	if len(server.Directory.Snapshots()) != 0 {
 		t.Fatal("session survived server shutdown")
 	}
-	if actor == nil {
-		t.Fatal("session actor was not created")
+	if created == nil {
+		t.Fatal("session was not created")
 	}
-	if err := actor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADStart}); !errors.Is(err, ErrActorClosed) {
-		t.Fatalf("shutdown left the in-flight actor running: %v", err)
+	if state := created.Stats().State; state != SessionStopped {
+		t.Fatalf("shutdown left the in-flight session %s", state)
 	}
 }
 
@@ -448,17 +353,17 @@ func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T
 	}
 }
 
-func TestFailedHTTPSessionCreationStopsActor(t *testing.T) {
+func TestFailedHTTPSessionCreationStopsSession(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "development")
 	server := NewServer(JWTVerifier{}, 4)
 	server.AllowInsecureDevelopment = true
-	var actor *LiveSessionActor
+	var created *Session
 	server.BridgeFactory = func(
 		_ OpenSessionRequest,
 		session *Session,
 		_ DownlinkSender,
 	) (*VoiceCoreMediaRuntime, error) {
-		actor = session.actor
+		created = session
 		return nil, errors.New("bridge failed")
 	}
 	recorder := httptest.NewRecorder()
@@ -472,11 +377,14 @@ func TestFailedHTTPSessionCreationStopsActor(t *testing.T) {
 	if recorder.Code != http.StatusBadGateway {
 		t.Fatalf("failed create status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if actor == nil {
-		t.Fatal("session actor was not created")
+	if created == nil {
+		t.Fatal("session was not created")
 	}
-	if err := actor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADStart}); !errors.Is(err, ErrActorClosed) {
-		t.Fatalf("failed create leaked an actor: %v", err)
+	if state := created.Stats().State; state != SessionStopped {
+		t.Fatalf("failed create leaked a %s session", state)
+	}
+	if len(server.Directory.Snapshots()) != 0 {
+		t.Fatal("failed create left a directory entry")
 	}
 }
 
@@ -529,14 +437,12 @@ func TestSessionCapacityMetricsUseLiveQueueAndPlayoutState(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Millisecond)
-	session.MirrorPlayback(0, Fence{SessionID: "capacity"})
-	session.MirrorVAD(true, 1)
-	waitForActorEvents(t, session.actor, 4)
+	session.RecordPlayback(0, Fence{SessionID: "capacity"})
 	stats := session.Stats()
 	if stats.IngressQueueAgeMS <= 0 || stats.EgressQueueAgeMS <= 0 {
 		t.Fatalf("queue ages were not measured: %+v", stats)
 	}
-	if stats.PlayoutBufferMS <= 0 || stats.FloorDecisionLatencyMS <= 0 || stats.SessionDurationMS <= 0 {
+	if stats.PlayoutBufferMS <= 0 || stats.SessionDurationMS <= 0 {
 		t.Fatalf("capacity state was not measured: %+v", stats)
 	}
 	if err := session.AcknowledgeUplink(0); err != nil {
@@ -1061,7 +967,7 @@ func TestHTTPAuthorizationAcceptsConfiguredEdDSAWithoutHMACFallback(t *testing.T
 		PublicKeys: map[string]ed25519.PublicKey{"media-2026-08": public},
 		Issuer:     "voice-agent", Audience: "memoria-media",
 	}, 4)
-	request := httptest.NewRequest(http.MethodPost, "/whip", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/media/sessions", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 
 	if err := server.authorizeIdentity(request, identity); err != nil {
@@ -1129,44 +1035,6 @@ func TestHTTPServerForwardsFramesThroughVoiceCoreRuntime(t *testing.T) {
 	_ = downlinkResponse.Body.Close()
 	if frame.GenerationID != 1 || frame.Sequence != 0 {
 		t.Fatalf("unexpected downlink frame: %+v", frame)
-	}
-}
-
-func TestOpenWebRTCSessionKeepsOldEpochWhenReplacementBridgeFails(t *testing.T) {
-	server := NewServer(JWTVerifier{}, 2)
-	server.RequireExternalDownlinkSender = true
-	server.DownlinkReadyProbe = func() bool { return true }
-	server.DownlinkSenderFactory = func(OpenSessionRequest, *Session) (DownlinkSender, error) {
-		return func(context.Context, AudioFrame) error { return nil }, nil
-	}
-	core := newFakeCoreStream()
-	var failedActor *LiveSessionActor
-	server.BridgeFactory = func(request OpenSessionRequest, session *Session, sender DownlinkSender) (*VoiceCoreMediaRuntime, error) {
-		if request.StreamEpoch == 2 {
-			failedActor = session.actor
-			return nil, errors.New("replacement bridge failed")
-		}
-		return NewVoiceCoreMediaRuntimeWithDownlinkSender(context.Background(), session, core, sender, nil, nil)
-	}
-	defer func() { _ = server.Close() }()
-	first := OpenSessionRequest{SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 1}
-	if _, err := server.OpenWebRTCSession(first); err != nil {
-		t.Fatal(err)
-	}
-	second := first
-	second.StreamEpoch = 2
-	if _, err := server.OpenWebRTCSession(second); err == nil {
-		t.Fatal("replacement bridge failure was accepted")
-	}
-	current, ok := server.Directory.Get(first.SessionID)
-	if !ok || current.Epoch() != first.StreamEpoch {
-		t.Fatal("failed replacement removed the old epoch")
-	}
-	if failedActor == nil {
-		t.Fatal("replacement actor was not created")
-	}
-	if err := failedActor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADStart}); !errors.Is(err, ErrActorClosed) {
-		t.Fatalf("failed replacement leaked an actor: %v", err)
 	}
 }
 

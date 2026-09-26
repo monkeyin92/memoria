@@ -399,10 +399,6 @@ async def test_unavailable_policy_cannot_load_private_persona_or_tools(
 ) -> None:
     called = False
 
-    class PersonaStub:
-        def cached(self, **_kwargs: object) -> object:
-            raise AssertionError("policy failure must not read persona")
-
     async def fake_llm_node(
         _agent: Any, safe_ctx: Any, tools: list[Any], _settings: Any
     ) -> AsyncIterator[str]:
@@ -416,7 +412,6 @@ async def test_unavailable_policy_cannot_load_private_persona_or_tools(
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
-        persona_client=PersonaStub(),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 

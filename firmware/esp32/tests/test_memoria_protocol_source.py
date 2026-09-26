@@ -1658,7 +1658,7 @@ def test_playback_supply_metering_patch_stays_observational() -> None:
     """
 
     patch = (
-        Path(__file__).parents[1] / "overlay" / "patches" / "0025-playback-underrun-metering.patch"
+        Path(__file__).parents[1] / "overlay" / "patches" / "0026-playback-underrun-metering.patch"
     ).read_text(encoding="utf-8")
     header = (
         Path(__file__).parents[1]
