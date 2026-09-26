@@ -391,7 +391,7 @@ class PostgresDigitalSelfRegistry:
             """
             SELECT version_id, snapshot
             FROM persona_versions
-            WHERE account_id = $1 AND status = 'active'
+            WHERE account_id = $1 AND subject_id = account_id AND status = 'active'
             """,
             account_id,
         )
@@ -424,7 +424,8 @@ class PostgresDigitalSelfRegistry:
                 """
                 SELECT category, description, counterexample
                 FROM persona_traits
-                WHERE account_id = $1 AND trait_id = $2 AND status = 'confirmed'
+                WHERE account_id = $1 AND subject_id = account_id
+                  AND trait_id = $2 AND status = 'confirmed'
                 """,
                 account_id,
                 trait_uuid,

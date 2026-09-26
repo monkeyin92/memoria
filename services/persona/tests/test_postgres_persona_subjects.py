@@ -560,7 +560,11 @@ async def test_postgres_legacy_schema_migrates_in_place_as_the_forced_rls_owner(
         policies = {
             str(row["qual"])
             for row in await connection.fetch(
-                "SELECT qual FROM pg_policies WHERE schemaname = $1", schema
+                # Only the persona tables: archive policies in the same schema
+                # depend on which global roles earlier tests created.
+                "SELECT qual FROM pg_policies WHERE schemaname = $1 "
+                "AND (tablename LIKE 'persona%' OR tablename = 'speech_style_stats')",
+                schema,
             )
         }
 
@@ -583,7 +587,9 @@ async def test_postgres_legacy_schema_migrates_in_place_as_the_forced_rls_owner(
         assert {row["relname"] for row in not_null} == set(_SUBJECT_TABLES)
         assert all(row["attnotnull"] for row in not_null)
         assert all(row["relrowsecurity"] and row["relforcerowsecurity"] for row in forced)
-        assert all("account_id" in policy and "subject_id" not in policy for policy in policies)
+        assert all(
+            "account_id" in policy and "subject_id" not in policy for policy in policies
+        ), policies
 
         # The engine runs on the migrated schema and extends the same trait id.
         await connection.execute("RESET ROLE")

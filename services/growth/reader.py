@@ -373,7 +373,8 @@ class GrowthReader:
             ).fetchall()
             traits = (
                 connection.execute(
-                    "SELECT * FROM persona_traits WHERE account_id = ? AND status = 'confirmed'",
+                    "SELECT * FROM persona_traits WHERE account_id = ? "
+                    "AND subject_id = account_id AND status = 'confirmed'",
                     (account_id,),
                 ).fetchall()
                 if self._table_exists(connection, "persona_traits")

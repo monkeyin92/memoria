@@ -123,7 +123,7 @@ class PostgresGrowthReader:
                     account_id,
                 )
                 trait_rows = await connection.fetch(
-                    "SELECT trait.trait_id, trait.category, trait.description, source.event_id, source.event_type, source.occurred_at, source.speaker_class, source.source, source.payload FROM persona_traits AS trait JOIN persona_evidence AS pe ON pe.trait_id = trait.trait_id AND pe.account_id = trait.account_id JOIN archive_evidence_events AS source ON source.event_id = pe.source_event_id WHERE trait.account_id = $1 AND trait.status = 'confirmed' ORDER BY trait.trait_id, source.occurred_at, source.event_id",
+                    "SELECT trait.trait_id, trait.category, trait.description, source.event_id, source.event_type, source.occurred_at, source.speaker_class, source.source, source.payload FROM persona_traits AS trait JOIN persona_evidence AS pe ON pe.trait_id = trait.trait_id AND pe.account_id = trait.account_id JOIN archive_evidence_events AS source ON source.event_id = pe.source_event_id WHERE trait.account_id = $1 AND trait.subject_id = trait.account_id AND trait.status = 'confirmed' ORDER BY trait.trait_id, source.occurred_at, source.event_id",
                     account_id,
                 )
                 voices = (
