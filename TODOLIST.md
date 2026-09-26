@@ -1,14 +1,12 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-26｜线上为 2026-09-25 整栈发布 `20260925-full-stack-v1`（main `064ed61`，保留豆包 TTS、fun-asr）加 control-api 单组件 `20260925-device-mascot-sync`（`9f02619`）；候选可见性（main `0059368`）、D1/D2（`48e34bc`/`c979f4e`）、readiness 刷新修复（`d1f05cf`）、P1-11 一对一绑定信任与按使用人删除（PR #29）均已随整栈上线，旧记录中的 `f7c4c2a`/`200d52e`/`3eede2f` 是合并前哈希。2026-09-26 减法整理（PR #42，main `00bb4b2`）只改仓库、未部署。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-26｜线上为整栈发布 `20260926-persona-subject-v1`（main `63cf5f8`，含 PR #42/#44/#45；media-edge 同版本单独切换），上一栈 `20260925-full-stack-v1` 为回滚目标。本次上线人格按使用人学习与读取、监护小结随长期记忆授予、按使用人导出含人格、死链路删除与 media-edge 启动收紧；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260925-full-stack-v1  # main 064ed61；agent/bridge、device-media-gateway、miniprogram-gateway、speaker-model 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260925-full-stack-v1-pre
-control_api_release: 20260925-device-mascot-sync  # main 9f02619，单组件发布，栈身份仍为 full-stack-v1；回滚 memoria-control-api:rollback-20260925-device-mascot-sync-pre-control
-media_edge_release: 20260920-f1f2-owner-silence-and-barge  # d61d486；下次发布含 PR #42 的启动收紧，见 P1-12
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（服务器副本 `/root/memoria-release/release-ops.sh`），缺口见 P1-12
+enabled_release: 20260926-persona-subject-v1  # main 63cf5f8；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-persona-subject-v1-pre，media-edge 回 20260920-f1f2-owner-silence-and-barge
+control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 全链 PASS），下次整栈前常量需改为本次链，见 P1-12
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -79,7 +77,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-03 修稳成员入口，再接按使用人切人格/音色
 
-- 已完成（2026-09-26，代码，未部署）：人格跟随使用机器的人（用户决定）。给孩子用学孩子的人格，给老人用学老人的人格。人格存储按（绑定账号，使用人）记账：SQLite 与 PostgreSQL 引擎的特征、风格统计、版本表加 `subject_id`，现有数据回填为账号本人、ID 不变，控制面启动时幂等迁移（线上表归 `memoria_app`，现有 5 条特征、0 个版本）。学习：账号本人仍用账号的人格学习同意；其他使用人复用绑定时勾选的长期记忆（签名 profile 对该使用人确认且带 `memory_recall_private`），调度移入 `services/control_api/app/persona_learning.py`。读取：response-plan/context-prefetch 经 `subject_persona.py` 向引擎按使用人读取，其他使用人同样要求长期记忆授权，撤销后不再读出。按使用人删除流程新增 `persona_forgotten` 步骤清除该使用人的人格。
+- 已上线（2026-09-26，`20260926-persona-subject-v1`，线上迁移已核对：三张表 `subject_id` 非空、5 条特征回填为账号本人）：人格跟随使用机器的人（用户决定）。给孩子用学孩子的人格，给老人用学老人的人格。人格存储按（绑定账号，使用人）记账：SQLite 与 PostgreSQL 引擎的特征、风格统计、版本表加 `subject_id`，现有数据回填为账号本人、ID 不变，控制面启动时幂等迁移（线上表归 `memoria_app`，现有 5 条特征、0 个版本）。学习：账号本人仍用账号的人格学习同意；其他使用人复用绑定时勾选的长期记忆（签名 profile 对该使用人确认且带 `memory_recall_private`），调度移入 `services/control_api/app/persona_learning.py`。读取：response-plan/context-prefetch 经 `subject_persona.py` 向引擎按使用人读取，其他使用人同样要求长期记忆授权，撤销后不再读出。按使用人删除流程新增 `persona_forgotten` 步骤清除该使用人的人格。
 - 已知风险（用户决定）：未成年人与成人一样完整学习人格特征（含价值观、决定等可画像特征），而 P0-04 学生安全闭环尚未完成；对外发布前需在 P0-04 中复核这一口径。
 - 查看入口（2026-09-26，代码，未部署）：绑定人（家长给孩子、子女给老人）在设备页看到「TA 的表达风格」，接口 `GET /v1/persona/subjects/{id}/style` 只返回已确认的固定风格标签（与 uncertain 说话人同一档，不含特征描述、价值观、决定或原话），`POST /v1/persona/subjects/{id}/reset` 经确认后清除该使用人的人格；仅限有效一对一绑定的所有者。
 - 待完成：设备验收：同一台设备绑定孩子后隔天体现孩子自己的表达风格，账号本人的人格不串入。
@@ -111,19 +109,19 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 先验证 Exact DAC reference、通道映射、pre/post AEC residual、近端保留和双讲，再测播中告别/打断；不得绕签名、开播放期 KWS 或丢采集假装 AEC。
 - 完成条件：同候选/身份/策略/fence 的 T1–T14 逐格有证据，非主人/回声不越权；完整硬件门通过前 `full_duplex_verified=false`。
 
-### [ ] P1-11 一台设备只服务一个使用人：声纹下线，信任与同意来自绑定（PR #29 已合入并随 2026-09-25 整栈上线，设备验收未完成）
+### [ ] P1-11 一台设备只服务一个使用人：声纹下线，信任与同意来自绑定（已上线，设备验收未完成）
 
 - 产品决定（用户 2026-09-25）：暂不用声纹（09-03 起生产 0 次 owner_match，主人得分 0.41–0.67 对门槛 0.78，profile 未评估）；设备只服务绑定时选定的使用人（孩子/老人/本人）。家长只看摘要、趋势、风险提醒，不看孩子原文；孩子的长期记忆需家长在绑定时勾选（默认不勾、非必选）；实名家长声明即监护关系；老人记忆由子女代为同意（如实记为代理）；同意长期有效直到撤销；解绑撤销同意并询问是否删除。
 - 已做并上线（本地 + 临时 PG 验证，生产 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 已于 09-25 改为 false）：Agent 在无声纹的设备会话上以签名 profile 为据给出 `device_bound_subject` 主人（仅数据权限，`current_speaker_authority_verified` 仍为假，回声/打断门不变），Control 用同一 profile 核验；播放后 3s 内机器人自己说过的告别词不能结束会话；策略 `subject_presence=device_bound`（家长 App 切到孩子仍读不到孩子记忆）；绑定时写入同意权威授予（guardian/subject/新 `delegate`），认定关系 `guardian_attestation_v1`/`delegate_attestation_v1`，老人登记为经绑定人认定的成年人（`child_for_parent` 此前根本无法绑定）；家长页开关双写、解绑撤销、换版延续；无账号孩子可由绑定人导出；生产 env 模板关闭 `MEMORIA_SPEAKER_AUTHORITY_ENABLED`；小程序隐藏声纹入口、绑定勾选与解绑/导出/删除入口。顺带修复：任何已生效关系都会让 profile 落库复核指纹不一致（收据只锁选中的关系）。
 - 按使用人删除（2026-09-25 同分支）：可续跑、有进度记录的删除流程（删除期间拒收该使用人的新证据），依次关闭该使用人的设备会话、删归档证据及其派生记忆（含引用了 TA 的合并条目）、文件对象、危机提醒与学习记录、MemoryScope（新维护角色 `memoria_memory_maintenance` 专用函数，只增不改约束对其他调用方不变）、语料；解绑并选删除时再把 TA 的身份隐去为占位并清掉审计中的旧名；最后逐库核对为空。保留的仅有无内容审计（同意记录、策略收据、关系/绑定、会话档案）。部署前须在 `/etc/memoria-postgres.env` 加 `MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD`，控制面 env 加 `MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL`。已知残留：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona/digital-self 快照、`entity_ids` 数组无行级来源可追。
 - 未做：已有生产绑定的旧"待确认"声明不自动升级（目前无真实用户），用户需重新绑定设备以写入绑定时 consent grant 后再验证 `memory_recall_private`；声纹代码与 `speaker-model` 容器待设备验证后清理；危机推送订阅号未开通（功能另分支，默认关闭）。
-- 监护小结（2026-09-26，代码，未部署；用户决定随长期记忆一起授予）：家长给孩子绑定并勾选长期记忆时，同时授予 `guardian_summary_view`（`GUARDIAN_MEMORY_CAPABILITIES`），家长页长期记忆开关同步授予/撤销；真实 PG 下家长 app 的签名 profile 因此出现该能力，孩子私人记忆仍不给。周小结接口新增无账号孩子分支：以孩子的长期记忆同意放行，只聚合家长账号下标注为该孩子的记录（不含原文），小程序在没有监护链接时自动加载绑定孩子的小结。老人（子女代同意）不授予监护小结。存量绑定需重新绑定或在家长页重开长期记忆开关后才会获得授予。
+- 监护小结（2026-09-26 已上线；用户决定随长期记忆一起授予）：家长给孩子绑定并勾选长期记忆时，同时授予 `guardian_summary_view`（`GUARDIAN_MEMORY_CAPABILITIES`），家长页长期记忆开关同步授予/撤销；真实 PG 下家长 app 的签名 profile 因此出现该能力，孩子私人记忆仍不给。周小结接口新增无账号孩子分支：以孩子的长期记忆同意放行，只聚合家长账号下标注为该孩子的记录（不含原文），小程序在没有监护链接时自动加载绑定孩子的小结。老人（子女代同意）不授予监护小结。存量绑定需重新绑定或在家长页重开长期记忆开关后才会获得授予。
 - 完成条件：设备上孩子/老人/本人三种绑定各一次：隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声"再见"不结束会话、真人"再见"能结束；家长端看不到孩子原文；撤销后不再记忆。
 
 ### [ ] P1-12 发布工具缺陷、media-edge 下次发布与旧媒体链去留（2026-09-26）
 
-- 整栈发布脚本两处缺陷已修（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。待完成：发布时安装到服务器 `/root/memoria-release/release-ops.sh`（现存副本未替换）。
-- media-edge 下次发布：新镜像含 PR #42 的启动收紧（`MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative`、生产未开设备 WSS 均拒绝启动）；compose 已固定 `MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"`，发布后把易失的 `/tmp/media-runtime.override.yml` 移出 compose 链。发布须另获授权。
+- 整栈发布脚本两处缺陷已修并上线使用（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。已安装到服务器并完成 `20260926-persona-subject-v1` 全链发布。待完成：下次整栈前把常量改为本次链（`PREV_TAG=20260926-persona-subject-v1`），且 control-api 已无组件 override，冻结与回滚里组件链写法需调整。
+- media-edge 已随 `20260926-persona-subject-v1` 单独切换（2026-09-26）：新链不含易失的 `/tmp/media-runtime.override.yml`，启动收紧生效；设备重连待真机验收确认。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - persona 死链路已删（2026-09-26）：agent 侧 `MEMORIA_PERSONA_{ENABLED,CAPSULE_URL,READ_TOKEN,TIMEOUT_S,CACHE_TTL_S}` 配置与校验、控制面 `/v1/persona/session-capsule` 端点及 `persona_read` 内部 token（生产要求的能力 token 由十个降为九个）、env 模板与升级生成脚本中的对应项；`split_production_env.py` 接受但不分发这些已退役变量，现有 env 文件无需改动。人格学习测试改为经 `persona_engine.capsule` 读取（与现役 response-plan 同一路径）。
 - session-context 死链路已删（2026-09-26）：控制面 `/v1/archive/session-context`（调用方是早已删除的 agent MemoryContextClient）及其专用 `memory_read` 内部 token（生产要求的能力 token 再降为八个）；`MEMORIA_MEMORY_READ_TOKEN` 从 env 模板与升级生成脚本移除，`split_production_env.py` 接受但不分发。记忆目录 `context()` 仍由 response-plan 与评测使用，保留；原经该端点覆盖的主体隔离断言改由 response-plan/context-prefetch 两条现役路径承担。
