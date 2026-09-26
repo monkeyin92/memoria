@@ -592,6 +592,10 @@ function declareAgeEvidence(personId, ageBand) {
   });
 }
 
+function readAgeEvidence(personId) {
+  return rawRequest(`/v1/persons/${encodeURIComponent(personId)}/age-evidence`);
+}
+
 function getGuardianNotifications() {
   return rawRequest("/v1/guardian/notifications");
 }
@@ -1346,6 +1350,7 @@ module.exports = {
   exportGuardianMinorData,
   deleteGuardianMinorData,
   declareAgeEvidence,
+  readAgeEvidence,
   getGuardianNotifications,
   getGuardianPushConfig,
   recordGuardianPushSubscription,

@@ -771,12 +771,14 @@ test("age declaration offers only three bands and never claims verification", as
   global.wx.request = (options) => {
     const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
-      calls.push(options.data);
+      // GET reads the recorded band (P0-04 D4); PATCH declares a new one.
+      const isRead = (options.method || "GET") === "GET";
+      if (!isRead) calls.push(options.data);
       options.success({
         statusCode: 200,
         data: {
           person_id: "person_child",
-          age_band: options.data.age_band,
+          age_band: isRead ? "under_14" : options.data.age_band,
           age_evidence_status: "unverified",
           subject_category: "minor",
         },
@@ -787,14 +789,18 @@ test("age declaration offers only three bands and never claims verification", as
   };
   const page = instantiate(pageDefinition);
   await page.onShow();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(
     page.data.ageRows[0].options.map((option) => option.label),
     ["年龄未知", "申报 14 岁以下", "申报 14 至 17 岁"],
   );
+  // The row shows the band the server has on record, not a fixed placeholder.
+  assert.equal(page.data.ageRows[0].selected, "under_14");
+  assert.equal(page.data.ageRows[0].declaredLabel, "申报 14 岁以下");
   page.selectAgeBand({
     currentTarget: { dataset: { personId: "person_child", ageBand: "adult" } },
   });
-  assert.equal(page.data.ageRows[0].selected, "unknown");
+  assert.equal(page.data.ageRows[0].selected, "under_14");
   page.selectAgeBand({
     currentTarget: { dataset: { personId: "person_child", ageBand: "14_17" } },
   });

@@ -416,6 +416,26 @@ Page({
   },
 
   /* 绑定人查看孩子/老人的表达风格：不阻塞设备页主体加载，失败只影响本区块。 */
+  // P0-04 D4：年龄资料行显示服务端当前记录的年龄段，而不是固定的「尚未申报」。
+  async _loadAgeRows(flowSeq, authEpoch) {
+    const rows = this.data.ageRows || [];
+    if (!rows.length) return;
+    const loaded = await Promise.all(
+      rows.map(async (row) => {
+        try {
+          const facts = await api.readAgeEvidence(row.person_id);
+          const declared = AGE_DECLARATION_OPTIONS.find((option) => option.value === facts?.age_band);
+          if (!declared || declared.value === "unknown") return row;
+          return { ...row, selected: declared.value, declaredLabel: declared.label };
+        } catch (error) {
+          return row;
+        }
+      }),
+    );
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    this.setData({ ageRows: loaded });
+  },
+
   async _loadSubjectPersonas(binding, flowSeq, authEpoch) {
     const subjects = boundPersonSubjects(binding);
     if (!subjects.length) return;
@@ -717,6 +737,7 @@ Page({
             : "",
       });
       this._loadSubjectPersonas(binding, flowSeq, authEpoch);
+      this._loadAgeRows(flowSeq, authEpoch);
     } catch (error) {
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
@@ -994,8 +1015,8 @@ Page({
     this.setData({ ageSaving: true, ageError: "" });
     try {
       const updated = await api.declareAgeEvidence(personId, selected.value);
-      // 申报结果只更新本行文案。不把 unverified/disputed 显示成已核验，
-      // 也不重签当前会话的 Runtime Profile。
+      // 申报结果只更新本行文案，不把 unverified/disputed 显示成已核验。
+      // 服务端会为这位使用人的设备重签会话授权，下一次会话即按新年龄段执行。
       const declared = AGE_DECLARATION_OPTIONS.find((option) => option.value === updated?.age_band);
       this.setData({
         ageRows: (this.data.ageRows || []).map((item) =>
