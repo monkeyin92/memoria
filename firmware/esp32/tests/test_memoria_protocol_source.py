@@ -1913,3 +1913,17 @@ def test_playback_supply_metering_patch_stays_observational() -> None:
         assert field in header, field
     for reason in ("generation_switch", "channel_flush", "decoder_reset", "service_stop"):
         assert reason in header, reason
+
+
+def test_online_proof_reserves_its_counter_before_sending() -> None:
+    """A lost proof response must not make the retry replay a consumed counter."""
+
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    proof = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof()") :]
+    proof = proof[: proof.index("\n}\n")]
+    reserve = proof.index('runtime.SetInt("activation_ctr", counter);')
+    send = proof.index('HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path)')
+    assert reserve < send
+    assert proof.count('runtime.SetInt("activation_ctr"') == 1

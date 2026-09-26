@@ -112,8 +112,16 @@ Page({
     this._controller = null;
   },
 
+  _syncNavigationTitle(reprovision) {
+    if (this._navigationReprovision === reprovision) return;
+    this._navigationReprovision = reprovision;
+    wx.setNavigationBarTitle?.({ title: reprovision ? "重新配网" : "配网引导" });
+  },
+
   _applySnapshot(snapshot) {
     if (this._unloaded) return;
+    // The server's purpose can turn an add-device scan into a reprovision.
+    this._syncNavigationTitle(Boolean(snapshot.reprovision));
     const activationStatus = snapshot.activation?.status || "unknown";
     const progressIndexValue = Number(snapshot.progressIndex || 0);
     this.setData({

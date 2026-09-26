@@ -138,7 +138,7 @@ Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业�
 已绑定的机器人在配网模式下显示二维码时，绑定它的账号可以直接扫码只更新 Wi-Fi，不需要先解除绑定：
 
 1. introspect 发现设备已绑定时，只有当前绑定人（`is_actor_bound_to_device`）能拿到会话，且会话 `purpose=reprovision`；其他账号仍得到 `DEVICE_ALREADY_BOUND`。同一张二维码先前用于首次启用、或 reprovision 已完成后再扫，一律返回 `QR_SESSION_EXPIRED`，需要机器人刷新二维码。
-2. BLE Security 1、Wi-Fi 写入、设备 challenge 与 online-proof 和首次启用完全相同，二维码 nonce、mobile nonce、一次性 challenge 与单调计数器的防重放规则不变；计数器与 Activation ACK 共用，重新配网的 proof 必须大于上次 ACK 的计数。
+2. BLE Security 1、Wi-Fi 写入、设备 challenge 与 online-proof 和首次启用完全相同，二维码 nonce、mobile nonce、一次性 challenge 与单调计数器的防重放规则不变；计数器与 Activation ACK 共用，重新配网的 proof 必须大于上次 ACK 的计数；固件在发送 proof 前先把计数器落盘，响应丢失后的重试会签新计数而不是重放已消费的值。
 3. 服务端接受 reprovision 的 online-proof 时要求设备仍绑定在该会话账号上（中途解绑返回 `BINDING_CONFLICT`，转给他人返回 `DEVICE_ALREADY_BOUND`），只更新计数器和固件版本，不改生命周期、绑定、Activation；会话停在 `device_online` 并写入 `consumed_at`，此后不再过期、取消为空操作；reprovision 会话的 claim 在服务层和两种存储层都被拒绝。
 4. 小程序以服务端 `purpose` 为准：看到 `device_online` 即显示“网络已更新”，不进入认领、初始化和激活步骤。设备页“重新配网”入口若扫到未绑定在本账号的设备，会在连接蓝牙前停下并提示改用“添加其他设备”；从“添加其他设备”扫到自己已绑定的机器人时同样只更新 Wi-Fi。
 
