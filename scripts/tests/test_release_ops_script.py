@@ -150,15 +150,15 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260828-agent-loss",
         "confirm-bound-subject",
         "$OLD",
-        "20260925-full-stack-v1",
+        "20260925-full-stack-v1", "20260926-persona-subject-v1",
         "20260925-device-mascot-sync",
         "LIVE_CONTROL_RELEASE",
         "component-releases",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260926-persona-subject-v1" in script
-    assert "PREV_COMMIT=63cf5f8cf09baace6ae4274844283eebf1d33ff3" in script
+    assert "PREV_TAG=20260926-edge-flush-v1" in script
+    assert "PREV_COMMIT=fa8a97d51ca799b53e09e014dd69b78b0f4e18ab" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
@@ -192,7 +192,7 @@ def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:
 
 
 def test_rollback_has_no_persona_guard_once_prev_keys_persona_by_subject() -> None:
-    # PREV (20260926-persona-subject-v1) already drops the one-active-version-per-
+    # PREV (20260926-persona-subject-v1 onward) already drops the one-active-version-per-
     # account index, so bound-subject persona versions no longer block a rollback.
     assert "rollback_persona_guard" not in _script()
     assert "ROLLBACK_SUPERSEDE_SUBJECT_PERSONA" not in _script()

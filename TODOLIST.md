@@ -1,18 +1,18 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-26｜线上为整栈发布 `20260926-persona-subject-v1`（main `63cf5f8`，含 PR #42/#44/#45；media-edge 同版本单独切换），上一栈 `20260925-full-stack-v1` 为回滚目标。本次上线人格按使用人学习与读取、监护小结随长期记忆授予、按使用人导出含人格、死链路删除与 media-edge 启动收紧；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-26｜线上为整栈发布 `20260926-edge-flush-v1`（main `fa8a97d`，含 PR #47–#50；media-edge 同版本单独切换），上一栈 `20260926-persona-subject-v1` 为回滚目标。本次上线按使用人删除补缺与恢复后重放、提示词身份规则统一、人格查看接口、单一装配根与 archive 库共享连接池、media-edge 关闭前送达 `session.error` 与 Opus 编解码器加锁、readiness 刷新逾期提示；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260926-persona-subject-v1  # main 63cf5f8；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-persona-subject-v1-pre，media-edge 回 20260920-f1f2-owner-silence-and-barge
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（服务器 `/root/memoria-release/release-ops.sh` 为 2026-09-26 全链 PASS 版本；仓库版已改为以本次链为回滚目标，下次整栈时安装，见 P1-12）
+enabled_release: 20260926-edge-flush-v1  # main fa8a97d；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-edge-flush-v1-pre，media-edge 回 20260926-persona-subject-v1
+control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走仓库版 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 `20260926-edge-flush-v1` 全链 PASS；仓库版常量已指向本次链）
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
 subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
-account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=人格改为按使用人学习与读取（2026-09-26 代码，未部署，见 P1-03），账号→主体的一次性投影迁移不再是产品读路径 / enabled=未启用 / verified=本地专测与真实 PG 契约
+account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=人格改为按使用人学习与读取（2026-09-26 已上线，见 P1-03），账号→主体的一次性投影迁移不再是产品读路径 / enabled=未启用 / verified=本地专测与真实 PG 契约
 read_path_postgres_parity: code=已提交 `d2318e4`（CI `35501188784` success）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
 ```
@@ -66,7 +66,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - **缺陷（已复现，非切流引入）**：`memoria-readiness-refresh.timer`（每 12h）自 2026-09-22 00:08 CST 起持续失败（systemd `status=1/FAILURE`，restart counter 3 后放弃），原因是 `/opt/memoria/current/scripts/refresh_readiness.sh` 只 `export MEMORIA_RELEASE_TAG`，而 09-21 的 agent 组件切流把 agent 的 base 换成仓库快照（`/opt/memoria/releases/20260921-defect-a-base/docker-compose.production.yml`），该 base 对 `speaker-model.build.args.MEMORIA_RELEASE_COMMIT` 用 `:?` → `docker compose config --format json` 直接报错、stdout 非 JSON → 脚本内联解析抛 `JSONDecodeError`。后果：`readiness_evidence` 中 `20260901-0945-wake-word-whitelist` 打点停在 2026-09-21T04:05Z，超过 `READINESS_GATE_TTL_S=86400` 后全栈 `/health/ready` 变 `not_ready`（core 12 项与 agent 均 ready，仅 `smokes: expired`）。
 - **已修复并部署（2026-09-22）**：脚本按 tag 同一模式从 control 容器 env 解析并导出 `MEMORIA_RELEASE_COMMIT`（空值告警不静默）；`require_live_service_image` 保留并打印 Compose 的 stderr、解析失败改为可读报错；回归 `scripts/tests/test_refresh_readiness_contract.py`。修复版部署到 `/opt/memoria/current/scripts/refresh_readiness.sh`（sha `c0152d5b…`→`89c27afc…`，备份 `…/readiness-fix/refresh_readiness.sh.pre-fix`），并以真实 systemd 单元验证 `Result=success`/`ExecMainStatus=0`、readiness 200、证据 `marked_at` 刷新（收据 `readiness-refresh.txt`、`readiness-fix-deploy.txt`、`readiness-fix-verify.txt`）。
 - 已完成：修复（main `d1f05cf`）随 2026-09-25 整栈发布带入，`/opt/memoria/current` 已指向新发布树，发布后定时单元 `Result=success`。
-- 已做（2026-09-26，代码，未部署）：刷新失败在证据过期前可见。`/health/ready` 在证据超过刷新间隔 12h + 1h 宽限（覆盖定时器抖动与 3 次重试）未更新时报告 `smokes: "overdue"` 与 `warnings: ["smoke_refresh_overdue"]`，状态仍为 ready（证据在 TTL 内有效）；与失败原因无关（脚本错误、Compose 渲染失败、systemd 放弃重试都会导致逾期），约 13h 可见，原先要 24h 过期才发现。间隔常量与 `infra/memoria-readiness-refresh.timer` 有一致性回归。
+- 已做（2026-09-26，已随 `20260926-edge-flush-v1` 上线，线上 readiness 已带 `smokes`/`warnings` 字段）：刷新失败在证据过期前可见。`/health/ready` 在证据超过刷新间隔 12h + 1h 宽限（覆盖定时器抖动与 3 次重试）未更新时报告 `smokes: "overdue"` 与 `warnings: ["smoke_refresh_overdue"]`，状态仍为 ready（证据在 TTL 内有效）；与失败原因无关（脚本错误、Compose 渲染失败、systemd 放弃重试都会导致逾期），约 13h 可见，原先要 24h 过期才发现。间隔常量与 `infra/memoria-readiness-refresh.timer` 有一致性回归。
 - 待完成：仍无主动告警渠道，逾期只在有人或脚本读取 readiness 时可见；若要推送告警需另定渠道与授权。
 - **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`），(d) 新链不校验挂载/端口/其它容器（demo02 旧工具校验了）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 历史归档 `docs/HANDOFF-archive-0916-0923.md` 同日节。
 
@@ -80,7 +80,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已上线（2026-09-26，`20260926-persona-subject-v1`，线上迁移已核对：三张表 `subject_id` 非空、5 条特征回填为账号本人）：人格跟随使用机器的人（用户决定）。给孩子用学孩子的人格，给老人用学老人的人格。人格存储按（绑定账号，使用人）记账：SQLite 与 PostgreSQL 引擎的特征、风格统计、版本表加 `subject_id`，现有数据回填为账号本人、ID 不变，控制面启动时幂等迁移（线上表归 `memoria_app`，现有 5 条特征、0 个版本）。学习：账号本人仍用账号的人格学习同意；其他使用人复用绑定时勾选的长期记忆（签名 profile 对该使用人确认且带 `memory_recall_private`），调度移入 `services/control_api/app/persona_learning.py`。读取：response-plan/context-prefetch 经 `subject_persona.py` 向引擎按使用人读取，其他使用人同样要求长期记忆授权，撤销后不再读出。按使用人删除流程新增 `persona_forgotten` 步骤清除该使用人的人格。
 - 已知风险（用户决定）：未成年人与成人一样完整学习人格特征（含价值观、决定等可画像特征），而 P0-04 学生安全闭环尚未完成；对外发布前需在 P0-04 中复核这一口径。
-- 查看入口（2026-09-26，代码，未部署）：绑定人（家长给孩子、子女给老人）在设备页看到「TA 的表达风格」，接口 `GET /v1/persona/subjects/{id}/style` 只返回已确认的固定风格标签（与 uncertain 说话人同一档，不含特征描述、价值观、决定或原话），`POST /v1/persona/subjects/{id}/reset` 经确认后清除该使用人的人格；仅限有效一对一绑定的所有者。
+- 查看入口（2026-09-26，接口已随 `20260926-edge-flush-v1` 上线；小程序页面未发布体验版）：绑定人（家长给孩子、子女给老人）在设备页看到「TA 的表达风格」，接口 `GET /v1/persona/subjects/{id}/style` 只返回已确认的固定风格标签（与 uncertain 说话人同一档，不含特征描述、价值观、决定或原话），`POST /v1/persona/subjects/{id}/reset` 经确认后清除该使用人的人格；仅限有效一对一绑定的所有者。
 - 待完成：设备验收：同一台设备绑定孩子后隔天体现孩子自己的表达风格，账号本人的人格不串入。
 - 待完成：建后年龄申报 UI；guardian 邀请/授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device→session 映射；同 binding 两个 subject 的人格/音色设备实听。
 - 完成条件：切换推进版本并使旧签名、上下文和音频失效；取消分配回落默认，克隆未 ready 回落设计音色；PG 与设备证据分开记录。入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`apps/miniprogram/pages/{device,persona-custom,guardian,privacy}/`。
@@ -121,7 +121,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-12 发布工具缺陷、media-edge 下次发布与旧媒体链去留（2026-09-26）
 
-- 整栈发布脚本两处缺陷已修并上线使用（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。已安装到服务器并完成 `20260926-persona-subject-v1` 全链发布。仓库版本已跟上当前线上链（2026-09-26，未安装到服务器）：只读核对 6 个目标容器均只用 `20260926-persona-subject-v1` 的整栈 compose、PostgreSQL 仍挂载 `20260827` 树、服务器脚本与仓库发布版一致（`8f0de20…`）；常量改为 `PREV_TAG=20260926-persona-subject-v1`/`63cf5f8`，冻结与回滚对 6 个角色统一按整栈 compose 校验和重建，删去 control-api 组件链、`/tmp/media-runtime.override.yml` 备份与人格回滚守卫（回滚目标已按使用人建索引，且其后无 schema 变更）。待完成：下次整栈发布时安装仓库版本（生产变更，另获授权）。
+- 整栈发布脚本两处缺陷已修并上线使用（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。已安装到服务器并完成 `20260926-persona-subject-v1` 全链发布。仓库版本已跟上当前线上链（2026-09-26，未安装到服务器）：只读核对 6 个目标容器均只用 `20260926-persona-subject-v1` 的整栈 compose、PostgreSQL 仍挂载 `20260827` 树、服务器脚本与仓库发布版一致（`8f0de20…`）；常量改为 `PREV_TAG=20260926-persona-subject-v1`/`63cf5f8`，冻结与回滚对 6 个角色统一按整栈 compose 校验和重建，删去 control-api 组件链、`/tmp/media-runtime.override.yml` 备份与人格回滚守卫（回滚目标已按使用人建索引，且其后无 schema 变更）。仓库版已于 2026-09-26 安装并用于 `20260926-edge-flush-v1` 全链发布（新链冻结校验通过）；随后常量改为 `PREV_TAG=20260926-edge-flush-v1`/`fa8a97d`，下次整栈前只读复核线上链后再安装。
 - media-edge 已随 `20260926-persona-subject-v1` 单独切换（2026-09-26）：新链不含易失的 `/tmp/media-runtime.override.yml`，启动收紧生效；设备重连待真机验收确认。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - persona 死链路已删（2026-09-26）：agent 侧 `MEMORIA_PERSONA_{ENABLED,CAPSULE_URL,READ_TOKEN,TIMEOUT_S,CACHE_TTL_S}` 配置与校验、控制面 `/v1/persona/session-capsule` 端点及 `persona_read` 内部 token（生产要求的能力 token 由十个降为九个）、env 模板与升级生成脚本中的对应项；`split_production_env.py` 接受但不分发这些已退役变量，现有 env 文件无需改动。人格学习测试改为经 `persona_engine.capsule` 读取（与现役 response-plan 同一路径）。
@@ -138,14 +138,14 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P2-03 可证明删除与导出证据链
 
 - 已完成（本地，收据见 `docs/HANDOFF-archive-0916-0923.md`）：四迁移读路径的 PG 侧对等（operator `read --postgres-dsn`，真实 PG 契约；投影侧 PG 未建表时 fail closed 不回落账号键）；PG 全 saga 删除验证（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）。
-- 已完成（2026-09-26，代码，未部署）：按使用人删除覆盖面逐存储复核并记入 `docs/compliance/delete-domains.md`；旧版“结构盲区”中 `memory_scope` 已由 P1-11 覆盖，同意/策略收据/会话 profile/身份绑定为有意保留的内容无关审计。修复：数字分身与进化学习只接收账号本人（或早于主体归属）的证据；删除末尾核对人格剩余行；删除前按使用人失效 response-plan 缓存；备份「恢复后再删除」由 `scripts/replay_subject_deletions.py` 重放全部已完成删除，已写入运维手册恢复流程。
+- 已完成（2026-09-26，已随 `20260926-edge-flush-v1` 上线）：按使用人删除覆盖面逐存储复核并记入 `docs/compliance/delete-domains.md`；旧版“结构盲区”中 `memory_scope` 已由 P1-11 覆盖，同意/策略收据/会话 profile/身份绑定为有意保留的内容无关审计。修复：数字分身与进化学习只接收账号本人（或早于主体归属）的证据；删除末尾核对人格剩余行；删除前按使用人失效 response-plan 缓存；备份「恢复后再删除」由 `scripts/replay_subject_deletions.py` 重放全部已完成删除，已写入运维手册恢复流程。
 - 待完成：真实 MinIO 版本删除与真实 provider 删除各需一次可复现收据（需可用环境与授权）；已知缺口（Redis 已派发载荷、未脱敏的显示名与激活清单、工具效果载荷、SQLite 迁移备份、悬空实体 id、空主体历史证据）按合规文档明确接受，若要闭合需先定权限与迁移方案；小程序成员主体读口（P1-03/P1-05）；生产/设备与真实机器人对话验收。
 - 安全约束：不得默认 `account_id == subject_id`；必须有 Control 注册、active Identity person、owner evidence 和一致事件 subject；child/member 只接受唯一 lineage，foreign/inactive/ambiguous/NULL/mixed subject fail closed；源表与 `snapshot_json` 保持字节不变；rollback 只移除本 migration 行。
 - 完成条件：PG、MinIO、投影/缓存和 provider 范围一致，重试幂等、回执可查询、导出标记 AI/授权/服务提供者；保留备份写明期限与恢复后再删除，不承诺即时物理抹除全部副本；真实 MinIO 与 provider 各需一次可复现收据。
 
 ### [ ] P2-04 协议故障注入与长稳观测
 
-- 已修（2026-09-26，代码，未部署）：Go 侧控制/error 帧丢失路径已查清并修复。拒绝 hello（`invalid_hello`/`device_busy`/`runtime_unavailable`）、拒绝控制帧和 Voice Core 断流三条路径都是先把 `session.error` 入队、随即写关闭帧并清空队列，复现测试 20 次中 19–20 次设备只收到关闭帧（控制帧拒绝路径甚至没有关闭帧、直接 1006）。而固件只从 `session.error` 判断终止/可重试、从不读关闭码，于是不可重试的拒绝被当成网络断开、设备继续续连。修复：关闭前在 250ms 上限内先写完队列中的 P0 控制帧（丢弃 P1–P3、拒收新帧），再写关闭帧；回归 `services/media_edge/device_ws_close_flush_test.go` 与 lane 单测。同时修复一个既有的内存安全缺陷：连接关闭销毁 Opus 编码器时，Voice Core 接收协程可能仍在编码，main 上 `go test -race -count=10` 三轮三次在 `opus_encode` 触发 SIGBUS（生产会使 media-edge 进程崩溃）；编解码器改为加锁串行化编解码与销毁，修复后 3×10 轮零崩溃，回归 `opus_close_race_test.go`。
+- 已修（2026-09-26，已随 `20260926-edge-flush-v1` 上线，设备行为未验）：Go 侧控制/error 帧丢失路径已查清并修复。拒绝 hello（`invalid_hello`/`device_busy`/`runtime_unavailable`）、拒绝控制帧和 Voice Core 断流三条路径都是先把 `session.error` 入队、随即写关闭帧并清空队列，复现测试 20 次中 19–20 次设备只收到关闭帧（控制帧拒绝路径甚至没有关闭帧、直接 1006）。而固件只从 `session.error` 判断终止/可重试、从不读关闭码，于是不可重试的拒绝被当成网络断开、设备继续续连。修复：关闭前在 250ms 上限内先写完队列中的 P0 控制帧（丢弃 P1–P3、拒收新帧），再写关闭帧；回归 `services/media_edge/device_ws_close_flush_test.go` 与 lane 单测。同时修复一个既有的内存安全缺陷：连接关闭销毁 Opus 编码器时，Voice Core 接收协程可能仍在编码，main 上 `go test -race -count=10` 三轮三次在 `opus_encode` 触发 SIGBUS（生产会使 media-edge 进程崩溃）；编解码器改为加锁串行化编解码与销毁，修复后 3×10 轮零崩溃，回归 `opus_close_race_test.go`。
 - 待完成：WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发/资源泄漏；重跑当前候选 Go/Trivy；设备上验证终止性拒绝不再续连。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量/注入，不顺手改断线产品行为。
 
@@ -164,10 +164,10 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P2-07 Prompt 审计遗留（2026-09-24 审计；第 1、4 项已于 2026-09-26 修复，第 2、3 项待定）
 
 - 审计口径：全仓发给模型的文本；实际模型为 DeepSeek V4 Flash（主对话，百炼）、`qwen-flash`（四个语义分类器/人格结构化）、`qwen-plus`/`qwen3.7-flash`（抽取/联网）。判据源自 Claude 文档，对这些模型只算经验判断，置信度最高为“中”；均未调用真实模型验证。
-- 中-1 已修复（2026-09-26，未部署）：`AI_IDENTITY_RULE_TRANSPARENT` 成为 `SAFETY_CORE` 唯一的身份规则，`SAFETY_CORE_TRANSPARENT` 为别名；生产文本 SHA-256 前后一致（`e53a14a0…`），导师会话与离线编排默认提示不再携带“不得自称或讨论 AI”；回归 `test_every_prompt_path_carries_only_the_transparent_identity_rule`。
+- 中-1 已修复（2026-09-26，已随 `20260926-edge-flush-v1` 上线）：`AI_IDENTITY_RULE_TRANSPARENT` 成为 `SAFETY_CORE` 唯一的身份规则，`SAFETY_CORE_TRANSPARENT` 为别名；生产文本 SHA-256 前后一致（`e53a14a0…`），导师会话与离线编排默认提示不再携带“不得自称或讨论 AI”；回归 `test_every_prompt_path_carries_only_the_transparent_identity_rule`。
 - 中-2 口癖禁用词表：`prompts.py:34` 列举“首先、其次、最后/综上所述/希望以上内容对你有帮助”，无来由（首次提交即有），列出原词可能反向锚定。拟改为正面表述“像当面聊天一样自然衔接，不用书面报告式的分点连接词、总结句或客服式结束语。”；会改变生产陪伴提示词。
 - 中-3 小结指令语义歧义：`services/control_api/app/routes/memory.py:293`“也不要输出敏感信息之外的推断”字面可读成允许推断敏感信息。拟改为“只写聊天中实际出现的内容：不编造事实，也不推测对方没有明说的健康、财务、关系等敏感信息。”（本意需确认）。
-- 中-4 已修复（2026-09-26，未部署）：删去 `qwen_extractor.py` 中“不要把一次情绪压成永久性格”，保留更精确的“不得把一次性情绪推断为稳定风格”；回归 `test_one_off_emotion_rule_is_stated_once`。
+- 中-4 已修复（2026-09-26，已随 `20260926-edge-flush-v1` 上线）：删去 `qwen_extractor.py` 中“不要把一次情绪压成永久性格”，保留更精确的“不得把一次性情绪推断为稳定风格”；回归 `test_one_off_emotion_rule_is_stated_once`。
 - 低-5 仅标记：`services/agent/src/providers/qwen_realtime_search.py:90` 发往 DashScope 只带 `thinking: {type: disabled}`，而其余 DashScope 调用都带 `enable_thinking: False`（`handlers.py:82-83`、四个分类器）；需对照百炼文档或抓响应确认后再决定是否补齐。
 - 低-6 仅标记：三个 Qwen JSON 抽取器用 `response_format: json_object` + pydantic 兜底；若当前 Qwen 支持 `json_schema` 结构化输出可再评估，现状可用。
 - 已核实保留：分类器“只输出一个枚举词”（精确解析、`max_tokens` 12）、半双工 120 字规则（`agent.py:93` 代码截断）、禁 Markdown（TTS）、禁笑/咳嗽标签（CosyVoice 支持且 `prosody.py:29` 过滤）、导师不给答案、危机/暴力固定话术、`context_assembler` 指令/数据分离、小结字数上限（pydantic 校验）。
@@ -177,7 +177,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已完成（PR #42）：删除无消费者代码约 3.09 万行；行数预算覆盖全部超 1,500 行模块；跨包依赖图冻结。
 - 待完成，按收益排序：① 账号/会话/设备从生产 SQLite（`/data/memoria.sqlite3`）迁到 PostgreSQL，再逐域删除 SQLite 孪生存储（约 4 万行），API 测试改走真实 PG；② 单一装配根替代 `main.py` 的双重装配，存储改为共享连接池；③ 版本化迁移替代 `initialize()` 内建表；④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry；⑤ 逐步消除 `common`→`agent`/`archive`、`governance`/`memory_scope`→`control_api` 等反向依赖。
-- 进度（2026-09-26，② 第一步，代码，未部署）：`create_app()` 与 lifespan 改走同一个装配函数 `_wire_services`，按存储只在一处选择 PostgreSQL/SQLite；启动中打开的资源统一登记，关闭时按创建倒序全部执行（首个失败在最后抛出，启动失败也会关闭已打开资源）；三种场景下 `app.state` 快照前后一致，`main.py` 1643 → 1536 行。② 第二步（2026-09-26，代码，未部署）：同用 archive DSN 的 10 个存储（归档、记忆目录、技能、人格、数字分身、自我模型、传承、成长、声音档案、声纹）改为借用装配函数按 DSN 建的一个共享池（上限 20、语句超时 15s），只由 lifespan 在全部借用者关闭后关闭；生产 `max_connections=50` 下该 DSN 原先 10 个池合计上限 90。临时 PG 实测启动后连接 10 → 2、关闭后归零；新增回归 `services/control_api/tests/test_lifespan_resources.py`（含真实 PG：同池、事务级 `app.account_id` 不外泄、借用者关闭不影响共享池）。行为变化：归档与声纹语句超时 10s → 15s，技能与成长原无语句超时、现为 15s。`_Resources` 移入 `lifespan_resources.py`，`main.py` 1536 → 1518 行。仍未做：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端）；consent（两个存储，其一带连接 `init`）、identity、guardian 等其他 DSN 各自的池未合并。
+- 进度（2026-09-26，② 第一步与第二步均已随 `20260926-edge-flush-v1` 上线）：`create_app()` 与 lifespan 改走同一个装配函数 `_wire_services`，按存储只在一处选择 PostgreSQL/SQLite；启动中打开的资源统一登记，关闭时按创建倒序全部执行（首个失败在最后抛出，启动失败也会关闭已打开资源）；三种场景下 `app.state` 快照前后一致，`main.py` 1643 → 1536 行。② 第二步：同用 archive DSN 的 10 个存储（归档、记忆目录、技能、人格、数字分身、自我模型、传承、成长、声音档案、声纹）改为借用装配函数按 DSN 建的一个共享池（上限 20、语句超时 15s），只由 lifespan 在全部借用者关闭后关闭；生产 `max_connections=50` 下该 DSN 原先 10 个池合计上限 90。临时 PG 实测启动后连接 10 → 2、关闭后归零，线上 `memoria_app` 发布后为 1 条（发布前 5 条）；新增回归 `services/control_api/tests/test_lifespan_resources.py`（含真实 PG：同池、事务级 `app.account_id` 不外泄、借用者关闭不影响共享池）。行为变化：归档与声纹语句超时 10s → 15s，技能与成长原无语句超时、现为 15s。`_Resources` 移入 `lifespan_resources.py`，`main.py` 1536 → 1518 行。仍未做：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端）；consent（两个存储，其一带连接 `init`）、identity、guardian 等其他 DSN 各自的池未合并。
 - 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 
