@@ -30,7 +30,9 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P0-04 当前使用人的监护授权与学生安全闭环
 
-- 产品决定（用户 2026-09-26）：未成年人不分档；只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许学习辅导（不留存）；删「每周小结」勾选项；孩子与老人的危机提醒都推送（家长/代为同意的子女）；话术加 12356 并待专业审核。详见 `docs/compliance/p0-04-minor-safety-decisions.md`，实现进度记在本条。
+- 产品决定（用户 2026-09-26）：未成年人不分档；只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许学习辅导（不留存）；删「每周小结」勾选项；孩子与老人的危机提醒都推送（家长/代为同意的子女）；话术加 12356 并待专业审核。详见 `docs/compliance/p0-04-minor-safety-decisions.md`。
+- 已实现（2026-09-26，代码，未部署；各项边界见决策文档「实现状态」）：D2 未成年人只学表达风格；D3 家长设定的单次时长与夜间时段签入授权并由设备会话强制（危机除外）；D4 设备页显示并修改年龄段、改后重签授权；D5 年龄不明允许不留存的学习辅导；D6 删除「每周小结」勾选项；D7 孩子与老人的危机提醒都入队、设备页为老人绑定人显示提醒；D8 话术加 12356。同时修复一个既有缺陷：`guardian_enqueue_declared_notification` 只接受待确认声明，而 2026-09-25 起绑定写入的是已认定关系，孩子的危机提醒入队在 PostgreSQL 必然失败且被静默吞掉（线上尚无孩子绑定，未影响真实用户）。
+- 待完成：部署（含 identity/guardian schema 函数更新，发布时 `schema` 步骤应用）；微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（需授权）；会话记忆按使用人迁入 `services/memory_scope`；两条策略入口软件矩阵；安全专项设备链验收；话术专业审核。
 - 待完成：建后年龄资料与 `app_confirm` UI、guardian consent 决策接口、会话记忆按 subject 键迁入 `services/memory_scope`，以及安全专项设备链（身份/年龄→有效同意→准入或受限能力→固定话术真实交付→outbox 绑定/幂等/家长读回）。发送 worker/外部投递暂缓。
 - 软件门：两条策略入口覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、同意撤销/过期/无权限、管理账号更换与切人并发；不能决定时 fail closed，且不得读取其他主体私密记忆。
 - 完成条件：软件矩阵与真实设备链一致，分别记录 `code/wired/enabled/verified`；`student_safety_loop_verified=false` 保持到安全专项设备链通过。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/{identity,session_runtime,guardian}/`。
