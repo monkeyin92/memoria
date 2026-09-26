@@ -19,11 +19,15 @@ The rescue must never break the realtime path: every failure mode returns
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Punctuation, symbols and whitespace carry no speech.
+_NON_SPEECH = re.compile(r"[\W_]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +53,17 @@ class SenseVoiceRescueConfig:
             raise ValueError("SenseVoice rescue audio cap must be within (0, 300] seconds")
         if self.min_text_chars < 1:
             raise ValueError("SenseVoice rescue minimum text length must be positive")
+
+    def accepts_text(self, text: str) -> bool:
+        """Whether a rescue transcript has enough speech to become a final.
+
+        Only word characters count toward ``min_text_chars``: SenseVoice
+        answers silence and noise with a punctuated "我。" (measured on the
+        production model, P1-02), which a raw length of 2 let through as a
+        user turn.
+        """
+
+        return len(_NON_SPEECH.sub("", text)) >= self.min_text_chars
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> SenseVoiceRescueConfig:

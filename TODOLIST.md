@@ -23,13 +23,14 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 1. 真机窗口（用户推动）：⓪ 先重新绑定设备并勾选长期记忆（现有绑定早于绑定授权，对话不入档），再按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 代码部分（先列需用户拍板的产品问题）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-08 ③ 版本化迁移、P2-06 回放评测、P2-04 Python 侧进程退出注入。
-3. 需用户决定：旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
+3. 需用户决定：P0-04 八项产品决定（`docs/compliance/p0-04-minor-safety-decisions.md`）、P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
 4. 边界：生产切流、回滚演练和制品清理须另获授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## P0：发布前必须闭环
 
 ### [ ] P0-04 当前使用人的监护授权与学生安全闭环
 
+- 待决（2026-09-26 整理）：实现前需用户拍板 8 项产品决定（年龄分档、未成年人人格学习范围、时长与夜间时段是否强制、年龄确认与变更、年龄不明时的辅导、「每周小结」勾选项、危机提醒投递、危机话术审核），见 `docs/compliance/p0-04-minor-safety-decisions.md`；文档同时列出现状核查与无需决定的工程项。
 - 待完成：建后年龄资料与 `app_confirm` UI、guardian consent 决策接口、会话记忆按 subject 键迁入 `services/memory_scope`，以及安全专项设备链（身份/年龄→有效同意→准入或受限能力→固定话术真实交付→outbox 绑定/幂等/家长读回）。发送 worker/外部投递暂缓。
 - 软件门：两条策略入口覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、同意撤销/过期/无权限、管理账号更换与切人并发；不能决定时 fail closed，且不得读取其他主体私密记忆。
 - 完成条件：软件矩阵与真实设备链一致，分别记录 `code/wired/enabled/verified`；`student_safety_loop_verified=false` 保持到安全专项设备链通过。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/{identity,session_runtime,guardian}/`。
@@ -66,11 +67,13 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 待完成：主动告警渠道（需用户定渠道与授权）；目前逾期只在有人或脚本读取 readiness 时可见。
 - 发布链缺口（供 P1-01）：组件发布脚本 `deploy_control_component.sh` 的 cutover 块缺已构建候选续跑入口，image-only 覆盖无法承载身份 env，配置不变时需显式 `--force-recreate`，且不校验挂载/端口（细节见 `docs/HANDOFF-archive-0916-0923.md` 2026-09-22 节）；整栈发布已改走 `scripts/release_ops.sh`。
 
-### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
+### [ ] P1-02 ASR 救援 sidecar：两项线上调整待授权（可重建与验证已完成）
 
-- 待完成：把生产 sidecar 的启动脚本、Dockerfile、模型/词表摘要和基础镜像输入纳入仓库；用真实中文 PCM 验证短句/尾字、长段、低 RMS、静音、削波、并发、失败降级与 2.5s 预算。
+- 已完成（2026-09-26，代码与文档，见 `docs/runbooks/sensevoice-asr.md`）：`infra/sensevoice-asr/` 入库 Dockerfile（基础镜像按 digest 锁定，与线上逐层一致）、哈希锁定的 17 个依赖（即线上 `pip freeze`）与模型校验值；重建镜像的依赖、Python 版本、脚本与线上一致，4 段合成中文语音在本地 amd64/arm64 与线上实例上转写逐字相同。`scripts/evaluate_sensevoice_rescue.py` 用 12 段真机录音切出的 69 句评测：无外文输出，降 20 dB/8 倍削波后相似度 0.971/0.984，4 路并发与串行一致。空结果分类（`vendor_error`/`vendor_silent`/`gating`/`low_rms`）已由 `funasr_empty_accounting.py` 提供。
+- 已修（代码，未部署）：模型对静音和任意噪声都返回「我。」，原先 `min_text_chars=2` 按原始长度计数让它成为一轮用户输入；现只计文字字符（`SenseVoiceRescueConfig.accepts_text`），回归覆盖。
+- 待授权（线上问题，建议见手册）：① 空闲约 7h 后首请求解码 12.7s（模型匿名内存被换到主机 swap，VmSwap 约 450MB），空闲后的首次救援必超 2.5s 预算，建议 `--memory 1536m --memory-swap 1536m` 重建容器禁用 swap；② 27–30s 语段解码 2.5–2.8s 必超时，建议 agent `SENSEVOICE_MAX_AUDIO_S=12`。
 - 约束：主链是云服务商 FunASR，救援后端单独核验；不把本地 FunASR PyPI、仓内 sherpa-onnx 或云模型版本混为一体，也不顺手改 NumPy/设备 VAD。
-- 完成条件：仓内可重建，分报 vendor_error/vendor_silent/gating/low_rms；有收益且无回归后才另行切流。
+- 完成条件：两项线上调整执行后，用合成语音在线上复测首请求与长语段时延均在 2.5s 内；「我。」修复随 agent 发布上线。
 
 ### [ ] P1-03 修稳成员入口，再接按使用人切人格/音色
 

@@ -221,7 +221,7 @@ async def test_rescue_runs_when_peak_abs_is_high_but_rms_is_low(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["error", "empty"])
+@pytest.mark.parametrize("scenario", ["error", "empty", "noise_hallucination"])
 async def test_rescue_failure_or_empty_text_never_raises(
     silent_funasr: MockFunASRServer,
     scenario: str,
@@ -531,3 +531,21 @@ def test_funasr_config_from_env_parses_rescue() -> None:
 
     disabled = FunASRConfig.from_env({"DASHSCOPE_API_KEY": "k"})
     assert disabled.rescue_config is None
+
+
+@pytest.mark.parametrize(
+    ("text", "accepted"),
+    [
+        ("我。", False),  # the model's answer to silence and noise
+        ("好。", False),
+        ("。。", False),
+        ("  ", False),
+        ("好的", True),
+        ("今天星期几？", True),
+        ("OK", True),
+    ],
+)
+def test_rescue_text_counts_only_speech_characters(text: str, accepted: bool) -> None:
+    config = SenseVoiceRescueConfig(endpoint="http://127.0.0.1:1/asr")
+
+    assert config.accepts_text(text) is accepted

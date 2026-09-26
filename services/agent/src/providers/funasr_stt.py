@@ -1522,7 +1522,7 @@ class FunASRSession:
             # authoritative.  A short early final must not discard rescue.
             return
         text = (text or "").strip()
-        if len(text) < rescue_config.min_text_chars:
+        if not rescue_config.accepts_text(text):
             outcome_class = classify_funasr_empty_outcome(
                 rms=rms,
                 min_rms=rescue_config.min_rms,
