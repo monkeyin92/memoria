@@ -63,6 +63,7 @@ from services.control_api.app.security import (
     require_active_voice_session,
     require_authenticated_user,
 )
+from services.control_api.app.subject_persona import subject_persona_capsule
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -111,7 +112,7 @@ from services.persona.custom_persona_fields import (
     custom_persona_definition,
     custom_persona_envelope,
 )
-from services.persona.domain import PersonaCapsule, PersonaEnginePort, PersonaRequest
+from services.persona.domain import PersonaCapsule
 from services.self_model.domain import (
     RelationshipProfile,
     SelfModelNotFoundError,
@@ -609,10 +610,6 @@ def _registry(request: Request) -> RegistryPort:
 
 def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
-
-
-def _persona_engine(request: Request) -> PersonaEnginePort:
-    return cast(PersonaEnginePort, request.app.state.persona_engine)
 
 
 def _legacy_registry(request: Request) -> LegacyRegistryPort:
@@ -1791,19 +1788,20 @@ async def _companion_items(
         if capabilities["private_memory"] and catalog_readable and confirmed_subject_id is not None
         else None
     )
+    # Persona follows the subject rule of memory (P1-03): see subject_persona.
     persona_task = (
         asyncio.create_task(
-            _persona_engine(request).capsule(
-                PersonaRequest(
-                    account_id=account_id,
-                    speaker_class=speaker.classification,
-                    topic=query[:1000],
-                    max_chars=1200,
-                    confirmed_style_only=capabilities["persona_low_sensitivity"],
-                )
+            subject_persona_capsule(
+                request,
+                account_id=account_id,
+                subject_id=confirmed_subject_id,
+                speaker_class=speaker.classification,
+                topic=query[:1000],
+                low_sensitivity_only=capabilities["persona_low_sensitivity"],
             )
         )
-        if capabilities["persona"] or capabilities["persona_low_sensitivity"]
+        if (capabilities["persona"] or capabilities["persona_low_sensitivity"])
+        and confirmed_subject_id is not None
         else None
     )
     completed = (
