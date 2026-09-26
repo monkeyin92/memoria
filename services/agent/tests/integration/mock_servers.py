@@ -1028,7 +1028,7 @@ class MockDeepSeekServer:
 class MockSenseVoiceServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|empty|error
+    scenario: str = "happy"  # happy|empty|error|noise_hallucination
     delay_s: float = 0.0
     requests: int = 0
     received_bytes: int = 0
@@ -1092,7 +1092,8 @@ class MockSenseVoiceServer:
             return web.Response(status=503, text="unavailable")
         if self.delay_s:
             await asyncio.sleep(self.delay_s)
-        text = "兜底识别成功。" if self.scenario == "happy" else ""
+        # SenseVoice answers silence and noise with a punctuated "我。".
+        text = {"happy": "兜底识别成功。", "noise_hallucination": "我。"}.get(self.scenario, "")
         return web.json_response({"text": text})
 
 
