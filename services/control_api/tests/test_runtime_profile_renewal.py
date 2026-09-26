@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import cast
 
 import asyncpg
@@ -109,6 +110,11 @@ class _IdentityView:
         actor_person_id: str | None = None,
     ) -> tuple[object, ...]:
         return ()
+
+    async def get_person(self, person_id: str, actor_person_id: str | None = None) -> object:
+        # The seeded owner row: the profile's subject facts are current (P0-04 D4).
+        assert person_id == _OWNER and actor_person_id == _OWNER
+        return SimpleNamespace(subject_category="adult", age_band="adult")
 
 
 async def _insert_binding(
