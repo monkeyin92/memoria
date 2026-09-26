@@ -5,12 +5,15 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 from asyncio import Lock, to_thread
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
@@ -804,15 +807,119 @@ def _evolution_plane(
     )
 
 
-async def _install_session_runtime(
-    app: FastAPI,
-    settings: ControlSettings,
-) -> PostgresSessionRuntimeStore | None:
+class _Worker(Protocol):
+    def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+class _Resources:
+    """What the lifespan opened, closed newest first on shutdown.
+
+    A resource registers once it is live, after the stores it was built from,
+    so workers stop before their stores close.  Every closer runs even when an
+    earlier one fails; the first failure is re-raised once all have run.
+    """
+
+    def __init__(self) -> None:
+        self._closers: list[Callable[[], object]] = []
+
+    def add(self, close: Callable[[], object]) -> None:
+        self._closers.append(close)
+
+    async def aclose(self) -> None:
+        failure: BaseException | None = None
+        while self._closers:
+            close = self._closers.pop()
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure
+
+
+@dataclass(frozen=True)
+class _Wiring:
+    """One build of the object graph: eager (``create_app``) or live (lifespan).
+
+    Live wiring picks PostgreSQL wherever a URL is set, initializes schemas,
+    starts workers and registers every closeable.  Eager wiring is what ASGI
+    test clients see without a lifespan: SQLite, no network, nothing started,
+    and only the schemas ``create_app`` has always initialized inline.
+    """
+
+    app: FastAPI
+    settings: ControlSettings
+    live: bool
+    resources: _Resources = field(default_factory=_Resources)
+
+    def url(self, value: str) -> str:
+        """A store's backend URL; eager wiring ignores it and stays on SQLite."""
+        return value if self.live else ""
+
+    def on_close(self, close: Callable[[], object]) -> None:
+        if self.live:
+            self.resources.add(close)
+
+    async def open(
+        self,
+        initialize: Callable[[], Awaitable[object]],
+        close: Callable[[], object],
+    ) -> None:
+        """Initialize a live resource, then register its closer."""
+        if self.live:
+            await initialize()
+            self.resources.add(close)
+
+    async def init_blocking(
+        self,
+        initialize: Callable[[], object],
+        *,
+        eager: bool = False,
+    ) -> None:
+        """Blocking schema setup: off-thread when live; inline only if ``eager``."""
+        if self.live:
+            await to_thread(initialize)
+        elif eager:
+            initialize()
+
+    def start(self, worker: _Worker) -> None:
+        worker.start()
+        self.resources.add(worker.stop)
+
+
+def _run_eagerly(wiring: Coroutine[object, None, None]) -> None:
+    """Finish eager wiring synchronously, inside or outside a running loop.
+
+    Eager ``_Wiring`` never awaits I/O, so the coroutine completes on its
+    first step; suspending would mean live-only work leaked into eager mode.
+    """
+    try:
+        wiring.send(None)
+    except StopIteration:
+        return
+    wiring.close()
+    raise RuntimeError("eager Control API wiring must not suspend")
+
+
+async def _install_session_runtime(w: _Wiring) -> None:
     """Install the authoritative Session Runtime for the current profile."""
 
+    app, settings = w.app, w.settings
     app.state.session_runtime_store = None
     app.state.session_runtime_service = None
     if settings.environment == "production":
+        if not w.live:
+            # Installed by the lifespan after schema/RLS/action-role
+            # initialization; never an in-memory policy receipt fallback in
+            # the eager app state.
+            app.state.policy_receipt_writer = None
+            app.state.multi_subject_runtime = None
+            return
         session_runtime_store = PostgresSessionRuntimeStore(
             dsn=settings.session_runtime_database_url.get_secret_value().strip(),
             action_dsn=settings.action_executor_database_url.get_secret_value().strip(),
@@ -822,6 +929,8 @@ async def _install_session_runtime(
             ),
         )
         app.state.session_runtime_store = session_runtime_store
+        # Registered before initialize: a half-initialized store still closes.
+        w.resources.add(session_runtime_store.close)
         await session_runtime_store.initialize()
         session_runtime_service = build_postgres_session_runtime_service(
             store=session_runtime_store,
@@ -834,7 +943,7 @@ async def _install_session_runtime(
             identity=app.state.identity_service,
             sessions=session_runtime_service,
         )
-        return session_runtime_store
+        return
 
     app.state.policy_receipt_writer = InMemoryPolicyReceiptWriter()
     app.state.multi_subject_runtime = MultiSubjectRuntimeControl(
@@ -842,23 +951,24 @@ async def _install_session_runtime(
         policy=PolicyEngine(receipt_writer=app.state.policy_receipt_writer),
         signing_key=settings.runtime_profile_signing_key(),
     )
-    return None
 
 
-async def _install_memory_scope(
-    app: FastAPI,
-    settings: ControlSettings,
-) -> None:
+async def _install_memory_scope(w: _Wiring) -> None:
     """Install MemoryScope only from dedicated production PostgreSQL roles."""
 
+    app, settings = w.app, w.settings
     app.state.memory_wiring = None
+    if not w.live:
+        return
     app.state.subject_memory_scope = None
     if settings.environment != "production":
         return
     maintenance_dsn = settings.memory_maintenance_database_url.get_secret_value().strip()
     if maintenance_dsn:
         # Erasing one bound subject's records: its own narrow login role.
-        app.state.subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
+        subject_memory_scope = PostgresSubjectMemoryScope(maintenance_dsn)
+        app.state.subject_memory_scope = subject_memory_scope
+        w.on_close(subject_memory_scope.close)
     api_dsn = settings.memory_api_database_url.get_secret_value().strip()
     worker_dsn = settings.memory_worker_database_url.get_secret_value().strip()
     if not api_dsn or not worker_dsn:
@@ -913,67 +1023,88 @@ async def _install_memory_scope(
         shared_action_executor=shared_actions,
         include_router=False,
     )
+    # Registered before start: a wiring that fails to start still closes.
+    w.on_close(wiring.close)
     await wiring.start()
 
 
-@asynccontextmanager
-async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
-    settings = ControlSettings()
-    try:
-        settings.validate_production()
-    except ValueError as exc:
-        if settings.environment == "production":
-            raise
-        app.state.config_warning = str(exc)
-    app.state.settings = settings
+async def _wire_services(w: _Wiring) -> None:
+    """The one place the Control API object graph is wired, eager or live."""
+
+    app, settings = w.app, w.settings
+    production = settings.environment == "production"
     crisis_semantic_classifier = _crisis_semantic_classifier(settings)
     app.state.crisis_semantic_classifier = crisis_semantic_classifier
-    media_stop_dispatcher = _build_media_stop_dispatcher(settings)
-    if media_stop_dispatcher is not None:
-        app.state.media_stop_dispatcher = media_stop_dispatcher
+    if crisis_semantic_classifier is not None:
+        w.on_close(crisis_semantic_classifier.aclose)
+    if w.live:
+        media_stop_dispatcher = _build_media_stop_dispatcher(settings)
+        if media_stop_dispatcher is not None:
+            app.state.media_stop_dispatcher = media_stop_dispatcher
     session_directory: SessionDirectory = (
         RedisSessionDirectory(settings.redis_url)
         if settings.redis_url.strip()
         else InMemorySessionDirectory()
     )
     app.state.session_directory = session_directory
+    w.on_close(session_directory.close)
     media_slo_gate = MediaSLOGate(
         ttl_s=settings.media_slo_snapshot_ttl_s,
         redis_url=settings.redis_url.strip() or None,
     )
     app.state.media_slo_gate = media_slo_gate
+    w.on_close(media_slo_gate.close)
+    # Eager: the store initializes lazily for ASGI clients without a lifespan.
     store = MemoryStore(settings.memoria_db_path)
-    await to_thread(store.initialize)
+    await w.init_blocking(store.initialize)
     app.state.memory_store = store
-    _replace_device_onboarding_service(app, settings)
-    consent_url = settings.consent_database_url.get_secret_value().strip()
-    if consent_url:
-        binding_consent_store: BindingConsentStorePort = (
-            PostgresBindingConsentStore(consent_url)
-        )
+    if w.live or not production:
+        _replace_device_onboarding_service(app, settings)
     else:
-        binding_consent_store = SqliteBindingConsentStore(
-            settings.consent_sqlite_path()
-        )
-    await binding_consent_store.initialize()
-    binding_consent_authority = BindingConsentAuthority(binding_consent_store)
+        app.state.device_onboarding_service = None
+    device_onboarding = app.state.device_onboarding_service
+    if isinstance(device_onboarding, DeviceOnboardingService):
+        w.on_close(device_onboarding.close)
+
+    consent_url = w.url(settings.consent_database_url.get_secret_value().strip())
+    binding_consent_store: BindingConsentStorePort | None
+    if consent_url:
+        postgres_binding_consent = PostgresBindingConsentStore(consent_url)
+        await w.open(postgres_binding_consent.initialize, postgres_binding_consent.close)
+        binding_consent_store = postgres_binding_consent
+    elif production and not w.live:
+        binding_consent_store = None
+    else:
+        sqlite_binding_consent = SqliteBindingConsentStore(settings.consent_sqlite_path())
+        if not w.live:
+            sqlite_binding_consent.initialize_sync()
+        await w.open(sqlite_binding_consent.initialize, sqlite_binding_consent.close)
+        binding_consent_store = sqlite_binding_consent
+    binding_consent_authority: ConsentSnapshotResolver = (
+        RejectingBindingConsentAuthority()
+        if binding_consent_store is None
+        else BindingConsentAuthority(binding_consent_store)
+    )
     app.state.binding_consent_store = binding_consent_store
     app.state.binding_consent_authority = binding_consent_authority
 
-    identity_url = settings.identity_database_url.get_secret_value().strip()
+    identity_url = w.url(settings.identity_database_url.get_secret_value().strip())
+    identity_store: IdentityStore
     if identity_url:
-        identity_store: IdentityStore = PostgresIdentityStore(
+        postgres_identity = PostgresIdentityStore(
             identity_url,
             registration_dsn=(
                 settings.identity_registration_database_url.get_secret_value().strip()
                 or None
             ),
         )
-        await identity_store.initialize()
+        await w.open(postgres_identity.initialize, postgres_identity.close)
+        identity_store = postgres_identity
     else:
-        sqlite_identity_store = SqliteIdentityStore(settings.identity_sqlite_path())
-        await to_thread(sqlite_identity_store.initialize)
-        identity_store = cast(IdentityStore, sqlite_identity_store)
+        sqlite_identity = SqliteIdentityStore(settings.identity_sqlite_path())
+        await w.init_blocking(sqlite_identity.initialize, eager=True)
+        w.on_close(sqlite_identity.close)
+        identity_store = cast(IdentityStore, sqlite_identity)
     app.state.identity_store = identity_store
     app.state.identity_service = IdentityService(
         identity_store,
@@ -983,12 +1114,14 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         transfer_verifier=RejectingTransferEvidenceVerifier(),
         consent_resolver=binding_consent_authority,
     )
-    app.state.bound_subject_consent = None
-    app.state.bound_subject_consent_store = None
+    if w.live:
+        app.state.bound_subject_consent = None
+        app.state.bound_subject_consent_store = None
     if consent_url:
         # Standing consents for the one person each device serves: the
         # binding's accepted offers become authority grants Policy reads.
         bound_consent_store = PostgresConsentStore(consent_url)
+        w.on_close(bound_consent_store.close)
         app.state.bound_subject_consent_store = bound_consent_store
         app.state.bound_subject_consent = BoundSubjectConsentService(
             store=bound_consent_store,
@@ -997,9 +1130,12 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
             prepare=bound_consent_store.ensure_initialized,
         )
     app.state.multi_subject_binding_manifests = {}
-    await _install_session_runtime(app, settings)
-    await _install_memory_scope(app, settings)
-    _install_tutor_authority(app)
+    await _install_session_runtime(w)
+    await _install_memory_scope(w)
+    if app.state.multi_subject_runtime is None:
+        app.state.tutor_session_fence = None
+    else:
+        _install_tutor_authority(app)
     app.state.device_registry = DeviceRegistry(
         store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
@@ -1010,54 +1146,51 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         close_room=LiveKitRoomCloser(settings),
     )
     app.state.session_terminator = session_terminator
-    guardian_url = settings.guardian_database_url.get_secret_value().strip()
-    guardian_maintenance_url = (
-        settings.guardian_maintenance_database_url.get_secret_value().strip() or None
-    )
-    guardian_worker_url = (
-        settings.guardian_worker_database_url.get_secret_value().strip() or None
-    )
-    postgres_guardian: PostgresGuardianStore | None = None
+
+    guardian_url = w.url(settings.guardian_database_url.get_secret_value().strip())
+    guardian_store: GuardianStorePort
     if guardian_url:
         postgres_guardian = PostgresGuardianStore(
             guardian_url,
-            maintenance_dsn=guardian_maintenance_url,
-            worker_dsn=guardian_worker_url,
-            initialize_schema=settings.environment != "production",
+            maintenance_dsn=(
+                settings.guardian_maintenance_database_url.get_secret_value().strip()
+                or None
+            ),
+            worker_dsn=(
+                settings.guardian_worker_database_url.get_secret_value().strip() or None
+            ),
+            initialize_schema=not production,
         )
-        await postgres_guardian.initialize()
-        guardian_store: GuardianStorePort = postgres_guardian
+        await w.open(postgres_guardian.initialize, postgres_guardian.close)
+        guardian_store = postgres_guardian
     else:
         sqlite_guardian = SqliteGuardianStore(settings.memoria_db_path)
-        await to_thread(sqlite_guardian.initialize)
+        await w.init_blocking(sqlite_guardian.initialize, eager=True)
         guardian_store = sqlite_guardian
     app.state.guardian_store = guardian_store
     app.state.tutor_store = guardian_store
-    archive_url = settings.archive_database_url.get_secret_value()
+
+    archive_url = w.url(settings.archive_database_url.get_secret_value())
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
-    postgres_archive: PostgresLifeArchive | None = None
-    postgres_catalog: PostgresMemoryCatalog | None = None
-    postgres_persona: PostgresPersonaEngine | None = None
-    postgres_digital_self: PostgresDigitalSelfRegistry | None = None
-    postgres_growth: PostgresGrowthReader | None = None
-    postgres_self_model: PostgresSelfModelRegistry | None = None
-    postgres_legacy: PostgresLegacyRegistry | None = None
-    postgres_skills: PostgresSkillCatalog | None = None
-    postgres_evolution: PostgresEvolutionStore | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     skill_catalog: SkillCatalogPort
     persona_engine: PersonaEnginePort
     extractor = build_memory_extractor(settings)
     persona_extractor = _persona_extractor(settings)
-    embedder = build_memory_embedder(settings)
+    # Live startup builds it even on SQLite: a bad embedding config fails fast.
+    embedder = build_memory_embedder(settings) if w.live else None
     account_guard = _memory_account_guard(app.state.account_operations, store)
+    evidence_category = _evidence_subject_category_resolver(
+        store,
+        cast(IdentityService, app.state.identity_service),
+    )
     if archive_url:
         postgres_archive = PostgresLifeArchive(
             archive_url,
             outbox_max_attempts=settings.archive_compile_max_attempts,
         )
-        await postgres_archive.initialize()
+        await w.open(postgres_archive.initialize, postgres_archive.close)
         archive = postgres_archive
         memory_wiring = cast(
             MemoryProductionWiring | None,
@@ -1082,56 +1215,43 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
             compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
-            evidence_subject_category_resolver=_evidence_subject_category_resolver(
-                store,
-                cast(IdentityService, app.state.identity_service),
-            ),
-            capture_evidence_projector=(
-                project_capture_evidence
-                if settings.environment == "production"
-                else None
-            ),
+            evidence_subject_category_resolver=evidence_category,
+            capture_evidence_projector=project_capture_evidence if production else None,
             embedder=embedder,
-            require_vector=settings.environment == "production",
+            require_vector=production,
             outbox_lease_s=settings.archive_compile_lease_s,
             outbox_retry_base_s=settings.archive_compile_retry_base_s,
             outbox_retry_max_s=settings.archive_compile_retry_max_s,
         )
-        await postgres_catalog.initialize()
+        await w.open(postgres_catalog.initialize, postgres_catalog.close)
         memory_catalog = postgres_catalog
         postgres_skills = PostgresSkillCatalog(archive_url)
-        await postgres_skills.initialize()
+        await w.open(postgres_skills.initialize, postgres_skills.close)
         skill_catalog = postgres_skills
-        postgres_persona = PostgresPersonaEngine(
-            archive_url,
-            extractor=persona_extractor,
-        )
-        await postgres_persona.initialize()
+        postgres_persona = PostgresPersonaEngine(archive_url, extractor=persona_extractor)
+        await w.open(postgres_persona.initialize, postgres_persona.close)
         persona_engine = postgres_persona
     else:
         sqlite_archive = LifeArchive.sqlite(settings.memoria_db_path)
-        await to_thread(sqlite_archive.initialize)
+        await w.init_blocking(sqlite_archive.initialize)
         archive = sqlite_archive
         sqlite_catalog = MemoryCatalog.sqlite(
             settings.memoria_db_path,
             extractor=extractor,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
-            evidence_subject_category_resolver=_evidence_subject_category_resolver(
-                store,
-                cast(IdentityService, app.state.identity_service),
-            ),
+            evidence_subject_category_resolver=evidence_category,
         )
-        await to_thread(sqlite_catalog.initialize)
+        await w.init_blocking(sqlite_catalog.initialize)
         memory_catalog = sqlite_catalog
         sqlite_skills = SkillCatalog.sqlite(settings.memoria_db_path)
-        await to_thread(sqlite_skills.initialize)
+        await w.init_blocking(sqlite_skills.initialize)
         skill_catalog = sqlite_skills
         sqlite_persona = PersonaEngine.sqlite(
             settings.memoria_db_path,
             extractor=persona_extractor,
         )
-        await to_thread(sqlite_persona.initialize)
+        await w.init_blocking(sqlite_persona.initialize)
         persona_engine = sqlite_persona
     app.state.life_archive = archive
     app.state.crisis_notification_service = CrisisNotificationService(
@@ -1146,20 +1266,24 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_catalog = memory_catalog
     app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
-    app.state.persona_structurer = _persona_structurer(settings)
+    if w.live:
+        app.state.persona_structurer = _persona_structurer(settings)
+
     configured_evolution_url = settings.evolution_database_url.get_secret_value().strip()
-    if settings.environment == "production" and not configured_evolution_url:
+    if w.live and production and not configured_evolution_url:
         # ``validate_production`` normally catches this first; keep the
         # lifecycle fail-closed if a caller constructs settings directly.
         raise ValueError("production requires MEMORIA_EVOLUTION_DATABASE_URL")
-    evolution_url = configured_evolution_url or archive_url
+    evolution_url = w.url(configured_evolution_url) or archive_url
+    evolution_store: EvolutionStore
     if evolution_url:
         postgres_evolution = PostgresEvolutionStore(
             evolution_url,
-            initialize_schema=settings.environment != "production",
+            initialize_schema=not production,
         )
-        await to_thread(postgres_evolution.initialize)
-        evolution_store: EvolutionStore = postgres_evolution
+        await w.init_blocking(postgres_evolution.initialize)
+        w.on_close(partial(to_thread, postgres_evolution.close))
+        evolution_store = postgres_evolution
     else:
         evolution_store = EvolutionStore(settings.evolution_sqlite_path())
     evolution_control_plane = _evolution_plane(
@@ -1182,42 +1306,45 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         ),
         account_read_guard=app.state.account_operations.sync_read,
     )
-    evolution_sleep_worker = EvolutionSleepWorker(
-        evolution_control_plane,
-        interval_s=settings.evolution_sleep_interval_s,
-    )
-    evolution_sleep_worker.start()
-    app.state.evolution_sleep_worker = evolution_sleep_worker
+    if w.live:
+        evolution_sleep_worker = EvolutionSleepWorker(
+            evolution_control_plane,
+            interval_s=settings.evolution_sleep_interval_s,
+        )
+        w.start(evolution_sleep_worker)
+        app.state.evolution_sleep_worker = evolution_sleep_worker
+
     digital_self_registry: RegistryPort
+    self_model_registry: SelfModelRegistryPort
+    legacy_registry: LegacyRegistryPort
     if archive_url:
         postgres_digital_self = PostgresDigitalSelfRegistry(archive_url)
-        await postgres_digital_self.initialize()
+        await w.open(postgres_digital_self.initialize, postgres_digital_self.close)
         digital_self_registry = postgres_digital_self
     else:
         sqlite_digital_self = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
-        await to_thread(sqlite_digital_self.initialize)
+        await w.init_blocking(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
-    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
-    await to_thread(app.state.self_preview_registry.initialize)
-    self_model_registry: SelfModelRegistryPort
+    self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
+    await w.init_blocking(self_preview_registry.initialize)
+    app.state.self_preview_registry = self_preview_registry
     if archive_url:
         postgres_self_model = PostgresSelfModelRegistry(archive_url)
-        await postgres_self_model.initialize()
+        await w.open(postgres_self_model.initialize, postgres_self_model.close)
         self_model_registry = postgres_self_model
     else:
         sqlite_self_model = SelfModelRegistry.sqlite(settings.memoria_db_path)
-        await to_thread(sqlite_self_model.initialize)
+        await w.init_blocking(sqlite_self_model.initialize)
         self_model_registry = sqlite_self_model
     app.state.self_model_registry = self_model_registry
-    legacy_registry: LegacyRegistryPort
     if archive_url:
         postgres_legacy = PostgresLegacyRegistry(archive_url)
-        await postgres_legacy.initialize()
+        await w.open(postgres_legacy.initialize, postgres_legacy.close)
         legacy_registry = postgres_legacy
     else:
         sqlite_legacy = LegacyRegistry.sqlite(settings.memoria_db_path)
-        await to_thread(sqlite_legacy.initialize)
+        await w.init_blocking(sqlite_legacy.initialize)
         legacy_registry = sqlite_legacy
     app.state.legacy_registry = legacy_registry
     # S4 is intentionally read-only over the same ledger; no coverage cache exists.
@@ -1226,46 +1353,40 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
             archive_url,
             self_model_registry=self_model_registry,
         )
-        await postgres_growth.initialize()
+        await w.open(postgres_growth.initialize, postgres_growth.close)
         app.state.growth_reader = postgres_growth
     else:
         app.state.growth_reader = GrowthReader.sqlite(
             settings.memoria_db_path,
             self_model_registry=self_model_registry,
         )
+
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
     )
-    postgres_voice = (
-        voice_profile_manager
-        if isinstance(voice_profile_manager, PostgresVoiceProfileManager)
-        else None
-    )
-    if postgres_voice is not None:
-        await postgres_voice.initialize()
+    if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
+        await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
     else:
         assert isinstance(voice_profile_manager, VoiceProfileManager)
-        await to_thread(voice_profile_manager.initialize)
+        await w.init_blocking(voice_profile_manager.initialize)
     app.state.voice_profile_manager = voice_profile_manager
     app.state.voice_sample_signer = voice_sample_signer
     app.state.voice_object_store = voice_object_store
     app.state.voice_preview_renderer = _voice_preview_renderer(settings)
-    compiler_worker = MemoryCompilerWorker(
-        memory_catalog,
-        interval_s=settings.archive_compile_interval_s,
-        batch_size=settings.archive_compile_batch_size,
-    )
-    compiler_worker.start()
-    app.state.memory_compiler_worker = compiler_worker
+    if w.live:
+        compiler_worker = MemoryCompilerWorker(
+            memory_catalog,
+            interval_s=settings.archive_compile_interval_s,
+            batch_size=settings.archive_compile_batch_size,
+        )
+        w.start(compiler_worker)
+        app.state.memory_compiler_worker = compiler_worker
     speaker_authority = _speaker_authority(settings)
-    postgres_speaker = (
-        speaker_authority if isinstance(speaker_authority, PostgresSpeakerAuthority) else None
-    )
-    if postgres_speaker is not None:
-        await postgres_speaker.initialize()
+    if isinstance(speaker_authority, PostgresSpeakerAuthority):
+        await w.open(speaker_authority.initialize, speaker_authority.close)
     else:
         assert isinstance(speaker_authority, SpeakerAuthority)
-        await to_thread(speaker_authority.initialize)
+        await w.init_blocking(speaker_authority.initialize)
     app.state.speaker_authority = speaker_authority
     archive_object_store = _archive_object_store(settings)
     app.state.archive_object_store = archive_object_store
@@ -1273,23 +1394,24 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         cast(CorpusSampleStorePort, guardian_store),
         archive_object_store,
     )
-    corpus_retention_worker = CorpusRetentionWorker(
-        corpus_retention_service,
-        interval_s=settings.corpus_retention_interval_s,
-    )
-    corpus_retention_worker.start()
     app.state.corpus_retention_service = corpus_retention_service
-    app.state.corpus_retention_worker = corpus_retention_worker
-    # Default disabled: without the flag no worker exists and crisis alerts
-    # stay queued and visible on the guardian page only.
-    crisis_push_worker = build_crisis_push_worker(
-        settings,
-        cast(CrisisPushStorePort, guardian_store),
-        display_name=app_display_name_resolver(app),
-    )
-    if crisis_push_worker is not None:
-        crisis_push_worker.start()
-    app.state.crisis_push_worker = crisis_push_worker
+    if w.live:
+        corpus_retention_worker = CorpusRetentionWorker(
+            corpus_retention_service,
+            interval_s=settings.corpus_retention_interval_s,
+        )
+        w.start(corpus_retention_worker)
+        app.state.corpus_retention_worker = corpus_retention_worker
+        # Default disabled: without the flag no worker exists and crisis
+        # alerts stay queued and visible on the guardian page only.
+        crisis_push_worker = build_crisis_push_worker(
+            settings,
+            cast(CrisisPushStorePort, guardian_store),
+            display_name=app_display_name_resolver(app),
+        )
+        if crisis_push_worker is not None:
+            w.start(crisis_push_worker)
+        app.state.crisis_push_worker = crisis_push_worker
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=store,
@@ -1307,103 +1429,38 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
         corpus_retention_service=corpus_retention_service,
         session_terminator=session_terminator,
     )
-    deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
-    deletion_worker.start()
-    app.state.account_deletion_worker = deletion_worker
-    subject_deletion_worker = AccountDeletionWorker(
-        _install_subject_deletion(
-            app,
-            settings,
-            guardian_store=guardian_store,
-            archive_object_store=archive_object_store,
-            corpus_retention_service=corpus_retention_service,
-            session_terminator=session_terminator,
-        )
+    if w.live:
+        deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
+        w.start(deletion_worker)
+        app.state.account_deletion_worker = deletion_worker
+    subject_deletion = _install_subject_deletion(
+        app,
+        settings,
+        guardian_store=guardian_store,
+        archive_object_store=archive_object_store,
+        corpus_retention_service=corpus_retention_service,
+        session_terminator=session_terminator,
     )
-    subject_deletion_worker.start()
-    try:
-        yield
-    finally:
-        if crisis_push_worker is not None:
-            await crisis_push_worker.stop()
-        await corpus_retention_worker.stop()
-        if crisis_semantic_classifier is not None:
-            await crisis_semantic_classifier.aclose()
-        await evolution_sleep_worker.stop()
-        await deletion_worker.stop()
-        await subject_deletion_worker.stop()
-        await compiler_worker.stop()
-        await session_directory.close()
-        await media_slo_gate.close()
-        if postgres_persona is not None:
-            await postgres_persona.close()
-        if postgres_digital_self is not None:
-            await postgres_digital_self.close()
-        if postgres_self_model is not None:
-            await postgres_self_model.close()
-        if postgres_growth is not None:
-            await postgres_growth.close()
-        if postgres_legacy is not None:
-            await postgres_legacy.close()
-        if postgres_catalog is not None:
-            await postgres_catalog.close()
-        if postgres_skills is not None:
-            await postgres_skills.close()
-        if postgres_evolution is not None:
-            await to_thread(postgres_evolution.close)
-        if postgres_archive is not None:
-            await postgres_archive.close()
-        if postgres_speaker is not None:
-            await postgres_speaker.close()
-        if postgres_voice is not None:
-            await postgres_voice.close()
-        if postgres_guardian is not None:
-            await postgres_guardian.close()
+    if w.live:
+        w.start(AccountDeletionWorker(subject_deletion))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    resources = _Resources()
     try:
-        async with _lifespan_impl(app):
-            yield
+        settings = ControlSettings()
+        try:
+            settings.validate_production()
+        except ValueError as exc:
+            if settings.environment == "production":
+                raise
+            app.state.config_warning = str(exc)
+        app.state.settings = settings
+        await _wire_services(_Wiring(app, settings, live=True, resources=resources))
+        yield
     finally:
-        memory_wiring = getattr(app.state, "memory_wiring", None)
-        if memory_wiring is not None:
-            await memory_wiring.close()
-        session_runtime_store = getattr(
-            app.state,
-            "session_runtime_store",
-            None,
-        )
-        if session_runtime_store is not None:
-            await session_runtime_store.close()
-        device_onboarding_service = getattr(
-            app.state,
-            "device_onboarding_service",
-            None,
-        )
-        if isinstance(device_onboarding_service, DeviceOnboardingService):
-            device_onboarding_service.close()
-        identity_store = getattr(
-            app.state,
-            "identity_store",
-            None,
-        )
-        if identity_store is not None:
-            await identity_store.close()
-        binding_consent_store = getattr(
-            app.state,
-            "binding_consent_store",
-            None,
-        )
-        if binding_consent_store is not None:
-            await binding_consent_store.close()
-        bound_consent_store = getattr(app.state, "bound_subject_consent_store", None)
-        if bound_consent_store is not None:
-            await bound_consent_store.close()
-        subject_memory_scope = getattr(app.state, "subject_memory_scope", None)
-        if subject_memory_scope is not None:
-            await subject_memory_scope.close()
+        await resources.aclose()
 
 
 def create_app() -> FastAPI:
@@ -1424,177 +1481,13 @@ def create_app() -> FastAPI:
     # Control-to-Edge runtime-control token; the internal device-close
     # endpoint validates it before touching any private state.
     app.state.device_close_report_token = settings.media_edge_device_close_report_token
-    app.state.crisis_semantic_classifier = _crisis_semantic_classifier(settings)
-    app.state.session_directory = (
-        RedisSessionDirectory(settings.redis_url)
-        if settings.redis_url.strip()
-        else InMemorySessionDirectory()
-    )
-    app.state.media_slo_gate = MediaSLOGate(
-        ttl_s=settings.media_slo_snapshot_ttl_s,
-        redis_url=settings.redis_url.strip() or None,
-    )
+    # Process-lifetime state the lifespan reuses rather than rebuilds.
     app.state.account_operations = AccountOperationGate()
     # Single-process CAS fence. A distributed deployment must replace this
     # with an account/task advisory lock or revision projection.
     app.state.growth_task_lock = Lock()
     app.state.realtime_connections = RealtimeConnectionRegistry()
-    # The store initializes lazily for ASGI test clients that do not run lifespan.
-    app.state.memory_store = MemoryStore(settings.memoria_db_path)
-    if production:
-        app.state.device_onboarding_service = None
-    else:
-        _replace_device_onboarding_service(app, settings)
-    identity_store = SqliteIdentityStore(settings.identity_sqlite_path())
-    identity_store.initialize()
-    app.state.identity_store = identity_store
-    if production:
-        binding_consent_store = None
-        binding_consent_authority: ConsentSnapshotResolver = (
-            RejectingBindingConsentAuthority()
-        )
-    else:
-        sqlite_binding_consent_store = SqliteBindingConsentStore(
-            settings.consent_sqlite_path()
-        )
-        sqlite_binding_consent_store.initialize_sync()
-        binding_consent_store = sqlite_binding_consent_store
-        binding_consent_authority = BindingConsentAuthority(
-            sqlite_binding_consent_store
-        )
-    app.state.binding_consent_store = binding_consent_store
-    app.state.binding_consent_authority = binding_consent_authority
-    app.state.identity_service = IdentityService(
-        cast(IdentityStore, identity_store),
-        transfer_verifier=RejectingTransferEvidenceVerifier(),
-        consent_resolver=binding_consent_authority,
-    )
-    app.state.multi_subject_binding_manifests = {}
-    app.state.session_runtime_store = None
-    app.state.session_runtime_service = None
-    app.state.memory_wiring = None
-    if production:
-        # Production Session Runtime is installed by the async lifespan after
-        # schema/RLS/action-role initialization; never provide an in-memory
-        # policy receipt fallback in the eager app state.
-        app.state.policy_receipt_writer = None
-        app.state.multi_subject_runtime = None
-        app.state.tutor_session_fence = None
-    else:
-        app.state.policy_receipt_writer = InMemoryPolicyReceiptWriter()
-        app.state.multi_subject_runtime = MultiSubjectRuntimeControl(
-            identity=app.state.identity_service,
-            policy=PolicyEngine(receipt_writer=app.state.policy_receipt_writer),
-            signing_key=settings.runtime_profile_signing_key(),
-        )
-        _install_tutor_authority(app)
-    app.state.device_registry = DeviceRegistry(
-        app.state.memory_store,
-        challenge_ttl_ms=settings.device_challenge_ttl_ms,
-    )
-    guardian_store = SqliteGuardianStore(settings.memoria_db_path)
-    guardian_store.initialize()
-    app.state.guardian_store = guardian_store
-    app.state.tutor_store = guardian_store
-    session_terminator = AccountSessionTerminator(
-        store=app.state.memory_store,
-        connections=app.state.realtime_connections,
-        close_room=LiveKitRoomCloser(settings),
-    )
-    app.state.session_terminator = session_terminator
-    app.state.life_archive = LifeArchive.sqlite(settings.memoria_db_path)
-    app.state.crisis_notification_service = CrisisNotificationService(
-        guardian_store,
-        app.state.life_archive,
-    )
-    app.state.guardian_consent_service = GuardianConsentService(
-        guardian_store,
-        app.state.life_archive,
-        on_revoked=_guardian_revocation_hook(session_terminator),
-    )
-    app.state.memory_catalog = MemoryCatalog.sqlite(
-        settings.memoria_db_path,
-        extractor=build_memory_extractor(settings),
-        account_guard=_memory_account_guard(
-            app.state.account_operations,
-            app.state.memory_store,
-        ),
-        subject_category_resolver=_subject_category_resolver(app.state.memory_store),
-        evidence_subject_category_resolver=_evidence_subject_category_resolver(
-            app.state.memory_store,
-            cast(IdentityService, app.state.identity_service),
-        ),
-    )
-    app.state.skill_catalog = SkillCatalog.sqlite(settings.memoria_db_path)
-    app.state.persona_engine = PersonaEngine.sqlite(
-        settings.memoria_db_path,
-        extractor=_persona_extractor(settings),
-    )
-    app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
-    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
-    app.state.self_model_registry = SelfModelRegistry.sqlite(settings.memoria_db_path)
-    app.state.legacy_registry = LegacyRegistry.sqlite(settings.memoria_db_path)
-    evolution_store = EvolutionStore(settings.evolution_sqlite_path())
-    evolution_control_plane = _evolution_plane(
-        settings,
-        evolution_store,
-        profile_store=app.state.memory_store,
-        account_write_guard=app.state.account_operations.sync_write,
-    )
-    app.state.evolution_store = evolution_store
-    app.state.evolution_control_plane = evolution_control_plane
-    app.state.evolution_runtime_capture = EvolutionRuntimeCapture(evolution_control_plane)
-    app.state.evolution_resolver = EvolutionResolver(
-        evolution_store,
-        trusted_root_sha256=settings.evolution_trusted_root(),
-        canary_percent=settings.evolution_canary_percent,
-        release_policy=_evolution_release_policy(settings),
-        account_subject_guard=lambda account_id: require_account_evolution_subject(
-            account_id,
-            resolve_subject_category=_subject_category_resolver(app.state.memory_store),
-        ),
-        account_read_guard=app.state.account_operations.sync_read,
-    )
-    app.state.growth_reader = GrowthReader.sqlite(
-        settings.memoria_db_path,
-        self_model_registry=app.state.self_model_registry,
-    )
-    app.state.speaker_authority = _speaker_authority(settings)
-    voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
-        settings
-    )
-    app.state.voice_profile_manager = voice_profile_manager
-    app.state.voice_sample_signer = voice_sample_signer
-    app.state.voice_object_store = voice_object_store
-    app.state.voice_preview_renderer = _voice_preview_renderer(settings)
-    archive_object_store = _archive_object_store(settings)
-    app.state.archive_object_store = archive_object_store
-    corpus_retention_service = CorpusRetentionService(
-        guardian_store,
-        archive_object_store,
-    )
-    app.state.corpus_retention_service = corpus_retention_service
-    _install_subject_deletion(
-        app,
-        settings,
-        guardian_store=guardian_store,
-        archive_object_store=archive_object_store,
-        corpus_retention_service=corpus_retention_service,
-        session_terminator=session_terminator,
-    )
-    app.state.account_data_governance = _account_data_governance(
-        settings,
-        store=app.state.memory_store,
-        voice_profiles=voice_profile_manager,
-        archive_object_store=archive_object_store,
-        realtime_connections=app.state.realtime_connections,
-        account_operations=app.state.account_operations,
-        legacy_registry=app.state.legacy_registry,
-        evolution_repository=SqliteEvolutionAccountRepository(settings.evolution_sqlite_path()),
-        guardian_repository=guardian_store,
-        corpus_retention_service=corpus_retention_service,
-        session_terminator=session_terminator,
-    )
+    _run_eagerly(_wire_services(_Wiring(app, settings, live=False)))
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.origins_list(),
