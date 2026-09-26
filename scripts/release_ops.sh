@@ -6,7 +6,7 @@
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
 # The PREV_* constants describe the chain this release replaces; they were
-# read-only checked on production after the 20260926-persona-subject-v1 release
+# read-only checked on production after the 20260926-edge-flush-v1 release
 # and must be re-checked before each full-stack release. The freeze step refuses
 # to run when the live containers are on any other chain.
 set -Eeuo pipefail
@@ -15,8 +15,8 @@ U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260926-persona-subject-v1
-PREV_COMMIT=63cf5f8cf09baace6ae4274844283eebf1d33ff3
+PREV_TAG=20260926-edge-flush-v1
+PREV_COMMIT=fa8a97d51ca799b53e09e014dd69b78b0f4e18ab
 PREV=/opt/memoria/releases/$PREV_TAG
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.

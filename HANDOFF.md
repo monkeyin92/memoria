@@ -2,21 +2,31 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-26 13:45–13:51（CST）整栈发布 `20260926-persona-subject-v1`（main `63cf5f8`，含 PR #42/#44/#45），5 个角色经 `release-ops.sh` 全链 PASS，media-edge 单独切换 PASS。详见下方同日发布一节。
+- **最近生产收据**：2026-09-26 16:37–16:44（CST）整栈发布 `20260926-edge-flush-v1`（main `fa8a97d`，含 PR #49/#50），5 个角色经仓库版 `release-ops.sh` 全链 PASS，media-edge 单独切换 PASS。详见下方同日发布一节。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260926-persona-subject-v1` | `sha256:b05bb9d187b4a9fed514c0fc5b971be4c6cbe41e80b54db2c43e96562e07f5d8`（本地 image id） | `63cf5f8cf09baace6ae4274844283eebf1d33ff3` | `20260926-persona-subject-v1` / `63cf5f8` | healthy | 0 | `2026-09-26T05:46:19Z` | `/opt/memoria/releases/20260926-persona-subject-v1/.cutover/` | `memoria-control-api:rollback-20260926-persona-subject-v1-pre`（= `20260925-device-mascot-sync`） |
-| Agent / Bridge | `memoria-agent:20260926-persona-subject-v1` | `sha256:a35891ec1a597355fd4009c51a6f176a6a0f303717fab6859aee82d740337005`（本地 image id） | `63cf5f8cf09baace6ae4274844283eebf1d33ff3` | `20260926-persona-subject-v1` / `63cf5f8` | healthy | 0 each | `2026-09-26T05:46:42Z` | 同上 | `memoria-agent:rollback-20260926-persona-subject-v1-pre`（= `20260925-full-stack-v1`） |
-| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260926-persona-subject-v1` | `sha256:c50be4cb…` / `sha256:86ef0eb8…` / `sha256:1e632857…`（本地 image id） | `63cf5f8cf09baace6ae4274844283eebf1d33ff3` | `20260926-persona-subject-v1` / `63cf5f8` | healthy | 0 each | `2026-09-26T05:46:11Z`–`05:47:07Z` | 同上 | 各自 `rollback-20260926-persona-subject-v1-pre`（= `20260925-full-stack-v1`） |
-| Media Edge | `memoria-media-edge:20260926-persona-subject-v1` | `sha256:6cad291ebd6654b5ce3053f88575c594294dbc966e17824f3aab8fa78c4e7419` | `63cf5f8cf09baace6ae4274844283eebf1d33ff3` | `not set / not applicable` | healthy | 0 | `2026-09-26T05:50:41Z` | `/opt/memoria/releases/20260926-persona-subject-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge`（override `component-releases/20260926-persona-subject-v1/media-edge-rollback.override.yml`） |
+| Control API | `memoria-control-api:20260926-edge-flush-v1` | `sha256:42f8cbcad8e76aad8e9b5ed9bee6eade3e4c433d1535bf215439b60e928e3fd8`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 | `2026-09-26T08:41:21Z` | `/opt/memoria/releases/20260926-edge-flush-v1/.cutover/` | `memoria-control-api:rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
+| Agent / Bridge | `memoria-agent:20260926-edge-flush-v1` | `sha256:65fe7c30f6c3e0edf61ded34d4d4549dee49811bea0d57dec24baa4300e24ac5`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 each | `2026-09-26T08:41:42Z` | 同上 | `memoria-agent:rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
+| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260926-edge-flush-v1` | `sha256:d6588a67…` / `sha256:aa2b3cdd…` / `sha256:b0d82847…`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 each | `2026-09-26T08:41:04Z`–`08:42:08Z` | 同上 | 各自 `rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
+| Media Edge | `memoria-media-edge:20260926-edge-flush-v1` | `sha256:5a905f03a649c3799a2f0fc73b660d81c6dc5a76ff20bdfad1058892367f47ab`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `not set / not applicable` | healthy | 0 | `2026-09-26T08:44:11Z` | `/opt/memoria/releases/20260926-edge-flush-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-persona-subject-v1`（override `component-releases/20260926-edge-flush-v1/media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260926-persona-subject-v1` / `63cf5f8`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260926-persona-subject-v1`。上一栈 `20260925-full-stack-v1` / `064ed61` 为回滚目标。
+- **发布身份**：`20260926-edge-flush-v1` / `fa8a97d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260926-edge-flush-v1`。上一栈 `20260926-persona-subject-v1` / `63cf5f8` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：真机窗口按同日发布一节的验收清单执行（人格按使用人、监护小结、按孩子导出、设备重连到新 media-edge），再补 TLS/WSS 重连观察与 P0-03 剩余设备矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
+- **下一步必须动作**：真机窗口按 `20260926-persona-subject-v1` 一节的验收清单执行（⓪ 先重新绑定并勾选长期记忆），并加验本次 media-edge 修复：终止性拒绝后设备显示错误且不再续连；再补 TLS/WSS 重连观察与 P0-03 剩余设备矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-26 整栈发布 20260926-edge-flush-v1
+
+- **范围**：tag `20260926-edge-flush-v1` → main `fa8a97d`（PR #49 发布脚本跟上线上链、archive 库存储共享连接池；PR #50 media-edge 关闭前送达 `session.error`、Opus 编解码器加锁、readiness 报告刷新逾期）。无 schema、compose、env 变更。合并后 main CI（run `36229760442`）全绿后才切流。6 个镜像本机 linux/amd64 全量构建，revision/version 标签核对无误；seeded 上传（基座 `20260926-persona-subject-v1`，实传 177 MB）双端校验 PASS；media-edge 镜像单独 scp、校验和核对后导入。
+- **发布脚本**：首次使用仓库版 `scripts/release_ops.sh`（sha256 `7f68cfad…`，`PREV_TAG=20260926-persona-subject-v1`），旧版备份为 `/root/memoria-release/release-ops.sh.pre-20260926-edge-flush-v1`。
+- **五角色**：`verify-load` PASS → `freeze` PASS（新版对 6 个目标容器的整栈 compose 链与 `current` 校验通过；回滚标签、pre-state、env 备份、`pg_dump`、SQLite 备份在 `.cutover/`）→ `env` PASS（env 键无变化；`validate_production`、`verify_env`、agent 与 bridge 声纹开关断言、真实 provider smoke `FunASR, QwenRealtimeSearch, Qwen, Doubao, InterruptSemantic`）→ `schema` PASS（无文件变更，权威库契约校验通过）→ `cutover` PASS（16:41:04–16:42:14，全部 healthy）→ `finish` PASS（readiness `ready` 且为新 tag，定时刷新 `Result=success`，外部 8443 就绪 200，所有带健康检查的容器 healthy、restarts=0）。
+- **media-edge（单独切换）**：新链为新发布树 compose + `component-releases/20260926-edge-flush-v1/media-edge-component.override.yml`；新旧渲染配置除 build context 路径外完全一致（设备 WSS 开启、WebRTC 关闭、`python_authoritative`、端口仅 `127.0.0.1:8794`）。切换后 healthy、restarts=0，设备 WSS 监听启动；bridge 7001 上有 1 条已建立连接；公网 `memoria-device-edge` 未带凭证返回 401。
+- **上线后实测**：`/health/ready` 带 `smokes: "passed"`、`warnings: []`（P1-09 字段生效）；PostgreSQL 客户端连接 `memoria_app` 为 1 条（发布前 5 条空闲，archive 库 10 个存储共享一个池）；control-api 与 agent 启动 5 分钟内无 error/traceback。设备当时空闲，终止性拒绝的设备行为未观察到，列入真机验收。
+- **回滚**（未实跑）：`TAG=20260926-edge-flush-v1 COMMIT=fa8a97d… release-ops.sh rollback` 把 6 个角色按 `20260926-persona-subject-v1` 整栈 compose 重建并把 `current` 指回；回滚目标已按使用人建人格索引，无需人格守卫。media-edge 回滚：同一发布树命令改用 `media-edge-rollback.override.yml`。schema 不回滚。
+- **本地制品**：`outputs/release/20260926-edge-flush-v1/` 与 `outputs/release/20260926-edge-flush-media-edge/`（ignored，约 3 GB），验收结束后可删除。
 
 ## 2026-09-26 整栈发布 20260926-persona-subject-v1
 
@@ -25,7 +35,6 @@
 - **人格表迁移（control-api 启动时自动执行）**：三张表 `subject_id` 非空、`FORCE ROW LEVEL SECURITY` 已恢复、现有 5 条特征全部回填为账号本人，新唯一约束 `persona_traits_account_subject_key`、`persona_versions_account_subject_version_key`、`speech_style_stats_pkey(account_id, subject_id, scene)` 就位；control-api 启动日志无错误。
 - **media-edge（单独切换）**：镜像校验和与标签核对后导入；新链为新发布树 compose + `component-releases/20260926-persona-subject-v1/media-edge-component.override.yml`，不再包含 `/tmp/media-runtime.override.yml`（原文件仍在主机上，并备份在 `.cutover/`）。渲染配置核对：设备 WSS 开启、WebRTC 关闭、`python_authoritative`、端口仅 `127.0.0.1:8794`。切换后 healthy、restarts=0，设备 WSS 监听启动；公网 `memoria-device-edge` 入口未带凭证返回 401（路由到新 edge）。bridge 重启期间 media-edge 原有 gRPC 通道自动恢复（bridge 7001 上有来自 media-edge 的已建立连接）。设备当时空闲、无会话，设备重连未观察到，列入真机验收。
 - **回滚**（未实跑）：五角色 `release-ops.sh rollback`（control-api 回 mascot-sync 组件链，其余回整栈镜像，`current` 指回整栈树）；若已有孩子/老人的生效人格版本，脚本默认拒绝，`ROLLBACK_SUPERSEDE_SUBJECT_PERSONA=1` 先将其标为已取代。回滚后旧代码写入人格会因唯一约束已替换而报错（后台捕获），人格读取不受影响。media-edge 回滚：同一命令改用 `media-edge-rollback.override.yml`。schema 不回滚。
-- **下次整栈发布前**：仓库 `scripts/release_ops.sh` 已改为以本次链为回滚目标（`PREV_TAG=20260926-persona-subject-v1`、`PREV_COMMIT=63cf5f8…`，6 个角色统一按整栈 compose 冻结与回滚，删去 control-api 组件链与人格回滚守卫）；发布时先只读复核线上链仍如此，再安装仓库版本。
 - **真机验收清单（待执行）**：⓪ 先重新绑定设备并勾选长期记忆——2026-09-26 只读核对线上最近三天没有任何 `speech.utterance_finalized`，2336 条证据全部无主体；现有测试绑定早于绑定授权，设备不会把说话人认作绑定使用人，对话不入档，人格、监护小结、按使用人删除都没有数据来源；① 设备唤醒后连上新 media-edge 并完成一轮对话；② 孩子绑定的设备在家长页重开"长期记忆"开关（存量绑定不会自动获得监护小结授予），监护小结出现且只含孩子的聚合记录；③ 隔天孩子的回复体现自己的表达风格，账号本人人格不串入；④ 按孩子导出含人格计数、不含描述；⑤ P0-03 剩余矩阵与 TLS/WSS 重连观察。
 - **本地制品**：`outputs/release/20260926-persona-subject-v1/`（ignored，约 3 GB），验收结束后可删除。
 
