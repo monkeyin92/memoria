@@ -1738,12 +1738,11 @@ async def _companion_items(
     request: Request,
     frozen: FrozenMode,
     account_id: str,
-    subject_id: str,
+    scope: _SubjectMemoryScope,
     query: str,
     speaker: ResponsePlanSpeakerDecision,
     now: datetime,
     recall_context: tuple[str, ...] = (),
-    catalog_readable: bool = False,
 ) -> tuple[tuple[GroundedItem, ...], PersonaCapsule | None]:
     trusted = ModePolicy.trusted_context(
         frozen,
@@ -1754,7 +1753,7 @@ async def _companion_items(
     # Fail closed before the catalog sees the call.  MemorySearchQuery.subject_id
     # defaults to None, and None means "the whole account", so a missing subject
     # must never be passed through as that default.
-    confirmed_subject_id = _confirmed_subject_id(subject_id)
+    confirmed_subject_id = _confirmed_subject_id(scope.subject_id)
 
     async def fetch_memory() -> MemorySearchResult:
         # The query carries the subject the turn was resolved for.  The legacy
@@ -1785,23 +1784,25 @@ async def _companion_items(
 
     memory_task = (
         asyncio.create_task(fetch_memory())
-        if capabilities["private_memory"] and catalog_readable and confirmed_subject_id is not None
+        if capabilities["private_memory"] and scope.catalog_readable and confirmed_subject_id is not None
         else None
     )
-    # Persona follows the subject rule of memory (P1-03): see subject_persona.
+    # P1-03: another subject's persona reads only under its long-term-memory grant.
+    persona_readable = scope.bound_subject_trusted or confirmed_subject_id == account_id
+    persona_subject = confirmed_subject_id if persona_readable else None
     persona_task = (
         asyncio.create_task(
             subject_persona_capsule(
                 request,
                 account_id=account_id,
-                subject_id=confirmed_subject_id,
+                subject_id=persona_subject,
                 speaker_class=speaker.classification,
                 topic=query[:1000],
                 low_sensitivity_only=capabilities["persona_low_sensitivity"],
             )
         )
         if (capabilities["persona"] or capabilities["persona_low_sensitivity"])
-        and confirmed_subject_id is not None
+        and persona_subject is not None
         else None
     )
     completed = (
@@ -2287,7 +2288,6 @@ async def response_plan(
         # target -- through the one resolver every Agent-facing seam shares.
         active_subject_id = scope.subject_id
         retention_allowed = scope.retention_allowed
-        catalog_readable = scope.catalog_readable
         is_minor_student = (
             scope.subject_category == "minor"
             or scope.age_band in {"under_14", "14_17"}
@@ -2344,12 +2344,11 @@ async def response_plan(
                 request=request,
                 frozen=frozen,
                 account_id=account_id,
-                subject_id=active_subject_id or "",
+                scope=scope,
                 query=body.query,
                 speaker=body.speaker_decision,
                 now=now,
                 recall_context=tuple(body.recall_context),
-                catalog_readable=catalog_readable,
             )
             if (
                 frozen.interaction_mode == "companion" and fixed_reply is None and retention_allowed
@@ -2496,11 +2495,10 @@ async def context_prefetch(
         request=request,
         frozen=frozen,
         account_id=account_id,
-        subject_id=scope.subject_id,
+        scope=scope,
         query=body.query,
         speaker=body.speaker_decision,
         now=_local_now(cast(ControlSettings, request.app.state.settings)),
-        catalog_readable=scope.catalog_readable,
     )
     return {
         "speaker_class": body.speaker_decision.classification,

@@ -14,7 +14,7 @@ direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
 subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
-account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=response-plan/context-prefetch 按当前主体读投影（2026-09-26 代码，未部署；原接线点 `/v1/persona/session-capsule` 从无调用方，已删除）；投影读取仅 SQLite，生产 PG 下非账号本人主体为空人格，见 P1-03 / enabled=未启用 / verified=本地专测与真实 PG 契约
+account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=人格改为按使用人学习与读取（2026-09-26 代码，未部署，见 P1-03），账号→主体的一次性投影迁移不再是产品读路径 / enabled=未启用 / verified=本地专测与真实 PG 契约
 read_path_postgres_parity: code=已提交 `d2318e4`（CI `35501188784` success）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
 ```
@@ -79,8 +79,9 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-03 修稳成员入口，再接按使用人切人格/音色
 
-- 已完成（2026-09-26，代码，未部署）：response-plan 与 context-prefetch 的人格改为跟随当前确认主体（`services/control_api/app/subject_persona.py`）：主体是账号本人时仍用账号学习器；其他主体读自己的人格投影，无投影则为空；主体未确认或权威不可用时不给人格。依据是学习器只接收主体即账号本人的发言，账号人格从来不是他人的。回归 `test_response_plan_persona_follows_the_confirmed_subject`（旧代码上复现了把账号人格给其他主体）与说话人门控参数化测试。上线影响：一对一设备绑定孩子/老人时，不再把绑定账号本人的人格用于该主体，这类主体暂时没有人格；`self_use` 不变。
-- 待完成：投影读取 `read_active_version` 只读 SQLite，生产人格库在 PostgreSQL 且投影迁移未启用，所以非账号本人主体在生产恒为空人格；需决定是让人格学习按主体记账，还是补 PG 投影读取与持续写入。
+- 已完成（2026-09-26，代码，未部署）：人格跟随使用机器的人（用户决定）。给孩子用学孩子的人格，给老人用学老人的人格。人格存储按（绑定账号，使用人）记账：SQLite 与 PostgreSQL 引擎的特征、风格统计、版本表加 `subject_id`，现有数据回填为账号本人、ID 不变，控制面启动时幂等迁移（线上表归 `memoria_app`，现有 5 条特征、0 个版本）。学习：账号本人仍用账号的人格学习同意；其他使用人复用绑定时勾选的长期记忆（签名 profile 对该使用人确认且带 `memory_recall_private`），调度移入 `services/control_api/app/persona_learning.py`。读取：response-plan/context-prefetch 经 `subject_persona.py` 向引擎按使用人读取，其他使用人同样要求长期记忆授权，撤销后不再读出。按使用人删除流程新增 `persona_forgotten` 步骤清除该使用人的人格。
+- 已知风险（用户决定）：未成年人与成人一样完整学习人格特征（含价值观、决定等可画像特征），而 P0-04 学生安全闭环尚未完成；对外发布前需在 P0-04 中复核这一口径。
+- 待完成：孩子/老人人格的查看与审核入口（现有 `/v1/persona/traits` 等只看账号本人的人格）；设备验收：同一台设备绑定孩子后隔天体现孩子自己的表达风格，账号本人的人格不串入。
 - 待完成：建后年龄申报 UI；guardian 邀请/授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device→session 映射；同 binding 两个 subject 的人格/音色设备实听。
 - 完成条件：切换推进版本并使旧签名、上下文和音频失效；取消分配回落默认，克隆未 ready 回落设计音色；PG 与设备证据分开记录。入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`apps/miniprogram/pages/{device,persona-custom,guardian,privacy}/`。
 

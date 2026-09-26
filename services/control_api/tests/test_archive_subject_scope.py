@@ -473,6 +473,7 @@ async def _read_subject_memory(
     subject_category: str,
     token: dict[str, str],
     turn_id: int,
+    capabilities: tuple[str, ...] = ("chat", "memory_recall_private"),
 ) -> tuple[Any, Any]:
     """Read the two subject-scoped memory seams for one signed runtime profile."""
 
@@ -489,7 +490,7 @@ async def _read_subject_memory(
         subject_category=subject_category,
         age_band="under_14" if subject_category == "minor" else "adult",
         service_mode="student_minor" if subject_category == "minor" else "adult_companion",
-        capabilities=("chat", "memory_recall_private"),
+        capabilities=capabilities,
     )
     body = _response_plan_body(session_id)
     body["query"] = "我喜欢什么？"
@@ -928,183 +929,149 @@ async def test_device_bound_owner_claim_needs_a_confirming_runtime_profile(
 
 
 _ACCOUNT_TRAIT = "账号本人习惯先说“我觉得”。"
-# A fixed style label, so it also survives the uncertain-speaker style filter.
-_SUBJECT_TRAIT = "日常表达偏好短句，先给出核心意思"
+_SUBJECT_TRAIT = "这位使用人习惯说“我们再想想”。"
 
 
-def _account_capsule() -> Any:
+def _one_trait_capsule(version_id: str, description: str) -> Any:
     from services.persona.domain import PersonaCapsule, PersonaCapsuleEntry
 
     return PersonaCapsule(
-        version_id="account-persona-v1",
+        version_id=version_id,
         version_number=1,
         entries=(
             PersonaCapsuleEntry(
-                trait_id="trait-account-tic",
+                trait_id=f"trait-{version_id}",
                 category="verbal_tic",
-                description=_ACCOUNT_TRAIT,
+                description=description,
                 context="conversation",
                 counterexample="",
                 confidence=0.9,
-                source_event_ids=("account-event",),
+                source_event_ids=(f"event-{version_id}",),
             ),
         ),
-        prompt_fragment=_ACCOUNT_TRAIT,
+        prompt_fragment=description,
     )
 
 
-def _projected_subject_persona(db_path: object, subject_id: str) -> dict[str, Any] | None:
-    if subject_id != "person-projected-adult":
-        return None
-    return {
-        "version_id": "projected-subject-v3",
-        "version_number": 3,
-        "snapshot": [
-            {
-                "trait_id": "trait-subject-tic",
-                "category": "verbal_tic",
-                "description": _SUBJECT_TRAIT,
-                "context": "conversation",
-                "counterexample": "",
-                "confidence": 0.9,
-                "status": "confirmed",
-                "source_event_ids": ["subject-event"],
-            }
-        ],
-        "source_account_id": "subject-account",
-        "projected_at": "2026-09-20T00:00:00+00:00",
-    }
-
-
 @pytest.mark.asyncio
-async def test_response_plan_persona_follows_the_confirmed_subject(
+async def test_response_plan_persona_follows_the_person_using_the_device(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """P1-03: persona is the current subject's own, never the account holder's.
+    """P1-03: the persona is the current user's own, learned per person.
 
-    The account-keyed learner only learns from the account holder's own turns,
-    so a child, elder or household member in front of the device must get its
-    projected persona or none -- never the account holder's traits.
+    The account holder gets the account holder's persona; another subject (a
+    child or elder on a one-to-one device) reads its own persona from the
+    engine, and only while the signed profile carries the binding's
+    long-term-memory grant.
     """
 
-    from services.control_api.app import subject_persona
+    from services.persona.domain import PersonaCapsule
 
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv(
         "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
     )
     app = create_app()
-    account_reads: list[str] = []
+    requests: list[Any] = []
 
-    async def account_capsule(request: Any) -> Any:
-        account_reads.append(request.account_id)
-        return _account_capsule()
+    async def capsule(request: Any) -> Any:
+        requests.append(request)
+        if request.subject_id is None:
+            return _one_trait_capsule("account-persona", _ACCOUNT_TRAIT)
+        if request.subject_id == "person-device-user":
+            return _one_trait_capsule("subject-persona", _SUBJECT_TRAIT)
+        return PersonaCapsule()
 
-    monkeypatch.setattr(app.state.persona_engine, "capsule", account_capsule)
-    monkeypatch.setattr(subject_persona, "read_active_version", _projected_subject_persona)
+    monkeypatch.setattr(app.state.persona_engine, "capsule", capsule)
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner = await _register_verified_adult(client, app, username="scope-persona")
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        now = datetime.now(UTC)
-        for person_id in ("person-plain-adult", "person-projected-adult"):
-            await app.state.identity_service.register_person(
-                person_id=person_id,
-                display_name="另一人",
-                timezone="Asia/Shanghai",
-                subject_category="adult",
-                age_band="adult",
-                age_evidence_status="verified",
-                age_evidence_id=f"evidence-{person_id}",
-                now=now,
-            )
-        reads = {}
-        for turn_id, subject in enumerate(
-            (str(owner["user_id"]), "person-plain-adult", "person-projected-adult"), start=7
-        ):
-            reads[subject] = await _read_subject_memory(
-                client,
-                app=app,
-                user_id=str(owner["user_id"]),
-                session_id=session["session_id"],
-                subject_id=subject,
-                subject_category="adult",
-                token=token,
-                turn_id=turn_id,
-            )
+        await app.state.identity_service.register_person(
+            person_id="person-device-user",
+            display_name="使用人",
+            timezone="Asia/Shanghai",
+            subject_category="adult",
+            age_band="adult",
+            age_evidence_status="verified",
+            age_evidence_id="evidence-device-user",
+            now=datetime.now(UTC),
+        )
+        common = {
+            "app": app,
+            "user_id": str(owner["user_id"]),
+            "session_id": session["session_id"],
+            "subject_category": "adult",
+            "token": token,
+        }
+        owner_plan, owner_prefetch = await _read_subject_memory(
+            client, subject_id=str(owner["user_id"]), turn_id=7, **common
+        )
+        user_plan, user_prefetch = await _read_subject_memory(
+            client, subject_id="person-device-user", turn_id=8, **common
+        )
+        calls_before_revoke = len(requests)
+        revoked_plan, revoked_prefetch = await _read_subject_memory(
+            client,
+            subject_id="person-device-user",
+            turn_id=9,
+            capabilities=("chat",),
+            **common,
+        )
 
-    owner_plan, owner_prefetch = reads[str(owner["user_id"])]
-    plain_plan, plain_prefetch = reads["person-plain-adult"]
-    projected_plan, projected_prefetch = reads["person-projected-adult"]
-    for response in (*reads[str(owner["user_id"])], *reads["person-plain-adult"]):
+    for response in (
+        owner_plan, owner_prefetch, user_plan, user_prefetch, revoked_plan, revoked_prefetch
+    ):
         assert response.status_code == 200, response.text
-    for response in reads["person-projected-adult"]:
-        assert response.status_code == 200, response.text
-
-    # The account holder is the subject: the account-keyed persona answers.
+    # The account holder is the user: the account holder's persona answers.
     assert _ACCOUNT_TRAIT in owner_plan.text
-    assert owner_prefetch.json()["persona_version_id"] == "account-persona-v1"
-    # Another subject without a projection gets no persona at all.
-    assert _ACCOUNT_TRAIT not in plain_plan.text
-    assert _ACCOUNT_TRAIT not in plain_prefetch.text
-    assert plain_prefetch.json()["persona_version_id"] is None
-    # Another subject with a projection gets its own persona only.
-    assert _SUBJECT_TRAIT in projected_plan.text
-    assert _ACCOUNT_TRAIT not in projected_plan.text
-    assert projected_prefetch.json()["persona_version_id"] == "projected-subject-v3"
-    # The account learner was only ever asked while the account was the subject.
-    assert set(account_reads) == {str(owner["user_id"])}
+    assert owner_prefetch.json()["persona_version_id"] == "account-persona"
+    # Another person using the device gets their own persona, never the account's.
+    assert _SUBJECT_TRAIT in user_plan.text
+    assert _ACCOUNT_TRAIT not in user_plan.text
+    assert user_prefetch.json()["persona_version_id"] == "subject-persona"
+    # Without the long-term-memory grant the subject's persona is not read at all.
+    assert _SUBJECT_TRAIT not in revoked_plan.text
+    assert _ACCOUNT_TRAIT not in revoked_plan.text
+    assert len(requests) == calls_before_revoke
+    assert {request.subject_id for request in requests} == {None, "person-device-user"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("speaker_class", "low_sensitivity_only", "expects_projection_read"),
+    ("subject_id", "speaker_class", "low_sensitivity_only", "expected_subject", "style_only"),
     [
-        ("owner", False, True),
-        ("uncertain", True, True),
-        ("uncertain", False, False),
-        ("guest", True, False),
-        ("guest", False, False),
+        ("account-holder", "owner", False, None, False),
+        ("person-device-user", "owner", False, "person-device-user", False),
+        ("person-device-user", "uncertain", True, "person-device-user", True),
+        ("person-device-user", "uncertain", False, "person-device-user", False),
     ],
 )
-async def test_subject_persona_applies_the_account_engine_speaker_gate(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_subject_persona_asks_the_engine_for_that_subject(
+    subject_id: str,
     speaker_class: str,
     low_sensitivity_only: bool,
-    expects_projection_read: bool,
+    expected_subject: str | None,
+    style_only: bool,
 ) -> None:
     from services.control_api.app import subject_persona
 
-    projection_reads: list[str] = []
+    engine = SimpleNamespace(capsule=AsyncMock(return_value="capsule"))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(persona_engine=engine)))
 
-    def read(db_path: object, subject_id: str) -> dict[str, Any] | None:
-        projection_reads.append(subject_id)
-        return _projected_subject_persona(db_path, subject_id)
-
-    monkeypatch.setattr(subject_persona, "read_active_version", read)
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                settings=SimpleNamespace(memoria_db_path="unused.sqlite3"),
-                persona_engine=SimpleNamespace(capsule=AsyncMock()),
-            )
-        )
-    )
-
-    capsule = await subject_persona.subject_persona_capsule(
+    result = await subject_persona.subject_persona_capsule(
         request,  # type: ignore[arg-type]
         account_id="account-holder",
-        subject_id="person-projected-adult",
+        subject_id=subject_id,
         speaker_class=speaker_class,  # type: ignore[arg-type]
         topic="表达看法",
         low_sensitivity_only=low_sensitivity_only,
     )
 
-    request.app.state.persona_engine.capsule.assert_not_awaited()
-    assert projection_reads == (["person-projected-adult"] if expects_projection_read else [])
-    if expects_projection_read:
-        assert capsule.version_id == "projected-subject-v3"
-    else:
-        assert capsule.entries == ()
-        assert capsule.version_id is None
+    assert result == "capsule"
+    sent = engine.capsule.await_args.args[0]
+    assert sent.account_id == "account-holder"
+    assert sent.subject_id == expected_subject
+    assert sent.speaker_class == speaker_class
+    assert sent.confirmed_style_only is style_only

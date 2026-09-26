@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from services.archive.object_store import ObjectNotFoundError, ObjectStore
 from services.governance.subject_ports import (
@@ -48,6 +48,7 @@ _STEPS: Final[tuple[str, ...]] = (
     "lineage_captured",
     "objects_deleted",
     "archive_rows_deleted",
+    "persona_forgotten",
     "guardian_rows_deleted",
     "memory_scope_erased",
     "corpus_purged",
@@ -233,6 +234,12 @@ type CorpusPurger = Callable[[str], Awaitable[int]]
 type IdentityRedactor = Callable[[str, str], Awaitable[None]]
 
 
+class PersonaForgetter(Protocol):
+    """The persona learns per person, so a subject's persona goes with them."""
+
+    async def forget_subject(self, *, account_id: str, subject_id: str) -> int: ...
+
+
 class SubjectDeletionService:
     """Run, resume and verify one subject's deletion."""
 
@@ -247,6 +254,7 @@ class SubjectDeletionService:
         terminate_sessions: SessionTerminator | None = None,
         purge_corpus: CorpusPurger | None = None,
         redact_identity: IdentityRedactor | None = None,
+        persona: PersonaForgetter | None = None,
     ) -> None:
         self._ledger = ledger
         self._archive = archive
@@ -256,6 +264,7 @@ class SubjectDeletionService:
         self._terminate_sessions = terminate_sessions
         self._purge_corpus = purge_corpus
         self._redact_identity = redact_identity
+        self._persona = persona
         self._lock = asyncio.Lock()
 
     def is_subject_deleting(self, *, account_id: str, subject_id: str) -> bool:
@@ -363,6 +372,16 @@ class SubjectDeletionService:
                     for table, count in counts.items():
                         progress[f"archive.{table}"] = progress.get(f"archive.{table}", 0) + count
                 await checkpoint("archive_rows_deleted")
+
+            if due("persona_forgotten"):
+                progress["persona.rows"] = (
+                    await self._persona.forget_subject(
+                        account_id=scope.account_id, subject_id=scope.subject_id
+                    )
+                    if self._persona is not None
+                    else 0
+                )
+                await checkpoint("persona_forgotten")
 
             if due("guardian_rows_deleted"):
                 if self._guardian is not None:

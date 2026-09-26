@@ -139,7 +139,7 @@ from services.governance.account_data import (
 )
 from services.governance.subject_archive import PostgresSubjectArchive, SqliteSubjectArchive
 from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
-from services.governance.subject_ports import SubjectGuardianPort, SubjectMemoryScopePort
+from services.governance.subject_ports import SubjectGuardianPort
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.reader import GrowthReader
 from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
@@ -721,18 +721,16 @@ def _install_subject_deletion(
 
     async def purge_corpus(subject_id: str) -> int:
         return await corpus_retention_service.purge_minor(minor_user_id=subject_id)
-
     service = SubjectDeletionService(
         ledger=ledger,
         archive=_subject_archive(settings),
         object_store=archive_object_store,
         guardian=cast(SubjectGuardianPort, guardian_store),
-        memory_scope=cast(
-            SubjectMemoryScopePort | None, getattr(app.state, "subject_memory_scope", None)
-        ),
+        memory_scope=getattr(app.state, "subject_memory_scope", None),
         terminate_sessions=session_terminator.terminate_subject,
         purge_corpus=purge_corpus,
         redact_identity=redact,
+        persona=app.state.persona_engine,
     )
     app.state.subject_deletion = service
     return service

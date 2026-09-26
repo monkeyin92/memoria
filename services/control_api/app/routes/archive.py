@@ -9,7 +9,6 @@ import hashlib
 import hmac
 import io
 import logging
-import math
 import uuid
 import wave
 from collections.abc import AsyncIterator, Mapping
@@ -67,6 +66,10 @@ from services.control_api.app.bound_subject import (
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy, SpeakerClass
+from services.control_api.app.persona_learning import (
+    schedule_low_sensitivity_persona_observation,
+    schedule_persona_observation,
+)
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -116,8 +119,6 @@ from services.legacy.domain import (
     LegacyNotFoundError,
     LegacyRegistryPort,
 )
-from services.persona.domain import PersonaEnginePort, PersonaEvidence
-from services.persona.rules import trusted_uncertain_profile
 
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
@@ -1295,140 +1296,6 @@ async def _delete_object_safely(store: ObjectStore, reference: ObjectRef) -> Non
         raise
 
 
-async def _observe_persona(
-    request: Request,
-    engine: PersonaEnginePort,
-    *,
-    account_id: str,
-    source_event_id: str,
-    speech_duration_ms: int | None,
-    pause_ratio: float | None,
-    quality_score: float | None,
-) -> None:
-    try:
-        async with _account_write(request, account_id):
-            allowed = await engine.learning_allowed(account_id=account_id)
-            await engine.observe(
-                PersonaEvidence(
-                    account_id=account_id,
-                    source_event_id=source_event_id,
-                    learning_allowed=allowed,
-                    speech_duration_ms=speech_duration_ms,
-                    pause_ratio=pause_ratio,
-                    quality_score=quality_score,
-                )
-            )
-    except Exception:
-        logger.exception("persona observation failed source_event_id=%s", source_event_id)
-
-
-def _bounded_metric(
-    payload: Mapping[str, Any],
-    key: str,
-    *,
-    minimum: float,
-    maximum: float,
-) -> float | None:
-    value = payload.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    metric = float(value)
-    if not math.isfinite(metric) or not minimum <= metric <= maximum:
-        return None
-    return metric
-
-
-def _persona_metrics(
-    payload: Mapping[str, Any],
-) -> tuple[int | None, float | None, float | None] | None:
-    speech_ms = _bounded_metric(payload, "speech_ms", minimum=1, maximum=600_000)
-    pause_ratio = _bounded_metric(payload, "pause_ratio", minimum=0, maximum=1)
-    quality_score = _bounded_metric(payload, "quality_score", minimum=0, maximum=1)
-    if any(
-        key in payload and metric is None
-        for key, metric in (
-            ("speech_ms", speech_ms),
-            ("pause_ratio", pause_ratio),
-            ("quality_score", quality_score),
-        )
-    ):
-        return None
-    return (
-        int(speech_ms) if speech_ms is not None else None,
-        pause_ratio,
-        quality_score,
-    )
-
-
-def _schedule_persona_observation(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    *,
-    event: EvidenceEvent,
-    duplicate: bool,
-    allow_uncertain_candidate: bool = False,
-) -> None:
-    if duplicate or event.event_type != "speech.utterance_finalized":
-        return
-    # This learner is account-keyed; a confirmed household member is not the
-    # account owner's persona, even when that member has retention consent.
-    # A NULL subject never reaches this seam (the retention ceiling already
-    # withdrew its capabilities), and it is not the owner either.
-    if event.subject_id != event.account_id:
-        return
-    if event.payload.get("persona_eligible") is not True:
-        return
-    if event.speaker_class == "uncertain":
-        if (
-            not allow_uncertain_candidate
-            or _store(request).get_account(user_id=event.account_id) is None
-            or trusted_uncertain_profile(event.payload) is None
-        ):
-            return
-    elif event.speaker_class != "owner":
-        return
-    engine = cast(PersonaEnginePort, request.app.state.persona_engine)
-    metrics = _persona_metrics(event.payload)
-    if metrics is None:
-        return
-    speech_duration_ms, pause_ratio, quality_score = metrics
-    background_tasks.add_task(
-        _observe_persona,
-        request,
-        engine,
-        account_id=event.account_id,
-        source_event_id=event.event_id,
-        speech_duration_ms=speech_duration_ms,
-        pause_ratio=pause_ratio,
-        quality_score=quality_score,
-    )
-
-
-def _schedule_low_sensitivity_persona_observation(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    *,
-    event: EvidenceEvent,
-    duplicate: bool,
-) -> None:
-    """Keep shadow candidates separate from owner-history learning."""
-
-    if (
-        event.speaker_class != "uncertain"
-        or event.payload.get("speaker_reason_code") != "shadow_owner_candidate"
-        or event.payload.get("history_eligible") is not False
-        or event.payload.get("owner_projection_eligible") is not False
-    ):
-        return
-    _schedule_persona_observation(
-        request,
-        background_tasks,
-        event=event,
-        duplicate=duplicate,
-        allow_uncertain_candidate=True,
-    )
-
-
 def _require_internal_token(
     request: Request,
     capability: Literal["archive_write"],
@@ -2067,19 +1934,29 @@ async def append_session_event(
     # user task succeeded.  Offline trajectory replay loads this canonical pair
     # later and appends a LearningSignal only after independent evaluation.
     _wake_compiler(request)
+    # "Long-term memory" ticked at binding is what lets another subject's persona
+    # learn; the signed profile carries it as memory_recall_private for exactly
+    # this subject.
+    subject_learning_allowed = runtime_profile_trusts_bound_subject(
+        current_profile, subject_id=event.subject_id
+    )
     if trusted_interaction["capabilities"]["learning"]:
-        _schedule_persona_observation(
+        schedule_persona_observation(
             request,
             background_tasks,
             event=event,
             duplicate=result.duplicate,
+            account_write=_account_write,
+            subject_learning_allowed=subject_learning_allowed,
         )
     elif trusted_interaction["capabilities"]["persona_low_sensitivity"]:
-        _schedule_low_sensitivity_persona_observation(
+        schedule_low_sensitivity_persona_observation(
             request,
             background_tasks,
             event=event,
             duplicate=result.duplicate,
+            account_write=_account_write,
+            subject_learning_allowed=subject_learning_allowed,
         )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,

@@ -31,11 +31,12 @@ from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
 from services.control_api.app.main import create_app
+from services.control_api.app.persona_learning import observe_persona
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
+    _account_write,
     _canonical_actual_voice,
     _deletion_status_response,
-    _observe_persona,
 )
 from services.digital_self.domain import (
     DigitalSelfManifest,
@@ -1326,9 +1327,10 @@ async def test_late_persona_background_task_is_rejected_by_the_deletion_fence(
     )
     engine = PersonaObservationStub()
 
-    await _observe_persona(
+    await observe_persona(
         SimpleNamespace(app=app),  # type: ignore[arg-type]
         engine,  # type: ignore[arg-type]
+        account_write=_account_write,
         account_id=account_id,
         source_event_id="late-persona-evidence",
         speech_duration_ms=1000,
