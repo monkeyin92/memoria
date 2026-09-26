@@ -18,6 +18,18 @@
 - **下一步必须动作**：先补 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 下次整栈发布检查清单（2026-09-26 准备，未执行）
+
+发布须另获授权。本清单覆盖 main 上尚未上线的 PR #42、#44、#45；执行工具为仓库 `scripts/release_ops.sh`（安装到服务器 `/root/memoria-release/release-ops.sh`，root 0700），它只切换 5 个角色（agent+bridge、control-api、speaker-model、两个网关），media-edge 单独切换。
+
+- **执行前**：合并 PR #45 并打 tag；只读复核脚本常量仍与线上一致（2026-09-26 已核对全部匹配：`PREV_TAG=20260925-full-stack-v1` / `064ed61`，control-api 链为整栈 compose + `20260925-device-mascot-sync` 两个 override，其余 5 个容器只用整栈 compose，`/opt/memoria/current` 指向整栈树，PostgreSQL 从 `20260827-architecture-split-v1` 挂载 schema）；若期间有新的组件发布，先改常量再执行，冻结步骤在链不一致时会拒绝。
+- **env 步骤**：新增断言候选 agent 与 bridge 的 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值（线上当前为 false）。控制面不再要求 `MEMORIA_PERSONA_READ_TOKEN`、`MEMORIA_MEMORY_READ_TOKEN`（能力 token 由十个降为八个）；这两个及其余已退役变量留在 env 文件里无害，`split_production_env.py` 接受但不分发。
+- **schema 步骤**：清单内文件照旧写入数据层旧树。人格表不在清单里，由 control-api 启动时的引擎自动迁移：三张表加 `subject_id`、回填为账号本人、替换唯一约束；迁移期间临时 `NO FORCE ROW LEVEL SECURITY` 并立即恢复；线上 5 条特征、0 个版本。切 control-api 后看启动日志无报错、`/health/ready` 200。
+- **cutover / finish**：`finish` 的容器状态列表已能处理无 healthcheck 的 LiveKit、sensevoice，遇 unhealthy/starting 失败关闭。
+- **media-edge（单独）**：新镜像在 `MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative` 或生产未开设备 WSS 时拒绝启动（线上 env 为 false / `python_authoritative`，compose 已固定设备 WSS 为 true）。新链用新发布树的 compose 加 media-edge 镜像 override，不再包含 `/tmp/media-runtime.override.yml`；回滚镜像 `memoria-media-edge:20260920-f1f2-owner-silence-and-barge`。切换期间设备会断开并自动重连 bridge。
+- **回滚**：`release-ops.sh rollback` 把 control-api 恢复为 mascot-sync 组件链，其余角色恢复为整栈镜像，`current` 指回整栈树。回滚前会检查是否已有孩子/老人的生效人格版本：旧版 control-api 启动时会重建"每账号一个生效版本"的索引，有这类版本时会启动失败，所以脚本默认拒绝回滚；设置 `ROLLBACK_SUPERSEDE_SUBJECT_PERSONA=1` 会先把这些版本标为已取代（数据保留）。回滚后旧代码写入人格会因唯一约束已替换而报错（后台捕获、只记日志），人格读取不受影响，直到重新发布。schema 不回滚。
+- **上线后验收**：readiness 与外部 8443 就绪 200；设备与小程序按顺序验证：孩子绑定后在家长页重开"长期记忆"开关以获得监护小结授予（存量绑定不会自动获得），监护小结出现且只含孩子的聚合记录；隔天孩子的回复体现自己的表达风格、账号本人人格不串入；按孩子导出含人格计数不含描述；P0-03 剩余矩阵与 TLS/WSS 重连观察。
+
 ## 2026-09-26 减法整理（PR #42，仅仓库，未部署）
 
 - **范围**：main `00bb4b2`（PR #42 squash），净删约 3.09 万行，线上链路行为不变。删除无消费者的多主体 Go/TS/固件生成契约、Go 侧 WebRTC/WHIP 终端与 Go-shadow 会话 actor、Python 侧 shadow 协商与观察流、agent 中只被自身测试引用的 4 个模块；`packages/proto` 未改。删除前只读核对线上：media-edge `MEDIA_EDGE_INTERACTION_AUTHORITY=python_authoritative`、`MEDIA_EDGE_WEBRTC_ENABLED=false`，bridge `MEDIA_BRIDGE_GO_SHADOW_ENABLED=false`。

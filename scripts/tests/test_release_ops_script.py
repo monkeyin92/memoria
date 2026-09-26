@@ -129,3 +129,49 @@ def test_speaker_guard_accepts_only_values_every_reader_treats_as_off(
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
     if passes:
         assert "speaker_authority_disabled=PASS" in result.stdout
+
+
+def test_live_chain_constants_have_no_stale_release_trees() -> None:
+    script = _script()
+    # Chains retired by the 20260925 full-stack release must not come back.
+    for stale in ("20260921-demo02-base", "20260921-defect-a-base", "20260901-0945",
+                  "20260828-agent-loss", "confirm-bound-subject", "$OLD"):
+        assert stale not in script, stale
+    assert "PREV_TAG=20260925-full-stack-v1" in script
+    assert "LIVE_CONTROL_RELEASE=20260925-device-mascot-sync" in script
+
+
+def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
+    freeze = _function("step_freeze")
+    assert '"$PREV/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/' in freeze
+    for container in ("memoria-speaker-model-1", "memoria-agent-1",
+                      "memoria-voice-core-media-bridge-1", "memoria-miniprogram-gateway-1",
+                      "memoria-device-media-gateway-1"):
+        assert container in freeze
+    assert '[[ "$cf" == "$PREV/docker-compose.production.yml" ]]' in freeze
+    assert 'readlink -f /opt/memoria/current)" == "$PREV"' in freeze
+    # media-edge's host-side override is optional now that no rebuilt role uses it.
+    assert "missing /tmp/media-runtime.override.yml" not in freeze
+
+
+def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:
+    schema = _function("step_schema")
+    rollback = _function("step_rollback")
+    assert '"$DATA_TREE/$f"' in schema and "$PREV" not in schema
+    assert 'ln -sfn "$PREV" /opt/memoria/current.new' in rollback
+    assert 'MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT"' in rollback
+    assert '"${PREV_STACK_SERVICES[@]}"' in rollback
+    assert "$DATA_TREE" not in rollback
+
+
+def test_rollback_refuses_when_bound_subjects_hold_active_persona_versions() -> None:
+    guard = _function("rollback_persona_guard")
+    rollback = _function("step_rollback")
+    # PREV's control-api rebuilds the one-active-version-per-account index at start.
+    assert "subject_id IS DISTINCT FROM account_id" in guard
+    assert "ROLLBACK_SUPERSEDE_SUBJECT_PERSONA" in guard
+    assert "exit 1" in guard
+    assert "SET status = 'superseded'" in guard
+    # It runs before anything is recreated or any env file is restored.
+    assert rollback.index("rollback_persona_guard") < rollback.index("cp -p")
+    assert rollback.index("rollback_persona_guard") < rollback.index("docker compose")
