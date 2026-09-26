@@ -33,6 +33,7 @@ from services.device_fleet.bootstrap_domain import (
     BindingConflict,
     BindingInitialization,
     BindingRecord,
+    BootstrapPurpose,
     BootstrapSession,
     BootstrapState,
     ChallengeReplay,
@@ -57,6 +58,7 @@ from services.device_fleet.bootstrap_domain import (
     b64url_decode,
     b64url_encode,
     now_utc,
+    require_bootstrap_device,
     require_transition,
     validate_activation_manifest,
 )
@@ -179,6 +181,11 @@ def _row_value(row: asyncpg.Record, key: str) -> object:
 
 def _int_value(row: asyncpg.Record, key: str) -> int:
     return int(cast(int, _row_value(row, key)))
+
+
+def _optional_text(row: asyncpg.Record, key: str) -> str | None:
+    value = _row_value(row, key)
+    return str(value) if value is not None else None
 
 
 class PostgresBootstrapStore(BootstrapStorePort):
@@ -498,21 +505,13 @@ class PostgresBootstrapStore(BootstrapStorePort):
             ),
             lifecycle_status=DeviceLifecycle(str(_row_value(row, "lifecycle_status"))),
             last_monotonic_counter=_int_value(row, "last_monotonic_counter"),
-            binding_id=(
-                str(_row_value(row, "binding_id"))
-                if _row_value(row, "binding_id") is not None
-                else None
-            ),
+            binding_id=_optional_text(row, "binding_id"),
             binding_version=(
                 _int_value(row, "binding_version")
                 if _row_value(row, "binding_version") is not None
                 else None
             ),
-            actor_id=(
-                str(_row_value(row, "actor_id"))
-                if _row_value(row, "actor_id") is not None
-                else None
-            ),
+            actor_id=_optional_text(row, "actor_id"),
             activation_version=_int_value(row, "activation_version"),
             last_activation_counter=_int_value(row, "last_activation_counter"),
         )
@@ -539,11 +538,8 @@ class PostgresBootstrapStore(BootstrapStorePort):
             device_online_at=_db_time(_row_value(row, "device_online_at")),
             cancelled_at=_db_time(_row_value(row, "cancelled_at")),
             consumed_at=_db_time(_row_value(row, "consumed_at")),
-            failure_code=(
-                str(_row_value(row, "failure_code"))
-                if _row_value(row, "failure_code") is not None
-                else None
-            ),
+            failure_code=_optional_text(row, "failure_code"),
+            purpose=BootstrapPurpose(str(_row_value(row, "purpose"))),
         )
 
     @staticmethod
@@ -582,11 +578,7 @@ class PostgresBootstrapStore(BootstrapStorePort):
             idempotency_key=str(_row_value(row, "idempotency_key")),
             reserved_at=_required_time(_row_value(row, "reserved_at")),
             expires_at=_required_time(_row_value(row, "expires_at")),
-            binding_id=(
-                str(_row_value(row, "binding_id"))
-                if _row_value(row, "binding_id") is not None
-                else None
-            ),
+            binding_id=_optional_text(row, "binding_id"),
             binding_version=(
                 _int_value(row, "binding_version")
                 if _row_value(row, "binding_version") is not None
@@ -741,10 +733,10 @@ class PostgresBootstrapStore(BootstrapStorePort):
                         qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
                         ble_name, ble_service_uuid, state, state_version, first_seen_at,
                         expires_at, proximity_verified_at, wifi_connected_at,
-                        device_online_at, cancelled_at, consumed_at, failure_code
+                        device_online_at, cancelled_at, consumed_at, failure_code, purpose
                     ) VALUES (
                         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+                        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
                     )
                     """,
                     session.onboarding_session_id,
@@ -769,6 +761,7 @@ class PostgresBootstrapStore(BootstrapStorePort):
                     _timestamp(session.cancelled_at) if session.cancelled_at else None,
                     _timestamp(session.consumed_at) if session.consumed_at else None,
                     session.failure_code,
+                    session.purpose.value,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise ClaimConflict("onboarding session identity already exists") from exc
@@ -1180,10 +1173,8 @@ class PostgresBootstrapStore(BootstrapStorePort):
             if device_row is None:
                 raise DeviceNotFound()
             device = self._device(device_row)
-            if device.lifecycle_status is DeviceLifecycle.REVOKED:
-                raise DeviceRevoked()
-            if device.lifecycle_status is DeviceLifecycle.BOUND:
-                raise DeviceAlreadyBound()
+            lifecycle = require_bootstrap_device(device, session)
+            reprovision = session.purpose is BootstrapPurpose.REPROVISION
             if monotonic_counter <= device.last_monotonic_counter:
                 raise ClaimConflict("device monotonic counter is not increasing")
             await connection.execute(
@@ -1198,7 +1189,7 @@ class PostgresBootstrapStore(BootstrapStorePort):
                     firmware_version = $3, firmware_security_version = $4, updated_at = $5
                 WHERE device_id = $6
                 """,
-                DeviceLifecycle.PROVISIONED.value,
+                lifecycle.value,
                 monotonic_counter,
                 firmware_version,
                 firmware_security_version,
@@ -1213,13 +1204,15 @@ class PostgresBootstrapStore(BootstrapStorePort):
                 SET state = $1, state_version = state_version + 1,
                     proximity_verified_at = COALESCE(proximity_verified_at, $2),
                     wifi_connected_at = COALESCE(wifi_connected_at, $2),
-                    device_online_at = $2
+                    device_online_at = $2,
+                    consumed_at = COALESCE(consumed_at, $5)
                 WHERE onboarding_session_id = $3 AND state_version = $4
                 """,
                 target.value,
                 current_time,
                 onboarding_session_id,
                 session.state_version,
+                current_time if reprovision else None,
             )
             updated_row = await connection.fetchrow(
                 "SELECT * FROM device_onboarding_sessions WHERE onboarding_session_id = $1",
@@ -1231,7 +1224,7 @@ class PostgresBootstrapStore(BootstrapStorePort):
             await self._event(
                 connection,
                 session=updated,
-                event_type="device_online_proof_accepted",
+                event_type=f"{'reprovision' if reprovision else 'device'}_online_proof_accepted",
                 previous_state=session.state,
                 next_state=target,
                 actor_type="device",
@@ -1272,6 +1265,8 @@ class PostgresBootstrapStore(BootstrapStorePort):
                 raise StateVersionConflict("onboarding state version changed")
             if session.device_id != claim.device_id or session.actor_id != claim.actor_id:
                 raise ActorMismatch()
+            if session.purpose is BootstrapPurpose.REPROVISION:
+                raise ClaimConflict("reprovision session cannot reserve a claim")
             if session.expires_at <= current_time:
                 raise SessionExpired()
             if not session.proximity_verified_at or not session.device_online_at:

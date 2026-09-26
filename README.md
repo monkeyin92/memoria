@@ -131,6 +131,17 @@ Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业�
 
 绑定完成前设备拉取 Activation Manifest 得到 `409` 属于正常中间态：固件保持二维码/BLE 入口并后台重试，绑定完成后停止配网入口。相同二维码从新页面再次扫码会复用原 onboarding session；安全会话已经释放时必须重新扫码，不能复用旧内存会话发送网络信息。
 
+### 已绑定设备重新配网
+
+机器人换了地方或路由器变了、连不上任何已保存网络时，固件进入 Wi-Fi 配网模式并重新显示近场二维码（需要固件补丁 `0028-memoria-bootstrap-in-wifi-config.patch`，与绑定状态无关）。绑定它的账号可以直接扫码只更新 Wi-Fi，不需要先解除绑定：
+
+1. introspect 发现设备已绑定时，只有当前绑定人（`is_actor_bound_to_device`）能拿到会话，且会话 `purpose=reprovision`；其他账号仍得到 `DEVICE_ALREADY_BOUND`。同一张二维码先前用于首次启用、或 reprovision 已完成后再扫，一律返回 `QR_SESSION_EXPIRED`，需要机器人刷新二维码。
+2. BLE Security 1、Wi-Fi 写入、设备 challenge 与 online-proof 和首次启用完全相同，二维码 nonce、mobile nonce、一次性 challenge 与单调计数器的防重放规则不变；计数器与 Activation ACK 共用，重新配网的 proof 必须大于上次 ACK 的计数。
+3. 服务端接受 reprovision 的 online-proof 时要求设备仍绑定在该会话账号上（中途解绑返回 `BINDING_CONFLICT`，转给他人返回 `DEVICE_ALREADY_BOUND`），只更新计数器和固件版本，不改生命周期、绑定、Activation；会话停在 `device_online` 并写入 `consumed_at`，此后不再过期、取消为空操作；reprovision 会话的 claim 在服务层和两种存储层都被拒绝。
+4. 小程序以服务端 `purpose` 为准：看到 `device_online` 即显示“网络已更新”，不进入认领、初始化和激活步骤。设备页“重新配网”入口若扫到未绑定在本账号的设备，会在连接蓝牙前停下并提示改用“添加其他设备”；从“添加其他设备”扫到自己已绑定的机器人时同样只更新 Wi-Fi。
+
+联网后已绑定的固件照常拉取 Activation Manifest；版本已确认过，不会重复 ACK。
+
 小程序仍是控制面：手机不采集声纹，不参与机器人实时对话。主人声纹登记由小程序记录明确授权，再由已绑定设备采集有界语音样本并提交 Speaker Authority；`requested`、`pending`、`active` 是服务端权威状态，shadow 档案未激活前不得宣传为主人认证。
 
 当前启用链路的线上、板卡和小程序证据以及仍待完成的真实对话验收见 `HANDOFF.md`。
@@ -386,7 +397,7 @@ Replay 使用现有 `adult_clean`、`child_clean`、`child_pause`、`tv_backgrou
 
 固件以固定 `78/xiaozhi-esp32` upstream 加小型 overlay 维护。锁定版本、commit、ESP-IDF 和传递依赖分别以 `firmware/esp32/upstream.lock` 与 `overlay/files/dependencies.lock` 为准；缓存、工具链和构建产物不提交。
 
-`MemoriaBootstrap` 负责签名二维码、Protocomm Security 1、Wi-Fi 写入、online-proof 和 Activation 重试。设备未绑定时保持附近配网入口；收到并确认 Activation Manifest 后停止二维码/BLE 配网面并进入正常会话状态。小程序端的对应实现位于 `apps/miniprogram/utils/device-onboarding`，跨端响应结构以 `packages/contracts/device-onboarding-v1.json` 为准。
+`MemoriaBootstrap` 负责签名二维码、Protocomm Security 1、Wi-Fi 写入、online-proof 和 Activation 重试。设备未绑定时保持附近配网入口（已绑定设备进入 Wi-Fi 配网模式时的重新配网见上文）；收到并确认 Activation Manifest 后停止二维码/BLE 配网面并进入正常会话状态。小程序端的对应实现位于 `apps/miniprogram/utils/device-onboarding`，跨端响应结构以 `packages/contracts/device-onboarding-v1.json` 为准。
 
 ```bash
 cd firmware/esp32

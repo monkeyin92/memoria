@@ -44,6 +44,7 @@ Page({
     state: "prepare",
     stateLabel: "准备设备",
     mode: "add",
+    reprovision: false,
     busy: false,
     scanning: false,
     error: "",
@@ -72,9 +73,10 @@ Page({
     this._initialSessionId =
       typeof options.session_id === "string" && options.session_id ? options.session_id : "";
     this._controller = new OnboardingController({
+      mode: this._mode,
       onChange: (snapshot) => this._applySnapshot(snapshot),
     });
-    this.setData({ mode: this._mode });
+    this.setData({ mode: this._mode, reprovision: this._mode === "reprovision" });
   },
 
   async onShow() {
@@ -117,6 +119,7 @@ Page({
     this.setData({
       state: snapshot.state,
       stateLabel: snapshot.stateLabel,
+      reprovision: Boolean(snapshot.reprovision),
       busy: snapshot.busy,
       error: snapshot.error,
       errorCode: snapshot.errorCode,
@@ -248,10 +251,11 @@ Page({
 
   cancelFlow() {
     if (this.data.busy) return;
+    const reprovision = this.data.reprovision;
     wx.showModal({
-      title: "取消本次启用？",
+      title: reprovision ? "取消重新配网？" : "取消本次启用？",
       content: "会断开当前蓝牙连接，但不会修改已经绑定的设备。",
-      confirmText: "取消启用",
+      confirmText: reprovision ? "取消配网" : "取消启用",
       cancelText: "继续设置",
       success: (result) => {
         if (!result.confirm) return;

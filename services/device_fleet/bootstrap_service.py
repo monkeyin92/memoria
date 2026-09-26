@@ -34,6 +34,7 @@ from services.device_fleet.bootstrap_domain import (
     BindingConflict,
     BindingInitialization,
     BindingRecord,
+    BootstrapPurpose,
     BootstrapSession,
     BootstrapState,
     ChallengeReplay,
@@ -67,6 +68,7 @@ from services.device_fleet.bootstrap_domain import (
     now_utc,
     parse_bootstrap_qr,
     public_key_from_bytes,
+    require_bootstrap_device,
     sha256_hex,
     validate_activation_manifest,
     verify_bootstrap_qr,
@@ -269,7 +271,15 @@ class DeviceOnboardingService:
         if expected != actual:
             raise ActorMismatch()
 
+    @staticmethod
+    def _reprovision_completed(session: BootstrapSession) -> bool:
+        return session.purpose is BootstrapPurpose.REPROVISION and session.consumed_at is not None
+
     def _expire_session_if_needed(self, session: BootstrapSession) -> BootstrapSession:
+        if self._reprovision_completed(session):
+            # A finished reprovision keeps reporting device_online; its TTL
+            # only bounds the nearby window, not the recorded outcome.
+            return session
         if session.expires_at <= self._now() and session.state not in {
             BootstrapState.EXPIRED,
             BootstrapState.CANCELLED,
@@ -315,8 +325,16 @@ class DeviceOnboardingService:
             raise QRSignatureError("QR firmware identity is stale")
         if device.lifecycle_status is DeviceLifecycle.REVOKED:
             raise DeviceRevoked()
+        purpose = BootstrapPurpose.ONBOARDING
         if device.lifecycle_status is DeviceLifecycle.BOUND:
-            raise DeviceAlreadyBound()
+            # A bound board shows its QR again when it cannot reach any known
+            # network.  Only the account it is bound to may use that QR, and
+            # only to deliver new Wi-Fi; every other actor keeps the conflict.
+            if not self.store.is_actor_bound_to_device(  # type: ignore[attr-defined]
+                actor_id=actor_id, device_id=device.device_id
+            ):
+                raise DeviceAlreadyBound()
+            purpose = BootstrapPurpose.REPROVISION
         qr_nonce_hash = hash_b64url(payload.bootstrap_nonce, field="bootstrap_nonce")
 
         # The board keeps one signed QR visible for the current bootstrap
@@ -333,14 +351,21 @@ class DeviceOnboardingService:
             existing_qr = self._expire_session_if_needed(existing_qr)
             if existing_qr.actor_id != actor_id:
                 raise ClaimConflict("device QR is already used by another actor")
-            if existing_qr.state in {
-                BootstrapState.EXPIRED,
-                BootstrapState.CANCELLED,
-                BootstrapState.FAILED,
-                BootstrapState.REVOKED,
-                BootstrapState.CONFLICT,
-                BootstrapState.ACTIVATED,
-            }:
+            if (
+                existing_qr.state
+                in {
+                    BootstrapState.EXPIRED,
+                    BootstrapState.CANCELLED,
+                    BootstrapState.FAILED,
+                    BootstrapState.REVOKED,
+                    BootstrapState.CONFLICT,
+                    BootstrapState.ACTIVATED,
+                }
+                # The device's binding changed since this QR was first
+                # scanned (bound through it, or released meanwhile).
+                or existing_qr.purpose is not purpose
+                or self._reprovision_completed(existing_qr)
+            ):
                 raise SessionExpired("device QR session is no longer resumable")
             existing_mobile_nonce = self._mobile_nonce(
                 actor_id=existing_qr.actor_id,
@@ -402,6 +427,7 @@ class DeviceOnboardingService:
             cancelled_at=None,
             consumed_at=None,
             failure_code=None,
+            purpose=purpose,
         )
         self.store.create_session(session)  # type: ignore[attr-defined]
         return self._session_view(session, mobile_nonce=mobile_nonce)
@@ -414,7 +440,8 @@ class DeviceOnboardingService:
     ) -> dict[str, object]:
         session = self._expire_session_if_needed(session)
         device = self._device(session.device_id)
-        claim_status = "unclaimed"
+        reprovision = session.purpose is BootstrapPurpose.REPROVISION
+        claim_status = "bound" if reprovision else "unclaimed"
         claim = self.store.get_claim_for_session(  # type: ignore[attr-defined]
             session.onboarding_session_id
         )
@@ -422,6 +449,7 @@ class DeviceOnboardingService:
             claim_status = _client_claim_status(claim.status)
         result: dict[str, object] = {
             "onboarding_session_id": session.onboarding_session_id,
+            "purpose": session.purpose.value,
             "state": session.state.value,
             "state_version": session.state_version,
             "activation_version": device.activation_version,
@@ -446,8 +474,14 @@ class DeviceOnboardingService:
             result["claim_id"] = claim.claim_id
             if claim.binding_id is not None:
                 result["binding_id"] = claim.binding_id
-        activation = self.store.latest_activation_for_device(  # type: ignore[attr-defined]
-            session.device_id
+        # A reprovision never produces an activation; reporting the existing
+        # one would read as progress of this session.
+        activation = (
+            None
+            if reprovision
+            else self.store.latest_activation_for_device(  # type: ignore[attr-defined]
+                session.device_id
+            )
         )
         if activation is not None:
             result["activation_status"] = activation.status.value
@@ -463,6 +497,9 @@ class DeviceOnboardingService:
         self._assert_actor(session.actor_id, actor_id)
         session = self._expire_session_if_needed(session)
         if session.state in {BootstrapState.CANCELLED, BootstrapState.EXPIRED}:
+            return self._session_view(session)
+        if self._reprovision_completed(session):
+            # The new Wi-Fi is already in use; there is nothing left to undo.
             return self._session_view(session)
         if session.state in {
             BootstrapState.BOUND,
@@ -493,10 +530,7 @@ class DeviceOnboardingService:
         device = self._device(device_id)
         if session.device_id != device_id or device.certificate_id != certificate_id:
             raise InvalidDeviceProof("device identity does not match onboarding session")
-        if device.lifecycle_status is DeviceLifecycle.REVOKED:
-            raise DeviceRevoked()
-        if device.lifecycle_status is DeviceLifecycle.BOUND:
-            raise DeviceAlreadyBound()
+        require_bootstrap_device(device, session)
         if session.state is BootstrapState.QR_VERIFIED:
             session = self.store.transition_session(  # type: ignore[attr-defined]
                 onboarding_session_id,
@@ -547,10 +581,7 @@ class DeviceOnboardingService:
             raise InvalidDeviceProof("device does not match onboarding session")
         if device.certificate_id != normalized.certificate_id:
             raise InvalidDeviceProof("certificate does not belong to device")
-        if device.lifecycle_status is DeviceLifecycle.REVOKED:
-            raise DeviceRevoked()
-        if device.lifecycle_status is DeviceLifecycle.BOUND:
-            raise DeviceAlreadyBound()
+        require_bootstrap_device(device, session)
         if not all(normalized.network_result.values()):
             raise InvalidDeviceProof("device network is not ready")
         if normalized.firmware_security_version < max(
@@ -611,6 +642,8 @@ class DeviceOnboardingService:
         self._assert_actor(session.actor_id, actor_id)
         if session.device_id != device_id:
             raise ActorMismatch()
+        if session.purpose is BootstrapPurpose.REPROVISION:
+            raise ClaimConflict("reprovision session cannot reserve a claim")
         if session.state not in {BootstrapState.DEVICE_ONLINE, BootstrapState.CLAIM_RESERVED}:
             if not session.proximity_verified_at or not session.device_online_at:
                 raise ProximityRequired("nearby device proof is required")

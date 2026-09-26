@@ -10,13 +10,16 @@ const { normalizeWifiNetworks, getConnectedWifi } = require("./wifi-model");
 const { isActivationReady, normalizeActivationResponse } = require("./contracts");
 const {
   transition,
-  clientStateForServerState,
+  clientStateForSession,
+  isReprovisionSession,
   isExpired,
   errorMessage,
   errorCode,
   progressIndex,
   activationIsLateOrReady,
   PROGRESS_STEPS,
+  STATE_LABELS,
+  REPROVISION_STATE_LABELS,
 } = require("./state");
 const {
   saveOnboardingSessionId,
@@ -39,6 +42,7 @@ class OnboardingController {
     clientOnboardingId = operationId("client_onb"),
     now = () => Date.now(),
     onChange = null,
+    mode = "add",
   } = {}) {
     this.api = apiClient;
     this.bleAdapterFactory = bleAdapterFactory;
@@ -50,6 +54,10 @@ class OnboardingController {
     this.clientOnboardingId = clientOnboardingId;
     this.now = now;
     this.onChange = onChange;
+    // The entry point's intent.  Once a session exists, the server's purpose
+    // decides the flow: an owner scanning their own bound robot from "add"
+    // only updates Wi-Fi as well.
+    this.mode = mode === "reprovision" ? "reprovision" : "add";
 
     this._state = "prepare";
     this._attemptEpoch = 0;
@@ -83,10 +91,16 @@ class OnboardingController {
     return this._claim;
   }
 
+  get reprovision() {
+    return this._session ? isReprovisionSession(this._session) : this.mode === "reprovision";
+  }
+
   snapshot() {
+    const reprovision = this.reprovision;
     return {
       state: this._state,
-      stateLabel: require("./state").STATE_LABELS[this._state],
+      stateLabel: (reprovision ? REPROVISION_STATE_LABELS : STATE_LABELS)[this._state],
+      reprovision,
       busy: this._busy,
       error: this._error,
       errorCode: this._errorCode,
@@ -101,7 +115,10 @@ class OnboardingController {
       progressIndex: progressIndex({
         state: this._session?.state,
         networkStatus: this._session?.network_status,
-        activationStatus: this._activation?.status || this._session?.activation_status,
+        // A reprovision has no activation of its own to report.
+        activationStatus: reprovision
+          ? undefined
+          : this._activation?.status || this._session?.activation_status,
       }),
       activationReady: Boolean(this._activation && isActivationReady(this._activation.status)),
     };
@@ -180,6 +197,15 @@ class OnboardingController {
         clientOnboardingId: this.clientOnboardingId,
       });
       if (!this._isCurrent(epoch)) return null;
+      if (this.mode === "reprovision" && !isReprovisionSession(session)) {
+        // Not bound to this account (released, or someone else's robot).
+        // Stop before BLE instead of silently turning "only update Wi-Fi"
+        // into claiming a device.  The session is left to expire so the same
+        // QR still works from the add-device entry.
+        const error = new Error("这台机器人没有绑定在你的账号上");
+        error.code = "REPROVISION_DEVICE_NOT_BOUND";
+        throw error;
+      }
       this._session = session;
       this._claim = null;
       this._binding = null;
@@ -329,12 +355,13 @@ class OnboardingController {
         throw new Error("服务端返回了不属于当前启用会话的数据");
       }
       this._session = session;
-      const nextState = clientStateForServerState(session.state);
+      const nextState = clientStateForSession(session);
       if (nextState && !(preserveProgress && this._state === "progress" && nextState === "wifi")) {
         this._setState(nextState, { force: true });
       } else {
         this._emit();
       }
+      if (nextState === "complete") clearOnboardingSessionId();
       return session;
     } catch (error) {
       if (this._isCurrent(epoch)) this._setError(error);
@@ -344,7 +371,7 @@ class OnboardingController {
 
   async reserveClaim() {
     const session = this._session;
-    if (!session) return null;
+    if (!session || isReprovisionSession(session)) return null;
     if (isExpired(session.expires_at, this.now())) {
       const error = new Error("本次认领已超时");
       error.code = "CLAIM_EXPIRED";
@@ -387,7 +414,7 @@ class OnboardingController {
   }
 
   beginInitialize() {
-    if (!this._claim) {
+    if (!this._claim || this.reprovision) {
       const error = new Error("请先完成设备认领");
       error.code = "CLAIM_CONFLICT";
       this._setError(error);
@@ -507,8 +534,12 @@ class OnboardingController {
       }
       this._session = session;
       saveOnboardingSessionId(session.onboarding_session_id);
-      const nextState = clientStateForServerState(session.state);
+      const nextState = clientStateForSession(session);
       if (nextState) this._setState(nextState, { force: true });
+      if (nextState === "complete" && isReprovisionSession(session)) {
+        clearOnboardingSessionId();
+        return session;
+      }
       if (session.claim_id && typeof this.api.getDeviceClaim === "function") {
         try {
           const claim = await this.api.getDeviceClaim(session.claim_id);
