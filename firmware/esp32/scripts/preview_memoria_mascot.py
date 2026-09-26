@@ -5,7 +5,7 @@ Compiles ``memoria_mascot_pack.cc`` and ``memoria_mascot_scene.cc`` (neither
 depends on ESP-IDF or LVGL) against host zlib, plays a scripted day in the
 life of the device (boot animation, idle, pat, listening, thinking, speaking
 with moods, a companion switch from the phone, a shake, an error, the binding
-screen) and writes:
+screen, the captioned Wi-Fi setup layout) and writes:
 
 * ``scene.mp4`` (when ffmpeg is on PATH) and ``frames/NNNNN.png`` keyframes,
 * ``sheet.png``, a contact sheet of the labelled moments,
@@ -154,7 +154,8 @@ int main(int argc, char** argv) {
                 } else if (e.cmd == "mood") {
                     memoria::SceneMood mood;
                     if (memoria::SceneMoodFromName(e.arg.c_str(), &mood)) s.SetMood(mood, now);
-                } else if (e.cmd == "pat") s.Pat(now);
+                } else if (e.cmd == "caption") s.SetCaptioned(e.arg == "on", now);
+                else if (e.cmd == "pat") s.Pat(now);
                 else if (e.cmd == "shake") s.Shake(now);
                 else if (e.cmd == "companion") {
                     memoria::MascotPack* pack = which == 0 ? &pa2 : &pb2;
@@ -208,7 +209,11 @@ TIMELINE = [
     (32000, "phase", "idle"),
     (33600, "phase", "setup"),
     (36000, "phase", "wifi"),
-    (38000, "end", ""),
+    (36000, "caption", "on"),
+    (38000, "phase", "connecting"),
+    (40000, "caption", "off"),
+    (40000, "phase", "idle"),
+    (41600, "end", ""),
 ]
 
 # Moments for the contact sheet: (ms, label).
@@ -229,7 +234,10 @@ MOMENTS = [
     (27200, "shaken"),
     (30400, "error"),
     (34600, "binding (QR on top)"),
-    (37000, "wifi setup"),
+    (36200, "wifi: shrinking"),
+    (37000, "wifi setup (captioned)"),
+    (39000, "connecting (captioned)"),
+    (41200, "back to idle"),
 ]
 
 

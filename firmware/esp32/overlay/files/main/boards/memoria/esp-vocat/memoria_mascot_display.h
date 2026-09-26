@@ -21,7 +21,10 @@ class Backlight;
 // account's companion mascot (memoria_mascot_scene.h) as a living character,
 // with the boot animation, state ring and companion switching. LVGL keeps
 // only the text on top: a quiet status line, notification and subtitle pills,
-// and the binding QR card.
+// and the binding QR card. While the device is getting online (network scan,
+// Wi-Fi setup, activation) the scene is captioned: the mascot moves up and the
+// text sits on its own band below it, never on the mascot. The QR card is a
+// screen of its own; no other text is drawn over it.
 class MemoriaMascotDisplay : public SpiLcdDisplay {
 public:
     MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -66,6 +69,7 @@ private:
     bool LoadCompanion(const std::string& id, std::unique_ptr<memoria::MascotPack>* out);
     void ApplyChrome();                 // caller holds the display lock
     void ApplyChromeOpacity(uint8_t opa);  // caller holds the display lock
+    bool WantsCaption(uint32_t now_ms);
     void StyleQrCard();                 // caller holds the display lock
     static uint32_t NowMs();
 
@@ -80,6 +84,10 @@ private:
     Backlight* backlight_ = nullptr;
     bool dimmed_ = false;
     uint8_t chrome_opa_ = 0;
+    uint8_t text_opa_applied_ = 0;
+    bool caption_layout_ = false;  // LVGL text is on the caption band
+    uint8_t caption_mix_ = 0;
+    int32_t bottom_bar_height_ = 0;
     lv_obj_t* qr_card_ = nullptr;
     lv_obj_t* qr_title_ = nullptr;
 

@@ -30,6 +30,8 @@ constexpr uint32_t kPopSwapMs = 90;
 constexpr uint32_t kHopMs = 520;
 constexpr uint32_t kRiseMs = 700;
 constexpr uint32_t kBlinkMs = 120;
+// Below this scale (8.8) the sprite is supersampled instead of point-sampled.
+constexpr int kFilterBelowQ = 218;
 
 // Boot animation timeline, ms after StartIntro().
 constexpr uint32_t kOrbStart = 250;
@@ -321,9 +323,26 @@ uint8_t MascotScene::chrome_opa(uint32_t now_ms) const {
     return static_cast<uint8_t>(255.0f * Phase01(t, kIntroChromeMs, kIntroChromeMs + 400));
 }
 
+void MascotScene::SetCaptioned(bool captioned, uint32_t now_ms) {
+    if (captioned == caption_target_) {
+        return;
+    }
+    // Reverse from wherever the running transition has got to.
+    caption_from_ = caption_mix(now_ms) / 255.0f;
+    caption_target_ = captioned;
+    caption_since_ms_ = now_ms;
+}
+
+uint8_t MascotScene::caption_mix(uint32_t now_ms) const {
+    const float target = caption_target_ ? 1.0f : 0.0f;
+    const float u = Smooth(Phase01(now_ms, caption_since_ms_, caption_since_ms_ + kCaptionMs));
+    return static_cast<uint8_t>(std::lround(255.0f * (caption_from_ + (target - caption_from_) * u)));
+}
+
 uint32_t MascotScene::FrameIntervalMs(uint32_t now_ms) const {
     const bool moving = motion_ != Motion::kNone || now_ms < wobble_until_ms_ ||
-                        pending_pose_ != MascotFrame::kCount;
+                        pending_pose_ != MascotFrame::kCount ||
+                        now_ms - caption_since_ms_ < kCaptionMs;
     if (intro_active(now_ms) || moving) {
         return 40;
     }
@@ -692,10 +711,25 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
         }
     }
 
+    // Captioned layout: the whole body, its motion included, shrinks about
+    // the feet onto a higher ground row. The boot entrance keeps its stage.
+    float ground = static_cast<float>(kFootY);
+    float k = 1.0f;
+    if (!intro_on) {
+        const float c = caption_mix(now_ms) / 255.0f;
+        k = 1.0f - c * (1.0f - kCaptionScaleQ / 256.0f);
+        ground -= c * static_cast<float>(kFootY - kCaptionFootY);
+        dx *= k;
+        dy *= k;
+        sx *= k;
+        sy *= k;
+    }
+
     p.sprite = true;
     p.frame = frame;
+    p.ground_y = static_cast<int>(std::lround(ground));
     p.ax = kCenter + static_cast<int>(std::lround(dx));
-    p.ay = kFootY + static_cast<int>(std::lround(dy));
+    p.ay = p.ground_y + static_cast<int>(std::lround(dy));
     p.sx_q = static_cast<int>(std::lround(sx * 256.0f));
     p.sy_q = static_cast<int>(std::lround(sy * 256.0f));
     const int cx = pack_->canvas_w() / 2;
@@ -707,13 +741,13 @@ MascotScene::Placement MascotScene::Compute(uint32_t now_ms) {
     p.sprite_box = Clip(p.sprite_box, Screen());
 
     // The shadow stays on the ground and shrinks while the mascot is airborne.
-    const float lift = Clamp01((kFootY - p.ay) / 30.0f);
-    p.shadow_rx = static_cast<int>(pack_->foot_half_w() * 1.35f * (1.0f - 0.3f * lift));
+    const float lift = Clamp01((p.ground_y - p.ay) / (30.0f * k));
+    p.shadow_rx = static_cast<int>(pack_->foot_half_w() * 1.35f * k * (1.0f - 0.3f * lift));
     p.shadow_alpha = static_cast<int>(72.0f * (1.0f - 0.5f * lift));
     const int sry = p.shadow_rx / 6 + 2;
     const int scx = kCenter + static_cast<int>(dx * 0.4f);
-    p.shadow_box = Clip(SceneRect{scx - p.shadow_rx - 1, kFootY + 2 - sry - 1, scx + p.shadow_rx + 2,
-                                  kFootY + 2 + sry + 2},
+    p.shadow_box = Clip(SceneRect{scx - p.shadow_rx - 1, p.ground_y + 2 - sry - 1,
+                                  scx + p.shadow_rx + 2, p.ground_y + 2 + sry + 2},
                         Screen());
     return p;
 }
@@ -728,7 +762,7 @@ void MascotScene::DrawShadow(const SceneRect& clip, const Placement& p) {
     }
     const uint16_t colour = To565(theme_.ink);
     const float cx = (p.shadow_box.x0 + p.shadow_box.x1) * 0.5f;
-    const float cy = kFootY + 2.0f;
+    const float cy = p.ground_y + 2.0f;
     const float rx = static_cast<float>(p.shadow_rx);
     const float ry = static_cast<float>(p.shadow_rx / 6 + 2);
     for (int y = area.y0; y < area.y1; ++y) {
@@ -786,6 +820,10 @@ void MascotScene::DrawSprite(const SceneRect& clip, const Placement& p) {
         }
         return;
     }
+    if (p.sx_q < kFilterBelowQ && p.sy_q < kFilterBelowQ) {
+        DrawSpriteFiltered(area, p, s);
+        return;
+    }
     // Scaled about the feet: nearest-neighbour inverse mapping, 16.16 fixed point.
     const int32_t inv_x = static_cast<int32_t>((256LL << 16) / p.sx_q);
     const int32_t inv_y = static_cast<int32_t>((256LL << 16) / p.sy_q);
@@ -811,6 +849,71 @@ void MascotScene::DrawSprite(const SceneRect& clip, const Placement& p) {
             if (a != 0) {
                 row[x] = Blend(src[sx], row[x], a);
             }
+        }
+    }
+}
+
+void MascotScene::DrawSpriteFiltered(const SceneRect& area, const Placement& p,
+                                     const MascotSprite* s) {
+    // A clear shrink (the captioned layout) would alias with one sample per
+    // pixel: plush edges crawl as the mascot breathes. Average a 2x2 grid of
+    // samples instead, weighting colour by coverage.
+    const int cx = pack_->canvas_w() / 2;
+    const int fy = pack_->foot_y();
+    const int32_t inv_x = static_cast<int32_t>((256LL << 16) / p.sx_q);
+    const int32_t inv_y = static_cast<int32_t>((256LL << 16) / p.sy_q);
+    for (int y = area.y0; y < area.y1; ++y) {
+        const uint16_t* src_rows[2] = {nullptr, nullptr};
+        const uint8_t* alpha_rows[2] = {nullptr, nullptr};
+        int span0[2] = {0, 0};
+        int span1[2] = {0, 0};
+        bool any_row = false;
+        for (int j = 0; j < 2; ++j) {
+            const int32_t cyq = (y - p.ay) * inv_y + inv_y / 4 + j * (inv_y / 2);
+            const int sy = fy + (cyq >> 16) - s->y;
+            if (sy < 0 || sy >= s->h) {
+                continue;
+            }
+            src_rows[j] = s->rgb + static_cast<std::size_t>(sy) * s->w;
+            alpha_rows[j] = s->alpha + static_cast<std::size_t>(sy) * s->w;
+            span0[j] = s->span[sy * 2];
+            span1[j] = s->span[sy * 2 + 1];
+            any_row = true;
+        }
+        if (!any_row) {
+            continue;
+        }
+        uint16_t* row = RowPtr(y);
+        const int32_t base_q = (area.x0 - p.ax) * inv_x + inv_x / 4;
+        for (int x = area.x0; x < area.x1; ++x) {
+            const int32_t cxq = base_q + (x - area.x0) * inv_x;
+            uint32_t sum_a = 0;
+            uint32_t sum_r = 0;
+            uint32_t sum_g = 0;
+            uint32_t sum_b = 0;
+            for (int i = 0; i < 2; ++i) {
+                const int sx = cx + ((cxq + i * (inv_x / 2)) >> 16) - s->x;
+                for (int j = 0; j < 2; ++j) {
+                    if (alpha_rows[j] == nullptr || sx < span0[j] || sx >= span1[j]) {
+                        continue;
+                    }
+                    const uint32_t a = alpha_rows[j][sx];
+                    if (a == 0) {
+                        continue;
+                    }
+                    const uint32_t c = src_rows[j][sx];
+                    sum_a += a;
+                    sum_r += ((c >> 11) & 0x1F) * a;
+                    sum_g += ((c >> 5) & 0x3F) * a;
+                    sum_b += (c & 0x1F) * a;
+                }
+            }
+            if (sum_a == 0) {
+                continue;
+            }
+            const uint16_t colour = static_cast<uint16_t>(((sum_r / sum_a) << 11) |
+                                                          ((sum_g / sum_a) << 5) | (sum_b / sum_a));
+            row[x] = Blend(colour, row[x], sum_a >> 2);
         }
     }
 }
@@ -1016,7 +1119,8 @@ int MascotScene::Render(uint32_t now_ms, SceneRect* dirty, int max_dirty) {
     }
     const bool sprite_changed = p.sprite != last_.sprite || p.frame != last_.frame ||
                                 p.ax != last_.ax || p.ay != last_.ay || p.sx_q != last_.sx_q ||
-                                p.sy_q != last_.sy_q || p.shadow_rx != last_.shadow_rx ||
+                                p.sy_q != last_.sy_q || p.ground_y != last_.ground_y ||
+                                p.shadow_rx != last_.shadow_rx ||
                                 p.shadow_alpha != last_.shadow_alpha;
     const bool ring_changed = p.ring_mode != last_.ring_mode || p.ring_level != last_.ring_level;
     SceneRect rects[kMaxDirty];
