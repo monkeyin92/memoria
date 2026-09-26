@@ -159,17 +159,17 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 逐场景记录任务接续、记忆证据、越权/编造、回顾可读性和失败降级；模型措辞需 recorded-bundle 人工盲评或设备窗口，离线生成不计真机成功。
 - 完成条件：形成可重复 baseline 与同条件对照，主体/撤销隔离和编造事实零回归，汇总可追溯到话轮/证据。
 
-### [ ] P2-07 Prompt 审计遗留（2026-09-24 审计，暂不修改）
+### [ ] P2-07 Prompt 审计遗留（2026-09-24 审计；第 1、4 项已于 2026-09-26 修复，第 2、3 项待定）
 
 - 审计口径：全仓发给模型的文本；实际模型为 DeepSeek V4 Flash（主对话，百炼）、`qwen-flash`（四个语义分类器/人格结构化）、`qwen-plus`/`qwen3.7-flash`（抽取/联网）。判据源自 Claude 文档，对这些模型只算经验判断，置信度最高为“中”；均未调用真实模型验证。
-- 中-1 身份规则双版本矛盾：`services/agent/src/prompts.py:12-15` 的旧“不得自称或讨论 AI”规则仍在 `SAFETY_CORE`/`VOICE_SYSTEM_PROMPT` 中，并经 `tutor_session.voice_system_prompt` 与 `Orchestrator` 默认 `ContextManager`（`scripts/run_e2e.py`）可达；生产透明版靠 `prompts.py:74` 的 `.replace()` 生成，`SAFETY_CORE` 改一字即静默回退为隐藏版。拟改：`AI_IDENTITY_RULE_TRANSPARENT` 作为唯一规则拼入 `SAFETY_CORE`，`SAFETY_CORE_TRANSPARENT` 保留为别名（生产文本逐字节不变，已在临时副本验证）。
+- 中-1 已修复（2026-09-26，未部署）：`AI_IDENTITY_RULE_TRANSPARENT` 成为 `SAFETY_CORE` 唯一的身份规则，`SAFETY_CORE_TRANSPARENT` 为别名；生产文本 SHA-256 前后一致（`e53a14a0…`），导师会话与离线编排默认提示不再携带“不得自称或讨论 AI”；回归 `test_every_prompt_path_carries_only_the_transparent_identity_rule`。
 - 中-2 口癖禁用词表：`prompts.py:34` 列举“首先、其次、最后/综上所述/希望以上内容对你有帮助”，无来由（首次提交即有），列出原词可能反向锚定。拟改为正面表述“像当面聊天一样自然衔接，不用书面报告式的分点连接词、总结句或客服式结束语。”；会改变生产陪伴提示词。
 - 中-3 小结指令语义歧义：`services/control_api/app/routes/memory.py:293`“也不要输出敏感信息之外的推断”字面可读成允许推断敏感信息。拟改为“只写聊天中实际出现的内容：不编造事实，也不推测对方没有明说的健康、财务、关系等敏感信息。”（本意需确认）。
-- 中-4 人格抽取规则重复：`services/persona/qwen_extractor.py:66` 与 `:68` 同一规则两种措辞（“永久性格”/“稳定风格”）；拟删 66 行分句，保留更精确的 68 行。
+- 中-4 已修复（2026-09-26，未部署）：删去 `qwen_extractor.py` 中“不要把一次情绪压成永久性格”，保留更精确的“不得把一次性情绪推断为稳定风格”；回归 `test_one_off_emotion_rule_is_stated_once`。
 - 低-5 仅标记：`services/agent/src/providers/qwen_realtime_search.py:90` 发往 DashScope 只带 `thinking: {type: disabled}`，而其余 DashScope 调用都带 `enable_thinking: False`（`handlers.py:82-83`、四个分类器）；需对照百炼文档或抓响应确认后再决定是否补齐。
 - 低-6 仅标记：三个 Qwen JSON 抽取器用 `response_format: json_object` + pydantic 兜底；若当前 Qwen 支持 `json_schema` 结构化输出可再评估，现状可用。
 - 已核实保留：分类器“只输出一个枚举词”（精确解析、`max_tokens` 12）、半双工 120 字规则（`agent.py:93` 代码截断）、禁 Markdown（TTS）、禁笑/咳嗽标签（CosyVoice 支持且 `prosody.py:29` 过滤）、导师不给答案、危机/暴力固定话术、`context_assembler` 指令/数据分离、小结字数上限（pydantic 校验）。
-- 完成条件：1–4 逐条单独落地；2 需在 DeepSeek V4 Flash 上用真实语音样本前后对照，3/4 跑 `scripts/evaluate_memory.py` 或小样本对照；语音/导师/prompt composition/persona/小结相关测试通过（临时副本上已通过，1 skip）。
+- 完成条件：1–4 逐条单独落地（1、4 已完成）；2 需在 DeepSeek V4 Flash 上用真实语音样本前后对照，3/4 跑 `scripts/evaluate_memory.py` 或小样本对照；语音/导师/prompt composition/persona/小结相关测试通过（临时副本上已通过，1 skip）。
 
 ### [ ] P2-08 架构整理后续（2026-09-26 审计，减法优先）
 
