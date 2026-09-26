@@ -14,7 +14,7 @@ direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
 subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
-account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=persona 会话胶囊按当前主体读投影、账号本人回落现表 / enabled=未启用 / verified=本地专测与真实 PG 契约
+account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=无生产读者（原接线点 `/v1/persona/session-capsule` 从无调用方，已于 2026-09-26 删除；现役 response-plan 仍按 account 取人格，按主体读投影的 `services/persona/subject_projection.read_active_version` 待接入，见 P1-03）/ enabled=未启用 / verified=本地专测与真实 PG 契约
 read_path_postgres_parity: code=已提交 `d2318e4`（CI `35501188784` success）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
 ```
@@ -79,7 +79,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-03 修稳成员入口，再接按使用人切人格/音色
 
-- 待完成：建后年龄申报 UI；guardian 邀请/授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device→session 映射；同 binding 两个 subject 的人格/音色设备实听。
+- 待完成：response-plan 的人格胶囊目前按 account 读取，需改为按当前确认主体读投影（`services/persona/subject_projection.read_active_version`；原主体隔离逻辑随死端点删除，行为要求见其删除前的 `test_session_capsule_never_lends_the_account_persona_to_another_subject`）；建后年龄申报 UI；guardian 邀请/授权与声音撤销的 consent 决策 seam；运行中会话的 `next_safe_point` 主动重协商与 device→session 映射；同 binding 两个 subject 的人格/音色设备实听。
 - 完成条件：切换推进版本并使旧签名、上下文和音频失效；取消分配回落默认，克隆未 ready 回落设计音色；PG 与设备证据分开记录。入口：`routes/{identity_lifecycle,persona_assignment,custom_personas,multi_subject}.py`、`services/session_runtime/profile_service.py`、`apps/miniprogram/pages/{device,persona-custom,guardian,privacy}/`。
 
 ### [ ] P1-04 自定义声音：样本上传到设备出声
@@ -120,7 +120,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 整栈发布脚本两处缺陷已修（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。待完成：下次整栈发布前把脚本内的线上链常量（`OLD`、`LIVE_CONTROL_RELEASE`、回滚 compose 链）改为届时线上链，再安装到服务器 `/root/memoria-release/release-ops.sh`；服务器现存副本未替换。
 - media-edge 下次发布：新镜像含 PR #42 的启动收紧（`MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative`、生产未开设备 WSS 均拒绝启动）；compose 已固定 `MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"`，发布后把易失的 `/tmp/media-runtime.override.yml` 移出 compose 链。发布须另获授权。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
-- 仓库内死链路：agent 侧 persona 配置（`MEMORIA_PERSONA_*`）只校验不消费，控制面 `/v1/persona/session-capsule` 无调用方，生产 env 生成脚本仍写入相关变量；可一并删除。
+- persona 死链路已删（2026-09-26）：agent 侧 `MEMORIA_PERSONA_{ENABLED,CAPSULE_URL,READ_TOKEN,TIMEOUT_S,CACHE_TTL_S}` 配置与校验、控制面 `/v1/persona/session-capsule` 端点及 `persona_read` 内部 token（生产要求的能力 token 由十个降为九个）、env 模板与升级生成脚本中的对应项；`split_production_env.py` 接受但不分发这些已退役变量，现有 env 文件无需改动。人格学习测试改为经 `persona_engine.capsule` 读取（与现役 response-plan 同一路径）。
+- 同类残留待删：控制面 `/v1/archive/session-context` 的调用方是早已删除的 agent MemoryContextClient，`memory_read` 内部 token 只服务该端点；`.env.example` 中的 `MEMORIA_MEMORY_CONTEXT_*` 已随本次删除。删除端点时同步退役 `MEMORIA_MEMORY_READ_TOKEN`。
 - 完成条件：脚本入库且两处缺陷有回归（已达成）；下次整栈发布使用仓库版本；media-edge 发布与 `/tmp` 移除有切流收据；旧媒体链有明确决定并按决定执行。
 
 ## P2：质量增强与后续能力

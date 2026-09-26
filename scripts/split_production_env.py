@@ -134,6 +134,13 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
 _RETIRED_KEYS = frozenset(
     {
         "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
+        # The agent-side persona capsule fetch and its control endpoint were
+        # removed on 2026-09-26; persona reaches the agent via response-plan.
+        "MEMORIA_PERSONA_CACHE_TTL_S",
+        "MEMORIA_PERSONA_CAPSULE_URL",
+        "MEMORIA_PERSONA_ENABLED",
+        "MEMORIA_PERSONA_READ_TOKEN",
+        "MEMORIA_PERSONA_TIMEOUT_S",
         "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
         "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
@@ -254,7 +261,6 @@ def split_env(
     media_edge = {key: value for key, value in values.items() if key in media_edge_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
-        ("MEMORIA_PERSONA_READ_TOKEN", "MEMORIA_PERSONA_ENABLED", False),
         ("MEMORIA_VOICE_RESOLUTION_TOKEN", "MEMORIA_VOICE_PROFILE_ENABLED", False),
     )
     for token, flag, default in capability_flags:

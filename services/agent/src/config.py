@@ -463,10 +463,6 @@ class AgentSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_AGENT_HEARTBEAT_TOKEN",
     )
-    persona_read_token: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_PERSONA_READ_TOKEN",
-    )
     voice_resolution_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
@@ -521,23 +517,6 @@ class AgentSettings(BaseSettings):
         le=1024 * 1024 * 1024,
         alias="MEMORIA_ARCHIVE_SPOOL_MAX_BYTES",
     )
-    persona_enabled: bool = Field(default=False, alias="MEMORIA_PERSONA_ENABLED")
-    persona_capsule_url: str = Field(
-        default="http://control-api:8000/v1/persona/session-capsule",
-        alias="MEMORIA_PERSONA_CAPSULE_URL",
-    )
-    persona_timeout_s: float = Field(
-        default=0.3,
-        ge=0.05,
-        le=2.0,
-        alias="MEMORIA_PERSONA_TIMEOUT_S",
-    )
-    persona_cache_ttl_s: float = Field(
-        default=60.0,
-        ge=1.0,
-        le=300.0,
-        alias="MEMORIA_PERSONA_CACHE_TTL_S",
-    )
     voice_profile_enabled: bool = Field(
         default=False,
         alias="MEMORIA_VOICE_PROFILE_ENABLED",
@@ -588,7 +567,6 @@ class AgentSettings(BaseSettings):
         capability: Literal[
             "archive_write",
             "agent_heartbeat",
-            "persona_read",
             "voice_resolution",
             "interaction_policy",
             "response_plan",
@@ -597,7 +575,6 @@ class AgentSettings(BaseSettings):
         configured = {
             "archive_write": self.archive_write_token,
             "agent_heartbeat": self.agent_heartbeat_token,
-            "persona_read": self.persona_read_token,
             "voice_resolution": self.voice_resolution_token,
             "interaction_policy": self.interaction_policy_token,
             "response_plan": self.response_plan_token,
@@ -730,13 +707,6 @@ class AgentSettings(BaseSettings):
                     raise ValueError(
                         "production archive requires a valid Fernet spool key"
                     ) from exc
-            if self.persona_enabled:
-                persona_token = self.internal_token("persona_read")
-                if len(persona_token) < 32:
-                    raise ValueError("production persona requires a scoped read token")
-                if not _secure_internal_url(self.persona_capsule_url):
-                    raise ValueError("production persona URL requires HTTPS or local Docker DNS")
-                capability_tokens.append(persona_token)
             if self.voice_profile_enabled:
                 voice_token = self.internal_token("voice_resolution")
                 if len(voice_token) < 32:

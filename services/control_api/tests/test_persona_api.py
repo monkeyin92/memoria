@@ -7,6 +7,21 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.main import create_app
+from services.control_api.app.mode_policy import FrozenMode, ModePolicy
+from services.persona.domain import PersonaCapsule, PersonaRequest
+
+
+async def _capsule(app: Any, account_id: str, speaker_class: str, **kwargs: Any) -> PersonaCapsule:
+    """Read the capsule the way the live response-plan path does."""
+    return await app.state.persona_engine.capsule(
+        PersonaRequest(
+            account_id=account_id,
+            speaker_class=speaker_class,  # type: ignore[arg-type]
+            topic="表达看法",
+            max_chars=500,
+            **kwargs,
+        )
+    )
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -108,7 +123,7 @@ async def test_owner_persona_learning_requires_explicit_turn_eligibility(
 
 
 @pytest.mark.asyncio
-async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_capsule(
+async def test_consent_drives_non_blocking_owner_learning_and_the_account_capsule(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -162,48 +177,21 @@ async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_cap
 
         traits = await client.get("/v1/persona/traits", headers=headers)
         versions = await client.get("/v1/persona/versions", headers=headers)
-        owner_capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers=internal,
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
-        )
-        guest_capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers=internal,
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "guest",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
-        )
+        owner_capsule = await _capsule(app, str(identity["user_id"]), "owner")
+        guest_capsule = await _capsule(app, str(identity["user_id"]), "guest")
         revoked = await client.delete("/v1/persona/consent", headers=headers)
-        revoked_owner_capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers=internal,
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
-        )
+        revoked_owner_capsule = await _capsule(app, str(identity["user_id"]), "owner")
 
     assert consent.status_code == 201
     assert status_before.json() == {"learning_allowed": False}
     assert status_after.json() == {"learning_allowed": True}
     assert any(item["status"] == "confirmed" for item in traits.json()["items"])
     assert versions.json()["items"][0]["status"] == "active"
-    assert "我觉得" in owner_capsule.json()["prompt_fragment"]
-    assert guest_capsule.json()["entries"] == []
+    assert "我觉得" in owner_capsule.prompt_fragment
+    assert guest_capsule.entries == ()
     assert revoked.status_code == 200
     assert revoked.json()["revoked_at"] is not None
-    assert revoked_owner_capsule.json()["entries"] == []
+    assert revoked_owner_capsule.entries == ()
 
 
 @pytest.mark.asyncio
@@ -359,27 +347,22 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
             json={"action": "confirm"},
         )
         versions_after_review = await client.get("/v1/persona/versions", headers=headers)
-        uncertain_capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "uncertain",
-                "speaker_reason_code": "shadow_owner_candidate",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
+        interaction = ModePolicy.trusted_context(
+            FrozenMode.from_session(
+                app.state.memory_store.get_voice_session_by_id(session_id=session["session_id"])
+            ),
+            speaker_class="uncertain",
+            reason_code="shadow_owner_candidate",
+        )
+        uncertain_capsule = await _capsule(
+            app,
+            str(identity["user_id"]),
+            "uncertain",
+            confirmed_style_only=interaction["capabilities"]["persona_low_sensitivity"],
         )
         await client.delete("/v1/persona/consent", headers=headers)
-        revoked_uncertain_capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "uncertain",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
+        revoked_uncertain_capsule = await _capsule(
+            app, str(identity["user_id"]), "uncertain", confirmed_style_only=True
         )
 
     assert recorded.status_code == 201
@@ -394,7 +377,6 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
     assert reviewed.status_code == 200
     assert reviewed.json()["status"] == "confirmed"
     assert versions_after_review.json()["items"][0]["version_number"] == 1
-    interaction = uncertain_capsule.json()["interaction"]
     assert interaction["history_eligible"] is False
     assert interaction["owner_projection_eligible"] is False
     assert interaction["capabilities"]["private_memory"] is False
@@ -402,9 +384,9 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
     assert interaction["capabilities"]["persona_low_sensitivity"] is True
     assert interaction["capabilities"]["tools"] is False
     assert interaction["capabilities"]["learning"] is False
-    assert "已确认表达风格 v1" in uncertain_capsule.json()["prompt_fragment"]
-    assert [item["category"] for item in uncertain_capsule.json()["entries"]] == ["verbal_tic"]
-    assert revoked_uncertain_capsule.json()["entries"] == []
+    assert "已确认表达风格 v1" in uncertain_capsule.prompt_fragment
+    assert [item.category for item in uncertain_capsule.entries] == ["verbal_tic"]
+    assert revoked_uncertain_capsule.entries == ()
 
 
 @pytest.mark.asyncio
@@ -457,16 +439,8 @@ async def test_consented_uncertain_cross_session_evidence_auto_publishes_persona
 
         traits = (await client.get("/v1/persona/traits", headers=headers)).json()["items"]
         versions = (await client.get("/v1/persona/versions", headers=headers)).json()["items"]
-        capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers=internal,
-            json={
-                "session_id": sessions[-1]["session_id"],
-                "speaker_class": "uncertain",
-                "speaker_reason_code": "shadow_owner_candidate",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
+        capsule = await _capsule(
+            app, str(identity["user_id"]), "uncertain", confirmed_style_only=True
         )
 
     assert versions[0]["version_number"] == 1
@@ -474,8 +448,8 @@ async def test_consented_uncertain_cross_session_evidence_auto_publishes_persona
     assert any(
         trait["category"] == "verbal_tic" and trait["status"] == "confirmed" for trait in traits
     )
-    assert "已确认表达风格 v1" in capsule.json()["prompt_fragment"]
-    assert {item["category"] for item in capsule.json()["entries"]} == {
+    assert "已确认表达风格 v1" in capsule.prompt_fragment
+    assert {item.category for item in capsule.entries} == {
         "verbal_tic",
         "sentence_length",
         "discourse_style",
@@ -772,140 +746,3 @@ async def _learned_owner_persona(
         )
         assert recorded.status_code == 201
     return identity, headers, session
-
-
-@pytest.mark.asyncio
-async def test_session_capsule_never_lends_the_account_persona_to_another_subject(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """P2-03: the device gets its current subject's persona, or none at all."""
-
-    from services.control_api.app.routes import interaction
-
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity, _, session = await _learned_owner_persona(
-            client, app, internal=internal, username="capsule-subject"
-        )
-        assert session["session_id"]
-        capsule_body = {
-            "session_id": session["session_id"],
-            "speaker_class": "owner",
-            "topic": "表达看法",
-            "max_chars": 500,
-        }
-        owner_capsule = await client.post(
-            "/v1/persona/session-capsule", headers=internal, json=capsule_body
-        )
-        assert identity["user_id"]
-        assert "我觉得" in owner_capsule.json()["prompt_fragment"]
-
-        app.state.session_runtime_service = object()
-
-        async def member_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"active_subject_id": "member-adult", "subject_category": "adult"}
-
-        monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", member_profile
-        )
-        member_capsule = await client.post(
-            "/v1/persona/session-capsule", headers=internal, json=capsule_body
-        )
-
-        async def unconfirmed_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"active_subject_id": None, "subject_category": None}
-
-        monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", unconfirmed_profile
-        )
-        unconfirmed_capsule = await client.post(
-            "/v1/persona/session-capsule", headers=internal, json=capsule_body
-        )
-
-        async def broken_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            raise RuntimeError("profile authority unavailable")
-
-        monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", broken_profile
-        )
-        unavailable_capsule = await client.post(
-            "/v1/persona/session-capsule", headers=internal, json=capsule_body
-        )
-
-    assert member_capsule.json()["entries"] == []
-    assert member_capsule.json()["prompt_fragment"] == ""
-    assert member_capsule.json()["version_id"] is None
-    assert unavailable_capsule.json()["entries"] == []
-    assert unavailable_capsule.json()["prompt_fragment"] == ""
-    # A runtime profile whose active subject is not confirmed is nobody's
-    # persona: never fall back to the account owner's.
-    assert unconfirmed_capsule.status_code == 200
-    assert unconfirmed_capsule.json()["entries"] == []
-    assert unconfirmed_capsule.json()["prompt_fragment"] == ""
-
-
-@pytest.mark.asyncio
-async def test_session_capsule_renders_the_projected_persona_of_another_subject(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The subject projection is the read path for a subject that is not the account."""
-
-    from services.control_api.app.routes import interaction
-    from services.control_api.app.routes import persona as persona_route
-
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        _, _, session = await _learned_owner_persona(
-            client, app, internal=internal, username="capsule-projection"
-        )
-        app.state.session_runtime_service = object()
-
-        async def member_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            return {"active_subject_id": "member-adult", "subject_category": "adult"}
-
-        monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", member_profile
-        )
-        monkeypatch.setattr(
-            persona_route,
-            "read_active_version",
-            lambda db_path, subject_id: {
-                "version_id": "projected-member-v1",
-                "version_number": 3,
-                "snapshot": [
-                    {
-                        "trait_id": "trait-member-tic",
-                        "category": "verbal_tic",
-                        "description": "习惯说“我们再想想”。",
-                        "context": "conversation",
-                        "counterexample": "",
-                        "confidence": 0.9,
-                        "source_event_ids": ["member-event"],
-                    }
-                ],
-                "source_account_id": "member-account",
-                "projected_at": "2026-09-20T00:00:00+00:00",
-            },
-        )
-        capsule = await client.post(
-            "/v1/persona/session-capsule",
-            headers=internal,
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "表达看法",
-                "max_chars": 500,
-            },
-        )
-
-    assert capsule.json()["version_id"] == "projected-member-v1"
-    assert capsule.json()["version_number"] == 3
-    assert [entry["trait_id"] for entry in capsule.json()["entries"]] == ["trait-member-tic"]
-    assert "我们再想想" in capsule.json()["prompt_fragment"]
-    assert "我觉得" not in capsule.json()["prompt_fragment"]

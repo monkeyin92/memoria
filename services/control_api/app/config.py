@@ -404,10 +404,6 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_READ_TOKEN",
     )
-    memoria_persona_read_token: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_PERSONA_READ_TOKEN",
-    )
     memoria_voice_resolution_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
@@ -1100,7 +1096,6 @@ class ControlSettings(BaseSettings):
             "archive_write",
             "agent_heartbeat",
             "memory_read",
-            "persona_read",
             "voice_resolution",
             "voice_cleanup",
             "interaction_policy",
@@ -1111,7 +1106,6 @@ class ControlSettings(BaseSettings):
             "archive_write": self.memoria_archive_write_token,
             "agent_heartbeat": self.memoria_agent_heartbeat_token,
             "memory_read": self.memoria_memory_read_token,
-            "persona_read": self.memoria_persona_read_token,
             "voice_resolution": self.memoria_voice_resolution_token,
             "voice_cleanup": self.memoria_voice_cleanup_token,
             "interaction_policy": self.memoria_interaction_policy_token,
@@ -1413,7 +1407,6 @@ class ControlSettings(BaseSettings):
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": self.internal_token("agent_heartbeat"),
             "MEMORIA_MEMORY_READ_TOKEN": self.internal_token("memory_read"),
-            "MEMORIA_PERSONA_READ_TOKEN": self.internal_token("persona_read"),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": self.internal_token("voice_resolution"),
             "MEMORIA_VOICE_CLEANUP_TOKEN": self.internal_token("voice_cleanup"),
             "MEMORIA_INTERACTION_POLICY_TOKEN": self.internal_token("interaction_policy"),
@@ -1422,7 +1415,7 @@ class ControlSettings(BaseSettings):
             "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": self.evolution_validator_token(),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires ten capability-scoped internal tokens")
+            raise ValueError("production requires nine capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):

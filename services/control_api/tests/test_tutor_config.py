@@ -65,7 +65,6 @@ def _production_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_ARCHIVE_WRITE_TOKEN": "test-archive-write-material-long-enough",
         "MEMORIA_AGENT_HEARTBEAT_TOKEN": "test-heartbeat-material-that-is-long-enough",
         "MEMORIA_MEMORY_READ_TOKEN": "test-memory-read-material-long-enough",
-        "MEMORIA_PERSONA_READ_TOKEN": "test-persona-read-material-long-enough",
         "MEMORIA_VOICE_RESOLUTION_TOKEN": "test-voice-resolve-material-long-enough",
         "MEMORIA_VOICE_CLEANUP_TOKEN": "test-voice-cleanup-material-long-enough",
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",

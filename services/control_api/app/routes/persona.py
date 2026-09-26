@@ -1,44 +1,24 @@
-"""Consent, review, version and session-scoped PersonaCapsule APIs."""
+"""Persona learning consent, review and version APIs."""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import logging
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import EvidenceNotFoundError
 from services.control_api.app.account_gate import require_writable_account
-from services.control_api.app.bound_subject import (
-    DEVICE_BOUND_SUBJECT_UNVERIFIED,
-    claims_device_bound_subject,
-)
-from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.mode_policy import FrozenMode, ModePolicy
-from services.control_api.app.routes.interaction import (
-    _resolve_subject_memory_scope,
-    _SubjectMemoryScope,
-)
 from services.control_api.app.security import (
     AuthenticatedUser,
-    require_active_voice_session,
     require_authenticated_user,
 )
 from services.persona.domain import (
-    PersonaCapsule,
     PersonaCounterexampleRequiredError,
     PersonaEnginePort,
-    PersonaRequest,
     PersonaReview,
 )
-from services.persona.engine import persona_capsule_from_snapshot
-from services.persona.subject_projection import read_active_version
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/persona", tags=["persona"])
 
@@ -49,16 +29,6 @@ def _engine(request: Request) -> PersonaEnginePort:
 
 def _store(request: Request) -> MemoryStore:
     return cast(MemoryStore, request.app.state.memory_store)
-
-
-def _require_internal_token(
-    request: Request,
-    token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
-) -> None:
-    settings = cast(ControlSettings, request.app.state.settings)
-    expected = settings.internal_token("persona_read")
-    if not expected or token is None or not hmac.compare_digest(token, expected):
-        raise HTTPException(status_code=401, detail="valid internal persona token required")
 
 
 def _require_registered(request: Request, user: AuthenticatedUser) -> None:
@@ -243,148 +213,4 @@ async def rollback_version(
         "reason": version.reason,
         "trait_ids": list(version.trait_ids),
         "created_at": version.created_at.isoformat(),
-    }
-
-
-class SessionCapsuleCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    session_id: str = Field(min_length=1, max_length=128)
-    speaker_class: Literal["owner", "guest", "uncertain"]
-    speaker_reason_code: str | None = Field(default=None, max_length=96)
-    topic: str = Field(default="", max_length=1000)
-    enabled: bool = True
-    max_chars: int = Field(default=1200, ge=160, le=4000)
-
-
-async def _subject_capsule(
-    request: Request,
-    *,
-    scope: _SubjectMemoryScope,
-    body: SessionCapsuleCreate,
-    account_id: str,
-    confirmed_style_only: bool,
-) -> PersonaCapsule:
-    """The capsule of the session's current subject, never of another person.
-
-    The account-keyed learner answers only while the current subject *is* the
-    account, and only while the session profile authority is the authority.
-    A different subject is served from its own projected persona; a subject
-    without a live projection, and an authority that cannot answer at all, get
-    an empty capsule -- the account owner's traits are a different person's
-    data.
-    """
-
-    if scope.subject_authority == "unavailable" or scope.subject_id is None:
-        # A configured authority that cannot answer, or a runtime profile whose
-        # active subject is not confirmed, must not hand the account owner's
-        # persona to whoever is in front of the device.
-        return PersonaCapsule()
-    if scope.subject_id == account_id:
-        return await _engine(request).capsule(
-            PersonaRequest(
-                account_id=account_id,
-                speaker_class=body.speaker_class,
-                topic=body.topic,
-                enabled=body.enabled,
-                max_chars=body.max_chars,
-                confirmed_style_only=confirmed_style_only,
-            )
-        )
-    settings = cast(ControlSettings, request.app.state.settings)
-    try:
-        projected = read_active_version(
-            settings.memoria_db_path,
-            scope.subject_id,
-        )
-    except ValueError:
-        logger.exception(
-            "persona subject projection unreadable subject_hash=%s",
-            hashlib.sha256(scope.subject_id.encode("utf-8")).hexdigest()[:16],
-        )
-        return PersonaCapsule()
-    if projected is None:
-        return PersonaCapsule()
-    return persona_capsule_from_snapshot(
-        projected["snapshot"],
-        version_id=str(projected["version_id"]),
-        version_number=int(projected["version_number"]),
-        topic=body.topic,
-        max_chars=body.max_chars,
-        confirmed_style_only=confirmed_style_only,
-    )
-
-
-@router.post("/session-capsule")
-async def session_capsule(
-    body: SessionCapsuleCreate,
-    request: Request,
-    _: Annotated[None, Depends(_require_internal_token)],
-) -> dict[str, Any]:
-    session = require_active_voice_session(request, body.session_id)
-    account_id = str(session["user_id"])
-    scope = None
-    if claims_device_bound_subject(body.speaker_class, body.speaker_reason_code):
-        scope = await _resolve_subject_memory_scope(
-            request,
-            session_id=body.session_id,
-            account_id=account_id,
-        )
-        if not scope.bound_subject_trusted:
-            body = body.model_copy(
-                update={
-                    "speaker_class": "uncertain",
-                    "speaker_reason_code": DEVICE_BOUND_SUBJECT_UNVERIFIED,
-                }
-            )
-    trusted_interaction = ModePolicy.trusted_context(
-        FrozenMode.from_session(session),
-        speaker_class=body.speaker_class,
-        reason_code=body.speaker_reason_code,
-    )
-    capabilities = trusted_interaction["capabilities"]
-    if not capabilities["persona"] and not capabilities["persona_low_sensitivity"]:
-        return {
-            "interaction": trusted_interaction,
-            "version_id": None,
-            "version_number": None,
-            "prompt_fragment": "",
-            "delivery_rate": 1.0,
-            "entries": [],
-        }
-    confirmed_style_only = (
-        capabilities["persona_low_sensitivity"]
-        and _store(request).get_account(user_id=account_id) is not None
-    )
-    if scope is None:
-        scope = await _resolve_subject_memory_scope(
-            request,
-            session_id=body.session_id,
-            account_id=account_id,
-        )
-    capsule = await _subject_capsule(
-        request,
-        scope=scope,
-        body=body,
-        account_id=account_id,
-        confirmed_style_only=confirmed_style_only,
-    )
-    return {
-        "interaction": trusted_interaction,
-        "version_id": capsule.version_id,
-        "version_number": capsule.version_number,
-        "prompt_fragment": capsule.prompt_fragment,
-        "delivery_rate": capsule.delivery_rate,
-        "entries": [
-            {
-                "trait_id": entry.trait_id,
-                "category": entry.category,
-                "description": entry.description,
-                "context": entry.context,
-                "counterexample": entry.counterexample,
-                "confidence": entry.confidence,
-                "source_event_ids": list(entry.source_event_ids),
-            }
-            for entry in capsule.entries
-        ],
     }
