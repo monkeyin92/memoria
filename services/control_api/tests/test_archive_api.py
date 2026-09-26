@@ -31,11 +31,12 @@ from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
 from services.common.redaction import redact_pii
 from services.control_api.app.main import create_app
+from services.control_api.app.persona_learning import observe_persona
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
+    _account_write,
     _canonical_actual_voice,
     _deletion_status_response,
-    _observe_persona,
 )
 from services.digital_self.domain import (
     DigitalSelfManifest,
@@ -640,7 +641,7 @@ async def test_internal_capability_tokens_are_not_interchangeable(
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "")
     monkeypatch.setenv("MEMORIA_ARCHIVE_WRITE_TOKEN", "archive-write-capability")
-    monkeypatch.setenv("MEMORIA_MEMORY_READ_TOKEN", "memory-read-capability")
+    monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-capability")
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         identity = (await client.post("/v1/auth/anonymous")).json()
@@ -660,35 +661,14 @@ async def test_internal_capability_tokens_are_not_interchangeable(
             headers={"X-Memoria-Internal-Token": "archive-write-capability"},
             json=event,
         )
-        write_with_read_token = await client.post(
+        write_with_plan_token = await client.post(
             "/v1/archive/session-events",
-            headers={"X-Memoria-Internal-Token": "memory-read-capability"},
+            headers={"X-Memoria-Internal-Token": "response-plan-capability"},
             json={**event, "event_id": "capability-event-denied"},
         )
-        read = await client.post(
-            "/v1/archive/session-context",
-            headers={"X-Memoria-Internal-Token": "memory-read-capability"},
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "",
-            },
-        )
-        read_with_write_token = await client.post(
-            "/v1/archive/session-context",
-            headers={"X-Memoria-Internal-Token": "archive-write-capability"},
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "",
-            },
-        )
 
-    assert (written.status_code, read.status_code) == (201, 200)
-    assert (write_with_read_token.status_code, read_with_write_token.status_code) == (
-        401,
-        401,
-    )
+    assert written.status_code == 201
+    assert write_with_plan_token.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -1347,9 +1327,10 @@ async def test_late_persona_background_task_is_rejected_by_the_deletion_fence(
     )
     engine = PersonaObservationStub()
 
-    await _observe_persona(
+    await observe_persona(
         SimpleNamespace(app=app),  # type: ignore[arg-type]
         engine,  # type: ignore[arg-type]
+        account_write=_account_write,
         account_id=account_id,
         source_event_id="late-persona-evidence",
         speech_duration_ms=1000,
@@ -3311,139 +3292,6 @@ async def test_archive_search_rejects_invalid_typed_filters_as_422(
 
 
 @pytest.mark.asyncio
-async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path)
-    app = create_app()
-    internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await _register_verified_adult(
-            client,
-            app,
-            username="confirmed-memory-first",
-        )
-        second = await _register_verified_adult(
-            client,
-            app,
-            username="confirmed-memory-second",
-        )
-        first_headers = {"Authorization": f"Bearer {first['access_token']}"}
-        second_headers = {"Authorization": f"Bearer {second['access_token']}"}
-        first_session = (
-            await client.post(
-                "/v1/sessions",
-                headers=first_headers,
-                json={"user_id": first["user_id"], "voice_backend": "cascade"},
-            )
-        ).json()
-        second_session = (
-            await client.post(
-                "/v1/sessions",
-                headers=second_headers,
-                json={"user_id": second["user_id"], "voice_backend": "cascade"},
-            )
-        ).json()
-
-        events = (
-            (
-                "first-confirmed",
-                first_session["session_id"],
-                first["user_id"],
-                "我们家的家训是答应别人的事一定做到。",
-            ),
-            (
-                "first-candidate",
-                first_session["session_id"],
-                first["user_id"],
-                "我在杭州读过书。",
-            ),
-            (
-                "second-confirmed",
-                second_session["session_id"],
-                second["user_id"],
-                "我们家的家训是每天早睡。",
-            ),
-        )
-        for index, (event_id, session_id, subject_id, text) in enumerate(events):
-            response = await client.post(
-                "/v1/archive/session-events",
-                headers=internal_headers,
-                json={
-                    "event_id": event_id,
-                    "session_id": session_id,
-                    "event_type": "speech.utterance_finalized",
-                    "occurred_at": datetime(2026, 7, 19, 10, index, tzinfo=UTC).isoformat(),
-                    "speaker_class": "owner",
-                    "source": "test",
-                    "active_subject_id": subject_id,
-                    "payload": {"text": text},
-                },
-            )
-            assert response.status_code == 201
-        await app.state.memory_catalog.compile_pending()
-
-        for headers, source_event_id in (
-            (first_headers, "first-confirmed"),
-            (second_headers, "second-confirmed"),
-        ):
-            queue = await client.get("/v1/archive/review-queue", headers=headers)
-            claim = next(
-                item for item in queue.json()["items"] if item["source_event_id"] == source_event_id
-            )
-            reviewed = await client.post(
-                f"/v1/archive/memories/{claim['item_id']}/review",
-                headers=headers,
-                json={"action": "confirm"},
-            )
-            assert reviewed.status_code == 200
-
-        owner = await client.post(
-            "/v1/archive/session-context",
-            headers=internal_headers,
-            json={
-                "session_id": first_session["session_id"],
-                "speaker_class": "owner",
-                "topic": "",
-                "limit": 10,
-            },
-        )
-        guest = await client.post(
-            "/v1/archive/session-context",
-            headers=internal_headers,
-            json={
-                "session_id": first_session["session_id"],
-                "speaker_class": "guest",
-                "topic": "",
-                "limit": 10,
-            },
-        )
-        injected_account = await client.post(
-            "/v1/archive/session-context",
-            headers=internal_headers,
-            json={
-                "session_id": first_session["session_id"],
-                "speaker_class": "owner",
-                "topic": "",
-                "limit": 10,
-                "account_id": second["user_id"],
-            },
-        )
-
-    assert owner.status_code == 200
-    assert {
-        (item["kind"], item["source_event_id"], item["status"]) for item in owner.json()["items"]
-    } == {
-        ("claim", "first-confirmed", "confirmed"),
-        ("knowledge", "first-confirmed", "confirmed"),
-        ("episode", "first-confirmed", "confirmed"),
-    }
-    assert guest.json() == {"items": []}
-    assert injected_account.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3790,16 +3638,6 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             headers=replacement_headers,
             params={"user_id": replacement_body["user_id"]},
         )
-        deleted_session = await client.post(
-            "/v1/archive/session-context",
-            headers=internal_headers,
-            json={
-                "session_id": session["session_id"],
-                "speaker_class": "owner",
-                "topic": "",
-                "limit": 8,
-            },
-        )
         deleted_session_event = await client.post(
             "/v1/archive/session-events",
             headers=internal_headers,
@@ -3830,7 +3668,6 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert replacement_profile.json()["companion_id"] is None
     assert replacement_days.status_code == 200
     assert replacement_days.json()["items"] == []
-    assert deleted_session.status_code == 410
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200
     assert remaining_growth_events.evidence == ()

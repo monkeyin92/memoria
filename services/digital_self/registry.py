@@ -446,7 +446,7 @@ class DigitalSelfRegistry:
             """
             SELECT version_id, snapshot_json
             FROM persona_versions
-            WHERE account_id = ? AND status = 'active'
+            WHERE account_id = ? AND subject_id = account_id AND status = 'active'
             """,
             (account_id,),
         ).fetchone()
@@ -473,7 +473,8 @@ class DigitalSelfRegistry:
                 """
                 SELECT category, description, counterexample
                 FROM persona_traits
-                WHERE account_id = ? AND trait_id = ? AND status = 'confirmed'
+                WHERE account_id = ? AND subject_id = account_id
+                  AND trait_id = ? AND status = 'confirmed'
                 """,
                 (account_id, trait_id),
             ).fetchone()

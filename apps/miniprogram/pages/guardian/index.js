@@ -193,7 +193,10 @@ Page({
           this._loadNotifications(),
           this._loadCrisisPush(),
         ]);
-        if (activeLinks.length) await this.selectMinorById(activeLinks[0].minorUserId);
+        // 一对一设备上的无账号孩子没有 guardian link：小结随绑定时勾选的长期记忆开放。
+        const firstMinorId =
+          activeLinks[0]?.minorUserId || (this.data.boundSubjects || [])[0]?.personId || "";
+        if (firstMinorId) await this.selectMinorById(firstMinorId);
       }
     } catch (error) {
       if (api.isAuthEpochCurrent(authEpoch)) {

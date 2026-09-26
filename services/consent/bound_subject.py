@@ -43,6 +43,7 @@ from services.policy.context import canonical_runtime_purpose_for_capability
 
 __all__ = [
     "BOUND_SUBJECT_POLICY_VERSION",
+    "GUARDIAN_MEMORY_CAPABILITIES",
     "MEMORY_CAPABILITIES",
     "MINOR_SESSION_CAPABILITIES",
     "BoundSubjectConsentService",
@@ -55,6 +56,13 @@ BOUND_SUBJECT_POLICY_VERSION: Final = "bound-subject-consent-v1"
 MEMORY_CAPABILITIES: Final[tuple[CapabilityValue, ...]] = (
     "memory_capture",
     "memory_recall_private",
+)
+#: A guardian's long-term-memory grant for a child also opens the weekly
+#: summary: without retained memory there is nothing to summarize, and the
+#: parent sees summaries, never the child's words (user decision 2026-09-26).
+GUARDIAN_MEMORY_CAPABILITIES: Final[tuple[CapabilityValue, ...]] = (
+    *MEMORY_CAPABILITIES,
+    "guardian_summary_view",
 )
 #: What a guardian's minor voice-session offer covers.
 MINOR_SESSION_CAPABILITIES: Final[tuple[CapabilityValue, ...]] = (

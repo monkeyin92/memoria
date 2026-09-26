@@ -343,7 +343,7 @@ async def test_self_export_declares_partial_scope_and_omits_unscoped_sections(
     assert scope["audience"] == "self"
     assert scope["partial"] is True
     assert scope["partial_reason"]
-    assert scope["included_sections"] == ["account", "consent", "evidence"]
+    assert scope["included_sections"] == ["account", "consent", "evidence", "persona"]
 
     omissions = {
         entry["name"]: entry["reason_code"] for entry in exported["omitted_sections"]
@@ -357,7 +357,7 @@ async def test_self_export_declares_partial_scope_and_omits_unscoped_sections(
         "guardian": "no_subject_lineage",
     }
     assert all(entry["reason"] for entry in exported["omitted_sections"])
-    assert set(exported["sections"]) == {"account", "consent", "evidence"}
+    assert set(exported["sections"]) == {"account", "consent", "evidence", "persona"}
     account_section = exported["sections"]["account"]
     assert account_section["profile"]["user_id"] == ACCOUNT_ID
     assert account_section["account"]["username"] == "subject-export-owner"
@@ -446,7 +446,7 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
     )
 
     assert exported["scope"]["audience"] == "guardian"
-    assert set(exported["sections"]) == {"consent", "evidence_metadata"}
+    assert set(exported["sections"]) == {"consent", "evidence_metadata", "persona_metadata"}
     metadata = exported["sections"]["evidence_metadata"]
     assert metadata["subject_id"] == CHILD_SUBJECT
     assert metadata["evidence_count"] == 1
@@ -500,6 +500,7 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
         "guardian",
         "account",
         "account_consents",
+        "persona",
     }
 
 
@@ -727,7 +728,7 @@ def test_postgres_archive_key_spellings_are_reduced_the_same_way() -> None:
         }
     ]
     assert exported["sections"]["consent"]["subject_person_consents"] == []
-    assert set(exported["sections"]) == {"account", "consent", "evidence"}
+    assert set(exported["sections"]) == {"account", "consent", "evidence", "persona"}
     assert exported["sections"]["account"]["profile"] == {
         "user_id": ACCOUNT_ID,
         "display_name": "本人",
@@ -768,3 +769,98 @@ def _person_consent(*, consent_id: str, subject: str) -> PersonConsentRecord:
         granted_at=_NOW,
         evidence_event_id=f"evidence-{consent_id}",
     )
+
+
+def _persona_snapshot() -> dict[str, Any]:
+    trait = {
+        "account_id": ACCOUNT_ID,
+        "category": "verbal_tic",
+        "context": "conversation",
+        "counterexample": "",
+        "confidence": 0.9,
+        "observation_count": 3,
+        "normalized_key": "wo-jue-de",
+        "created_at": "2026-09-20T00:00:00+00:00",
+        "updated_at": "2026-09-21T00:00:00+00:00",
+        "review_event_id": "internal-review",
+    }
+    return {
+        "format_version": 1,
+        "generated_at": "2026-09-26T00:00:00+00:00",
+        "account_id": ACCOUNT_ID,
+        "sections": {
+            "conversation": {"profile": {"user_id": ACCOUNT_ID}, "account": {}},
+            "archive": {
+                "persona_traits": [
+                    {**trait, "trait_id": "holder-trait", "subject_id": ACCOUNT_ID,
+                     "description": "本人习惯先说“我觉得”", "status": "confirmed"},
+                    # Learned before the per-person persona: the account holder's.
+                    {**trait, "trait_id": "legacy-trait", "description": "本人旧特征",
+                     "status": "candidate"},
+                    {**trait, "trait_id": "child-trait", "subject_id": "child-person",
+                     "description": "孩子习惯说“我们再想想”", "status": "confirmed"},
+                    {**trait, "trait_id": "foreign-trait", "account_id": "elsewhere",
+                     "subject_id": ACCOUNT_ID, "description": "别的账号", "status": "confirmed"},
+                ],
+                "persona_versions": [
+                    {"version_id": "holder-v1", "account_id": ACCOUNT_ID,
+                     "subject_id": ACCOUNT_ID, "version_number": 1, "status": "active",
+                     "reason": "auto", "snapshot": [{"trait_id": "holder-trait"}],
+                     "created_at": "2026-09-21T00:00:00+00:00"},
+                    {"version_id": "child-v2", "account_id": ACCOUNT_ID,
+                     "subject_id": "child-person", "version_number": 2, "status": "active",
+                     "reason": "auto", "snapshot": [{"trait_id": "child-trait"}],
+                     "created_at": "2026-09-22T00:00:00+00:00"},
+                ],
+                "speech_style_stats": [
+                    {"account_id": ACCOUNT_ID, "subject_id": "child-person",
+                     "scene": "conversation", "utterance_count": 12, "tic_counts": {"嗯": 3}},
+                ],
+            },
+        },
+    }
+
+
+def test_self_export_releases_only_the_subjects_own_persona() -> None:
+    exported = build_subject_export(
+        snapshot=_persona_snapshot(),
+        account_id=ACCOUNT_ID,
+        subject_id=ACCOUNT_ID,
+        audience="self",
+    )
+
+    persona = exported["sections"]["persona"]
+    assert {row["trait_id"] for row in persona["traits"]} == {"holder-trait", "legacy-trait"}
+    assert [row["version_id"] for row in persona["versions"]] == ["holder-v1"]
+    assert persona["style_stats"] == []
+    assert persona["annotation"]["ai_generated"] is True
+    # Internal columns stay behind the whitelist.
+    assert all("review_event_id" not in row and "normalized_key" not in row
+               for row in persona["traits"])
+    serialized = json.dumps(exported, ensure_ascii=False)
+    assert "孩子习惯说" not in serialized
+    assert "别的账号" not in serialized
+
+
+def test_guardian_export_reports_the_childs_persona_without_descriptions() -> None:
+    exported = build_subject_export(
+        snapshot=_persona_snapshot(),
+        account_id=ACCOUNT_ID,
+        subject_id="child-person",
+        audience="guardian",
+    )
+
+    assert "persona" not in exported["sections"]
+    assert exported["sections"]["persona_metadata"] == {
+        "subject_id": "child-person",
+        "trait_count": 1,
+        "trait_status_counts": {"confirmed": 1},
+        "version_count": 1,
+        "active_version_number": 2,
+        "descriptions_included": False,
+    }
+    serialized = json.dumps(exported, ensure_ascii=False)
+    assert "我们再想想" not in serialized
+    assert "我觉得" not in serialized
+    omissions = {entry["name"]: entry["reason_code"] for entry in exported["omitted_sections"]}
+    assert omissions["persona"] == "audience_forbidden"

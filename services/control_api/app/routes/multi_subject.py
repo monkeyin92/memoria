@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.consent.binding_snapshot import BINDING_OFFER_CATALOG
 from services.consent.bound_subject import (
+    GUARDIAN_MEMORY_CAPABILITIES,
     MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectConsentService,
@@ -420,7 +421,7 @@ def _bound_subject_grants(
         if "offer_minor_voice_session_v1" in accepted:
             add("guardian", MINOR_SESSION_CAPABILITIES)
         if "offer_minor_memory_retention_v1" in accepted:
-            add("guardian", MEMORY_CAPABILITIES)
+            add("guardian", GUARDIAN_MEMORY_CAPABILITIES)
     elif declared_mode == "self_use" and owner_id == subject_id:
         if "offer_self_memory_retention_v1" in accepted:
             add("subject", MEMORY_CAPABILITIES)

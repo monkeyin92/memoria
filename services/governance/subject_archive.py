@@ -15,9 +15,12 @@ Every statement is filtered by ``account_id`` and, on PostgreSQL, runs under
 the account's ``app.account_id`` RLS scope -- the adapter never bypasses RLS.
 Deleting already-deleted ids matches nothing, so a retry is a no-op.
 
-Not covered (no row-level lineage to follow): ``speech_style_stats``
-aggregates, ``persona_versions`` / ``digital_self_versions`` snapshots, and
-``entity_ids`` arrays that may still name a deleted person.
+The subject's own persona (traits, ``speech_style_stats``, ``persona_versions``)
+is keyed by subject since 2026-09-26 and removed by the saga's
+``persona_forgotten`` step through the persona engine.
+
+Not covered (no row-level lineage to follow): ``digital_self_versions``
+snapshots and ``entity_ids`` arrays that may still name a deleted person.
 """
 
 from __future__ import annotations

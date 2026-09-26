@@ -107,6 +107,17 @@ class _Objects:
         raise ObjectNotFoundError(reference.object_key)
 
 
+class _Persona:
+    """The persona learns per person; the saga forgets exactly one subject's."""
+
+    def __init__(self) -> None:
+        self.forgotten: list[tuple[str, str]] = []
+
+    async def forget_subject(self, *, account_id: str, subject_id: str) -> int:
+        self.forgotten.append((account_id, subject_id))
+        return 4
+
+
 def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, dict[str, Any]]:
     ledger = SubjectDeletionLedger(tmp_path / "control.sqlite3")
     ledger.initialize()
@@ -119,6 +130,7 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
         "sessions": [],
         "corpus": [],
         "redacted": [],
+        "persona": _Persona(),
     }
     parts.update(overrides)
 
@@ -142,6 +154,7 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
         terminate_sessions=terminate,
         purge_corpus=purge,
         redact_identity=redact,
+        persona=parts["persona"],
     )
     return service, parts
 
@@ -160,6 +173,8 @@ async def test_deletes_only_the_subject_and_proves_it(tmp_path: Path) -> None:
     assert parts["archive"].owner_events == set()
     assert parts["archive"].subject_events == set()
     assert parts["corpus"] == ["child"]
+    assert parts["persona"].forgotten == [("parent", "child")]
+    assert result["deleted_counts"]["persona.rows"] == 4
     # Still served by the device: the name stays.
     assert parts["redacted"] == []
     assert service.is_subject_deleting(account_id="parent", subject_id="child") is False

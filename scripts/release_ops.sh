@@ -5,21 +5,34 @@
 # Never prints secret values. Every step fails closed.
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
-# The live-chain constants below (OLD, LIVE_CONTROL_RELEASE, the rollback
-# compose chains) describe the production chain before 20260925-full-stack-v1.
-# Update them to the then-live chain before the next full-stack release; the
-# freeze step refuses to run against any other chain.
+# The PREV_* / LIVE_CONTROL_RELEASE constants describe the chain this release
+# replaces; they were read-only checked on production on 2026-09-26 and must be
+# re-checked before each full-stack release. The freeze step refuses to run
+# when the live containers are on any other chain.
 set -Eeuo pipefail
 : "${TAG:?}" "${COMMIT:?}"
 U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
-OLD=/opt/memoria/releases/20260827-architecture-split-v1
+# The stack this release replaces: the rollback target and its identity.
+PREV_TAG=20260925-full-stack-v1
+PREV_COMMIT=064ed611c266be12b18097380a01b5efec4e9b7d
+PREV=/opt/memoria/releases/$PREV_TAG
+# The live control-api is a component release on top of PREV.
 CR=/opt/memoria/component-releases
-LIVE_CONTROL_RELEASE=20260925-confirm-bound-subject
+LIVE_CONTROL_RELEASE=20260925-device-mascot-sync
+# PostgreSQL still bind-mounts its schema files from this older tree, so schema
+# upgrades are written there (in place, keeping the inode) -- never into PREV.
+DATA_TREE=/opt/memoria/releases/20260827-architecture-split-v1
+# Services recreated from the plain PREV compose file on rollback.
+PREV_STACK_SERVICES=(speaker-model agent voice-core-media-bridge miniprogram-gateway device-media-gateway)
 ROLES=(agent control-api device-media-gateway miniprogram-gateway speaker-model)
 TARGETS=(memoria-speaker-model-1 memoria-control-api-1 memoria-agent-1 memoria-voice-core-media-bridge-1 memoria-miniprogram-gateway-1 memoria-device-media-gateway-1)
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
+
+live_chain() {
+  docker inspect "$1" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
+}
 
 # One status line per container. Some memoria containers (LiveKit, the
 # SenseVoice sidecar) define no healthcheck, and a bare .State.Health.Status
@@ -94,12 +107,19 @@ step_verify_load() {
 step_freeze() {
   [[ -d "$R" ]]
   install -d -m 0700 "$S"
-  # The live control chain must be the one the rollback expects.
-  local cf; cf="$(docker inspect memoria-control-api-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
-  [[ "$cf" == "/opt/memoria/releases/20260921-demo02-base/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml,$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml" ]] \
+  # Every target must be on the chain the rollback rebuilds.
+  local cf c
+  cf="$(live_chain memoria-control-api-1)"
+  [[ "$cf" == "$PREV/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml,$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml" ]] \
     || { log "unexpected live control chain: $cf"; exit 1; }
-  [[ -f /tmp/media-runtime.override.yml ]] || { log "missing /tmp/media-runtime.override.yml (device-media-gateway rollback needs it)"; exit 1; }
-  cp -p /tmp/media-runtime.override.yml "$S/media-runtime.override.yml"
+  for c in memoria-speaker-model-1 memoria-agent-1 memoria-voice-core-media-bridge-1 \
+      memoria-miniprogram-gateway-1 memoria-device-media-gateway-1; do
+    cf="$(live_chain "$c")"
+    [[ "$cf" == "$PREV/docker-compose.production.yml" ]] || { log "unexpected live chain for $c: $cf"; exit 1; }
+  done
+  [[ "$(readlink -f /opt/memoria/current)" == "$PREV" ]] || { log "/opt/memoria/current is not $PREV"; exit 1; }
+  # media-edge is not recreated here; keep its host-side override for the record.
+  [[ ! -f /tmp/media-runtime.override.yml ]] || cp -p /tmp/media-runtime.override.yml "$S/media-runtime.override.yml"
   for c in "${TARGETS[@]}"; do
     local img; img="$(docker inspect "$c" --format '{{.Config.Image}}')"
     local repo="${img%%:*}"
@@ -153,7 +173,7 @@ print("control_env_valid=PASS")'
 }
 
 step_schema() {
-  local BK="$OLD/.pre-$TAG-schema-backup"
+  local BK="$DATA_TREE/.pre-$TAG-schema-backup"
   local files=(infra/postgres/init-memoria.sh services/identity/postgres_schema.sql services/consent/postgres_schema.sql
     services/policy/postgres_receipt_schema.sql services/device_fleet/postgres_schema.sql
     services/session_runtime/postgres_schema.sql services/evolution/postgres_schema.sql
@@ -161,9 +181,9 @@ step_schema() {
     services/device_fleet/bootstrap_postgres_schema.sql)
   install -d -m 0700 "$BK"
   for f in "${files[@]}"; do
-    if ! cmp -s "$OLD/$f" "$R/$f"; then
-      [[ -e "$BK/$f" ]] || install -D -m 0644 "$OLD/$f" "$BK/$f"
-      cp "$R/$f" "$OLD/$f"   # cp keeps the inode the running container bind-mounts
+    if ! cmp -s "$DATA_TREE/$f" "$R/$f"; then
+      [[ -e "$BK/$f" ]] || install -D -m 0644 "$DATA_TREE/$f" "$BK/$f"
+      cp "$R/$f" "$DATA_TREE/$f"   # cp keeps the inode the running container bind-mounts
       log "schema file updated: $f"
     fi
   done
@@ -210,33 +230,51 @@ step_finish() {
   log "finish=PASS"
 }
 
+# PREV's control-api re-runs its persona schema at startup, which recreates
+# idx_pg_persona_one_active_version (one active persona version per account).
+# Once a bound subject (child/elder) has its own active version, that index
+# cannot be built and PREV's control-api would crash on start. Refuse, or with
+# ROLLBACK_SUPERSEDE_SUBJECT_PERSONA=1 mark those versions superseded (rows are
+# kept; a later forward release can publish them again).
+rollback_persona_guard() {
+  local sql_count="SELECT count(*) FROM persona_versions WHERE status = 'active' AND subject_id IS DISTINCT FROM account_id"
+  local n
+  n="$(docker exec memoria-data-postgres-1 psql -U memoria_admin -d memoria -Atc "$sql_count")"
+  [[ "$n" == 0 ]] && return 0
+  if [[ "${ROLLBACK_SUPERSEDE_SUBJECT_PERSONA:-}" != 1 ]]; then
+    log "ROLLBACK REFUSED: $n active persona version(s) belong to bound subjects; PREV's control-api"
+    log "would fail to rebuild idx_pg_persona_one_active_version. Re-run with"
+    log "ROLLBACK_SUPERSEDE_SUBJECT_PERSONA=1 to mark them superseded first."
+    exit 1
+  fi
+  docker exec memoria-data-postgres-1 psql -U memoria_admin -d memoria -v ON_ERROR_STOP=1 -Atc \
+    "UPDATE persona_versions SET status = 'superseded' WHERE status = 'active' AND subject_id IS DISTINCT FROM account_id"
+  log "superseded $n bound-subject persona version(s) for rollback"
+}
+
 step_rollback() {
+  rollback_persona_guard
   log "ROLLBACK: restoring env files"
   cp -p "$S/memoria-control-api.env" /etc/memoria-control-api.env
   cp -p "$S/memoria-agent.env" /etc/memoria-agent.env
-  ln -sfn "$OLD" /opt/memoria/current.new && mv -T /opt/memoria/current.new /opt/memoria/current
-  local ID=(MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist MEMORIA_RELEASE_COMMIT=7ca3d4ec531305d968d67ef1bb13b944e566e4cf)
-  (cd /opt/memoria/releases/20260921-demo02-base && env "${ID[@]}" docker compose -p memoria \
-    -f /opt/memoria/releases/20260921-demo02-base/docker-compose.production.yml \
+  ln -sfn "$PREV" /opt/memoria/current.new && mv -T /opt/memoria/current.new /opt/memoria/current
+  local ID=(MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT")
+  # control-api returns to its component release on top of PREV.
+  (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
+    -f "$PREV/docker-compose.production.yml" \
     -f "$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml" \
     -f "$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml" \
     up -d --no-deps --no-build --force-recreate control-api) && wait_healthy memoria-control-api-1
-  (cd /opt/memoria/releases/20260921-defect-a-base && env "${ID[@]}" docker compose -p memoria \
-    -f /opt/memoria/releases/20260921-defect-a-base/docker-compose.production.yml \
-    -f "$CR/20260921-defect-a-followup-endpoint/agent-component.override.yml" \
-    -f "$CR/20260924-d1d2-evidence-floor/agent-component.override.yml" \
-    --profile media-runtime up -d --no-deps --no-build --force-recreate agent voice-core-media-bridge) \
-    && wait_healthy memoria-agent-1 && wait_healthy memoria-voice-core-media-bridge-1
-  (cd "$OLD" && env -u MEMORIA_RELEASE_TAG -u MEMORIA_RELEASE_COMMIT docker compose -p memoria \
-    -f "$OLD/docker-compose.production.yml" \
-    up -d --no-deps --no-build --force-recreate speaker-model miniprogram-gateway) \
-    && wait_healthy memoria-speaker-model-1 && wait_healthy memoria-miniprogram-gateway-1
-  [[ -f /tmp/media-runtime.override.yml ]] || cp -p "$S/media-runtime.override.yml" /tmp/media-runtime.override.yml
-  (cd "$OLD" && env -u MEMORIA_RELEASE_TAG -u MEMORIA_RELEASE_COMMIT docker compose -p memoria \
-    -f "$OLD/docker-compose.production.yml" -f /tmp/media-runtime.override.yml \
-    -f "$CR/20260828-agent-loss-reconnect-device-gateway-v1/device-gateway-component.override.yml" \
-    up -d --no-deps --no-build --force-recreate device-media-gateway) && wait_healthy memoria-device-media-gateway-1
-  MEMORIA_RELEASE_TAG=20260901-0945-wake-word-whitelist /opt/memoria/current/scripts/refresh_readiness.sh || true
+  # Every other role runs PREV's own images from PREV's compose file.
+  (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
+    -f "$PREV/docker-compose.production.yml" --profile media-runtime \
+    up -d --no-deps --no-build --force-recreate "${PREV_STACK_SERVICES[@]}")
+  local c
+  for c in memoria-speaker-model-1 memoria-agent-1 memoria-voice-core-media-bridge-1 \
+      memoria-miniprogram-gateway-1 memoria-device-media-gateway-1; do
+    wait_healthy "$c"
+  done
+  MEMORIA_RELEASE_TAG="$PREV_TAG" /opt/memoria/current/scripts/refresh_readiness.sh || true
   memoria_container_states
   log "rollback done; compare image ids with $S/pre-state.txt"
 }

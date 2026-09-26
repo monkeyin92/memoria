@@ -22,7 +22,7 @@ from services.archive.domain import (
 )
 from services.archive.object_store import ObjectStore
 from services.consent.bound_subject import (
-    MEMORY_CAPABILITIES,
+    GUARDIAN_MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectConsentService,
     BoundSubjectGrant,
@@ -380,7 +380,7 @@ async def _require_binding_owner_for_subject(
 #: Guardian consent kinds that stand for standing grants in the consent
 #: authority Policy reads (see ``services.consent.bound_subject``).
 _BOUND_SUBJECT_CAPABILITIES: dict[str, tuple[CapabilityValue, ...]] = {
-    "memory_retention": MEMORY_CAPABILITIES,
+    "memory_retention": GUARDIAN_MEMORY_CAPABILITIES,
     "minor_voice_session": MINOR_SESSION_CAPABILITIES,
 }
 
@@ -1079,20 +1079,33 @@ async def weekly_summary(
     week_start: Annotated[date | None, Query()] = None,
 ) -> dict[str, Any]:
     _require_wechat_guardian(request, user)
-    await _active_link_or_403(
-        request,
-        guardian_user_id=user.user_id,
-        minor_user_id=minor_user_id,
-    )
-    require_capability_for_account_id(
-        minor_user_id,
-        "guardian_weekly_report",
-        store=_profiles(request),
-    )
-    consent = await _store(request).active_consent(
-        minor_user_id=minor_user_id,
-        consent_kind="weekly_report",
-    )
+    # Whose account holds the child's evidence.
+    evidence_account_id = minor_user_id
+    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+        # A one-to-one device stores the child's turns in the binding owner's
+        # account, attributed to the child. The weekly summary comes with the
+        # long-term memory the owner ticked for the child (user decision
+        # 2026-09-26): switching that off closes the summary too.
+        consent = await _store(request).active_consent(
+            minor_user_id=minor_user_id,
+            consent_kind="memory_retention",
+        )
+        evidence_account_id = user.user_id
+    else:
+        await _active_link_or_403(
+            request,
+            guardian_user_id=user.user_id,
+            minor_user_id=minor_user_id,
+        )
+        require_capability_for_account_id(
+            minor_user_id,
+            "guardian_weekly_report",
+            store=_profiles(request),
+        )
+        consent = await _store(request).active_consent(
+            minor_user_id=minor_user_id,
+            consent_kind="weekly_report",
+        )
     if consent is None:
         raise HTTPException(status_code=403, detail={"code": "guardian_consent_required"})
     zone = ZoneInfo(_settings(request).memoria_timezone)
@@ -1104,7 +1117,7 @@ async def weekly_summary(
     start_at = datetime.combine(start_day, time.min, tzinfo=zone).astimezone(UTC)
     end_at = (start_at + timedelta(days=7)) - timedelta(microseconds=1)
     events = await _archive(request).evidence_window(
-        account_id=minor_user_id,
+        account_id=evidence_account_id,
         subject_id=minor_user_id,
         occurred_after=start_at,
         occurred_before=end_at,
@@ -1115,6 +1128,9 @@ async def weekly_summary(
         week_start=start_day,
         events=events,
         timezone=_settings(request).memoria_timezone,
+        evidence_account_id=(
+            evidence_account_id if evidence_account_id != minor_user_id else None
+        ),
     )
     return report.public_payload()
 

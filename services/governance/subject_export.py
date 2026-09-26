@@ -171,6 +171,45 @@ GUARDIAN_EVENT_BUCKET_SCHEMA: Final[tuple[str, ...]] = (
     *sorted(set(_GUARDIAN_EVENT_BUCKETS.values())),
     "other",
 )
+# The persona is learned per person (2026-09-26): its rows carry subject_id and
+# are released to the subject's own export.  SQLite and PostgreSQL name the JSON
+# columns differently, so both spellings are whitelisted.
+PERSONA_TRAIT_EXPORT_FIELDS: Final[tuple[str, ...]] = (
+    "trait_id",
+    "subject_id",
+    "category",
+    "description",
+    "context",
+    "counterexample",
+    "confidence",
+    "status",
+    "observation_count",
+    "created_at",
+    "updated_at",
+)
+PERSONA_VERSION_EXPORT_FIELDS: Final[tuple[str, ...]] = (
+    "version_id",
+    "subject_id",
+    "version_number",
+    "status",
+    "reason",
+    "snapshot",
+    "snapshot_json",
+    "created_at",
+)
+PERSONA_STYLE_EXPORT_FIELDS: Final[tuple[str, ...]] = (
+    "subject_id",
+    "scene",
+    "utterance_count",
+    "char_count",
+    "speech_duration_ms",
+    "pause_ratio_sum",
+    "pause_sample_count",
+    "tic_counts",
+    "tic_counts_json",
+    "updated_at",
+)
+
 _NO_SUBJECT_LINEAGE: Final[str] = "no_subject_lineage"
 _AUDIENCE_FORBIDDEN: Final[str] = "audience_forbidden"
 
@@ -204,8 +243,9 @@ _SELF_OMISSIONS: Final[tuple[OmittedSection, ...]] = (
         name="archive",
         reason_code=_NO_SUBJECT_LINEAGE,
         reason=(
-            "claims, episodes, transcripts, skills, persona and voice projections "
-            "carry no subject_id; only matching evidence rows are included"
+            "claims, episodes, transcripts, skills and voice projections carry no "
+            "subject_id; only matching evidence rows and the subject's own persona "
+            "are included"
         ),
     ),
     OmittedSection(
@@ -281,6 +321,14 @@ _GUARDIAN_OMISSIONS: Final[tuple[OmittedSection, ...]] = (
         reason="profile and account metadata are withheld from the guardian audience",
     ),
     OmittedSection(
+        name="persona",
+        reason_code=_AUDIENCE_FORBIDDEN,
+        reason=(
+            "the guardian audience receives persona metadata only; learned trait "
+            "descriptions, version snapshots and style statistics are withheld"
+        ),
+    ),
+    OmittedSection(
         name="account_consents",
         reason_code=_AUDIENCE_FORBIDDEN,
         reason=(
@@ -340,12 +388,14 @@ def build_subject_export(
     )
     sections: dict[str, Any] = {}
     omissions: list[OmittedSection] = []
+    persona = _SubjectPersona.of(archive, account_id=account_id, subject_id=subject_id)
     if audience == GUARDIAN_AUDIENCE:
         sections["consent"] = consent
         sections["evidence_metadata"] = _evidence_metadata(
             evidence=evidence,
             subject_id=subject_id,
         )
+        sections["persona_metadata"] = persona.metadata(subject_id)
         omissions.extend(_GUARDIAN_OMISSIONS)
     else:
         if subject_is_account:
@@ -359,6 +409,7 @@ def build_subject_export(
             subject_id=subject_id,
         )
         sections["consent"] = consent
+        sections["persona"] = persona.section(subject_id)
         omissions.extend(_SELF_OMISSIONS)
     body: dict[str, Any] = {
         "format_version": SUBJECT_EXPORT_FORMAT_VERSION,
@@ -383,6 +434,73 @@ def build_subject_export(
     # subject-scoped export did not actually release.
     body["manifest_sha256"] = manifest_sha256(body)
     return body
+
+
+@dataclass(frozen=True, slots=True)
+class _SubjectPersona:
+    """The persona rows learned for exactly one subject of this account."""
+
+    traits: list[dict[str, Any]]
+    versions: list[dict[str, Any]]
+    style_stats: list[dict[str, Any]]
+
+    @classmethod
+    def of(
+        cls, archive: Mapping[str, Any], *, account_id: str, subject_id: str
+    ) -> _SubjectPersona:
+        def owned(table: str) -> list[dict[str, Any]]:
+            # A row from before the per-person persona has no subject_id; it was
+            # learned from the account holder's own turns.
+            return [
+                row
+                for row in _rows(archive, table)
+                if str(row.get("account_id") or account_id) == account_id
+                and str(row.get("subject_id") or account_id) == subject_id
+            ]
+
+        return cls(
+            traits=owned("persona_traits"),
+            versions=owned("persona_versions"),
+            style_stats=owned("speech_style_stats"),
+        )
+
+    def section(self, subject_id: str) -> dict[str, Any]:
+        return {
+            "subject_id": subject_id,
+            "annotation": {
+                "service_provider": SERVICE_PROVIDER,
+                # Traits and snapshots are machine-derived from the subject's turns.
+                "ai_generated": True,
+            },
+            "traits": [
+                _whitelisted(row, PERSONA_TRAIT_EXPORT_FIELDS) for row in self.traits
+            ],
+            "versions": [
+                _whitelisted(row, PERSONA_VERSION_EXPORT_FIELDS) for row in self.versions
+            ],
+            "style_stats": [
+                _whitelisted(row, PERSONA_STYLE_EXPORT_FIELDS) for row in self.style_stats
+            ],
+        }
+
+    def metadata(self, subject_id: str) -> dict[str, Any]:
+        statuses: dict[str, int] = {}
+        for row in self.traits:
+            status = str(row.get("status") or "unknown")
+            statuses[status] = statuses.get(status, 0) + 1
+        active = [
+            int(row["version_number"])
+            for row in self.versions
+            if row.get("status") == "active" and isinstance(row.get("version_number"), int)
+        ]
+        return {
+            "subject_id": subject_id,
+            "trait_count": len(self.traits),
+            "trait_status_counts": dict(sorted(statuses.items())),
+            "version_count": len(self.versions),
+            "active_version_number": max(active) if active else None,
+            "descriptions_included": False,
+        }
 
 
 def _foreign_subject_account_omission() -> OmittedSection:

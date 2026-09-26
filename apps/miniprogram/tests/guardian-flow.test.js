@@ -412,3 +412,56 @@ test("guardian child data actions surface a 403 as an owner-scoped message", asy
   assert.match(page.data.error, /只有监护人或绑定发起人/);
   assert.equal(page.data.minorExport, null);
 });
+
+test("guardian page opens the bound child's summary when there is no guardian link", async () => {
+  global.wx = {
+    getStorageSync: (key) => storage[key],
+    setStorageSync: (key, value) => {
+      storage[key] = value;
+    },
+    removeStorageSync: (key) => {
+      delete storage[key];
+    },
+    request(options) {
+      options.success({ statusCode: 404, data: { detail: { code: "not_found" } } });
+    },
+  };
+  global.getApp = () => ({
+    globalData: {
+      identity: { user_id: "person_owner", display_name: "主人" },
+      accessToken: "test-token",
+      accessTokenExpiresAt: Date.now() + 3600_000,
+      authEpoch: 0,
+    },
+  });
+  const originals = { getProfile: api.getProfile, getGuardianLinks: api.getGuardianLinks };
+  api.getProfile = async () => ({ subject_category: "adult" });
+  api.getGuardianLinks = async () => [];
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  const pagePath = require.resolve("../pages/guardian/index");
+  delete require.cache[pagePath];
+  require(pagePath);
+  const page = instantiate(definition);
+  const selected = [];
+  page._gateGuardian = async () => true;
+  page._loadLinkConsents = async () => {};
+  page._loadNotifications = async () => {};
+  page._loadCrisisPush = async () => {};
+  page._loadBoundSubjectConsents = async function () {
+    this.setData({ boundSubjects: [{ personId: "person_child", consentRows: [] }] });
+  };
+  page.selectMinorById = async (minorId) => {
+    selected.push(minorId);
+  };
+  try {
+    await page.refresh();
+  } finally {
+    Object.assign(api, originals);
+  }
+
+  assert.equal(page.data.role, "guardian");
+  assert.deepEqual(selected, ["person_child"]);
+});

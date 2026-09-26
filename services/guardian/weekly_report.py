@@ -103,7 +103,11 @@ class WeeklyReportProjector:
         week_start: date,
         events: Iterable[EvidenceEvent],
         timezone: str = "Asia/Shanghai",
+        evidence_account_id: str | None = None,
     ) -> WeeklyReport:
+        """``evidence_account_id`` names the binding owner's account when a child
+        without an account of their own is served on a one-to-one device; their
+        rows are then accepted only when attributed to exactly this child."""
         zone = ZoneInfo(timezone)
         week_end = date.fromordinal(week_start.toordinal() + 6)
         emotions: Counter[str] = Counter()
@@ -112,8 +116,11 @@ class WeeklyReportProjector:
         study_seconds = 0
         accepted_ids: set[str] = set()
 
+        account_id = evidence_account_id or minor_user_id
         for event in events:
-            if event.account_id != minor_user_id or event.event_id in accepted_ids:
+            if event.account_id != account_id or event.event_id in accepted_ids:
+                continue
+            if evidence_account_id is not None and event.subject_id != minor_user_id:
                 continue
             local_day = event.occurred_at.astimezone(zone).date()
             if local_day < week_start or local_day > week_end:
