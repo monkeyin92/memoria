@@ -575,3 +575,28 @@ async def test_binder_sees_only_style_labels_and_can_reset_the_bound_persona(
     assert reset.status_code == 200, reset.text
     assert reset.json() == {"subject_id": child_id, "deleted_rows": 7}
     assert forgotten == [(owner_id, child_id)]
+
+
+@pytest.mark.parametrize(
+    ("preferences", "expected"),
+    [
+        (
+            {"max_session_minutes": 45, "quiet_hours": {"start": "21:00", "end": "07:00"}},
+            (2700, ("21:00", "07:00")),
+        ),
+        ({}, (None, None)),
+        # A malformed value never blocks the binding; the policy default applies.
+        ({"max_session_minutes": 45, "quiet_hours": {"start": "9pm", "end": "7am"}}, (None, None)),
+        ({"max_session_minutes": True}, (None, None)),
+    ],
+)
+def test_bind_form_session_limits_become_consent_params(
+    preferences: dict[str, object], expected: tuple[object, object]
+) -> None:
+    """P0-04 D3: what the parent set on the bind page is what policy signs."""
+
+    from services.control_api.app.routes.multi_subject import _session_params
+
+    params = _session_params(preferences)
+
+    assert (params.max_session_seconds, params.quiet_hours) == expected

@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from packages.contracts.generated.python.multi_subject_contracts import (
     AgeBand,
@@ -60,11 +60,13 @@ _VERIFIED_TOKEN = object()
 # unknown / minor / adult.  "student" is a renderer-side derivation.
 CanonicalSubjectCategory = Literal["minor", "adult", "unknown"]
 
-# Unknown-safe mode only keeps the explicitly allowed conversation surface
-# (remediation doc 4.3: chat and temporary English practice; tutor delivery
-# and learning-progress persistence are NOT part of the unknown-safe
-# surface); anything else is stripped or the profile is rejected.
-UNKNOWN_SAFE_CAPABILITIES: Final[frozenset[str]] = frozenset({"chat", "english_practice"})
+# Unknown-safe mode only keeps the explicitly allowed conversation surface:
+# chat, temporary English practice and, since P0-04 D5 (user decision
+# 2026-09-26), tutoring without learning-progress persistence; anything else
+# is stripped or the profile is rejected.
+UNKNOWN_SAFE_CAPABILITIES: Final[frozenset[str]] = frozenset(
+    {"chat", "english_practice", "tutor"}
+)
 UNKNOWN_SAFE_REQUIRED_OBLIGATIONS: Final[frozenset[str]] = frozenset(
     {
         "DO_NOT_PERSIST",
@@ -124,6 +126,9 @@ class RuntimeProfile:
     device_id: str
     capabilities: tuple[str, ...] = ()
     obligations: tuple[str, ...] = ()
+    # Signed obligation parameters the device session enforces (P0-04 D3).
+    max_session_seconds: int | None = None
+    quiet_hours: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -434,6 +439,7 @@ def parse_runtime_profile(
             device_id=signed.device_id,
             capabilities=capabilities,
             obligations=obligations,
+            **_session_limits(signed),
         )
         if profile.is_expired(now or datetime.now(UTC)):
             return None
@@ -446,6 +452,23 @@ def parse_runtime_profile(
         )
     except (ValueError, TypeError):
         return None
+
+
+def _session_limits(signed: object) -> dict[str, Any]:
+    """The signed MAX_SESSION_SECONDS / QUIET_HOURS parameters, if present."""
+
+    limits: dict[str, Any] = {}
+    for item in getattr(signed, "obligations", ()):
+        params = getattr(item, "params", None)
+        code = getattr(getattr(item, "code", None), "value", None)
+        if params is None:
+            continue
+        if code == "MAX_SESSION_SECONDS" and params.max_session_seconds is not None:
+            limits["max_session_seconds"] = int(params.max_session_seconds)
+        if code == "QUIET_HOURS" and params.quiet_hours is not None:
+            start, end = params.quiet_hours
+            limits["quiet_hours"] = (str(start), str(end))
+    return limits
 
 
 def is_expired_profile_payload(payload: object, *, now: datetime | None = None) -> bool:

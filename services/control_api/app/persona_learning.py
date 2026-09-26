@@ -43,6 +43,7 @@ async def observe_persona(
     pause_ratio: float | None,
     quality_score: float | None,
     subject_learning_allowed: bool = False,
+    style_only: bool = False,
 ) -> None:
     try:
         async with account_write(request, account_id):
@@ -59,6 +60,7 @@ async def observe_persona(
                     speech_duration_ms=speech_duration_ms,
                     pause_ratio=pause_ratio,
                     quality_score=quality_score,
+                    style_only=style_only,
                 )
             )
     except Exception:
@@ -112,6 +114,7 @@ def schedule_persona_observation(
     account_write: AccountWrite,
     allow_uncertain_candidate: bool = False,
     subject_learning_allowed: bool = False,
+    style_only: bool = False,
 ) -> None:
     if duplicate or event.event_type != "speech.utterance_finalized":
         return
@@ -153,6 +156,7 @@ def schedule_persona_observation(
         pause_ratio=pause_ratio,
         quality_score=quality_score,
         subject_learning_allowed=other_subject,
+        style_only=style_only,
     )
 
 
@@ -164,6 +168,7 @@ def schedule_low_sensitivity_persona_observation(
     duplicate: bool,
     account_write: AccountWrite,
     subject_learning_allowed: bool = False,
+    style_only: bool = False,
 ) -> None:
     """Keep shadow candidates separate from owner-history learning."""
 
@@ -182,4 +187,5 @@ def schedule_low_sensitivity_persona_observation(
         account_write=account_write,
         allow_uncertain_candidate=True,
         subject_learning_allowed=subject_learning_allowed,
+        style_only=style_only,
     )

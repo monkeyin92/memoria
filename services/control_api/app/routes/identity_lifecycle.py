@@ -22,6 +22,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.consent.bound_subject import BoundSubjectConsentService
+from services.control_api.app.companion_device_sync import project_persona_change
 from services.control_api.app.response_plan_cache import forget_subject_plans
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.governance.subject_deletion import SubjectDeletionService
@@ -259,6 +260,22 @@ class DeclareAgeEvidenceRequest(BaseModel):
     age_band: Literal["unknown", "under_14", "14_17"] = Field()
 
 
+@router.get("/v1/persons/{person_id}/age-evidence")
+async def read_person_age_evidence(
+    person_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    """The age facts of a member the caller manages, for the device page (P0-04 D4)."""
+    person = await _managed_person(request, user_id=user.user_id, person_id=person_id)
+    return {
+        "person_id": person.person_id,
+        "age_band": person.age_band,
+        "subject_category": person.subject_category,
+        "age_evidence_status": person.age_evidence_status,
+    }
+
+
 @router.patch("/v1/persons/{person_id}/age-evidence")
 async def declare_person_age_evidence(
     person_id: str,
@@ -274,22 +291,7 @@ async def declare_person_age_evidence(
     verified adult fails closed into disputed inside the service.
     """
     identity = _identity(request)
-    try:
-        await identity.get_person(person_id, actor_person_id=user.user_id)
-    except Exception as exc:
-        raise _error(
-            exc,
-            not_found="person_not_found",
-            forbidden="binding_forbidden",
-            conflict="binding_conflict",
-        ) from exc
-    is_self = user.user_id == person_id
-    if not is_self and not await _is_binding_owner_for_subject(
-        request, user_id=user.user_id, subject_person_id=person_id
-    ):
-        raise HTTPException(
-            status_code=403, detail={"code": "guardian_binding_owner_required"}
-        )
+    await _managed_person(request, user_id=user.user_id, person_id=person_id)
     try:
         updated = await identity.declare_age_evidence(
             person_id=person_id,
@@ -304,7 +306,50 @@ async def declare_person_age_evidence(
             forbidden="binding_forbidden",
             conflict="binding_conflict",
         ) from exc
+    # The age band decides the service mode and memory scope: rotate the
+    # profile of every device serving this person so the change reaches the
+    # next session instead of waiting out the profile TTL (P0-04 D4).
+    now = datetime.now(UTC)
+    for manifest in await _active_primary_manifests(request, user.user_id, person_id):
+        await project_persona_change(
+            request, device_id=manifest.device_id, actor_id=user.user_id, now=now
+        )
     return updated.to_dict()
+
+
+async def _managed_person(request: Request, *, user_id: str, person_id: str) -> Any:
+    """The person, if the caller is them or owns their parent_for_child binding."""
+    try:
+        person = await _identity(request).get_person(person_id, actor_person_id=user_id)
+    except Exception as exc:
+        raise _error(
+            exc,
+            not_found="person_not_found",
+            forbidden="binding_forbidden",
+            conflict="binding_conflict",
+        ) from exc
+    if user_id != person_id and not await _is_binding_owner_for_subject(
+        request, user_id=user_id, subject_person_id=person_id
+    ):
+        raise HTTPException(
+            status_code=403, detail={"code": "guardian_binding_owner_required"}
+        )
+    return person
+
+
+async def _active_primary_manifests(
+    request: Request, user_id: str, person_id: str
+) -> list[Any]:
+    """ACTIVE bindings, visible to the user, that name the person as a primary subject."""
+    identity = _identity(request)
+    if not isinstance(identity, IdentityService):
+        raise HTTPException(
+            status_code=503, detail={"code": "identity_authority_unavailable"}
+        )
+    manifests = await identity.list_active_manifests_for_person(
+        person_id, actor_person_id=user_id
+    )
+    return [manifest for manifest in manifests if person_id in manifest.primary_subject_ids]
 
 
 async def _is_binding_owner_for_subject(
@@ -316,19 +361,9 @@ async def _is_binding_owner_for_subject(
     (``routes/guardian.py``): the account owner of an ACTIVE
     ``parent_for_child`` binding naming this subject as a primary subject.
     """
-    identity = _identity(request)
-    if not isinstance(identity, IdentityService):
-        raise HTTPException(
-            status_code=503, detail={"code": "identity_authority_unavailable"}
-        )
-    manifests = await identity.list_active_manifests_for_person(
-        subject_person_id, actor_person_id=user_id
-    )
     return any(
-        manifest.declared_mode == "parent_for_child"
-        and manifest.account_owner_id == user_id
-        and subject_person_id in manifest.primary_subject_ids
-        for manifest in manifests
+        manifest.declared_mode == "parent_for_child" and manifest.account_owner_id == user_id
+        for manifest in await _active_primary_manifests(request, user_id, subject_person_id)
     )
 
 

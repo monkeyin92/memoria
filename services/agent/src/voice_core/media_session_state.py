@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -161,6 +162,10 @@ class MediaVoiceSessionState:
     device_wake_ack_fence: GenerationFence | None = None
     device_wake_ack_pending: bool = False
     speaker_enrollment_task: asyncio.Task[None] | None = None
+    # P0-04 D3: when the session began (monotonic) for a minor's time limit,
+    # and whether it heard the crisis reply (never cut short afterwards).
+    started_at: float = field(default_factory=time.monotonic)
+    crisis_reply_heard: bool = False
     pending_missed_hearing_nudge: bool = False
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None

@@ -224,21 +224,18 @@ def _crisis_notifications(request: Request) -> CrisisNotificationService:
 
 
 async def _declared_guardian_ids(request: Request, *, subject_person_id: str) -> tuple[str, ...]:
-    """Guardians who declared responsibility for a subject without an account.
+    """Who took responsibility for a bound person without an account (P0-04 D7).
 
-    The declaration is the only basis these guardians have: the subject never
-    confirmed a guardian link, so their consent-gated capabilities stay
-    closed.  A read failure is logged and degrades to "no declared guardian"
-    instead of inventing one.
+    A child's declared or attested guardian, or an elder's attested delegate:
+    the only basis they have, so consent-gated capabilities stay closed.  A
+    read failure is logged and degrades to "no contact" instead of inventing one.
     """
 
     identity_service = getattr(request.app.state, "identity_service", None)
     if not isinstance(identity_service, IdentityService):
         return ()
     try:
-        return await identity_service.declared_guardians(
-            subject_person_id=subject_person_id,
-        )
+        return await identity_service.crisis_contacts(subject_person_id=subject_person_id)
     except Exception:
         logger.exception(
             "declared guardian lookup failed subject_person_id=%s",
@@ -2191,13 +2188,19 @@ async def response_plan(
             scope.subject_category == "minor"
             or scope.age_band in {"under_14", "14_17"}
         )
-        if (
+        notify = (
             crisis.action == "crisis_support"
             and crisis.notify_guardian
             and crisis.script_version is not None
-            and is_minor_student
             and active_subject_id is not None
-        ):
+        )
+        # A minor always notifies; an elder notifies the attested delegate (P0-04 D7).
+        contacts = (
+            await _declared_guardian_ids(request, subject_person_id=active_subject_id)
+            if notify and active_subject_id is not None
+            else ()
+        )
+        if notify and active_subject_id is not None and (is_minor_student or contacts):
             try:
                 await _crisis_notifications(request).record_minor_crisis(
                     minor_user_id=active_subject_id,
@@ -2205,12 +2208,9 @@ async def response_plan(
                     turn_id=body.fence.turn_id,
                     generation_id=body.fence.generation_id,
                     tool_epoch=body.fence.tool_epoch,
-                    script_version=crisis.script_version,
+                    script_version=crisis.script_version or "",
                     occurred_at=now,
-                    declared_guardian_ids=await _declared_guardian_ids(
-                        request,
-                        subject_person_id=active_subject_id,
-                    ),
+                    declared_guardian_ids=contacts,
                 )
             except Exception:
                 logger.exception(

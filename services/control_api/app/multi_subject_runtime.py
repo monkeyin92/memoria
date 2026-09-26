@@ -230,13 +230,15 @@ class MultiSubjectRuntimeControl:
                 and self.profiles.verify(current, now=now)
             )
             if current_valid and not multiple_speakers and not offline:
-                if self._persona_snapshot_is_current(manifest, current):
+                if self._persona_snapshot_is_current(
+                    manifest, current
+                ) and self._subject_facts_are_current(current):
                     return current
-                # A persona write is not a binding change (it does not bump
-                # ``binding_version``), so a profile still inside its TTL would
-                # keep reporting the superseded assignment.  Rotate the profile
-                # while holding the confirmed subject, so the write reaches the
-                # next read instead of the next natural rotation.
+                # A persona write or an age declaration (P0-04 D4) is not a
+                # binding change (it does not bump ``binding_version``), so a
+                # profile still inside its TTL would keep reporting superseded
+                # facts.  Rotate the profile while holding the confirmed
+                # subject, so the write reaches the next read.
                 return self.profiles.switch_subject(
                     SwitchSubjectCommand(
                         session_id=resolved_session_id,
@@ -570,6 +572,16 @@ class MultiSubjectRuntimeControl:
             and resolved.assignment_id == current.persona_assignment_id
         )
 
+    def _subject_facts_are_current(self, current: RuntimeProfile) -> bool:
+        """Whether the profile still carries the refreshed subject facts."""
+
+        if current.active_subject_id is None:
+            return True
+        facts = self.authority.subject(current.active_subject_id)
+        return facts is None or (
+            (facts.category, facts.age_band) == (current.subject_category, current.age_band)
+        )
+
     @staticmethod
     def _subject_facts(person: PersonSubject) -> SubjectFacts:
         revision = max(1, int(person.updated_at.timestamp() * 1_000_000))
@@ -618,6 +630,10 @@ class MultiSubjectRuntimeControl:
         if actor_id in manifest.primary_subject_ids:
             roles.add("self")
         return frozenset(roles)
+
+
+def _wire_value(value: object) -> str:
+    return str(getattr(value, "value", value))
 
 
 class PostgresMultiSubjectRuntimeControl:
@@ -752,12 +768,12 @@ class PostgresMultiSubjectRuntimeControl:
             manifest,
             current=current,
             actor_id=actor_id,
-        ):
-            # Same rule as the in-memory control: a persona write does not bump
-            # ``binding_version``, so rotate the stored profile with the subject
-            # it already holds instead of reporting the superseded assignment
-            # until the profile TTL lapses.  The rotation re-locks the binding,
-            # which is what re-reads the overrides.
+        ) or not await self._subject_facts_are_current(current, actor_id=actor_id):
+            # Same rule as the in-memory control: a persona write or an age
+            # declaration (P0-04 D4) does not bump ``binding_version``, so
+            # rotate the stored profile with the subject it already holds
+            # instead of reporting superseded facts until the profile TTL
+            # lapses.  The rotation re-locks the binding and re-reads both.
             return await self.sessions.switch_subject(
                 SwitchPersistentSubjectCommand(
                     session_id=resolved_session_id,
@@ -768,6 +784,21 @@ class PostgresMultiSubjectRuntimeControl:
                 )
             )
         return current
+
+    async def _subject_facts_are_current(
+        self, current: RuntimeProfileSignedV2, *, actor_id: str
+    ) -> bool:
+        """Whether the profile still carries the subject's category and age band."""
+
+        if current.active_subject_id is None:
+            return True
+        person = await self.identity.get_person(
+            current.active_subject_id, actor_person_id=actor_id
+        )
+        return (_wire_value(current.subject_category), _wire_value(current.age_band)) == (
+            person.subject_category,
+            person.age_band,
+        )
 
     async def _persona_snapshot_is_current(
         self,

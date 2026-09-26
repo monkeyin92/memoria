@@ -771,12 +771,14 @@ test("age declaration offers only three bands and never claims verification", as
   global.wx.request = (options) => {
     const pathname = options.url.replace("https://aigcnice.com:8443/memoria-api", "");
     if (pathname === "/v1/persons/person_child/age-evidence") {
-      calls.push(options.data);
+      // GET reads the recorded band (P0-04 D4); PATCH declares a new one.
+      const isRead = (options.method || "GET") === "GET";
+      if (!isRead) calls.push(options.data);
       options.success({
         statusCode: 200,
         data: {
           person_id: "person_child",
-          age_band: options.data.age_band,
+          age_band: isRead ? "under_14" : options.data.age_band,
           age_evidence_status: "unverified",
           subject_category: "minor",
         },
@@ -787,14 +789,18 @@ test("age declaration offers only three bands and never claims verification", as
   };
   const page = instantiate(pageDefinition);
   await page.onShow();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(
     page.data.ageRows[0].options.map((option) => option.label),
     ["年龄未知", "申报 14 岁以下", "申报 14 至 17 岁"],
   );
+  // The row shows the band the server has on record, not a fixed placeholder.
+  assert.equal(page.data.ageRows[0].selected, "under_14");
+  assert.equal(page.data.ageRows[0].declaredLabel, "申报 14 岁以下");
   page.selectAgeBand({
     currentTarget: { dataset: { personId: "person_child", ageBand: "adult" } },
   });
-  assert.equal(page.data.ageRows[0].selected, "unknown");
+  assert.equal(page.data.ageRows[0].selected, "under_14");
   page.selectAgeBand({
     currentTarget: { dataset: { personId: "person_child", ageBand: "14_17" } },
   });
@@ -1528,5 +1534,40 @@ test("device page shows a bound elder's style labels and resets only after confi
   } finally {
     Object.assign(api, originals);
     global.wx = previousWx;
+  }
+});
+
+test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async () => {
+  const api = require("../utils/api");
+  const originals = {
+    getGuardianNotifications: api.getGuardianNotifications,
+    getGuardianPushConfig: api.getGuardianPushConfig,
+    isAuthEpochCurrent: api.isAuthEpochCurrent,
+  };
+  api.getGuardianNotifications = async () => ({
+    items: [
+      {
+        notification_id: "n1",
+        minor_display_name: "老爸",
+        message: "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+        occurred_at: "2026-09-26T10:00:00Z",
+      },
+    ],
+  });
+  api.getGuardianPushConfig = async () => ({ enabled: false });
+  api.isAuthEpochCurrent = () => true;
+  const page = instantiate(pageDefinition);
+  page._flowSeq = 1;
+  try {
+    // A self-use or parent_for_child binding does not get this section.
+    await page._loadElderSafety({ declared_mode: "self_use", status: "active" }, 1, 0);
+    assert.equal(page.data.elderSafetyVisible, false);
+    await page._loadElderSafety({ declared_mode: "child_for_parent", status: "active" }, 1, 0);
+    assert.equal(page.data.elderSafetyVisible, true);
+    assert.equal(page.data.elderAlerts.length, 1);
+    assert.equal(page.data.elderAlerts[0].minor_display_name, "老爸");
+    assert.doesNotMatch(page.data.elderAlerts[0].message, /孩子/);
+  } finally {
+    Object.assign(api, originals);
   }
 });

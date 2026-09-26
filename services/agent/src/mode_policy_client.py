@@ -26,7 +26,7 @@ from services.common.companions import (
 )
 from services.identity.domain import is_custom_persona_id
 from services.persona.custom_persona_fields import companion_definition_from_envelope
-from services.tutor.domain import SESSION_FOCUSES, SessionFocus
+from services.tutor.domain import SESSION_FOCUSES, TUTOR_FOCUSES, SessionFocus
 
 InteractionMode = Literal[
     "companion",
@@ -741,9 +741,15 @@ class ModePolicyClient:
             return ModePolicy.unavailable("payload_invalid")
 
         session_focus = payload.get("session_focus", "chat")
-        if (
-            session_focus not in SESSION_FOCUSES
-            or (expected_mode != "companion" and session_focus != "chat")
+        # P0-04 D5: an unknown-safe session may tutor when its signed profile
+        # carries tutor; progress stays unwritten (DO_NOT_WRITE_LEARNING_PROGRESS).
+        unknown_safe_tutor = (
+            expected_mode == "unknown_safe"
+            and session_focus in TUTOR_FOCUSES
+            and "tutor" in runtime_profile.profile.capabilities
+        )
+        if session_focus not in SESSION_FOCUSES or (
+            expected_mode != "companion" and session_focus != "chat" and not unknown_safe_tutor
         ):
             return ModePolicy.unavailable("payload_invalid")
         policy_scope = payload.get("policy_scope", "session")

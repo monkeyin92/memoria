@@ -40,6 +40,7 @@ from services.persona.rules import (
     PersonaExtractor,
     RuleBasedPersonaExtractor,
     exclusive_auto_promote_target,
+    learnable_candidates,
     safe_confirmed_style_description,
     should_auto_promote,
     trusted_uncertain_profile,
@@ -522,7 +523,9 @@ class PersonaEngine:
                 evidence,
                 quality_score=(evidence.quality_score or 1.0) * prompt_factor,
             )
-        candidates = await self._extractor.extract(text, extraction_evidence)
+        candidates = learnable_candidates(
+            await self._extractor.extract(text, extraction_evidence), evidence
+        )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             # The account holder's own consent is re-checked under the write

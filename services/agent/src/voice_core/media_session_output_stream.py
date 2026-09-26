@@ -895,6 +895,39 @@ class MediaOutputStreamMixin:
         if callable(request_standby):
             await request_standby(context, reason="conversation_farewell_complete")
 
+    async def _maybe_standby_after_session_limit(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """P0-04 D3: end a minor's session past its signed limit after the reply."""
+
+        from services.agent.src.prompts import MINOR_SESSION_LIMIT_PHRASE
+        from services.agent.src.voice_core.minor_session_limits import (
+            minor_limits,
+            session_limit_reached,
+        )
+        from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+
+        assistant_text = context.assistant_text.strip()
+        if assistant_text == CRISIS_SUPPORT_REPLY:
+            context.crisis_reply_heard = True
+        max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
+        if (
+            context.closed
+            or context.standby_requested
+            or context.crisis_reply_heard
+            or context.identity.client_type != "device"
+            or not context.runtime.fence.matches(fence)
+            or not session_limit_reached(context.started_at, time.monotonic(), max_seconds)
+        ):
+            return
+        speak = getattr(self, "_speak_device_enrollment_phrase", None)
+        request_standby = getattr(self, "_request_device_standby", None)
+        if callable(speak) and callable(request_standby):
+            await speak(context, MINOR_SESSION_LIMIT_PHRASE)
+            await request_standby(context, reason="minor_max_session")
+
     @staticmethod
     def _record_playback_boundary(context: _MediaVoiceSession) -> None:
         """Snapshot the uplink capture boundary of a just-ended playback.
@@ -960,6 +993,7 @@ class MediaOutputStreamMixin:
             ),
         )
         await self._maybe_standby_after_farewell_complete(context, fence)
+        await self._maybe_standby_after_session_limit(context, fence)
         self.clear_device_wake_ack_fence(context, fence)
         if not context.standby_requested:
             self.flush_pending_missed_hearing_nudge(context)

@@ -950,3 +950,48 @@ async def test_accountless_child_profile_reaches_the_device_through_the_real_api
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_an_elder_crisis_is_queued_for_the_binding_delegate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """P0-04 D7: an adult subject with an attested delegate notifies them too."""
+
+    from services.control_api.app.routes import interaction
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        elder, elder_headers = await _register(client, "safety-elder")
+        _mark_verified_adult(app, elder["user_id"])
+        elder_headers = await _login(client, "safety-elder")
+        seen: list[str] = []
+
+        async def delegate_of(_request: Any, *, subject_person_id: str) -> tuple[str, ...]:
+            seen.append(subject_person_id)
+            return ("elder-delegate",)
+
+        monkeypatch.setattr(interaction, "_declared_guardian_ids", delegate_of)
+        session = await client.post("/v1/sessions", headers=elder_headers, json={})
+        assert session.status_code == 200, session.text
+        session_id = session.json()["session_id"]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=elder["user_id"],
+            session_id=session_id,
+            subject_category="adult",
+            age_band="adult",
+            service_mode="senior_companion",
+            capabilities=("chat",),
+        )
+
+        crisis = await _response_plan(
+            client, session_id=session_id, query=_CRISIS_QUERY, turn_id=1, generation_id=1
+        )
+
+        assert crisis.status_code == 200, crisis.text
+        assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
+        assert seen == [elder["user_id"]]
+        assert await _crisis_event_count(app, minor_user_id=elder["user_id"]) == 1

@@ -50,7 +50,7 @@ _KEYWORD_LIMITS = {
     "letter": 32,
 }
 _DEFAULT_KEYWORD_LIMIT = 20
-_DEFAULT_NAME = "孩子"
+_DEFAULT_NAME = "TA"
 
 
 def _keyword_kind(keyword: str) -> str:

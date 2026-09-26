@@ -30,7 +30,6 @@ function validRequest(overrides = {}) {
     consent_offer_ids: [
       "offer_minor_voice_session_v1",
       "offer_minor_memory_retention_v1",
-      "offer_guardian_weekly_summary_v1",
     ],
     ...overrides,
   };
@@ -59,7 +58,6 @@ test("builds the documented payload for parent_for_child", () => {
     consent_offer_ids: [
       "offer_minor_voice_session_v1",
       "offer_minor_memory_retention_v1",
-      "offer_guardian_weekly_summary_v1",
     ],
   });
 });

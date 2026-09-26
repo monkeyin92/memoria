@@ -776,8 +776,9 @@ END
 $$;
 
 -- Binding-scoped declaration authority (P0-04): a ``guardian_of``
--- declaration only authorizes reaching the guardian when it carries the
--- binding-issued evidence id AND the declarant owns an ACTIVE binding that
+-- declaration (or, for an elder, the binding owner's ``delegate_for``
+-- attestation, P0-04 D7) only authorizes reaching that person when it carries
+-- the binding-issued evidence id AND the declarant owns an ACTIVE binding that
 -- names the subject as primary subject.  A bare third-party invite +
 -- self-accept (arbitrary evidence, no binding) therefore never becomes a
 -- crisis-notification recipient.  Kept separate from
@@ -792,18 +793,20 @@ BEGIN
         SELECT 1 FROM identity_relationships r
         WHERE r.source_person_id = p_source
           AND r.target_person_id = p_target
-          AND r.relation_type = 'guardian_of'
           AND r.confirmed_by_source_at IS NOT NULL
           AND r.confirmed_by_target_at IS NULL
           AND r.valid_from <= p_at
           AND (r.valid_until IS NULL OR r.valid_until > p_at)
-          -- A pending declaration, or the same declaration the binding owner
-          -- attested active for a person with no account (2026-09-25).
+          -- A pending guardian declaration, the same declaration the binding
+          -- owner attested active for a person with no account (2026-09-25),
+          -- or the binding owner's delegate attestation for an elder.
           AND (
-              (r.status = 'pending'
+              (r.relation_type = 'guardian_of' AND r.status = 'pending'
                AND r.established_evidence_id = 'guardian_declaration_v1:device_binding')
-              OR (r.status = 'active'
+              OR (r.relation_type = 'guardian_of' AND r.status = 'active'
                AND r.established_evidence_id = 'guardian_attestation_v1:device_binding')
+              OR (r.relation_type = 'delegate_for' AND r.status = 'active'
+               AND r.established_evidence_id = 'delegate_attestation_v1:device_binding')
           )
           AND EXISTS (
               SELECT 1 FROM identity_device_bindings b

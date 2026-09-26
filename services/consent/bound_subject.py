@@ -182,6 +182,8 @@ class BoundSubjectGrant:
     #: Stable id of what the person accepted (e.g. the binding consent
     #: snapshot); a retry with the same key replays instead of re-granting.
     source_key: str
+    #: The guardian's session limits for a minor's voice sessions (P0-04 D3).
+    params: ConsentParams = ConsentParams()
 
     def __post_init__(self) -> None:
         if not self.capabilities:
@@ -249,7 +251,7 @@ class BoundSubjectConsentService:
                 actor_id=request.actor_person_id,
                 resource_owner_id=request.subject_person_id,
                 purpose=purpose,
-                params=ConsentParams(),
+                params=request.params,
                 valid_from=binding.valid_from,
                 valid_until=evidence.valid_until,
                 policy_version=BOUND_SUBJECT_POLICY_VERSION,

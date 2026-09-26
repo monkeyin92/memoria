@@ -646,7 +646,14 @@ async def _register_verified_owner(client, app, owner: dict) -> None:
 
 
 async def _bind_parent_child(
-    client, app, owner: dict, device_id: str, nonce: str, child_name: str, age_band: str
+    client,
+    app,
+    owner: dict,
+    device_id: str,
+    nonce: str,
+    child_name: str,
+    age_band: str,
+    service_preferences: dict | None = None,
 ) -> str:
     now = datetime.now(UTC)
     token = mint_device_binding_token(
@@ -670,6 +677,7 @@ async def _bind_parent_child(
             },
             "persona_selection": "starlight",
             "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            **({"service_preferences": service_preferences} if service_preferences else {}),
         },
     )
     assert created.status_code == 201, created.text
@@ -1207,3 +1215,84 @@ async def test_age_evidence_declaration_owner_self_stranger(
             json={"age_band": "unknown"},
         )
         assert me_patch.status_code == 200, me_patch.text
+
+
+@pytest.mark.asyncio
+async def test_device_page_reads_the_age_band_and_a_change_rotates_the_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """P0-04 D4: the declared band is readable, and a change reaches the device."""
+
+    from services.control_api.app.routes import identity_lifecycle
+
+    rotated: list[str] = []
+
+    async def record_rotation(_request: object, *, device_id: str, **_: object) -> bool:
+        rotated.append(device_id)
+        return True
+
+    monkeypatch.setattr(identity_lifecycle, "project_persona_change", record_rotation)
+    app = _env(monkeypatch, tmp_path, "age-read")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register(client, "age-read-owner")
+        stranger = await _register(client, "age-read-stranger")
+        await _register_verified_owner(client, app, owner)
+        child = await _bind_parent_child(
+            client, app, owner, "device-age-read", "age-read-1", "老二", "under_14"
+        )
+        target = "/v1/persons/" + child + "/age-evidence"
+
+        read = await client.get(target, headers=_headers(owner))
+        assert read.status_code == 200, read.text
+        assert read.json()["age_band"] == "under_14"
+        assert read.json()["subject_category"] == "minor"
+        denied = await client.get(target, headers=_headers(stranger))
+        assert denied.status_code == 403, denied.text
+        assert rotated == []
+
+        changed = await client.patch(target, headers=_headers(owner), json={"age_band": "14_17"})
+        assert changed.status_code == 200, changed.text
+        assert (await client.get(target, headers=_headers(owner))).json()["age_band"] == "14_17"
+        assert rotated == ["device-age-read"]
+
+
+@pytest.mark.asyncio
+async def test_an_age_change_reaches_the_next_runtime_profile_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """P0-04 D4: the profile rotates with the new band, not after its TTL."""
+
+    app = _env(monkeypatch, tmp_path, "age-rotate")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _register(client, "age-rotate-owner")
+        await _register_verified_owner(client, app, owner)
+        child = await _bind_parent_child(
+            client, app, owner, "device-age-rotate", "age-rotate-1", "老三", "under_14"
+        )
+        profile_path = "/v1/devices/device-age-rotate/runtime-profile"
+        issued = await client.get(profile_path, headers=_headers(owner))
+        assert issued.status_code == 200, issued.text
+        # The in-memory control confirms the subject in the app, as a parent would.
+        first = await client.post(
+            f"/v1/sessions/{issued.json()['session_id']}/active-subject",
+            headers=_headers(owner),
+            json={"person_id": child, "confirmation_method": "app_confirm"},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["active_subject_id"] == child
+        assert first.json()["age_band"] == "under_14"
+
+        changed = await client.patch(
+            "/v1/persons/" + child + "/age-evidence",
+            headers=_headers(owner),
+            json={"age_band": "14_17"},
+        )
+        assert changed.status_code == 200, changed.text
+
+        second = await client.get(profile_path, headers=_headers(owner))
+        assert second.status_code == 200, second.text
+        assert second.json()["age_band"] == "14_17"
+        assert second.json()["active_subject_id"] == child
+        assert second.json()["session_epoch"] > first.json()["session_epoch"]
+
+

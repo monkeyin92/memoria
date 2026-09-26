@@ -627,11 +627,11 @@ async def guardian_notifications(
             {
                 "notification_id": item.notification_id,
                 "minor_user_id": item.minor_user_id,
-                "minor_display_name": str(minor_display_name or "孩子"),
+                "minor_display_name": str(minor_display_name or "TA"),
                 "occurred_at": item.created_at.isoformat(),
                 "delivery_status": item.status,
                 "channel": item.channel,
-                "message": "孩子此刻可能需要可信任的大人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+                "message": "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
                 "contains_transcript": False,
                 "contains_severity": False,
             }

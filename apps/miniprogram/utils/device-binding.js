@@ -80,16 +80,8 @@ const CONSENT_OFFERS = Object.freeze([
     modes: ["parent_for_child"],
     label: "长期记忆：学习与成长记录",
     description:
-      "勾选后伙伴会记住孩子的学习进度和聊过的事（脱敏保存，不存原始音频）；不勾选也能完成绑定，只保留当次对话",
+      "勾选后伙伴会记住孩子的学习进度和聊过的事（脱敏保存，不存原始音频），并同时为你开通每周成长小结（只含趋势和话题分布，不含对话原文）；不勾选也能完成绑定，只保留当次对话",
     defaultChecked: false,
-    requiresParentSelfAcceptance: false,
-  },
-  {
-    id: "offer_guardian_weekly_summary_v1",
-    modes: ["parent_for_child"],
-    label: "每周成长小结",
-    description: "只分享趋势、学习时长和话题分布，不含对话原文",
-    defaultChecked: true,
     requiresParentSelfAcceptance: false,
   },
   {

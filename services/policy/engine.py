@@ -2,8 +2,9 @@
 
 The decision matrix follows the corrected edition of the shared CONTRACT:
 
-* unknown_safe / unconfirmed subjects get ephemeral chat / english_practice
-  only; tutor is denied and every sensitive capability is denied.
+* unknown_safe / unconfirmed subjects get ephemeral chat / english_practice /
+  tutor only (tutoring allowed without progress, P0-04 D5); every sensitive
+  capability is denied.
 * confirmed subjects with ``subject_category=unknown`` never fall into the
   plain adult allow path.
 * minor capabilities require governance (active guardian relationship
@@ -118,6 +119,7 @@ def privacy_action_requires_allow_receipt(action: str) -> bool:
 
 
 #: Minor hard-forbidden set — no evidence can flip these.
+UNKNOWN_SAFE_CAPABILITIES = frozenset({"chat", "english_practice", "tutor"})
 MINOR_HARD_FORBIDDEN: Final[frozenset[Capability]] = frozenset(
     {
         "voice_clone_use",
@@ -277,14 +279,32 @@ _OBLIGATION_PARAMS: Final[dict[PolicyObligationCode, GeneratedObligationParams]]
 }
 
 
-def _obligations(*codes: PolicyObligationCode) -> tuple[PolicyObligationSpec, ...]:
+def _obligations(
+    *codes: PolicyObligationCode, consent: ConsentEvidencePort | None = None
+) -> tuple[PolicyObligationSpec, ...]:
     return tuple(
         PolicyObligationSpec(
             code=GeneratedPolicyObligation(code),
-            params=_OBLIGATION_PARAMS.get(code, _params()),
+            params=_session_params(code, consent) or _OBLIGATION_PARAMS.get(code, _params()),
         )
         for code in codes
     )
+
+
+def _session_params(
+    code: PolicyObligationCode, consent: ConsentEvidencePort | None
+) -> GeneratedObligationParams | None:
+    """The guardian's own session limits from the binding consent (P0-04 D3)."""
+
+    params = getattr(consent, "params", None)
+    max_seconds = getattr(params, "max_session_seconds", None)
+    quiet_hours = getattr(params, "quiet_hours", None)
+    if code == "MAX_SESSION_SECONDS" and max_seconds:
+        return _params(max_session_seconds=int(max_seconds))
+    if code == "QUIET_HOURS" and quiet_hours:
+        start, end = quiet_hours
+        return _params(quiet_hours=(str(start), str(end)))
+    return None
 
 
 def _select_consent(
@@ -859,19 +879,9 @@ class PolicyEngine:
         )
 
     def _decide_unconfirmed(self, context: PolicyContext) -> _PolicyEvaluation:
-        if context.capability == "chat":
-            return self._decision(
-                context,
-                effect="allow_with_obligations",
-                reason_code="unknown_safe_ephemeral",
-                obligations=_obligations(
-                    "DO_NOT_PERSIST",
-                    "DO_NOT_WRITE_LEARNING_PROGRESS",
-                    "NO_MODEL_TRAINING",
-                    "REQUIRE_SPEAKER_CONFIRMATION",
-                ),
-            )
-        if context.capability == "english_practice":
+        # P0-04 D5 (user decision 2026-09-26): tutoring is allowed when the age
+        # is unknown, but like chat it persists nothing and writes no progress.
+        if context.capability in UNKNOWN_SAFE_CAPABILITIES:
             return self._decision(
                 context,
                 effect="allow_with_obligations",
@@ -890,7 +900,7 @@ class PolicyEngine:
         )
 
     def _decide_category_unknown(self, context: PolicyContext) -> _PolicyEvaluation:
-        if context.capability in {"chat", "english_practice"}:
+        if context.capability in UNKNOWN_SAFE_CAPABILITIES:
             return self._decide_unconfirmed(context)
         return self._decision(
             context,
@@ -1016,8 +1026,9 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="binding_evidence_required",
             )
+        selected_consent = _select_consent(consents)
         evidence_args = {
-            "consents": (_select_consent(consents),),
+            "consents": (selected_consent,),
             "relationships": (_select_relationship(guardians),),
             "binding_evidence": context.binding_evidence,
         }
@@ -1032,6 +1043,7 @@ class PolicyEngine:
                     "DEPENDENCY_GUARD",
                     "AI_IDENTITY_CLARIFICATION",
                     "NO_MODEL_TRAINING",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )
@@ -1046,6 +1058,7 @@ class PolicyEngine:
                     "QUIET_HOURS",
                     "NO_MODEL_TRAINING",
                     "WRITE_POLICY_RECEIPT",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )
@@ -1060,6 +1073,7 @@ class PolicyEngine:
                     "QUIET_HOURS",
                     "NO_MODEL_TRAINING",
                     "WRITE_POLICY_RECEIPT",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )

@@ -29,6 +29,7 @@ from services.consent.bound_subject import (
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectGrant,
 )
+from services.consent.evidence import ConsentParams
 from services.consent.tests.test_bound_subject_postgres import _attest, _consent_service
 from services.control_api.app.multi_subject_runtime import (
     PostgresMultiSubjectRuntimeControl,
@@ -354,15 +355,26 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
         "active_subject_id": None,
         "speaker_state": "unconfirmed",
         "service_mode": "unknown_safe",
-        "capabilities": ["chat", "english_practice"],
+        "capabilities": ["chat", "english_practice", "tutor"],
     }
     assert await _event_reasons(bootstrap_dsn, profile.session_id) == ["subject_facts_unverified"]
 
 
 @requires_postgres
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("session_params", "expected_limits"),
+    [
+        # No bind-form values: the policy defaults.
+        (None, (1800, ["21:30", "06:30"])),
+        # The parent's session length and quiet hours (P0-04 D3).
+        ((2700, ("21:00", "07:00")), (2700, ["21:00", "07:00"])),
+    ],
+)
 async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_memory(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811
+    session_params: tuple[int, tuple[str, str]] | None,
+    expected_limits: tuple[int, list[str]],
 ) -> None:
     store, bootstrap_dsn = postgres_runtime_with_consent
     now = datetime.now(UTC)
@@ -411,6 +423,13 @@ async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_m
             kind="guardian",
             capabilities=MINOR_SESSION_CAPABILITIES,
             source_key="snapshot-child",
+            params=(
+                ConsentParams(
+                    max_session_seconds=session_params[0], quiet_hours=session_params[1]
+                )
+                if session_params
+                else ConsentParams()
+            ),
         )
         await consent.grant(grant)
         # Ticking long-term memory for a child also grants the weekly summary.
@@ -429,6 +448,12 @@ async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_m
         "capabilities": ["chat", "english_practice", "guardian_summary_view"],
     }
     assert set(_shape(with_consent)["capabilities"]) & _GATED == {"guardian_summary_view"}
+    limits = {
+        item.code.value: item.params for item in with_consent.obligations
+        if item.code.value in {"MAX_SESSION_SECONDS", "QUIET_HOURS"}
+    }
+    assert limits["MAX_SESSION_SECONDS"].max_session_seconds == expected_limits[0]
+    assert list(limits["QUIET_HOURS"].quiet_hours) == expected_limits[1]
 
 
 @requires_postgres
@@ -522,7 +547,7 @@ async def test_family_shared_stays_unconfirmed(
         "active_subject_id": None,
         "speaker_state": "unconfirmed",
         "service_mode": "unknown_safe",
-        "capabilities": ["chat", "english_practice"],
+        "capabilities": ["chat", "english_practice", "tutor"],
     }
     renewed = await _read(control, manifest, now=now + timedelta(minutes=6))
     assert renewed.active_subject_id is None
@@ -570,7 +595,7 @@ async def test_a_proxy_without_an_active_relationship_leaves_the_subject_unconfi
         "active_subject_id": None,
         "speaker_state": "unconfirmed",
         "service_mode": "unknown_safe",
-        "capabilities": ["chat", "english_practice"],
+        "capabilities": ["chat", "english_practice", "tutor"],
     }
     assert await _event_reasons(bootstrap_dsn, profile.session_id) == [
         "sole_bound_subject_relationship_missing"
