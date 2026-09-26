@@ -805,3 +805,49 @@ def test_unknown_internal_envelope_key_does_not_trip_the_legacy_parser() -> None
 
     assert policy.available is True
     assert policy.mode == "companion"
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "available"),
+    [(["chat", "tutor"], True), (["chat"], False)],
+)
+def test_unknown_safe_session_may_tutor_only_with_a_signed_tutor_capability(
+    capabilities: list[str], available: bool
+) -> None:
+    """P0-04 D5: tutoring is allowed with unknown age, never beyond the profile."""
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        UNKNOWN_SAFE_OBLIGATIONS,
+        canonical_wire_payload,
+    )
+
+    envelope = {
+        key: value
+        for key, value in _payload().items()
+        if key not in {"companion_style_id", "companion_style_version"}
+    }
+    policy = ModePolicyClient._parse(
+        {
+            **envelope,
+            "interaction_mode": "unknown_safe",
+            "session_focus": "tutor_homework",
+            "runtime_profile": canonical_wire_payload(
+                active_subject_id=None,
+                subject_category="unknown",
+                age_band="unknown",
+                speaker_state="unconfirmed",
+                service_mode="unknown_safe",
+                session_epoch=1,
+                capabilities=capabilities,
+                obligations=UNKNOWN_SAFE_OBLIGATIONS,
+            ),
+        },
+        TEST_VERIFY_KEY,
+    )
+
+    assert policy.available is available
+    if available:
+        assert policy.session_focus == "tutor_homework"
+        # Progress stays unwritten: the learning surface remains closed.
+        assert not policy.capability("learning")

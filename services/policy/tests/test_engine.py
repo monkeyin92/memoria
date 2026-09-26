@@ -629,9 +629,8 @@ def test_minor_chat_has_time_dependency_and_event_identity_guards() -> None:
 
 
 def test_unknown_tutor_is_temporary_and_cannot_write_progress() -> None:
-    # Matrix change (V2): unknown_safe no longer allows tutor — the corrected
-    # decision matrix allows only chat/english_practice in unknown_safe and
-    # denies tutor (subject_unconfirmed).
+    # P0-04 D5 (user decision 2026-09-26): tutoring is allowed with unknown
+    # age, ephemeral like chat -- no persistence, no learning progress.
     decision = PolicyEngine().decide(
         _context(
             capability="tutor",
@@ -640,9 +639,14 @@ def test_unknown_tutor_is_temporary_and_cannot_write_progress() -> None:
         )
     )
 
-    assert decision.effect == "deny"
-    assert decision.reason_code == "subject_unconfirmed"
-    assert decision.obligations == ()
+    assert decision.effect == "allow_with_obligations"
+    assert decision.reason_code == "unknown_safe_ephemeral"
+    assert {item.code for item in decision.obligations} >= {
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "NO_MODEL_TRAINING",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+    }
 
 
 def test_confirmed_minor_tutor_writes_only_subject_scoped_progress() -> None:

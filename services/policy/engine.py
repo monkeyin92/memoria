@@ -2,8 +2,9 @@
 
 The decision matrix follows the corrected edition of the shared CONTRACT:
 
-* unknown_safe / unconfirmed subjects get ephemeral chat / english_practice
-  only; tutor is denied and every sensitive capability is denied.
+* unknown_safe / unconfirmed subjects get ephemeral chat / english_practice /
+  tutor only (tutoring allowed without progress, P0-04 D5); every sensitive
+  capability is denied.
 * confirmed subjects with ``subject_category=unknown`` never fall into the
   plain adult allow path.
 * minor capabilities require governance (active guardian relationship
@@ -118,6 +119,7 @@ def privacy_action_requires_allow_receipt(action: str) -> bool:
 
 
 #: Minor hard-forbidden set — no evidence can flip these.
+UNKNOWN_SAFE_CAPABILITIES = frozenset({"chat", "english_practice", "tutor"})
 MINOR_HARD_FORBIDDEN: Final[frozenset[Capability]] = frozenset(
     {
         "voice_clone_use",
@@ -859,19 +861,9 @@ class PolicyEngine:
         )
 
     def _decide_unconfirmed(self, context: PolicyContext) -> _PolicyEvaluation:
-        if context.capability == "chat":
-            return self._decision(
-                context,
-                effect="allow_with_obligations",
-                reason_code="unknown_safe_ephemeral",
-                obligations=_obligations(
-                    "DO_NOT_PERSIST",
-                    "DO_NOT_WRITE_LEARNING_PROGRESS",
-                    "NO_MODEL_TRAINING",
-                    "REQUIRE_SPEAKER_CONFIRMATION",
-                ),
-            )
-        if context.capability == "english_practice":
+        # P0-04 D5 (user decision 2026-09-26): tutoring is allowed when the age
+        # is unknown, but like chat it persists nothing and writes no progress.
+        if context.capability in UNKNOWN_SAFE_CAPABILITIES:
             return self._decision(
                 context,
                 effect="allow_with_obligations",
@@ -890,7 +882,7 @@ class PolicyEngine:
         )
 
     def _decide_category_unknown(self, context: PolicyContext) -> _PolicyEvaluation:
-        if context.capability in {"chat", "english_practice"}:
+        if context.capability in UNKNOWN_SAFE_CAPABILITIES:
             return self._decide_unconfirmed(context)
         return self._decision(
             context,

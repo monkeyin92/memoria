@@ -345,25 +345,31 @@ def test_unknown_safe_english_practice_is_allowed() -> None:
     assert decision.no_model_training is True
 
 
-def test_unknown_safe_chat_tutor_request_degrades_to_chat_only() -> None:
-    """A signed unknown-safe payload asking for tutor is inconsistent with the
-    safe surface: the whole profile fails closed and only ordinary chat (no
-    tutor capability, no learning-progress persistence) remains possible."""
+def test_unknown_safe_may_tutor_but_a_sensitive_capability_fails_closed() -> None:
+    """P0-04 D5: a signed unknown-safe profile may carry tutor (progress stays
+    unwritten); anything sensitive is inconsistent with the safe surface and
+    the whole profile fails closed."""
 
     from services.agent.src.contracts.ids import GenerationFence
     from services.agent.src.observability.metrics import MetricsRegistry
     from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 
-    payload = canonical_wire_payload(
-        active_subject_id=None,
-        subject_category="unknown",
-        age_band="unknown",
-        speaker_state="unconfirmed",
-        service_mode="unknown_safe",
-        session_epoch=1,
-        capabilities=["chat", "tutor"],
-        obligations=UNKNOWN_SAFE_OBLIGATIONS,
-    )
+    def unknown_safe(capabilities: list[str]) -> dict[str, object]:
+        return canonical_wire_payload(
+            active_subject_id=None,
+            subject_category="unknown",
+            age_band="unknown",
+            speaker_state="unconfirmed",
+            service_mode="unknown_safe",
+            session_epoch=1,
+            capabilities=capabilities,
+            obligations=UNKNOWN_SAFE_OBLIGATIONS,
+        )
+
+    tutoring = parse_runtime_profile(unknown_safe(["chat", "tutor"]), verify_key=TEST_VERIFY_KEY)
+    assert tutoring is not None
+    assert "tutor" in tutoring.profile.capabilities
+    payload = unknown_safe(["chat", "tutor", "memory_recall_private"])
     assert parse_runtime_profile(payload, verify_key=TEST_VERIFY_KEY) is None
     gate = RuntimeProfileGate(
         metrics=MetricsRegistry(),

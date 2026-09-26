@@ -550,7 +550,7 @@ def test_unknown_safe_chat_has_complete_ephemeral_obligations() -> None:
     ]
 
 
-def test_unknown_safe_tutor_is_denied() -> None:
+def test_unknown_safe_tutor_is_ephemeral() -> None:
     decision = PolicyEngine().decide(
         make_context(
             subject_id=None,
@@ -562,8 +562,14 @@ def test_unknown_safe_tutor_is_denied() -> None:
             evaluated_at=NOW,
         )
     )
-    assert decision.effect == "deny"
-    assert decision.reason_code == "subject_unconfirmed"
+    assert decision.effect == "allow_with_obligations"
+    assert decision.reason_code == "unknown_safe_ephemeral"
+    assert {item.code for item in decision.obligations} >= {
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "NO_MODEL_TRAINING",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+    }
 
 
 def test_confirmed_unknown_category_never_gets_sensitive_capabilities() -> None:
@@ -589,7 +595,7 @@ def test_confirmed_unknown_category_never_gets_sensitive_capabilities() -> None:
         assert decision.reason_code == "subject_category_unverified"
 
 
-def test_confirmed_unknown_category_tutor_is_denied() -> None:
+def test_confirmed_unknown_category_tutor_is_ephemeral() -> None:
     decision = PolicyEngine().decide(
         make_context(
             actor_id="person-unverified",
@@ -602,8 +608,14 @@ def test_confirmed_unknown_category_tutor_is_denied() -> None:
             evaluated_at=NOW,
         )
     )
-    assert decision.effect == "deny"
-    assert decision.reason_code == "subject_category_unverified"
+    assert decision.effect == "allow_with_obligations"
+    assert decision.reason_code == "unknown_safe_ephemeral"
+    assert {item.code for item in decision.obligations} >= {
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "NO_MODEL_TRAINING",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+    }
 
 
 def test_confirmed_unknown_category_chat_stays_ephemeral() -> None:

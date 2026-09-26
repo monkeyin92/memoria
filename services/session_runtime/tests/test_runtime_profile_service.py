@@ -292,8 +292,8 @@ def test_unresolved_session_gets_signed_short_lived_unknown_safe_profile() -> No
     assert profile.service_mode == "unknown_safe"
     assert profile.session_epoch == 1
     assert profile.binding_version == 4
-    # Unknown-safe keeps chat; tutor is outside the safe surface (4.3).
-    assert profile.capabilities == ("chat",)
+    # Unknown-safe keeps chat and, since P0-04 D5, tutoring without progress.
+    assert set(profile.capabilities) == {"chat", "tutor"}
     assert _obligation_codes(profile.obligations) >= {
         "DO_NOT_PERSIST",
         "DO_NOT_WRITE_LEARNING_PROGRESS",
@@ -369,9 +369,9 @@ def test_confirmed_candidate_with_unverified_subject_facts_degrades_atomically()
     assert service.verify(profile, now=now + timedelta(minutes=1))
 
 
-def test_unresolved_session_allows_temporary_english_practice_only() -> None:
-    """Remediation 4.3: unknown-safe grants chat + temporary English practice;
-    tutor and learning-progress persistence stay rejected."""
+def test_unresolved_session_allows_temporary_practice_and_tutoring() -> None:
+    """Unknown-safe grants chat, temporary English practice and (P0-04 D5)
+    tutoring; learning-progress persistence stays rejected."""
 
     now = datetime(2026, 8, 9, 11, 0, tzinfo=UTC)
     authority = InMemoryRuntimeAuthority(
@@ -415,7 +415,7 @@ def test_unresolved_session_allows_temporary_english_practice_only() -> None:
 
     assert profile.service_mode == "unknown_safe"
     assert profile.active_subject_id is None
-    assert profile.capabilities == ("chat", "english_practice")
+    assert set(profile.capabilities) == {"chat", "english_practice", "tutor"}
     assert "DO_NOT_WRITE_LEARNING_PROGRESS" in _obligation_codes(profile.obligations)
     assert "DO_NOT_PERSIST" in _obligation_codes(profile.obligations)
     assert service.verify(profile, now=now + timedelta(minutes=1))

@@ -60,11 +60,13 @@ _VERIFIED_TOKEN = object()
 # unknown / minor / adult.  "student" is a renderer-side derivation.
 CanonicalSubjectCategory = Literal["minor", "adult", "unknown"]
 
-# Unknown-safe mode only keeps the explicitly allowed conversation surface
-# (remediation doc 4.3: chat and temporary English practice; tutor delivery
-# and learning-progress persistence are NOT part of the unknown-safe
-# surface); anything else is stripped or the profile is rejected.
-UNKNOWN_SAFE_CAPABILITIES: Final[frozenset[str]] = frozenset({"chat", "english_practice"})
+# Unknown-safe mode only keeps the explicitly allowed conversation surface:
+# chat, temporary English practice and, since P0-04 D5 (user decision
+# 2026-09-26), tutoring without learning-progress persistence; anything else
+# is stripped or the profile is rejected.
+UNKNOWN_SAFE_CAPABILITIES: Final[frozenset[str]] = frozenset(
+    {"chat", "english_practice", "tutor"}
+)
 UNKNOWN_SAFE_REQUIRED_OBLIGATIONS: Final[frozenset[str]] = frozenset(
     {
         "DO_NOT_PERSIST",

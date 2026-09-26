@@ -190,7 +190,7 @@ async def test_decision_producer_preserves_unknown_subject_in_scoped_repository(
 
     decision = await service.decide_and_persist(context)
 
-    assert decision.effect == "deny"
+    assert decision.effect == "allow_with_obligations"
     assert repository.scopes == [("actor-unknown-safe", None)]
 
 
