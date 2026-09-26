@@ -811,7 +811,8 @@ async def test_postgres_api_persists_unknown_subject_deny_with_actor_scope(
         actor_id="actor-unknown-safe",
         subject_id=None,
         resource_owner_id=None,
-        capability="tutor",
+        # Tutoring is ephemeral-allowed since P0-04 D5; memory stays denied.
+        capability="memory_capture",
         current_session_mode="unknown_safe",
         subject_category="unknown",
         age_band="unknown",
