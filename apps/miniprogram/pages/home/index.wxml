@@ -1,5 +1,5 @@
-<view class="page-shell theme-dark">
-  <page-backdrop theme="sky"></page-backdrop>
+<view class="page-shell">
+  <page-backdrop theme="mist"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">你好，欢迎来到 Memoria</text>
     <text class="page-lede">把设备连好，再慢慢留下日常。</text>

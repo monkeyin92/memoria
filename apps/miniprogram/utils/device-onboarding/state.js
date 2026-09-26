@@ -55,7 +55,8 @@ const ERROR_MESSAGES = Object.freeze({
   QR_SIGNATURE_INVALID: "设备码校验失败，请刷新机器人屏幕上的二维码。",
   QR_SESSION_EXPIRED: "设备码已失效，请让机器人重新进入启用模式后再扫。",
   DEVICE_REVOKED: "设备当前不可启用，请联系设备管理员或客服。",
-  DEVICE_ALREADY_BOUND: "设备已经绑定到其他账号，不能在此账号重新认领。",
+  DEVICE_ALREADY_BOUND:
+    "这台机器人仍处于绑定状态。如果是你自己的设备，请先在「设备」页解除绑定，再扫描屏幕上的二维码。",
   PROTOCOL_UNSUPPORTED:
     "当前固件的安全配网协议未完成兼容，已停止发送网络信息。请升级机器人固件后重试。",
   BLUETOOTH_DISABLED: "请打开手机蓝牙，再返回这里重试。",

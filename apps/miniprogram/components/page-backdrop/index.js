@@ -1,5 +1,6 @@
 // 整页氛围背景：固定铺满视口，位于内容之下。
-const themes = Object.freeze(["sky", "night", "mist", "warm"]);
+// 全部页面统一浅色主题，只保留 mist；传入其他值也回落到 mist。
+const themes = Object.freeze(["mist"]);
 
 function srcFor(value) {
   return `/assets/ui/bg/${themes.includes(value) ? value : "mist"}.jpg`;

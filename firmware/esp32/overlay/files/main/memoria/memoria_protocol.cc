@@ -20,6 +20,7 @@
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_wake_word.h"
+#include "settings.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -393,6 +394,7 @@ void MemoriaProtocol::RunActivationRetry() {
         const esp_err_t result = activation_client.Activate(&activation_);
         if (result == ESP_OK) {
             MemoriaBootstrap::GetInstance().Stop();
+            released_.store(false);
             ESP_LOGI(kTag, "Activation completed after nearby bootstrap");
             StartDisplayProfilePoll();
             if (on_connected_ != nullptr) {
@@ -437,7 +439,14 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
                 ESP_LOGI(kTag, "Display profile companion=%s version=%s",
                          profile.companion_id.c_str(), profile.display_version.c_str());
                 PublishCompanion(profile.companion_id.c_str());
-            } else if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+            } else if (result == ESP_ERR_INVALID_STATE) {
+                // 409: the device is no longer bound. Without this the board
+                // would keep its old face until a reboot and never offer the
+                // QR the phone now needs to bind it again.
+                if (!protocol->released_.exchange(true)) {
+                    protocol->EnterReleasedState();
+                }
+            } else if (result != ESP_OK) {
                 ESP_LOGW(kTag, "Display profile poll failed, code=%s", esp_err_to_name(result));
             }
         }
@@ -445,6 +454,19 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
         vTaskDelay(pdMS_TO_TICKS(polled ? kDisplayProfilePollMs : 3000));
     }
     vTaskDelete(nullptr);
+}
+
+void MemoriaProtocol::EnterReleasedState() {
+    // Same bookkeeping as an unbound activation: drop the acknowledged
+    // version so the next binding's manifest is ACKed, keep activation_ctr.
+    Settings runtime("memoria_runtime", true);
+    runtime.SetInt("activation_v", 0);
+    ESP_LOGW(kTag, "Device released by the server; nearby bootstrap required");
+    auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
+    if (display == nullptr || MemoriaBootstrap::GetInstance().Start(display) != ESP_OK) {
+        ESP_LOGE(kTag, "Nearby bootstrap unavailable after release");
+    }
+    StartActivationRetry();
 }
 
 bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {

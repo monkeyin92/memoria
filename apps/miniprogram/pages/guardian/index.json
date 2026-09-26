@@ -6,11 +6,5 @@
     "page-backdrop": "/components/page-backdrop/index",
     "glass-icon": "/components/glass-icon/index",
     "device-screen": "/components/device-screen/index"
-  },
-  "navigationBarBackgroundColor": "#BAC8FA",
-  "navigationBarTextStyle": "black",
-  "backgroundColor": "#BAC8FA",
-  "backgroundColorTop": "#BAC8FA",
-  "backgroundColorBottom": "#FEF6E6",
-  "backgroundTextStyle": "dark"
+  }
 }
