@@ -145,7 +145,7 @@
       <text class="section-head-title">成长小结</text>
     </view>
     <view wx:if="{{summaryState === 'loading'}}" class="l2-card"><text class="loading-text">正在整理最近一周…</text></view>
-    <view wx:elif="{{summaryState === 'unauthorized'}}" class="l2-card"><text class="empty-copy">请先完成绑定并开启“每周成长小结”。</text></view>
+    <view wx:elif="{{summaryState === 'unauthorized'}}" class="l2-card"><text class="empty-copy">请先完成绑定，并开启孩子的“长期记忆”或“每周成长小结”。</text></view>
     <view wx:elif="{{summaryState === 'empty'}}" class="l2-card"><text class="empty-copy">本周还没有足够的成长记录。</text></view>
     <view wx:elif="{{summaryState === 'ready'}}" class="l2-card">
       <view class="kept-head">

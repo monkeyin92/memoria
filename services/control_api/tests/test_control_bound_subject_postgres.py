@@ -24,6 +24,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileSignedV2,
 )
 from services.consent.bound_subject import (
+    GUARDIAN_MEMORY_CAPABILITIES,
     MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectGrant,
@@ -360,7 +361,7 @@ async def test_self_use_owner_without_verified_age_stays_unconfirmed(
 
 @requires_postgres
 @pytest.mark.asyncio
-async def test_parent_for_child_confirms_the_child_but_the_guardian_never_reads_memory(
+async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_memory(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811
 ) -> None:
     store, bootstrap_dsn = postgres_runtime_with_consent
@@ -412,21 +413,22 @@ async def test_parent_for_child_confirms_the_child_but_the_guardian_never_reads_
             source_key="snapshot-child",
         )
         await consent.grant(grant)
-        await consent.grant(replace(grant, capabilities=MEMORY_CAPABILITIES))
+        # Ticking long-term memory for a child also grants the weekly summary.
+        await consent.grant(replace(grant, capabilities=GUARDIAN_MEMORY_CAPABILITIES))
     finally:
         await consent_store.close()
 
     with_consent = await _read(control, manifest, now=now + timedelta(minutes=6))
     # The guardian's app is not the child talking: the guardian's consent
-    # lifts chat/practice, never the child's tutoring, private memory or a
-    # summary (no summary consent is ever granted).
+    # lifts chat/practice and the summary, never the child's tutoring or
+    # private memory.
     assert _shape(with_consent) == {
         "active_subject_id": "child-1",
         "speaker_state": "confirmed",
         "service_mode": "student_minor",
-        "capabilities": ["chat", "english_practice"],
+        "capabilities": ["chat", "english_practice", "guardian_summary_view"],
     }
-    assert not set(_shape(with_consent)["capabilities"]) & _GATED
+    assert set(_shape(with_consent)["capabilities"]) & _GATED == {"guardian_summary_view"}
 
 
 @requires_postgres

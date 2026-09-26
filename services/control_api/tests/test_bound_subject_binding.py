@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.consent.bound_subject import (
+    GUARDIAN_MEMORY_CAPABILITIES,
     MEMORY_CAPABILITIES,
     MINOR_SESSION_CAPABILITIES,
     BoundSubjectGrant,
@@ -130,7 +131,7 @@ async def test_child_binding_grants_chat_and_ticked_memory_as_the_guardian(
 
     assert [(g.kind, g.capabilities) for g in recorder.grants] == [
         ("guardian", MINOR_SESSION_CAPABILITIES),
-        ("guardian", MEMORY_CAPABILITIES),
+        ("guardian", GUARDIAN_MEMORY_CAPABILITIES),
     ]
     assert {(g.actor_person_id, g.subject_person_id) for g in recorder.grants} == {
         (owner_id, child_id)
@@ -314,7 +315,7 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
         )
         assert granted.status_code == 201, granted.text
         assert [(g.kind, g.capabilities) for g in recorder.grants] == [
-            ("guardian", MEMORY_CAPABILITIES)
+            ("guardian", GUARDIAN_MEMORY_CAPABILITIES)
         ]
 
         revoked = await client.delete(
@@ -322,7 +323,7 @@ async def test_guardian_memory_toggle_moves_the_consent_authority_too(
             headers={**headers, "Idempotency-Key": "toggle-revoke-0001"},
         )
         assert revoked.status_code == 200, revoked.text
-        assert [item["capabilities"] for item in recorder.revokes] == [MEMORY_CAPABILITIES]
+        assert [item["capabilities"] for item in recorder.revokes] == [GUARDIAN_MEMORY_CAPABILITIES]
 
         exported = await client.post(f"/v1/guardian/minors/{child_id}/export", headers=headers)
         assert exported.status_code == 200, exported.text
@@ -410,3 +411,83 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         assert unbound.json()["subject_deletion"] == "completed"
         child = await app.state.identity_service.get_person(child_id, actor_person_id=owner_id)
         assert (child.display_name, child.status) == (REDACTED_DISPLAY_NAME, "disabled")
+
+
+@pytest.mark.asyncio
+async def test_accountless_child_weekly_summary_follows_long_term_memory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The weekly summary opens with the child's long-term memory (2026-09-26).
+
+    A one-to-one device stores the child's turns in the binding owner's
+    account, attributed to the child; the summary aggregates exactly those
+    rows and never the owner's own.
+    """
+
+    from services.archive.domain import EvidenceEvent
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    recorder = _RecordingConsent()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = recorder
+        owner_id, headers = await _owner(client, app, "bound-summary-owner")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-bound-summary",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+        now = datetime.now(UTC)
+        eligible = {"history_eligible": True, "owner_projection_eligible": True}
+        for event_id, subject, label in (
+            ("summary-child-1", child_id, "happy"),
+            ("summary-child-2", child_id, "sad"),
+            ("summary-owner", owner_id, "angry"),
+        ):
+            await app.state.life_archive.record(
+                EvidenceEvent(
+                    event_id=event_id,
+                    account_id=owner_id,
+                    subject_id=subject,
+                    event_type="emotion_observation",
+                    occurred_at=now,
+                    speaker_class="owner",
+                    source="test",
+                    payload={"label": label, **eligible},
+                )
+            )
+
+        closed = await client.get(f"/v1/guardian/minors/{child_id}/summary", headers=headers)
+        granted = await client.post(
+            f"/v1/guardian/minors/{child_id}/consents",
+            headers={**headers, "Idempotency-Key": "summary-grant-0001"},
+            json={"consent_kind": "memory_retention", "policy_version": "minor-retention-v1"},
+        )
+        assert granted.status_code == 201, granted.text
+        opened = await client.get(f"/v1/guardian/minors/{child_id}/summary", headers=headers)
+        revoked = await client.delete(
+            f"/v1/guardian/minors/{child_id}/consents/{granted.json()['consent_id']}",
+            headers={**headers, "Idempotency-Key": "summary-revoke-0001"},
+        )
+        assert revoked.status_code == 200, revoked.text
+        reclosed = await client.get(f"/v1/guardian/minors/{child_id}/summary", headers=headers)
+
+    assert closed.status_code == 403, closed.text
+    assert closed.json()["detail"]["code"] == "guardian_consent_required"
+    assert opened.status_code == 200, opened.text
+    summary = opened.json()
+    assert summary["minor_user_id"] == child_id
+    assert summary["source_event_count"] == 2
+    assert summary["emotion_distribution"].get("happy") == 1
+    assert summary["emotion_distribution"].get("sad") == 1
+    # The binding owner's own row never enters the child's summary.
+    assert "angry" not in {k for k, v in summary["emotion_distribution"].items() if v}
+    assert reclosed.status_code == 403, reclosed.text
