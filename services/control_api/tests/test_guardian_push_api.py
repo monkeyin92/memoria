@@ -198,7 +198,7 @@ async def test_wechat_sender_posts_only_the_fixed_alert(monkeypatch: pytest.Monk
             "thing1": {"value": "安全提醒"},
             "name2": {"value": "小明号"},
             "time3": {"value": "2026-09-25 10:30"},
-            "thing4": {"value": "请打开小程序查看并尽快联系孩子"},
+            "thing4": {"value": "请打开小程序查看并尽快联系TA"},
         },
     }
     body = json.dumps(posts[0]["json"], ensure_ascii=False)
@@ -269,7 +269,7 @@ async def test_wechat_sender_refreshes_a_rejected_access_token_once(
 def test_keyword_values_fit_wechat_limits() -> None:
     assert fit_keyword_value("thing1", "一" * 30) == "一" * 20
     assert fit_keyword_value("name2", "Tom 123") == "Tom"
-    assert fit_keyword_value("name2", "123") == "孩子"
+    assert fit_keyword_value("name2", "123") == "TA"
     assert fit_keyword_value("phrase3", "安全提醒已送达") == "安全提醒已"
     assert fit_keyword_value("time4", "2026-09-25 10:30") == "2026-09-25 10:30"
 

@@ -2356,3 +2356,44 @@ async def test_sqlite_custom_persona_update_is_rejected_by_trigger(
             ).fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_crisis_contacts_reach_an_elders_binding_delegate(
+    service: IdentityService,
+) -> None:
+    """P0-04 D7: an elder's crisis reaches the child who bound the device."""
+
+    now = _now()
+    child_buyer = await _adult(service, "子女", now)
+    father = await _adult(service, "父亲", now)
+    stranger = await _adult(service, "外人", now)
+    for relation_type in ("child_of", "emergency_contact_for"):
+        await _establish_relationship(
+            service, relation_type=relation_type, source=child_buyer, target=father, now=now
+        )
+    await service.attest_binding_relationship(
+        source_person_id=child_buyer,
+        target_person_id=father,
+        relation_type="delegate_for",
+        actor_person_id=child_buyer,
+        now=now,
+    )
+    # An attestation without the binding is not enough.
+    assert await service.crisis_contacts(subject_person_id=father, now=now) == ()
+
+    await service.create_binding(
+        device_id="dev-senior-crisis",
+        declared_mode="child_for_parent",
+        account_owner_person_id=child_buyer,
+        primary_subject_ids=(father,),
+        roles=((child_buyer, "device_admin"), (child_buyer, "emergency_contact")),
+        service_profile_version="senior-v1",
+        policy_bundle_version="policy-senior-v1",
+        now=now,
+    )
+
+    assert await service.crisis_contacts(subject_person_id=father, now=now) == (child_buyer,)
+    assert stranger not in await service.crisis_contacts(subject_person_id=father, now=now)
+    # The elder is still nobody's declared guardian ward.
+    assert await service.declared_guardians(subject_person_id=father, now=now) == ()

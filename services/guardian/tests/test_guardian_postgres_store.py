@@ -1204,7 +1204,21 @@ async def test_postgres_one_owner_holds_progress_for_two_subjects(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
     reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL guardian contract",
 )
-async def test_declared_guardian_notification_requires_the_identity_declaration() -> None:
+@pytest.mark.parametrize(
+    ("relation_type", "relationship_status", "relationship_evidence", "declared_mode"),
+    [
+        # The pre-2026-09-25 binding wrote a pending one-sided declaration...
+        ("guardian_of", "pending", "guardian_declaration_v1:device_binding", "parent_for_child"),
+        # ...every binding since attests the guardian active (P1-11); a
+        # pending-only check refused these until 2026-09-26.
+        ("guardian_of", "active", "guardian_attestation_v1:device_binding", "parent_for_child"),
+        # An elder's crisis reaches the child who bound the device (P0-04 D7).
+        ("delegate_for", "active", "delegate_attestation_v1:device_binding", "child_for_parent"),
+    ],
+)
+async def test_declared_guardian_notification_requires_the_identity_declaration(
+    relation_type: str, relationship_status: str, relationship_evidence: str, declared_mode: str
+) -> None:
     """A declared guardian is a distinct, database-validated notification basis.
 
     An account-less subject can never confirm a guardian link, so the only
@@ -1291,12 +1305,14 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                     permissions_json, auto_suspended, created_at, updated_at
                 ) VALUES (
                     'declaration-1', 'declared-guardian', 'declared-ward',
-                    'guardian_of', 'pending', $1,
-                    'guardian_declaration_v1:device_binding',
+                    $4, $2, $1, $3,
                     $1, NULL, TRUE, FALSE, 0, '[]'::jsonb, FALSE, $1, $1
                 )
                 """,
                 now,
+                relationship_status,
+                relationship_evidence,
+                relation_type,
             )
             # P0-04: the declaration only authorizes a recipient when it is
             # binding-scoped — the declarant owns an ACTIVE binding naming the
@@ -1311,12 +1327,13 @@ async def test_declared_guardian_notification_requires_the_identity_declaration(
                     consent_snapshot_id, persona_assignment_id, created_at
                 ) VALUES (
                     'declaration-binding', 'declaration-device',
-                    'parent_for_child', NULL, 'declared-guardian', 1, 'active',
-                    'create', $1, NULL, NULL, 'parent_for_child-v1',
+                    $2, NULL, 'declared-guardian', 1, 'active',
+                    'create', $1, NULL, NULL, $2 || '-v1',
                     'multi-subject-v1', NULL, 'starlight:v1', $1
                 )
                 """,
                 now,
+                declared_mode,
             )
             await bootstrap.execute(
                 """

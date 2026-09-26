@@ -184,6 +184,21 @@
             </view>
           </view>
         </block>
+        <!-- P0-04 D7：老人在对话中出现安全风险时，提醒代为同意的子女；不含对话原文。 -->
+        <block wx:if="{{elderSafetyVisible}}">
+          <view class="list-row">
+            <view class="row-copy">
+              <text class="row-title">安全提醒</text>
+              <text class="caption">TA 在对话中出现安全风险时，机器人会先安抚 TA，并在这里提醒你；不含对话原文。</text>
+              <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button" bindtap="enableElderCrisisPush">开启一次微信提醒</button>
+              <text wx:if="{{elderAlerts.length === 0}}" class="row-meta">暂无提醒。</text>
+              <view wx:for="{{elderAlerts}}" wx:key="notification_id" class="row-copy">
+                <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
+                <text class="caption">{{item.occurred_at}}</text>
+              </view>
+            </view>
+          </view>
+        </block>
         <block wx:if="{{ageRows.length > 0}}">
           <view wx:for="{{ageRows}}" wx:key="person_id" class="list-row">
             <view class="row-copy">

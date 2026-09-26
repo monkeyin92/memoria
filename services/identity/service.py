@@ -88,6 +88,15 @@ BINDING_ATTESTATION_EVIDENCE: dict[str, str] = {
 }
 
 
+#: One-sided links (relation, status, evidence) that make someone a crisis contact.
+_CRISIS_CONTACT_LINKS: dict[str, frozenset[tuple[str, str, str | None]]] = {
+    "guardian_of": frozenset({
+        ("guardian_of", "pending", "guardian_declaration_v1:device_binding"),
+        ("guardian_of", "active", BINDING_ATTESTATION_EVIDENCE["guardian_of"]),
+    }),
+    "delegate_for": frozenset({("delegate_for", "active", BINDING_ATTESTATION_EVIDENCE["delegate_for"])}),
+}
+
 #: What a redacted person is shown as (``redact_bound_subject``).
 REDACTED_DISPLAY_NAME = "已删除的使用人"
 
@@ -1109,28 +1118,38 @@ class IdentityService:
         subject_person_id: str,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
-        """Guardians whose ``guardian_of`` link to the subject is a declaration only.
+        """Guardians with a binding-issued declaration or attestation for the subject.
 
-        The relationship is still ``pending`` because the subject has no
-        account and never confirmed an endpoint.  A declaration counts only
-        when all of these hold:
-
-        - it carries the binding-issued evidence id
-          (``guardian_declaration_v1:device_binding``), so a bare invite +
-          self-accept with arbitrary evidence never qualifies;
-        - it is inside its own validity window at ``now``;
-        - the declarant is the account owner of an ACTIVE binding that names
-          the subject as primary subject — the one production write shape
-          (``POST /v1/device-bindings`` with ``parent_for_child`` +
-          ``subject_draft``).
-
-        A third party that merely learns the subject's person id therefore
-        cannot self-declare into the crisis-notification recipient set.
-        Callers may use the result for the narrow purpose the declaration
-        actually covers — reaching the guardian who declared responsibility —
-        and must not treat it as verified guardianship, consent, or evidence
-        that the subject agreed to anything.
+        Scoped to the owner of an ACTIVE binding naming the subject, so a third
+        party that learns the person id never qualifies. It reaches the person
+        who took responsibility; it is never verified guardianship or consent.
         """
+
+        return await self._binding_scoped_sources(
+            subject_person_id, now, lambda r: (r.relation_type, r.status, r.established_evidence_id)
+            in _CRISIS_CONTACT_LINKS["guardian_of"],
+        )
+
+    async def crisis_contacts(
+        self,
+        *,
+        subject_person_id: str,
+        now: datetime | None = None,
+    ) -> tuple[str, ...]:
+        """Declared guardians plus an elder's binding delegate (P0-04 D7), same scope."""
+
+        return await self._binding_scoped_sources(
+            subject_person_id, now, lambda r: (r.relation_type, r.status, r.established_evidence_id)
+            in _CRISIS_CONTACT_LINKS["guardian_of"] | _CRISIS_CONTACT_LINKS["delegate_for"],
+        )
+
+    async def _binding_scoped_sources(
+        self,
+        subject_person_id: str,
+        now: datetime | None,
+        accepted: Callable[[Relationship], bool],
+    ) -> tuple[str, ...]:
+        """Sources of accepted one-sided links who own an ACTIVE binding for the subject."""
 
         timestamp = _now(now)
         relationships = await self._store.list_relationships(
@@ -1139,48 +1158,26 @@ class IdentityService:
             actor_person_id=subject_person_id,
         )
         candidates = {
-            relationship.source_person_id
-            for relationship in relationships
-            if relationship.relation_type == "guardian_of"
-            and relationship.target_person_id == subject_person_id
-            and relationship.confirmed_by_source_at is not None
-            and relationship.confirmed_by_target_at is None
-            and relationship.valid_from <= timestamp
-            and (
-                relationship.valid_until is None
-                or timestamp < relationship.valid_until
-            )
-            and (
-                (
-                    relationship.status == "pending"
-                    and relationship.established_evidence_id
-                    == "guardian_declaration_v1:device_binding"
-                )
-                or (
-                    relationship.status == "active"
-                    and relationship.established_evidence_id
-                    == BINDING_ATTESTATION_EVIDENCE["guardian_of"]
-                )
-            )
+            r.source_person_id
+            for r in relationships
+            if r.target_person_id == subject_person_id
+            and r.confirmed_by_source_at is not None
+            and r.confirmed_by_target_at is None
+            and r.valid_from <= timestamp
+            and (r.valid_until is None or timestamp < r.valid_until)
+            and accepted(r)
         }
         if not candidates:
             return ()
         bindings = await self._store.list_active_bindings_for_person(
-            subject_person_id,
-            timestamp,
-            actor_person_id=subject_person_id,
+            subject_person_id, timestamp, actor_person_id=subject_person_id
         )
-        return tuple(
-            sorted(
-                guardian_id
-                for guardian_id in candidates
-                if any(
-                    binding.account_owner_person_id == guardian_id
-                    and subject_person_id in binding.primary_subject_ids
-                    for binding in bindings
-                )
-            )
-        )
+        owners = {
+            binding.account_owner_person_id
+            for binding in bindings
+            if subject_person_id in binding.primary_subject_ids
+        }
+        return tuple(sorted(candidates & owners))
 
     # ------------------------------------------------------------------
     # Bindings

@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const guardianPush = require("../../utils/guardian-push");
 const { requireLogin } = require("../../utils/auth-gate");
 const {
   MODE_META,
@@ -276,6 +277,9 @@ Page({
     personaAssignmentError: "",
     ageRows: [],
     subjectPersonas: [],
+    elderSafetyVisible: false,
+    elderAlerts: [],
+    elderCrisisPush: { enabled: false, templateId: "", explanation: "" },
     personaResetting: false,
     ageSaving: false,
     ageError: "",
@@ -375,6 +379,9 @@ Page({
       personaRows: [],
       ageRows: [],
     subjectPersonas: [],
+    elderSafetyVisible: false,
+    elderAlerts: [],
+    elderCrisisPush: { enabled: false, templateId: "", explanation: "" },
     personaResetting: false,
       ageSaving: false,
       ageError: "",
@@ -434,6 +441,27 @@ Page({
     );
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     this.setData({ ageRows: loaded });
+  },
+
+  // P0-04 D7：给父母使用的绑定，绑定人在这里看到老人的安全提醒并开启微信推送。
+  async _loadElderSafety(binding, flowSeq, authEpoch) {
+    if (binding?.declared_mode !== "child_for_parent" || (binding.status && binding.status !== "active")) return;
+    const [alerts, crisisPush] = await Promise.all([
+      api.getGuardianNotifications().then((payload) => (Array.isArray(payload?.items) ? payload.items : []), () => []),
+      guardianPush.loadCrisisPushConfig(api).catch(() => ({ enabled: false, templateId: "", explanation: "" })),
+    ]);
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    this.setData({ elderSafetyVisible: true, elderAlerts: alerts, elderCrisisPush: crisisPush });
+  },
+
+  /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
+  async enableElderCrisisPush() {
+    try {
+      const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.elderCrisisPush, api });
+      if (outcome.result === "accept") wx.showToast({ title: "已开启一次安全提醒", icon: "none" });
+    } catch (error) {
+      wx.showToast({ title: error?.message || "安全提醒开启失败，请稍后再试。", icon: "none" });
+    }
   },
 
   async _loadSubjectPersonas(binding, flowSeq, authEpoch) {
@@ -670,6 +698,8 @@ Page({
         ageRows: ageDeclarationRows(binding),
         ageError: "",
         subjectPersonas: [],
+        elderSafetyVisible: false,
+        elderAlerts: [],
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
         personaRows: personaRows(
@@ -738,6 +768,7 @@ Page({
       });
       this._loadSubjectPersonas(binding, flowSeq, authEpoch);
       this._loadAgeRows(flowSeq, authEpoch);
+      this._loadElderSafety(binding, flowSeq, authEpoch);
     } catch (error) {
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({

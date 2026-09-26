@@ -35,8 +35,9 @@ MAX_PUSH_SUBSCRIPTION_BALANCE = 20
 CRISIS_PUSH_MAX_AGE = timedelta(hours=24)
 
 CRISIS_PUSH_TITLE = "安全提醒"
-CRISIS_PUSH_TIP = "请打开小程序查看并尽快联系孩子"
-CRISIS_PUSH_DEFAULT_CHILD_NAME = "孩子"
+# Neutral wording: the recipient may be a parent or an elder's child (P0-04 D7).
+CRISIS_PUSH_TIP = "请打开小程序查看并尽快联系TA"
+CRISIS_PUSH_DEFAULT_CHILD_NAME = "TA"
 
 
 @dataclass(frozen=True, slots=True)

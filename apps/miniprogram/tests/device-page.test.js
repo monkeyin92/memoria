@@ -1536,3 +1536,38 @@ test("device page shows a bound elder's style labels and resets only after confi
     global.wx = previousWx;
   }
 });
+
+test("an elder's binder sees safety alerts on the device page (P0-04 D7)", async () => {
+  const api = require("../utils/api");
+  const originals = {
+    getGuardianNotifications: api.getGuardianNotifications,
+    getGuardianPushConfig: api.getGuardianPushConfig,
+    isAuthEpochCurrent: api.isAuthEpochCurrent,
+  };
+  api.getGuardianNotifications = async () => ({
+    items: [
+      {
+        notification_id: "n1",
+        minor_display_name: "老爸",
+        message: "TA此刻可能需要可信任的人陪伴，请尽快联系并确认安全；紧急时联系当地急救或报警。",
+        occurred_at: "2026-09-26T10:00:00Z",
+      },
+    ],
+  });
+  api.getGuardianPushConfig = async () => ({ enabled: false });
+  api.isAuthEpochCurrent = () => true;
+  const page = instantiate(pageDefinition);
+  page._flowSeq = 1;
+  try {
+    // A self-use or parent_for_child binding does not get this section.
+    await page._loadElderSafety({ declared_mode: "self_use", status: "active" }, 1, 0);
+    assert.equal(page.data.elderSafetyVisible, false);
+    await page._loadElderSafety({ declared_mode: "child_for_parent", status: "active" }, 1, 0);
+    assert.equal(page.data.elderSafetyVisible, true);
+    assert.equal(page.data.elderAlerts.length, 1);
+    assert.equal(page.data.elderAlerts[0].minor_display_name, "老爸");
+    assert.doesNotMatch(page.data.elderAlerts[0].message, /孩子/);
+  } finally {
+    Object.assign(api, originals);
+  }
+});

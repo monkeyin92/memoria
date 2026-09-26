@@ -1072,18 +1072,14 @@ BEGIN
     IF v_minor_user_id IS NULL THEN
         RAISE EXCEPTION 'guardian notification target has no crisis event';
     END IF;
-    IF NOT identity_relationship_source_confirmed(
-        p_guardian_user_id, v_minor_user_id, 'guardian_of', p_created_at
-    ) THEN
-        RAISE EXCEPTION
-            'guardian notification target is not a declared guardian';
-    END IF;
     -- P0-04 source constraint: the declaration must be binding-scoped.  The
     -- declarant has to own an ACTIVE binding naming this subject as primary
-    -- subject (the ``parent_for_child`` + ``subject_draft`` write shape), so
-    -- a third party that merely learned the subject's person id and
-    -- self-accepted a ``guardian_of`` invite can never become a recipient.
-    -- A missing authority fails closed (never fail open).
+    -- subject, so a third party that merely learned the subject's person id
+    -- and self-accepted a ``guardian_of`` invite can never become a recipient.
+    -- The predicate accepts a pending guardian declaration, the guardian
+    -- attested active since 2026-09-25 (a pending-only check here refused
+    -- every binding made since, found 2026-09-26) and an elder's attested
+    -- delegate (P0-04 D7).  A missing authority fails closed.
     IF to_regprocedure(
         'public.identity_relationship_declared_for_binding(text,text,timestamptz)'
     ) IS NULL
@@ -1091,7 +1087,7 @@ BEGIN
         p_guardian_user_id, v_minor_user_id, p_created_at
     ) THEN
         RAISE EXCEPTION
-            'guardian notification target has no binding-scoped declaration';
+            'guardian notification target is not a declared guardian: no binding-scoped declaration';
     END IF;
     INSERT INTO guardian_notification_outbox(
         notification_id, crisis_event_id, guardian_user_id,
