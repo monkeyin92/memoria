@@ -1,7 +1,3 @@
-page {
-  background: #FADABF;
-}
-
 .back-row {
   padding: 8rpx 0 4rpx;
 }
@@ -10,7 +6,8 @@ page {
   display: inline-flex;
   align-items: center;
   min-height: 88rpx;
-  color: #326e70;
+  color: #285c5e;
+  color: var(--brand-teal);
   font-size: 28rpx;
   font-weight: 500;
 }
@@ -43,7 +40,8 @@ page {
 .choice-desc {
   display: block;
   margin-top: 8rpx;
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 24rpx;
   line-height: 1.6;
 }
@@ -52,7 +50,8 @@ page {
 .form-note {
   display: block;
   margin-top: 24rpx;
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 22rpx;
   line-height: 1.65;
 }
@@ -80,7 +79,8 @@ page {
 }
 
 .readonly-hint {
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 24rpx;
 }
 
@@ -98,7 +98,8 @@ page {
 }
 
 .picker-value {
-  color: #326e70;
+  color: #285c5e;
+  color: var(--brand-teal);
   font-size: 26rpx;
 }
 
@@ -132,7 +133,7 @@ page {
   height: 40rpx;
   margin-top: 2rpx;
   box-sizing: border-box;
-  border: 2rpx solid #c8d4dc;
+  border: 2rpx solid rgba(30, 45, 70, 0.22);
   border-radius: 50%;
   color: #fff;
   font-size: 24rpx;
@@ -158,7 +159,8 @@ page {
 .offer-desc {
   display: block;
   margin-top: 6rpx;
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 24rpx;
   line-height: 1.55;
 }
@@ -212,7 +214,8 @@ page {
 .done-note {
   display: block;
   margin-top: 22rpx;
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 23rpx;
   line-height: 1.65;
   text-align: left;

@@ -1,7 +1,3 @@
-page {
-  background: #FADABF;
-}
-
 .back-row {
   padding: 8rpx 0 4rpx;
 }
@@ -10,7 +6,8 @@ page {
   display: inline-flex;
   align-items: center;
   min-height: 88rpx;
-  color: #326e70;
+  color: #285c5e;
+  color: var(--brand-teal);
   font-size: 28rpx;
   font-weight: 500;
 }
@@ -44,7 +41,8 @@ page {
 .ds-sub {
   display: block;
   margin-top: 12rpx;
-  color: #5c6b76;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 24rpx;
 }
 
@@ -71,7 +69,8 @@ page {
 
 .dim-meta {
   flex: none;
-  color: #93a1ab;
+  color: #5a6167;
+  color: var(--text-tertiary);
   font-size: 24rpx;
 }
 
@@ -88,7 +87,8 @@ page {
 }
 
 .fold-chevron {
-  color: #93a1ab;
+  color: #5a6167;
+  color: var(--text-tertiary);
   transition: transform 250ms;
 }
 
@@ -99,6 +99,7 @@ page {
 .fold-summary {
   display: block;
   padding: 16rpx 0;
-  color: #5c6b76;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 26rpx;
 }

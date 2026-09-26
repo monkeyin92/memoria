@@ -14,17 +14,19 @@
     "pages/device-onboarding/index"
   ],
   "window": {
-    "backgroundColor": "#f4f6f8",
+    "backgroundColor": "#BAC7FA",
+    "backgroundColorTop": "#BAC7FA",
+    "backgroundColorBottom": "#FEF6E6",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#f4f6f8",
+    "navigationBarBackgroundColor": "#BAC7FA",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
     "custom": true,
-    "color": "#93a1ab",
+    "color": "#5a6167",
     "selectedColor": "#172f43",
-    "backgroundColor": "#ffffff",
+    "backgroundColor": "#fef7ea",
     "borderStyle": "white",
     "list": [
       {
