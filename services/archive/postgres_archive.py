@@ -30,19 +30,24 @@ from services.archive.object_store import ObjectRef
 
 
 class PostgresLifeArchive:
-    def __init__(self, dsn: str, *, outbox_max_attempts: int = 8) -> None:
+    def __init__(
+        self, dsn: str, *, outbox_max_attempts: int = 8, pool: asyncpg.Pool | None = None
+    ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("archive DSN must use PostgreSQL")
         if not 1 <= outbox_max_attempts <= 100:
             raise ValueError("archive outbox max attempts must be between 1 and 100")
         self._dsn = dsn
         self._outbox_max_attempts = outbox_max_attempts
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=10)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=10
+        )
         if pool is None:  # pragma: no cover - asyncpg returns a pool outside its context manager
             raise RuntimeError("failed to create PostgreSQL pool")
         schema = Path(__file__).with_name("postgres_archive_schema.sql").read_text(encoding="utf-8")

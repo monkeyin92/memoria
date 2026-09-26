@@ -250,12 +250,11 @@ class PostgresMemoryCatalog:
         evidence_subject_category_resolver: (
             Callable[[EvidenceEvent], str | None | Awaitable[str | None]] | None
         ) = None,
-        capture_evidence_projector: (
-            Callable[[EvidenceEvent], Awaitable[bool]] | None
-        ) = None,
+        capture_evidence_projector: Callable[[EvidenceEvent], Awaitable[bool]] | None = None,
         outbox_lease_s: float = 300.0,
         outbox_retry_base_s: float = 2.0,
         outbox_retry_max_s: float = 300.0,
+        pool: asyncpg.Pool | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("memory catalog DSN must use PostgreSQL")
@@ -296,13 +295,16 @@ class PostgresMemoryCatalog:
         self._outbox_retry_max_s = outbox_retry_max_s
         self._worker_id = f"memory-compiler:{uuid.uuid4()}"
         self._vector_enabled = False
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL memory pool")
         archive_dir = Path(__file__).parent
@@ -324,10 +326,7 @@ class PostgresMemoryCatalog:
         self._pool = pool
         if self._compiler_dsn is not None:
             compiler_pool = await asyncpg.create_pool(
-                self._compiler_dsn,
-                min_size=1,
-                max_size=2,
-                command_timeout=15,
+                self._compiler_dsn, min_size=1, max_size=2, command_timeout=15
             )
             if compiler_pool is None:  # pragma: no cover
                 raise RuntimeError("failed to create PostgreSQL compiler pool")

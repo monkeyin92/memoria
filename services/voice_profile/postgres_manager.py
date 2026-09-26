@@ -61,6 +61,7 @@ class PostgresVoiceProfileManager:
         provider_region: str,
         target_model: str,
         provider_name: str = "alibaba_model_studio",
+        pool: asyncpg.Pool | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("voice profile DSN must use PostgreSQL")
@@ -73,16 +74,14 @@ class PostgresVoiceProfileManager:
         if not provider_name.strip():
             raise ValueError("voice provider name is required")
         self._provider_name = provider_name
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(
-            self._dsn,
-            min_size=1,
-            max_size=10,
-            command_timeout=15,
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
         )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL voice profile pool")

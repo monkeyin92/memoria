@@ -65,6 +65,7 @@ class PostgresDigitalSelfRegistry:
         *,
         compiler_version: str = DEFAULT_COMPILER_VERSION,
         policy_version: str = DEFAULT_POLICY_VERSION,
+        pool: asyncpg.Pool | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("digital self DSN must use PostgreSQL")
@@ -73,12 +74,15 @@ class PostgresDigitalSelfRegistry:
         self._dsn = dsn
         self._compiler_version = compiler_version
         self._policy_version = policy_version
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL digital self pool")
         schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")

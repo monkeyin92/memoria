@@ -54,16 +54,19 @@ from services.self_model.domain import RelationshipProfile
 
 
 class PostgresLegacyRegistry:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: asyncpg.Pool | None = None) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("Legacy DSN must use PostgreSQL")
         self._dsn = dsn
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL Legacy pool")
         schema = read_postgres_schema()

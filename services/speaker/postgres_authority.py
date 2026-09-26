@@ -45,6 +45,7 @@ class PostgresSpeakerAuthority:
         owner_threshold: float = 0.78,
         guest_threshold: float = 0.45,
         classify_timeout_s: float = 1.0,
+        pool: asyncpg.Pool | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("speaker DSN must use PostgreSQL")
@@ -56,12 +57,15 @@ class PostgresSpeakerAuthority:
         self._owner_threshold = owner_threshold
         self._guest_threshold = guest_threshold
         self._classify_timeout_s = classify_timeout_s
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=10)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=10
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL speaker pool")
         schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")

@@ -175,7 +175,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已完成（PR #42）：删除无消费者代码约 3.09 万行；行数预算覆盖全部超 1,500 行模块；跨包依赖图冻结。
 - 待完成，按收益排序：① 账号/会话/设备从生产 SQLite（`/data/memoria.sqlite3`）迁到 PostgreSQL，再逐域删除 SQLite 孪生存储（约 4 万行），API 测试改走真实 PG；② 单一装配根替代 `main.py` 的双重装配，存储改为共享连接池；③ 版本化迁移替代 `initialize()` 内建表；④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry；⑤ 逐步消除 `common`→`agent`/`archive`、`governance`/`memory_scope`→`control_api` 等反向依赖。
-- 进度（2026-09-26，② 第一步，代码，未部署）：`create_app()` 与 lifespan 改走同一个装配函数 `_wire_services`，按存储只在一处选择 PostgreSQL/SQLite；启动中打开的资源统一登记，关闭时按创建倒序全部执行（首个失败在最后抛出，启动失败也会关闭已打开资源）；三种场景下 `app.state` 快照前后一致，`main.py` 1643 → 1536 行。仍未做：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端）、约 11 个 PG 存储各自建池（下一步在装配函数里按 DSN 共享连接池）。
+- 进度（2026-09-26，② 第一步，代码，未部署）：`create_app()` 与 lifespan 改走同一个装配函数 `_wire_services`，按存储只在一处选择 PostgreSQL/SQLite；启动中打开的资源统一登记，关闭时按创建倒序全部执行（首个失败在最后抛出，启动失败也会关闭已打开资源）；三种场景下 `app.state` 快照前后一致，`main.py` 1643 → 1536 行。② 第二步（2026-09-26，代码，未部署）：同用 archive DSN 的 10 个存储（归档、记忆目录、技能、人格、数字分身、自我模型、传承、成长、声音档案、声纹）改为借用装配函数按 DSN 建的一个共享池（上限 20、语句超时 15s），只由 lifespan 在全部借用者关闭后关闭；生产 `max_connections=50` 下该 DSN 原先 10 个池合计上限 90。临时 PG 实测启动后连接 10 → 2、关闭后归零；新增回归 `services/control_api/tests/test_lifespan_resources.py`（含真实 PG：同池、事务级 `app.account_id` 不外泄、借用者关闭不影响共享池）。行为变化：归档与声纹语句超时 10s → 15s，技能与成长原无语句超时、现为 15s。`_Resources` 移入 `lifespan_resources.py`，`main.py` 1536 → 1518 行。仍未做：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端）；consent（两个存储，其一带连接 `init`）、identity、guardian 等其他 DSN 各自的池未合并。
 - 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 

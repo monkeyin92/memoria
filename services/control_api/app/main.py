@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import inspect
 from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Protocol, cast
 from urllib.parse import quote, unquote, urlsplit
 
+import asyncpg
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
@@ -61,6 +61,7 @@ from services.control_api.app.guardian_push import (
     app_display_name_resolver,
     build_crisis_push_worker,
 )
+from services.control_api.app.lifespan_resources import LifespanResources, SharedPostgresPools
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
@@ -417,7 +418,9 @@ def _replace_device_onboarding_service(
     app.state.device_onboarding_service = _device_onboarding_service(settings)
 
 
-def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
+def _speaker_authority(
+    settings: ControlSettings, *, archive_pool: asyncpg.Pool | None = None
+) -> SpeakerAuthorityPort:
     configured_key = settings.speaker_template_key.get_secret_value()
     template_key = configured_key or base64.urlsafe_b64encode(
         hashlib.sha256(b"memoria-development-speaker-template-key").digest()
@@ -432,10 +435,8 @@ def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
         )
     else:
         adapter = UnavailableSpeakerEmbeddingAdapter(settings.speaker_embedding_model)
-    speaker_database_url = (
-        settings.speaker_database_url.get_secret_value()
-        or settings.archive_database_url.get_secret_value()
-    )
+    archive_url = settings.archive_database_url.get_secret_value()
+    speaker_database_url = settings.speaker_database_url.get_secret_value() or archive_url
     if speaker_database_url:
         return PostgresSpeakerAuthority(
             speaker_database_url,
@@ -444,6 +445,7 @@ def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
             owner_threshold=settings.speaker_owner_threshold,
             guest_threshold=settings.speaker_guest_threshold,
             classify_timeout_s=settings.speaker_embedding_timeout_s,
+            pool=archive_pool if speaker_database_url == archive_url else None,
         )
     return SpeakerAuthority.sqlite(
         settings.speaker_database_path,
@@ -511,7 +513,7 @@ def _crisis_semantic_classifier(
 
 
 def _voice_profile_services(
-    settings: ControlSettings,
+    settings: ControlSettings, *, archive_pool: asyncpg.Pool | None = None
 ) -> tuple[VoiceProfilePort, VoiceSampleURLSigner, ObjectStore]:
     configured_key = settings.voice_sample_encryption_key.get_secret_value()
     object_key = configured_key or base64.urlsafe_b64encode(
@@ -590,6 +592,7 @@ def _voice_profile_services(
             provider_region=settings.voice_provider_region,
             target_model=settings.voice_target_model,
             provider_name=settings.voice_clone_provider,
+            pool=archive_pool,
         )
     else:
         manager = VoiceProfileManager.sqlite(
@@ -813,35 +816,6 @@ class _Worker(Protocol):
     async def stop(self) -> None: ...
 
 
-class _Resources:
-    """What the lifespan opened, closed newest first on shutdown.
-
-    A resource registers once it is live, after the stores it was built from,
-    so workers stop before their stores close.  Every closer runs even when an
-    earlier one fails; the first failure is re-raised once all have run.
-    """
-
-    def __init__(self) -> None:
-        self._closers: list[Callable[[], object]] = []
-
-    def add(self, close: Callable[[], object]) -> None:
-        self._closers.append(close)
-
-    async def aclose(self) -> None:
-        failure: BaseException | None = None
-        while self._closers:
-            close = self._closers.pop()
-            try:
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-            except BaseException as exc:
-                if failure is None:
-                    failure = exc
-        if failure is not None:
-            raise failure
-
-
 @dataclass(frozen=True)
 class _Wiring:
     """One build of the object graph: eager (``create_app``) or live (lifespan).
@@ -855,7 +829,7 @@ class _Wiring:
     app: FastAPI
     settings: ControlSettings
     live: bool
-    resources: _Resources = field(default_factory=_Resources)
+    resources: LifespanResources = field(default_factory=LifespanResources)
 
     def url(self, value: str) -> str:
         """A store's backend URL; eager wiring ignores it and stays on SQLite."""
@@ -1171,6 +1145,9 @@ async def _wire_services(w: _Wiring) -> None:
     app.state.tutor_store = guardian_store
 
     archive_url = w.url(settings.archive_database_url.get_secret_value())
+    # The archive-DSN stores borrow one pool; it closes after all of them.
+    pools = SharedPostgresPools(w.resources)
+    archive_pool = await pools.borrow(archive_url) if archive_url else None
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
@@ -1189,6 +1166,7 @@ async def _wire_services(w: _Wiring) -> None:
         postgres_archive = PostgresLifeArchive(
             archive_url,
             outbox_max_attempts=settings.archive_compile_max_attempts,
+            pool=archive_pool,
         )
         await w.open(postgres_archive.initialize, postgres_archive.close)
         archive = postgres_archive
@@ -1222,13 +1200,16 @@ async def _wire_services(w: _Wiring) -> None:
             outbox_lease_s=settings.archive_compile_lease_s,
             outbox_retry_base_s=settings.archive_compile_retry_base_s,
             outbox_retry_max_s=settings.archive_compile_retry_max_s,
+            pool=archive_pool,
         )
         await w.open(postgres_catalog.initialize, postgres_catalog.close)
         memory_catalog = postgres_catalog
-        postgres_skills = PostgresSkillCatalog(archive_url)
+        postgres_skills = PostgresSkillCatalog(archive_url, pool=archive_pool)
         await w.open(postgres_skills.initialize, postgres_skills.close)
         skill_catalog = postgres_skills
-        postgres_persona = PostgresPersonaEngine(archive_url, extractor=persona_extractor)
+        postgres_persona = PostgresPersonaEngine(
+            archive_url, extractor=persona_extractor, pool=archive_pool
+        )
         await w.open(postgres_persona.initialize, postgres_persona.close)
         persona_engine = postgres_persona
     else:
@@ -1318,7 +1299,7 @@ async def _wire_services(w: _Wiring) -> None:
     self_model_registry: SelfModelRegistryPort
     legacy_registry: LegacyRegistryPort
     if archive_url:
-        postgres_digital_self = PostgresDigitalSelfRegistry(archive_url)
+        postgres_digital_self = PostgresDigitalSelfRegistry(archive_url, pool=archive_pool)
         await w.open(postgres_digital_self.initialize, postgres_digital_self.close)
         digital_self_registry = postgres_digital_self
     else:
@@ -1330,7 +1311,7 @@ async def _wire_services(w: _Wiring) -> None:
     await w.init_blocking(self_preview_registry.initialize)
     app.state.self_preview_registry = self_preview_registry
     if archive_url:
-        postgres_self_model = PostgresSelfModelRegistry(archive_url)
+        postgres_self_model = PostgresSelfModelRegistry(archive_url, pool=archive_pool)
         await w.open(postgres_self_model.initialize, postgres_self_model.close)
         self_model_registry = postgres_self_model
     else:
@@ -1339,7 +1320,7 @@ async def _wire_services(w: _Wiring) -> None:
         self_model_registry = sqlite_self_model
     app.state.self_model_registry = self_model_registry
     if archive_url:
-        postgres_legacy = PostgresLegacyRegistry(archive_url)
+        postgres_legacy = PostgresLegacyRegistry(archive_url, pool=archive_pool)
         await w.open(postgres_legacy.initialize, postgres_legacy.close)
         legacy_registry = postgres_legacy
     else:
@@ -1352,6 +1333,7 @@ async def _wire_services(w: _Wiring) -> None:
         postgres_growth = PostgresGrowthReader(
             archive_url,
             self_model_registry=self_model_registry,
+            pool=archive_pool,
         )
         await w.open(postgres_growth.initialize, postgres_growth.close)
         app.state.growth_reader = postgres_growth
@@ -1362,7 +1344,7 @@ async def _wire_services(w: _Wiring) -> None:
         )
 
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
-        settings
+        settings, archive_pool=archive_pool
     )
     if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
         await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
@@ -1381,7 +1363,7 @@ async def _wire_services(w: _Wiring) -> None:
         )
         w.start(compiler_worker)
         app.state.memory_compiler_worker = compiler_worker
-    speaker_authority = _speaker_authority(settings)
+    speaker_authority = _speaker_authority(settings, archive_pool=archive_pool)
     if isinstance(speaker_authority, PostgresSpeakerAuthority):
         await w.open(speaker_authority.initialize, speaker_authority.close)
     else:
@@ -1447,7 +1429,7 @@ async def _wire_services(w: _Wiring) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    resources = _Resources()
+    resources = LifespanResources()
     try:
         settings = ControlSettings()
         try:

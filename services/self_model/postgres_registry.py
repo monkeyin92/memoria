@@ -121,16 +121,19 @@ def _source_payloads(sources: tuple[SourceInput, ...]) -> tuple[dict[str, object
 class PostgresSelfModelRegistry:
     """Keeps candidate material and derives effective material on every read."""
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool: asyncpg.Pool | None = None) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("self model DSN must use PostgreSQL")
         self._dsn = dsn
+        self._shared_pool = pool
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._pool is not None:
             return
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
+        pool = self._shared_pool or await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=10, command_timeout=15
+        )
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL self model pool")
         root = Path(__file__).parents[1]
