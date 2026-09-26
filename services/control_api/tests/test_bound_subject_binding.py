@@ -491,3 +491,76 @@ async def test_accountless_child_weekly_summary_follows_long_term_memory(
     # The binding owner's own row never enters the child's summary.
     assert "angry" not in {k for k, v in summary["emotion_distribution"].items() if v}
     assert reclosed.status_code == 403, reclosed.text
+
+
+@pytest.mark.asyncio
+async def test_binder_sees_only_style_labels_and_can_reset_the_bound_persona(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P1-03: the binder's view of a child's or elder's persona."""
+
+    from services.persona.domain import PersonaCapsule, PersonaCapsuleEntry
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    recorder = _RecordingConsent()
+    requests: list[Any] = []
+    forgotten: list[tuple[str, str]] = []
+
+    async def capsule(request: Any) -> Any:
+        requests.append(request)
+        return PersonaCapsule(
+            version_id="child-v1",
+            version_number=2,
+            entries=(
+                PersonaCapsuleEntry(
+                    trait_id="t1", category="sentence_length",
+                    description="日常表达偏好短句，先给出核心意思", context="",
+                    counterexample="", confidence=0.9, source_event_ids=(),
+                ),
+            ),
+            prompt_fragment="",
+        )
+
+    async def forget_subject(*, account_id: str, subject_id: str) -> int:
+        forgotten.append((account_id, subject_id))
+        return 7
+
+    monkeypatch.setattr(app.state.persona_engine, "capsule", capsule)
+    monkeypatch.setattr(app.state.persona_engine, "forget_subject", forget_subject)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = recorder
+        owner_id, headers = await _owner(client, app, "persona-view-owner")
+        created = await _bind(
+            client, app, owner_id=owner_id, headers=headers, device_id="device-persona-view",
+            declared_mode="parent_for_child", relationship="guardian_of", age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        child_id = created.json()["primary_subject_ids"][0]
+        _, other_headers = await _owner(client, app, "persona-view-stranger")
+
+        style = await client.get(f"/v1/persona/subjects/{child_id}/style", headers=headers)
+        stranger = await client.get(f"/v1/persona/subjects/{child_id}/style", headers=other_headers)
+        own = await client.get(f"/v1/persona/subjects/{owner_id}/style", headers=headers)
+        stranger_reset = await client.post(
+            f"/v1/persona/subjects/{child_id}/reset", headers=other_headers
+        )
+        reset = await client.post(f"/v1/persona/subjects/{child_id}/reset", headers=headers)
+
+    assert style.status_code == 200, style.text
+    assert style.json() == {
+        "subject_id": child_id,
+        "version_number": 2,
+        "style_labels": ["日常表达偏好短句，先给出核心意思"],
+        "descriptions_included": False,
+    }
+    sent = requests[0]
+    assert (sent.account_id, sent.subject_id) == (owner_id, child_id)
+    assert sent.speaker_class == "uncertain" and sent.confirmed_style_only is True
+    assert stranger.status_code == 403
+    assert own.status_code == 404
+    assert stranger_reset.status_code == 403
+    assert reset.status_code == 200, reset.text
+    assert reset.json() == {"subject_id": child_id, "deleted_rows": 7}
+    assert forgotten == [(owner_id, child_id)]
