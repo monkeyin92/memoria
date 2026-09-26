@@ -245,7 +245,9 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   });
   assert.ok(payload.consent_offer_ids.includes("offer_minor_voice_session_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_minor_memory_retention_v1"));
-  assert.ok(payload.consent_offer_ids.includes("offer_guardian_weekly_summary_v1"));
+  // The weekly summary rides on long-term memory (P0-04 D6); no separate offer.
+  assert.ok(!payload.consent_offer_ids.includes("offer_guardian_weekly_summary_v1"));
+  assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
 });

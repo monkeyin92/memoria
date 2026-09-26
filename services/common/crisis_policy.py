@@ -13,7 +13,9 @@ from services.common.companion_response_safety import (
 )
 
 CrisisAction = Literal["crisis_support", "support_request", "none"]
-CRISIS_SCRIPT_VERSION = "crisis-transfer-draft-v1"
+# v2 adds the national psychological assistance hotline 12356 (P0-04 D8);
+# still a draft until a professional review signs it off.
+CRISIS_SCRIPT_VERSION = "crisis-transfer-draft-v2"
 
 _FIRST_PERSON_RISK_ANCHOR = re.compile(
     r"(?:我|本人).{0,16}(?:不想活|想死|自伤|自残|轻生|结束生命|"
