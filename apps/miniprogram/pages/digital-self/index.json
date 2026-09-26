@@ -1,16 +1,10 @@
 {
   "navigationBarTitleText": "记忆档案",
   "enablePullDownRefresh": true,
-  "backgroundTextStyle": "dark",
   "usingComponents": {
     "face-badge": "/components/face-badge/index",
     "page-backdrop": "/components/page-backdrop/index",
     "glass-icon": "/components/glass-icon/index",
     "device-screen": "/components/device-screen/index"
-  },
-  "navigationBarBackgroundColor": "#F9ECDD",
-  "navigationBarTextStyle": "black",
-  "backgroundColor": "#F9ECDD",
-  "backgroundColorTop": "#F9ECDD",
-  "backgroundColorBottom": "#FADABF"
+  }
 }

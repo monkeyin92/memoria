@@ -15,7 +15,9 @@ namespace memoria {
 // RGB565 framebuffer, reporting only the rectangles that changed.
 //
 // Text (status, subtitles, the binding QR card) stays in LVGL on top of the
-// framebuffer. Like memoria_face.cc this file has no ESP-IDF or LVGL
+// framebuffer. While the device is still getting online the scene can leave
+// the lower band free for that text (SetCaptioned), so no line ever sits on
+// top of the mascot. Like memoria_face.cc this file has no ESP-IDF or LVGL
 // dependency; scripts/preview_memoria_mascot.py renders it on the host.
 
 enum class ScenePhase : uint8_t {
@@ -57,6 +59,13 @@ public:
     static constexpr int kMaxDirty = 6;
     // Screen row the mascot's feet stand on.
     static constexpr int kFootY = 298;
+    // Captioned layout: the mascot shrinks onto a higher ground row and the
+    // rows from kCaptionTextY down belong to the text (two to three lines of
+    // the 28 px LVGL font still fit inside the round panel there).
+    static constexpr int kCaptionFootY = 212;
+    static constexpr int kCaptionScaleQ = 164;  // 0.64 in 8.8 fixed point
+    static constexpr int kCaptionTextY = 226;
+    static constexpr uint32_t kCaptionMs = 450;  // layout transition
     // Boot animation milestones, in ms after StartIntro().
     static constexpr uint32_t kIntroChromeMs = 3300;  // status text may appear
     static constexpr uint32_t kIntroDoneMs = 5200;    // live phases take over
@@ -84,6 +93,10 @@ public:
     void SetMood(SceneMood mood, uint32_t now_ms);
     void Pat(uint32_t now_ms);
     void Shake(uint32_t now_ms);
+    // Eases the mascot into (or out of) the captioned layout.
+    void SetCaptioned(bool captioned, uint32_t now_ms);
+    // How far the captioned layout has progressed, 0 (full) .. 255 (captioned).
+    uint8_t caption_mix(uint32_t now_ms) const;
     bool sleeping() const { return sleeping_; }
     // Redraw the whole screen on the next Render (e.g. after LVGL lost it).
     void Invalidate() { full_redraw_ = true; }
@@ -109,6 +122,7 @@ private:
         MascotFrame frame = MascotFrame::kCount;
         int ax = 0;  // anchor (feet centre) on screen
         int ay = 0;
+        int ground_y = kFootY;  // row the shadow lies on
         int sx_q = 256;  // scale, 8.8 fixed point
         int sy_q = 256;
         SceneRect sprite_box;
@@ -130,6 +144,7 @@ private:
     void BuildBackground();
     void RedrawRect(const SceneRect& rect, const Placement& p, uint32_t now_ms);
     void DrawSprite(const SceneRect& clip, const Placement& p);
+    void DrawSpriteFiltered(const SceneRect& clip, const Placement& p, const MascotSprite* s);
     void DrawShadow(const SceneRect& clip, const Placement& p);
     void DrawRing(const SceneRect& clip, const Placement& p);
     void DrawIntro(const SceneRect& clip, uint32_t now_ms);
@@ -176,6 +191,10 @@ private:
     MascotFrame override_pose_ = MascotFrame::kCount;
     uint32_t override_until_ms_ = 0;
     uint32_t wobble_until_ms_ = 0;
+
+    bool caption_target_ = false;
+    float caption_from_ = 0.0f;
+    uint32_t caption_since_ms_ = 0;
 
     uint32_t next_blink_ms_ = 0;
     uint32_t blink_until_ms_ = 0;

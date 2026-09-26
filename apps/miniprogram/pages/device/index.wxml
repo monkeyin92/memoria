@@ -1,5 +1,5 @@
-<view class="page-shell theme-dark">
-  <page-backdrop theme="night"></page-backdrop>
+<view class="page-shell">
+  <page-backdrop theme="mist"></page-backdrop>
   <view wx:if="{{!authenticated}}">
     <text class="page-title">设备</text>
     <text class="page-lede">跟随账号同步，无需在每个端重新绑定。</text>
@@ -93,7 +93,7 @@
           </view>
           <text class="volume-num">{{settings.volume_limit}}%</text>
         </view>
-        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#9fe3d8" backgroundColor="#34425c" block-color="#ffffff" block-size="24" />
+        <slider min="0" max="100" step="5" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#326e70" backgroundColor="#d5dce3" block-color="#ffffff" block-size="24" />
         <view class="slider-scale"><text>安静</text><text>响亮</text></view>
       </view>
 

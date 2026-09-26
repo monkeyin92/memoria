@@ -1,5 +1,5 @@
 <view class="page-shell">
-  <page-backdrop theme="warm"></page-backdrop>
+  <page-backdrop theme="mist"></page-backdrop>
   <text class="page-title">回顾</text>
   <text class="page-lede">留下一些事，也可以选择不留。</text>
 

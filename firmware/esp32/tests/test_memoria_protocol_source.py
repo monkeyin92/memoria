@@ -196,6 +196,56 @@ def test_unbound_activation_retries_after_nearby_binding_and_clears_qr() -> None
     assert "Activation completed after nearby bootstrap" in retry
 
 
+def test_wifi_config_mode_always_offers_the_nearby_bootstrap_qr() -> None:
+    # A bound board moved to a place without a known network cannot learn
+    # that the phone released it; the QR must not depend on activation_v.
+    patch = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "patches"
+        / "0028-memoria-bootstrap-in-wifi-config.patch"
+    ).read_text(encoding="utf-8")
+    hunk = patch[patch.index("case NetworkEvent::WifiConfigModeEnter:") :]
+    hunk = hunk[: hunk.index("case NetworkEvent::WifiConfigModeExit:")]
+    assert "+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT" in hunk
+    assert "+                Schedule([]() {" in hunk
+    assert "memoria::MemoriaBootstrap::GetInstance().Start(lcd_display);" in hunk
+    assert "activation_v" not in hunk
+
+    board = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    long_press = board[board.index("boot_button_.OnLongPress") :]
+    configuring = long_press[: long_press.index("if (state == kDeviceStateRecovering)")]
+    assert "MemoriaBootstrap::GetInstance().Start(display_)" in configuring
+
+
+def test_server_release_while_online_brings_the_binding_qr_back() -> None:
+    assert "std::atomic<bool> released_{false};" in PROTOCOL_HEADER
+    assert "void EnterReleasedState();" in PROTOCOL_HEADER
+    task = SOURCE[SOURCE.index("void MemoriaProtocol::DisplayProfileTask") :]
+    task = task[: task.index("void MemoriaProtocol::EnterReleasedState")]
+    assert "result == ESP_ERR_INVALID_STATE" in task
+    assert "if (!protocol->released_.exchange(true)) {" in task
+    assert "protocol->EnterReleasedState();" in task
+    released = SOURCE[SOURCE.index("void MemoriaProtocol::EnterReleasedState") :]
+    released = released[: released.index("bool MemoriaProtocol::CreateMediaSession")]
+    assert 'runtime.SetInt("activation_v", 0);' in released
+    assert "activation_ctr" not in released.replace("keep activation_ctr", "")
+    assert "MemoriaBootstrap::GetInstance().Start(display)" in released
+    assert "StartActivationRetry();" in released
+    retry = SOURCE[SOURCE.index("void MemoriaProtocol::RunActivationRetry") :]
+    retry = retry[: retry.index("void MemoriaProtocol::StartDisplayProfilePoll")]
+    assert "released_.store(false);" in retry
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)

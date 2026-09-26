@@ -1193,7 +1193,7 @@ Page({
       title: "退出所有设备",
       content: "确定要结束所有设备上的登录吗？其他设备需要重新登录。",
       confirmText: "全部退出",
-      confirmColor: "#ff6b8a",
+      confirmColor: "#b3261e",
       success: async (result) => {
         if (!result.confirm) return;
         try {

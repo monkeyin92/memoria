@@ -1,5 +1,5 @@
 <view class="page-shell">
-  <page-backdrop theme="warm"></page-backdrop>
+  <page-backdrop theme="mist"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/profile/index" open-type="switchTab">‹ 我的</navigator></view>
   <view class="page-head">
     <text class="page-title">记忆档案</text>

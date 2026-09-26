@@ -126,6 +126,72 @@ def test_errors_are_dizzy_and_setup_hides_the_mascot(harness) -> None:
     assert _frames_between(stats, 3400, 5000) == {NONE}  # the QR card owns the centre
 
 
+def _mascot_rows(preview, work, binary, timeline, moments, first="starlight"):
+    """Top and bottom screen rows the mascot (and its shadow) cover at each moment."""
+    np = pytest.importorskip("numpy")
+    raw = work / "caption.raw"
+    stats = preview.run(binary, work, 25, str(raw), timeline=timeline, first=first)
+    frames = np.fromfile(raw, dtype="<u2").reshape(-1, 360, 360).astype(np.int32)
+    backdrop = frames[0]  # "setup": the ring glow over the backdrop, no mascot
+    yy, xx = np.mgrid[0:360, 0:360]
+    inside_ring = (xx - 180) ** 2 + (yy - 180) ** 2 < 146**2
+    rows = {}
+    for ms in moments:
+        changed = (np.abs(frames[ms // 40] - backdrop) > 0) & inside_ring
+        ys = np.where(changed.any(axis=1))[0]
+        rows[ms] = (int(ys.min()), int(ys.max()))
+    return stats, rows
+
+
+def test_captioned_layout_leaves_the_text_band_free(harness) -> None:
+    preview, work, binary = harness
+    stats, rows = _mascot_rows(
+        preview,
+        work,
+        binary,
+        [
+            (0, "phase", "setup"),
+            (400, "phase", "wifi"),
+            (2000, "caption", "on"),
+            (4000, "phase", "connecting"),
+            (6000, "caption", "off"),
+            (6000, "phase", "idle"),
+            (8000, "end", ""),
+        ],
+        [1600, 3600, 5600, 7600],
+    )
+    assert stats["mismatches"] == 0  # the shrink and regrow redraw exactly
+    text_y = 226  # MascotScene::kCaptionTextY
+    for ms in (3600, 5600):  # Wi-Fi setup, then connecting, both captioned
+        top, bottom = rows[ms]
+        assert bottom < text_y, f"mascot reaches row {bottom} at {ms} ms"
+        assert top > 40
+    for ms in (1600, 7600):  # full-size companion before and after
+        assert rows[ms][1] > 290
+
+
+def test_captioned_layout_is_wired_to_network_states() -> None:
+    display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
+    wants = display[display.index("bool MemoriaMascotDisplay::WantsCaption") :]
+    wants = wants[: wants.index("void MemoriaMascotDisplay::SetEmotion")]
+    for state in ("kDeviceStateStarting", "kDeviceStateWifiConfiguring", "kDeviceStateActivating"):
+        assert f"case {state}:" in wants
+    assert "qr_visible_.load()" in wants
+    assert "intro_active(now_ms)" in wants
+    assert "scene_->SetCaptioned(want_caption, frame_now);" in display
+    # Text on the caption band sits below the shrunken mascot.
+    assert "memoria::MascotScene::kCaptionTextY" in display
+    # Nothing is drawn over the QR card, and the 30 s "已连接" notice is
+    # dropped once the device is online.
+    opacity = display[display.index("void MemoriaMascotDisplay::ApplyChromeOpacity") :]
+    opacity = opacity[: opacity.index("void MemoriaMascotDisplay::StyleQrCard")]
+    assert "if (qr_visible_.load()) {\n        text_opa = 0;" in opacity
+    assert "lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);" in display
+    # The hotspot fallback hint is split into two short lines.
+    assert "Lang::Strings::CONNECT_TO_HOTSPOT" in display
+    assert '"\\n浏览器打开 "' in display
+
+
 def test_companion_switch_arrives_waving(harness) -> None:
     stats = _play(harness, [(0, "phase", "idle"), (1000, "companion", "taoxi"), (5000, "end", "")])
     assert stats["mismatches"] == 0

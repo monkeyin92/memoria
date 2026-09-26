@@ -1,5 +1,5 @@
 <view class="page-shell auth-wrap">
-  <page-backdrop theme="warm"></page-backdrop>
+  <page-backdrop theme="mist"></page-backdrop>
   <view class="mem-hero auth-hero" data-role="starlight">
     <view class="auth-copy">
       <text class="eyebrow auth-copy-line">家庭桌面陪伴终端</text>

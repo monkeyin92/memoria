@@ -192,6 +192,10 @@ bool MemoriaMascotDisplay::LoadCompanion(const std::string& id,
 
 void MemoriaMascotDisplay::SetupUI() {
     SpiLcdDisplay::SetupUI();
+    if (bottom_bar_ != nullptr && Lock(1000)) {
+        bottom_bar_height_ = lv_obj_get_style_height(bottom_bar_, LV_PART_MAIN);
+        Unlock();
+    }
     // The backdrop is light, so text follows the light theme and then the
     // companion's ink colour.
     auto* light_theme = LvglThemeManager::GetInstance().GetTheme("light");
@@ -233,29 +237,70 @@ void MemoriaMascotDisplay::ApplyChrome() {
     if (top_bar_ != nullptr) {
         lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
     }
-    if (status_bar_ != nullptr) {
-        lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
-        lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 26);
-    }
-    if (status_label_ != nullptr) {
-        lv_obj_set_width(status_label_, 200);
-        lv_obj_set_style_text_color(status_label_, Color(ink), 0);
-        lv_obj_set_style_text_opa(status_label_, LV_OPA_80, 0);
-    }
-    if (notification_label_ != nullptr) {
-        lv_obj_set_width(notification_label_, 208);
-        StylePill(notification_label_, ink);
-        lv_obj_set_style_pad_ver(notification_label_, 4, 0);
-        lv_obj_set_style_pad_hor(notification_label_, 12, 0);
-    }
-    if (bottom_bar_ != nullptr) {
-        lv_obj_set_width(bottom_bar_, 256);
-        StylePill(bottom_bar_, ink);
-        lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -28);
-    }
-    if (chat_message_label_ != nullptr) {
-        lv_obj_set_width(chat_message_label_, 228);
-        lv_obj_set_style_text_color(chat_message_label_, Color(ink), 0);
+    if (caption_layout_) {
+        // Caption band under the shrunken mascot: plain ink text, the status
+        // or network notice first, then up to two lines of detail.
+        constexpr int kLineY = memoria::MascotScene::kCaptionTextY;
+        if (status_bar_ != nullptr) {
+            lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
+            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, kLineY - 4);
+        }
+        if (status_label_ != nullptr) {
+            lv_obj_set_width(status_label_, 250);
+            lv_obj_set_style_text_color(status_label_, Color(ink), 0);
+            lv_obj_set_style_text_opa(status_label_, LV_OPA_COVER, 0);
+        }
+        if (notification_label_ != nullptr) {
+            lv_obj_set_width(notification_label_, 250);
+            lv_obj_set_style_bg_opa(notification_label_, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_pad_all(notification_label_, 0, 0);
+            lv_obj_set_style_text_color(notification_label_, Color(ink), 0);
+        }
+        if (bottom_bar_ != nullptr) {
+            lv_obj_set_size(bottom_bar_, 244, LV_SIZE_CONTENT);
+            lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_pad_all(bottom_bar_, 0, 0);
+            lv_obj_align(bottom_bar_, LV_ALIGN_TOP_MID, 0, kLineY + 32);
+        }
+        if (chat_message_label_ != nullptr) {
+            lv_obj_set_width(chat_message_label_, 236);
+            lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_WRAP);
+            lv_obj_align(chat_message_label_, LV_ALIGN_TOP_MID, 0, 0);
+            lv_obj_set_style_text_color(chat_message_label_, Color(ink), 0);
+            lv_obj_set_style_text_opa(chat_message_label_, LV_OPA_80, 0);
+        }
+    } else {
+        if (status_bar_ != nullptr) {
+            lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
+            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 26);
+        }
+        if (status_label_ != nullptr) {
+            lv_obj_set_width(status_label_, 200);
+            lv_obj_set_style_text_color(status_label_, Color(ink), 0);
+            lv_obj_set_style_text_opa(status_label_, LV_OPA_80, 0);
+        }
+        if (notification_label_ != nullptr) {
+            lv_obj_set_width(notification_label_, 208);
+            StylePill(notification_label_, ink);
+            lv_obj_set_style_pad_ver(notification_label_, 4, 0);
+            lv_obj_set_style_pad_hor(notification_label_, 12, 0);
+        }
+        if (bottom_bar_ != nullptr) {
+            if (bottom_bar_height_ > 0) {
+                lv_obj_set_height(bottom_bar_, bottom_bar_height_);
+            }
+            lv_obj_set_width(bottom_bar_, 256);
+            StylePill(bottom_bar_, ink);
+            lv_obj_set_style_pad_all(bottom_bar_, 0, 0);
+            lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -28);
+        }
+        if (chat_message_label_ != nullptr) {
+            lv_obj_set_width(chat_message_label_, 228);
+            lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_align(chat_message_label_, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_set_style_text_color(chat_message_label_, Color(ink), 0);
+            lv_obj_set_style_text_opa(chat_message_label_, LV_OPA_COVER, 0);
+        }
     }
     if (low_battery_popup_ != nullptr) {
         lv_obj_set_size(low_battery_popup_, 200, LV_SIZE_CONTENT);
@@ -270,10 +315,23 @@ void MemoriaMascotDisplay::ApplyChrome() {
 
 void MemoriaMascotDisplay::ApplyChromeOpacity(uint8_t opa) {
     chrome_opa_ = opa;
-    lv_obj_t* layers[] = {status_bar_, bottom_bar_, qr_overlay_};
+    if (qr_overlay_ != nullptr) {
+        lv_obj_set_style_opa(qr_overlay_, opa, 0);
+    }
+    // The QR card is a screen of its own: status and subtitle text would sit
+    // on the code and its caption. On the caption band the text fades in only
+    // once the mascot has made room, and out before the mascot grows back.
+    uint8_t text_opa = opa;
+    if (qr_visible_.load()) {
+        text_opa = 0;
+    } else if (caption_layout_) {
+        text_opa = static_cast<uint8_t>((static_cast<uint32_t>(opa) * caption_mix_) / 255);
+    }
+    text_opa_applied_ = text_opa;
+    lv_obj_t* layers[] = {status_bar_, bottom_bar_};
     for (lv_obj_t* layer : layers) {
         if (layer != nullptr) {
-            lv_obj_set_style_opa(layer, opa, 0);
+            lv_obj_set_style_opa(layer, text_opa, 0);
         }
     }
 }
@@ -333,12 +391,12 @@ bool MemoriaMascotDisplay::ShowQrCode(const std::string& payload, const char* ca
     if (!LcdDisplay::ShowQrCode(payload, caption)) {
         return false;
     }
+    qr_visible_.store(true);
     if (Lock(1000)) {
         StyleQrCard();
         ApplyChromeOpacity(chrome_opa_);
         Unlock();
     }
-    qr_visible_.store(true);
     return true;
 }
 
@@ -347,6 +405,27 @@ void MemoriaMascotDisplay::ClearQrCode() {
     qr_card_ = nullptr;
     qr_title_ = nullptr;
     qr_visible_.store(false);
+    if (Lock(1000)) {
+        ApplyChromeOpacity(chrome_opa_);
+        Unlock();
+    }
+}
+
+bool MemoriaMascotDisplay::WantsCaption(uint32_t now_ms) {
+    if (qr_visible_.load() || scene_->intro_active(now_ms)) {
+        return false;
+    }
+    // Getting online: the network notices, the hotspot hint and activation
+    // text need a place of their own. Conversation states keep the full-size
+    // companion and show no status text.
+    switch (Application::GetInstance().GetDeviceState()) {
+        case kDeviceStateStarting:
+        case kDeviceStateWifiConfiguring:
+        case kDeviceStateActivating:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
@@ -388,8 +467,14 @@ void MemoriaMascotDisplay::SetStatus(const char* status) {
     if (Equals(status, Lang::Strings::ERROR)) {
         error_until_ms_.store(NowMs() + kErrorHoldMs);
     }
-    if (Equals(status, Lang::Strings::LOADING_PROTOCOL) || Equals(status, Lang::Strings::CONNECTING)) {
+    if (Equals(status, Lang::Strings::LOADING_PROTOCOL)) {
         LvglDisplay::SetStatus("正在连接");
+        return;
+    }
+    if (Equals(status, Lang::Strings::CONNECTING)) {
+        // A conversation (re)opening: the comet ring already says so, and a
+        // line at the top would sit on the full-size companion's head.
+        LvglDisplay::SetStatus("");
         return;
     }
     LvglDisplay::SetStatus(status);
@@ -420,6 +505,26 @@ void MemoriaMascotDisplay::SetChatMessage(const char* role, const char* content)
         SystemInfo::GetUserAgent() == content) {
         LcdDisplay::SetChatMessage(role, "");
         return;
+    }
+    // Upstream's one-line hotspot hint ("手机连接热点 X，浏览器访问 http://Y")
+    // becomes two short lines for the caption band.
+    const std::string hotspot_prefix = Lang::Strings::CONNECT_TO_HOTSPOT;
+    const std::string browser_infix = Lang::Strings::ACCESS_VIA_BROWSER;
+    if (role != nullptr && content != nullptr && std::strcmp(role, "system") == 0 &&
+        std::strncmp(content, hotspot_prefix.c_str(), hotspot_prefix.size()) == 0) {
+        const std::string hint(content);
+        const std::size_t infix = hint.find(browser_infix, hotspot_prefix.size());
+        if (infix != std::string::npos) {
+            std::string url = hint.substr(infix + browser_infix.size());
+            if (url.rfind("http://", 0) == 0) {
+                url.erase(0, 7);
+            }
+            const std::string lines = "连接热点 " +
+                                      hint.substr(hotspot_prefix.size(), infix - hotspot_prefix.size()) +
+                                      "\n浏览器打开 " + url;
+            LcdDisplay::SetChatMessage(role, lines.c_str());
+            return;
+        }
     }
     LcdDisplay::SetChatMessage(role, content);
 }
@@ -536,6 +641,22 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ApplyChrome();  // ink colour follows the companion
             }
             scene_->SetPhase(CurrentPhase(frame_now), frame_now);
+            const bool want_caption = WantsCaption(frame_now);
+            scene_->SetCaptioned(want_caption, frame_now);
+            caption_mix_ = scene_->caption_mix(frame_now);
+            if (want_caption && !caption_layout_) {
+                caption_layout_ = true;  // text moves now, fades in with the mix
+                ApplyChrome();
+            } else if (!want_caption && caption_layout_ && caption_mix_ == 0) {
+                caption_layout_ = false;
+                ApplyChrome();
+                // "已连接 <Wi-Fi>" is held for 30 s; it has done its job once
+                // the device is online and must not land on the companion.
+                if (notification_label_ != nullptr && status_label_ != nullptr) {
+                    lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+                    lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
             if (mood_pending) {
                 scene_->SetMood(mood, frame_now);
             }
@@ -566,7 +687,10 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 lv_obj_invalidate_area(container_, &area);
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
-            if (opa != chrome_opa_) {
+            const uint8_t text_opa =
+                caption_layout_ ? static_cast<uint8_t>((static_cast<uint32_t>(opa) * caption_mix_) / 255)
+                                : opa;
+            if (opa != chrome_opa_ || (!qr_visible_.load() && text_opa != text_opa_applied_)) {
                 ApplyChromeOpacity(opa);
             }
             Unlock();

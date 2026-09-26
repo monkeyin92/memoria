@@ -1,0 +1,25 @@
+diff --git a/main/application.cc b/main/application.cc
+index 46f61c7..4344b41 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -210,6 +210,20 @@ void Application::Initialize() {
+                 break;
+             case NetworkEvent::WifiConfigModeEnter:
+                 // WiFi config mode enter is handled by WifiBoard internally
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                // No known network in reach (a new place, a changed router):
++                // the Mini Program delivers Wi-Fi over the nearby bootstrap,
++                // so its QR must be on screen whatever this board remembers
++                // about a past binding. Offline, the board cannot learn that
++                // the phone has released it; the server decides on scan.
++                Schedule([]() {
++                    auto* lcd_display =
++                        dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
++                    if (lcd_display != nullptr) {
++                        memoria::MemoriaBootstrap::GetInstance().Start(lcd_display);
++                    }
++                });
++#endif
+                 break;
+             case NetworkEvent::WifiConfigModeExit:
+                 // WiFi config mode exit is handled by WifiBoard internally

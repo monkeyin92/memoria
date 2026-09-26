@@ -1,16 +1,10 @@
 {
   "navigationBarTitleText": "配网引导",
   "enablePullDownRefresh": false,
-  "backgroundTextStyle": "dark",
   "usingComponents": {
     "face-badge": "/components/face-badge/index",
     "page-backdrop": "/components/page-backdrop/index",
     "glass-icon": "/components/glass-icon/index",
     "device-screen": "/components/device-screen/index"
-  },
-  "navigationBarBackgroundColor": "#BAC8FA",
-  "navigationBarTextStyle": "black",
-  "backgroundColor": "#BAC8FA",
-  "backgroundColorTop": "#BAC8FA",
-  "backgroundColorBottom": "#FEF6E6"
+  }
 }

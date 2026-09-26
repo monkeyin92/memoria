@@ -1,7 +1,3 @@
-page {
-  background: #FADABF;
-}
-
 .memory-summarize {
   margin-top: 28rpx;
 }
@@ -68,7 +64,8 @@ page {
 
 .recap-body {
   display: block;
-  color: #596a78;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 26rpx;
   line-height: 1.8;
 }
@@ -117,14 +114,15 @@ page {
 
 .conversation-speaker {
   display: block;
-  color: #326e70;
+  color: #285c5e;
+  color: var(--brand-teal);
   font-size: 22rpx;
   font-weight: 600;
 }
 
 .assistant-speaker {
   margin-top: 18rpx;
-  color: #8b6b32;
+  color: #74572a;
 }
 
 .conversation-text {
