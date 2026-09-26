@@ -8,7 +8,7 @@
 enabled_release: 20260925-full-stack-v1  # main 064ed61；agent/bridge、device-media-gateway、miniprogram-gateway、speaker-model 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260925-full-stack-v1-pre
 control_api_release: 20260925-device-mascot-sync  # main 9f02619，单组件发布，栈身份仍为 full-stack-v1；回滚 memoria-control-api:rollback-20260925-device-mascot-sync-pre-control
 media_edge_release: 20260920-f1f2-owner-silence-and-barge  # d61d486；下次发布含 PR #42 的启动收紧，见 P1-12
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走服务器 `/root/memoria-release/release-ops.sh`，缺口见 P1-12
+control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（服务器副本 `/root/memoria-release/release-ops.sh`），缺口见 P1-12
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -117,11 +117,11 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-12 发布工具缺陷、media-edge 下次发布与旧媒体链去留（2026-09-26）
 
-- 整栈发布脚本（服务器 `/root/memoria-release/release-ops.sh`，尚未入库）两处缺陷：`finish` 的状态循环遇到无 healthcheck 的容器会中断；env 步骤不断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED=false`（09-25 因此首轮问候被判非主人）。修复时把脚本纳入仓库并补测试。
+- 整栈发布脚本两处缺陷已修（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。待完成：下次整栈发布前把脚本内的线上链常量（`OLD`、`LIVE_CONTROL_RELEASE`、回滚 compose 链）改为届时线上链，再安装到服务器 `/root/memoria-release/release-ops.sh`；服务器现存副本未替换。
 - media-edge 下次发布：新镜像含 PR #42 的启动收紧（`MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative`、生产未开设备 WSS 均拒绝启动）；compose 已固定 `MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"`，发布后把易失的 `/tmp/media-runtime.override.yml` 移出 compose 链。发布须另获授权。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - 仓库内死链路：agent 侧 persona 配置（`MEMORIA_PERSONA_*`）只校验不消费，控制面 `/v1/persona/session-capsule` 无调用方，生产 env 生成脚本仍写入相关变量；可一并删除。
-- 完成条件：脚本入库且两处缺陷有回归；media-edge 发布与 `/tmp` 移除有切流收据；旧媒体链有明确决定并按决定执行。
+- 完成条件：脚本入库且两处缺陷有回归（已达成）；下次整栈发布使用仓库版本；media-edge 发布与 `/tmp` 移除有切流收据；旧媒体链有明确决定并按决定执行。
 
 ## P2：质量增强与后续能力
 
