@@ -107,6 +107,12 @@ def _valid_configuration(settings: ControlSettings) -> bool:
     return True
 
 
+#: infra/memoria-readiness-refresh.timer refreshes smoke evidence every 12 h;
+#: the grace covers its jitter (5 min) and three restarts 5 min apart.
+_REFRESH_INTERVAL_S = 43_200
+_REFRESH_GRACE_S = 3_600
+
+
 def _smoke_state(request: Request, settings: ControlSettings) -> str:
     try:
         evidence = _store(request).get_readiness(
@@ -128,6 +134,11 @@ def _smoke_state(request: Request, settings: ControlSettings) -> str:
         return "invalid"
     if age_s > settings.readiness_gate_ttl_s:
         return "expired"
+    # P1-09: a failing refresh used to stay invisible until the evidence
+    # expired a day later. One missed interval plus the timer's jitter and
+    # retries is overdue: still ready, but reported.
+    if age_s > _REFRESH_INTERVAL_S + _REFRESH_GRACE_S:
+        return "overdue"
     return "passed"
 
 
@@ -422,7 +433,8 @@ async def health_ready(request: Request) -> JSONResponse:
     smoke_state = _smoke_state(request, settings)
     agent_state = _agent_state(request, settings)
     agent_ready = agent_state["status"] in {"ready", "skipped"}
-    if not config_ready or missing or smoke_state != "passed" or not core_ready or not agent_ready:
+    smokes_valid = smoke_state in {"passed", "overdue"}
+    if not config_ready or missing or not smokes_valid or not core_ready or not agent_ready:
         return JSONResponse(
             status_code=503,
             content={
@@ -442,6 +454,8 @@ async def health_ready(request: Request) -> JSONResponse:
         {
             "status": "ready",
             "release_tag": settings.memoria_release_tag,
+            "smokes": smoke_state,
+            "warnings": ["smoke_refresh_overdue"] if smoke_state == "overdue" else [],
             "checks": {
                 "config": True,
                 "core": core_checks,
