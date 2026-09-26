@@ -63,7 +63,7 @@ class _ExtractionPayload(BaseModel):
 def _prompt(text: str, evidence: PersonaEvidence) -> str:
     return f"""
 从下面的账户主人原话中提取可审核的人格候选。只输出 JSON 对象，不要 Markdown。
-不得补充原话没有的信息；不要把一次情绪压成永久性格；证据不足时少提取或返回空数组。
+不得补充原话没有的信息；证据不足时少提取或返回空数组。
     只提取原话有明确证据的重音方式、情绪表达、表达组织、叙事方式、决策习惯和价值排序。
     不得把一次性情绪推断为稳定风格。决策习惯与价值排序只有在原话同时给出适用情境和
     例外/反例时才可提取；否则不要生成。normalized_key 使用简短稳定的英文 snake_case。

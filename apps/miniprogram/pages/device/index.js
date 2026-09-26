@@ -193,6 +193,18 @@ function ageDeclarationRows(binding) {
     }));
 }
 
+/* 孩子（parent_for_child）或老人（child_for_parent）绑定里非账号持有人的主要使用者。
+ * 人格跟着使用机器的人走，绑定人只能看到固定风格标签。 */
+function boundPersonSubjects(binding) {
+  if (!["parent_for_child", "child_for_parent"].includes(binding?.declared_mode)) return [];
+  if (binding.status && binding.status !== "active") return [];
+  const ownerId = typeof binding.account_owner_id === "string" ? binding.account_owner_id : "";
+  const subjects = Array.isArray(binding.primary_subject_ids) ? binding.primary_subject_ids : [];
+  return subjects.filter(
+    (personId) => typeof personId === "string" && personId && personId !== ownerId,
+  );
+}
+
 function ageGateMessage(error) {
   if (error?.code === "guardian_binding_owner_required" || error?.status === 403) {
     return "只有监护绑定发起人可以修改这项年龄资料。";
@@ -263,6 +275,8 @@ Page({
     personaSaving: false,
     personaAssignmentError: "",
     ageRows: [],
+    subjectPersonas: [],
+    personaResetting: false,
     ageSaving: false,
     ageError: "",
     activation: null,
@@ -360,6 +374,8 @@ Page({
       subjectAliasDraft: "",
       personaRows: [],
       ageRows: [],
+    subjectPersonas: [],
+    personaResetting: false,
       ageSaving: false,
       ageError: "",
       activation: null,
@@ -397,6 +413,53 @@ Page({
       unbinding: false,
       unbindError: "",
     });
+  },
+
+  /* 绑定人查看孩子/老人的表达风格：不阻塞设备页主体加载，失败只影响本区块。 */
+  async _loadSubjectPersonas(binding, flowSeq, authEpoch) {
+    const subjects = boundPersonSubjects(binding);
+    if (!subjects.length) return;
+    const rows = await Promise.all(
+      subjects.map(async (personId) => {
+        try {
+          const style = await api.getSubjectPersonaStyle(personId);
+          return { personId, styleLabels: style.styleLabels, versionNumber: style.versionNumber, loadError: "" };
+        } catch (error) {
+          return { personId, styleLabels: [], versionNumber: null, loadError: "表达风格暂时无法读取。" };
+        }
+      }),
+    );
+    if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
+    this.setData({ subjectPersonas: rows });
+  },
+
+  async resetSubjectPersona(event) {
+    const personId = event?.currentTarget?.dataset?.personId;
+    if (!personId || this.data.personaResetting) return;
+    const confirmed = await new Promise((resolve) => {
+      wx.showModal({
+        title: "重置表达风格",
+        content: "机器人会忘记为这位使用人学到的表达风格，之后从新的对话重新学习。此操作不可撤销。",
+        confirmText: "重置",
+        success: (result) => resolve(Boolean(result.confirm)),
+        fail: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+    this.setData({ personaResetting: true });
+    try {
+      await api.resetSubjectPersona(personId);
+      this.setData({
+        subjectPersonas: (this.data.subjectPersonas || []).map((row) =>
+          row.personId === personId ? { ...row, styleLabels: [], versionNumber: null, loadError: "" } : row,
+        ),
+      });
+      wx.showToast({ title: "已重置", icon: "success" });
+    } catch (error) {
+      wx.showToast({ title: "重置失败，请稍后再试", icon: "none" });
+    } finally {
+      this.setData({ personaResetting: false });
+    }
   },
 
   async loadDevice() {
@@ -586,6 +649,7 @@ Page({
         currentUserLabelConfirmed: Boolean(speakerLabel),
         ageRows: ageDeclarationRows(binding),
         ageError: "",
+        subjectPersonas: [],
         subjectAliasLabel,
         subjectAliasDraft: subjectAliasLabel,
         personaRows: personaRows(
@@ -652,6 +716,7 @@ Page({
             ? "设备状态暂时无法读取，绑定关系仍保留；请稍后下拉刷新。"
             : "",
       });
+      this._loadSubjectPersonas(binding, flowSeq, authEpoch);
     } catch (error) {
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({

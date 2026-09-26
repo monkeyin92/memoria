@@ -1109,6 +1109,24 @@ class PostgresPersonaEngine:
                 deleted += int(str(status).rsplit(" ", 1)[-1])
         return deleted
 
+    async def remaining_subject_rows(self, *, account_id: str, subject_id: str) -> dict[str, int]:
+        """Persona rows still held for one non-holder subject (deletion check)."""
+
+        require_forgettable_subject(account_id=account_id, subject_id=subject_id)
+        pool = await self._ready_pool()
+        counts: dict[str, int] = {}
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            for table in ("persona_traits", "speech_style_stats", "persona_versions"):
+                counts[table] = int(
+                    await connection.fetchval(
+                        f"SELECT count(*) FROM {table} WHERE account_id = $1 AND subject_id = $2",
+                        account_id,
+                        subject_id,
+                    )
+                )
+        return counts
+
     @staticmethod
     async def _trait_from_row(
         connection: asyncpg.Connection,

@@ -273,3 +273,17 @@ async def test_invalid_qwen_persona_output_falls_back_to_conservative_rules() ->
 
     assert any(trait.category == "decision_habit" for trait in traits)
     assert all(trait.description != "总是很理性" for trait in traits)
+
+
+def test_one_off_emotion_rule_is_stated_once() -> None:
+    """P2-07: the same rule used to appear twice in two wordings."""
+
+    from services.persona.domain import PersonaEvidence
+    from services.persona.qwen_extractor import _prompt
+
+    prompt = _prompt(
+        "我觉得先把事实弄清楚。",
+        PersonaEvidence(account_id="account", source_event_id="event", learning_allowed=True),
+    )
+    assert prompt.count("一次性情绪推断为稳定风格") == 1
+    assert "永久性格" not in prompt

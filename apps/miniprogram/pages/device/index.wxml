@@ -164,6 +164,26 @@
           <text class="caption">在「选TA陪伴」里选的伙伴会自动分配给主要使用者；也可以按使用人单独分配。分配从下一次对话起生效。</text>
           <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
         </block>
+        <block wx:if="{{subjectPersonas.length > 0}}">
+          <view wx:for="{{subjectPersonas}}" wx:key="personId" class="list-row">
+            <view class="row-copy">
+              <text class="row-title">TA 的表达风格</text>
+              <text wx:if="{{item.loadError}}" class="error-text">{{item.loadError}}</text>
+              <block wx:elif="{{item.styleLabels.length > 0}}">
+                <text wx:for="{{item.styleLabels}}" wx:for-item="label" wx:key="*this" class="row-meta">· {{label}}</text>
+              </block>
+              <text wx:else class="row-meta">还没有学到稳定的表达风格。</text>
+              <text class="caption">机器人跟着使用它的人学习说话方式。这里只显示通用的风格标签，不含对话原文。</text>
+              <button
+                class="secondary-button"
+                data-person-id="{{item.personId}}"
+                loading="{{personaResetting}}"
+                disabled="{{personaResetting}}"
+                bindtap="resetSubjectPersona"
+              >重置表达风格</button>
+            </view>
+          </view>
+        </block>
         <block wx:if="{{ageRows.length > 0}}">
           <view wx:for="{{ageRows}}" wx:key="person_id" class="list-row">
             <view class="row-copy">

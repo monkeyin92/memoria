@@ -107,7 +107,15 @@ docker compose --project-directory "$DATA_COMPOSE_DIR" \
 - WAL 最后观察仍归档且无自动裁剪；旧日增长估计/磁盘余量不是当前值。P1-08 单独处理保留策略，不因备份暂缓而遗漏。禁止只按文件年龄删 WAL，必须保护仍保留 base backup 所需连续链；本轮未删任何数据。
 - 重新启用备份时，已修的 pg_basebackup CLI 仍需真实部署验证；网桥复制受现有 pg_hba 限制，优先评估 `network_mode: service:postgres` 走 loopback。真实异地 endpoint/凭据与恢复演练须另行补齐。
 
-恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。恢复不可变 evidence/claims 后，在 Control API 镜像中重建投影：
+恢复集合须含 PostgreSQL base/WAL、MinIO versioned objects、SQLite 兼容快照、root-only env、manifest/回执。用 `scripts/run_offsite_restore_drill.sh` 在隔离环境校验备份、对象清单/哈希、外键和应用读取；不能拿缓存当权威。
+
+恢复后、恢复流量和重建投影之前，必须先重放已完成的按使用人删除：删除台账在控制库（SQLite），使用人数据在 PostgreSQL/MinIO，恢复数据层会让已删除的孩子/老人数据复活而台账仍显示 completed。用一次性 Control API 容器执行（只输出计数，`incomplete` 非零则退出码 1，未完成项由删除 worker 续跑）：
+
+~~~bash
+python -m scripts.replay_subject_deletions --confirm-replay
+~~~
+
+然后再恢复不可变 evidence/claims 的投影，在 Control API 镜像中重建：
 
 ~~~bash
 python -m scripts.rebuild_memory_projections --confirm-rebuild

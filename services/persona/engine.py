@@ -1395,6 +1395,21 @@ class PersonaEngine:
                 ).rowcount
         return deleted
 
+    async def remaining_subject_rows(self, *, account_id: str, subject_id: str) -> dict[str, int]:
+        """Persona rows still held for one non-holder subject (deletion check)."""
+
+        require_forgettable_subject(account_id=account_id, subject_id=subject_id)
+        with self._connect() as connection:
+            return {
+                table: int(
+                    connection.execute(
+                        f"SELECT count(*) FROM {table} WHERE account_id = ? AND subject_id = ?",
+                        (account_id, subject_id),
+                    ).fetchone()[0]
+                )
+                for table in ("persona_traits", "speech_style_stats", "persona_versions")
+            }
+
     @staticmethod
     def _trait_from_row(
         connection: sqlite3.Connection,

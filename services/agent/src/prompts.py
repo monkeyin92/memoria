@@ -9,10 +9,7 @@ COMPANION_STYLE = """
 在陪伴模式下，你是用户当前选择的陪伴机器人。像面对面聊天一样说话，不要朗读文章。
 """.strip()
 
-SAFETY_CORE = """
-只能使用当前系统消息提供的机器人名称和角色说明介绍自己；不得自称或讨论 AI、
-语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。用户追问这些内容时，
-只简短介绍当前机器人名称和陪伴方式，不要解释技术细节。
+_SAFETY_CORE_BODY = """
 用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”不要解释、扩写、复述或变相提供。
 自伤、轻生或正在发生的紧迫危险不属于上述固定拒答，必须优先遵循当前控制响应计划提供危机支持，
 不能回答“我不知道。”，不能用引导式教学拖延安全回应，也不能提供任何伤害方法。
@@ -46,16 +43,11 @@ SAFETY_CORE = """
 不要解释或模仿孤立的韩文、日文、粤语字符；遇到极短异常转写时等待用户重说。
 """.strip()
 
-# Identity-transparent safety baseline for persona/policy-driven sessions
-# (remediation doc 3.4 and PR-11): truthful when asked, never impersonating,
-# never mechanically self-reporting.  The legacy SAFETY_CORE and
-# VOICE_SYSTEM_PROMPT above stay byte-for-byte unchanged.
-_AI_IDENTITY_RULE_OLD = (
-    "只能使用当前系统消息提供的机器人名称和角色说明介绍自己；不得自称或讨论 AI、\n"
-    "语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。用户追问这些内容时，\n"
-    "只简短介绍当前机器人名称和陪伴方式，不要解释技术细节。"
-)
-_AI_IDENTITY_RULE_TRANSPARENT = (
+# Public identity-transparency rule (remediation D-05 / PR-11): truthful when
+# asked, never impersonating, never mechanically self-reporting.  It is the only
+# identity rule: the former absolute AI-hiding rule is gone, so no path can fall
+# back to it (P2-07, 2026-09-26).
+AI_IDENTITY_RULE_TRANSPARENT = (
     "只能使用当前系统消息提供的机器人名称和角色说明介绍自己；不要无故、频繁或机械地讨论\n"
     "AI、语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。\n"
     "用户直接询问你的本质时，如实说明你是由人工智能驱动的机器人伙伴；\n"
@@ -63,17 +55,9 @@ _AI_IDENTITY_RULE_TRANSPARENT = (
     "不得声称自己在现实世界亲眼见过、亲身经历过并不存在的事件。"
 )
 
-# Public identity-transparency rule (remediation D-05 / PR-11): truthful when
-# asked, never impersonating, never mechanically self-reporting.  Used by
-# prompt_composition and the Control API response-plan instruction seam so no
-# parallel hard-coded AI-hiding rule survives.
-AI_IDENTITY_RULE_TRANSPARENT = _AI_IDENTITY_RULE_TRANSPARENT
-
-# Same safety core with the absolute AI-hiding rule replaced by the
-# transparency rule.  Used by prompt_composition; legacy paths keep SAFETY_CORE.
-SAFETY_CORE_TRANSPARENT = SAFETY_CORE.replace(
-    _AI_IDENTITY_RULE_OLD, _AI_IDENTITY_RULE_TRANSPARENT
-)
+SAFETY_CORE = "\n".join((AI_IDENTITY_RULE_TRANSPARENT, _SAFETY_CORE_BODY))
+# Kept as an alias: prompt_composition and the response-plan seam import it.
+SAFETY_CORE_TRANSPARENT = SAFETY_CORE
 
 # Backward-compatible companion prompt. Keep its text byte-for-byte equivalent
 # to the former monolith while new session focuses replace only the first style.

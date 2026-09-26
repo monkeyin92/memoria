@@ -958,3 +958,56 @@ async def test_rollback_of_v1_creates_v3_without_mutating_old_bytes(tmp_path: Pa
     assert reloaded.manifest.schema_version == "digital-self-manifest-v1"
     assert canonical_manifest_bytes(reloaded.manifest) == legacy_bytes
     assert reloaded.manifest_sha256 == legacy_digest
+
+
+@pytest.mark.asyncio
+async def test_a_bound_childs_claims_stay_out_of_the_account_holders_digital_self(
+    tmp_path: Path,
+) -> None:
+    """P2-03: the child's turns live in the binder's account but are not theirs."""
+
+    path = tmp_path / "digital-self.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    await _seed_sources(path)
+    await LifeArchive.sqlite(path).record(
+        EvidenceEvent(
+            event_id="owner-account-child-source",
+            account_id="owner-account",
+            subject_id="person-child",
+            event_type="speech.utterance_finalized",
+            occurred_at=_OCCURRED_AT,
+            speaker_class="owner",
+            source="registry-test",
+            payload={
+                "text": "child material",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+            },
+        )
+    )
+    now = _OCCURRED_AT.isoformat()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO memory_claims (
+                claim_id, account_id, category, domain_category, subject_key, predicate,
+                value, confidence, status, sensitive_domain, extractor_version,
+                source_event_id, valid_at, observed_at, created_at
+            ) VALUES ('00000000-0000-0000-0000-0000000000c1', 'owner-account', 'life_story',
+                      'life_story', 'owner', 'preference', 'child memory', 0.9, 'confirmed',
+                      'personal', 'extractor-v1', 'owner-account-child-source', ?, ?, ?)
+            """,
+            (now, now, now),
+        )
+
+    version = await registry.build(account_id="owner-account")
+
+    values = [
+        entry.value
+        for entry in version.manifest.entries
+        if isinstance(entry, MemoryClaimManifestEntry)
+    ]
+    assert values == ["owner memory"]
+    assert "child memory" not in str(version.manifest)

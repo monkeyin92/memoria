@@ -475,6 +475,23 @@ function getGuardianSummary(minorUserId) {
   );
 }
 
+/* 绑定人查看孩子/老人的人格：只返回固定风格标签，不含特征描述或原话。 */
+function getSubjectPersonaStyle(subjectId) {
+  const clean = encodeURIComponent(subjectId);
+  return rawRequest(`/v1/persona/subjects/${clean}/style`).then((payload) => ({
+    subjectId: typeof payload?.subject_id === "string" ? payload.subject_id : subjectId,
+    versionNumber: Number.isInteger(payload?.version_number) ? payload.version_number : null,
+    styleLabels: Array.isArray(payload?.style_labels)
+      ? payload.style_labels.filter((label) => typeof label === "string" && label)
+      : [],
+  }));
+}
+
+function resetSubjectPersona(subjectId) {
+  const clean = encodeURIComponent(subjectId);
+  return rawRequest(`/v1/persona/subjects/${clean}/reset`, { method: "POST" });
+}
+
 function createGuardianLink({ minorUserId, relation = "parent", idempotencyKey }) {
   return rawRequest("/v1/guardian/links", {
     method: "POST",
@@ -1344,6 +1361,8 @@ module.exports = {
   getDeliveredCapabilities,
   getGrowthOverview,
   getPersonaStatus,
+  getSubjectPersonaStyle,
+  resetSubjectPersona,
   getDigitalSelfVersions,
   getRawVoiceConsent,
   grantRawVoiceConsent,

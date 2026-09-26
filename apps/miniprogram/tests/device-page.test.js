@@ -1466,3 +1466,67 @@ test("device page offers both unbind data choices", () => {
   assert.match(template, /保留数据（重新绑定后可恢复）/);
   assert.match(template, /停止记忆/);
 });
+
+test("device page shows a bound elder's style labels and resets only after confirmation", async () => {
+  const api = require("../utils/api");
+  const originals = {
+    getSubjectPersonaStyle: api.getSubjectPersonaStyle,
+    resetSubjectPersona: api.resetSubjectPersona,
+    currentAuthEpoch: api.currentAuthEpoch,
+    isAuthEpochCurrent: api.isAuthEpochCurrent,
+  };
+  const styleCalls = [];
+  const resetCalls = [];
+  api.getSubjectPersonaStyle = async (personId) => {
+    styleCalls.push(personId);
+    return { subjectId: personId, versionNumber: 3, styleLabels: ["说话节奏偏从容，适合保留自然停顿"] };
+  };
+  api.resetSubjectPersona = async (personId) => {
+    resetCalls.push(personId);
+    return { subject_id: personId, deleted_rows: 4 };
+  };
+  api.isAuthEpochCurrent = () => true;
+  const previousWx = global.wx;
+  const modalAnswers = [false, true];
+  global.wx = {
+    ...(previousWx || {}),
+    showModal: ({ success }) => success({ confirm: modalAnswers.shift() }),
+    showToast: () => {},
+  };
+  const page = instantiate(pageDefinition);
+  page._flowSeq = 1;
+  try {
+    await page._loadSubjectPersonas(
+      {
+        declared_mode: "child_for_parent",
+        status: "active",
+        account_owner_id: "person_owner",
+        primary_subject_ids: ["person_elder"],
+      },
+      1,
+      0,
+    );
+    // A self-use binding has nobody else's persona to show.
+    await page._loadSubjectPersonas(
+      { declared_mode: "self_use", status: "active", account_owner_id: "person_owner",
+        primary_subject_ids: ["person_owner"] },
+      1,
+      0,
+    );
+    assert.deepEqual(styleCalls, ["person_elder"]);
+    assert.deepEqual(page.data.subjectPersonas, [
+      { personId: "person_elder", styleLabels: ["说话节奏偏从容，适合保留自然停顿"], versionNumber: 3, loadError: "" },
+    ]);
+
+    const tap = { currentTarget: { dataset: { personId: "person_elder" } } };
+    await page.resetSubjectPersona(tap); // declined
+    assert.deepEqual(resetCalls, []);
+    await page.resetSubjectPersona(tap); // confirmed
+    assert.deepEqual(resetCalls, ["person_elder"]);
+    assert.deepEqual(page.data.subjectPersonas[0].styleLabels, []);
+    assert.equal(page.data.personaResetting, false);
+  } finally {
+    Object.assign(api, originals);
+    global.wx = previousWx;
+  }
+});

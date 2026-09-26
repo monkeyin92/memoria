@@ -112,10 +112,14 @@ class _Persona:
 
     def __init__(self) -> None:
         self.forgotten: list[tuple[str, str]] = []
+        self.leftover: dict[str, int] = {}
 
     async def forget_subject(self, *, account_id: str, subject_id: str) -> int:
         self.forgotten.append((account_id, subject_id))
         return 4
+
+    async def remaining_subject_rows(self, *, account_id: str, subject_id: str) -> dict[str, int]:
+        return dict(self.leftover)
 
 
 def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, dict[str, Any]]:
@@ -231,3 +235,54 @@ async def test_a_completed_deletion_can_run_again_for_new_data(tmp_path: Path) -
 def test_a_subject_scope_never_targets_the_account_itself() -> None:
     with pytest.raises(ValueError, match="never targets the account"):
         SubjectScope(account_id="parent", subject_id="parent")
+
+
+@pytest.mark.asyncio
+async def test_leftover_persona_rows_keep_the_deletion_open(tmp_path: Path) -> None:
+    persona = _Persona()
+    persona.leftover = {"persona_traits": 1, "persona_versions": 0}
+    service, _parts = _service(tmp_path, persona=persona)
+
+    with pytest.raises(SubjectDeletionIncompleteError, match="persona.persona_traits"):
+        await service.delete_subject(SCOPE)
+    assert service.is_subject_deleting(account_id="parent", subject_id="child") is True
+
+
+
+@pytest.mark.asyncio
+async def test_completed_deletions_are_reapplied_after_a_restore(tmp_path: Path) -> None:
+    """P2-03: restoring the data stores must not resurrect an erased subject.
+
+    The ledger lives in the control database; restoring the archive from a
+    backup brings the rows back while the ledger still says completed.
+    """
+
+    service, parts = _service(tmp_path)
+    await service.delete_subject(SCOPE)
+    assert parts["archive"].owner_events == set()
+
+    # A backup restore brings the child's evidence back.
+    parts["archive"].owner_events |= {"e1", "e2", "e3-restored"}
+    parts["archive"].subject_events |= {"crisis-1"}
+    report = await service.replay_completed_deletions()
+
+    assert report == {"replayed": 1, "incomplete": 0}
+    assert parts["archive"].owner_events == set()
+    assert parts["archive"].subject_events == set()
+    assert parts["persona"].forgotten == [("parent", "child"), ("parent", "child")]
+    assert service.is_subject_deleting(account_id="parent", subject_id="child") is False
+
+
+@pytest.mark.asyncio
+async def test_a_replay_that_cannot_finish_stays_pending_for_the_worker(tmp_path: Path) -> None:
+    service, parts = _service(tmp_path)
+    await service.delete_subject(SCOPE)
+    parts["archive"].owner_events |= {"e1"}
+    parts["archive"].fail_delete_once = True
+
+    report = await service.replay_completed_deletions()
+
+    assert report == {"replayed": 0, "incomplete": 1}
+    assert service.is_subject_deleting(account_id="parent", subject_id="child") is True
+    assert await service.retry_pending_deletions() == 1
+    assert parts["archive"].owner_events == set()

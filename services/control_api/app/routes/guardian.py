@@ -35,6 +35,7 @@ from services.control_api.app.account_gate import (
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.guardian_push import resolve_minor_display_name
+from services.control_api.app.response_plan_cache import forget_subject_plans
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.control_api.app.session_termination import AccountSessionTerminator
 from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
@@ -1201,6 +1202,8 @@ async def delete_minor(
             raise HTTPException(
                 status_code=503, detail={"code": "child_subject_deletion_unavailable"}
             )
+        # Cached response plans may hold the child's private context.
+        await forget_subject_plans(request.app.state, minor_user_id)
         try:
             return await deletion.delete_subject(
                 SubjectScope(account_id=user.user_id, subject_id=minor_user_id)

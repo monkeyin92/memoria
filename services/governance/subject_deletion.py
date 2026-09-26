@@ -194,6 +194,20 @@ class SubjectDeletionLedger:
                 return False
         return row is not None
 
+    def completed(self, *, limit: int = 1000) -> tuple[tuple[str, str, bool], ...]:
+        """Completed deletions, oldest first, for re-application after a restore."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT account_id, subject_id, redact_identity FROM subject_deletions "
+                "WHERE status = 'completed' ORDER BY completed_at, updated_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(
+            (str(row["account_id"]), str(row["subject_id"]), bool(row["redact_identity"]))
+            for row in rows
+        )
+
     def pending(self, *, limit: int = 100) -> tuple[tuple[str, str, bool], ...]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -238,6 +252,10 @@ class PersonaForgetter(Protocol):
     """The persona learns per person, so a subject's persona goes with them."""
 
     async def forget_subject(self, *, account_id: str, subject_id: str) -> int: ...
+
+    async def remaining_subject_rows(
+        self, *, account_id: str, subject_id: str
+    ) -> dict[str, int]: ...
 
 
 class SubjectDeletionService:
@@ -295,6 +313,37 @@ class SubjectDeletionService:
             else:
                 completed += 1
         return completed
+
+    async def replay_completed_deletions(self, *, limit: int = 1000) -> dict[str, int]:
+        """Re-apply every completed deletion, e.g. after a database restore.
+
+        The ledger lives in the control database while subject data is in the
+        archive/persona/memory stores, so restoring those stores from a backup
+        brings erased rows back while the ledger still says ``completed``. Each
+        replay recaptures lineage from the restored evidence and runs the whole
+        saga again, which is idempotent for data that is already gone. Run it
+        after a restore and before traffic and projection rebuilds resume.
+        """
+
+        replayed = incomplete = 0
+        for account_id, subject_id, redact in await asyncio.to_thread(
+            self._ledger.completed, limit=limit
+        ):
+            try:
+                await self.delete_subject(
+                    SubjectScope(account_id=account_id, subject_id=subject_id),
+                    redact_identity=redact,
+                )
+            except Exception as exc:
+                incomplete += 1
+                logger.warning(
+                    "subject deletion replay remains incomplete subject_hash=%s reason=%s",
+                    _hash(subject_id)[:16],
+                    type(exc).__name__,
+                )
+            else:
+                replayed += 1
+        return {"replayed": replayed, "incomplete": incomplete}
 
     async def _run(self, scope: SubjectScope, *, redact_identity: bool) -> dict[str, Any]:
         now = datetime.now(UTC).isoformat()
@@ -478,6 +527,11 @@ class SubjectDeletionService:
                 account_id=scope.account_id, subject_id=scope.subject_id
             )
             remaining.update({f"guardian.{key}": value for key, value in guardian.items()})
+        if self._persona is not None:
+            persona = await self._persona.remaining_subject_rows(
+                account_id=scope.account_id, subject_id=scope.subject_id
+            )
+            remaining.update({f"persona.{key}": value for key, value in persona.items()})
         if self._memory_scope is not None:
             memory = await self._memory_scope.remaining_subject_rows(subject_id=scope.subject_id)
             remaining.update({f"memory_scope.{key}": value for key, value in memory.items()})
