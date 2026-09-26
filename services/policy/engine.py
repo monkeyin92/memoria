@@ -279,14 +279,32 @@ _OBLIGATION_PARAMS: Final[dict[PolicyObligationCode, GeneratedObligationParams]]
 }
 
 
-def _obligations(*codes: PolicyObligationCode) -> tuple[PolicyObligationSpec, ...]:
+def _obligations(
+    *codes: PolicyObligationCode, consent: ConsentEvidencePort | None = None
+) -> tuple[PolicyObligationSpec, ...]:
     return tuple(
         PolicyObligationSpec(
             code=GeneratedPolicyObligation(code),
-            params=_OBLIGATION_PARAMS.get(code, _params()),
+            params=_session_params(code, consent) or _OBLIGATION_PARAMS.get(code, _params()),
         )
         for code in codes
     )
+
+
+def _session_params(
+    code: PolicyObligationCode, consent: ConsentEvidencePort | None
+) -> GeneratedObligationParams | None:
+    """The guardian's own session limits from the binding consent (P0-04 D3)."""
+
+    params = getattr(consent, "params", None)
+    max_seconds = getattr(params, "max_session_seconds", None)
+    quiet_hours = getattr(params, "quiet_hours", None)
+    if code == "MAX_SESSION_SECONDS" and max_seconds:
+        return _params(max_session_seconds=int(max_seconds))
+    if code == "QUIET_HOURS" and quiet_hours:
+        start, end = quiet_hours
+        return _params(quiet_hours=(str(start), str(end)))
+    return None
 
 
 def _select_consent(
@@ -1008,8 +1026,9 @@ class PolicyEngine:
                 effect="deny",
                 reason_code="binding_evidence_required",
             )
+        selected_consent = _select_consent(consents)
         evidence_args = {
-            "consents": (_select_consent(consents),),
+            "consents": (selected_consent,),
             "relationships": (_select_relationship(guardians),),
             "binding_evidence": context.binding_evidence,
         }
@@ -1024,6 +1043,7 @@ class PolicyEngine:
                     "DEPENDENCY_GUARD",
                     "AI_IDENTITY_CLARIFICATION",
                     "NO_MODEL_TRAINING",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )
@@ -1038,6 +1058,7 @@ class PolicyEngine:
                     "QUIET_HOURS",
                     "NO_MODEL_TRAINING",
                     "WRITE_POLICY_RECEIPT",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )
@@ -1052,6 +1073,7 @@ class PolicyEngine:
                     "QUIET_HOURS",
                     "NO_MODEL_TRAINING",
                     "WRITE_POLICY_RECEIPT",
+                    consent=selected_consent,
                 ),
                 **evidence_args,  # type: ignore[arg-type]
             )

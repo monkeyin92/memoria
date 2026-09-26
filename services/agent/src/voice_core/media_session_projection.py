@@ -310,6 +310,23 @@ class MediaSessionProjectionMixin:
             await asyncio.sleep(0.05)
         return bool(seen_busy and not self._media_output_is_busy(context))
 
+    async def _refuse_minor_quiet_hours(self, context: _MediaVoiceSession) -> bool:
+        """P0-04 D3: a minor's wake inside signed quiet hours gets a fixed goodnight."""
+
+        from services.agent.src.prompts import MINOR_QUIET_HOURS_PHRASE
+        from services.agent.src.voice_core.minor_session_limits import in_quiet_hours, minor_limits
+
+        _max_seconds, quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
+        if context.identity.client_type != "device" or quiet_hours is None:
+            return False
+        now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
+        if not in_quiet_hours(now.time(), quiet_hours):
+            return False
+        context.device_wake_ack_pending = False
+        await self._speak_device_enrollment_phrase(context, MINOR_QUIET_HOURS_PHRASE)
+        await self._request_device_standby(context, reason="minor_quiet_hours")
+        return True
+
     async def _speak_device_enrollment_phrase(
         self,
         context: _MediaVoiceSession,

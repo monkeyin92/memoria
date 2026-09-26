@@ -24,6 +24,7 @@ from services.consent.bound_subject import (
     BoundSubjectConsentService,
     BoundSubjectGrant,
 )
+from services.consent.evidence import ConsentParams
 from services.control_api.app.account_gate import require_capability_for_subject_category
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_binding_token import (
@@ -391,6 +392,26 @@ async def _primary_subject(
     return person
 
 
+def _session_params(preferences: dict[str, object] | None) -> ConsentParams:
+    """The bind form's session length and quiet hours, validated at binding."""
+
+    minutes = (preferences or {}).get("max_session_minutes")
+    quiet = (preferences or {}).get("quiet_hours")
+    try:
+        return ConsentParams(
+            max_session_seconds=(
+                minutes * 60 if isinstance(minutes, int) and not isinstance(minutes, bool) else None
+            ),
+            quiet_hours=(
+                (str(quiet["start"]), str(quiet["end"]))
+                if isinstance(quiet, dict) and {"start", "end"} <= quiet.keys()
+                else None
+            ),
+        )
+    except ValueError:
+        return ConsentParams()
+
+
 def _bound_subject_grants(
     *,
     declared_mode: str,
@@ -399,13 +420,18 @@ def _bound_subject_grants(
     subject_id: str,
     binding_id: str,
     source_key: str,
+    service_preferences: dict[str, object] | None = None,
 ) -> tuple[BoundSubjectGrant, ...]:
     """The standing consents this binding's accepted offers stand for."""
 
     accepted = set(consent_offer_ids)
     grants: list[BoundSubjectGrant] = []
 
-    def add(kind: Literal["subject", "guardian", "delegate"], capabilities: tuple[Any, ...]) -> None:
+    def add(
+        kind: Literal["subject", "guardian", "delegate"],
+        capabilities: tuple[Any, ...],
+        params: ConsentParams | None = None,
+    ) -> None:
         grants.append(
             BoundSubjectGrant(
                 actor_person_id=owner_id,
@@ -414,12 +440,15 @@ def _bound_subject_grants(
                 kind=kind,
                 capabilities=capabilities,
                 source_key=source_key,
+                params=params or ConsentParams(),
             )
         )
 
     if declared_mode == "parent_for_child":
         if "offer_minor_voice_session_v1" in accepted:
-            add("guardian", MINOR_SESSION_CAPABILITIES)
+            # The parent's session length and quiet hours become the signed
+            # limits the device enforces (P0-04 D3).
+            add("guardian", MINOR_SESSION_CAPABILITIES, _session_params(service_preferences))
         if "offer_minor_memory_retention_v1" in accepted:
             add("guardian", GUARDIAN_MEMORY_CAPABILITIES)
     elif declared_mode == "self_use" and owner_id == subject_id:
@@ -461,6 +490,7 @@ async def _grant_bound_subject_consents(
         subject_id=subject.person_id,
         binding_id=manifest.binding_id,
         source_key=manifest.consent_snapshot_id or manifest.binding_id,
+        service_preferences=body.service_preferences,
     )
     for grant in grants:
         await service.grant(grant)

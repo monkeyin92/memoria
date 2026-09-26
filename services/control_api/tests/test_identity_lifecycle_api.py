@@ -646,7 +646,14 @@ async def _register_verified_owner(client, app, owner: dict) -> None:
 
 
 async def _bind_parent_child(
-    client, app, owner: dict, device_id: str, nonce: str, child_name: str, age_band: str
+    client,
+    app,
+    owner: dict,
+    device_id: str,
+    nonce: str,
+    child_name: str,
+    age_band: str,
+    service_preferences: dict | None = None,
 ) -> str:
     now = datetime.now(UTC)
     token = mint_device_binding_token(
@@ -670,6 +677,7 @@ async def _bind_parent_child(
             },
             "persona_selection": "starlight",
             "consent_offer_ids": ["offer_minor_voice_session_v1"],
+            **({"service_preferences": service_preferences} if service_preferences else {}),
         },
     )
     assert created.status_code == 201, created.text
@@ -1286,3 +1294,5 @@ async def test_an_age_change_reaches_the_next_runtime_profile_read(
         assert second.json()["age_band"] == "14_17"
         assert second.json()["active_subject_id"] == child
         assert second.json()["session_epoch"] > first.json()["session_epoch"]
+
+
