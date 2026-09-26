@@ -12,12 +12,15 @@ import "C"
 
 import (
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
 // opusDecoder owns the small libopus surface needed for normal decoding and
 // packet-loss concealment. An empty packet invokes the codec's PLC state.
+// The mutex serializes decoding with destroy, as for opusEncoder.
 type opusDecoder struct {
+	mu    sync.Mutex
 	value *C.OpusDecoder
 }
 
@@ -31,7 +34,12 @@ func newOpusDecoder(sampleRate, channels int) (*opusDecoder, error) {
 }
 
 func (d *opusDecoder) Decode(packet []byte, output []int16, fec bool) (int, error) {
-	if d == nil || d.value == nil || len(output) == 0 {
+	if d == nil {
+		return 0, fmt.Errorf("opus decoder input is empty")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.value == nil || len(output) == 0 {
 		return 0, fmt.Errorf("opus decoder input is empty")
 	}
 	var input *C.uchar
@@ -53,7 +61,12 @@ func (d *opusDecoder) Decode(packet []byte, output []int16, fec bool) (int, erro
 }
 
 func (d *opusDecoder) Reset() error {
-	if d == nil || d.value == nil {
+	if d == nil {
+		return fmt.Errorf("opus decoder is closed")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.value == nil {
 		return fmt.Errorf("opus decoder is closed")
 	}
 	if code := C.memoria_opus_decoder_reset(d.value); code != C.OPUS_OK {
@@ -63,7 +76,12 @@ func (d *opusDecoder) Reset() error {
 }
 
 func (d *opusDecoder) close() {
-	if d != nil && d.value != nil {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.value != nil {
 		C.opus_decoder_destroy(d.value)
 		d.value = nil
 	}

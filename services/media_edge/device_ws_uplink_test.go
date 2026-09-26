@@ -1,12 +1,9 @@
 package mediaedge
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gorilla/websocket"
 
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
@@ -338,23 +335,12 @@ func TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt(t *testing.T) {
 		RenderedSampleEnd: 320,
 		Approximate:       false,
 	})
-	// The frame is refused fail-closed. What the device observes on the wire is
-	// the explicit close frame, not only a bare 1006: 4002 is the same
-	// non-retryable session-failure code every other refused control frame
-	// uses, so the device does not have to guess whether an approximate
-	// receipt may be replayed as exact.
-	//
-	// The queued session.error stays best-effort: the lane is torn down when
-	// the read loop returns, so a message still waiting to be written can be
-	// dropped. The close frame is the deterministic contract; do not assert on
-	// the diagnostic here.
-	_, _, err := readDeviceMessage(connection, 3*time.Second)
-	if err == nil {
-		t.Fatal("approximate device upgraded its receipt to exact")
-	}
-	var closeErr *websocket.CloseError
-	if !errors.As(err, &closeErr) {
-		t.Fatalf("watermark refusal did not close the connection: %v", err)
+	// The frame is refused fail-closed. The firmware reads terminal vs.
+	// retryable only from session.error, so it must arrive before the 4002
+	// close frame (P2-04); the close frame keeps the code for diagnostics.
+	sessionError, closeErr := readSessionErrorThenClose(t, connection)
+	if sessionError.Code != "playback_watermark_precision_mismatch" || sessionError.Retryable {
+		t.Fatalf("watermark refusal session.error = %+v", sessionError)
 	}
 	if closeErr.Code != 4002 || closeErr.Text != "playback_watermark_precision_mismatch" {
 		t.Fatalf("watermark refusal close code: %d %q", closeErr.Code, closeErr.Text)

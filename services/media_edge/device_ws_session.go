@@ -23,8 +23,11 @@ const (
 	deviceConnAccepted int32 = 1
 	deviceConnClosed   int32 = 2
 
-	deviceIdleReadTimeout     = 90 * time.Second
-	deviceWriteTimeout        = 5 * time.Second
+	deviceIdleReadTimeout = 90 * time.Second
+	deviceWriteTimeout    = 5 * time.Second
+	// deviceCloseFlushTimeout bounds how long a close waits for the writer to
+	// deliver queued P0 controls (session.error / session.close).
+	deviceCloseFlushTimeout   = 250 * time.Millisecond
 	devicePingInterval        = 20 * time.Second
 	deviceDefaultControlRate  = 40.0
 	deviceDefaultControlBurst = 20.0
@@ -277,7 +280,23 @@ func (c *DeviceConnection) leaseWatchLoop() {
 	}
 }
 
+// flushControls gives the writer a bounded chance to deliver queued P0
+// controls before the socket closes. The firmware reads terminal vs.
+// retryable only from session.error, never from the close code, so a dropped
+// session.error turns a terminal refusal into an endless resume (P2-04).
+func (c *DeviceConnection) flushControls() {
+	drained := c.lane.beginClose()
+	timer := time.NewTimer(deviceCloseFlushTimeout)
+	defer timer.Stop()
+	select {
+	case <-drained:
+	case <-c.writeErr:
+	case <-timer.C:
+	}
+}
+
 func (c *DeviceConnection) closeWithCode(code int, reason string) {
+	c.flushControls()
 	_ = c.ws.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(code, reason), time.Now().Add(deviceWriteTimeout))
 }
@@ -285,6 +304,7 @@ func (c *DeviceConnection) closeWithCode(code int, reason string) {
 func (c *DeviceConnection) close() {
 	c.closeOnce.Do(func() {
 		accepted := c.state.Load() == deviceConnAccepted
+		c.flushControls()
 		c.state.Store(deviceConnClosed)
 		c.lane.close()
 		c.server.unregisterConn(c)

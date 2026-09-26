@@ -429,3 +429,65 @@ async def test_stale_agent_heartbeat_closes_production_readiness(
     assert heartbeat.status_code == 200
     assert stale.status_code == 503
     assert stale.json()["checks"]["agent"]["status"] == "stale"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("age_h", "status_code", "smokes", "warnings"),
+    [
+        (1, 200, "passed", []),
+        # One 12 h refresh missed (+1 h grace): still ready, but reported.
+        (14, 200, "overdue", ["smoke_refresh_overdue"]),
+        (25, 503, "expired", None),
+    ],
+)
+async def test_readiness_reports_an_overdue_smoke_refresh_before_it_expires(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    age_h: int,
+    status_code: int,
+    smokes: str,
+    warnings: list[str] | None,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.settings = ControlSettings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        MEMORIA_RELEASE_TAG="release-refresh-test",
+        LLM_PROVIDER="bailian_deepseek",
+        OFFLINE_MOCK=False,
+    )
+
+    async def ready_core(*_: object) -> dict[str, str]:
+        return {"control_database": "ready"}
+
+    monkeypatch.setattr(readiness_routes, "_valid_configuration", lambda _: True)
+    monkeypatch.setattr(readiness_routes, "_missing_config", lambda _: [])
+    monkeypatch.setattr(readiness_routes, "_core_checks", ready_core)
+    monkeypatch.setattr(readiness_routes, "_agent_state", lambda *_: {"status": "ready"})
+    marked_at = datetime.fromtimestamp(datetime.now(UTC).timestamp() - age_h * 3600, tz=UTC)
+    app.state.memory_store.mark_readiness(
+        release_tag="release-refresh-test",
+        llm_provider="bailian_deepseek",
+        marked_at=marked_at.isoformat().replace("+00:00", "Z"),
+    )
+
+    code, body = await _ready(app)
+
+    assert code == status_code
+    assert body["smokes"] == smokes
+    if warnings is not None:
+        assert body["status"] == "ready"
+        assert body["warnings"] == warnings
+
+
+def test_overdue_threshold_follows_the_refresh_timer() -> None:
+    timer = Path(__file__).parents[3] / "infra" / "memoria-readiness-refresh.timer"
+    interval = next(
+        line.split("=", 1)[1].strip()
+        for line in timer.read_text(encoding="utf-8").splitlines()
+        if line.startswith("OnUnitActiveSec=")
+    )
+    assert interval.endswith("h")
+    assert int(interval[:-1]) * 3600 == readiness_routes._REFRESH_INTERVAL_S

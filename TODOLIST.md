@@ -66,7 +66,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - **缺陷（已复现，非切流引入）**：`memoria-readiness-refresh.timer`（每 12h）自 2026-09-22 00:08 CST 起持续失败（systemd `status=1/FAILURE`，restart counter 3 后放弃），原因是 `/opt/memoria/current/scripts/refresh_readiness.sh` 只 `export MEMORIA_RELEASE_TAG`，而 09-21 的 agent 组件切流把 agent 的 base 换成仓库快照（`/opt/memoria/releases/20260921-defect-a-base/docker-compose.production.yml`），该 base 对 `speaker-model.build.args.MEMORIA_RELEASE_COMMIT` 用 `:?` → `docker compose config --format json` 直接报错、stdout 非 JSON → 脚本内联解析抛 `JSONDecodeError`。后果：`readiness_evidence` 中 `20260901-0945-wake-word-whitelist` 打点停在 2026-09-21T04:05Z，超过 `READINESS_GATE_TTL_S=86400` 后全栈 `/health/ready` 变 `not_ready`（core 12 项与 agent 均 ready，仅 `smokes: expired`）。
 - **已修复并部署（2026-09-22）**：脚本按 tag 同一模式从 control 容器 env 解析并导出 `MEMORIA_RELEASE_COMMIT`（空值告警不静默）；`require_live_service_image` 保留并打印 Compose 的 stderr、解析失败改为可读报错；回归 `scripts/tests/test_refresh_readiness_contract.py`。修复版部署到 `/opt/memoria/current/scripts/refresh_readiness.sh`（sha `c0152d5b…`→`89c27afc…`，备份 `…/readiness-fix/refresh_readiness.sh.pre-fix`），并以真实 systemd 单元验证 `Result=success`/`ExecMainStatus=0`、readiness 200、证据 `marked_at` 刷新（收据 `readiness-refresh.txt`、`readiness-fix-deploy.txt`、`readiness-fix-verify.txt`）。
 - 已完成：修复（main `d1f05cf`）随 2026-09-25 整栈发布带入，`/opt/memoria/current` 已指向新发布树，发布后定时单元 `Result=success`。
-- 待完成：让失败可见（timer 失败目前只有 journal，readiness 到期才发现）。
+- 已做（2026-09-26，代码，未部署）：刷新失败在证据过期前可见。`/health/ready` 在证据超过刷新间隔 12h + 1h 宽限（覆盖定时器抖动与 3 次重试）未更新时报告 `smokes: "overdue"` 与 `warnings: ["smoke_refresh_overdue"]`，状态仍为 ready（证据在 TTL 内有效）；与失败原因无关（脚本错误、Compose 渲染失败、systemd 放弃重试都会导致逾期），约 13h 可见，原先要 24h 过期才发现。间隔常量与 `infra/memoria-readiness-refresh.timer` 有一致性回归。
+- 待完成：仍无主动告警渠道，逾期只在有人或脚本读取 readiness 时可见；若要推送告警需另定渠道与授权。
 - **发布链缺口（同日实测，供 P1-01）**：`deploy_control_component.sh` 的 cutover 块要求线上链为「base commit 的仓库 compose 快照 + `component-releases/` 内 image-only YAML 覆盖」，而线上 control-api 实际链是 `20260827 树 compose + /tmp/media-runtime.override.yml + control-api.override.json` → **任何变更前就 fail-closed**；且 (a) 无「已构建候选续跑」入口（release 目录已存在即拒绝，target 镜像已存在即拒绝重建），(b) image-only 覆盖无处承载身份 env（agent 侧的 `agent-component.override.yml` 是带 env 的非 image-only 覆盖），(c) 解析后服务配置与旧链完全相同时 Compose 不重建、`config_files` 标签不更新（归一化必须显式 `--force-recreate`），(d) 新链不校验挂载/端口/其它容器（demo02 旧工具校验了）。本轮以「同镜像强制重建归一化 + 逐字执行 cutover 块」通过，见 HANDOFF 历史归档 `docs/HANDOFF-archive-0916-0923.md` 同日节。
 
 ### [ ] P1-02 让 ASR 救援 sidecar 可复现并验证真实输入
@@ -144,7 +145,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P2-04 协议故障注入与长稳观测
 
-- 待完成：WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发/资源泄漏；查清 Go 侧控制/error 帧在 read-loop 关闭 lane 后丢失的路径；重跑当前候选 Go/Trivy。
+- 已修（2026-09-26，代码，未部署）：Go 侧控制/error 帧丢失路径已查清并修复。拒绝 hello（`invalid_hello`/`device_busy`/`runtime_unavailable`）、拒绝控制帧和 Voice Core 断流三条路径都是先把 `session.error` 入队、随即写关闭帧并清空队列，复现测试 20 次中 19–20 次设备只收到关闭帧（控制帧拒绝路径甚至没有关闭帧、直接 1006）。而固件只从 `session.error` 判断终止/可重试、从不读关闭码，于是不可重试的拒绝被当成网络断开、设备继续续连。修复：关闭前在 250ms 上限内先写完队列中的 P0 控制帧（丢弃 P1–P3、拒收新帧），再写关闭帧；回归 `services/media_edge/device_ws_close_flush_test.go` 与 lane 单测。同时修复一个既有的内存安全缺陷：连接关闭销毁 Opus 编码器时，Voice Core 接收协程可能仍在编码，main 上 `go test -race -count=10` 三轮三次在 `opus_encode` 触发 SIGBUS（生产会使 media-edge 进程崩溃）；编解码器改为加锁串行化编解码与销毁，修复后 3×10 轮零崩溃，回归 `opus_close_race_test.go`。
+- 待完成：WSS 丢帧/乱序/重连、Bridge/Agent 退出、未知配置、迟到终端、profile 失效、并发/资源泄漏；重跑当前候选 Go/Trivy；设备上验证终止性拒绝不再续连。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量/注入，不顺手改断线产品行为。
 
 ### [ ] P2-05 补齐唤醒计数，再采家庭噪声矩阵
