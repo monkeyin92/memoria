@@ -2,21 +2,31 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-26 16:37–16:44（CST）整栈发布 `20260926-edge-flush-v1`（main `fa8a97d`，含 PR #49/#50），5 个角色经仓库版 `release-ops.sh` 全链 PASS，media-edge 单独切换 PASS。详见下方同日发布一节。
+- **最近生产收据**：2026-09-26 19:34–19:40（CST）整栈发布 `20260926-minor-safety-v1`（main `048a83a`，含 PR #52/#53/#54），5 个角色经仓库版 `release-ops.sh` 全链 PASS（含 identity/guardian schema 函数更新），media-edge 单独切换 PASS。详见下方同日发布一节。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260926-edge-flush-v1` | `sha256:42f8cbcad8e76aad8e9b5ed9bee6eade3e4c433d1535bf215439b60e928e3fd8`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 | `2026-09-26T08:41:21Z` | `/opt/memoria/releases/20260926-edge-flush-v1/.cutover/` | `memoria-control-api:rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
-| Agent / Bridge | `memoria-agent:20260926-edge-flush-v1` | `sha256:65fe7c30f6c3e0edf61ded34d4d4549dee49811bea0d57dec24baa4300e24ac5`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 each | `2026-09-26T08:41:42Z` | 同上 | `memoria-agent:rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
-| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260926-edge-flush-v1` | `sha256:d6588a67…` / `sha256:aa2b3cdd…` / `sha256:b0d82847…`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `20260926-edge-flush-v1` / `fa8a97d` | healthy | 0 each | `2026-09-26T08:41:04Z`–`08:42:08Z` | 同上 | 各自 `rollback-20260926-edge-flush-v1-pre`（= `20260926-persona-subject-v1`） |
-| Media Edge | `memoria-media-edge:20260926-edge-flush-v1` | `sha256:5a905f03a649c3799a2f0fc73b660d81c6dc5a76ff20bdfad1058892367f47ab`（服务器 image id） | `fa8a97d51ca799b53e09e014dd69b78b0f4e18ab` | `not set / not applicable` | healthy | 0 | `2026-09-26T08:44:11Z` | `/opt/memoria/releases/20260926-edge-flush-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-persona-subject-v1`（override `component-releases/20260926-edge-flush-v1/media-edge-rollback.override.yml`） |
+| Control API | `memoria-control-api:20260926-minor-safety-v1` | `sha256:9541a70efce02cf0c2e76de70347a8065eae755825505214732eb77aa2f2d760`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 | `2026-09-26T11:37:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/` | `memoria-control-api:rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
+| Agent / Bridge | `memoria-agent:20260926-minor-safety-v1` | `sha256:fbce8c061186d1324f9e397dd1d1963bc2d39f39e7ed3cf686e30ba7bab81037`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 each | `2026-09-26T11:37:28Z` | 同上 | `memoria-agent:rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
+| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260926-minor-safety-v1` | `sha256:90a09e57…` / `sha256:270f9415…` / `sha256:af160c6b…`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 each | `2026-09-26T11:37:07Z`–`11:37:53Z` | 同上 | 各自 `rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
+| Media Edge | `memoria-media-edge:20260926-minor-safety-v1` | `sha256:abee9b82f5e349445eeffb6b56d4bc5308edc9e9e26a1acd3a7175183698c561`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `not set / not applicable` | healthy | 0 | `2026-09-26T11:40:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-edge-flush-v1`（override `component-releases/20260926-minor-safety-v1/media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260926-edge-flush-v1` / `fa8a97d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260926-edge-flush-v1`。上一栈 `20260926-persona-subject-v1` / `63cf5f8` 为回滚目标。
+- **发布身份**：`20260926-minor-safety-v1` / `048a83a`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260926-minor-safety-v1`。上一栈 `20260926-edge-flush-v1` / `fa8a97d` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：真机窗口按 `20260926-persona-subject-v1` 一节的验收清单执行（⓪ 先重新绑定并勾选长期记忆），并加验本次 media-edge 修复：终止性拒绝后设备显示错误且不再续连；再补 TLS/WSS 重连观察与 P0-03 剩余设备矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
+- **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-26 整栈发布 20260926-minor-safety-v1
+
+- **范围**：tag `20260926-minor-safety-v1` → main `048a83a`（PR #52 故障注入测试与 TODOLIST 清理；PR #53 ASR 救援 sidecar 可重建与「我。」幻觉修复；PR #54 P0-04 八项产品决定与孩子危机提醒入队缺陷修复）。compose、env 无变更；identity 与 guardian 两个 schema 文件的函数有更新。合并后 main CI（run `36238700971`）全绿后才切流。6 个镜像本机 linux/amd64 全量构建，revision/version 标签核对无误；seeded 上传（基座 `20260926-edge-flush-v1`，实传 175 MB）双端校验 PASS；media-edge 镜像单独 scp、校验和核对后导入。发布脚本以仓库版安装（sha256 `c9239d69…`，`PREV_TAG=20260926-edge-flush-v1`），旧版备份 `release-ops.sh.pre-20260926-minor-safety-v1`。
+- **五角色**：`verify-load` PASS → `freeze` PASS → `env` PASS（env 键无变化，声纹开关断言与真实 provider smoke 通过）→ `schema` PASS（`services/identity/postgres_schema.sql`、`services/guardian/postgres_schema.sql` 就地更新并执行升级与契约校验；只读确认生产库 `identity_relationship_declared_for_binding` 已接受老人代理认定、`guardian_enqueue_declared_notification` 已去掉只认待确认声明的检查）→ `cutover` PASS（19:37:06–19:37:59，全部 healthy）→ `finish` PASS（readiness `ready` 且为新 tag，定时刷新 `Result=success`，外部 8443 就绪 200）。
+- **media-edge（单独切换）**：新链为新发布树 compose + `component-releases/20260926-minor-safety-v1/media-edge-component.override.yml`，新旧渲染配置除 build context 外一致；切换后 healthy、restarts=0。本次无 Go 代码变更，切换只为版本一致。
+- **上线后实测**：7 个容器均为新 tag、healthy、restarts=0；readiness `smokes: "passed"`、`warnings: []`；公网设备入口未带凭证 401；bridge 7001 有 1 条来自 media-edge 的已建立连接；control-api、agent、media-edge 启动 5 分钟内无 error/traceback。设备当时空闲，P0-04 的设备行为未观察到。
+- **未随整栈变更**：ASR 救援 sidecar 仍是线上原容器（未重建）；P1-02 的两项线上调整（禁用 swap、救援音频上限 12s）未执行，需另行授权。危机推送仍关闭（`MEMORIA_GUARDIAN_PUSH_ENABLED=false`），提醒只在小程序可见。
+- **回滚**（未实跑）：`TAG=20260926-minor-safety-v1 COMMIT=048a83a… release-ops.sh rollback` 把 6 个角色按 `20260926-edge-flush-v1` 整栈 compose 重建；schema 不回滚（函数只放宽了判定：旧代码调用新函数仍可工作）。media-edge 回滚改用 `media-edge-rollback.override.yml`。
+- **本地制品**：`outputs/release/20260926-minor-safety-v1/` 与 `outputs/release/20260926-minor-safety-media-edge/`（ignored，约 3 GB），验收结束后可删除。
 
 ## 2026-09-26 整栈发布 20260926-edge-flush-v1
 

@@ -150,15 +150,15 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260828-agent-loss",
         "confirm-bound-subject",
         "$OLD",
-        "20260925-full-stack-v1", "20260926-persona-subject-v1",
+        "20260925-full-stack-v1", "20260926-persona-subject-v1", "20260926-edge-flush-v1",
         "20260925-device-mascot-sync",
         "LIVE_CONTROL_RELEASE",
         "component-releases",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260926-edge-flush-v1" in script
-    assert "PREV_COMMIT=fa8a97d51ca799b53e09e014dd69b78b0f4e18ab" in script
+    assert "PREV_TAG=20260926-minor-safety-v1" in script
+    assert "PREV_COMMIT=048a83ad8e869b8a3dd0ddc43a777410919f3881" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
