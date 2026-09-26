@@ -71,6 +71,26 @@ class PersonaEvidence:
                 raise ValueError("persona ratios and quality must be between 0 and 1")
 
 
+def evidence_subject_id(account_id: str, subject_id: object) -> str:
+    """The person an evidence row speaks for: its subject, else the account holder.
+
+    Persona rows are keyed by ``(account_id, subject_id)``: a device used by a
+    child learns the child's persona, one used by an elder the elder's.  A
+    legacy row without a subject belongs to the account holder.
+    """
+
+    if isinstance(subject_id, str) and subject_id.strip():
+        return subject_id
+    return account_id
+
+
+def require_forgettable_subject(*, account_id: str, subject_id: str) -> None:
+    if not account_id.strip() or not subject_id.strip():
+        raise ValueError("forget_subject requires account_id and subject_id")
+    if subject_id == account_id:
+        raise ValueError("forget_subject cannot forget the account holder's own persona")
+
+
 @dataclass(frozen=True, slots=True)
 class ObservationResult:
     accepted: bool
@@ -121,6 +141,7 @@ class PersonaRequest:
     enabled: bool = True
     max_chars: int = 1200
     confirmed_style_only: bool = False
+    subject_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not 160 <= self.max_chars <= 4000:
@@ -129,6 +150,16 @@ class PersonaRequest:
             raise ValueError("persona topic must not exceed 1000 characters")
         if self.confirmed_style_only and self.speaker_class != "uncertain":
             raise ValueError("confirmed style access is only valid for uncertain speakers")
+        if self.subject_id is not None and (
+            not self.subject_id.strip() or len(self.subject_id) > 128
+        ):
+            raise ValueError("persona subject_id must contain 1..128 characters")
+
+    @property
+    def effective_subject_id(self) -> str:
+        """The person whose persona is read; the account holder by default."""
+
+        return self.subject_id or self.account_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,3 +223,5 @@ class PersonaEnginePort(Protocol):
     async def revoke_consent(self, *, account_id: str) -> PersonaConsent: ...
 
     async def learning_allowed(self, *, account_id: str) -> bool: ...
+
+    async def forget_subject(self, *, account_id: str, subject_id: str) -> int: ...

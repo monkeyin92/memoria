@@ -28,6 +28,8 @@ from services.persona.domain import (
     PersonaTraitCategory,
     PersonaTraitStatus,
     PersonaVersion,
+    evidence_subject_id,
+    require_forgettable_subject,
     require_persona_counterexample,
 )
 from services.persona.rules import (
@@ -43,10 +45,14 @@ from services.persona.rules import (
     trusted_uncertain_profile,
 )
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS persona_traits (
+# Persona-owned rows are keyed by (account_id, subject_id): account_id is the
+# binding/custodian account, subject_id the person whose persona it is.
+_SUBJECT_TABLE_DDL: dict[str, str] = {
+    "persona_traits": """
+CREATE TABLE IF NOT EXISTS {table} (
     trait_id TEXT PRIMARY KEY,
     account_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
     category TEXT NOT NULL,
     normalized_key TEXT NOT NULL,
     description TEXT NOT NULL,
@@ -59,9 +65,75 @@ CREATE TABLE IF NOT EXISTS persona_traits (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     review_event_id TEXT,
-    UNIQUE (account_id, category, normalized_key)
+    UNIQUE (account_id, subject_id, category, normalized_key)
 );
+""",
+    "speech_style_stats": """
+CREATE TABLE IF NOT EXISTS {table} (
+    account_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    scene TEXT NOT NULL,
+    utterance_count INTEGER NOT NULL DEFAULT 0,
+    char_count INTEGER NOT NULL DEFAULT 0,
+    speech_duration_ms INTEGER NOT NULL DEFAULT 0,
+    pause_ratio_sum REAL NOT NULL DEFAULT 0,
+    pause_sample_count INTEGER NOT NULL DEFAULT 0,
+    tic_counts_json TEXT NOT NULL DEFAULT '{{}}',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (account_id, subject_id, scene)
+);
+""",
+    "persona_versions": """
+CREATE TABLE IF NOT EXISTS {table} (
+    version_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL CHECK (version_number > 0),
+    status TEXT NOT NULL CHECK (status IN ('active', 'superseded')),
+    reason TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    parent_version_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (account_id, subject_id, version_number)
+);
+""",
+}
 
+_SUBJECT_COLUMNS: dict[str, tuple[str, ...]] = {
+    table: tuple(
+        match.group(1)
+        for match in re.finditer(r"^    ([a-z_]+) [A-Z]", ddl, flags=re.MULTILINE)
+    )
+    for table, ddl in _SUBJECT_TABLE_DDL.items()
+}
+
+
+def _default_subject_trigger(table: str) -> str:
+    """Rows written without a subject belong to the account holder.
+
+    Legacy writers, restores and fixtures still insert without ``subject_id``.
+    A SQLite trigger cannot rewrite NEW, so it re-inserts the row with
+    ``subject_id = account_id`` and drops the original.
+    """
+
+    columns = _SUBJECT_COLUMNS[table]
+    values = ", ".join(
+        "NEW.account_id" if column == "subject_id" else f"NEW.{column}" for column in columns
+    )
+    return f"""
+CREATE TRIGGER IF NOT EXISTS {table}_default_subject
+BEFORE INSERT ON {table}
+WHEN NEW.subject_id IS NULL
+BEGIN
+    INSERT INTO {table} ({", ".join(columns)}) VALUES ({values});
+    SELECT RAISE(IGNORE);
+END;
+"""
+
+
+_SCHEMA = (
+    _SUBJECT_TABLE_DDL["persona_traits"].format(table="persona_traits")
+    + """
 CREATE TABLE IF NOT EXISTS persona_evidence (
     trait_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -80,20 +152,9 @@ CREATE TABLE IF NOT EXISTS persona_observation_receipts (
     observed_at TEXT NOT NULL,
     FOREIGN KEY (source_event_id) REFERENCES evidence_events(event_id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS speech_style_stats (
-    account_id TEXT NOT NULL,
-    scene TEXT NOT NULL,
-    utterance_count INTEGER NOT NULL DEFAULT 0,
-    char_count INTEGER NOT NULL DEFAULT 0,
-    speech_duration_ms INTEGER NOT NULL DEFAULT 0,
-    pause_ratio_sum REAL NOT NULL DEFAULT 0,
-    pause_sample_count INTEGER NOT NULL DEFAULT 0,
-    tic_counts_json TEXT NOT NULL DEFAULT '{}',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (account_id, scene)
-);
-
+"""
+    + _SUBJECT_TABLE_DDL["speech_style_stats"].format(table="speech_style_stats")
+    + """
 CREATE TABLE IF NOT EXISTS persona_learning_consents (
     account_id TEXT PRIMARY KEY,
     policy_version TEXT NOT NULL,
@@ -102,22 +163,70 @@ CREATE TABLE IF NOT EXISTS persona_learning_consents (
     grant_event_id TEXT NOT NULL,
     revoke_event_id TEXT
 );
-
-CREATE TABLE IF NOT EXISTS persona_versions (
-    version_id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    version_number INTEGER NOT NULL CHECK (version_number > 0),
-    status TEXT NOT NULL CHECK (status IN ('active', 'superseded')),
-    reason TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    parent_version_id TEXT,
-    created_at TEXT NOT NULL,
-    UNIQUE (account_id, version_number)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_one_active_version
-ON persona_versions(account_id) WHERE status = 'active';
 """
+    + _SUBJECT_TABLE_DDL["persona_versions"].format(table="persona_versions")
+    # Created after any legacy rebuild (initialize migrates first), so these
+    # may name subject_id.
+    + """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_one_active_subject_version
+ON persona_versions(account_id, subject_id) WHERE status = 'active';
+"""
+    + "".join(_default_subject_trigger(table) for table in _SUBJECT_TABLE_DDL)
+)
+
+
+def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_subject_tables(connection: sqlite3.Connection) -> None:
+    """Rebuild pre-subject Persona tables in place, keeping every row and id.
+
+    Existing rows are the account holder's own persona, so they get
+    ``subject_id = account_id``.  Foreign keys are switched off for the rebuild
+    (``persona_evidence`` references ``persona_traits``; dropping the old table
+    with enforcement on would cascade-delete the evidence) and checked before
+    commit.  Only tables that lack ``subject_id`` are touched, so a second run
+    is a no-op.  ``connection`` must be in autocommit mode.
+    """
+
+    if all(
+        not (columns := _table_columns(connection, table)) or "subject_id" in columns
+        for table in _SUBJECT_TABLE_DDL
+    ):
+        return
+    connection.execute("PRAGMA foreign_keys=OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for table, ddl in _SUBJECT_TABLE_DDL.items():
+                columns = _table_columns(connection, table)
+                if not columns or "subject_id" in columns:
+                    continue
+                rebuilt = f"{table}__subject_rebuild"
+                copied = ", ".join(
+                    column for column in _SUBJECT_COLUMNS[table] if column in columns
+                )
+                connection.execute(f"DROP TABLE IF EXISTS {rebuilt}")
+                connection.execute(ddl.format(table=rebuilt))
+                connection.execute(
+                    f"INSERT INTO {rebuilt} (subject_id, {copied}) "
+                    f"SELECT account_id, {copied} FROM {table}"
+                )
+                connection.execute(f"DROP TABLE {table}")
+                connection.execute(f"ALTER TABLE {rebuilt} RENAME TO {table}")
+            violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"persona subject migration broke {len(violations)} foreign keys"
+                )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+
 
 _CONTAMINATION = frozenset(
     {"assistant", "synthetic_audio", "guest", "echo", "overlap", "low_quality", "replay"}
@@ -127,6 +236,23 @@ _CONTAMINATION = frozenset(
 def _stable_id(kind: str, *values: object) -> str:
     key = ":".join(str(value) for value in values)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:{kind}:{key}"))
+
+
+def persona_trait_key(
+    account_id: str,
+    subject_id: str,
+    category: str,
+    normalized_key: str,
+) -> tuple[str, tuple[str, ...]]:
+    """The stable-id inputs of one trait.
+
+    The account holder keeps the pre-subject formula so existing trait ids do
+    not move; any other subject gets its own namespace under the account.
+    """
+
+    if subject_id == account_id:
+        return "persona-trait", (account_id, category, normalized_key)
+    return "persona-subject-trait", (account_id, subject_id, category, normalized_key)
 
 
 def _capsule_topic_tokens(topic: str) -> tuple[str, ...]:
@@ -260,11 +386,15 @@ class PersonaEngine:
             if self._initialized:
                 return
             LifeArchive.sqlite(self._path).initialize()
-            with sqlite3.connect(self._path, timeout=5) as connection:
+            connection = sqlite3.connect(self._path, timeout=5, isolation_level=None)
+            try:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA foreign_keys=ON")
                 connection.execute("PRAGMA busy_timeout=5000")
+                _migrate_subject_tables(connection)
                 connection.executescript(_SCHEMA)
+            finally:
+                connection.close()
             self._initialized = True
 
     def _connect(self) -> sqlite3.Connection:
@@ -344,6 +474,7 @@ class PersonaEngine:
                 return ObservationResult(False, "speaker_not_owner")
             if row["event_type"] != "speech.utterance_finalized":
                 return ObservationResult(False, "unsupported_evidence_type")
+            subject_id = evidence_subject_id(evidence.account_id, row["subject_id"])
 
             payload = json.loads(str(row["payload_json"]))
             text = str(payload.get("text") or "").strip()
@@ -394,7 +525,12 @@ class PersonaEngine:
         candidates = await self._extractor.extract(text, extraction_evidence)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if not self._learning_allowed(connection, evidence.account_id):
+            # The account holder's own consent is re-checked under the write
+            # lock; another subject's consent was decided by the caller and is
+            # carried in ``evidence.learning_allowed``.
+            if subject_id == evidence.account_id and not self._learning_allowed(
+                connection, evidence.account_id
+            ):
                 return ObservationResult(False, "learning_not_authorized")
             duplicate = self._duplicate_observation(connection, evidence)
             if duplicate is not None:
@@ -404,14 +540,17 @@ class PersonaEngine:
             version_changed = False
             if speaker_class == "owner" and prompt_weight_for(payload)[0] == "strong":
                 tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
-                self._update_style_stats(connection, evidence, text, tic_counts, now)
+                self._update_style_stats(
+                    connection, evidence, text, tic_counts, now, subject_id=subject_id
+                )
             for candidate in candidates:
-                trait_id = _stable_id(
-                    "persona-trait",
+                kind, key = persona_trait_key(
                     evidence.account_id,
+                    subject_id,
                     candidate.category,
                     candidate.normalized_key,
                 )
+                trait_id = _stable_id(kind, *key)
                 current = connection.execute(
                     """
                     SELECT status, EXISTS (
@@ -424,9 +563,9 @@ class PersonaEngine:
                           AND ee.speaker_class = 'owner'
                     ) AS has_owner_evidence
                     FROM persona_traits
-                    WHERE trait_id = ? AND account_id = ?
+                    WHERE trait_id = ? AND account_id = ? AND subject_id = ?
                     """,
-                    (trait_id, evidence.account_id),
+                    (trait_id, evidence.account_id, subject_id),
                 ).fetchone()
                 if current is not None and str(current["status"]) == "disabled":
                     continue
@@ -442,14 +581,15 @@ class PersonaEngine:
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO persona_traits (
-                        trait_id, account_id, category, normalized_key,
+                        trait_id, account_id, subject_id, category, normalized_key,
                         description, context, counterexample, confidence,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.55, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.55, ?, ?)
                     """,
                     (
                         trait_id,
                         evidence.account_id,
+                        subject_id,
                         candidate.category,
                         candidate.normalized_key,
                         candidate.description,
@@ -598,6 +738,7 @@ class PersonaEngine:
                             self._reconcile_exclusive_category(
                                 connection,
                                 account_id=evidence.account_id,
+                                subject_id=subject_id,
                                 category=candidate.category,
                                 now=now,
                                 uncertain_profile_id=(
@@ -620,6 +761,7 @@ class PersonaEngine:
                 self._publish_version(
                     connection,
                     evidence.account_id,
+                    subject_id=subject_id,
                     reason="automatic_style_learning_v1",
                 ).version_id
                 if version_changed
@@ -640,7 +782,9 @@ class PersonaEngine:
         category: PersonaTraitCategory,
         now: str,
         uncertain_profile_id: str | None = None,
+        subject_id: str | None = None,
     ) -> bool:
+        subject = subject_id or account_id
         rows = connection.execute(
             """
             SELECT
@@ -653,11 +797,11 @@ class PersonaEngine:
             LEFT JOIN evidence_events AS ee
               ON ee.event_id = pe.source_event_id
              AND ee.account_id = pe.account_id
-            WHERE pt.account_id = ? AND pt.category = ?
+            WHERE pt.account_id = ? AND pt.subject_id = ? AND pt.category = ?
               AND pt.status <> 'disabled'
             ORDER BY pt.trait_id, pe.occurred_at, pe.source_event_id
             """,
-            (account_id, category),
+            (account_id, subject, category),
         ).fetchall()
         observations = tuple(
             ExclusiveBucketObservation(
@@ -698,9 +842,10 @@ class PersonaEngine:
                 """
                 UPDATE persona_traits
                 SET status = ?, updated_at = ?
-                WHERE trait_id = ? AND account_id = ? AND status <> 'disabled'
+                WHERE trait_id = ? AND account_id = ? AND subject_id = ?
+                  AND status <> 'disabled'
                 """,
-                (desired, now, trait_id, account_id),
+                (desired, now, trait_id, account_id, subject),
             )
             changed = True
         return changed
@@ -712,13 +857,15 @@ class PersonaEngine:
         text: str,
         tic_counts: dict[str, int],
         now: str,
+        *,
+        subject_id: str,
     ) -> None:
         row = connection.execute(
             """
             SELECT * FROM speech_style_stats
-            WHERE account_id = ? AND scene = ?
+            WHERE account_id = ? AND subject_id = ? AND scene = ?
             """,
-            (evidence.account_id, evidence.scene),
+            (evidence.account_id, subject_id, evidence.scene),
         ).fetchone()
         existing_tics = json.loads(str(row["tic_counts_json"])) if row is not None else {}
         for tic, count in tic_counts.items():
@@ -733,11 +880,11 @@ class PersonaEngine:
         connection.execute(
             """
             INSERT INTO speech_style_stats (
-                account_id, scene, utterance_count, char_count,
+                account_id, subject_id, scene, utterance_count, char_count,
                 speech_duration_ms, pause_ratio_sum, pause_sample_count,
                 tic_counts_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(account_id, scene) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, subject_id, scene) DO UPDATE SET
                 utterance_count = utterance_count + excluded.utterance_count,
                 char_count = char_count + excluded.char_count,
                 speech_duration_ms = speech_duration_ms + excluded.speech_duration_ms,
@@ -748,6 +895,7 @@ class PersonaEngine:
             """,
             (
                 evidence.account_id,
+                subject_id,
                 evidence.scene,
                 *values,
                 json.dumps(existing_tics, ensure_ascii=False, sort_keys=True),
@@ -760,7 +908,7 @@ class PersonaEngine:
             row = connection.execute(
                 """
                 SELECT * FROM persona_traits
-                WHERE trait_id = ? AND account_id = ?
+                WHERE trait_id = ? AND account_id = ? AND subject_id = account_id
                 """,
                 (command.trait_id, command.account_id),
             ).fetchone()
@@ -812,7 +960,8 @@ class PersonaEngine:
                     """
                     UPDATE persona_traits
                     SET status = 'candidate', updated_at = ?
-                    WHERE account_id = ? AND category = ? AND trait_id <> ?
+                    WHERE account_id = ? AND subject_id = account_id
+                      AND category = ? AND trait_id <> ?
                       AND status = 'confirmed'
                     """,
                     (now, command.account_id, row["category"], command.trait_id),
@@ -822,7 +971,7 @@ class PersonaEngine:
                 UPDATE persona_traits
                 SET description = ?, counterexample = ?, status = ?,
                     review_event_id = ?, updated_at = ?
-                WHERE trait_id = ? AND account_id = ?
+                WHERE trait_id = ? AND account_id = ? AND subject_id = account_id
                 """,
                 (
                     description,
@@ -837,6 +986,7 @@ class PersonaEngine:
             version = self._publish_version(
                 connection,
                 command.account_id,
+                subject_id=command.account_id,
                 reason=f"trait_{command.action}",
             )
             updated = connection.execute(
@@ -855,14 +1005,15 @@ class PersonaEngine:
         connection: sqlite3.Connection,
         account_id: str,
         *,
+        subject_id: str,
         reason: str,
     ) -> PersonaVersion:
         rows = connection.execute(
             """
             SELECT * FROM persona_traits
-            WHERE account_id = ? AND status = 'confirmed'
+            WHERE account_id = ? AND subject_id = ? AND status = 'confirmed'
             """,
-            (account_id,),
+            (account_id, subject_id),
         ).fetchall()
         ordered = sorted(
             rows, key=lambda row: (CATEGORY_ORDER[str(row["category"])], row["trait_id"])
@@ -908,32 +1059,39 @@ class PersonaEngine:
         active = connection.execute(
             """
             SELECT version_id FROM persona_versions
-            WHERE account_id = ? AND status = 'active'
+            WHERE account_id = ? AND subject_id = ? AND status = 'active'
             """,
-            (account_id,),
+            (account_id, subject_id),
         ).fetchone()
         version_number = int(
             connection.execute(
-                "SELECT COALESCE(MAX(version_number), 0) + 1 FROM persona_versions WHERE account_id = ?",
-                (account_id,),
+                """
+                SELECT COALESCE(MAX(version_number), 0) + 1 FROM persona_versions
+                WHERE account_id = ? AND subject_id = ?
+                """,
+                (account_id, subject_id),
             ).fetchone()[0]
         )
         version_id = str(uuid.uuid4())
         now = datetime.now(UTC)
         connection.execute(
-            "UPDATE persona_versions SET status = 'superseded' WHERE account_id = ? AND status = 'active'",
-            (account_id,),
+            """
+            UPDATE persona_versions SET status = 'superseded'
+            WHERE account_id = ? AND subject_id = ? AND status = 'active'
+            """,
+            (account_id, subject_id),
         )
         connection.execute(
             """
             INSERT INTO persona_versions (
-                version_id, account_id, version_number, status, reason,
+                version_id, account_id, subject_id, version_number, status, reason,
                 snapshot_json, parent_version_id, created_at
-            ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
             """,
             (
                 version_id,
                 account_id,
+                subject_id,
                 version_number,
                 reason,
                 json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
@@ -957,7 +1115,7 @@ class PersonaEngine:
             row = connection.execute(
                 """
                 SELECT * FROM persona_versions
-                WHERE version_id = ? AND account_id = ?
+                WHERE version_id = ? AND account_id = ? AND subject_id = account_id
                 """,
                 (version_id, account_id),
             ).fetchone()
@@ -966,7 +1124,10 @@ class PersonaEngine:
             snapshot = json.loads(str(row["snapshot_json"]))
             snapshot_ids = {str(item["trait_id"]) for item in snapshot}
             connection.execute(
-                "UPDATE persona_traits SET status = 'disabled' WHERE account_id = ?",
+                """
+                UPDATE persona_traits SET status = 'disabled'
+                WHERE account_id = ? AND subject_id = account_id
+                """,
                 (account_id,),
             )
             for item in snapshot:
@@ -975,7 +1136,7 @@ class PersonaEngine:
                     UPDATE persona_traits
                     SET description = ?, context = ?, counterexample = ?,
                         confidence = ?, status = 'confirmed', updated_at = ?
-                    WHERE trait_id = ? AND account_id = ?
+                    WHERE trait_id = ? AND account_id = ? AND subject_id = account_id
                     """,
                     (
                         item["description"],
@@ -988,7 +1149,10 @@ class PersonaEngine:
                     ),
                 )
             connection.execute(
-                "UPDATE persona_versions SET status = 'superseded' WHERE account_id = ? AND status = 'active'",
+                """
+                UPDATE persona_versions SET status = 'superseded'
+                WHERE account_id = ? AND subject_id = account_id AND status = 'active'
+                """,
                 (account_id,),
             )
             connection.execute(
@@ -1008,19 +1172,32 @@ class PersonaEngine:
         confirmed_style_only = request.speaker_class == "uncertain" and request.confirmed_style_only
         if not request.enabled or (request.speaker_class != "owner" and not confirmed_style_only):
             return PersonaCapsule()
+        subject_id = request.effective_subject_id
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT persona_versions.*
-                FROM persona_versions
-                JOIN persona_learning_consents USING (account_id)
-                WHERE persona_versions.account_id = ?
-                  AND persona_versions.status = 'active'
-                  AND persona_learning_consents.revoked_at IS NULL
-                """,
-                (request.account_id,),
-            ).fetchone()
+            if subject_id == request.account_id:
+                row = connection.execute(
+                    """
+                    SELECT persona_versions.*
+                    FROM persona_versions
+                    JOIN persona_learning_consents USING (account_id)
+                    WHERE persona_versions.account_id = ?
+                      AND persona_versions.subject_id = persona_versions.account_id
+                      AND persona_versions.status = 'active'
+                      AND persona_learning_consents.revoked_at IS NULL
+                    """,
+                    (request.account_id,),
+                ).fetchone()
+            else:
+                # Another subject has no persona_learning_consents row: the
+                # caller gates it by the binding's long-term-memory consent.
+                row = connection.execute(
+                    """
+                    SELECT * FROM persona_versions
+                    WHERE account_id = ? AND subject_id = ? AND status = 'active'
+                    """,
+                    (request.account_id, subject_id),
+                ).fetchone()
         if row is None:
             return PersonaCapsule()
         snapshot = json.loads(str(row["snapshot_json"]))
@@ -1040,7 +1217,7 @@ class PersonaEngine:
             rows = connection.execute(
                 """
                 SELECT * FROM persona_traits
-                WHERE account_id = ?
+                WHERE account_id = ? AND subject_id = account_id
                 ORDER BY status = 'candidate' DESC, updated_at DESC, trait_id
                 """,
                 (account_id,),
@@ -1054,7 +1231,8 @@ class PersonaEngine:
             rows = connection.execute(
                 """
                 SELECT * FROM persona_versions
-                WHERE account_id = ? ORDER BY version_number DESC
+                WHERE account_id = ? AND subject_id = account_id
+                ORDER BY version_number DESC
                 """,
                 (account_id,),
             ).fetchall()
@@ -1188,6 +1366,34 @@ class PersonaEngine:
                 (account_id,),
             ).fetchone()
         return row is not None
+
+    async def forget_subject(self, *, account_id: str, subject_id: str) -> int:
+        """Delete one non-holder subject's persona under the account; idempotent.
+
+        Observation receipts stay: the archive events they point at are not
+        this engine's to delete, and a kept receipt stops a forgotten subject
+        from being relearned from the same events.
+        """
+
+        require_forgettable_subject(account_id=account_id, subject_id=subject_id)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            deleted = connection.execute(
+                """
+                DELETE FROM persona_evidence
+                WHERE trait_id IN (
+                    SELECT trait_id FROM persona_traits
+                    WHERE account_id = ? AND subject_id = ?
+                )
+                """,
+                (account_id, subject_id),
+            ).rowcount
+            for table in ("persona_traits", "speech_style_stats", "persona_versions"):
+                deleted += connection.execute(
+                    f"DELETE FROM {table} WHERE account_id = ? AND subject_id = ?",
+                    (account_id, subject_id),
+                ).rowcount
+        return deleted
 
     @staticmethod
     def _trait_from_row(

@@ -25,9 +25,11 @@ from services.persona.domain import (
     PersonaTraitCategory,
     PersonaTraitStatus,
     PersonaVersion,
+    evidence_subject_id,
+    require_forgettable_subject,
     require_persona_counterexample,
 )
-from services.persona.engine import persona_capsule_from_snapshot
+from services.persona.engine import persona_capsule_from_snapshot, persona_trait_key
 from services.persona.rules import (
     CATEGORY_ORDER,
     EXCLUSIVE_STYLE_CATEGORIES,
@@ -165,6 +167,7 @@ class PostgresPersonaEngine:
                 return ObservationResult(False, "speaker_not_owner")
             if row["event_type"] != "speech.utterance_finalized":
                 return ObservationResult(False, "unsupported_evidence_type")
+            subject_id = evidence_subject_id(evidence.account_id, row.get("subject_id"))
             payload = row["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
@@ -218,7 +221,12 @@ class PostgresPersonaEngine:
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, evidence.account_id)
             await self._lock_account(connection, evidence.account_id)
-            if not await self._learning_allowed(connection, evidence.account_id):
+            # The account holder's own consent is re-checked under the account
+            # lock; another subject's consent was decided by the caller and is
+            # carried in ``evidence.learning_allowed``.
+            if subject_id == evidence.account_id and not await self._learning_allowed(
+                connection, evidence.account_id
+            ):
                 return ObservationResult(False, "learning_not_authorized")
             duplicate = await self._duplicate_observation(connection, evidence)
             if duplicate is not None:
@@ -227,14 +235,17 @@ class PostgresPersonaEngine:
             version_changed = False
             if speaker_class == "owner" and prompt_weight == "strong":
                 tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
-                await self._update_style_stats(connection, evidence, text, tic_counts)
+                await self._update_style_stats(
+                    connection, evidence, text, tic_counts, subject_id=subject_id
+                )
             for candidate in candidates:
-                trait_uuid = _stable_uuid(
-                    "persona-trait",
+                kind, key = persona_trait_key(
                     evidence.account_id,
+                    subject_id,
                     candidate.category,
                     candidate.normalized_key,
                 )
+                trait_uuid = _stable_uuid(kind, *key)
                 current = await connection.fetchrow(
                     """
                     SELECT status, EXISTS (
@@ -247,10 +258,11 @@ class PostgresPersonaEngine:
                           AND ae.speaker_class = 'owner'
                     ) AS has_owner_evidence
                     FROM persona_traits
-                    WHERE trait_id = $1 AND account_id = $2
+                    WHERE trait_id = $1 AND account_id = $2 AND subject_id = $3
                     """,
                     trait_uuid,
                     evidence.account_id,
+                    subject_id,
                 )
                 if current is not None and str(current["status"]) == "disabled":
                     continue
@@ -267,9 +279,9 @@ class PostgresPersonaEngine:
                     """
                     INSERT INTO persona_traits (
                         trait_id, account_id, category, normalized_key,
-                        description, context, counterexample, confidence
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0.55)
-                    ON CONFLICT (account_id, category, normalized_key) DO NOTHING
+                        description, context, counterexample, confidence, subject_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0.55, $8)
+                    ON CONFLICT (account_id, subject_id, category, normalized_key) DO NOTHING
                     """,
                     trait_uuid,
                     evidence.account_id,
@@ -278,6 +290,7 @@ class PostgresPersonaEngine:
                     candidate.description,
                     candidate.context,
                     candidate.counterexample,
+                    subject_id,
                 )
                 inserted = await connection.fetchval(
                     """
@@ -389,6 +402,7 @@ class PostgresPersonaEngine:
                             await self._reconcile_exclusive_category(
                                 connection,
                                 account_id=evidence.account_id,
+                                subject_id=subject_id,
                                 category=candidate.category,
                                 uncertain_profile_id=(
                                     uncertain_provenance[0]
@@ -411,6 +425,7 @@ class PostgresPersonaEngine:
                 await self._publish_version(
                     connection,
                     evidence.account_id,
+                    subject_id=subject_id,
                     reason="automatic_style_learning_v1",
                 )
                 if version_changed
@@ -430,7 +445,9 @@ class PostgresPersonaEngine:
         account_id: str,
         category: PersonaTraitCategory,
         uncertain_profile_id: str | None = None,
+        subject_id: str | None = None,
     ) -> bool:
+        subject = subject_id or account_id
         rows = await connection.fetch(
             """
             SELECT
@@ -443,12 +460,13 @@ class PostgresPersonaEngine:
             LEFT JOIN archive_evidence_events AS ae
               ON ae.event_id = pe.source_event_id
              AND ae.account_id = pe.account_id
-            WHERE pt.account_id = $1 AND pt.category = $2
+            WHERE pt.account_id = $1 AND pt.category = $2 AND pt.subject_id = $3
               AND pt.status <> 'disabled'
             ORDER BY pt.trait_id, pe.occurred_at, pe.source_event_id
             """,
             account_id,
             category,
+            subject,
         )
         observations: list[ExclusiveBucketObservation] = []
         for row in rows:
@@ -491,11 +509,13 @@ class PostgresPersonaEngine:
                 """
                 UPDATE persona_traits
                 SET status = $1, updated_at = now()
-                WHERE trait_id = $2 AND account_id = $3 AND status <> 'disabled'
+                WHERE trait_id = $2 AND account_id = $3 AND subject_id = $4
+                  AND status <> 'disabled'
                 """,
                 desired,
                 uuid.UUID(trait_id),
                 account_id,
+                subject,
             )
             changed = True
         return changed
@@ -506,14 +526,17 @@ class PostgresPersonaEngine:
         evidence: PersonaEvidence,
         text: str,
         tic_counts: dict[str, int],
+        *,
+        subject_id: str,
     ) -> None:
         current = await connection.fetchval(
             """
             SELECT tic_counts FROM speech_style_stats
-            WHERE account_id = $1 AND scene = $2
+            WHERE account_id = $1 AND scene = $2 AND subject_id = $3
             """,
             evidence.account_id,
             evidence.scene,
+            subject_id,
         )
         if isinstance(current, str):
             current = json.loads(current)
@@ -525,9 +548,9 @@ class PostgresPersonaEngine:
             INSERT INTO speech_style_stats (
                 account_id, scene, utterance_count, char_count,
                 speech_duration_ms, pause_ratio_sum, pause_sample_count,
-                tic_counts, updated_at
-            ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7::jsonb, now())
-            ON CONFLICT(account_id, scene) DO UPDATE SET
+                tic_counts, updated_at, subject_id
+            ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7::jsonb, now(), $8)
+            ON CONFLICT(account_id, subject_id, scene) DO UPDATE SET
                 utterance_count = speech_style_stats.utterance_count + 1,
                 char_count = speech_style_stats.char_count + excluded.char_count,
                 speech_duration_ms = speech_style_stats.speech_duration_ms
@@ -546,6 +569,7 @@ class PostgresPersonaEngine:
             evidence.pause_ratio or 0.0,
             1 if evidence.pause_ratio is not None else 0,
             json.dumps(merged, ensure_ascii=False, separators=(",", ":")),
+            subject_id,
         )
 
     async def review(self, command: PersonaReview) -> PersonaTrait:
@@ -560,7 +584,7 @@ class PostgresPersonaEngine:
             row = await connection.fetchrow(
                 """
                 SELECT * FROM persona_traits
-                WHERE trait_id = $1 AND account_id = $2
+                WHERE trait_id = $1 AND account_id = $2 AND subject_id = account_id
                 FOR UPDATE
                 """,
                 trait_id,
@@ -613,7 +637,8 @@ class PostgresPersonaEngine:
                     """
                     UPDATE persona_traits
                     SET status = 'candidate', updated_at = now()
-                    WHERE account_id = $1 AND category = $2 AND trait_id <> $3
+                    WHERE account_id = $1 AND subject_id = account_id
+                      AND category = $2 AND trait_id <> $3
                       AND status = 'confirmed'
                     """,
                     command.account_id,
@@ -625,7 +650,7 @@ class PostgresPersonaEngine:
                 UPDATE persona_traits
                 SET description = $1, counterexample = $2, status = $3,
                     review_event_id = $4, updated_at = now()
-                WHERE trait_id = $5 AND account_id = $6
+                WHERE trait_id = $5 AND account_id = $6 AND subject_id = account_id
                 """,
                 description,
                 counterexample,
@@ -637,6 +662,7 @@ class PostgresPersonaEngine:
             version = await self._publish_version(
                 connection,
                 command.account_id,
+                subject_id=command.account_id,
                 reason=f"trait_{command.action}",
             )
             updated = await connection.fetchrow(
@@ -655,14 +681,16 @@ class PostgresPersonaEngine:
         connection: asyncpg.Connection,
         account_id: str,
         *,
+        subject_id: str,
         reason: str,
     ) -> PersonaVersion:
         rows = await connection.fetch(
             """
             SELECT * FROM persona_traits
-            WHERE account_id = $1 AND status = 'confirmed'
+            WHERE account_id = $1 AND subject_id = $2 AND status = 'confirmed'
             """,
             account_id,
+            subject_id,
         )
         ordered = sorted(
             rows,
@@ -709,17 +737,19 @@ class PostgresPersonaEngine:
         active = await connection.fetchrow(
             """
             SELECT version_id FROM persona_versions
-            WHERE account_id = $1 AND status = 'active'
+            WHERE account_id = $1 AND subject_id = $2 AND status = 'active'
             """,
             account_id,
+            subject_id,
         )
         version_number = int(
             await connection.fetchval(
                 """
                 SELECT COALESCE(MAX(version_number), 0) + 1
-                FROM persona_versions WHERE account_id = $1
+                FROM persona_versions WHERE account_id = $1 AND subject_id = $2
                 """,
                 account_id,
+                subject_id,
             )
         )
         version_id = uuid.uuid4()
@@ -727,16 +757,17 @@ class PostgresPersonaEngine:
         await connection.execute(
             """
             UPDATE persona_versions SET status = 'superseded'
-            WHERE account_id = $1 AND status = 'active'
+            WHERE account_id = $1 AND subject_id = $2 AND status = 'active'
             """,
             account_id,
+            subject_id,
         )
         await connection.execute(
             """
             INSERT INTO persona_versions (
                 version_id, account_id, version_number, status, reason,
-                snapshot, parent_version_id, created_at
-            ) VALUES ($1, $2, $3, 'active', $4, $5::jsonb, $6, $7)
+                snapshot, parent_version_id, created_at, subject_id
+            ) VALUES ($1, $2, $3, 'active', $4, $5::jsonb, $6, $7, $8)
             """,
             version_id,
             account_id,
@@ -745,6 +776,7 @@ class PostgresPersonaEngine:
             json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
             active["version_id"] if active is not None else None,
             created_at,
+            subject_id,
         )
         return PersonaVersion(
             version_id=str(version_id),
@@ -769,7 +801,7 @@ class PostgresPersonaEngine:
             row = await connection.fetchrow(
                 """
                 SELECT * FROM persona_versions
-                WHERE version_id = $1 AND account_id = $2
+                WHERE version_id = $1 AND account_id = $2 AND subject_id = account_id
                 FOR UPDATE
                 """,
                 version_uuid,
@@ -781,7 +813,10 @@ class PostgresPersonaEngine:
             if isinstance(snapshot, str):
                 snapshot = json.loads(snapshot)
             await connection.execute(
-                "UPDATE persona_traits SET status = 'disabled' WHERE account_id = $1",
+                """
+                UPDATE persona_traits SET status = 'disabled'
+                WHERE account_id = $1 AND subject_id = account_id
+                """,
                 account_id,
             )
             for item in snapshot:
@@ -790,7 +825,7 @@ class PostgresPersonaEngine:
                     UPDATE persona_traits
                     SET description = $1, context = $2, counterexample = $3,
                         confidence = $4, status = 'confirmed', updated_at = now()
-                    WHERE trait_id = $5 AND account_id = $6
+                    WHERE trait_id = $5 AND account_id = $6 AND subject_id = account_id
                     """,
                     item["description"],
                     item["context"],
@@ -802,7 +837,7 @@ class PostgresPersonaEngine:
             await connection.execute(
                 """
                 UPDATE persona_versions SET status = 'superseded'
-                WHERE account_id = $1 AND status = 'active'
+                WHERE account_id = $1 AND subject_id = account_id AND status = 'active'
                 """,
                 account_id,
             )
@@ -826,21 +861,35 @@ class PostgresPersonaEngine:
         confirmed_style_only = request.speaker_class == "uncertain" and request.confirmed_style_only
         if not request.enabled or (request.speaker_class != "owner" and not confirmed_style_only):
             return PersonaCapsule()
+        subject_id = request.effective_subject_id
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
             await self._lock_account(connection, request.account_id)
-            row = await connection.fetchrow(
-                """
-                SELECT persona_versions.*
-                FROM persona_versions
-                JOIN persona_learning_consents USING (account_id)
-                WHERE persona_versions.account_id = $1
-                  AND persona_versions.status = 'active'
-                  AND persona_learning_consents.revoked_at IS NULL
-                """,
-                request.account_id,
-            )
+            if subject_id == request.account_id:
+                row = await connection.fetchrow(
+                    """
+                    SELECT persona_versions.*
+                    FROM persona_versions
+                    JOIN persona_learning_consents USING (account_id)
+                    WHERE persona_versions.account_id = $1
+                      AND persona_versions.subject_id = persona_versions.account_id
+                      AND persona_versions.status = 'active'
+                      AND persona_learning_consents.revoked_at IS NULL
+                    """,
+                    request.account_id,
+                )
+            else:
+                # Another subject has no persona_learning_consents row: the
+                # caller gates it by the binding's long-term-memory consent.
+                row = await connection.fetchrow(
+                    """
+                    SELECT * FROM persona_versions
+                    WHERE account_id = $1 AND subject_id = $2 AND status = 'active'
+                    """,
+                    request.account_id,
+                    subject_id,
+                )
         if row is None:
             return PersonaCapsule()
         snapshot = row["snapshot"]
@@ -864,7 +913,7 @@ class PostgresPersonaEngine:
             rows = await connection.fetch(
                 """
                 SELECT * FROM persona_traits
-                WHERE account_id = $1
+                WHERE account_id = $1 AND subject_id = account_id
                 ORDER BY (status = 'candidate') DESC, updated_at DESC, trait_id
                 """,
                 account_id,
@@ -880,7 +929,8 @@ class PostgresPersonaEngine:
             rows = await connection.fetch(
                 """
                 SELECT * FROM persona_versions
-                WHERE account_id = $1 ORDER BY version_number DESC
+                WHERE account_id = $1 AND subject_id = account_id
+                ORDER BY version_number DESC
                 """,
                 account_id,
             )
@@ -1028,6 +1078,36 @@ class PostgresPersonaEngine:
                 account_id,
             )
         return value is not None
+
+    async def forget_subject(self, *, account_id: str, subject_id: str) -> int:
+        """Delete one non-holder subject's persona under the account; idempotent.
+
+        Observation receipts stay: the archive events they point at are not
+        this engine's to delete, and a kept receipt stops a forgotten subject
+        from being relearned from the same events.
+        """
+
+        require_forgettable_subject(account_id=account_id, subject_id=subject_id)
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            await self._lock_account(connection, account_id)
+            deleted = 0
+            for statement in (
+                """
+                DELETE FROM persona_evidence
+                WHERE trait_id IN (
+                    SELECT trait_id FROM persona_traits
+                    WHERE account_id = $1 AND subject_id = $2
+                )
+                """,
+                "DELETE FROM persona_traits WHERE account_id = $1 AND subject_id = $2",
+                "DELETE FROM speech_style_stats WHERE account_id = $1 AND subject_id = $2",
+                "DELETE FROM persona_versions WHERE account_id = $1 AND subject_id = $2",
+            ):
+                status = await connection.execute(statement, account_id, subject_id)
+                deleted += int(str(status).rsplit(" ", 1)[-1])
+        return deleted
 
     @staticmethod
     async def _trait_from_row(
