@@ -1,12 +1,12 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-26｜线上为整栈发布 `20260926-edge-flush-v1`（main `fa8a97d`，含 PR #47–#50；media-edge 同版本单独切换），上一栈 `20260926-persona-subject-v1` 为回滚目标。本次上线按使用人删除补缺与恢复后重放、提示词身份规则统一、人格查看接口、单一装配根与 archive 库共享连接池、media-edge 关闭前送达 `session.error` 与 Opus 编解码器加锁、readiness 刷新逾期提示；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-26｜线上为整栈发布 `20260926-minor-safety-v1`（main `048a83a`，含 PR #52–#54；media-edge 同版本单独切换），上一栈 `20260926-edge-flush-v1` 为回滚目标。本次上线 P0-04 八项产品决定（未成年人只学表达风格、时长与夜间时段强制、年龄段显示与修改、年龄不明允许辅导、孩子与老人危机提醒、话术加 12356）、孩子危机提醒入队缺陷修复与 ASR 救援「我。」幻觉修复；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260926-edge-flush-v1  # main fa8a97d；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-edge-flush-v1-pre，media-edge 回 20260926-persona-subject-v1
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走仓库版 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 `20260926-edge-flush-v1` 全链 PASS；仓库版常量已指向本次链）
+enabled_release: 20260926-minor-safety-v1  # main 048a83a；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-minor-safety-v1-pre，media-edge 回 20260926-edge-flush-v1
+control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走仓库版 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 `20260926-minor-safety-v1` 全链 PASS；仓库版常量已指向本次链）
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -31,8 +31,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P0-04 当前使用人的监护授权与学生安全闭环
 
 - 产品决定（用户 2026-09-26）：未成年人不分档；只学表达风格；时长与夜间时段运行时强制（危机除外）；年龄以家长申报为准并可在设备页修改；年龄不明也允许学习辅导（不留存）；删「每周小结」勾选项；孩子与老人的危机提醒都推送（家长/代为同意的子女）；话术加 12356 并待专业审核。详见 `docs/compliance/p0-04-minor-safety-decisions.md`。
-- 已实现（2026-09-26，代码，未部署；各项边界见决策文档「实现状态」）：D2 未成年人只学表达风格；D3 家长设定的单次时长与夜间时段签入授权并由设备会话强制（危机除外）；D4 设备页显示并修改年龄段、改后重签授权；D5 年龄不明允许不留存的学习辅导；D6 删除「每周小结」勾选项；D7 孩子与老人的危机提醒都入队、设备页为老人绑定人显示提醒；D8 话术加 12356。同时修复一个既有缺陷：`guardian_enqueue_declared_notification` 只接受待确认声明，而 2026-09-25 起绑定写入的是已认定关系，孩子的危机提醒入队在 PostgreSQL 必然失败且被静默吞掉（线上尚无孩子绑定，未影响真实用户）。
-- 待完成：部署（含 identity/guardian schema 函数更新，发布时 `schema` 步骤应用）；微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（需授权）；会话记忆按使用人迁入 `services/memory_scope`；两条策略入口软件矩阵；安全专项设备链验收；话术专业审核。
+- 已实现（2026-09-26，已随 `20260926-minor-safety-v1` 上线，设备未验；各项边界见决策文档「实现状态」）：D2 未成年人只学表达风格；D3 家长设定的单次时长与夜间时段签入授权并由设备会话强制（危机除外）；D4 设备页显示并修改年龄段、改后重签授权；D5 年龄不明允许不留存的学习辅导；D6 删除「每周小结」勾选项；D7 孩子与老人的危机提醒都入队、设备页为老人绑定人显示提醒；D8 话术加 12356。同时修复一个既有缺陷：`guardian_enqueue_declared_notification` 只接受待确认声明，而 2026-09-25 起绑定写入的是已认定关系，孩子的危机提醒入队在 PostgreSQL 必然失败且被静默吞掉（线上尚无孩子绑定，未影响真实用户）。
+- 待完成：微信订阅消息模板开通与 `MEMORIA_GUARDIAN_PUSH_ENABLED`（需授权）；会话记忆按使用人迁入 `services/memory_scope`；两条策略入口软件矩阵；安全专项设备链验收；话术专业审核。
 - 待完成：建后年龄资料与 `app_confirm` UI、guardian consent 决策接口、会话记忆按 subject 键迁入 `services/memory_scope`，以及安全专项设备链（身份/年龄→有效同意→准入或受限能力→固定话术真实交付→outbox 绑定/幂等/家长读回）。发送 worker/外部投递暂缓。
 - 软件门：两条策略入口覆盖 under_14/14_17/adult/unknown_safe、权威 unavailable/过期、profile-session 错绑、同意撤销/过期/无权限、管理账号更换与切人并发；不能决定时 fail closed，且不得读取其他主体私密记忆。
 - 完成条件：软件矩阵与真实设备链一致，分别记录 `code/wired/enabled/verified`；`student_safety_loop_verified=false` 保持到安全专项设备链通过。入口：`routes/{identity_lifecycle,multi_subject,interaction,guardian}.py`、`services/{identity,session_runtime,guardian}/`。
@@ -72,7 +72,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 ### [ ] P1-02 ASR 救援 sidecar：两项线上调整待授权（可重建与验证已完成）
 
 - 已完成（2026-09-26，代码与文档，见 `docs/runbooks/sensevoice-asr.md`）：`infra/sensevoice-asr/` 入库 Dockerfile（基础镜像按 digest 锁定，与线上逐层一致）、哈希锁定的 17 个依赖（即线上 `pip freeze`）与模型校验值；重建镜像的依赖、Python 版本、脚本与线上一致，4 段合成中文语音在本地 amd64/arm64 与线上实例上转写逐字相同。`scripts/evaluate_sensevoice_rescue.py` 用 12 段真机录音切出的 69 句评测：无外文输出，降 20 dB/8 倍削波后相似度 0.971/0.984，4 路并发与串行一致。空结果分类（`vendor_error`/`vendor_silent`/`gating`/`low_rms`）已由 `funasr_empty_accounting.py` 提供。
-- 已修（代码，未部署）：模型对静音和任意噪声都返回「我。」，原先 `min_text_chars=2` 按原始长度计数让它成为一轮用户输入；现只计文字字符（`SenseVoiceRescueConfig.accepts_text`），回归覆盖。
+- 已修（随 `20260926-minor-safety-v1` 上线）：模型对静音和任意噪声都返回「我。」，原先 `min_text_chars=2` 按原始长度计数让它成为一轮用户输入；现只计文字字符（`SenseVoiceRescueConfig.accepts_text`），回归覆盖。
 - 待授权（线上问题，建议见手册）：① 空闲约 7h 后首请求解码 12.7s（模型匿名内存被换到主机 swap，VmSwap 约 450MB），空闲后的首次救援必超 2.5s 预算，建议 `--memory 1536m --memory-swap 1536m` 重建容器禁用 swap；② 27–30s 语段解码 2.5–2.8s 必超时，建议 agent `SENSEVOICE_MAX_AUDIO_S=12`。
 - 约束：主链是云服务商 FunASR，救援后端单独核验；不把本地 FunASR PyPI、仓内 sherpa-onnx 或云模型版本混为一体，也不顺手改 NumPy/设备 VAD。
 - 完成条件：两项线上调整执行后，用合成语音在线上复测首请求与长语段时延均在 2.5s 内；「我。」修复随 agent 发布上线。
