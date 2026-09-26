@@ -175,6 +175,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已完成（PR #42）：删除无消费者代码约 3.09 万行；行数预算覆盖全部超 1,500 行模块；跨包依赖图冻结。
 - 待完成，按收益排序：① 账号/会话/设备从生产 SQLite（`/data/memoria.sqlite3`）迁到 PostgreSQL，再逐域删除 SQLite 孪生存储（约 4 万行），API 测试改走真实 PG；② 单一装配根替代 `main.py` 的双重装配，存储改为共享连接池；③ 版本化迁移替代 `initialize()` 内建表；④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry；⑤ 逐步消除 `common`→`agent`/`archive`、`governance`/`memory_scope`→`control_api` 等反向依赖。
+- 进度（2026-09-26，② 第一步，代码，未部署）：`create_app()` 与 lifespan 改走同一个装配函数 `_wire_services`，按存储只在一处选择 PostgreSQL/SQLite；启动中打开的资源统一登记，关闭时按创建倒序全部执行（首个失败在最后抛出，启动失败也会关闭已打开资源）；三种场景下 `app.state` 快照前后一致，`main.py` 1643 → 1536 行。仍未做：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端）、约 11 个 PG 存储各自建池（下一步在装配函数里按 DSN 共享连接池）。
 - 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 
