@@ -11,12 +11,21 @@
 | Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260925-full-stack-v1` | `sha256:a684de19…` / `sha256:b99584b4…` / `sha256:1e950444…`（本地 image id） | `064ed611c266be12b18097380a01b5efec4e9b7d` | `20260925-full-stack-v1` / `064ed611c266be12b18097380a01b5efec4e9b7d` | healthy | 0 each | `2026-09-25T11:30:27Z`–`11:31:27Z` | `/opt/memoria/releases/20260925-full-stack-v1/.cutover/` | 各自 `rollback-20260925-full-stack-v1-pre` tag |
 | Media Edge | `memoria-media-edge:20260920-f1f2-owner-silence-and-barge` | `sha256:dfa7aafb07e2710cdcaec8b35b5092ffa5c2dfa6c30a62b485bd5994855b3d4a` | `d61d486e9b79c9a77016f71e242ccc84b3aede4b` | `not set / not applicable` | healthy | 0 | `2026-09-20T12:38:48.127671963Z` | `/opt/memoria/component-releases/20260920-f1f2-owner-silence-and-barge/MEDIA_EDGE_CUTOVER_RESULT.txt` | `memoria-media-edge:20260908-1600-vocat-interrupt-assist-edge-component` |
 
-- **候选可见性状态**：`code=候选 visibility 契约已完成（代码提交 f7c4c2a0f2ec2ec7a9d72fef8c03f85fad8ddf6b）`；`wired=只核验生产 Qwen key 非空、qwen-flash、OFFLINE_MOCK=false`；`enabled=false`；`verified=SQLite/HTTP/主体隔离/评测适配器/archive/control-api 回归；真实 PG candidate 行为未验`。
-- **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，不能作为当前候选代码已部署或已完整验证的证明。
+- **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
+- **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
 - **发布身份**：已收敛为 `20260925-full-stack-v1` / `064ed61`（control-api env、compose 插值、Agent 心跳一致）；`/opt/memoria/current` → `releases/20260925-full-stack-v1`。旧冻结值 `20260901-0945-wake-word-whitelist` / `7ca3d4ec` 只用于回滚链。
-- **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界已通过；工具查询最终回答未完成，TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：先补齐工具查询最终交付与 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
+- **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
+- **下一步必须动作**：先补 TLS/WSS 重连观察，再继续 P0-03 剩余设备矩阵（>45s/B/D 长答、部分下发失败、待机/表情及点屏/摇晃/短拍/BOOT 回归）；`direct_real_device_verified=false`、`full_duplex_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-26 减法整理（PR #42，仅仓库，未部署）
+
+- **范围**：main `00bb4b2`（PR #42 squash），净删约 3.09 万行，线上链路行为不变。删除无消费者的多主体 Go/TS/固件生成契约、Go 侧 WebRTC/WHIP 终端与 Go-shadow 会话 actor、Python 侧 shadow 协商与观察流、agent 中只被自身测试引用的 4 个模块；`packages/proto` 未改。删除前只读核对线上：media-edge `MEDIA_EDGE_INTERACTION_AUTHORITY=python_authoritative`、`MEDIA_EDGE_WEBRTC_ENABLED=false`，bridge `MEDIA_BRIDGE_GO_SHADOW_ENABLED=false`。
+- **护栏**：行数预算覆盖全部 35 个超过 1,500 行的源模块（只降不升）；`tests/test_service_layering.py` 冻结 `services/` 跨包依赖图。
+- **下次 media-edge 发布须知**：新镜像在 `MEDIA_EDGE_WEBRTC_ENABLED=true`、`go_shadow`/`go_authoritative` 或生产未开设备 WSS 时拒绝启动；仓库 compose 已固定 `MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"`，发布后可把 `/tmp/media-runtime.override.yml` 移出 compose 链。`split_production_env.py` 接受但不再分发已退役的 shadow/WebRTC 变量，现有 env 文件无需改动。
+- **固件**：补丁 `0025-playback-underrun-metering` 改为 `0026`、吉祥物补丁改为 `0027`，应用顺序不变；overlay 哈希变化，下次构建需重新 bootstrap upstream 缓存。
+- **文档**：09-16 至 09-23 的过时章节原样迁入 `docs/HANDOFF-archive-0916-0923.md`。
+- **验证**：本地 ruff、strict mypy、行数预算、完整 pytest（无失败）、Go vet/test/race、proto 可复现、媒体冒烟/回放、离线 E2E、小程序与固件主机测试通过；远端 CI 9 项全绿（python 首跑因 buf 下载断连失败，重跑通过）。未部署，未做设备验收。
 
 ## 2026-09-25 control-api 发布 20260925-device-mascot-sync（设备屏伙伴同步）
 
