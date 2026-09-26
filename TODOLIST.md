@@ -6,7 +6,7 @@
 
 ```yaml
 enabled_release: 20260926-persona-subject-v1  # main 63cf5f8；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-persona-subject-v1-pre，media-edge 回 20260920-f1f2-owner-silence-and-barge
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 全链 PASS），下次整栈前常量需改为本次链，见 P1-12
+control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走 `scripts/release_ops.sh`（服务器 `/root/memoria-release/release-ops.sh` 为 2026-09-26 全链 PASS 版本；仓库版已改为以本次链为回滚目标，下次整栈时安装，见 P1-12）
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -120,7 +120,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-12 发布工具缺陷、media-edge 下次发布与旧媒体链去留（2026-09-26）
 
-- 整栈发布脚本两处缺陷已修并上线使用（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。已安装到服务器并完成 `20260926-persona-subject-v1` 全链发布。待完成：下次整栈前把常量改为本次链（`PREV_TAG=20260926-persona-subject-v1`），且 control-api 已无组件 override，冻结与回滚里组件链写法需调整。
+- 整栈发布脚本两处缺陷已修并上线使用（2026-09-26）：脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`）。`finish`/`rollback` 的状态列表与 `wait_healthy` 对无 healthcheck 容器输出 `no-healthcheck`，不再中断，`finish` 遇 unhealthy/starting 失败关闭；`env` 在候选 agent 与 bridge 内断言 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 为关闭值。新模板已在线上对 12 个容器只读验证。线上链常量已于 2026-09-26 按只读核对结果更新（`PREV_TAG`/`PREV_COMMIT`/`LIVE_CONTROL_RELEASE`/`DATA_TREE`），冻结步骤校验全部 6 个目标容器的链与 `current` 指向，回滚前新增人格版本守卫；发布清单见 HANDOFF「下次整栈发布检查清单」。已安装到服务器并完成 `20260926-persona-subject-v1` 全链发布。仓库版本已跟上当前线上链（2026-09-26，未安装到服务器）：只读核对 6 个目标容器均只用 `20260926-persona-subject-v1` 的整栈 compose、PostgreSQL 仍挂载 `20260827` 树、服务器脚本与仓库发布版一致（`8f0de20…`）；常量改为 `PREV_TAG=20260926-persona-subject-v1`/`63cf5f8`，冻结与回滚对 6 个角色统一按整栈 compose 校验和重建，删去 control-api 组件链、`/tmp/media-runtime.override.yml` 备份与人格回滚守卫（回滚目标已按使用人建索引，且其后无 schema 变更）。待完成：下次整栈发布时安装仓库版本（生产变更，另获授权）。
 - media-edge 已随 `20260926-persona-subject-v1` 单独切换（2026-09-26）：新链不含易失的 `/tmp/media-runtime.override.yml`，启动收紧生效；设备重连待真机验收确认。
 - 旧媒体链去留（需用户决定）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - persona 死链路已删（2026-09-26）：agent 侧 `MEMORIA_PERSONA_{ENABLED,CAPSULE_URL,READ_TOKEN,TIMEOUT_S,CACHE_TTL_S}` 配置与校验、控制面 `/v1/persona/session-capsule` 端点及 `persona_read` 内部 token（生产要求的能力 token 由十个降为九个）、env 模板与升级生成脚本中的对应项；`split_production_env.py` 接受但不分发这些已退役变量，现有 env 文件无需改动。人格学习测试改为经 `persona_engine.capsule` 读取（与现役 response-plan 同一路径）。
