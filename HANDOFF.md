@@ -19,6 +19,13 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-27 配网体验与孩子绑定修复（PR #67）
+
+- **绑定冲突根因**：「给孩子使用」时 Identity 要求紧急联系人与孩子之间有 `emergency_contact_for` 关系，而声明的监护人本人（账号所有者）没有这条关系 → `ModeConstraintError` → 小程序显示「设备绑定状态发生冲突」。修复在 `services/identity/binding_roles.py`：所有者监护人且 `guardian_of` 已源确认时，可兼任孩子的紧急联系人。**线上未生效**：Identity 不在单组件发布范围内，需要一次整栈发布（`release_ops.sh` 的 PREV 改为 `20260927-unbind-release-v1` / `00a94cb`）。
+- **小程序**：扫机器人码进入时先提示微信登录（`scan_device` 原因文案），登录后自动回到配网；人格选择改为左右滑动的重叠卡片（吉祥物、性格、音色、试听），试听音频为生产豆包 TTS 预先渲染、打包在 `assets/voices/`（5 个 mp3，共 156 KB），不走实时媒体；绑定冲突、领取冲突或过期时提示「轻点机器人屏幕换一张新二维码」，并给出重新扫码按钮。体验版 `0.2.20260927.4` 已上传（**需在公众平台设为体验版**）。
+- **固件 build 8**：二维码标题改为「欢迎使用 Memoria」，说明文字改为「微信扫一扫 开始配网」，不再在绑定前显示伙伴名；patch `0030` 让字体资源在二维码显示前加载，避免文字残缺几秒；在二维码界面轻点屏幕会换一张新码（3 秒防抖）。开发板已 USB 刷入；build 8（sha256 `046492ee…`）已签名发布为 `current.json`。
+- **开发板状态**：服务端还留着一个卡住的领取（`binding_committing`）。重新扫码会新建会话，不影响。
+
 ## 2026-09-27 微信扫一扫直达配网页（PR #66）
 
 - **问题**：体验版 `0.2.20260926` 早于 #57，严格契约拒收 introspect 的 `purpose`（「包含未声明字段 purpose」）→ 体验版 `0.2.20260927` 已上传。微信「扫一扫」只显示裸载荷 → 固件构建 4 把二维码改为 `https://aigcnice.com/memoria-bind/?b=<载荷>`，小程序拆包，体验版 `0.2.20260927.1` 已上传（**需在公众平台设为体验版**）。
