@@ -19,6 +19,12 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-27 重扫已上云机器人的二维码不再卡在「连接云端」（PR #68）
+
+- **现象**：机器人已连上 Wi‑Fi，小程序却显示「还没连上 Memoria 云端」。线上 nginx 日志与 `device_onboarding_events`：22:49 会话 `onb_5270…` 1 秒内通过在线证明并 `claim_reserved`；22:54、22:56 重扫同一张码，introspect 正确返回该会话，但小程序一律重走 BLE 与 Wi‑Fi，机器人 `POST …/challenge` 每 4 秒 422（`issue_challenge` 只接受 `ble_connecting`…`device_online`），90 秒后超时。Wi‑Fi 与到 `aigcnice.com:8443` 的 TLS 正常。
+- **修复**（main `d6eec9c`）：introspect 返回已上线的 onboarding 会话时直接接续：`device_online` 预留领取，之后的状态取回已有领取（与 `resume` 共用）。`node --test` 305/305，main CI 全绿。体验版 `0.2.20260927.5`（CI 机器人 1，编译预检 190 个文件，包 1.58 MB）已上传（**需在公众平台设为体验版**）；手机上未验证。
+- **机器人侧**：配网随机码每次进入配网重新生成，重启或轻点屏幕即换新码，新码不受影响。
+
 ## 2026-09-27 配网体验与孩子绑定修复（PR #67）
 
 - **绑定冲突根因**：「给孩子使用」时 Identity 要求紧急联系人与孩子之间有 `emergency_contact_for` 关系，而声明的监护人本人（账号所有者）没有这条关系 → `ModeConstraintError` → 小程序显示「设备绑定状态发生冲突」。修复在 `services/identity/binding_roles.py`：所有者监护人且 `guardian_of` 已源确认时，可兼任孩子的紧急联系人。**线上未生效**：Identity 不在单组件发布范围内，需要一次整栈发布（`release_ops.sh` 的 PREV 改为 `20260927-unbind-release-v1` / `00a94cb`）。
