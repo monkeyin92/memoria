@@ -350,7 +350,10 @@ esp_err_t MemoriaBootstrap::StartBle() {
     config.nu_lookup_count = sizeof(endpoints) / sizeof(endpoints[0]);
     config.nu_lookup = endpoints;
     config.ble_notify = 0;
-    config.keep_ble_on = 1;
+    // Tear the NimBLE stack down on Stop(): kept running it holds the
+    // internal RAM the audio engine and the display-profile task need once
+    // the board is activated. Start() brings it up again when needed.
+    config.keep_ble_on = 0;
     esp_err_t result = protocomm_ble_start(protocomm_, &config);
     if (result != ESP_OK) {
         return result;
