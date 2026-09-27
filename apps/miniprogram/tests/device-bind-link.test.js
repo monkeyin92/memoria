@@ -41,13 +41,38 @@ test("the board's WeChat bind link carries the signed payload unchanged", () => 
   assert.equal(parseDeviceQr(RAW).raw_payload, RAW);
 });
 
+test("every form a scanner hands back for the bind link is unwrapped", () => {
+  const forms = [
+    LINK,
+    `  ${LINK}\n`,
+    encodeURIComponent(LINK),
+    `pages/device-onboarding/index?q=${encodeURIComponent(LINK)}`,
+    `/pages/device-onboarding/index?scancode_time=1727430000&q=${encodeURIComponent(LINK)}`,
+    LINK.replace("https://", "http://"),
+    LINK.replace("aigcnice.com/", "www.aigcnice.com/"),
+    LINK.replace("memoria-bind/?", "memoria-bind?"),
+    `${LINK}&scancode_time=1727430000`,
+  ];
+  for (const form of forms) assert.equal(parseDeviceQr(form).raw_payload, RAW, form);
+});
+
+test("a foreign code is named in the error without its query", () => {
+  assert.throws(
+    () => parseDeviceQr("https://example.com/some/page?token=secret"),
+    (error) =>
+      error.code === "QR_INVALID" &&
+      error.message.includes("https://example.com/some/page") &&
+      !error.message.includes("secret"),
+  );
+});
+
 test("a malformed bind link is refused before anything is sent", () => {
   for (const bad of [
     `${BIND_LINK_PREFIX}`,
     `${BIND_LINK_PREFIX}?x=${RAW}`,
-    `${BIND_LINK_PREFIX}?b=${RAW}&extra=1`,
     `${BIND_LINK_PREFIX}?b=%E0%A4%A`,
     `${BIND_LINK_PREFIX}?b=not-a-memoria-payload`,
+    `${BIND_LINK_PREFIX}?b=${RAW}&b=${RAW}`,
   ]) {
     assert.throws(() => parseDeviceQr(bad), (error) => error.code === "QR_INVALID", bad);
   }
@@ -107,5 +132,49 @@ test("opening the onboarding page from WeChat's scanner starts with the scanned 
   delete require.cache[pagePath];
   if (previousAuth) require.cache[authPath] = previousAuth;
   else delete require.cache[authPath];
+  delete global.Page;
+});
+
+test("the in-app scanner falls back to the page path WeChat returns", async () => {
+  const authPath = require.resolve("../utils/auth-gate");
+  const previousAuth = require.cache[authPath];
+  require.cache[authPath] = { id: authPath, filename: authPath, loaded: true, exports: { requireLogin: async () => true } };
+  let definition;
+  global.Page = (value) => {
+    definition = value;
+  };
+  const pagePath = require.resolve("../pages/device-onboarding/index");
+  delete require.cache[pagePath];
+  require(pagePath);
+  const page = {
+    ...definition,
+    data: JSON.parse(JSON.stringify(definition.data)),
+    setData(patch) {
+      Object.assign(this.data, patch);
+    },
+  };
+  page.onLoad({});
+  const scanned = [];
+  page._controller.introspectQr = async (value) => {
+    scanned.push(value);
+  };
+  const previousWx = global.wx;
+  global.wx = {
+    scanCode: ({ success, complete }) => {
+      success({
+        result: "unrecognised text",
+        path: `pages/device-onboarding/index?q=${encodeURIComponent(LINK)}`,
+      });
+      complete?.();
+    },
+  };
+  page.scanQr();
+  assert.deepEqual(scanned, [`pages/device-onboarding/index?q=${encodeURIComponent(LINK)}`]);
+  page._controller.dispose();
+  delete require.cache[pagePath];
+  if (previousAuth) require.cache[authPath] = previousAuth;
+  else delete require.cache[authPath];
+  if (previousWx === undefined) delete global.wx;
+  else global.wx = previousWx;
   delete global.Page;
 });

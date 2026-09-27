@@ -3,6 +3,7 @@ const { OnboardingController } = require("../../utils/device-onboarding/onboardi
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { isActivationReady } = require("../../utils/device-onboarding/contracts");
 const { getConnectedWifi } = require("../../utils/device-onboarding/wifi-model");
+const { isMemoriaDeviceQr } = require("../../utils/device-onboarding/qr-code");
 
 const NETWORK_LABELS = Object.freeze({
   credentials_received: "已安全发送网络信息",
@@ -179,10 +180,13 @@ Page({
     wx.scanCode({
       onlyFromCamera: false,
       success: (result) => {
-        // Do not trim, store, or log this value. The controller passes the
-        // scanner's raw payload to POST /v1/device-bootstrap/introspect.
-        const rawPayload = typeof result?.result === "string" ? result.result : "";
-        this._controller.introspectQr(rawPayload);
+        // Do not store or log these values. The controller unwraps a bind
+        // link and passes only the device payload to introspect. A code tied
+        // to this Mini Program may come back as its page path in `path`.
+        const scanned = [result?.result, result?.path].filter(
+          (value) => typeof value === "string" && value,
+        );
+        this._controller.introspectQr(scanned.find(isMemoriaDeviceQr) || scanned[0] || "");
       },
       fail: (error) => {
         if (!this._unloaded) {
