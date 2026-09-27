@@ -58,7 +58,22 @@ test("production package contains no realtime voice surface at all", () => {
   matches(files, /wss:\/\//, "媒体 Gateway WSS 地址");
   matches(files, /MiniProgramMediaSession/, "小程序媒体会话");
   matches(files, /MINIPROGRAM_MEDIA_GATEWAY_URL/, "媒体网关环境变量");
-  matches(files, /createWebAudioContext|createInnerAudioContext|InnerAudioContext/, "实时 TTS 播放");
+  // The one audio surface is the bind page's persona preview: a short clip
+  // bundled with the package, never a stream or a remote/TTS source.
+  const PREVIEW_PAGE = path.join(root, "pages", "bind", "index.js");
+  matches(
+    files.filter((file) => file !== PREVIEW_PAGE),
+    /createWebAudioContext|createInnerAudioContext|InnerAudioContext/,
+    "实时 TTS 播放",
+  );
+  const preview = fs.readFileSync(PREVIEW_PAGE, "utf8");
+  assert.doesNotMatch(preview, /createWebAudioContext/);
+  assert.match(preview, /previewSrc: `\/assets\/voices\/\$\{companion\.voiceId\}\.mp3`/);
+  assert.match(preview, /audio\.src = persona\.previewSrc;/);
+  assert.equal((preview.match(/\.src = /g) || []).length, 1, "试听只能播放包内音频");
+  for (const companion of require("../utils/companions").companions) {
+    assert.ok(fs.existsSync(path.join(root, "assets", "voices", `${companion.voiceId}.mp3`)), companion.voiceId);
+  }
   matches(files, /require\(["'][^"']*(media-gateway|media-protocol|pcm-player|transcript-events)["']\)/, "媒体工具依赖");
   matches(files, /bindtap="(startVoice|startText|stopVoice|retryVoice|sendText)"/, "实时会话入口");
 });

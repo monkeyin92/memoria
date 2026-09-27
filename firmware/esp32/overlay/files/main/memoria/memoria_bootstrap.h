@@ -26,6 +26,8 @@ public:
 
     esp_err_t Start(LcdDisplay* display);
     void Stop();
+    // Shows a fresh QR (new nonce and PoP) in place of the current one.
+    esp_err_t Refresh(LcdDisplay* display);
     bool active() const { return active_; }
     const std::string& qr_payload() const { return qr_payload_; }
 

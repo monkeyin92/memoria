@@ -35,15 +35,6 @@ constexpr CompanionName kCompanions[] = {
     {"axu", "阿序"},       {"xuanmo", "玄墨"},
 };
 
-const char* CompanionDisplayName(const std::string& id) {
-    for (const auto& companion : kCompanions) {
-        if (id == companion.id) {
-            return companion.name;
-        }
-    }
-    return kCompanions[0].name;
-}
-
 void* PsramAlloc(std::size_t bytes) {
     void* ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return ptr != nullptr ? ptr : heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
@@ -362,8 +353,8 @@ void MemoriaMascotDisplay::StyleQrCard() {
     if (qr_title_ == nullptr) {
         qr_title_ = lv_label_create(qr_overlay_);
     }
-    std::string title = std::string("你好，我是") + CompanionDisplayName(companion_id_);
-    lv_label_set_text(qr_title_, title.c_str());
+    // No companion has been picked yet when the board asks to be set up.
+    lv_label_set_text(qr_title_, "欢迎使用 Memoria");
     lv_obj_set_style_text_color(qr_title_, Color(ink), 0);
     lv_obj_align(qr_title_, LV_ALIGN_TOP_MID, 0, 30);
     if (qr_caption_ != nullptr) {

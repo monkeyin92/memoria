@@ -138,10 +138,28 @@
         <text class="form-note">每位成员拥有独立主体档案；私人记忆、家庭共享记忆与待确认共同记忆分区管理，家庭管理员不能读取成员私人记忆。成员邀请与确认由服务端完成。</text>
       </block>
 
-      <text class="field-label">陪伴人格</text>
-      <picker range="{{personaOptions}}" range-key="name" value="{{personaIndex}}" bindchange="onPersonaChange">
-        <view class="picker-row"><text class="picker-label">选择人格</text><text class="picker-value">{{personaOptions[personaIndex].name}}</text></view>
-      </picker>
+      <text class="field-label">陪伴伙伴</text>
+      <text class="form-note persona-hint">左右滑动认识每一位伙伴，点「试听」听听 TA 的声音</text>
+      <swiper class="persona-swiper" current="{{personaIndex}}" previous-margin="96rpx" next-margin="96rpx" bindchange="onPersonaSwipe">
+        <swiper-item wx:for="{{personaOptions}}" wx:key="id" class="persona-slide">
+          <view class="persona-card {{index === personaIndex ? 'persona-card-current' : ''}}" data-role="{{item.id}}" data-index="{{index}}" bindtap="onPersonaTap">
+            <view wx:if="{{index === personaIndex}}" class="pill pill-teal persona-picked">已选择</view>
+            <view class="persona-face">
+              <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{index === personaIndex}}"></face-badge>
+            </view>
+            <text class="persona-name">{{item.name}}</text>
+            <text class="persona-tagline">{{item.tagline}}</text>
+            <text class="persona-desc">{{item.description}}</text>
+            <view class="persona-voice">
+              <text class="persona-voice-name">声音 · {{item.voiceName}}（{{item.tone}}）</text>
+              <button class="persona-play {{previewingId === item.id ? 'persona-play-on' : ''}}" data-index="{{index}}" catchtap="togglePreview">{{previewingId === item.id ? '停止' : '▶ 试听'}}</button>
+            </view>
+          </view>
+        </swiper-item>
+      </swiper>
+      <view class="persona-dots">
+        <view wx:for="{{personaOptions}}" wx:key="id" class="persona-dot {{index === personaIndex ? 'persona-dot-on' : ''}}"></view>
+      </view>
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToMode">上一步</button>
@@ -179,6 +197,7 @@
         <button class="primary-button" loading="{{submitting}}" bindtap="submitBinding">提交绑定</button>
       </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
+      <button wx:if="{{needsRescan}}" class="secondary-button bind-rescan" bindtap="rescanDevice">轻点机器人屏幕换码后，重新扫码</button>
     </view>
   </block>
 

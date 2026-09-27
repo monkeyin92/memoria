@@ -224,3 +224,132 @@
 .done-card .form-note {
   text-align: left;
 }
+
+/* 陪伴伙伴：左右滑动的卡片，两侧露出并压暗，当前卡片放大 */
+.persona-hint {
+  margin-top: 0;
+}
+
+.persona-swiper {
+  height: 720rpx;
+  margin: 8rpx -32rpx 0;
+}
+
+.persona-slide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.persona-card {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 680rpx;
+  margin: 0 -18rpx;
+  padding: 36rpx 32rpx 28rpx;
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, var(--role-soft) 0%, rgba(255, 255, 255, 0.92) 62%);
+  border: 1rpx solid rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow-sm);
+  transform: scale(0.86);
+  opacity: 0.62;
+  transition: transform var(--dur-base) ease, opacity var(--dur-base) ease, box-shadow var(--dur-base) ease;
+}
+
+.persona-card-current {
+  z-index: 2;
+  transform: scale(1);
+  opacity: 1;
+  border-color: var(--role-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.persona-picked {
+  position: absolute;
+  top: 24rpx;
+  right: 24rpx;
+}
+
+.persona-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 280rpx;
+}
+
+.persona-name {
+  margin-top: 12rpx;
+  color: var(--role-ink);
+  font-size: 44rpx;
+  font-weight: 700;
+}
+
+.persona-tagline {
+  margin-top: 6rpx;
+  color: var(--role-ink);
+  font-size: 27rpx;
+}
+
+.persona-desc {
+  margin-top: 14rpx;
+  color: var(--text-secondary);
+  font-size: 25rpx;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.persona-voice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 18rpx;
+  border-top: 1rpx solid var(--border-default);
+}
+
+.persona-voice-name {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 24rpx;
+}
+
+.persona-play {
+  margin: 0;
+  padding: 0 28rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  border-radius: 999rpx;
+  background: var(--role-primary);
+  color: #ffffff;
+  font-size: 25rpx;
+}
+
+.persona-play-on {
+  background: var(--role-ink);
+}
+
+.persona-dots {
+  display: flex;
+  justify-content: center;
+  gap: 12rpx;
+  margin: 8rpx 0 24rpx;
+}
+
+.persona-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: rgba(30, 45, 70, 0.18);
+  transition: width var(--dur-base) ease;
+}
+
+.persona-dot-on {
+  width: 32rpx;
+  border-radius: 999rpx;
+  background: var(--brand-deep);
+}

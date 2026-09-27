@@ -1,0 +1,18 @@
+diff --git a/main/application.cc b/main/application.cc
+index 4344b41..ddf06b3 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -69,6 +69,13 @@ void Application::Initialize() {
+     display->SetupUI();
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+     display->ShowNotification("Memoria", 1500);
++    // The QR screen needs the assets' common-charset font: the built-in basic
++    // font lacks glyphs such as 微/绑/是, which only appeared seconds later
++    // once activation applied the assets. ActivationTask applies them again
++    // before the audio engine loads its models.
++    if (Assets::GetInstance().partition_valid()) {
++        Assets::GetInstance().Apply();
++    }
+     {
+         Settings runtime("memoria_runtime", true);
+         if (runtime.GetInt("activation_v", 0) == 0) {

@@ -16,6 +16,9 @@ function reasonText(reason) {
     view_profile: "登录后即可管理你的资料与陪伴偏好。",
     view_digital_self: "登录后即可查看你的记忆档案。",
     manage_privacy: "登录后即可查看和管理你的语音授权。",
+    scan_device: "已识别到你的机器人。请先用微信登录，登录后会自动回到配网，继续连接和绑定。",
+    manage_device: "登录后即可添加和管理你的机器人。",
+    bind_device: "登录后继续绑定这台机器人。",
   }[reason] || "登录后即可继续刚才的操作。";
 }
 

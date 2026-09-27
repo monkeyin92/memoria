@@ -33,6 +33,7 @@ from services.identity.authority import (
     TransferEvidenceVerifier,
     TransferVerificationError,
 )
+from services.identity.binding_roles import parent_emergency_contact_verified
 from services.identity.domain import (
     ALL_BINDING_ROLES,
     ALL_PERMISSIONS,
@@ -2773,22 +2774,14 @@ class IdentityService:
                         role_label="device_admin",
                     )
             for emergency_id in emergency_ids:
-                emergency_verified = False
-                for subject_id in subjects:
-                    if await self._store.has_active_relationship(
-                        source_person_id=emergency_id,
-                        target_person_id=subject_id,
-                        relation_type="emergency_contact_for",
-                        at=now,
-                    ) or await self._store.has_active_relationship(
-                        source_person_id=subject_id,
-                        target_person_id=emergency_id,
-                        relation_type="emergency_contact_for",
-                        at=now,
-                    ):
-                        emergency_verified = True
-                        break
-                if not emergency_verified:
+                if not await parent_emergency_contact_verified(
+                    self._store,
+                    emergency_id=emergency_id,
+                    account_owner_id=account_owner_person_id,
+                    guardian_ids=guardian_ids,
+                    subject_ids=subjects,
+                    at=now,
+                ):
                     raise ModeConstraintError(
                         "parent_for_child emergency_contact requires an active "
                         "confirmed emergency_contact_for relationship with a "

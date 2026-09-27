@@ -2397,3 +2397,46 @@ async def test_crisis_contacts_reach_an_elders_binding_delegate(
     assert stranger not in await service.crisis_contacts(subject_person_id=father, now=now)
     # The elder is still nobody's declared guardian ward.
     assert await service.declared_guardians(subject_person_id=father, now=now) == ()
+
+
+@pytest.mark.asyncio
+async def test_declared_owner_guardian_is_also_the_childs_emergency_contact(
+    service: IdentityService,
+) -> None:
+    """Binding a child with the emergency-contact offer must not conflict.
+
+    The Mini Program adds the account owner as ``emergency_contact`` when the
+    emergency offer is accepted; the owner's own ``guardian_of`` declaration
+    already makes them the child's crisis contact, so no second
+    ``emergency_contact_for`` relationship is needed. A non-owner still is.
+    """
+
+    now = _now()
+    owner = await _adult(service, "家长", now)
+    child = await _minor(service, "孩子", now)
+    other = await _adult(service, "外人", now)
+    await _declare_owner_guardianship(service, owner=owner, child=child, now=now)
+
+    manifest = await service.create_binding(
+        device_id="dev-child-emergency",
+        declared_mode="parent_for_child",
+        account_owner_person_id=owner,
+        primary_subject_ids=(child,),
+        roles=((owner, "guardian"), (owner, "device_admin"), (owner, "emergency_contact")),
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        now=now,
+    )
+    assert manifest.declared_mode == "parent_for_child"
+
+    with pytest.raises(ModeConstraintError, match="emergency_contact_for"):
+        await service.create_binding(
+            device_id="dev-child-emergency-other",
+            declared_mode="parent_for_child",
+            account_owner_person_id=owner,
+            primary_subject_ids=(child,),
+            roles=((owner, "guardian"), (owner, "device_admin"), (other, "emergency_contact")),
+            service_profile_version="parent_for_child-v1",
+            policy_bundle_version="multi-subject-v1",
+            now=now,
+        )
