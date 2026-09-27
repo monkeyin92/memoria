@@ -470,6 +470,7 @@ private:
     esp_timer_handle_t touchpad_timer_;
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
+    int64_t last_qr_refresh_us_ = 0;
     TaskHandle_t imu_task_handle_ = nullptr;
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
     TaskHandle_t touch_slider_task_handle_ = nullptr;
@@ -573,6 +574,21 @@ private:
         MuteImuForTouch();
         auto& app = Application::GetInstance();
         const auto state = app.GetDeviceState();
+        if (memoria::MemoriaBootstrap::GetInstance().active()) {
+            // The Mini Program asks for this when a QR expired or a claim was
+            // refused ("轻点机器人屏幕换一张新二维码"). One refresh per 3 s.
+            const int64_t now_us = esp_timer_get_time();
+            if (now_us - last_qr_refresh_us_ < 3 * 1000 * 1000) {
+                return;
+            }
+            last_qr_refresh_us_ = now_us;
+            app.Schedule([this]() {
+                if (memoria::MemoriaBootstrap::GetInstance().Refresh(display_) == ESP_OK) {
+                    GetDisplay()->ShowNotification("已换新二维码，请重新扫码", 2500);
+                }
+            });
+            return;
+        }
         if (state == kDeviceStateStarting) {
             EnterWifiConfigMode();
             return;

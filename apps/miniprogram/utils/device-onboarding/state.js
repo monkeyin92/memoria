@@ -60,8 +60,8 @@ const PROGRESS_STEPS = Object.freeze([
 
 const ERROR_MESSAGES = Object.freeze({
   QR_INVALID: "无法识别设备码，请重新扫描机器人屏幕上的二维码。",
-  QR_SIGNATURE_INVALID: "设备码校验失败，请刷新机器人屏幕上的二维码。",
-  QR_SESSION_EXPIRED: "设备码已失效，请让机器人重新进入启用模式后再扫。",
+  QR_SIGNATURE_INVALID: "设备码校验失败，请轻点机器人屏幕换一张新二维码后再扫。",
+  QR_SESSION_EXPIRED: "这张设备码已经用过或过期了，请轻点机器人屏幕换一张新二维码后再扫。",
   DEVICE_REVOKED: "设备当前不可启用，请联系设备管理员或客服。",
   // The bound owner's own scan opens a reprovision session instead, so this
   // only reaches accounts the robot is not bound to.
@@ -75,7 +75,7 @@ const ERROR_MESSAGES = Object.freeze({
   BLUETOOTH_PERMISSION_DENIED: "无法使用蓝牙权限，请在系统设置中允许微信使用蓝牙。",
   BLE_DEVICE_NOT_FOUND: "没有找到屏幕上的机器人，请靠近设备并重试。",
   BLE_CONNECTION_FAILED: "机器人连接失败，请确认设备已通电并重试。",
-  BLE_SESSION_REJECTED: "机器人安全会话未通过，请刷新二维码后重试。",
+  BLE_SESSION_REJECTED: "机器人安全会话未通过，请轻点机器人屏幕换一张新二维码后重新扫码。",
   BLE_REAUTH_REQUIRED: "蓝牙安全会话已失效，请重新扫描机器人二维码后连接。",
   BLE_DISCONNECTED: "机器人蓝牙连接中断，可以从当前启用会话继续。",
   WIFI_AUTH_FAILED: "Wi‑Fi 密码可能不正确，请重新输入。",

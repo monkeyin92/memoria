@@ -43,9 +43,16 @@ const modeCards = Object.entries(MODE_META).map(([id, meta]) => ({
   description: meta.description,
 }));
 
+// Everything a persona card shows; the preview is the device's own voice
+// (Doubao, rendered once from the catalogue preview line) bundled with the app.
 const personaOptions = companions.map((companion) => ({
   id: companion.id,
   name: companion.name,
+  tagline: companion.tagline,
+  description: companion.description,
+  tone: companion.tone,
+  voiceName: companion.voiceName,
+  previewSrc: `/assets/voices/${companion.voiceId}.mp3`,
 }));
 
 let familyDraftCounter = 0;
@@ -116,6 +123,8 @@ Page({
     offers: [],
     personaOptions,
     personaIndex: 0,
+    previewingId: "",
+    needsRescan: false,
     existingSubjectOptions: [],
     subjectSourceOptions: [
       { value: "new", label: "新建孩子档案" },
@@ -145,6 +154,14 @@ Page({
       claimId: this._claimId,
       onboardingSessionId: this._onboardingSessionId,
     });
+  },
+
+  onHide() {
+    this._stopPreview();
+  },
+
+  onUnload() {
+    this._stopPreview();
   },
 
   async onShow() {
@@ -301,8 +318,55 @@ Page({
     this.setData({ [`form.${key}`]: index, error: "" });
   },
 
-  onPersonaChange(event) {
-    this.setData({ personaIndex: Number(event.detail.value) });
+  onPersonaSwipe(event) {
+    const index = Number(event.detail.current);
+    if (!Number.isInteger(index) || index === this.data.personaIndex) return;
+    this._stopPreview();
+    this.setData({ personaIndex: index });
+  },
+
+  onPersonaTap(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (Number.isInteger(index) && index !== this.data.personaIndex) {
+      this._stopPreview();
+      this.setData({ personaIndex: index });
+    }
+  },
+
+  togglePreview(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const persona = this.data.personaOptions[index];
+    if (!persona) return;
+    if (this.data.previewingId === persona.id) {
+      this._stopPreview();
+      return;
+    }
+    this._stopPreview();
+    const audio = wx.createInnerAudioContext({ useWebAudioImplement: false });
+    audio.obeyMuteSwitch = false;
+    audio.src = persona.previewSrc;
+    const done = () => {
+      if (this._previewAudio === audio) this._stopPreview();
+    };
+    audio.onEnded(done);
+    audio.onError(done);
+    this._previewAudio = audio;
+    this.setData({ previewingId: persona.id });
+    audio.play();
+  },
+
+  _stopPreview() {
+    const audio = this._previewAudio;
+    this._previewAudio = null;
+    if (audio) {
+      try {
+        audio.stop();
+        audio.destroy();
+      } catch {
+        // Already released by the runtime.
+      }
+    }
+    if (this.data.previewingId) this.setData({ previewingId: "" });
   },
 
   addFamilyMember() {
@@ -488,10 +552,19 @@ Page({
         reviewSubjectLabel: this._subjectLabel(),
       });
     } catch (error) {
-      this.setData({ error: error?.message || "绑定失败，请稍后重试。" });
+      const code = String(error?.code || error?.detail?.code || "").toUpperCase();
+      this.setData({
+        error: error?.message || "绑定失败，请稍后重试。",
+        // These need a fresh QR from the robot, not another tap here.
+        needsRescan: ["BINDING_CONFLICT", "CLAIM_CONFLICT", "CLAIM_EXPIRED", "QR_SESSION_EXPIRED"].includes(code),
+      });
     } finally {
       this.setData({ submitting: false });
     }
+  },
+
+  rescanDevice() {
+    wx.redirectTo({ url: "/pages/device-onboarding/index?fresh=1" });
   },
 
   openDevicePage() {

@@ -124,7 +124,9 @@ Page({
   },
 
   async onShow() {
-    if (!(await requireLogin({ reason: "manage_device" }))) return;
+    // Opened from the robot's QR: say why a login comes first.
+    const reason = this._linkedQr ? "scan_device" : "manage_device";
+    if (!(await requireLogin({ reason }))) return;
     if (this._linkedQr) {
       const linkedQr = this._linkedQr;
       this._linkedQr = "";

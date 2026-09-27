@@ -355,6 +355,33 @@ def test_the_board_counter_never_stays_behind_the_server() -> None:
     assert "kCounterSkipOnConflict = 32;" in bootstrap
 
 
+def test_the_qr_screen_is_neutral_complete_and_refreshable() -> None:
+    root = Path(__file__).parents[1] / "overlay"
+    patch = (root / "patches" / "0030-memoria-assets-font-before-qr.patch").read_text(encoding="utf-8")
+    # The common-charset font is applied before the bootstrap QR can show.
+    assert patch.index("Assets::GetInstance().Apply();") < patch.index('Settings runtime("memoria_runtime", true);')
+    display = (
+        root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_mascot_display.cc"
+    ).read_text(encoding="utf-8")
+    assert 'lv_label_set_text(qr_title_, "欢迎使用 Memoria");' in display
+    assert "你好，我是" not in display
+    bootstrap = (root / "files" / "main" / "memoria" / "memoria_bootstrap.cc").read_text(encoding="utf-8")
+    assert 'kQrCaption = "微信扫一扫 开始配网";' in bootstrap
+    refresh = bootstrap[bootstrap.index("esp_err_t MemoriaBootstrap::Refresh") :]
+    refresh = refresh[: refresh.index("void MemoriaBootstrap::Stop")]
+    assert refresh.index("Stop();") < refresh.index("return Start(display);")
+    board = (
+        root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    touch = board[board.index("void HandleScreenTouchRelease()") :]
+    touch = touch[: touch.index("void InitializeI2c()")]
+    # A tap on the QR refreshes it before any state-specific handling (the
+    # starting state used to jump to hotspot Wi-Fi setup instead).
+    assert touch.index("MemoriaBootstrap::GetInstance().active()") < touch.index("kDeviceStateStarting")
+    assert "Refresh(display_)" in touch
+    assert "3 * 1000 * 1000" in touch
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)
