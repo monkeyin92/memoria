@@ -1,0 +1,12 @@
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index b240cc9..651410e 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -38,6 +38,7 @@ set(SOURCES "audio/audio_codec.cc"
+             "memoria/memoria_wake_word.cc"
+             "memoria/memoria_protocol.cc"
+             "memoria/memoria_bootstrap.cc"
++            "memoria/memoria_firmware_update.cc"
+             "memoria/memoria_display_hooks.cc"
+             "mcp_server.cc"
+             "system_info.cc"

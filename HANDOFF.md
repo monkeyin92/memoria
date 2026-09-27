@@ -18,6 +18,13 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-26 小程序体验版 0.2.20260926（PR #56）
+
+- **范围**：main `0b2cb43`（PR #56）。小程序全部页面统一 mist 浅色主题（删除 `.theme-dark` 与 sky/night/warm 背景图，导航栏/tab 栏统一，次要文字等 token 调深到 WCAG AA）；`DEVICE_ALREADY_BOUND` 提示改为先解绑再扫码。
+- **上传**：Node 24.16.0 经 `upload:test`（CI 机器人 1，编译预检 185 个文件，包 1.41 MB）上传成功。**提交审核与正式发布需在公众平台手动完成。**
+- **固件**：同一 PR 的固件改动（patch `0028` 配网模式必出二维码、在线解绑 409 后重出二维码、联网阶段吉祥物缩小留出字幕带）已编译通过，**未刷机、未真机验证**（开发板未连接）。
+- **已知缺口**：设备页「重新配网（不解除绑定）」对已绑定设备仍被服务端 `DEVICE_ALREADY_BOUND` 拒绝，另有任务处理。
+
 ## 2026-09-26 整栈发布 20260926-minor-safety-v1
 
 - **范围**：tag `20260926-minor-safety-v1` → main `048a83a`（PR #52 故障注入测试与 TODOLIST 清理；PR #53 ASR 救援 sidecar 可重建与「我。」幻觉修复；PR #54 P0-04 八项产品决定与孩子危机提醒入队缺陷修复）。compose、env 无变更；identity 与 guardian 两个 schema 文件的函数有更新。合并后 main CI（run `36238700971`）全绿后才切流。6 个镜像本机 linux/amd64 全量构建，revision/version 标签核对无误；seeded 上传（基座 `20260926-edge-flush-v1`，实传 175 MB）双端校验 PASS；media-edge 镜像单独 scp、校验和核对后导入。发布脚本以仓库版安装（sha256 `c9239d69…`，`PREV_TAG=20260926-edge-flush-v1`），旧版备份 `release-ops.sh.pre-20260926-minor-safety-v1`。

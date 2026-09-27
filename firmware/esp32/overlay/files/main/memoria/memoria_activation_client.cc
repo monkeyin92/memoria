@@ -511,6 +511,11 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
     return ESP_OK;
 }
 
+std::string MemoriaActivationClient::SignGetRequest(const std::string& path) const {
+    const std::string payload = BuildSignedGetPayload(identity_, path);
+    return payload.empty() ? std::string{} : SignedRequestHeader(identity_, payload);
+}
+
 esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& control_api_url,
                                                        DisplayProfile* profile) {
     if (profile == nullptr || !identity_.loaded() || control_api_url.empty()) {

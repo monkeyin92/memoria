@@ -131,7 +131,7 @@ Wi-Fi 密码只通过加密 BLE 会话进入设备，不经过普通 HTTPS 业�
 
 绑定完成前设备拉取 Activation Manifest 得到 `409` 属于正常中间态：固件保持二维码/BLE 入口并后台重试，绑定完成后停止配网入口。相同二维码从新页面再次扫码会复用原 onboarding session；安全会话已经释放时必须重新扫码，不能复用旧内存会话发送网络信息。
 
-设备进入 Wi-Fi 配网模式（没有已知网络可连，例如换了地方）时，无论本机是否记得旧绑定，都会显示二维码并开启 BLE 配网入口（patch `0028`）：离线设备无从得知手机端已解绑，扫码后由服务端判断是首次启用、重新配网还是拒绝。在线时被解绑的设备会在下一次空闲 display-profile 轮询（约 20 秒）收到 `409`，随即清掉已确认的激活版本、重新显示二维码并后台重试激活。配网模式下长按 BOOT 可重新调出二维码。
+设备进入 Wi-Fi 配网模式（没有已知网络可连，例如换了地方）时，无论本机是否记得旧绑定，都会显示二维码并开启 BLE 配网入口（patch `0028`）：离线设备无从得知手机端已解绑，扫码后由服务端判断是首次启用、重新配网还是拒绝（见下文）。在线时被解绑的设备会在下一次空闲 display-profile 轮询（约 20 秒）收到 `409`；这个 409 只是线索（Identity 与设备档案可能不一致），设备随即重取 Activation Manifest，只有清单也答 `409` 才确认已解绑：清掉已确认的激活版本并重启，走未绑定开机流程（二维码/BLE 先于音频引擎启动，两者不能在运行中共享内部 RAM）；清单仍有效则保留绑定，10 分钟后再核对。BLE 配网面停止时完整释放 NimBLE 协议栈（`keep_ble_on = 0`）。配网模式下长按 BOOT 可重新调出二维码。
 
 ### 已绑定设备重新配网
 
@@ -409,6 +409,25 @@ cd firmware/esp32
 ./scripts/flash.sh --list
 ./scripts/flash.sh --port /dev/cu.usbmodemXXXX --monitor
 ```
+
+### 在线升级（OTA）
+
+设备空闲时向 control-api 查询签名的固件发布（`GET /v1/devices/{id}/firmware-release`，设备签名与 Activation Manifest 相同，只是 path 不同；未发布时答 `204`），首次在空闲约 30 秒后，此后每 6 小时，失败或被打断的下载 15 分钟后重试。只有构建号大于本机（`memoria_firmware_release.h` 的 `MEMORIA_FIRMWARE_BUILD`）且 Ed25519 签名能用固件内置的发布公钥验过的发布才会安装：镜像流式写入空闲 OTA 分区，同时校验大小与 SHA-256，bootloader 格式校验通过、项目名为 `memoria` 后才切换启动分区，并等到空闲时重启。新固件以 `PENDING_VERIFY` 启动，拿到服务端对激活的明确答复（已绑定或 409 未绑定）后才标记为有效；在那之前复位，bootloader 自动回到旧分区（`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`）。`esp_app_desc` 的版本号仍是上游 `2.4.2`（配网二维码与 online-proof 携带它，服务端逐字比对），OTA 只比较构建号。第一个带 OTA 的固件（构建 1）仍需 USB 刷入。
+
+发布一个新构建：
+
+```bash
+# 1. 把 MEMORIA_FIRMWARE_BUILD 加一，然后构建
+firmware/esp32/scripts/build.sh
+# 2. 签名：校验镜像内嵌的构建号标记与头文件一致，并用内置公钥自检
+uv run python firmware/esp32/scripts/publish_firmware_release.py sign
+# 3. 上传到服务器并原子切换 current.json（设备下次空闲检查时升级）
+uv run python firmware/esp32/scripts/publish_firmware_release.py upload --remote memoria-prod --build N
+# 撤回：不再提供任何发布（已升级的设备保留当前版本）
+uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remote memoria-prod
+```
+
+签名私钥只在发布机上：`~/.config/memoria/secrets/firmware-release-ed25519.key`（600）；公钥同时写在固件头文件与 `services/control_api/app/device_firmware.py`，测试保证两者一致。私钥丢失后已出货设备只能 USB 刷机，请离线备份。服务器上发布目录是 control-api 现有 `/data` 挂载的宿主侧 `/var/lib/memoria/firmware-releases/<board>/`（`current.json` + `<build>/app.bin`）；control-api 每次提供前都重新验签并核对镜像大小与哈希，损坏的发布一律不提供。`services/device_fleet/service.py` 里的 OTA assignment/receipt 领域（A/B 槽、防回滚能力声明）尚未接入 control-api 与固件，本路径不依赖它。
 
 默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 

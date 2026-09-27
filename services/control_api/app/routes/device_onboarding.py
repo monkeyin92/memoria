@@ -9,10 +9,12 @@ never falls back to an in-memory or client-supplied authority.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response, status
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.control_api.app.database import MemoryStore
@@ -20,6 +22,15 @@ from services.control_api.app.device_display_profile import (
     DisplayBindingUnavailable,
     display_binding,
     resolve_device_display_profile,
+)
+from services.control_api.app.device_firmware import (
+    FirmwareRelease,
+    FirmwareReleaseDirectory,
+    InvalidFirmwareRelease,
+    authenticate_device_get,
+    image_path,
+    release_directory_for,
+    release_path,
 )
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.device_fleet.bootstrap_domain import (
@@ -30,6 +41,8 @@ from services.device_fleet.bootstrap_domain import (
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.identity.domain import IdentityAccessDeniedError, IdentityNotFoundError
 from services.identity.service import IdentityService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["device-onboarding"])
 
@@ -424,6 +437,108 @@ async def get_device_display_profile(
         ) from exc
     response.headers.update(_NO_STORE)
     return profile.to_wire()
+
+
+def _current_firmware(request: Request) -> FirmwareRelease | None:
+    releases = getattr(request.app.state, "firmware_releases", None)
+    if not isinstance(releases, FirmwareReleaseDirectory):
+        settings = getattr(request.app.state, "settings", None)
+        if settings is None:
+            return None
+        releases = release_directory_for(settings.memoria_db_path)
+        request.app.state.firmware_releases = releases  # keeps the hash cache
+    try:
+        return releases.current()
+    except (InvalidFirmwareRelease, OSError, ValueError) as exc:
+        # A broken publication must not brick polling devices; offer nothing.
+        logger.error("firmware release unavailable: %s", exc)
+        return None
+
+
+async def _authenticate_firmware_request(
+    request: Request,
+    *,
+    device_id: str,
+    certificate_id: str | None,
+    device_signature: str | None,
+    path: str,
+) -> None:
+    if not certificate_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "device_certificate_required"},
+            headers=_NO_STORE,
+        )
+    try:
+        await asyncio.to_thread(
+            authenticate_device_get,
+            _service(request),
+            device_id=device_id,
+            certificate_id=certificate_id,
+            request_signature=_device_signature(device_signature),
+            path=path,
+        )
+    except OnboardingError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code},
+            headers=_NO_STORE,
+        ) from error
+
+
+@router.get("/v1/devices/{device_id}/firmware-release", response_model=None)
+async def get_device_firmware_release(
+    device_id: str,
+    request: Request,
+    certificate_id: Annotated[str | None, Header(alias="X-Device-Certificate-ID")] = None,
+    device_signature: Annotated[str | None, Header(alias="X-Device-Signature")] = None,
+) -> Response | dict[str, object]:
+    """The signed firmware release a device should run; 204 when none is published.
+
+    The device decides whether the build is newer than its own and verifies
+    the release signature itself; this endpoint never tailors the answer.
+    """
+    await _authenticate_firmware_request(
+        request,
+        device_id=device_id,
+        certificate_id=certificate_id,
+        device_signature=device_signature,
+        path=release_path(device_id),
+    )
+    release = await asyncio.to_thread(_current_firmware, request)
+    if release is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT, headers=_NO_STORE)
+    return JSONResponse(content=release.document, headers=_NO_STORE)
+
+
+@router.get("/v1/devices/{device_id}/firmware-release/{build}/image", response_model=None)
+async def get_device_firmware_image(
+    device_id: str,
+    build: Annotated[int, Path(ge=1, lt=2**31)],
+    request: Request,
+    certificate_id: Annotated[str | None, Header(alias="X-Device-Certificate-ID")] = None,
+    device_signature: Annotated[str | None, Header(alias="X-Device-Signature")] = None,
+) -> FileResponse:
+    """The application image of the current release, and only that one."""
+    await _authenticate_firmware_request(
+        request,
+        device_id=device_id,
+        certificate_id=certificate_id,
+        device_signature=device_signature,
+        path=image_path(device_id, build),
+    )
+    release = await asyncio.to_thread(_current_firmware, request)
+    if release is None or release.build != build:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "firmware_release_not_found"},
+            headers=_NO_STORE,
+        )
+    return FileResponse(
+        release.image,
+        media_type="application/octet-stream",
+        headers=_NO_STORE,
+    )
 
 
 @router.post("/v1/devices/{device_id}/activation-ack")

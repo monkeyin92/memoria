@@ -188,7 +188,6 @@ private:
         on_device_settings_received_;
     TaskHandle_t activation_retry_task_ = nullptr;
     TaskHandle_t display_profile_task_ = nullptr;
-    std::atomic<bool> released_{false};
 
     // Session/epoch scoped state; reset by ResetSessionState().
     uint32_t stream_epoch_ = 0;
@@ -242,9 +241,12 @@ private:
 
     void StartActivationRetry();
     void RunActivationRetry();
-    // The phone released this board while it was online: show the binding QR
-    // again and wait for the next binding, as an unbound boot would.
-    void EnterReleasedState();
+    // A display-profile 409 is only a hint (Identity may lag the fleet); the
+    // activation manifest is the authority on whether this board is released.
+    // Returns true when the manifest confirms the release.
+    bool ConfirmServerRelease();
+    // Idle-time OTA: installs a newer signed release and restarts into it.
+    void CheckFirmwareUpdate(const std::string& base, uint64_t* next_check_ms);
     static void ActivationRetryTask(void* context);
     // Keeps the screen's companion in step with the account's pick.
     void StartDisplayProfilePoll();
