@@ -227,7 +227,7 @@ function errorFromResponse(response) {
                                   : code === "BINDING_CONFLICT" || code === "binding_conflict"
                                     ? "设备绑定状态发生冲突，请刷新二维码后重试。"
                                     : code === "DEVICE_ALREADY_BOUND"
-                                      ? "这台机器人已经绑定，请先解除原绑定或更换设备。"
+                                      ? "这台机器人已绑定到其他账号，请由绑定它的账号操作。"
                                       : code === "STATE_VERSION_CONFLICT"
                                         ? "启用状态已更新，请返回设备页刷新后再提交。"
                                         : code === "INVALID_STATE_TRANSITION"

@@ -18,6 +18,7 @@ from services.device_fleet.bootstrap_domain import (
     ActivationStatus,
     BindingInitialization,
     BindingRecord,
+    BootstrapPurpose,
     BootstrapQRPayload,
     BootstrapSession,
     BootstrapState,
@@ -25,6 +26,7 @@ from services.device_fleet.bootstrap_domain import (
     ClaimConflict,
     ClaimReservation,
     ClaimStatus,
+    DeviceAlreadyBound,
     DeviceChallenge,
     DeviceLifecycle,
     DeviceMediaChallenge,
@@ -675,3 +677,163 @@ def test_store_rejects_unscoped_operation_before_database_io() -> None:
     store = object.__new__(PostgresBootstrapStore)
     with pytest.raises(PostgresBootstrapStoreContextError):
         store._scope()  # type: ignore[attr-defined]
+
+
+def _signed_online_proof(
+    *,
+    device: DeviceRecord,
+    device_key: Ed25519PrivateKey,
+    payload: BootstrapQRPayload,
+    session: dict[str, object],
+    challenge: dict[str, object],
+    counter: int,
+) -> DeviceOnlineProof:
+    unsigned: dict[str, object] = {
+        "device_id": device.device_id,
+        "certificate_id": device.certificate_id,
+        "bootstrap_nonce_hash": hash_b64url(payload.bootstrap_nonce),
+        "mobile_nonce_hash": hash_b64url(str(session["mobile_nonce"])),
+        "challenge_id": challenge["challenge_id"],
+        "challenge_nonce": challenge["nonce"],
+        "firmware_version": device.firmware_version,
+        "firmware_security_version": device.firmware_security_version,
+        "capability_manifest_hash": device.capability_manifest_hash,
+        "network_result": {"got_ip": True, "dns_ready": True, "tls_ready": True},
+        "monotonic_counter": counter,
+    }
+    return DeviceOnlineProof.from_mapping(
+        {**unsigned, "signature": b64url_encode(device_key.sign(canonical_json_bytes(unsigned)))}
+    )
+
+
+@pytest.mark.asyncio
+async def test_postgres_owner_reprovision_keeps_binding_and_never_claims(
+    postgres_onboarding: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str],
+) -> None:
+    api, maintenance, _admin_dsn = postgres_onboarding
+    device_key = Ed25519PrivateKey.generate()
+    device = replace(
+        _device("dev_reprovision"),
+        public_key=device_key.public_key().public_bytes_raw(),
+    )
+    maintenance.register_manufactured_device(device)
+    service = DeviceOnboardingService(
+        api,
+        offline_mock=True,
+        now_fn=lambda: NOW,
+        minimum_firmware_security_version=1,
+    )
+    client = {
+        "platform": "wechat-miniprogram",
+        "app_version": "1.0.0",
+        "base_library_version": "3.0.0",
+    }
+    payload = BootstrapQRPayload(
+        typ="memoria-device-bootstrap",
+        ver=1,
+        device_id=device.device_id,
+        bootstrap_nonce=b64url_encode(b"first-place-nonc"),
+        ble_name="MEM-REPROV",
+        ble_service_uuid="12345678-1234-5678-1234-567812345678",
+        certificate_id=device.certificate_id,
+        provisioning_protocol="memoria-provisioning/1",
+        firmware_version=device.firmware_version,
+        pop=b64url_encode(b"0123456789abcdef-pop"),
+    )
+    first = service.introspect(
+        actor_id="actor_owner",
+        qr_payload=encode_bootstrap_qr(payload, device_key),
+        client_onboarding_id="client_first",
+        client=client,
+    )
+    online = service.submit_online_proof(
+        onboarding_session_id=str(first["onboarding_session_id"]),
+        proof=_signed_online_proof(
+            device=device,
+            device_key=device_key,
+            payload=payload,
+            session=first,
+            challenge=service.issue_challenge(
+                onboarding_session_id=str(first["onboarding_session_id"]),
+                device_id=device.device_id,
+                certificate_id=device.certificate_id,
+            ),
+            counter=1,
+        ),
+    )
+    claim = service.reserve_claim(
+        actor_id="actor_owner",
+        onboarding_session_id=str(first["onboarding_session_id"]),
+        device_id=device.device_id,
+        idempotency_key="claim_reprovision",
+        expected_state_version=int(online["state_version"]),
+    )
+    service.create_binding(
+        actor_id="actor_owner",
+        claim_id=str(claim["claim_id"]),
+        onboarding_session_id=str(first["onboarding_session_id"]),
+        initialization={
+            "declared_mode": "self_use",
+            "account_owner_person_id": "actor_owner",
+            "primary_subject": {"person_id": "actor_owner", "relationship": "self"},
+            "persona_selection": "companion_x",
+            "service_preferences": {},
+            "consent_offer_ids": [],
+        },
+        idempotency_key="binding_reprovision",
+    )
+    bound = api.get_device(device.device_id)
+    assert bound is not None and bound.lifecycle_status is DeviceLifecycle.BOUND
+
+    moved = replace(payload, bootstrap_nonce=b64url_encode(b"new-place-nonce!"))
+    moved_qr = encode_bootstrap_qr(moved, device_key)
+    with pytest.raises(DeviceAlreadyBound):
+        service.introspect(
+            actor_id="actor_other",
+            qr_payload=moved_qr,
+            client_onboarding_id="client_other",
+            client=client,
+        )
+    session = service.introspect(
+        actor_id="actor_owner",
+        qr_payload=moved_qr,
+        client_onboarding_id="client_reprovision",
+        client=client,
+    )
+    assert session["purpose"] == "reprovision"
+    reprovisioned = service.submit_online_proof(
+        onboarding_session_id=str(session["onboarding_session_id"]),
+        proof=_signed_online_proof(
+            device=device,
+            device_key=device_key,
+            payload=moved,
+            session=session,
+            challenge=service.issue_challenge(
+                onboarding_session_id=str(session["onboarding_session_id"]),
+                device_id=device.device_id,
+                certificate_id=device.certificate_id,
+            ),
+            counter=2,
+        ),
+    )
+    assert reprovisioned["state"] == "device_online"
+    assert reprovisioned["purpose"] == "reprovision"
+    after = api.get_device(device.device_id)
+    assert after is not None
+    assert after.lifecycle_status is DeviceLifecycle.BOUND
+    assert (after.actor_id, after.binding_id, after.binding_version) == (
+        bound.actor_id,
+        bound.binding_id,
+        bound.binding_version,
+    )
+    assert after.last_monotonic_counter == 2
+    row = api.get_session(str(session["onboarding_session_id"]))
+    assert row is not None
+    assert row.purpose is BootstrapPurpose.REPROVISION
+    assert row.consumed_at is not None
+    with pytest.raises(ClaimConflict, match="reprovision"):
+        api.reserve_claim(
+            _claim(claim_id="claim_forged", session=row),
+            expected_state_version=row.state_version,
+            now=NOW,
+        )

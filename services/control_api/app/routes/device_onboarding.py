@@ -144,6 +144,7 @@ class BootstrapSessionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     onboarding_session_id: str
+    purpose: Literal["onboarding", "reprovision"]
     state: str
     state_version: int
     activation_version: int

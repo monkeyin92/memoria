@@ -566,6 +566,7 @@ async def test_real_api_response_shapes_match_miniprogram_contracts() -> None:
         onboarding = introspected.json()
         assert set(onboarding) == {
             "onboarding_session_id",
+            "purpose",
             "state",
             "state_version",
             "activation_version",
@@ -581,6 +582,7 @@ async def test_real_api_response_shapes_match_miniprogram_contracts() -> None:
             "firmware_version",
             "claim_status",
         }
+        assert onboarding["purpose"] == "onboarding"
         assert onboarding["device"]["claim_status"] in {
             "unclaimed",
             "reserved",
@@ -593,6 +595,7 @@ async def test_real_api_response_shapes_match_miniprogram_contracts() -> None:
         assert session_response.status_code == 200
         assert set(session_response.json()) == {
             "onboarding_session_id",
+            "purpose",
             "state",
             "state_version",
             "activation_version",
@@ -1487,3 +1490,59 @@ async def test_direct_device_media_projection_failure_invalidates_authority_and_
     assert authority.failed == [(session_id, "direct_media_projection_unavailable")]
     assert memory.get_voice_session_by_id(session_id=session_id) is None
     assert memory.get_device_media_session(session_id=session_id) is None
+
+
+def _assert_contract(value: dict[str, object], definition: str) -> None:
+    import json
+
+    import jsonschema
+
+    contract = json.loads(
+        (Path(__file__).parents[3] / "packages/contracts/device-onboarding-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.validate(
+        value, {"$defs": contract["$defs"], "$ref": f"#/$defs/{definition}"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_bound_device_qr_opens_reprovision_only_for_its_owner() -> None:
+    from services.device_fleet.bootstrap_domain import encode_bootstrap_qr
+    from services.device_fleet.tests.test_bootstrap_reprovision import _bound_device
+
+    service, _store, device_key, moved = _bound_device()
+    body = {
+        "qr_payload": encode_bootstrap_qr(moved, device_key),
+        "client_onboarding_id": "api-reprovision",
+        "client": _client_payload(),
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(service, actor="person_b")), base_url="http://test"
+    ) as client:
+        refused = await client.post("/v1/device-bootstrap/introspect", json=body)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "DEVICE_ALREADY_BOUND"
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(service)), base_url="http://test"
+    ) as client:
+        opened = await client.post("/v1/device-bootstrap/introspect", json=body)
+        assert opened.status_code == 200, opened.text
+        session = opened.json()
+        assert session["purpose"] == "reprovision"
+        assert session["device"]["claim_status"] == "bound"
+        assert "activation_status" not in session
+        _assert_contract(session, "bootstrap_session_response")
+        claim = await client.post(
+            "/v1/device-claims",
+            json={
+                "onboarding_session_id": session["onboarding_session_id"],
+                "device_id": "dev_test_01",
+                "idempotency_key": "claim-reprovision-http",
+                "expected_state_version": session["state_version"],
+            },
+        )
+    assert claim.status_code == 409
+    assert claim.json()["detail"]["code"] == "CLAIM_CONFLICT"

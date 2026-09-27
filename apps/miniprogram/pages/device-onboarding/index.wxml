@@ -2,10 +2,10 @@
   <page-backdrop theme="mist"></page-backdrop>
   <view class="back-row"><navigator class="back-link" url="/pages/device/index" open-type="switchTab">‹ 设备</navigator></view>
   <view class="page-head">
-    <text class="page-title">配网引导</text>
+    <text class="page-title">{{reprovision ? '重新配网' : '配网引导'}}</text>
     <text class="page-subtitle">跟着亮起的步骤走就好</text>
   </view>
-  <text class="caption">{{mode === 'reprovision' ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
+  <text class="caption">{{reprovision ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
 
   <view class="l2-card ob-steps-card">
     <text class="l2-card-title">{{stateLabel}}</text>
@@ -33,6 +33,7 @@
         </view>
         <view class="step-main"><text class="step-title">写入 Wi-Fi <text wx:if="{{state === 'wifi' || state === 'progress'}}" class="pill pill-teal">进行中</text></text><text class="step-desc">正在写入，大约需要 30 秒</text></view>
       </view>
+      <block wx:if="{{!reprovision}}">
       <view class="step-item {{(state === 'claim' || state === 'initialize') ? 'current' : ((state === 'activation' || state === 'complete') ? 'done' : 'todo')}}">
         <view class="step-node">
           <view wx:if="{{state === 'claim' || state === 'initialize'}}" class="step-num">4</view>
@@ -48,6 +49,14 @@
         </view>
         <view class="step-main"><text class="step-title">激活完成</text><text class="step-desc">灯亮起来，就可以打招呼了</text></view>
       </view>
+      </block>
+      <view wx:else class="step-item {{state === 'complete' ? 'done' : 'todo'}}">
+        <view class="step-node">
+          <view wx:if="{{state === 'complete'}}" class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+          <view wx:else class="step-num">4</view>
+        </view>
+        <view class="step-main"><text class="step-title">重新上线</text><text class="step-desc">用新网络连上 Memoria，绑定保持不变</text></view>
+      </view>
     </view>
   </view>
 
@@ -56,7 +65,8 @@
       <glass-icon name="device" size="80"></glass-icon>
       <text class="l2-card-title">先准备好机器人</text>
     </view>
-    <text class="l2-card-sub">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
+    <text wx:if="{{reprovision}}" class="l2-card-sub">机器人找不到已保存的 Wi‑Fi 时，屏幕会自动显示二维码。请用绑定它的账号扫码，本次只更新网络，不需要解除绑定；家庭网络需支持 2.4 GHz。</text>
+    <text wx:else class="l2-card-sub">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
     <view class="notice notice-warn">
       <text class="notice-title">安全提醒</text>
       <text class="notice-copy">二维码只启动短期启用会话，不代表设备所有权。Wi‑Fi 密码只在本页内存和机器人安全配网会话中短暂存在。</text>
@@ -84,9 +94,10 @@
       <view class="summary-row"><text class="summary-key">设备型号</text><text class="summary-value">{{device.model}}</text></view>
       <view class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
       <view class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{device.firmware_version}}</text></view>
-      <view class="summary-row"><text class="summary-key">设备状态</text><text class="summary-value">{{device.claim_status === 'unclaimed' ? '待启用' : device.claim_status}}</text></view>
+      <view class="summary-row"><text class="summary-key">设备状态</text><text class="summary-value">{{device.claim_status === 'unclaimed' ? '待启用' : (device.claim_status === 'bound' ? '已绑定' : device.claim_status)}}</text></view>
     </view>
-    <text class="form-note">下一步会在附近搜索名称和尾号均匹配的机器人；扫码本身不会直接绑定账号。</text>
+    <text wx:if="{{reprovision}}" class="form-note">这台机器人已绑定在你的账号上，本次只更新 Wi‑Fi；下一步会在附近搜索名称和尾号均匹配的机器人。</text>
+    <text wx:else class="form-note">下一步会在附近搜索名称和尾号均匹配的机器人；扫码本身不会直接绑定账号。</text>
     <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="connectBle">连接附近机器人</button>
     <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
   </view>
@@ -140,7 +151,7 @@
     </view>
     <text class="network-state">{{networkLabel}}</text>
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryProgress">刷新机器人状态</button>
-    <button wx:if="{{progressIndex >= 6}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
+    <button wx:if="{{progressIndex >= 6 && !reprovision}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
   </view>
 
   <view wx:if="{{state === 'claim'}}" class="l2-card">
@@ -185,13 +196,14 @@
 
   <view wx:if="{{state === 'complete'}}" class="l2-card done-card">
     <view class="done-device"><device-screen online="{{true}}" size="220"></device-screen></view>
-    <text class="done-badge">READY</text>
-    <text class="done-title">机器人可以开始对话了</text>
-    <text class="done-note">设备已就绪。唤醒机器人就可以开始聊天；它只服务这次绑定的使用人，使用人和设备管理都可以在「设备」页调整。</text>
+    <text class="done-badge">{{reprovision ? 'ONLINE' : 'READY'}}</text>
+    <text class="done-title">{{reprovision ? '网络已更新' : '机器人可以开始对话了'}}</text>
+    <text wx:if="{{reprovision}}" class="done-note">机器人已经用新的 Wi‑Fi 连上 Memoria。绑定关系、使用人和记忆都没有变化，唤醒它就能继续聊天。</text>
+    <text wx:else class="done-note">设备已就绪。唤醒机器人就可以开始聊天；它只服务这次绑定的使用人，使用人和设备管理都可以在「设备」页调整。</text>
     <button class="primary-button onboarding-button" bindtap="openDevicePage">进入设备管理</button>
   </view>
 
   <text wx:if="{{error}}" class="error-text onboarding-error">{{error}}</text>
   <text class="privacy-note">Wi-Fi 密码只经过加密蓝牙通道，不经过服务器。</text>
-  <button wx:if="{{state !== 'complete'}}" class="cancel-link" bindtap="cancelFlow">取消本次启用</button>
+  <button wx:if="{{state !== 'complete'}}" class="cancel-link" bindtap="cancelFlow">{{reprovision ? '取消重新配网' : '取消本次启用'}}</button>
 </view>

@@ -398,6 +398,10 @@
       ],
       "properties": {
         "onboarding_session_id": { "$ref": "#/$defs/identifier" },
+        "purpose": {
+          "description": "onboarding leads to claim and binding; reprovision only delivers Wi-Fi to a device bound to the requesting owner, ends at device_online and never claims. Absent from servers that predate reprovisioning, which only onboard.",
+          "enum": ["onboarding", "reprovision"]
+        },
         "state": { "type": "string", "minLength": 1, "maxLength": 64 },
         "state_version": { "type": "integer", "minimum": 1 },
         "activation_version": { "type": "integer", "minimum": 0 },

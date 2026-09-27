@@ -30,6 +30,10 @@ const BOOTSTRAP_STATES = Object.freeze([
   "conflict",
 ]);
 
+// "reprovision" only delivers new Wi-Fi to a device that stays bound to the
+// signed-in owner; the server never lets such a session claim or bind.
+const BOOTSTRAP_PURPOSES = Object.freeze(["onboarding", "reprovision"]);
+
 const CLAIM_STATES = Object.freeze([
   "reserved",
   "binding_committing",
@@ -214,10 +218,17 @@ function normalizeProvisioning(value) {
   };
 }
 
+function optionalPurpose(value) {
+  // Servers from before reprovisioning omit the field; they only onboard.
+  if (value === undefined || value === null) return "onboarding";
+  return requiredEnum(value, "purpose", BOOTSTRAP_PURPOSES);
+}
+
 function normalizeIntrospectResponse(payload) {
   const value = assertObject(payload, "introspect 响应");
   const keys = [
     "onboarding_session_id",
+    "purpose",
     "state",
     "state_version",
     "activation_version",
@@ -242,6 +253,7 @@ function normalizeIntrospectResponse(payload) {
   ], "introspect 响应");
   return {
     onboarding_session_id: requiredId(value.onboarding_session_id, "onboarding_session_id"),
+    purpose: optionalPurpose(value.purpose),
     state: requiredEnum(value.state, "state", BOOTSTRAP_STATES),
     state_version: requiredInteger(value.state_version, "state_version"),
     activation_version: requiredInteger(value.activation_version, "activation_version", { min: 0 }),
@@ -283,6 +295,7 @@ function normalizeOnboardingSession(payload) {
   const value = assertObject(payload, "onboarding session 响应");
   const keys = [
     "onboarding_session_id",
+    "purpose",
     "state",
     "expires_at",
     "device",
@@ -310,6 +323,7 @@ function normalizeOnboardingSession(payload) {
   ], "onboarding session 响应");
   return {
     onboarding_session_id: requiredId(value.onboarding_session_id, "onboarding_session_id"),
+    purpose: optionalPurpose(value.purpose),
     state: requiredEnum(value.state, "state", BOOTSTRAP_STATES),
     expires_at: requiredTime(value.expires_at, "expires_at"),
     device: normalizeDeviceInfo(value.device),
@@ -415,6 +429,7 @@ function isActivationReady(status) {
 
 module.exports = {
   BOOTSTRAP_STATES,
+  BOOTSTRAP_PURPOSES,
   CLAIM_STATES,
   ACTIVATION_STATES,
   QR_PAYLOAD_KEYS,

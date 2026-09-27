@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS device_onboarding_sessions (
     CHECK (first_seen_at < expires_at)
 );
 
+-- Additive and idempotent so fresh and upgraded databases converge.  A
+-- reprovision session delivers Wi-Fi to a device that stays bound to the
+-- session actor; it never reserves a claim or changes a binding.
+ALTER TABLE device_onboarding_sessions
+    ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'onboarding'
+    CHECK (purpose IN ('onboarding', 'reprovision'));
+
 CREATE TABLE IF NOT EXISTS device_onboarding_events (
     event_id TEXT PRIMARY KEY CHECK (char_length(event_id) BETWEEN 1 AND 160),
     onboarding_session_id TEXT NOT NULL

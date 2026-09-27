@@ -198,6 +198,18 @@ class BootstrapState(StrEnum):
     CONFLICT = "conflict"
 
 
+class BootstrapPurpose(StrEnum):
+    """Why a nearby bootstrap session exists.
+
+    ``onboarding`` leads to claim and binding.  ``reprovision`` only delivers
+    new Wi-Fi to a device that stays bound to the session's actor; it ends at
+    ``device_online`` and can never reserve a claim or change a binding.
+    """
+
+    ONBOARDING = "onboarding"
+    REPROVISION = "reprovision"
+
+
 class DeviceLifecycle(StrEnum):
     MANUFACTURED = "manufactured"
     PROVISIONED = "provisioned"
@@ -1059,6 +1071,7 @@ class BootstrapSession:
     cancelled_at: datetime | None
     consumed_at: datetime | None
     failure_code: str | None
+    purpose: BootstrapPurpose = BootstrapPurpose.ONBOARDING
 
 
 @dataclass(frozen=True, slots=True)
@@ -1152,6 +1165,29 @@ def verify_signed_payload(
         raise error("device signature is invalid") from exc
 
 
+def require_bootstrap_device(device: DeviceRecord, session: BootstrapSession) -> DeviceLifecycle:
+    """Gate a device-side bootstrap step on the session's purpose.
+
+    An onboarding session never touches a bound device.  A reprovision session
+    only proceeds while the device is still bound to the session's actor, so
+    an unbind or a transfer between scan and proof stops it.  Returns the
+    lifecycle the device holds once its online proof is accepted: reprovision
+    only refreshes the network and leaves the binding exactly as it was.
+    """
+
+    if device.lifecycle_status is DeviceLifecycle.REVOKED:
+        raise DeviceRevoked()
+    if session.purpose is BootstrapPurpose.REPROVISION:
+        if device.lifecycle_status is not DeviceLifecycle.BOUND:
+            raise BindingConflict("reprovision requires the device to stay bound")
+        if device.actor_id != session.actor_id:
+            raise DeviceAlreadyBound()
+        return DeviceLifecycle.BOUND
+    if device.lifecycle_status is DeviceLifecycle.BOUND:
+        raise DeviceAlreadyBound()
+    return DeviceLifecycle.PROVISIONED
+
+
 def can_transition(current: BootstrapState, target: BootstrapState) -> bool:
     return current == target or target in _STATE_TRANSITIONS[current]
 
@@ -1178,6 +1214,7 @@ __all__ = [
     "BindingConflict",
     "BindingInitialization",
     "BindingRecord",
+    "BootstrapPurpose",
     "BootstrapQRPayload",
     "BootstrapSession",
     "BootstrapState",
@@ -1223,6 +1260,7 @@ __all__ = [
     "parse_bootstrap_qr",
     "parse_rfc3339",
     "public_key_from_bytes",
+    "require_bootstrap_device",
     "require_transition",
     "sha256_hex",
     "validate_activation_manifest",
