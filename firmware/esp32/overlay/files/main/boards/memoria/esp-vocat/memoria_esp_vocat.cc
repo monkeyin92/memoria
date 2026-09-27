@@ -301,10 +301,18 @@ public:
     ~Charge() { delete[] read_buffer_; }
 
     int16_t ReadWord(uint8_t reg) {
+        // The fuel gauge shares the bus with the IMU and a read can time out
+        // while flash is being written (OTA, NVS). I2cDevice::ReadRegs would
+        // abort on that; a battery reading is not worth a reboot, so keep the
+        // last good value instead.
         uint8_t data[2] = {0};
-        ReadRegs(reg, data, 2);
-        return static_cast<int16_t>(static_cast<uint16_t>(data[0]) |
-                                    (static_cast<uint16_t>(data[1]) << 8));
+        const uint8_t slot = reg & 0x3F;
+        if (i2c_master_transmit_receive(i2c_device_, &reg, 1, data, 2, 100) != ESP_OK) {
+            return last_words_[slot];
+        }
+        last_words_[slot] = static_cast<int16_t>(static_cast<uint16_t>(data[0]) |
+                                                 (static_cast<uint16_t>(data[1]) << 8));
+        return last_words_[slot];
     }
 
     int GetBatteryLevel() {
@@ -343,6 +351,7 @@ public:
 
 private:
     uint8_t* read_buffer_ = nullptr;
+    int16_t last_words_[0x40] = {};  // last good reading per register
 };
 
 class Cst816s : public I2cDevice {

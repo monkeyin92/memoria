@@ -146,31 +146,35 @@ def _ssh(remote: str, script: str) -> None:
     subprocess.run(["ssh", remote, "bash -s"], input=script, text=True, check=True)
 
 
+# The release root belongs to control-api's container user (0750); the SSH
+# login stages in its own home and installs with sudo when it is not root.
+_REMOTE_SUDO = 'SUDO=""; if [ "$(id -u)" != 0 ]; then SUDO="sudo -n"; fi\n'
+
+
 def upload(remote: str, remote_root: str, build: int, out: Path) -> None:
     source = out / FIRMWARE_BOARD / str(build)
     release = validate_release(json.loads((source / "release.json").read_text()))
     if release["build"] != build:
         fail("release.json build does not match --build")
-    board_dir = f"{remote_root}/{FIRMWARE_BOARD}"
-    staging = f"{board_dir}/.incoming-{build}"
-    _ssh(remote, f"set -euo pipefail\nmkdir -p {shlex.quote(staging)}\n")
+    board_dir = shlex.quote(f"{remote_root}/{FIRMWARE_BOARD}")
+    final = shlex.quote(f"{remote_root}/{FIRMWARE_BOARD}/{build}")
+    staging = f".memoria-firmware-incoming/{build}"
+    _ssh(remote, f"set -euo pipefail\nrm -rf ~/{staging}\nmkdir -p ~/{staging}\n")
     subprocess.run(
         ["rsync", "-a", "--checksum", f"{source}/", f"{remote}:{staging}/"],
         check=True,
     )
-    final = f"{board_dir}/{build}"
     _ssh(
         remote,
         f"""set -euo pipefail
-cd {shlex.quote(staging)}
+{_REMOTE_SUDO}cd ~/{staging}
 test "$(stat -c %s app.bin)" = {release["size"]}
 test "$(sha256sum app.bin | cut -d' ' -f1)" = {release["sha256"]}
-rm -rf {shlex.quote(final)}
-mv {shlex.quote(staging)} {shlex.quote(final)}
-chmod 0755 {shlex.quote(final)}
-chmod 0644 {shlex.quote(final)}/app.bin {shlex.quote(final)}/release.json
-cp {shlex.quote(final)}/release.json {shlex.quote(board_dir)}/.current.json.new
-mv -f {shlex.quote(board_dir)}/.current.json.new {shlex.quote(board_dir)}/current.json
+$SUDO install -d -m 0755 {board_dir} {final}
+$SUDO install -m 0644 app.bin release.json {final}/
+$SUDO install -m 0644 release.json {board_dir}/.current.json.new
+$SUDO mv -f {board_dir}/.current.json.new {board_dir}/current.json
+cd ~ && rm -rf ~/{staging}
 echo "current -> build {build}"
 """,
     )
@@ -179,7 +183,8 @@ echo "current -> build {build}"
 def withdraw(remote: str, remote_root: str) -> None:
     _ssh(
         remote,
-        f"set -euo pipefail\nrm -f {shlex.quote(remote_root)}/{FIRMWARE_BOARD}/current.json\n"
+        f"set -euo pipefail\n{_REMOTE_SUDO}"
+        f"$SUDO rm -f {shlex.quote(remote_root)}/{FIRMWARE_BOARD}/current.json\n"
         "echo 'no firmware release offered'\n",
     )
 
