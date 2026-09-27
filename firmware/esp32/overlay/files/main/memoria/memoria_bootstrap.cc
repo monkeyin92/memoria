@@ -30,6 +30,10 @@ namespace {
 constexpr const char* kTag = "MemoriaBootstrap";
 constexpr const char* kQrPrefix = "memoria-bootstrap:v1:";
 constexpr const char* kProvisioningVersion = "memoria-provisioning/1";
+// The QR is a link so WeChat's own scanner opens the Mini Program (扫普通链接
+// 二维码打开小程序). The signed payload rides unchanged in `b`; the Mini
+// Program unwraps it (qr-code.js BIND_LINK_PREFIX) before the server sees it.
+constexpr const char* kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b=";
 constexpr const char* kCapabilityManifestHash =
     "67ab4e8840637bd8df497bed6b13153d146a8fa790271eae59ac3a032345758b";
 constexpr int kHttpTimeoutMs = 10000;
@@ -389,7 +393,7 @@ esp_err_t MemoriaBootstrap::Start(LcdDisplay* display) {
         return ESP_ERR_INVALID_STATE;
     }
     if (active_) {
-        return display->ShowQrCode(qr_payload_, "微信扫码绑定") ? ESP_OK : ESP_FAIL;
+        return display->ShowQrCode(kBindLinkPrefix + qr_payload_, "微信扫码绑定") ? ESP_OK : ESP_FAIL;
     }
     display_ = display;
     esp_err_t result = identity_.Load();
@@ -399,7 +403,7 @@ esp_err_t MemoriaBootstrap::Start(LcdDisplay* display) {
     if (result == ESP_OK) {
         result = StartBle();
     }
-    if (result == ESP_OK && !display_->ShowQrCode(qr_payload_, "微信扫码绑定")) {
+    if (result == ESP_OK && !display_->ShowQrCode(kBindLinkPrefix + qr_payload_, "微信扫码绑定")) {
         result = ESP_FAIL;
     }
     if (result != ESP_OK) {

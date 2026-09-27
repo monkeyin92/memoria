@@ -281,6 +281,20 @@ def test_a_fuel_gauge_timeout_never_aborts_the_board() -> None:
     assert "return last_words_[slot];" in charge
 
 
+def test_the_bootstrap_qr_is_a_wechat_bind_link_the_mini_program_unwraps() -> None:
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    assert 'kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b="' in bootstrap
+    assert bootstrap.count("ShowQrCode(kBindLinkPrefix + qr_payload_,") == 2
+    assert "ShowQrCode(qr_payload_," not in bootstrap
+    qr_code = (
+        Path(__file__).parents[3] / "apps" / "miniprogram" / "utils" / "device-onboarding" / "qr-code.js"
+    ).read_text(encoding="utf-8")
+    assert 'BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";' in qr_code
+    assert "const BIND_LINK_QUERY = /^\\?b=([^&#]+)$/;" in qr_code
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)

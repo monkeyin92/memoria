@@ -177,8 +177,9 @@ class OnboardingController {
     this.startScan();
     this._setBusy(true);
     try {
-      // Local parsing is only a shape/version gate.  The exact raw payload is
-      // sent unchanged to the server for signature and revocation checks.
+      // Local parsing is only a shape/version gate.  The exact device payload
+      // (unwrapped from a WeChat bind link when the board shows one) is sent
+      // unchanged to the server for signature and revocation checks.
       let parsedQr;
       try {
         parsedQr = parseDeviceQr(rawPayload);
@@ -193,7 +194,7 @@ class OnboardingController {
         throw error;
       }
       const session = await this.api.introspectDeviceQr({
-        qrPayload: rawPayload,
+        qrPayload: parsedQr.raw_payload,
         clientOnboardingId: this.clientOnboardingId,
       });
       if (!this._isCurrent(epoch)) return null;

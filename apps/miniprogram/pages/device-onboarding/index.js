@@ -72,6 +72,18 @@ Page({
     this._freshStart = options.fresh === "1" || options.fresh === 1 || options.fresh === true;
     this._initialSessionId =
       typeof options.session_id === "string" && options.session_id ? options.session_id : "";
+    // Opened by WeChat's scanner from the board's bind link: `q` is the
+    // encoded link. Start a fresh scan with it once the user is signed in.
+    this._linkedQr = "";
+    if (typeof options.q === "string" && options.q) {
+      try {
+        this._linkedQr = decodeURIComponent(options.q);
+      } catch {
+        this._linkedQr = options.q;
+      }
+      this._freshStart = true;
+      this._initialSessionId = "";
+    }
     this._controller = new OnboardingController({
       mode: this._mode,
       onChange: (snapshot) => this._applySnapshot(snapshot),
@@ -81,7 +93,12 @@ Page({
 
   async onShow() {
     if (!(await requireLogin({ reason: "manage_device" }))) return;
-    if (this._initialSessionId && !this._resumed) {
+    if (this._linkedQr) {
+      const linkedQr = this._linkedQr;
+      this._linkedQr = "";
+      this._resumed = true;
+      await this._controller.introspectQr(linkedQr);
+    } else if (this._initialSessionId && !this._resumed) {
       this._resumed = true;
       await this._controller.resume(this._initialSessionId);
     } else if (!this._freshStart && !this._resumed) {

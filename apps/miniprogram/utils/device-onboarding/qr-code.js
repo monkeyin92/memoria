@@ -3,6 +3,12 @@
 const { QR_PAYLOAD_KEYS } = require("./contracts");
 
 const PREFIX = "memoria-bootstrap:v1:";
+// The board shows its bootstrap payload inside this link so that WeChat's own
+// scanner opens the Mini Program (扫普通链接二维码打开小程序, prefix rule
+// pointing at pages/device-onboarding/index). The link carries the signed
+// payload unchanged in `b`; only that payload is sent to the server.
+const BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";
+const BIND_LINK_QUERY = /^\?b=([^&#]+)$/;
 const QR_TYPE = "memoria-device-bootstrap";
 const QR_VERSION = 1;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -70,10 +76,22 @@ function assertExactKeys(value) {
   }
 }
 
-function parseDeviceQr(rawPayload) {
-  if (typeof rawPayload !== "string" || !rawPayload || rawPayload.length > 4096) {
+function unwrapBindLink(scanned) {
+  if (typeof scanned !== "string" || !scanned.startsWith(BIND_LINK_PREFIX)) return scanned;
+  const match = BIND_LINK_QUERY.exec(scanned.slice(BIND_LINK_PREFIX.length));
+  if (!match) throw qrError("设备绑定链接格式无效");
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    throw qrError("设备绑定链接编码无效");
+  }
+}
+
+function parseDeviceQr(scanned) {
+  if (typeof scanned !== "string" || !scanned || scanned.length > 4096) {
     throw qrError("二维码内容为空或过长");
   }
+  const rawPayload = unwrapBindLink(scanned);
   if (!rawPayload.startsWith(PREFIX)) throw qrError("不是 Memoria 设备二维码");
   const encoded = rawPayload.slice(PREFIX.length);
   const separator = encoded.indexOf(".");
@@ -133,6 +151,8 @@ function isMemoriaDeviceQr(rawPayload) {
 
 module.exports = {
   PREFIX,
+  BIND_LINK_PREFIX,
+  unwrapBindLink,
   QR_TYPE,
   QR_VERSION,
   parseDeviceQr,
