@@ -84,7 +84,7 @@ const ERROR_MESSAGES = Object.freeze({
   WIFI_NO_INTERNET: "机器人已连接 Wi‑Fi，但暂时无法访问互联网。",
   CLOUD_TLS_FAILED: "机器人无法建立安全云端连接，请检查网络或升级固件。",
   DEVICE_ONLINE_TIMEOUT: "机器人暂未连接到云端，可以稍后继续查看状态。",
-  CLAIM_CONFLICT: "设备正在被其他账号设置，请稍后重试。",
+  CLAIM_CONFLICT: "这台机器人还有一次没完成的认领（可能是刚才那次），最多 10 分钟后自动释放，请稍后再扫码。",
   CLAIM_EXPIRED: "本次认领已超时，请重新保留认领，不需要重输 Wi‑Fi。",
   BINDING_FAILED: "机器人初始化没有完成，请从当前启用会话重试。",
   ACTIVATION_ACK_TIMEOUT: "配置已保存，机器人仍在同步；稍后刷新设备状态即可。",
