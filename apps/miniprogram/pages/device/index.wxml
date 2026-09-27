@@ -304,7 +304,7 @@
             <text class="row-title">{{item.label}}</text>
             <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
           </view>
-          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <button class="primary-button" style="margin-top: 16rpx;" loading="{{settingsSaving}}" bindtap="confirmWakeSheet">确认</button>
       </view>
@@ -327,7 +327,7 @@
             <text class="row-title">{{item.label}}</text>
             <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
           </view>
-          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <button class="primary-button" style="margin-top: 16rpx;" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
         <button class="text-button" style="margin-top: 8rpx;" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
@@ -345,7 +345,7 @@
             <text class="row-title">保留数据（重新绑定后可恢复）</text>
             <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
           </view>
-          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
           <view class="choice-radio"></view>
@@ -353,7 +353,7 @@
             <text class="row-title">同时删除 TA 的记忆和对话数据</text>
             <text class="row-meta">永久删除，重新绑定也无法恢复</text>
           </view>
-          <svg class="opt-check" width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <view class="opt-check"><view class="icon-check"></view></view>
         </view>
         <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
         <button class="danger-button" style="margin-top: 16rpx;" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>

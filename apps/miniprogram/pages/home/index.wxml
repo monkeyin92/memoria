@@ -119,7 +119,7 @@
             <text class="l2-card-sub">{{pendingCount}} 条内容，等你确认</text>
           </view>
           <view class="home-todo-chevron {{todoExpanded ? 'is-open' : ''}}">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <view class="icon-chevron"></view>
           </view>
         </view>
         <view wx:if="{{todoExpanded}}" class="home-todo-body">

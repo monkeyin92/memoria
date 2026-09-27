@@ -44,7 +44,7 @@
   <view class="l2-card">
     <view class="fold-head" bindtap="toggleEngineering">
       <text class="fold-title">技术状态与版本</text>
-      <view class="inline-icon fold-chevron {{showEngineering ? 'fold-chevron-open' : ''}}"><svg viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+      <view class="inline-icon fold-chevron {{showEngineering ? 'fold-chevron-open' : ''}}"><view class="icon-chevron"></view></view>
     </view>
     <text class="fold-summary">{{showEngineering ? '收起技术状态' : '查看技术状态'}}</text>
     <block wx:if="{{showEngineering}}">
