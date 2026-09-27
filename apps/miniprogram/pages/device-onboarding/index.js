@@ -32,6 +32,33 @@ function displayWifi(network) {
   return network.status ? NETWORK_LABELS[network.status] || network.status : "网络状态未知";
 }
 
+// The four things a person can follow while the robot gets online.
+function networkRows(network) {
+  const phase = network?.phase || "joining";
+  const failure = network?.failure || "";
+  const online = phase === "online";
+  const joined = online || Boolean(network?.joined);
+  const ssid = network?.ssid ? `「${network.ssid}」` : "";
+  const row = (key, label, done, active, failed) => ({ key, label, done, active, failed });
+  return [
+    row("sent", "网络信息已安全送达机器人", true, false, false),
+    row("wifi", `机器人连接 Wi‑Fi${ssid}`, joined, !joined && !failure, failure === "wifi_join"),
+    row("cloud", "连接 Memoria 云端", online, joined && !online && !failure, failure === "cloud"),
+    row("proof", "设备身份验证通过", online, false, false),
+  ];
+}
+
+function networkFailureText(network) {
+  const ssid = network?.ssid ? `「${network.ssid}」` : "这个 Wi‑Fi";
+  if (network?.failure === "wifi_join") {
+    return `机器人 45 秒内没有连上${ssid}。请确认密码正确、是 2.4 GHz 网络（机器人不支持 5 GHz），并让机器人离路由器近一些。`;
+  }
+  if (network?.failure === "cloud") {
+    return "机器人已连上 Wi‑Fi，但还没连上 Memoria 云端。如果这个网络需要网页登录（酒店、公司网络）或限制了外网，请换一个网络；也可以再等一会儿。";
+  }
+  return "";
+}
+
 function progressRows(steps, index) {
   return (steps || []).map((step, stepIndex) => ({
     ...step,
@@ -60,6 +87,10 @@ Page({
     networkLabel: "尚未读取网络状态",
     progressRows: [],
     progressIndex: 0,
+    network: null,
+    networkRows: [],
+    networkFailed: false,
+    networkFailure: "",
     wifiNetworks: [],
     connectedWifi: "",
     selectedSsid: "",
@@ -115,6 +146,8 @@ Page({
       }
     }
     if (this.data.state === "activation") this._controller.startActivationPolling();
+    // A resumed or re-shown progress step follows the robot again.
+    if (this.data.state === "progress" && !this.data.network) this._controller.watchNetwork();
     await this._refreshConnectedWifi();
   },
 
@@ -160,6 +193,10 @@ Page({
       wifiNetworks: snapshot.wifiNetworks || [],
       progressIndex: progressIndexValue,
       progressRows: progressRows(snapshot.progressSteps, progressIndexValue),
+      network: snapshot.network || null,
+      networkRows: networkRows(snapshot.network),
+      networkFailed: snapshot.network?.phase === "failed",
+      networkFailure: networkFailureText(snapshot.network),
     });
     // 使用人身份来自设备绑定，不做声音身份识别；完成设置后不再自动发起
     // speaker enrollment intent。
@@ -255,7 +292,11 @@ Page({
   },
 
   retryProgress() {
-    this._controller.refreshSession({ preserveProgress: true });
+    this._controller.watchNetwork();
+  },
+
+  retryWifi() {
+    this._controller.retryWifi();
   },
 
   reserveClaim() {

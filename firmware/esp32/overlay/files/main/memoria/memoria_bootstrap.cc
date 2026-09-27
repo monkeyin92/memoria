@@ -12,6 +12,7 @@
 #include "cJSON.h"
 #include "display/lcd_display.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_wifi.h"
@@ -37,6 +38,8 @@ constexpr const char* kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b=";
 constexpr const char* kCapabilityManifestHash =
     "67ab4e8840637bd8df497bed6b13153d146a8fa790271eae59ac3a032345758b";
 constexpr int kHttpTimeoutMs = 10000;
+constexpr int kOnlineProofAttempts = 4;
+constexpr uint32_t kOnlineProofRetryMs = 3000;
 constexpr const char* kServiceUuidText = "21d53b8d-bd75-688a-b442-eb314a1e983d";
 constexpr std::array<uint8_t, 16> kServiceUuid = {
     0x21, 0xd5, 0x3b, 0x8d, 0xbd, 0x75, 0x68, 0x8a,
@@ -473,33 +476,52 @@ bool MemoriaBootstrap::RunOnlineProof() {
     auto& wifi = WifiManager::GetInstance();
     if (!wifi.IsConnected() || wifi.GetIpAddress().empty() || onboarding_session_id_.empty() ||
         mobile_nonce_.empty() || bootstrap_nonce_.empty()) {
+        ESP_LOGW(kTag, "Online proof skipped: no network route or bootstrap context");
         return false;
     }
+    // Each attempt takes a fresh single-use challenge and reserves a higher
+    // counter. A transient failure (a TLS connection that cannot get memory
+    // while BLE is up, a lost response) must not leave the phone waiting on a
+    // proof that is never sent.
+    for (int attempt = 1; attempt <= kOnlineProofAttempts; ++attempt) {
+        const char* stage = AttemptOnlineProof();
+        if (stage == nullptr) {
+            return true;
+        }
+        ESP_LOGW(kTag, "Online proof attempt %d/%d failed at %s (free internal %u)", attempt,
+                 kOnlineProofAttempts, stage,
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+        vTaskDelay(pdMS_TO_TICKS(kOnlineProofRetryMs));
+    }
+    return false;
+}
 
+// Returns nullptr once the server accepted the proof, else the failed stage.
+const char* MemoriaBootstrap::AttemptOnlineProof() {
     const std::string challenge_path = "/v1/device-bootstrap/" + onboarding_session_id_ + "/challenge";
     const std::string challenge_body = "{\"certificate_id\":\"" + identity_.certificate_id() +
                                        "\",\"device_id\":\"" + identity_.device_id() + "\"}";
     std::string challenge_response;
     if (!HttpRequest("POST", JoinUrl(identity_.control_api_url(), challenge_path), challenge_body,
                      &challenge_response)) {
-        return false;
+        return "challenge request";
     }
     ScopedJson challenge{cJSON_ParseWithLength(challenge_response.data(), challenge_response.size())};
     std::string challenge_id;
     std::string challenge_nonce;
     if (!ReadRequiredString(challenge.value, "challenge_id", 128, &challenge_id) ||
         !ReadRequiredString(challenge.value, "nonce", 128, &challenge_nonce)) {
-        return false;
+        return "challenge response";
     }
     std::vector<uint8_t> decoded_challenge_nonce;
     if (!Base64UrlDecode(challenge_nonce, &decoded_challenge_nonce) ||
         decoded_challenge_nonce.size() != 32) {
-        return false;
+        return "challenge nonce";
     }
     const std::string bootstrap_nonce_hash = HashBase64Url(bootstrap_nonce_);
     const std::string mobile_nonce_hash = HashBase64Url(mobile_nonce_);
     if (bootstrap_nonce_hash.empty() || mobile_nonce_hash.empty()) {
-        return false;
+        return "nonce hashes";
     }
 
     Settings runtime("memoria_runtime", true);
@@ -507,7 +529,7 @@ bool MemoriaBootstrap::RunOnlineProof() {
     const int32_t counter = std::max<int32_t>(1, previous_counter + 1);
     ScopedJson unsigned_proof{cJSON_CreateObject()};
     if (unsigned_proof.value == nullptr) {
-        return false;
+        return "proof payload";
     }
     cJSON_AddStringToObject(unsigned_proof.value, "bootstrap_nonce_hash", bootstrap_nonce_hash.c_str());
     cJSON_AddStringToObject(unsigned_proof.value, "capability_manifest_hash", kCapabilityManifestHash);
@@ -521,31 +543,31 @@ bool MemoriaBootstrap::RunOnlineProof() {
     cJSON_AddNumberToObject(unsigned_proof.value, "monotonic_counter", counter);
     cJSON* network_result = cJSON_AddObjectToObject(unsigned_proof.value, "network_result");
     if (network_result == nullptr) {
-        return false;
+        return "network result";
     }
     cJSON_AddBoolToObject(network_result, "dns_ready", true);
     cJSON_AddBoolToObject(network_result, "got_ip", true);
     cJSON_AddBoolToObject(network_result, "tls_ready", true);
     char* unsigned_rendered = cJSON_PrintUnformatted(unsigned_proof.value);
     if (unsigned_rendered == nullptr) {
-        return false;
+        return "proof rendering";
     }
     const std::string unsigned_payload(unsigned_rendered);
     cJSON_free(unsigned_rendered);
     std::array<uint8_t, DeviceIdentity::kEd25519SignatureBytes> signature{};
     if (identity_.SignDetached(reinterpret_cast<const uint8_t*>(unsigned_payload.data()),
                                unsigned_payload.size(), signature.data(), signature.size()) != ESP_OK) {
-        return false;
+        return "proof signature";
     }
     const std::string signature_b64 = Base64UrlEncode(signature.data(), signature.size());
     sodium_memzero(signature.data(), signature.size());
     if (signature_b64.empty()) {
-        return false;
+        return "signature encoding";
     }
     cJSON_AddStringToObject(unsigned_proof.value, "signature", signature_b64.c_str());
     char* proof_rendered = cJSON_PrintUnformatted(unsigned_proof.value);
     if (proof_rendered == nullptr) {
-        return false;
+        return "signed proof rendering";
     }
     const std::string proof(proof_rendered);
     cJSON_free(proof_rendered);
@@ -557,10 +579,10 @@ bool MemoriaBootstrap::RunOnlineProof() {
     // skips a value, which the strictly-increasing rule allows.
     runtime.SetInt("activation_ctr", counter);
     if (!HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path), proof, &proof_response)) {
-        return false;
+        return "proof request";
     }
     ESP_LOGI(kTag, "Nearby device online proof accepted, counter=%ld", static_cast<long>(counter));
-    return true;
+    return nullptr;
 }
 
 esp_err_t MemoriaBootstrap::HandleScan(uint32_t,

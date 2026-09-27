@@ -297,6 +297,44 @@ def test_the_bootstrap_qr_is_a_wechat_bind_link_the_mini_program_unwraps() -> No
     assert "aigcnice\\.com\\/memoria-bind\\/?\\?" in qr_code
 
 
+def test_nearby_bootstrap_leaves_internal_ram_for_tls() -> None:
+    # With NimBLE's host heap in internal RAM the unbound board fell to a few
+    # hundred free bytes; the online proof's TLS connection then failed and the
+    # phone waited forever. The host heap lives in PSRAM.
+    board = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "overlay"
+            / "files"
+            / "main"
+            / "boards"
+            / "memoria"
+            / "esp-vocat"
+            / "config.json"
+        ).read_text(encoding="utf-8")
+    )
+    append = board["builds"][0]["sdkconfig_append"]
+    assert "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y" in append
+
+
+def test_online_proof_retries_with_fresh_challenges_and_says_why_it_failed() -> None:
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    run = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof") :]
+    run = run[: run.index("const char* MemoriaBootstrap::AttemptOnlineProof")]
+    assert "for (int attempt = 1; attempt <= kOnlineProofAttempts; ++attempt)" in run
+    assert "AttemptOnlineProof()" in run
+    assert "failed at %s (free internal %u)" in run
+    attempt = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof") :]
+    attempt = attempt[: attempt.index("esp_err_t MemoriaBootstrap::HandleScan")]
+    # Every exit names its stage; none returns silently.
+    assert "return false;" not in attempt
+    assert 'return "challenge request";' in attempt
+    assert 'return "proof request";' in attempt
+    assert attempt.index("/challenge") < attempt.index('runtime.SetInt("activation_ctr", counter);')
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)
@@ -1972,7 +2010,7 @@ def test_online_proof_reserves_its_counter_before_sending() -> None:
     bootstrap = (
         Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
     ).read_text(encoding="utf-8")
-    proof = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof()") :]
+    proof = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof()") :]
     proof = proof[: proof.index("\n}\n")]
     reserve = proof.index('runtime.SetInt("activation_ctr", counter);')
     send = proof.index('HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path)')

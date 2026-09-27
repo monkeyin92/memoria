@@ -141,17 +141,23 @@
   <view wx:if="{{state === 'progress'}}" class="l2-card">
     <view class="card-lead">
       <glass-icon name="wifi" size="80"></glass-icon>
-      <text class="l2-card-title">机器人正在联网</text>
+      <text class="l2-card-title">{{networkFailed ? '机器人没能联网' : (network.phase === 'online' ? '机器人已上线' : '机器人正在联网')}}</text>
     </view>
     <view class="progress-list">
-      <view wx:for="{{progressRows}}" wx:key="key" class="progress-row {{item.done ? 'progress-done' : ''}} {{item.active ? 'progress-active' : ''}}">
-        <view class="progress-dot"><text wx:if="{{item.done}}">✓</text></view>
+      <view wx:for="{{networkRows}}" wx:key="key" class="progress-row {{item.done ? 'progress-done' : ''}} {{item.active ? 'progress-active' : ''}} {{item.failed ? 'progress-failed' : ''}}">
+        <view class="progress-dot"><text wx:if="{{item.done}}">✓</text><text wx:elif="{{item.failed}}">!</text></view>
         <text class="progress-label">{{item.label}}</text>
       </view>
     </view>
-    <text class="network-state">{{networkLabel}}</text>
-    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryProgress">刷新机器人状态</button>
-    <button wx:if="{{progressIndex >= 6 && !reprovision}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
+    <text wx:if="{{network && !networkFailed && network.phase !== 'online'}}" class="network-state">已等待 {{network.elapsedS}} 秒，通常 30 秒内完成，请保持机器人通电、手机靠近。</text>
+    <view wx:if="{{networkFailed}}" class="network-failure">
+      <text class="network-failure-text">{{networkFailure}}</text>
+      <button class="primary-button onboarding-button" bindtap="retryWifi">重新输入 Wi‑Fi 密码</button>
+      <button wx:if="{{network.failure === 'cloud'}}" class="secondary-button onboarding-button" bindtap="retryProgress">再等一会儿</button>
+      <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
+    </view>
+    <button wx:if="{{!network}}" class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryProgress">查看机器人联网状态</button>
+    <button wx:if="{{network.phase === 'online' && !reprovision}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
   </view>
 
   <view wx:if="{{state === 'claim'}}" class="l2-card">
