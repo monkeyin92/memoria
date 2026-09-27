@@ -239,6 +239,13 @@ class OnboardingController {
       this._activation = null;
       this._bootstrapPop = parsedQr.payload.pop;
       saveOnboardingSessionId(session.onboarding_session_id);
+      if (!isReprovisionSession(session) && isDeviceOnline(session)) {
+        // Rescanning a QR that is still on screen returns the same session.
+        // Once the robot has proved itself online the server no longer issues
+        // it a challenge, so BLE and Wi-Fi again could only time out; pick up
+        // from the step the session has reached.
+        return this._continueOnlineSession(session, epoch);
+      }
       this._setState("device_verified", { force: true });
       return session;
     } catch (error) {
@@ -640,27 +647,7 @@ class OnboardingController {
         clearOnboardingSessionId();
         return session;
       }
-      if (session.claim_id && typeof this.api.getDeviceClaim === "function") {
-        try {
-          const claim = await this.api.getDeviceClaim(session.claim_id);
-          // The claim lookup is a second await under the same attempt fence.
-          // A page pause/dispose or a newer resume must be able to discard it
-          // before it mutates the controller.
-          if (!this._isCurrent(epoch)) return null;
-          if (
-            !sameId(claim.onboarding_session_id, session.onboarding_session_id) ||
-            !sameId(claim.device_id, session.device.device_id)
-          ) {
-            const error = new Error("服务端返回的认领不属于当前设备或启用会话");
-            error.code = "CLAIM_CONFLICT";
-            throw error;
-          }
-          this._claim = claim;
-          this._emit();
-        } catch {
-          // The session remains resumable; claim expiry is surfaced on reserve.
-        }
-      }
+      if (!(await this._loadSessionClaim(session, epoch))) return null;
       return session;
     } catch (error) {
       if (this._isCurrent(epoch)) this._setError(error);
@@ -668,6 +655,44 @@ class OnboardingController {
     } finally {
       if (this._isCurrent(epoch)) this._setBusy(false);
     }
+  }
+
+  async _continueOnlineSession(session, epoch) {
+    if (session.state === "device_online") {
+      // Online but not claimed yet: where the network watch hands over.
+      this._network = { phase: "online", ssid: "", joined: true, elapsedS: 0, failure: "" };
+      this._setState("progress", { force: true });
+      await this.reserveClaim();
+      return session;
+    }
+    this._setState(clientStateForSession(session), { force: true });
+    if (!(await this._loadSessionClaim(session, epoch))) return null;
+    return session;
+  }
+
+  /** False when a pause, dispose, or newer attempt superseded this one. */
+  async _loadSessionClaim(session, epoch) {
+    if (!session.claim_id || typeof this.api.getDeviceClaim !== "function") return true;
+    try {
+      const claim = await this.api.getDeviceClaim(session.claim_id);
+      // The claim lookup is a second await under the same attempt fence.
+      // A page pause/dispose or a newer resume must be able to discard it
+      // before it mutates the controller.
+      if (!this._isCurrent(epoch)) return false;
+      if (
+        !sameId(claim.onboarding_session_id, session.onboarding_session_id) ||
+        !sameId(claim.device_id, session.device.device_id)
+      ) {
+        const error = new Error("服务端返回的认领不属于当前设备或启用会话");
+        error.code = "CLAIM_CONFLICT";
+        throw error;
+      }
+      this._claim = claim;
+      this._emit();
+    } catch {
+      // The session remains resumable; claim expiry is surfaced on reserve.
+    }
+    return true;
   }
 
   _disposeBle() {
