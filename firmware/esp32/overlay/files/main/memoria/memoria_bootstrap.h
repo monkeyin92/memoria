@@ -37,6 +37,7 @@ private:
     esp_err_t StartBle();
     esp_err_t StartOnlineProofTask();
     bool RunOnlineProof();
+    const char* AttemptOnlineProof();
     static void OnlineProofTask(void* context);
 
     static esp_err_t HandleScan(uint32_t session_id,

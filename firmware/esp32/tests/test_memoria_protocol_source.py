@@ -281,6 +281,80 @@ def test_a_fuel_gauge_timeout_never_aborts_the_board() -> None:
     assert "return last_words_[slot];" in charge
 
 
+def test_the_bootstrap_qr_is_a_wechat_bind_link_the_mini_program_unwraps() -> None:
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    assert 'kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b="' in bootstrap
+    assert bootstrap.count("ShowQrCode(kBindLinkPrefix + qr_payload_,") == 2
+    assert "ShowQrCode(qr_payload_," not in bootstrap
+    qr_code = (
+        Path(__file__).parents[3] / "apps" / "miniprogram" / "utils" / "device-onboarding" / "qr-code.js"
+    ).read_text(encoding="utf-8")
+    assert 'BIND_LINK_PREFIX = "https://aigcnice.com/memoria-bind/";' in qr_code
+    # The Mini Program accepts this host and path, so the firmware's prefix
+    # must stay inside it.
+    assert "aigcnice\\.com\\/memoria-bind\\/?\\?" in qr_code
+
+
+def test_nearby_bootstrap_leaves_internal_ram_for_tls() -> None:
+    # With NimBLE's host heap in internal RAM the unbound board fell to a few
+    # hundred free bytes; the online proof's TLS connection then failed and the
+    # phone waited forever. The host heap lives in PSRAM.
+    board = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "overlay"
+            / "files"
+            / "main"
+            / "boards"
+            / "memoria"
+            / "esp-vocat"
+            / "config.json"
+        ).read_text(encoding="utf-8")
+    )
+    append = board["builds"][0]["sdkconfig_append"]
+    assert "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y" in append
+
+
+def test_online_proof_retries_with_fresh_challenges_and_says_why_it_failed() -> None:
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    run = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof") :]
+    run = run[: run.index("const char* MemoriaBootstrap::AttemptOnlineProof")]
+    assert "for (int attempt = 1; attempt <= kOnlineProofAttempts; ++attempt)" in run
+    # Writing Wi-Fi restarts the station: each attempt waits for a route first.
+    assert run.index("WaitForRoute(") < run.index("AttemptOnlineProof()")
+    assert "kOnlineProofAttempts = 6;" in bootstrap
+    assert "AttemptOnlineProof()" in run
+    assert "failed at %s (free internal %u)" in run
+    attempt = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof") :]
+    attempt = attempt[: attempt.index("esp_err_t MemoriaBootstrap::HandleScan")]
+    # Every exit names its stage; none returns silently.
+    assert "return false;" not in attempt
+    assert 'return "challenge request";' in attempt
+    assert 'return "proof request";' in attempt
+    assert attempt.index("/challenge") < attempt.index('runtime.SetInt("activation_ctr", counter);')
+
+
+def test_the_board_counter_never_stays_behind_the_server() -> None:
+    # The dev board's NVS counter fell behind the server's (an ACK the server
+    # kept answered 409 and the spent counter was not stored); every proof
+    # was then refused as a replay and Wi-Fi setup never finished.
+    memoria = Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria"
+    client = (memoria / "memoria_activation_client.cc").read_text(encoding="utf-8")
+    ack = client[client.index("if (ack_status == 409) {") :]
+    ack = ack[: ack.index("return ESP_OK;")]
+    assert 'runtime.SetInt("activation_ctr", counter);' in ack
+    bootstrap = (memoria / "memoria_bootstrap.cc").read_text(encoding="utf-8")
+    attempt = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof") :]
+    attempt = attempt[: attempt.index("esp_err_t MemoriaBootstrap::HandleScan")]
+    assert "if (proof_status == 409) {" in attempt
+    assert 'runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);' in attempt
+    assert "kCounterSkipOnConflict = 32;" in bootstrap
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)
@@ -1956,9 +2030,11 @@ def test_online_proof_reserves_its_counter_before_sending() -> None:
     bootstrap = (
         Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
     ).read_text(encoding="utf-8")
-    proof = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof()") :]
+    proof = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof()") :]
     proof = proof[: proof.index("\n}\n")]
     reserve = proof.index('runtime.SetInt("activation_ctr", counter);')
     send = proof.index('HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path)')
     assert reserve < send
-    assert proof.count('runtime.SetInt("activation_ctr"') == 1
+    # The only other write skips ahead after the server refused the counter.
+    assert proof.count('runtime.SetInt("activation_ctr"') == 2
+    assert proof.index('runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);') > send

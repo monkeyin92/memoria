@@ -3,6 +3,7 @@ const { OnboardingController } = require("../../utils/device-onboarding/onboardi
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { isActivationReady } = require("../../utils/device-onboarding/contracts");
 const { getConnectedWifi } = require("../../utils/device-onboarding/wifi-model");
+const { isMemoriaDeviceQr } = require("../../utils/device-onboarding/qr-code");
 
 const NETWORK_LABELS = Object.freeze({
   credentials_received: "已安全发送网络信息",
@@ -29,6 +30,33 @@ const ACTIVATION_LABELS = Object.freeze({
 function displayWifi(network) {
   if (!network) return "尚未读取网络状态";
   return network.status ? NETWORK_LABELS[network.status] || network.status : "网络状态未知";
+}
+
+// The four things a person can follow while the robot gets online.
+function networkRows(network) {
+  const phase = network?.phase || "joining";
+  const failure = network?.failure || "";
+  const online = phase === "online";
+  const joined = online || Boolean(network?.joined);
+  const ssid = network?.ssid ? `「${network.ssid}」` : "";
+  const row = (key, label, done, active, failed) => ({ key, label, done, active, failed });
+  return [
+    row("sent", "网络信息已安全送达机器人", true, false, false),
+    row("wifi", `机器人连接 Wi‑Fi${ssid}`, joined, !joined && !failure, failure === "wifi_join"),
+    row("cloud", "连接 Memoria 云端", online, joined && !online && !failure, failure === "cloud"),
+    row("proof", "设备身份验证通过", online, false, false),
+  ];
+}
+
+function networkFailureText(network) {
+  const ssid = network?.ssid ? `「${network.ssid}」` : "这个 Wi‑Fi";
+  if (network?.failure === "wifi_join") {
+    return `机器人 45 秒内没有连上${ssid}。请确认密码正确、是 2.4 GHz 网络（机器人不支持 5 GHz），并让机器人离路由器近一些。`;
+  }
+  if (network?.failure === "cloud") {
+    return "机器人已连上 Wi‑Fi，但还没连上 Memoria 云端。如果这个网络需要网页登录（酒店、公司网络）或限制了外网，请换一个网络；也可以再等一会儿。";
+  }
+  return "";
 }
 
 function progressRows(steps, index) {
@@ -59,6 +87,10 @@ Page({
     networkLabel: "尚未读取网络状态",
     progressRows: [],
     progressIndex: 0,
+    network: null,
+    networkRows: [],
+    networkFailed: false,
+    networkFailure: "",
     wifiNetworks: [],
     connectedWifi: "",
     selectedSsid: "",
@@ -72,6 +104,18 @@ Page({
     this._freshStart = options.fresh === "1" || options.fresh === 1 || options.fresh === true;
     this._initialSessionId =
       typeof options.session_id === "string" && options.session_id ? options.session_id : "";
+    // Opened by WeChat's scanner from the board's bind link: `q` is the
+    // encoded link. Start a fresh scan with it once the user is signed in.
+    this._linkedQr = "";
+    if (typeof options.q === "string" && options.q) {
+      try {
+        this._linkedQr = decodeURIComponent(options.q);
+      } catch {
+        this._linkedQr = options.q;
+      }
+      this._freshStart = true;
+      this._initialSessionId = "";
+    }
     this._controller = new OnboardingController({
       mode: this._mode,
       onChange: (snapshot) => this._applySnapshot(snapshot),
@@ -81,7 +125,12 @@ Page({
 
   async onShow() {
     if (!(await requireLogin({ reason: "manage_device" }))) return;
-    if (this._initialSessionId && !this._resumed) {
+    if (this._linkedQr) {
+      const linkedQr = this._linkedQr;
+      this._linkedQr = "";
+      this._resumed = true;
+      await this._controller.introspectQr(linkedQr);
+    } else if (this._initialSessionId && !this._resumed) {
       this._resumed = true;
       await this._controller.resume(this._initialSessionId);
     } else if (!this._freshStart && !this._resumed) {
@@ -97,6 +146,8 @@ Page({
       }
     }
     if (this.data.state === "activation") this._controller.startActivationPolling();
+    // A resumed or re-shown progress step follows the robot again.
+    if (this.data.state === "progress" && !this.data.network) this._controller.watchNetwork();
     await this._refreshConnectedWifi();
   },
 
@@ -142,6 +193,10 @@ Page({
       wifiNetworks: snapshot.wifiNetworks || [],
       progressIndex: progressIndexValue,
       progressRows: progressRows(snapshot.progressSteps, progressIndexValue),
+      network: snapshot.network || null,
+      networkRows: networkRows(snapshot.network),
+      networkFailed: snapshot.network?.phase === "failed",
+      networkFailure: networkFailureText(snapshot.network),
     });
     // 使用人身份来自设备绑定，不做声音身份识别；完成设置后不再自动发起
     // speaker enrollment intent。
@@ -162,10 +217,13 @@ Page({
     wx.scanCode({
       onlyFromCamera: false,
       success: (result) => {
-        // Do not trim, store, or log this value. The controller passes the
-        // scanner's raw payload to POST /v1/device-bootstrap/introspect.
-        const rawPayload = typeof result?.result === "string" ? result.result : "";
-        this._controller.introspectQr(rawPayload);
+        // Do not store or log these values. The controller unwraps a bind
+        // link and passes only the device payload to introspect. A code tied
+        // to this Mini Program may come back as its page path in `path`.
+        const scanned = [result?.result, result?.path].filter(
+          (value) => typeof value === "string" && value,
+        );
+        this._controller.introspectQr(scanned.find(isMemoriaDeviceQr) || scanned[0] || "");
       },
       fail: (error) => {
         if (!this._unloaded) {
@@ -234,7 +292,11 @@ Page({
   },
 
   retryProgress() {
-    this._controller.refreshSession({ preserveProgress: true });
+    this._controller.watchNetwork();
+  },
+
+  retryWifi() {
+    this._controller.retryWifi();
   },
 
   reserveClaim() {

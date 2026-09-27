@@ -497,6 +497,9 @@ esp_err_t MemoriaActivationClient::Activate(ActivationProfile* profile) {
                              "/v1/devices/" + identity_.device_id() + "/activation-ack"),
                      {}, ack, nullptr, &ack_status)) {
         if (ack_status == 409) {
+            // Keep the counter this ACK spent: the server already holds one at
+            // least this high, and a later proof must sign above it.
+            runtime.SetInt("activation_ctr", counter);
             runtime.SetInt("activation_v", profile->activation_version);
             ESP_LOGW(kTag, "Activation ACK already acknowledged by server (status 409), resuming version=%ld",
                      static_cast<long>(profile->activation_version));

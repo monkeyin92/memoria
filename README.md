@@ -121,7 +121,7 @@ node --test apps/miniprogram/tests/*.test.js
 
 首次启用使用“二维码确认设备身份、BLE 近场安全配网、HTTPS 设备认领与激活”的单一路径：
 
-1. ESP32 显示签名的 `memoria-bootstrap:v1:` 二维码并广播 `MEM-XXXX` BLE 名称。
+1. ESP32 显示签名的 `memoria-bootstrap:v1:` 载荷并广播 `MEM-XXXX` BLE 名称。自构建 4 起二维码是链接 `https://aigcnice.com/memoria-bind/?b=<载荷>`：微信「扫一扫」按公众平台的「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`，页面 `pages/device-onboarding/index`）直接打开配网页，页面从 `q` 取回链接；小程序内扫码同样接受链接与旧的裸载荷。小程序只把 `b` 里的原始载荷交给服务端，服务端验签逻辑不变。浏览器打开该链接只看到一页“请用微信扫一扫”的说明（443 上的 `infra/nginx-memoria-bind.conf`，不写访问日志，因为载荷含 PoP）。
 2. 小程序把原始二维码交给 Control API introspect，取得一次性 onboarding session 和设备 provisioning 契约。
 3. 小程序与设备建立 Protocomm Security 1 会话，使用 X25519、PoP 和 AES-256-CTR；只有会话认证成功后才允许写入 Wi-Fi SSID/密码。
 4. 设备联网后自行提交 online-proof；小程序完成 claim、binding 和授权确认。

@@ -26,6 +26,27 @@ const {
   clearOnboardingSessionId,
 } = require("./session-store");
 
+// After Wi-Fi is written the page watches the robot come online: over BLE
+// (prov-status: joined the network yet?) and on the server (online proof).
+const NETWORK_POLL_MS = 2000;
+const WIFI_JOIN_TIMEOUT_MS = 45000;
+const ONLINE_TIMEOUT_MS = 90000;
+const ONLINE_SERVER_STATES = new Set([
+  "device_online",
+  "claim_reserved",
+  "binding_committing",
+  "bound",
+  "activating",
+  "activated",
+]);
+
+function isDeviceOnline(session) {
+  return (
+    ONLINE_SERVER_STATES.has(session?.state) ||
+    session?.network_status?.status === "device_proof_accepted"
+  );
+}
+
 function operationId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -41,6 +62,7 @@ class OnboardingController {
     transportFactory = null,
     clientOnboardingId = operationId("client_onb"),
     now = () => Date.now(),
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     onChange = null,
     mode = "add",
   } = {}) {
@@ -53,6 +75,7 @@ class OnboardingController {
     }));
     this.clientOnboardingId = clientOnboardingId;
     this.now = now;
+    this.sleep = sleep;
     this.onChange = onChange;
     // The entry point's intent.  Once a session exists, the server's purpose
     // decides the flow: an owner scanning their own bound robot from "add"
@@ -69,6 +92,8 @@ class OnboardingController {
     this._binding = null;
     this._activation = null;
     this._wifiNetworks = [];
+    // { phase: joining|cloud|online|failed, ssid, joined, elapsedS, failure: ""|wifi_join|cloud }
+    this._network = null;
     this._adapter = null;
     this._transport = null;
     this._wifiPassword = new SensitiveBuffer();
@@ -109,6 +134,7 @@ class OnboardingController {
       binding: this._binding,
       activation: this._activation,
       wifiNetworks: this._wifiNetworks,
+      network: this._network,
       device: this._session?.device || this._claim?.device || null,
       provisioning: this._session?.provisioning || null,
       progressSteps: PROGRESS_STEPS,
@@ -177,8 +203,9 @@ class OnboardingController {
     this.startScan();
     this._setBusy(true);
     try {
-      // Local parsing is only a shape/version gate.  The exact raw payload is
-      // sent unchanged to the server for signature and revocation checks.
+      // Local parsing is only a shape/version gate.  The exact device payload
+      // (unwrapped from a WeChat bind link when the board shows one) is sent
+      // unchanged to the server for signature and revocation checks.
       let parsedQr;
       try {
         parsedQr = parseDeviceQr(rawPayload);
@@ -193,7 +220,7 @@ class OnboardingController {
         throw error;
       }
       const session = await this.api.introspectDeviceQr({
-        qrPayload: rawPayload,
+        qrPayload: parsedQr.raw_payload,
         clientOnboardingId: this.clientOnboardingId,
       });
       if (!this._isCurrent(epoch)) return null;
@@ -326,11 +353,13 @@ class OnboardingController {
         ssid: this._wifiSsid,
         password: this._wifiPassword.getText(),
       });
+      // The password has reached the robot; do not hold it while waiting.
+      const sentSsid = this._wifiSsid;
+      this.clearSensitiveInput();
       if (!this._isCurrent(epoch)) return false;
       this._setState("progress", { force: true });
       this._setBusy(false);
-      await this.refreshSession({ preserveProgress: true });
-      return true;
+      return this._watchNetwork(epoch, sentSsid);
     } catch (error) {
       if (this._isCurrent(epoch)) {
         this._setError(error, { keepState: error?.code !== "BLE_REAUTH_REQUIRED" });
@@ -342,6 +371,77 @@ class OnboardingController {
       this.clearSensitiveInput();
       if (this._isCurrent(epoch)) this._setBusy(false);
     }
+  }
+
+  /** Keep waiting after a timeout, or pick the watch up again after a resume. */
+  watchNetwork() {
+    if (!this._session) return Promise.resolve(false);
+    return this._watchNetwork(this._beginAttempt());
+  }
+
+  /** Back to the Wi-Fi form; BLE is reused when it is still connected. */
+  retryWifi() {
+    this._network = null;
+    if (!this._transport) return this.connectBle();
+    this._setState("wifi", { force: true });
+    return this.loadWifiNetworks();
+  }
+
+  async _watchNetwork(epoch, ssidHint = "") {
+    const sessionId = this._session?.onboarding_session_id;
+    if (!sessionId) return false;
+    const startedAt = this.now();
+    const ssid = ssidHint || this._network?.ssid || "";
+    let joined = false;
+    this._network = { phase: "joining", ssid, joined, elapsedS: 0, failure: "" };
+    this._emit();
+    while (this._isCurrent(epoch)) {
+      await this.sleep(NETWORK_POLL_MS);
+      if (!this._isCurrent(epoch)) return false;
+      if (!joined && this._transport) {
+        try {
+          const status = await this._transport.request("prov-status", {});
+          joined = status?.connected === true;
+        } catch {
+          // BLE can drop while the radio joins the new network; the server
+          // still says when the robot comes online.
+        }
+      }
+      let session = null;
+      try {
+        session = await this.api.getOnboardingSession(sessionId);
+      } catch {
+        session = null;
+      }
+      if (!this._isCurrent(epoch)) return false;
+      if (session && sameId(session.onboarding_session_id, sessionId)) this._session = session;
+      const elapsed = this.now() - startedAt;
+      const elapsedS = Math.round(elapsed / 1000);
+      if (session && isDeviceOnline(session)) {
+        this._network = { phase: "online", ssid, joined: true, elapsedS, failure: "" };
+        if (clientStateForSession(session) === "complete") {
+          this._setState("complete", { force: true });
+          clearOnboardingSessionId();
+          return true;
+        }
+        this._emit();
+        if (!this.reprovision) await this.reserveClaim();
+        return true;
+      }
+      let failure = "";
+      if (!joined && elapsed >= WIFI_JOIN_TIMEOUT_MS) failure = "wifi_join";
+      else if (elapsed >= ONLINE_TIMEOUT_MS) failure = "cloud";
+      this._network = {
+        phase: failure ? "failed" : joined ? "cloud" : "joining",
+        ssid,
+        joined,
+        elapsedS,
+        failure,
+      };
+      this._emit();
+      if (failure) return false;
+    }
+    return false;
   }
 
   async refreshSession({ preserveProgress = false } = {}) {
