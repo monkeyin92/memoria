@@ -9,6 +9,7 @@ field are rejected with extra=forbid.  All mutations delegate to
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
@@ -25,6 +26,7 @@ from services.consent.bound_subject import BoundSubjectConsentService
 from services.control_api.app.companion_device_sync import project_persona_change
 from services.control_api.app.response_plan_cache import forget_subject_plans
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
+from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.governance.subject_deletion import SubjectDeletionService
 from services.governance.subject_ports import SubjectScope
 from services.guardian.consent import GuardianConsentService
@@ -688,6 +690,9 @@ async def unbind_device(
             forbidden="binding_forbidden",
             conflict="binding_conflict",
         ) from exc
+    device_released = await _release_fleet_binding(
+        request, device_id=device_id, binding_id=binding.binding_id
+    )
     withdrawn = 0
     subject_deletion = "not_requested"
     if manifest is not None and manifest.account_owner_id == user.user_id:
@@ -716,9 +721,30 @@ async def unbind_device(
     return {
         "binding_id": binding.binding_id,
         "status": binding.status,
+        "device_released": device_released,
         "consents_withdrawn": withdrawn,
         "subject_deletion": subject_deletion,
     }
+
+
+async def _release_fleet_binding(request: Request, *, device_id: str, binding_id: str) -> bool:
+    """Follow the Identity revoke in the device fleet.
+
+    Otherwise the fleet keeps the device bound: it still gets its activation
+    manifest and a fresh scan of its QR is refused as already bound. The
+    Identity revoke already stands and fences memory, so a failure here is
+    logged and reported, not raised.
+    """
+    service = getattr(request.app.state, "device_onboarding_service", None)
+    if not isinstance(service, DeviceOnboardingService):
+        return False
+    try:
+        return await asyncio.to_thread(
+            service.release_device_binding, device_id=device_id, binding_id=binding_id
+        )
+    except Exception:
+        logger.exception("fleet binding release failed binding_id=%s", binding_id)
+        return False
 
 
 async def _withdraw_bound_subject_consents(
