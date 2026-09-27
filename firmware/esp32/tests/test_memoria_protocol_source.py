@@ -324,6 +324,9 @@ def test_online_proof_retries_with_fresh_challenges_and_says_why_it_failed() -> 
     run = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof") :]
     run = run[: run.index("const char* MemoriaBootstrap::AttemptOnlineProof")]
     assert "for (int attempt = 1; attempt <= kOnlineProofAttempts; ++attempt)" in run
+    # Writing Wi-Fi restarts the station: each attempt waits for a route first.
+    assert run.index("WaitForRoute(") < run.index("AttemptOnlineProof()")
+    assert "kOnlineProofAttempts = 6;" in bootstrap
     assert "AttemptOnlineProof()" in run
     assert "failed at %s (free internal %u)" in run
     attempt = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof") :]

@@ -38,7 +38,10 @@ constexpr const char* kBindLinkPrefix = "https://aigcnice.com/memoria-bind/?b=";
 constexpr const char* kCapabilityManifestHash =
     "67ab4e8840637bd8df497bed6b13153d146a8fa790271eae59ac3a032345758b";
 constexpr int kHttpTimeoutMs = 10000;
-constexpr int kOnlineProofAttempts = 4;
+constexpr int kOnlineProofAttempts = 6;
+// Writing new Wi-Fi restarts the station; an attempt first waits for a route
+// again so the reconnect (about 10 s) does not burn the retries.
+constexpr int kOnlineProofRouteWaitS = 60;
 constexpr uint32_t kOnlineProofRetryMs = 3000;
 // A 409 on the proof is almost always a counter the server has already seen
 // (this board's NVS fell behind an ACK the server kept). Skipping ahead is
@@ -472,26 +475,37 @@ void MemoriaBootstrap::OnlineProofTask(void* context) {
     vTaskDelete(nullptr);
 }
 
-bool MemoriaBootstrap::RunOnlineProof() {
-    // The nearby nonce is delivered before Wi-Fi credentials are written. Wait
-    // here so the proof is emitted only after the board has a real route.
-    for (int attempt = 0; attempt < 120; ++attempt) {
-        if (WifiManager::GetInstance().IsConnected()) {
-            break;
+namespace {
+
+bool WaitForRoute(int seconds) {
+    auto& wifi = WifiManager::GetInstance();
+    for (int waited = 0; waited < seconds; ++waited) {
+        if (wifi.IsConnected() && !wifi.GetIpAddress().empty()) {
+            return true;
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-    auto& wifi = WifiManager::GetInstance();
-    if (!wifi.IsConnected() || wifi.GetIpAddress().empty() || onboarding_session_id_.empty() ||
-        mobile_nonce_.empty() || bootstrap_nonce_.empty()) {
-        ESP_LOGW(kTag, "Online proof skipped: no network route or bootstrap context");
+    return wifi.IsConnected() && !wifi.GetIpAddress().empty();
+}
+
+}  // namespace
+
+bool MemoriaBootstrap::RunOnlineProof() {
+    if (onboarding_session_id_.empty() || mobile_nonce_.empty() || bootstrap_nonce_.empty()) {
+        ESP_LOGW(kTag, "Online proof skipped: no bootstrap context");
         return false;
     }
+    // The nearby nonce is delivered before Wi-Fi credentials are written, and
+    // writing them restarts the station: every attempt waits for a real route.
     // Each attempt takes a fresh single-use challenge and reserves a higher
     // counter. A transient failure (a TLS connection that cannot get memory
     // while BLE is up, a lost response) must not leave the phone waiting on a
     // proof that is never sent.
     for (int attempt = 1; attempt <= kOnlineProofAttempts; ++attempt) {
+        if (!WaitForRoute(attempt == 1 ? 2 * kOnlineProofRouteWaitS : kOnlineProofRouteWaitS)) {
+            ESP_LOGW(kTag, "Online proof attempt %d/%d: no network route", attempt, kOnlineProofAttempts);
+            continue;
+        }
         const char* stage = AttemptOnlineProof();
         if (stage == nullptr) {
             return true;
