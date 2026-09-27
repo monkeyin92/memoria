@@ -52,7 +52,7 @@
       </block>
       <view wx:else class="step-item {{state === 'complete' ? 'done' : 'todo'}}">
         <view class="step-node">
-          <view wx:if="{{state === 'complete'}}" class="inline-icon step-check"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></view>
+          <view wx:if="{{state === 'complete'}}" class="inline-icon step-check"><view class="icon-check"></view></view>
           <view wx:else class="step-num">4</view>
         </view>
         <view class="step-main"><text class="step-title">重新上线</text><text class="step-desc">用新网络连上 Memoria，绑定保持不变</text></view>
