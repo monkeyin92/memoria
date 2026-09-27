@@ -454,6 +454,53 @@ test("resume fences the second getDeviceClaim await after pause/dispose", async 
   else global.wx = previousWx;
 });
 
+test("rescanning a QR whose robot is already online resumes instead of redoing BLE", async () => {
+  const previousWx = global.wx;
+  global.wx = {
+    setStorageSync() {},
+    getStorageSync() { return ""; },
+    removeStorageSync() {},
+  };
+  const calls = [];
+  const introspected = [
+    introspectResponse({ state: "claim_reserved", binding_id: null, activation_status: null }),
+    introspectResponse({ state: "device_online", claim_id: null, binding_id: null, activation_status: null }),
+    introspectResponse({ state: "wifi_connected", claim_id: null, binding_id: null, activation_status: null }),
+  ];
+  const controller = new OnboardingController({
+    apiClient: {
+      introspectDeviceQr: async () => introspected.shift(),
+      getDeviceClaim: async (claimId) => {
+        calls.push(`get-claim:${claimId}`);
+        return makeClaim();
+      },
+      reserveDeviceClaim: async (request) => {
+        calls.push(`reserve:${request.idempotencyKey}`);
+        return makeClaim();
+      },
+    },
+    bleAdapterFactory: () => {
+      throw new Error("an online session must not reopen BLE");
+    },
+  });
+
+  await controller.introspectQr(makeQr());
+  assert.equal(controller.state, "claim");
+  assert.equal(controller.claim.claim_id, "claim_01");
+
+  await controller.introspectQr(makeQr());
+  assert.equal(controller.state, "claim");
+  assert.equal(controller.snapshot().network.phase, "online");
+
+  // Not online yet: the robot still needs its Wi-Fi and online proof.
+  await controller.introspectQr(makeQr());
+  assert.equal(controller.state, "device_verified");
+  assert.deepEqual(calls, ["get-claim:claim_01", "reserve:claim-onb_01"]);
+  controller.dispose();
+  if (previousWx === undefined) delete global.wx;
+  else global.wx = previousWx;
+});
+
 test("expired session cannot reserve a claim", async () => {
   let reserveCalls = 0;
   const controller = new OnboardingController({
