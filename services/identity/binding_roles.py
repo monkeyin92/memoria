@@ -48,14 +48,15 @@ async def parent_emergency_contact_verified(
             ):
                 return True
         if emergency_id == account_owner_id and emergency_id in guardian_ids:
-            owner_guardianship = {
-                "source_person_id": emergency_id,
-                "target_person_id": subject_id,
-                "relation_type": "guardian_of",
-                "at": at,
-            }
-            if await store.has_active_relationship(
-                **owner_guardianship
-            ) or await store.has_source_confirmed_relationship(**owner_guardianship):
-                return True
+            for owner_guardianship in (
+                store.has_active_relationship,
+                store.has_source_confirmed_relationship,
+            ):
+                if await owner_guardianship(
+                    source_person_id=emergency_id,
+                    target_person_id=subject_id,
+                    relation_type="guardian_of",
+                    at=at,
+                ):
+                    return True
     return False
