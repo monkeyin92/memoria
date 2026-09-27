@@ -555,8 +555,10 @@ Page({
       const code = String(error?.code || error?.detail?.code || "").toUpperCase();
       this.setData({
         error: error?.message || "绑定失败，请稍后重试。",
-        // These need a fresh QR from the robot, not another tap here.
-        needsRescan: ["BINDING_CONFLICT", "CLAIM_CONFLICT", "CLAIM_EXPIRED", "QR_SESSION_EXPIRED"].includes(code),
+        // These need a fresh QR from the robot, not another tap here. A
+        // binding conflict keeps its claim: the same request can be retried
+        // here, while a new QR would be refused until that claim expires.
+        needsRescan: ["CLAIM_CONFLICT", "CLAIM_EXPIRED", "QR_SESSION_EXPIRED"].includes(code),
       });
     } finally {
       this.setData({ submitting: false });

@@ -5,30 +5,26 @@
 # Never prints secret values. Every step fails closed.
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
-# The PREV_* / LIVE_CONTROL_RELEASE constants describe the chain this release
-# replaces; they were read-only checked on production on 2026-09-27 and must be
-# re-checked before each full-stack release. The freeze step refuses to run
-# when the live containers are on any other chain.
+# The PREV_* constants describe the chain this release replaces; they were
+# read-only checked on production on 2026-09-27 23:30 (all six targets on the
+# plain PREV compose file) and must be re-checked before each full-stack
+# release. The freeze step refuses to run when the live containers are on any
+# other chain.
 set -Eeuo pipefail
 : "${TAG:?}" "${COMMIT:?}"
 U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260926-minor-safety-v1
-PREV_COMMIT=048a83ad8e869b8a3dd0ddc43a777410919f3881
+PREV_TAG=20260927-unbind-release-v1
+PREV_COMMIT=00a94cbc6ee760739e9c36c912a8b5ff8ab354b7
 PREV=/opt/memoria/releases/$PREV_TAG
-# The live control-api is a component release on top of PREV (device OTA).
-CR=/opt/memoria/component-releases
-LIVE_CONTROL_RELEASE=20260927-device-ota
-CONTROL_CHAIN="$PREV/docker-compose.production.yml,$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml,$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml"
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.
 DATA_TREE=/opt/memoria/releases/20260827-architecture-split-v1
-# Services recreated from the plain PREV compose file on rollback; control-api
-# returns to its component chain. media-edge is released separately and is not
-# touched here.
-PREV_STACK_SERVICES=(speaker-model agent voice-core-media-bridge miniprogram-gateway device-media-gateway)
+# Services recreated from the plain PREV compose file on rollback. media-edge is
+# released separately and is not touched here.
+PREV_STACK_SERVICES=(speaker-model control-api agent voice-core-media-bridge miniprogram-gateway device-media-gateway)
 ROLES=(agent control-api device-media-gateway miniprogram-gateway speaker-model)
 TARGETS=(memoria-speaker-model-1 memoria-control-api-1 memoria-agent-1 memoria-voice-core-media-bridge-1 memoria-miniprogram-gateway-1 memoria-device-media-gateway-1)
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
@@ -111,12 +107,10 @@ step_freeze() {
   [[ -d "$R" ]]
   install -d -m 0700 "$S"
   # Every target must be on the chain the rollback rebuilds.
-  local cf c want
+  local cf c
   for c in "${TARGETS[@]}"; do
     cf="$(live_chain "$c")"
-    want="$PREV/docker-compose.production.yml"
-    [[ "$c" == memoria-control-api-1 ]] && want="$CONTROL_CHAIN"
-    [[ "$cf" == "$want" ]] || { log "unexpected live chain for $c: $cf"; exit 1; }
+    [[ "$cf" == "$PREV/docker-compose.production.yml" ]] || { log "unexpected live chain for $c: $cf"; exit 1; }
   done
   [[ "$(readlink -f /opt/memoria/current)" == "$PREV" ]] || { log "/opt/memoria/current is not $PREV"; exit 1; }
   for c in "${TARGETS[@]}"; do
@@ -235,12 +229,6 @@ step_rollback() {
   cp -p "$S/memoria-agent.env" /etc/memoria-agent.env
   ln -sfn "$PREV" /opt/memoria/current.new && mv -T /opt/memoria/current.new /opt/memoria/current
   local ID=(MEMORIA_RELEASE_TAG="$PREV_TAG" MEMORIA_RELEASE_COMMIT="$PREV_COMMIT")
-  # control-api returns to its component release on top of PREV.
-  (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
-    -f "$PREV/docker-compose.production.yml" \
-    -f "$CR/$LIVE_CONTROL_RELEASE/pre-cutover-control.override.yml" \
-    -f "$CR/$LIVE_CONTROL_RELEASE/control-component.override.yml" \
-    up -d --no-deps --no-build --force-recreate control-api)
   (cd "$PREV" && env "${ID[@]}" docker compose -p memoria --project-directory "$PREV" \
     -f "$PREV/docker-compose.production.yml" --profile media-runtime \
     up -d --no-deps --no-build --force-recreate "${PREV_STACK_SERVICES[@]}")
