@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from fastapi import FastAPI
 
+from services.device_fleet.binding_release import release_committed_binding
 from services.device_fleet.bootstrap_domain import (
     ActivationAck,
     ActivationRecord,
@@ -777,6 +778,26 @@ class DeviceOnboardingService:
             now=self._now(),
         )
         return self._claim_view(released)
+
+    def release_device_binding(
+        self, *, device_id: str, binding_id: str, reason: str = "user_unbound"
+    ) -> bool:
+        """Free the fleet binding after Identity revoked ``binding_id``.
+
+        The caller has already been authorized by the Identity revoke; this
+        only follows it. True when the device went back to ``provisioned``.
+        """
+        device_id = _safe_protocol_id(device_id, field="device_id")
+        binding_id = _safe_protocol_id(binding_id, field="binding_id")
+        if not isinstance(reason, str) or not reason or len(reason) > 128:
+            raise InvalidOnboardingRequest("reason is invalid")
+        return release_committed_binding(
+            self.store,
+            device_id=device_id,
+            binding_id=binding_id,
+            reason_code=reason,
+            now=self._now(),
+        )
 
     def _local_binding_authority(
         self, *, binding: BindingRecord, device: DeviceRecord
