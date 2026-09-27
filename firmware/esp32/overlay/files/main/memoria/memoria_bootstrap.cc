@@ -40,6 +40,10 @@ constexpr const char* kCapabilityManifestHash =
 constexpr int kHttpTimeoutMs = 10000;
 constexpr int kOnlineProofAttempts = 4;
 constexpr uint32_t kOnlineProofRetryMs = 3000;
+// A 409 on the proof is almost always a counter the server has already seen
+// (this board's NVS fell behind an ACK the server kept). Skipping ahead is
+// safe: the server only requires the counter to keep increasing.
+constexpr int32_t kCounterSkipOnConflict = 32;
 constexpr const char* kServiceUuidText = "21d53b8d-bd75-688a-b442-eb314a1e983d";
 constexpr std::array<uint8_t, 16> kServiceUuid = {
     0x21, 0xd5, 0x3b, 0x8d, 0xbd, 0x75, 0x68, 0x8a,
@@ -241,7 +245,8 @@ std::string HashBase64Url(const std::string& value) {
 bool HttpRequest(const std::string& method,
                  const std::string& url,
                  const std::string& body,
-                 std::string* response) {
+                 std::string* response,
+                 int* status_code = nullptr) {
     auto network = Board::GetInstance().GetNetwork();
     if (network == nullptr) {
         return false;
@@ -261,6 +266,9 @@ bool HttpRequest(const std::string& method,
         return false;
     }
     const int status = http->GetStatusCode();
+    if (status_code != nullptr) {
+        *status_code = status;
+    }
     if (status != 200) {
         ESP_LOGE(kTag, "Bootstrap HTTP rejected, status=%d", status);
         http->Close();
@@ -578,7 +586,13 @@ const char* MemoriaBootstrap::AttemptOnlineProof() {
     // higher counter instead of replaying a consumed one. A failed send only
     // skips a value, which the strictly-increasing rule allows.
     runtime.SetInt("activation_ctr", counter);
-    if (!HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path), proof, &proof_response)) {
+    int proof_status = 0;
+    if (!HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path), proof, &proof_response,
+                     &proof_status)) {
+        if (proof_status == 409) {
+            runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);
+            return "proof request (counter conflict, skipping ahead)";
+        }
         return "proof request";
     }
     ESP_LOGI(kTag, "Nearby device online proof accepted, counter=%ld", static_cast<long>(counter));

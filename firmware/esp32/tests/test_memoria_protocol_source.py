@@ -335,6 +335,23 @@ def test_online_proof_retries_with_fresh_challenges_and_says_why_it_failed() -> 
     assert attempt.index("/challenge") < attempt.index('runtime.SetInt("activation_ctr", counter);')
 
 
+def test_the_board_counter_never_stays_behind_the_server() -> None:
+    # The dev board's NVS counter fell behind the server's (an ACK the server
+    # kept answered 409 and the spent counter was not stored); every proof
+    # was then refused as a replay and Wi-Fi setup never finished.
+    memoria = Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria"
+    client = (memoria / "memoria_activation_client.cc").read_text(encoding="utf-8")
+    ack = client[client.index("if (ack_status == 409) {") :]
+    ack = ack[: ack.index("return ESP_OK;")]
+    assert 'runtime.SetInt("activation_ctr", counter);' in ack
+    bootstrap = (memoria / "memoria_bootstrap.cc").read_text(encoding="utf-8")
+    attempt = bootstrap[bootstrap.index("const char* MemoriaBootstrap::AttemptOnlineProof") :]
+    attempt = attempt[: attempt.index("esp_err_t MemoriaBootstrap::HandleScan")]
+    assert "if (proof_status == 409) {" in attempt
+    assert 'runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);' in attempt
+    assert "kCounterSkipOnConflict = 32;" in bootstrap
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)
@@ -2015,4 +2032,6 @@ def test_online_proof_reserves_its_counter_before_sending() -> None:
     reserve = proof.index('runtime.SetInt("activation_ctr", counter);')
     send = proof.index('HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path)')
     assert reserve < send
-    assert proof.count('runtime.SetInt("activation_ctr"') == 1
+    # The only other write skips ahead after the server refused the counter.
+    assert proof.count('runtime.SetInt("activation_ctr"') == 2
+    assert proof.index('runtime.SetInt("activation_ctr", counter + kCounterSkipOnConflict);') > send
