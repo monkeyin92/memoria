@@ -19,6 +19,13 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-27 微信扫一扫直达配网页（PR #66）
+
+- **问题**：体验版 `0.2.20260926` 早于 #57，严格契约拒收 introspect 的 `purpose`（「包含未声明字段 purpose」）→ 体验版 `0.2.20260927` 已上传。微信「扫一扫」只显示裸载荷 → 固件构建 4 把二维码改为 `https://aigcnice.com/memoria-bind/?b=<载荷>`，小程序拆包，体验版 `0.2.20260927.1` 已上传（**需在公众平台设为体验版**）。
+- **线上**：WMS 的 443 server 块新增 `include /etc/nginx/snippets/memoria-bind.conf;`（备份 `/etc/nginx/wms.pre-20260927-bind-link`），`/var/www/memoria-bind/index.html` 说明页；访问日志关闭。构建 4（sha256 `f1e06234…`）已签名发布为 `current.json`；开发板 USB 刷入构建 4（未绑定设备不跑 OTA）。
+- **待用户**：公众平台「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`、页面 `pages/device-onboarding/index`）与校验文件；校验文件放 `/var/www/memoria-bind/`。
+- **风险**：`/etc/nginx/ssl/aigcnice.com_bundle.crt`（443 与 8443 上 aigcnice.com 共用）**2026-10-18 到期**，非 certbot 管理，需在到期前续期，否则设备、小程序与该规则同时失效。
+
 ## 2026-09-27 整栈发布 20260927-unbind-release-v1（重新配网 + 解绑释放设备）
 
 - **范围**：tag `20260927-unbind-release-v1` → main `00a94cb`（PR #57 已绑定设备只更新 Wi-Fi；#60/#61 小程序内联 svg 图标替换；#62 解绑时释放 device_fleet 绑定；#63 `release_ops.sh` 认 control-api 的 OTA 组件链）。schema：`services/device_fleet/bootstrap_postgres_schema.sql` 新增 `device_onboarding_sessions.purpose`（加列带默认值，旧代码不受影响）。compose、env 无变更。合并后 main CI（`00a94cb`）全绿后才切流。
