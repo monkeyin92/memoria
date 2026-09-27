@@ -35,6 +35,10 @@ public:
     // signature as the manifest). ESP_ERR_INVALID_STATE when unbound.
     esp_err_t FetchDisplayProfile(const std::string& control_api_url, DisplayProfile* profile);
 
+    // X-Device-Signature value for a device-signed GET of `path` (the
+    // manifest's request object with this path). Empty on failure.
+    std::string SignGetRequest(const std::string& path) const;
+
 private:
     const DeviceIdentity& identity_;
 };
