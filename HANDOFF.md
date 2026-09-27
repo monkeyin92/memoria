@@ -28,6 +28,12 @@
 - **真机**：开发板（构建 3）在 10 分钟复查点 display-profile 409 → 清单 409 → `Device released by the server; restarting into nearby bootstrap` → 重启后 3 s 显示二维码并广播 `MEM-095C`，激活后台重试。**待用户**：小程序扫码重新绑定并对话验收。
 - **回滚**（未实跑）：`TAG=20260927-unbind-release-v1 COMMIT=00a94cbc6ee760739e9c36c912a8b5ff8ab354b7 release-ops.sh rollback`：control-api 按 `20260927-device-ota` 组件链重建，其余 5 个按 `20260926-minor-safety-v1` 整栈 compose 重建；schema 不回滚（加列向前兼容）。开发板数据修复不随回滚恢复（旧代码下设备保持 `provisioned`，可正常重新认领）。
 
+## 2026-09-27 小程序体验版 0.2.20260927
+
+- **范围**：main `00a94cb`（含 PR #57 已绑定设备「重新配网」小程序流程；PR #60/#61 内联 `<svg>` 改为 CSS 绘制的勾与折叠箭头，配网步骤勾、设备页抽屉选中勾、首页与数字分身折叠箭头恢复显示）。
+- **上传**：Node 24.16.0 经 `upload:test`（CI 机器人 1，dry-run 编译预检 185 个文件，包 1.42 MB）上传成功；上传前 `node --test` 291/291 通过、main CI 全绿。**提交审核与正式发布需在公众平台手动完成。**
+- **服务端**：与整栈发布 `20260927-unbind-release-v1` 同为 main `00a94cb`，重新配网与解绑释放 fleet 绑定的服务端改动已上线，体验版可直接用于开发板重新绑定验收。
+
 ## 2026-09-27 设备在线升级（OTA）上线 + 解绑误判回归修复（PR #58）
 
 - **范围**：PR #58（main `b317481`）。固件：display-profile 409 先核对 Activation Manifest，只有清单也 409 才清 `activation_v` 并重启进未绑定流程（PR #56 版本在音频运行时开 BLE，AFE 任务创建失败、设备不能对话）；BLE 配网面停止时释放 NimBLE；签名 OTA（`memoria_firmware_update.*`、patch `0029`、`publish_firmware_release.py`）。control-api：设备签名的 `GET /v1/devices/{id}/firmware-release` 与 `.../{build}/image`。
@@ -42,7 +48,7 @@
 - **范围**：main `0b2cb43`（PR #56）。小程序全部页面统一 mist 浅色主题（删除 `.theme-dark` 与 sky/night/warm 背景图，导航栏/tab 栏统一，次要文字等 token 调深到 WCAG AA）；`DEVICE_ALREADY_BOUND` 提示改为先解绑再扫码。
 - **上传**：Node 24.16.0 经 `upload:test`（CI 机器人 1，编译预检 185 个文件，包 1.41 MB）上传成功。**提交审核与正式发布需在公众平台手动完成。**
 - **固件**：同一 PR 的固件改动（patch `0028` 配网模式必出二维码、在线解绑 409 后重出二维码、联网阶段吉祥物缩小留出字幕带）已编译通过，**未刷机、未真机验证**（开发板未连接）。
-- **已知缺口**：设备页「重新配网（不解除绑定）」对已绑定设备仍被服务端 `DEVICE_ALREADY_BOUND` 拒绝，另有任务处理。
+- **已知缺口（已于 09-27 `20260927-unbind-release-v1` 修复）**：设备页「重新配网（不解除绑定）」对已绑定设备曾被服务端 `DEVICE_ALREADY_BOUND` 拒绝。
 
 ## 2026-09-26 整栈发布 20260926-minor-safety-v1
 
