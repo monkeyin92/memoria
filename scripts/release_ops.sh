@@ -6,7 +6,7 @@
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
 # The PREV_* constants describe the chain this release replaces; they were
-# read-only checked on production on 2026-09-27 23:30 (all six targets on the
+# read-only checked on production on 2026-09-28 00:40 (all six targets on the
 # plain PREV compose file) and must be re-checked before each full-stack
 # release. The freeze step refuses to run when the live containers are on any
 # other chain.
@@ -16,8 +16,8 @@ U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260927-unbind-release-v1
-PREV_COMMIT=00a94cbc6ee760739e9c36c912a8b5ff8ab354b7
+PREV_TAG=20260927-child-binding-v1
+PREV_COMMIT=56d103b62cfedfb0d79b51d13c4075853e1fb931
 PREV=/opt/memoria/releases/$PREV_TAG
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.

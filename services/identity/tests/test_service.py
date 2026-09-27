@@ -2400,22 +2400,37 @@ async def test_crisis_contacts_reach_an_elders_binding_delegate(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("guardianship", ["attested", "declared"])
 async def test_declared_owner_guardian_is_also_the_childs_emergency_contact(
     service: IdentityService,
+    guardianship: str,
 ) -> None:
     """Binding a child with the emergency-contact offer must not conflict.
 
     The Mini Program adds the account owner as ``emergency_contact`` when the
-    emergency offer is accepted; the owner's own ``guardian_of`` declaration
-    already makes them the child's crisis contact, so no second
-    ``emergency_contact_for`` relationship is needed. A non-owner still is.
+    emergency offer is accepted; the owner's own ``guardian_of`` already makes
+    them the child's crisis contact, so no second ``emergency_contact_for``
+    relationship is needed. A non-owner still is.
+
+    The device-binding route records the owner's attestation, an *active*
+    relationship; 20260927-child-binding-v1 only accepted the pending
+    declaration and kept refusing every real child binding.
     """
 
     now = _now()
     owner = await _adult(service, "家长", now)
     child = await _minor(service, "孩子", now)
     other = await _adult(service, "外人", now)
-    await _declare_owner_guardianship(service, owner=owner, child=child, now=now)
+    if guardianship == "attested":
+        await service.attest_binding_relationship(
+            source_person_id=owner,
+            target_person_id=child,
+            relation_type="guardian_of",
+            actor_person_id=owner,
+            now=now,
+        )
+    else:
+        await _declare_owner_guardianship(service, owner=owner, child=child, now=now)
 
     manifest = await service.create_binding(
         device_id="dev-child-emergency",

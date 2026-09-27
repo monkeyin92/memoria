@@ -30,7 +30,9 @@ async def parent_emergency_contact_verified(
 
     An active emergency_contact_for relationship with a primary subject (in
     either direction) always counts. So does the account owner's own
-    ``guardian_of`` declaration when the owner is also the binding's guardian:
+    ``guardian_of`` when the owner is also the binding's guardian, whether it
+    is the owner's attestation (active, the device-binding path since
+    2026-09-25) or a one-sided pending declaration:
     that owner is already the account-less child's crisis contact (P0-04 D7,
     ``_CRISIS_CONTACT_LINKS``). Requiring a second emergency_contact_for
     relationship made every parent_for_child binding that accepted the
@@ -45,15 +47,16 @@ async def parent_emergency_contact_verified(
                 at=at,
             ):
                 return True
-        if (
-            emergency_id == account_owner_id
-            and emergency_id in guardian_ids
-            and await store.has_source_confirmed_relationship(
-                source_person_id=emergency_id,
-                target_person_id=subject_id,
-                relation_type="guardian_of",
-                at=at,
-            )
-        ):
-            return True
+        if emergency_id == account_owner_id and emergency_id in guardian_ids:
+            for owner_guardianship in (
+                store.has_active_relationship,
+                store.has_source_confirmed_relationship,
+            ):
+                if await owner_guardianship(
+                    source_person_id=emergency_id,
+                    target_person_id=subject_id,
+                    relation_type="guardian_of",
+                    at=at,
+                ):
+                    return True
     return False

@@ -146,6 +146,50 @@ async def test_child_binding_grants_chat_and_ticked_memory_as_the_guardian(
 
 
 @pytest.mark.asyncio
+async def test_child_binding_with_the_emergency_contact_offer_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The request production refused with 409 binding_conflict on 2026-09-27/28.
+
+    Accepting the emergency-contact offer adds the owner as emergency_contact;
+    the owner's attested guardian_of must be enough for that role.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    recorder = _RecordingConsent()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = recorder
+        owner_id, headers = await _owner(client, app, "bound-child-emergency")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-bound-child-emergency",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=[
+                "offer_minor_voice_session_v1",
+                "offer_minor_memory_retention_v1",
+                "offer_emergency_contact_v1",
+            ],
+            preferences={
+                "quiet_hours": {"start": "21:00", "end": "07:00"},
+                "memory_level": "growth_summary",
+                "tutor_enabled": True,
+                "max_session_minutes": 30,
+                "english_practice_enabled": True,
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert (owner_id, "emergency_contact") in {
+            (role["person_id"], role["role"]) for role in created.json()["roles"]
+        }
+
+
+@pytest.mark.asyncio
 async def test_child_binding_without_the_memory_box_grants_no_memory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
