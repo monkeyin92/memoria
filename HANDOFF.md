@@ -23,7 +23,7 @@
 
 - **问题**：体验版 `0.2.20260926` 早于 #57，严格契约拒收 introspect 的 `purpose`（「包含未声明字段 purpose」）→ 体验版 `0.2.20260927` 已上传。微信「扫一扫」只显示裸载荷 → 固件构建 4 把二维码改为 `https://aigcnice.com/memoria-bind/?b=<载荷>`，小程序拆包，体验版 `0.2.20260927.1` 已上传（**需在公众平台设为体验版**）。
 - **线上**：WMS 的 443 server 块新增 `include /etc/nginx/snippets/memoria-bind.conf;`（备份 `/etc/nginx/wms.pre-20260927-bind-link`），`/var/www/memoria-bind/index.html` 说明页；访问日志关闭。构建 4（sha256 `f1e06234…`）已签名发布为 `current.json`；开发板 USB 刷入构建 4（未绑定设备不跑 OTA）。
-- **待用户**：公众平台「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`、页面 `pages/device-onboarding/index`）与校验文件；校验文件放 `/var/www/memoria-bind/`。
+- **公众平台规则**：前缀 `https://aigcnice.com/memoria-bind/`、页面 `pages/device-onboarding/index`。校验文件 `w1ET0CkeeZ.txt` 已放在 `/var/www/memoria-bind/`（公网 200、字节一致；不入仓库，迁移服务器时要一并带走）。**待用户**：公众平台点校验、保存；发布后对正式版生效。
 - **风险**：`/etc/nginx/ssl/aigcnice.com_bundle.crt`（443 与 8443 上 aigcnice.com 共用）**2026-10-18 到期**，非 certbot 管理，需在到期前续期，否则设备、小程序与该规则同时失效。
 
 ## 2026-09-27 整栈发布 20260927-unbind-release-v1（重新配网 + 解绑释放设备）
