@@ -28,6 +28,7 @@ from services.device_fleet.bootstrap_domain import (
     BindingConflict,
     BindingInitialization,
     BindingRecord,
+    BootstrapPurpose,
     BootstrapSession,
     BootstrapState,
     ChallengeReplay,
@@ -51,6 +52,7 @@ from services.device_fleet.bootstrap_domain import (
     StateVersionConflict,
     b64url_encode,
     now_utc,
+    require_bootstrap_device,
     require_transition,
     validate_activation_manifest,
 )
@@ -172,6 +174,7 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                     cancelled_at TEXT,
                     consumed_at TEXT,
                     failure_code TEXT,
+                    -- purpose: added by the column migration below
                     UNIQUE (actor_id, client_onboarding_id),
                     UNIQUE (device_id, qr_nonce_hash)
                 );
@@ -272,19 +275,14 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                     ON device_media_challenges(device_id, expires_at, used_at);
                 """
             )
-            media_challenge_columns = {
-                str(row["name"])
-                for row in connection.execute(
-                    "PRAGMA table_info(device_media_challenges)"
-                ).fetchall()
-            }
-            if "client_id" not in media_challenge_columns:
-                connection.execute(
-                    """
-                    ALTER TABLE device_media_challenges
-                    ADD COLUMN client_id TEXT NOT NULL DEFAULT ''
-                    """
-                )
+            for table, column, definition in (
+                ("device_media_challenges", "client_id", "TEXT NOT NULL DEFAULT ''"),
+                ("device_onboarding_sessions", "purpose", "TEXT NOT NULL DEFAULT 'onboarding' "
+                 "CHECK (purpose IN ('onboarding', 'reprovision'))"),
+            ):
+                info = connection.execute(f"PRAGMA table_info({table})").fetchall()
+                if column not in {str(row["name"]) for row in info}:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
@@ -362,6 +360,7 @@ class SQLiteBootstrapStore(BootstrapStorePort):
             cancelled_at=_parse_timestamp(row["cancelled_at"]),
             consumed_at=_parse_timestamp(row["consumed_at"]),
             failure_code=(str(row["failure_code"]) if row["failure_code"] is not None else None),
+            purpose=BootstrapPurpose(str(row["purpose"])),
         )
 
     @staticmethod
@@ -533,8 +532,8 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                         qr_nonce_hash, pop_hash, mobile_nonce_hash, protocol_version,
                         ble_name, ble_service_uuid, state, state_version, first_seen_at,
                         expires_at, proximity_verified_at, wifi_connected_at,
-                        device_online_at, cancelled_at, consumed_at, failure_code
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        device_online_at, cancelled_at, consumed_at, failure_code, purpose
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session.onboarding_session_id,
@@ -559,6 +558,7 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                         _timestamp(session.cancelled_at) if session.cancelled_at else None,
                         _timestamp(session.consumed_at) if session.consumed_at else None,
                         session.failure_code,
+                        session.purpose.value,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -907,10 +907,8 @@ class SQLiteBootstrapStore(BootstrapStorePort):
             if device_row is None:
                 raise DeviceNotFound()
             device = self._device(device_row)
-            if device.lifecycle_status is DeviceLifecycle.REVOKED:
-                raise DeviceRevoked()
-            if device.lifecycle_status is DeviceLifecycle.BOUND:
-                raise DeviceAlreadyBound()
+            lifecycle = require_bootstrap_device(device, session)
+            reprovision = session.purpose is BootstrapPurpose.REPROVISION
             if monotonic_counter <= device.last_monotonic_counter:
                 raise ClaimConflict("device monotonic counter is not increasing")
             timestamp = _timestamp(current_time)
@@ -926,7 +924,7 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                 WHERE device_id = ?
                 """,
                 (
-                    DeviceLifecycle.PROVISIONED.value,
+                    lifecycle.value,
                     monotonic_counter,
                     firmware_version,
                     firmware_security_version,
@@ -942,14 +940,14 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                 SET state = ?, state_version = state_version + 1,
                     proximity_verified_at = COALESCE(proximity_verified_at, ?),
                     wifi_connected_at = COALESCE(wifi_connected_at, ?),
-                    device_online_at = ?
+                    device_online_at = ?,
+                    consumed_at = COALESCE(consumed_at, ?)
                 WHERE onboarding_session_id = ? AND state_version = ?
                 """,
                 (
                     target.value,
-                    timestamp,
-                    timestamp,
-                    timestamp,
+                    timestamp, timestamp, timestamp,
+                    timestamp if reprovision else None,
                     onboarding_session_id,
                     session.state_version,
                 ),
@@ -964,7 +962,7 @@ class SQLiteBootstrapStore(BootstrapStorePort):
             self._event(
                 connection,
                 session=updated,
-                event_type="device_online_proof_accepted",
+                event_type=f"{'reprovision' if reprovision else 'device'}_online_proof_accepted",
                 previous_state=session.state,
                 next_state=target,
                 actor_type="device",
@@ -997,6 +995,8 @@ class SQLiteBootstrapStore(BootstrapStorePort):
                 raise StateVersionConflict("onboarding state version changed")
             if session.device_id != claim.device_id or session.actor_id != claim.actor_id:
                 raise ActorMismatch()
+            if session.purpose is BootstrapPurpose.REPROVISION:
+                raise ClaimConflict("reprovision session cannot reserve a claim")
             if session.expires_at <= current_time:
                 raise SessionExpired()
             if not session.proximity_verified_at or not session.device_online_at:

@@ -28,6 +28,14 @@ const STATE_LABELS = Object.freeze({
   complete: "可以开始对话",
 });
 
+// Reprovisioning ends once the bound robot is back online; it has no claim,
+// initialization, or activation step.
+const REPROVISION_STATE_LABELS = Object.freeze({
+  ...STATE_LABELS,
+  progress: "等待机器人用新网络上线",
+  complete: "网络已更新",
+});
+
 const TRANSITIONS = Object.freeze({
   prepare: ["scan"],
   scan: ["device_verified", "prepare"],
@@ -55,8 +63,12 @@ const ERROR_MESSAGES = Object.freeze({
   QR_SIGNATURE_INVALID: "设备码校验失败，请刷新机器人屏幕上的二维码。",
   QR_SESSION_EXPIRED: "设备码已失效，请让机器人重新进入启用模式后再扫。",
   DEVICE_REVOKED: "设备当前不可启用，请联系设备管理员或客服。",
+  // The bound owner's own scan opens a reprovision session instead, so this
+  // only reaches accounts the robot is not bound to.
   DEVICE_ALREADY_BOUND:
-    "这台机器人仍处于绑定状态。如果是你自己的设备，请先在「设备」页解除绑定，再扫描屏幕上的二维码。",
+    "这台机器人已绑定到其他账号。请由绑定它的账号扫码配网，或请对方先在「设备」页解除绑定。",
+  REPROVISION_DEVICE_NOT_BOUND:
+    "这台机器人没有绑定在你的账号上，重新配网只适用于你已绑定的设备。请返回设备页，用「添加其他设备」完成绑定。",
   PROTOCOL_UNSUPPORTED:
     "当前固件的安全配网协议未完成兼容，已停止发送网络信息。请升级机器人固件后重试。",
   BLUETOOTH_DISABLED: "请打开手机蓝牙，再返回这里重试。",
@@ -118,6 +130,15 @@ function clientStateForServerState(state) {
   return SERVER_TO_CLIENT_STATE[state] || null;
 }
 
+function isReprovisionSession(session) {
+  return session?.purpose === "reprovision";
+}
+
+function clientStateForSession(session) {
+  if (isReprovisionSession(session) && session.state === "device_online") return "complete";
+  return clientStateForServerState(session?.state);
+}
+
 function isExpired(expiresAt, now = Date.now()) {
   const timestamp = Date.parse(expiresAt || "");
   return !Number.isFinite(timestamp) || timestamp <= now;
@@ -163,6 +184,7 @@ function activationIsLateOrReady(previous, next) {
 module.exports = {
   CLIENT_STATES,
   STATE_LABELS,
+  REPROVISION_STATE_LABELS,
   TRANSITIONS,
   PROGRESS_STEPS,
   ERROR_MESSAGES,
@@ -170,6 +192,8 @@ module.exports = {
   canTransition,
   transition,
   clientStateForServerState,
+  clientStateForSession,
+  isReprovisionSession,
   isExpired,
   errorMessage,
   errorCode,

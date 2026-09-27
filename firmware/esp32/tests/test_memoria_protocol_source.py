@@ -227,23 +227,58 @@ def test_wifi_config_mode_always_offers_the_nearby_bootstrap_qr() -> None:
     assert "MemoriaBootstrap::GetInstance().Start(display_)" in configuring
 
 
-def test_server_release_while_online_brings_the_binding_qr_back() -> None:
-    assert "std::atomic<bool> released_{false};" in PROTOCOL_HEADER
-    assert "void EnterReleasedState();" in PROTOCOL_HEADER
+def test_server_release_is_confirmed_by_the_manifest_before_restarting() -> None:
+    # display-profile also answers 409 when Identity lags the fleet binding;
+    # only the activation manifest may declare the board released.
+    assert "bool ConfirmServerRelease();" in PROTOCOL_HEADER
+    assert "released_" not in PROTOCOL_HEADER
     task = SOURCE[SOURCE.index("void MemoriaProtocol::DisplayProfileTask") :]
-    task = task[: task.index("void MemoriaProtocol::EnterReleasedState")]
-    assert "result == ESP_ERR_INVALID_STATE" in task
-    assert "if (!protocol->released_.exchange(true)) {" in task
-    assert "protocol->EnterReleasedState();" in task
-    released = SOURCE[SOURCE.index("void MemoriaProtocol::EnterReleasedState") :]
-    released = released[: released.index("bool MemoriaProtocol::CreateMediaSession")]
-    assert 'runtime.SetInt("activation_v", 0);' in released
-    assert "activation_ctr" not in released.replace("keep activation_ctr", "")
-    assert "MemoriaBootstrap::GetInstance().Start(display)" in released
-    assert "StartActivationRetry();" in released
-    retry = SOURCE[SOURCE.index("void MemoriaProtocol::RunActivationRetry") :]
-    retry = retry[: retry.index("void MemoriaProtocol::StartDisplayProfilePoll")]
-    assert "released_.store(false);" in retry
+    task = task[: task.index("bool MemoriaProtocol::ConfirmServerRelease")]
+    assert "result == ESP_ERR_INVALID_STATE &&" in task
+    assert "DeviceMonotonicMs() >= next_release_check_ms" in task
+    assert "if (protocol->ConfirmServerRelease()) {" in task
+    assert "esp_restart();" in task
+    assert "next_release_check_ms = DeviceMonotonicMs() + kReleaseRecheckMs;" in task
+    # No BLE bring-up next to a running audio engine.
+    assert "MemoriaBootstrap::GetInstance().Start" not in task
+    confirm = SOURCE[SOURCE.index("bool MemoriaProtocol::ConfirmServerRelease") :]
+    confirm = confirm[: confirm.index("bool MemoriaProtocol::CreateMediaSession")]
+    assert "client.Activate(&probe)" in confirm
+    assert "result == ESP_ERR_INVALID_STATE" in confirm
+    client = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_activation_client.cc"
+    ).read_text(encoding="utf-8")
+    unbound = client[client.index("if (manifest_status == 409) {") :]
+    unbound = unbound[: unbound.index("return ESP_ERR_INVALID_STATE;")]
+    assert 'runtime.SetInt("activation_v", 0);' in unbound
+
+
+def test_bootstrap_releases_the_ble_stack_when_it_stops() -> None:
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    assert "config.keep_ble_on = 0;" in bootstrap
+    assert "protocomm_ble_stop(protocomm_);" in bootstrap
+
+
+def test_a_fuel_gauge_timeout_never_aborts_the_board() -> None:
+    # A battery read that times out while flash is written (an OTA download)
+    # used to hit ESP_ERROR_CHECK inside I2cDevice::ReadRegs and reboot.
+    board = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    charge = board[board.index("class Charge : public I2cDevice") : board.index("class Cst816s")]
+    assert "ReadRegs(" not in charge
+    assert "ReadReg(" not in charge
+    assert "i2c_master_transmit_receive(i2c_device_, &reg, 1, data, 2, 100) != ESP_OK" in charge
+    assert "return last_words_[slot];" in charge
 
 
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
@@ -1913,3 +1948,17 @@ def test_playback_supply_metering_patch_stays_observational() -> None:
         assert field in header, field
     for reason in ("generation_switch", "channel_flush", "decoder_reset", "service_stop"):
         assert reason in header, reason
+
+
+def test_online_proof_reserves_its_counter_before_sending() -> None:
+    """A lost proof response must not make the retry replay a consumed counter."""
+
+    bootstrap = (
+        Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_bootstrap.cc"
+    ).read_text(encoding="utf-8")
+    proof = bootstrap[bootstrap.index("bool MemoriaBootstrap::RunOnlineProof()") :]
+    proof = proof[: proof.index("\n}\n")]
+    reserve = proof.index('runtime.SetInt("activation_ctr", counter);')
+    send = proof.index('HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path)')
+    assert reserve < send
+    assert proof.count('runtime.SetInt("activation_ctr"') == 1

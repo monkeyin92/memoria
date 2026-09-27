@@ -350,7 +350,10 @@ esp_err_t MemoriaBootstrap::StartBle() {
     config.nu_lookup_count = sizeof(endpoints) / sizeof(endpoints[0]);
     config.nu_lookup = endpoints;
     config.ble_notify = 0;
-    config.keep_ble_on = 1;
+    // Tear the NimBLE stack down on Stop(): kept running it holds the
+    // internal RAM the audio engine and the display-profile task need once
+    // the board is activated. Start() brings it up again when needed.
+    config.keep_ble_on = 0;
     esp_err_t result = protocomm_ble_start(protocomm_, &config);
     if (result != ESP_OK) {
         return result;
@@ -544,10 +547,14 @@ bool MemoriaBootstrap::RunOnlineProof() {
     cJSON_free(proof_rendered);
     std::string proof_response;
     const std::string proof_path = "/v1/device-bootstrap/" + onboarding_session_id_ + "/online-proof";
+    // Reserve the counter before it leaves the board. The server may accept
+    // the proof and the response still be lost; a retry must then sign a
+    // higher counter instead of replaying a consumed one. A failed send only
+    // skips a value, which the strictly-increasing rule allows.
+    runtime.SetInt("activation_ctr", counter);
     if (!HttpRequest("POST", JoinUrl(identity_.control_api_url(), proof_path), proof, &proof_response)) {
         return false;
     }
-    runtime.SetInt("activation_ctr", counter);
     ESP_LOGI(kTag, "Nearby device online proof accepted, counter=%ld", static_cast<long>(counter));
     return true;
 }

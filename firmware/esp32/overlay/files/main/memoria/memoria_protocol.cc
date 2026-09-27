@@ -12,6 +12,7 @@
 #include "board.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "display/lcd_display.h"
 #include "http.h"
@@ -19,8 +20,8 @@
 #include "application.h"
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
+#include "memoria_firmware_update.h"
 #include "memoria_wake_word.h"
-#include "settings.h"
 #include "sodium.h"
 #include "web_socket.h"
 
@@ -35,6 +36,14 @@ constexpr int64_t kTransportPongTimeoutUs = 10LL * 1000LL * 1000LL;
 constexpr uint32_t kActivationRetryDelayMs = 5000;
 // The phone's companion pick reaches an idle device within one poll.
 constexpr uint32_t kDisplayProfilePollMs = 20000;
+// A bound board whose display profile is unavailable rechecks the manifest
+// at most this often.
+constexpr uint64_t kReleaseRecheckMs = 10 * 60 * 1000;
+// Firmware updates: first look shortly after the board settles idle, then a
+// few times a day; a paused or failed download is retried sooner.
+constexpr uint64_t kFirstFirmwareCheckMs = 30 * 1000;
+constexpr uint64_t kFirmwareCheckMs = 6ULL * 60 * 60 * 1000;
+constexpr uint64_t kFirmwareRetryMs = 15 * 60 * 1000;
 constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate24k = 24000;
 constexpr uint32_t kDownlinkSampleRate16k = 16000;
@@ -336,6 +345,11 @@ bool MemoriaProtocol::Start() {
     }
     MemoriaActivationClient activation_client(identity_);
     const esp_err_t activation_result = activation_client.Activate(&activation_);
+    if (activation_result == ESP_OK || activation_result == ESP_ERR_INVALID_STATE) {
+        // Control API answered this image (bound or not): an update that got
+        // this far is good; until then a reset rolls back to the old slot.
+        MemoriaFirmwareUpdate::ConfirmRunningImage();
+    }
     if (activation_result != ESP_OK) {
         if (activation_result == ESP_ERR_INVALID_STATE) {
             auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
@@ -394,7 +408,6 @@ void MemoriaProtocol::RunActivationRetry() {
         const esp_err_t result = activation_client.Activate(&activation_);
         if (result == ESP_OK) {
             MemoriaBootstrap::GetInstance().Stop();
-            released_.store(false);
             ESP_LOGI(kTag, "Activation completed after nearby bootstrap");
             StartDisplayProfilePoll();
             if (on_connected_ != nullptr) {
@@ -423,6 +436,8 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
     auto* protocol = static_cast<MemoriaProtocol*>(context);
     std::string applied_version;
     bool polled = false;
+    uint64_t next_release_check_ms = 0;
+    uint64_t next_firmware_check_ms = DeviceMonotonicMs() + kFirstFirmwareCheckMs;
     while (protocol != nullptr) {
         // Only while idle: a conversation must never share the radio with a
         // cosmetic poll, and the next idle moment is soon enough.
@@ -439,15 +454,25 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
                 ESP_LOGI(kTag, "Display profile companion=%s version=%s",
                          profile.companion_id.c_str(), profile.display_version.c_str());
                 PublishCompanion(profile.companion_id.c_str());
-            } else if (result == ESP_ERR_INVALID_STATE) {
-                // 409: the device is no longer bound. Without this the board
-                // would keep its old face until a reboot and never offer the
-                // QR the phone now needs to bind it again.
-                if (!protocol->released_.exchange(true)) {
-                    protocol->EnterReleasedState();
+            } else if (result == ESP_ERR_INVALID_STATE &&
+                       DeviceMonotonicMs() >= next_release_check_ms) {
+                // 409: possibly released by the phone. Without a check the
+                // board would keep its old binding until a reboot and never
+                // offer the QR the phone needs to bind it again.
+                if (protocol->ConfirmServerRelease()) {
+                    // Restart into the unbound boot path: QR and BLE come up
+                    // before the audio engine, which cannot share internal
+                    // RAM with the BLE stack once it runs.
+                    ESP_LOGW(kTag, "Device released by the server; restarting into nearby bootstrap");
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    esp_restart();
                 }
-            } else if (result != ESP_OK) {
+                next_release_check_ms = DeviceMonotonicMs() + kReleaseRecheckMs;
+            } else if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
                 ESP_LOGW(kTag, "Display profile poll failed, code=%s", esp_err_to_name(result));
+            }
+            if (DeviceMonotonicMs() >= next_firmware_check_ms) {
+                protocol->CheckFirmwareUpdate(base, &next_firmware_check_ms);
             }
         }
         // Right after activation the device is not idle yet; check back soon.
@@ -456,17 +481,38 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
     vTaskDelete(nullptr);
 }
 
-void MemoriaProtocol::EnterReleasedState() {
-    // Same bookkeeping as an unbound activation: drop the acknowledged
-    // version so the next binding's manifest is ACKed, keep activation_ctr.
-    Settings runtime("memoria_runtime", true);
-    runtime.SetInt("activation_v", 0);
-    ESP_LOGW(kTag, "Device released by the server; nearby bootstrap required");
-    auto* display = dynamic_cast<LcdDisplay*>(Board::GetInstance().GetDisplay());
-    if (display == nullptr || MemoriaBootstrap::GetInstance().Start(display) != ESP_OK) {
-        ESP_LOGE(kTag, "Nearby bootstrap unavailable after release");
+void MemoriaProtocol::CheckFirmwareUpdate(const std::string& base, uint64_t* next_check_ms) {
+    const auto idle = []() {
+        return Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+    };
+    const FirmwareCheck check = MemoriaFirmwareUpdate::CheckAndStage(identity_, base, idle);
+    if (check != FirmwareCheck::kStaged) {
+        *next_check_ms =
+            DeviceMonotonicMs() + (check == FirmwareCheck::kRetryLater ? kFirmwareRetryMs : kFirmwareCheckMs);
+        return;
     }
-    StartActivationRetry();
+    // Never cut a conversation short: restart at the next quiet moment.
+    while (!idle()) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    ESP_LOGW(kTag, "Restarting into the new firmware");
+    Board::GetInstance().GetDisplay()->ShowNotification("正在更新，马上回来", 3000);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+}
+
+bool MemoriaProtocol::ConfirmServerRelease() {
+    // Activate() answers ESP_ERR_INVALID_STATE only for a manifest 409 and
+    // then clears activation_v itself (activation_ctr is kept).
+    MemoriaActivationClient client(identity_);
+    ActivationProfile probe;
+    const esp_err_t result = client.Activate(&probe);
+    if (result == ESP_ERR_INVALID_STATE) {
+        return true;
+    }
+    ESP_LOGW(kTag, "Display profile unavailable but activation manifest answers %s; keeping binding",
+             esp_err_to_name(result));
+    return false;
 }
 
 bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {
