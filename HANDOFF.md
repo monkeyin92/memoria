@@ -2,11 +2,12 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-26 19:34–19:40（CST）整栈发布 `20260926-minor-safety-v1`（main `048a83a`，含 PR #52/#53/#54），5 个角色经仓库版 `release-ops.sh` 全链 PASS（含 identity/guardian schema 函数更新），media-edge 单独切换 PASS。详见下方同日发布一节。
+- **最近生产收据**：2026-09-27 18:22（CST）control-api 单组件发布 `20260927-device-ota`（设备 OTA 接口），同日 nginx `memoria-https.conf` 就地加 `proxy_max_temp_file_size 0`，固件发布目录上线构建 3；其余角色仍为下行整栈。
+- **上一次整栈收据**：2026-09-26 19:34–19:40（CST）整栈发布 `20260926-minor-safety-v1`（main `048a83a`，含 PR #52/#53/#54），5 个角色经仓库版 `release-ops.sh` 全链 PASS（含 identity/guardian schema 函数更新），media-edge 单独切换 PASS。详见下方同日发布一节。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260926-minor-safety-v1` | `sha256:9541a70efce02cf0c2e76de70347a8065eae755825505214732eb77aa2f2d760`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 | `2026-09-26T11:37:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/` | `memoria-control-api:rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
+| Control API | `memoria-control-api:20260927-device-ota` | `sha256:5991fd1e883e8ffb9449e56cf93803baadeba88803f720d32cbd96565faf5436`（服务器 image id） | `42b5c5421f321a75e7fe0c06e87ae07e98d8ee63`（hotfix 分支 = `048a83a` + PR #58 的 control-api 部分） | `20260927-device-ota` / `42b5c54` | healthy | 0 | `2026-09-27T10:22:27Z` | `deploy_control_component.sh --cutover` PASS | `memoria-control-api:rollback-20260927-device-ota-pre-control`（= `20260926-minor-safety-v1`） |
 | Agent / Bridge | `memoria-agent:20260926-minor-safety-v1` | `sha256:fbce8c061186d1324f9e397dd1d1963bc2d39f39e7ed3cf686e30ba7bab81037`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 each | `2026-09-26T11:37:28Z` | 同上 | `memoria-agent:rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
 | Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260926-minor-safety-v1` | `sha256:90a09e57…` / `sha256:270f9415…` / `sha256:af160c6b…`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `20260926-minor-safety-v1` / `048a83a` | healthy | 0 each | `2026-09-26T11:37:07Z`–`11:37:53Z` | 同上 | 各自 `rollback-20260926-minor-safety-v1-pre`（= `20260926-edge-flush-v1`） |
 | Media Edge | `memoria-media-edge:20260926-minor-safety-v1` | `sha256:abee9b82f5e349445eeffb6b56d4bc5308edc9e9e26a1acd3a7175183698c561`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `not set / not applicable` | healthy | 0 | `2026-09-26T11:40:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-edge-flush-v1`（override `component-releases/20260926-minor-safety-v1/media-edge-rollback.override.yml`） |
@@ -17,6 +18,15 @@
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-27 设备在线升级（OTA）上线 + 解绑误判回归修复（PR #58）
+
+- **范围**：PR #58（main `b317481`）。固件：display-profile 409 先核对 Activation Manifest，只有清单也 409 才清 `activation_v` 并重启进未绑定流程（PR #56 版本在音频运行时开 BLE，AFE 任务创建失败、设备不能对话）；BLE 配网面停止时释放 NimBLE；签名 OTA（`memoria_firmware_update.*`、patch `0029`、`publish_firmware_release.py`）。control-api：设备签名的 `GET /v1/devices/{id}/firmware-release` 与 `.../{build}/image`。
+- **发布**：`deploy_control_component.sh` 因 main 上 `scripts/release_ops.sh` 常量改动（PR #55）越界而拒绝，按 `20260925-control-binding-actor` 先例用 hotfix 分支 `hotfix/20260927-device-ota`（`048a83a` + 仅 `services/control_api/app/device_firmware.py`、`routes/device_onboarding.py` 与测试），tag `20260927-device-ota` → `42b5c54`；main CI（run `36311652118`）全绿后 dry-run PASS → `--cutover` PASS（PG schema/RLS 校验、单容器重建）。切后 healthy、restarts=0，其余容器未动，外部 ready 200，新接口无证书 401。
+- **nginx（线上就地改）**：`/var/lib/nginx/proxy` 属 `nobody` 0700 而 worker 是 `www-data`，任何超出内存缓冲的代理响应都会被截断（首次 OTA 下载在 79% 断开，设备按哈希/长度校验拒收）。线上 `/etc/nginx/snippets/memoria-https.conf` 只在 `location ^~ /memoria-api/` 加 `proxy_max_temp_file_size 0`（备份 `.pre-20260927-ota`，`nginx -t` 通过后 reload）；仓库文件同步此行。**注意**：线上片段与仓库仍不一致（仓库已下线 H5，线上未部署），不要整份覆盖。
+- **固件发布**：私钥 `~/.config/memoria/secrets/firmware-release-ed25519.key`（本机，600，需离线备份），公钥 `b9fc4ad5…b009a`。服务器目录 `/var/lib/memoria/firmware-releases/memoria-esp-vocat/`（= control-api `/data/firmware-releases`），当前 `current.json` → 构建 3（`2.4.2+m3`，sha256 `b18cd9b9…`）。SSH 用户 `ubuntu`，上传脚本在家目录暂存后 `sudo -n install`。
+- **真机（开发板 `dev_atk_a4cb8fd6095c`）**：刷前回读 NVS+identity（`0x9000–0x20000`）备份在 `firmware/esp32/artifacts/backups/pre-ota-20260927/`。构建 1 USB 刷入后首次 OTA 暴露电量计 I2C 超时 → `ESP_ERROR_CHECK` abort（写 flash 期间）→ 下载中反复重启；已撤回发布、改为读失败沿用上次值，构建 2 USB 刷入。构建 2 → 3 在线升级 PASS：空闲 30 s 发现，83 s 下载，校验后写 `ota_1`，空闲重启，以构建 3 从 `ota_1` 启动并在激活答复后 `confirmed`，AFE 正常。**未测**：回滚（新镜像确认前复位回旧槽）。
+- **已知缺口**：小程序「解除绑定」（`POST /v1/devices/{id}/binding/unbind`）只撤销 Identity 绑定，不释放 device_fleet 绑定：设备仍拿到激活清单、扫码报 `DEVICE_ALREADY_BOUND`。开发板当前即此状态（清单 v3 有效，display-profile 409），无法重新绑定；待 PR #57 合并后修服务端并修复这台设备的数据。
 
 ## 2026-09-26 小程序体验版 0.2.20260926（PR #56）
 

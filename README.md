@@ -416,7 +416,7 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py upload --remote
 uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remote memoria-prod
 ```
 
-签名私钥只在发布机上：`~/.config/memoria/secrets/firmware-release-ed25519.key`（600）；公钥同时写在固件头文件与 `services/control_api/app/device_firmware.py`，测试保证两者一致。私钥丢失后已出货设备只能 USB 刷机，请离线备份。服务器上发布目录是 control-api 现有 `/data` 挂载的宿主侧 `/var/lib/memoria/firmware-releases/<board>/`（`current.json` + `<build>/app.bin`）；control-api 每次提供前都重新验签并核对镜像大小与哈希，损坏的发布一律不提供。`services/device_fleet/service.py` 里的 OTA assignment/receipt 领域（A/B 槽、防回滚能力声明）尚未接入 control-api 与固件，本路径不依赖它。
+签名私钥只在发布机上：`~/.config/memoria/secrets/firmware-release-ed25519.key`（600）；公钥同时写在固件头文件与 `services/control_api/app/device_firmware.py`，测试保证两者一致。私钥丢失后已出货设备只能 USB 刷机，请离线备份。服务器上发布目录是 control-api 现有 `/data` 挂载的宿主侧 `/var/lib/memoria/firmware-releases/<board>/`（`current.json` + `<build>/app.bin`）；control-api 每次提供前都重新验签并核对镜像大小与哈希，损坏的发布一律不提供。nginx 的 `/memoria-api/` 需 `proxy_max_temp_file_size 0`（生产 worker 写不了 proxy 临时目录，缓冲溢出的响应会被截断，设备会按哈希拒收）。`services/device_fleet/service.py` 里的 OTA assignment/receipt 领域（A/B 槽、防回滚能力声明）尚未接入 control-api 与固件，本路径不依赖它。
 
 默认出厂唤醒词为「茉莉」（`mo li`）。Memoria 板卡 assets 同时打包白名单词「梅莫里亚」（`mei mo li ya`），可在小程序设备页切换，或在填写 display + 拼音后保存自定义词（MultiNet 命令词，v1 非云端训练）。切换/自定义后设备需重连；固件需含 overlay patch `0021`。短按 BOOT 可启动会话；播放期间 BOOT 是本地物理硬停止权威。只有排查媒体问题时才构建 `./scripts/build.sh --wake-word disabled`。
 

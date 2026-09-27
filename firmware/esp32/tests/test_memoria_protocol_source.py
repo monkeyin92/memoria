@@ -261,6 +261,26 @@ def test_bootstrap_releases_the_ble_stack_when_it_stops() -> None:
     assert "protocomm_ble_stop(protocomm_);" in bootstrap
 
 
+def test_a_fuel_gauge_timeout_never_aborts_the_board() -> None:
+    # A battery read that times out while flash is written (an OTA download)
+    # used to hit ESP_ERROR_CHECK inside I2cDevice::ReadRegs and reboot.
+    board = (
+        Path(__file__).parents[1]
+        / "overlay"
+        / "files"
+        / "main"
+        / "boards"
+        / "memoria"
+        / "esp-vocat"
+        / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    charge = board[board.index("class Charge : public I2cDevice") : board.index("class Cst816s")]
+    assert "ReadRegs(" not in charge
+    assert "ReadReg(" not in charge
+    assert "i2c_master_transmit_receive(i2c_device_, &reg, 1, data, 2, 100) != ESP_OK" in charge
+    assert "return last_words_[slot];" in charge
+
+
 def test_media_challenge_post_has_an_explicit_json_body() -> None:
     start = SOURCE.index('device_path + "/media-challenge"')
     end = SOURCE.index("&challenge_response", start)
