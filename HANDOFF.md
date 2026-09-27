@@ -19,6 +19,12 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-27 小程序体验版 0.2.20260927
+
+- **范围**：main `00a94cb`（含 PR #57 已绑定设备「重新配网」小程序流程；PR #60/#61 内联 `<svg>` 改为 CSS 绘制的勾与折叠箭头，配网步骤勾、设备页抽屉选中勾、首页与数字分身折叠箭头恢复显示）。
+- **上传**：Node 24.16.0 经 `upload:test`（CI 机器人 1，dry-run 编译预检 185 个文件，包 1.42 MB）上传成功；上传前 `node --test` 291/291 通过、main CI 全绿。**提交审核与正式发布需在公众平台手动完成。**
+- **已知缺口**：生产 control-api 仍为 `20260927-device-ota`（`42b5c54`），未含 PR #57 的 device_fleet 重新配网服务端改动（含 `bootstrap_postgres_schema.sql` 变更）与 PR #62 的解绑释放 fleet 绑定，体验版里的「重新配网」与解绑后重扫码在服务端上线前仍会被拒。
+
 ## 2026-09-27 设备在线升级（OTA）上线 + 解绑误判回归修复（PR #58）
 
 - **范围**：PR #58（main `b317481`）。固件：display-profile 409 先核对 Activation Manifest，只有清单也 409 才清 `activation_v` 并重启进未绑定流程（PR #56 版本在音频运行时开 BLE，AFE 任务创建失败、设备不能对话）；BLE 配网面停止时释放 NimBLE；签名 OTA（`memoria_firmware_update.*`、patch `0029`、`publish_firmware_release.py`）。control-api：设备签名的 `GET /v1/devices/{id}/firmware-release` 与 `.../{build}/image`。
