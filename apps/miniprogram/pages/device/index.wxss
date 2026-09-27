@@ -88,13 +88,17 @@
 
 .sheet-opt .opt-check {
   display: none;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: 36rpx;
+  height: 36rpx;
   color: #285c5e;
   color: var(--brand-teal);
 }
 
 .sheet-opt.on .opt-check {
-  display: block;
+  display: flex;
 }
 
 .sheet-opt.on .choice-radio { border-color: #172f43; background: #172f43; box-shadow: inset 0 0 0 8rpx #fff; }
