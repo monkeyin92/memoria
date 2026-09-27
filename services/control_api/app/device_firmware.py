@@ -2,7 +2,8 @@
 
 A release is published by ``firmware/esp32/scripts/publish_firmware_release.py``
 into a directory this service reads (``MEMORIA_FIRMWARE_RELEASE_DIR``, by
-default ``firmware-releases`` next to the Control database)::
+default ``firmware-releases`` next to ``MEMORIA_DB_PATH``: in production the
+existing ``/data`` bind of ``/var/lib/memoria``)::
 
     <root>/<board>/current.json          the signed release document
     <root>/<board>/<build>/app.bin       the application image it describes
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -166,6 +168,13 @@ class FirmwareReleaseDirectory:
         verified = FirmwareRelease(document=release, image=image)
         self._verified = (fingerprint, verified)
         return verified
+
+
+def release_directory_for(memoria_db_path: str) -> FirmwareReleaseDirectory:
+    configured = os.environ.get("MEMORIA_FIRMWARE_RELEASE_DIR", "").strip()
+    return FirmwareReleaseDirectory(
+        Path(configured) if configured else Path(memoria_db_path).parent / "firmware-releases"
+    )
 
 
 def authenticate_device_get(

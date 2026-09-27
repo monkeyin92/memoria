@@ -29,6 +29,7 @@ from services.control_api.app.device_firmware import (
     InvalidFirmwareRelease,
     authenticate_device_get,
     image_path,
+    release_directory_for,
     release_path,
 )
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
@@ -440,7 +441,11 @@ async def get_device_display_profile(
 def _current_firmware(request: Request) -> FirmwareRelease | None:
     releases = getattr(request.app.state, "firmware_releases", None)
     if not isinstance(releases, FirmwareReleaseDirectory):
-        return None
+        settings = getattr(request.app.state, "settings", None)
+        if settings is None:
+            return None
+        releases = release_directory_for(settings.memoria_db_path)
+        request.app.state.firmware_releases = releases  # keeps the hash cache
     try:
         return releases.current()
     except (InvalidFirmwareRelease, OSError, ValueError) as exc:

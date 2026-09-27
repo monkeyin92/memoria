@@ -56,7 +56,6 @@ from services.consent.postgres_store import PostgresConsentStore
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.device_firmware import FirmwareReleaseDirectory
 from services.control_api.app.device_registry import DeviceRegistry
 from services.control_api.app.guardian_push import (
     app_display_name_resolver,
@@ -1040,12 +1039,6 @@ async def _wire_services(w: _Wiring) -> None:
     device_onboarding = app.state.device_onboarding_service
     if isinstance(device_onboarding, DeviceOnboardingService):
         w.on_close(device_onboarding.close)
-    app.state.firmware_releases = FirmwareReleaseDirectory(
-        Path(
-            settings.firmware_release_dir.strip()
-            or Path(settings.memoria_db_path).parent / "firmware-releases"
-        )
-    )
 
     consent_url = w.url(settings.consent_database_url.get_secret_value().strip())
     binding_consent_store: BindingConsentStorePort | None

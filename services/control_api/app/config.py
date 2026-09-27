@@ -273,10 +273,6 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64",
     )
-    # Directory of signed firmware releases for device OTA. Empty means
-    # `firmware-releases` next to MEMORIA_DB_PATH (in production the existing
-    # /data bind of /var/lib/memoria); a missing directory offers nothing.
-    firmware_release_dir: str = Field(default="", alias="MEMORIA_FIRMWARE_RELEASE_DIR")
     identity_registration_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL",

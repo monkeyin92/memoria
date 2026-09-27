@@ -100,9 +100,10 @@ async def test_nothing_published_answers_no_content(
     _online_claim(app.state.device_onboarding_service, actor_id="someone", device_key=device_key)
     headers = _signed_headers(device_key, path=RELEASE_PATH)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # The default directory next to the Control database does not exist.
-        assert not app.state.firmware_releases.root.exists()
         unconfigured = await client.get(RELEASE_PATH, headers=headers)
+        # The default directory next to the Control database does not exist.
+        assert app.state.firmware_releases.root == tmp_path / "firmware-releases"
+        assert not app.state.firmware_releases.root.exists()
         app.state.firmware_releases = _releases(tmp_path / "empty", Ed25519PrivateKey.generate())
         empty = await client.get(RELEASE_PATH, headers=headers)
     assert unconfigured.status_code == empty.status_code == 204
