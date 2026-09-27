@@ -44,11 +44,6 @@
   padding: 10rpx 0;
 }
 
-.auth-point .inline-icon {
-  flex: none;
-  color: #326e70;
-}
-
 .auth-point-text {
   color: #3f464c;
   font-size: 26rpx;
