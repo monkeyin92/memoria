@@ -1360,10 +1360,19 @@ async def test_parent_for_child_binding_attests_the_guardianship(
         # relationship.attest; PostgreSQL's audit trigger records the insert
         # as relationship.proposed), so assert the substance: one event on
         # this relationship, attributed to the guardian.
-        actions = app_store.fetch_all(
-            tmp_path / "guardian-declaration-identity.sqlite3",
-            "SELECT action, actor_person_id FROM identity_audit_events WHERE relationship_id = ?",
-            (declaration.relationship_id,),
+        actions = (
+            app_store.fetch_all(
+                "",
+                "SELECT action, actor_person_id FROM identity_audit_events "
+                "WHERE relationship_id = ?",
+                (declaration.relationship_id,),
+            )
+            if app_store.postgres_active()
+            else [
+                (event.action, event.actor_person_id)
+                for event in app.state.identity_store.audit_events()
+                if event.relationship_id == declaration.relationship_id
+            ]
         )
         assert len(actions) == 1
         assert actions[0][0] in {"relationship.attest", "relationship.proposed"}

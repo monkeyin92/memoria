@@ -19,22 +19,17 @@ from services.identity.domain import (
 )
 from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import IdentityService
-from services.identity.sqlite_store import SqliteIdentityStore
 from services.identity.testing_authorities import TestTransferAuthority
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def store(
-    request: pytest.FixtureRequest, tmp_path: Path
-) -> InMemoryIdentityStore | SqliteIdentityStore:
-    if request.param == "memory":
-        return InMemoryIdentityStore()
-    return SqliteIdentityStore(tmp_path / "identity.sqlite3")
+@pytest.fixture
+def store() -> InMemoryIdentityStore:
+    return InMemoryIdentityStore()
 
 
 @pytest.fixture
 def service(
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> IdentityService:
     return IdentityService(
         store,
@@ -459,7 +454,7 @@ async def test_transfer_conflicts_when_binding_changed(
 @pytest.mark.asyncio
 async def test_transfer_outbox_events_and_idempotent_accept(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     owner = await _adult(service, "本人", now)
@@ -527,7 +522,7 @@ async def test_transfer_outbox_events_and_idempotent_accept(
 @pytest.mark.asyncio
 async def test_atomic_audit_outbox_on_failed_supersede(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     owner = await _adult(service, "本人", now)
@@ -569,7 +564,7 @@ async def test_concurrent_transfer_accepts_are_monotonic(
 ) -> None:
     """Two concurrent accepts: both converge on the same monotonic version
     (idempotent replay), no duplicate binding version is ever issued."""
-    store = SqliteIdentityStore(tmp_path / "identity-concurrent.sqlite3")
+    store = InMemoryIdentityStore()
     service = IdentityService(
         store,
         consent_resolver=DeterministicConsentSnapshotResolver(),

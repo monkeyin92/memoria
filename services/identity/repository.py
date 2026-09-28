@@ -1,9 +1,9 @@
 """Storage seam for the identity domain.
 
 ``IdentityStore`` is the only persistence contract the service depends on.
-Adapters: ``InMemoryIdentityStore`` (Control API dev fixtures),
-``SqliteIdentityStore`` (local development) and ``PostgresIdentityStore``
-(production authority with FORCE RLS, section 11.7 / PR-17).
+Adapters: ``PostgresIdentityStore`` (the authority, FORCE RLS, section 11.7 /
+PR-17) and ``InMemoryIdentityStore`` (unit tests and a Control API started
+without an identity DSN, which production refuses).
 """
 
 from __future__ import annotations

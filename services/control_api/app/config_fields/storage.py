@@ -102,10 +102,6 @@ class StorageFields(BaseModel):
         default=SecretStr(""),
         alias="MEMORIA_SESSION_RUNTIME_MAINTENANCE_DATABASE_URL",
     )
-    identity_db_path: str = Field(
-        default="",
-        alias="MEMORIA_IDENTITY_DB_PATH",
-    )
     consent_db_path: str = Field(
         default="",
         alias="MEMORIA_CONSENT_DB_PATH",

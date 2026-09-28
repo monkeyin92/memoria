@@ -131,7 +131,6 @@ show_missing = true
 "services/guardian/postgres_store.py" = 2470
 "services/archive/memory_catalog.py" = 2432
 "services/archive/postgres_memory_catalog.py" = 2390
-"services/identity/sqlite_store.py" = 2282
 "services/consent/authority.py" = 2202
 "services/device_fleet/bootstrap_postgres_store.py" = 2175
 "services/memory_scope/shared_actions.py" = 2007

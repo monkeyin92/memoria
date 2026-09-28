@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from services.identity.authority import DeterministicConsentSnapshotResolver
 from services.identity.domain import IdentityAccessDeniedError, RelationshipLifecycleError
+from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import REDACTED_DISPLAY_NAME, IdentityService
-from services.identity.sqlite_store import SqliteIdentityStore
 from services.identity.tests.test_service import _TEST_AUTHORITY
 
 NOW = datetime.now(UTC)
 
 
-async def _bound_child(tmp_path: Path) -> tuple[IdentityService, str, str]:
+async def _bound_child(
+    tmp_path: Path, store: InMemoryIdentityStore | None = None
+) -> tuple[IdentityService, str, str]:
     identity = IdentityService(
-        SqliteIdentityStore(tmp_path / "identity.sqlite3"),
+        store or InMemoryIdentityStore(),
         transfer_verifier=_TEST_AUTHORITY,
         consent_resolver=DeterministicConsentSnapshotResolver(),
     )
@@ -65,7 +65,8 @@ async def _bound_child(tmp_path: Path) -> tuple[IdentityService, str, str]:
 
 @pytest.mark.asyncio
 async def test_redaction_waits_until_no_device_serves_the_person(tmp_path: Path) -> None:
-    identity, child_id, device_id = await _bound_child(tmp_path)
+    store = InMemoryIdentityStore()
+    identity, child_id, device_id = await _bound_child(tmp_path, store)
 
     with pytest.raises(RelationshipLifecycleError, match="still serves"):
         await identity.redact_bound_subject(person_id=child_id, actor_person_id="parent", now=NOW)
@@ -78,15 +79,11 @@ async def test_redaction_waits_until_no_device_serves_the_person(tmp_path: Path)
     assert (redacted.display_name, redacted.status) == (REDACTED_DISPLAY_NAME, "disabled")
     stored = await identity.get_person(child_id, actor_person_id="parent")
     assert stored.display_name == REDACTED_DISPLAY_NAME
-    with sqlite3.connect(tmp_path / "identity.sqlite3") as connection:
-        payloads = [
-            json.loads(row[0])
-            for row in connection.execute(
-                "SELECT payload_json FROM identity_audit_events "
-                "WHERE person_id = ? OR subject_person_id = ?",
-                (child_id, child_id),
-            )
-        ]
+    payloads = [
+        event.payload
+        for event in store.audit_events()
+        if child_id in (event.person_id, event.subject_person_id)
+    ]
     assert payloads, "the audit trail itself is kept"
     assert all(item.get("display_name", REDACTED_DISPLAY_NAME) != "小明" for item in payloads)
 

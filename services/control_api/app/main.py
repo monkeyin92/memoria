@@ -151,10 +151,10 @@ from services.identity.authority import (
     ConsentSnapshotResolver,
     RejectingTransferEvidenceVerifier,
 )
+from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.postgres_store import PostgresIdentityStore
 from services.identity.repository import IdentityStore
 from services.identity.service import IdentityService
-from services.identity.sqlite_store import SqliteIdentityStore
 from services.legacy.domain import LegacyRegistryPort
 from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.legacy.registry import LegacyRegistry
@@ -853,10 +853,9 @@ async def _wire_services(w: Wiring) -> None:
         await w.open(postgres_identity.initialize, postgres_identity.close)
         identity_store = postgres_identity
     else:
-        sqlite_identity = SqliteIdentityStore(settings.identity_sqlite_path())
-        await w.init_blocking(sqlite_identity.initialize, eager=True)
-        w.on_close(sqlite_identity.close)
-        identity_store = cast(IdentityStore, sqlite_identity)
+        # Development and default tests only (production requires the DSN):
+        # Identity is PostgreSQL-only, so without one it lives in memory.
+        identity_store = InMemoryIdentityStore()
     app.state.identity_store = identity_store
     app.state.identity_service = IdentityService(
         identity_store,
