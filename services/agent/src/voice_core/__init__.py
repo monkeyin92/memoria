@@ -10,23 +10,12 @@ from .asr_stream_supervisor import (
     ASRDecisionReason,
     ASRStreamSupervisor,
 )
-from .device_client import (
-    LinuxMediaDeviceClient,
-    MediaDeviceConfig,
-    MediaDeviceTLS,
-)
 from .device_protocol import (
     DEVICE_EVENT_TYPES,
     DEVICE_TOPICS,
     DeviceCommand,
     DeviceCommandAck,
     DeviceEvent,
-)
-from .device_runtime import (
-    AudioDeviceConfig,
-    DevicePcmFrame,
-    LinuxAudioPipeline,
-    NLMSAcousticEchoCanceller,
 )
 from .device_security import (
     DeviceIdentity,
@@ -121,12 +110,8 @@ __all__ = [
     "DeviceCommandAck",
     "DeviceEvent",
     "DEVICE_EVENT_TYPES",
-    "LinuxMediaDeviceClient",
-    "MediaDeviceConfig",
-    "MediaDeviceTLS",
     "AdaptiveEnergyVAD",
     "AdaptiveVADConfig",
-    "AudioDeviceConfig",
     "AudioReplayHarness",
     "AudioEncoding",
     "AudioFrame",
@@ -146,8 +131,6 @@ __all__ = [
     "KeywordHit",
     "KeywordSpotter",
     "DeviceIdentity",
-    "DevicePcmFrame",
-    "LinuxAudioPipeline",
     "LoadReport",
     "LoadScenario",
     "MEDIA_METRIC_NAMES",
@@ -157,7 +140,6 @@ __all__ = [
     "MediaBridgeSession",
     "MediaTelemetry",
     "MediaSLO",
-    "NLMSAcousticEchoCanceller",
     "OtaManifest",
     "OtaSlot",
     "OtaUpdateManager",

@@ -309,74 +309,6 @@ async def initialize_production_memory_stack(
         await executor.initialize()
 
 
-class MemoryCaptureAdapter:
-    """Thin route adapter: capture one durable memory from a signed
-    session fence + confirmed active subject + verified policy receipt.
-    Unknown/guest subjects, missing fences or missing authorities fail
-    closed (503) and NEVER write the legacy archive."""
-
-    def __init__(self, stack: MemoryProductionStack) -> None:
-        self._stack = stack
-
-    async def capture(
-        self,
-        *,
-        context: ResolutionContext,
-        draft: MemoryWriteDraft,
-        actor_subject_id: str,
-        snapshot: MemoryAuthoritySnapshot | None = None,
-    ) -> str:
-        executor = self._stack.sensitive_executor
-        if executor is None:
-            raise MemoryProductionUnavailableError(
-                "memory capture requires the Policy SensitiveWriteService "
-                "(same-connection seam, A1); a separate "
-                "in-process receipt verifier is NOT production authority "
-                "(503)"
-            )
-        if context.fence is None or context.fence.is_expired(datetime.now(UTC)):
-            raise MemoryProductionUnavailableError(
-                "memory capture requires a signed, unexpired session fence "
-                "(503)"
-            )
-        if not context.subject.active_subject_id:
-            raise MemoryProductionUnavailableError(
-                "memory capture requires a confirmed active subject (503)"
-            )
-        if context.subject.active_subject_id == "unknown":
-            raise MemoryProductionUnavailableError(
-                "unknown subject cannot write private memory (503)"
-            )
-        if context.requested_scope is MemoryScope.MEMORY_SCOPE_FAMILY_SHARED:
-            raise MemoryCaptureDeniedError(
-                "family-shared memory must use proposal and per-subject confirmation"
-            )
-        if context.requested_scope not in {
-            MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE,
-            MemoryScope.MEMORY_SCOPE_GUARDIAN_SUMMARY,
-        }:
-            raise MemoryCaptureDeniedError(
-                "the requested memory scope is not a durable capture target"
-            )
-        if (
-            context.requested_scope is MemoryScope.MEMORY_SCOPE_GUARDIAN_SUMMARY
-            and context.subject.subject_category != "minor"
-        ):
-            raise MemoryCaptureDeniedError(
-                "guardian summaries are limited to a confirmed minor subject"
-            )
-        if snapshot is None:
-            raise MemoryProductionUnavailableError(
-                "memory capture requires the authoritative Session snapshot (503)"
-            )
-        return await executor.execute(
-            context,
-            draft,
-            actor_subject_id,
-            snapshot=snapshot,
-        )
-
-
 class MemorySensitiveWriteExecutor:
     """Caller-owned transaction path (A1): acquire ONE connection, open ONE
     transaction and let the Policy SensitiveWriteService decide -> insert
@@ -734,33 +666,6 @@ def _capture_commit_payload(
         }
     )
     return payload
-
-
-def _new_id() -> str:
-    import uuid
-
-    return str(uuid.uuid4())
-
-
-class MemoryRecallAdapter:
-    """Subject-scoped recall: a caller can only ever read through the
-    authoritative actor/subject/family context (RLS + service gates)."""
-
-    def __init__(self, stack: MemoryProductionStack) -> None:
-        self._stack = stack
-
-    async def get(
-        self,
-        record_id: str,
-        actor_subject_id: str,
-        *,
-        actor_family_space_id: str | None = None,
-    ) -> object | None:
-        return await self._stack.service.get(
-            record_id,
-            actor_subject_id,
-            actor_family_space_id=actor_family_space_id,
-        )
 
 
 class MemorySharedLifecycleAdapter:

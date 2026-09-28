@@ -56,14 +56,6 @@ async def test_every_minor_forbidden_route_family_uses_the_subject_matrix(
                 await client.get("/v1/digital-self/preview-capability", headers=auth),
                 "self_preview",
             ),
-            (
-                await client.get("/v1/legacy/grants", params={"role": "owner"}, headers=auth),
-                "legacy_grant",
-            ),
-            (
-                await client.get("/v1/legacy/grants", params={"role": "grantee"}, headers=auth),
-                "legacy_receive",
-            ),
             (await client.get("/v1/speakers", headers=auth), "speaker_enrollment"),
             (await client.get("/v1/archive/raw-voice-consent", headers=auth), "raw_voice_archive"),
             (

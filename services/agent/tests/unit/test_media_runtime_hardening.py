@@ -15,11 +15,6 @@ from services.agent.src.orchestration.speech_timeline import (
     SpeechTimeline,
 )
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
-from services.agent.src.voice_core.device_runtime import (
-    AudioDeviceConfig,
-    LinuxAudioPipeline,
-    NLMSAcousticEchoCanceller,
-)
 from services.agent.src.voice_core.device_security import (
     OtaManifest,
     provision_device,
@@ -46,26 +41,6 @@ from services.agent.src.voice_core.telemetry import (
     TraceContext,
     TurnTimeline,
 )
-
-
-def test_nlms_reduces_known_echo() -> None:
-    aec = NLMSAcousticEchoCanceller(taps=8, step=0.8)
-    reference = tuple(1000.0 if index % 2 else -1000.0 for index in range(200))
-    microphone = tuple(sample * 0.5 + 20.0 for sample in reference)
-    first = sum(abs(sample) for sample in microphone[-20:])
-    output = aec.process(microphone, reference)
-    last = sum(abs(sample) for sample in output[-20:])
-    assert last < first
-
-
-def test_linux_pipeline_pairs_actual_playback_reference_and_epoch() -> None:
-    pipeline = LinuxAudioPipeline(AudioDeviceConfig(aec_taps=4))
-    pipeline.ingest_playback_reference(0, [1000] * 160)
-    frame = pipeline.capture([500] * 160)
-    assert frame.capture_start_sample == 0
-    assert frame.stream_epoch == 1
-    pipeline.reset_stream(2)
-    assert pipeline.capture([0] * 80).stream_epoch == 2
 
 
 def test_device_challenge_and_signed_ota() -> None:

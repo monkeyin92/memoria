@@ -12,8 +12,8 @@ direct_real_device_verified: false
 full_duplex_verified: false
 student_safety_loop_verified: false
 subject_scope_batch: code=已提交 / wired=应用读出口按主体过滤 / enabled=未启用 / verified=本地 SQLite 与临时 PostgreSQL 回归
-account_to_subject_migrations: code=四项已提交（含 operator 执行入口与按 subject 的只读出口）/ wired=人格改为按使用人学习与读取（2026-09-26 已上线，见 P1-03），账号→主体的一次性投影迁移不再是产品读路径 / enabled=未启用 / verified=本地专测与真实 PG 契约
-read_path_postgres_parity: code=已提交 `d2318e4`（CI `35501188784` success）/ wired=仅 operator CLI 可达，Control API 不导入迁移接缝 / enabled=未启用 / verified=真实 PG 契约（durable_subject/memory_scope 读 PG 真实行，archive 证据读走 `app.account_id` 上下文、无 account 且在 FORCE RLS 下拒绝；投影侧 PG 未建表时 fail closed，不回落账号键）
+account_to_subject_migrations: 已删除（2026-09-28 第 2 批）——四项账号→主体一次性迁移、operator CLI `run_subject_migrations.py` 与治理层迁移接缝从未在生产启用，人格已改为按使用人学习与读取（P1-03），不再有读路径依赖；表结构保留在各 schema，git 历史可恢复
+read_path_postgres_parity: 随上一项删除（仅 operator CLI 可达，Control API 从未导入）
 deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 saga 用例在远端实跑）/ enabled=未启用 / verified=PG 全 saga 本地已验（归档/声纹行 + 加密对象 + 厂商音色桩 + 收据幂等）；真实 MinIO 仍未验（本地 Docker MinIO 对象写入不可用）、真实 provider 未验（需密钥与授权）、备份「恢复后再删除」无实现、subject 键存储不在 saga
 ```
 
@@ -153,7 +153,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P1-12 旧媒体链去留（发布工具部分已完成）
 
-- 已完成：整栈发布脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`），已用于两次全链发布，`20260926-edge-flush-v1` 首次使用仓库版并通过新链冻结校验；常量已指向当前线上链，下次整栈前只读复核后安装。media-edge 已脱离易失的 `/tmp/media-runtime.override.yml`，两次单独切换收据见 HANDOFF。persona 与 session-context 死链路已删，生产要求的能力 token 由十个降为八个，`split_production_env.py` 接受但不分发已退役变量。
+- 已完成：整栈发布脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`），已用于两次全链发布，`20260926-edge-flush-v1` 首次使用仓库版并通过新链冻结校验；常量已指向当前线上链，下次整栈前只读复核后安装。media-edge 已脱离易失的 `/tmp/media-runtime.override.yml`，两次单独切换收据见 HANDOFF。persona 与 session-context 死链路已删，生产要求的能力 token 由十个降为八个（2026-09-28 删除 `/v1/evolution` 后再降为七个，`MEMORIA_EVOLUTION_VALIDATOR_TOKEN` 退役），`split_production_env.py` 接受但不分发已退役变量。
 - 待决定（需用户）：Python 设备媒体网关（8793）、小程序网关与 LiveKit 在 2026-09-26 只读检查时过去 24 小时零业务流量，但仍部署且属于回滚链；下线等于关闭回滚窗口，需同步删 compose 服务、nginx 路由、镜像与发布脚本中的角色。
 - 完成条件：旧媒体链有明确决定并按决定执行。
 
@@ -207,6 +207,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 已完成：PR #42 删除无消费者代码约 3.09 万行，行数预算覆盖全部超 1,500 行模块，跨包依赖图冻结；② 第一、二步已上线（`20260926-edge-flush-v1`）：`create_app()` 与 lifespan 共用装配函数 `_wire_services`，启动资源按创建倒序关闭；同用 archive DSN 的 10 个存储共享一个池（上限 20、语句超时 15s，线上 `memoria_app` 连接 5 → 1），`main.py` 1643 → 1518 行。
 - 待完成，按收益排序：① 账号/会话/设备从生产 SQLite（`/data/memoria.sqlite3`）迁到 PostgreSQL，再逐域删除 SQLite 孪生存储（约 4 万行），API 测试改走真实 PG；② 剩余：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端），consent/identity/guardian 等其他 DSN 的池未合并（consent 其一带连接 `init`）；③ 版本化迁移替代 `initialize()` 内建表；④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry；⑤ 逐步消除 `common`→`agent`/`archive`、`governance`/`memory_scope`→`control_api` 等反向依赖。
 - 2026-09-28 双视角评审后的批次顺序（先修缺陷，再做减法，再做需授权的存储迁移，最后拆大对象；每批一个 PR）：第 0 批 media-edge 写循环/CloseSend/accept 后登记与小程序 tab 导航已合并（PR #86、#87，media-edge 已单独发布）；第 1 批正确性修复见下；第 2 批删除零消费者路由与域包、一次性迁移、声纹残留、Python 设备网关残留；第 3 批即 ①③；第 4 批即 P1-12 加 `ReplyPipeline` 抽取、`TTS_PROVIDER` 工厂与跨语言 fence 向量；第 5 批即 ④ 加测试瘦身（可控时钟、按 mixin 切分）；第 6 批 `ControlSettings` 按域拆分、Go `%w` 与结构化日志、固件 CI 编译、⑤。
+- 第 2 批（代码已完成，待发布）：删除零消费者代码——一次性迁移与接缝（约 1.9 万行，含测试）、Python 设备网关残留 `device_client`/`device_runtime`、`speaker/evaluation.py`、`evolution` 的 runtime/trajectory/replay/skill；删除无调用方的路由 `/v1/legacy`、`/v1/self-model`、`/v1/skills`、`/v1/evolution`、`/v1/tutor`、`/v1/production/memories` 及仅服务它们的装配（tutor 授权、evolution 运行时采集、`tutor_profile`、MemoryScope 的 capture/recall 适配器）；域包本身保留，因 session/interaction/agent 仍导入其领域模型。依赖基线收紧：去掉 governance→digital_self/identity/memory_scope/persona、`memory_scope→control_api`（已知反向依赖之一）与 tutor→archive。保留决定：Go 端 `keyword.detected` 转发路径保留，它是 README 所述签名本地硬停与 P1-07 语音打断的契约入口，只是固件尚未产生；声纹后端（`/v1/speakers`、speaker-model 容器）按 P1-11 等设备验收后整体清理，内部登记依赖公开登记意向，不能只删一半。
 - 第 1 批（代码已完成，待发布）：media-edge 开槽等待跟随请求 context，超载答 503；关键词发送不再持 `stateMu` 做 gRPC 写（`Session.mu` 原子门保留，因关键词事件无 fence、Voice Core 不能迟到拒收）；guardian SQLite `grant_consent` 补上与 PG 一致的 actor/`guardian_user_id` 校验；`BootstrapStorePort` 由空类改为 Protocol（`bootstrap_port.py`），删除 41 处 `attr-defined` 忽略并修正一处被掩盖的类型收窄；删零导入依赖 `sqlalchemy`；小程序「我的」敏感入口改用 `entryAllowed` 结果（数字分身/原始语音不再永远「暂未开放」），监护与原始语音授权的未接入状态提前显示并禁用控件，首页唤醒词读设备设置，回顾页文案改为「点确认后才会留下」，换伙伴保存失败回滚，删 5 个无引用 API 导出。
 - 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。

@@ -69,7 +69,6 @@ def _production_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",
         "MEMORIA_RESPONSE_PLAN_TOKEN": "test-response-plan-material-long-enough",
         "MEMORIA_EVOLUTION_CONTROL_TOKEN": "test-evolution-control-material-long-enough",
-        "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": "test-evolution-validator-material-long-enough",
         "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://archive:test@db/memoria",
         "MEMORIA_EVOLUTION_DATABASE_URL": "postgresql://memoria_evolution:test@db/memoria",
         "MEMORIA_GUARDIAN_DATABASE_URL": "postgresql://memoria_guardian:test@db/memoria",

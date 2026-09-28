@@ -359,7 +359,7 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert len(control["MEMORIA_RESPONSE_PLAN_TOKEN"]) >= 32
     assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control["MEMORIA_INTERACTION_POLICY_TOKEN"]
     assert len(control["MEMORIA_EVOLUTION_CONTROL_TOKEN"]) >= 32
-    assert len(control["MEMORIA_EVOLUTION_VALIDATOR_TOKEN"]) >= 32
+    assert "MEMORIA_EVOLUTION_VALIDATOR_TOKEN" not in control
     assert control["MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES"] == "weather"
     assert control["MEMORIA_GUARDIAN_DATABASE_URL"].startswith("postgresql://memoria_guardian:")
     generated_database_urls = {

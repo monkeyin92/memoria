@@ -1056,7 +1056,6 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",
         "MEMORIA_RESPONSE_PLAN_TOKEN": "test-response-plan-material-long-enough",
         "MEMORIA_EVOLUTION_CONTROL_TOKEN": "test-evolution-control-material-long-enough",
-        "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": "test-evolution-validator-material-long-enough",
         "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
         "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://archive:test@db/memoria",
         "MEMORIA_EVOLUTION_DATABASE_URL": "postgresql://memoria_evolution:test@db/memoria",
@@ -1175,21 +1174,14 @@ def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None
 def test_production_requires_a_response_plan_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_RESPONSE_PLAN_TOKEN="")
 
-    with pytest.raises(ValueError, match="eight capability-scoped"):
+    with pytest.raises(ValueError, match="seven capability-scoped"):
         settings.validate_production()
 
 
 def test_production_requires_an_evolution_control_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_CONTROL_TOKEN="")
 
-    with pytest.raises(ValueError, match="eight capability-scoped"):
-        settings.validate_production()
-
-
-def test_production_requires_an_evolution_validator_capability_token() -> None:
-    settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_VALIDATOR_TOKEN="")
-
-    with pytest.raises(ValueError, match="eight capability-scoped"):
+    with pytest.raises(ValueError, match="seven capability-scoped"):
         settings.validate_production()
 
 
@@ -1251,7 +1243,6 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         MEMORIA_INTERACTION_POLICY_TOKEN=shared,
         MEMORIA_RESPONSE_PLAN_TOKEN=shared,
         MEMORIA_EVOLUTION_CONTROL_TOKEN=shared,
-        MEMORIA_EVOLUTION_VALIDATOR_TOKEN=shared,
     )
 
     with pytest.raises(ValueError, match="capability tokens must be independent"):
@@ -1276,7 +1267,6 @@ def test_production_requires_an_independent_message_idempotency_secret() -> None
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-that-is-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-that-is-long-enough",
         MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
-        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
     )
 
     with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):
@@ -1299,7 +1289,6 @@ def test_production_rejects_the_development_message_idempotency_secret() -> None
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
-        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
     )
 
     with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):

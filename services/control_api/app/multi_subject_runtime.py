@@ -983,23 +983,6 @@ class PostgresMultiSubjectRuntimeControl:
             )
         return result
 
-    async def tutor_profile(
-        self,
-        *,
-        actor_id: str,
-        session_id: str,
-        now: datetime,
-    ) -> RuntimeProfileSignedV2 | None:
-        try:
-            profile, _context = await self.sessions.current(
-                actor_id=actor_id,
-                session_id=session_id,
-                now=now,
-            )
-        except (PersistentSessionNotFound, PersistentSessionDenied):
-            return None
-        return profile if profile.actor_id == actor_id else None
-
     @staticmethod
     def default_session_id(device_id: str) -> str:
         return MultiSubjectRuntimeControl.default_session_id(device_id)

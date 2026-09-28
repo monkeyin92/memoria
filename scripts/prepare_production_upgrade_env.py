@@ -308,7 +308,6 @@ def prepare(
             "MEMORIA_INTERACTION_POLICY_TOKEN": _token(),
             "MEMORIA_RESPONSE_PLAN_TOKEN": _token(),
             "MEMORIA_EVOLUTION_CONTROL_TOKEN": _token(),
-            "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": _token(),
             "MEMORIA_RESPONSE_PLAN_URL": "http://control-api:8000/v1/interaction/response-plan",
             "MEMORIA_RESPONSE_PLAN_TIMEOUT_S": "0.8",
             "MINIPROGRAM_MEDIA_GATEWAY_URL": gateway_url,

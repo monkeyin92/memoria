@@ -8,7 +8,7 @@ only shrinks.
 
 Known inversions kept only until they are removed (do not add more of these):
 ``common`` importing ``agent``/``archive``, domain packages importing
-``control_api`` (governance, memory_scope, companionship) or ``agent``
+``control_api`` (governance, companionship) or ``agent``
 (voice_profile, device_media_gateway).
 """
 
@@ -61,13 +61,9 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
         {
             "archive",
             "control_api",
-            "digital_self",
             "evolution",
             "guardian",
-            "identity",
             "legacy",
-            "memory_scope",
-            "persona",
             "voice_profile",
         }
     ),
@@ -75,13 +71,13 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "guardian": frozenset({"archive", "governance", "tutor"}),
     "identity": frozenset({"common", "consent"}),
     "legacy": frozenset({"digital_self", "self_model"}),
-    "memory_scope": frozenset({"consent", "control_api", "identity", "policy"}),
+    "memory_scope": frozenset({"consent", "identity", "policy"}),
     "miniprogram_gateway": frozenset({"common"}),
     "persona": frozenset({"archive", "common", "identity"}),
     "policy": frozenset({"consent"}),
     "self_model": frozenset({"archive"}),
     "session_runtime": frozenset({"consent", "policy"}),
-    "tutor": frozenset({"archive", "policy"}),
+    "tutor": frozenset({"policy"}),
     "voice_profile": frozenset({"agent", "archive"}),
 }
 
