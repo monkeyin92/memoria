@@ -1418,6 +1418,26 @@ test("角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cann
   }
 });
 
+test("sensitive entries open tab pages with switchTab and other pages with navigateTo", () => {
+  const calls = [];
+  const previous = { switchTab: global.wx.switchTab, navigateTo: global.wx.navigateTo };
+  global.wx.switchTab = (options) => calls.push(["switchTab", options.url]);
+  global.wx.navigateTo = (options) => calls.push(["navigateTo", options.url]);
+  const open = (page) => instantiate(pageDefinition).openEntry({ currentTarget: { dataset: { page } } });
+  try {
+    open("/pages/memory/index");
+    open("/pages/guardian/index");
+    open("https://example.com");
+    assert.deepEqual(calls, [
+      ["switchTab", "/pages/memory/index"],
+      ["navigateTo", "/pages/guardian/index"],
+    ]);
+  } finally {
+    global.wx.switchTab = previous.switchTab;
+    global.wx.navigateTo = previous.navigateTo;
+  }
+});
+
 test("wake sheet saves a custom wake word, then closes and gives the tab bar back", async () => {
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireProfile({ runtime_profile_id: "rp_sheet", session_id: "ses_sheet", session_epoch: 1 });

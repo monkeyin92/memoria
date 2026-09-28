@@ -1,11 +1,5 @@
 const api = require("../../utils/api");
-
-const TAB_ROUTES = new Set([
-  "/pages/home/index",
-  "/pages/device/index",
-  "/pages/memory/index",
-  "/pages/profile/index",
-]);
+const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 function reasonText(reason) {
   return {
@@ -144,9 +138,8 @@ Page({
 
   finishLogin() {
     const redirect = this.data.redirect || "/pages/home/index";
-    const route = redirect.split("?", 1)[0];
-    if (TAB_ROUTES.has(route)) {
-      wx.switchTab({ url: route });
+    if (isTabRoute(redirect)) {
+      wx.switchTab({ url: routeOf(redirect) });
       return;
     }
     wx.redirectTo({ url: redirect });
