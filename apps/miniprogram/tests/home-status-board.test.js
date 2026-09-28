@@ -89,3 +89,9 @@ test("profile keeps the voice-sample entry points and never promises an evaluati
   assert.doesNotMatch(script, /评估/);
   assert.doesNotMatch(template, /评估/);
 });
+
+test("online hero caption names the device's configured wake word", () => {
+  const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
+  assert.match(script, /唤醒「\$\{settings\?\.wake_word_display \|\| "茉莉"\}」/);
+  assert.doesNotMatch(script, /\? "在设备旁唤醒「茉莉」/);
+});

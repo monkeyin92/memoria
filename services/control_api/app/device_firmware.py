@@ -186,7 +186,7 @@ def authenticate_device_get(
     path: str,
 ) -> DeviceRecord:
     """Manufactured certificate, not revoked, signature over this exact path."""
-    device = cast(DeviceRecord | None, service.store.get_device(device_id))  # type: ignore[attr-defined]
+    device = service.store.get_device(device_id)
     if device is None:
         raise DeviceNotFound()
     if device.certificate_id != certificate_id:

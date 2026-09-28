@@ -1,6 +1,7 @@
 package mediaedge
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -70,9 +71,16 @@ func NewServer(verifier JWTVerifier, maxPendingFrames int) *Server {
 	}
 }
 
-func (s *Server) acquireOpenSlot() func() {
-	s.openSemaphore <- struct{}{}
-	return func() { <-s.openSemaphore }
+// acquireOpenSlot waits for one of the bounded session-open slots. It gives up
+// when ctx ends (client gone or request deadline), so an overloaded edge
+// answers 503 instead of parking HTTP handlers and delaying Close.
+func (s *Server) acquireOpenSlot(ctx context.Context) (func(), bool) {
+	select {
+	case s.openSemaphore <- struct{}{}:
+		return func() { <-s.openSemaphore }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 func (s *Server) beginOpen() (func(), bool) {

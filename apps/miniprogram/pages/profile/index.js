@@ -1160,8 +1160,19 @@ Page({
     wx.navigateTo({ url: "/pages/guardian/index" });
   },
 
+  // The *EntryAllowed flags come from entryAllowed(), which also opens
+  // action-time capabilities (digital self, raw audio) on a valid profile.
+  // Checking the capability list directly would keep those entries shut forever.
   _allowSensitiveEntry(label, capability) {
-    if (this.data.runtimeCapabilities.includes(capability)) return true;
+    const flagByCapability = {
+      [contracts.Capability.DigitalSelfPreview]: "digitalSelfEntryAllowed",
+      [contracts.Capability.GuardianSummaryView]: "guardianEntryAllowed",
+      [contracts.Capability.RawAudioRetention]: "rawVoiceEntryAllowed",
+    };
+    const flag = flagByCapability[capability];
+    if (flag ? this.data[flag] === true : this.data.runtimeCapabilities.includes(capability)) {
+      return true;
+    }
     const reason = this.data.profileUnavailableReason || "服务端未按当前主体授权";
     wx.showToast({ title: `${label}暂未开放：${reason}`, icon: "none" });
     return false;

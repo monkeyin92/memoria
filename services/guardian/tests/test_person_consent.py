@@ -446,3 +446,42 @@ async def test_person_consent_grant_recovers_after_evidence_write_failure(
     )
     assert len(events) == 1
     assert events[0].event_id == record.evidence_event_id
+
+
+@pytest.mark.asyncio
+async def test_link_consent_grant_requires_the_links_guardian(tmp_path: Path) -> None:
+    """The SQLite store refuses the same grants the PostgreSQL store refuses."""
+
+    store = _store(tmp_path)
+    digest = hashlib.sha256(b"binding-code").hexdigest()
+    link = await store.create_link(
+        guardian_user_id="guardian-user",
+        minor_user_id="minor-user",
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=NOW + timedelta(minutes=15),
+        now=NOW,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id="minor-user",
+        binding_code_hash=digest,
+        now=NOW,
+    )
+    record = ConsentRecord(
+        consent_id="00000000-0000-0000-0000-000000000401",
+        link_id=link.link_id,
+        consent_kind="memory_retention",
+        policy_version="minor-memory-v1",
+        granted_at=NOW,
+        evidence_event_id="evidence-actor-contract",
+    )
+
+    with pytest.raises(GuardianAccessDeniedError):
+        await store.grant_consent(record)
+    with pytest.raises(GuardianAccessDeniedError):
+        await store.grant_consent(record, actor_user_id="someone-else")
+
+    granted = await store.grant_consent(record, actor_user_id="guardian-user")
+    assert granted == record

@@ -990,13 +990,16 @@ class SqliteGuardianStore:
         *,
         actor_user_id: str | None = None,
     ) -> ConsentRecord:
+        # Same contract as the PostgreSQL store: only the link's guardian may grant.
+        if actor_user_id is None or not str(actor_user_id).strip():
+            raise GuardianAccessDeniedError("guardian consent grant requires an actor context")
         self._ready()
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 active = connection.execute(
-                    "SELECT status FROM guardian_links WHERE link_id = ?",
-                    (record.link_id,),
+                    "SELECT status FROM guardian_links WHERE link_id = ? AND guardian_user_id = ?",
+                    (record.link_id, actor_user_id),
                 ).fetchone()
                 if active is None or str(active["status"]) != "active":
                     raise GuardianAccessDeniedError("an active guardian link is required")
@@ -1008,12 +1011,7 @@ class SqliteGuardianStore:
                       AND consent_id <> ?
                     LIMIT 1
                     """,
-                    (
-                        record.link_id,
-                        record.consent_kind,
-                        record.granted_at.isoformat(),
-                        record.consent_id,
-                    ),
+                    (record.link_id, record.consent_kind, record.granted_at.isoformat(), record.consent_id),
                 ).fetchone()
                 if conflicting is not None:
                     raise GuardianConflictError(

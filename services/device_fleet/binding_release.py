@@ -22,7 +22,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from services.device_fleet.bootstrap_domain import ClaimStatus, DeviceLifecycle, now_utc
-from services.device_fleet.bootstrap_store import BootstrapStorePort, SQLiteBootstrapStore
+from services.device_fleet.bootstrap_port import BootstrapStorePort
+from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
 
 if TYPE_CHECKING:
     import asyncpg

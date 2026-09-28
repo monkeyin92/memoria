@@ -427,3 +427,31 @@ test("profile derives a custom persona id only from a cu_ runtime persona", asyn
     }
   });
 });
+
+test("profile entry clicks follow the entry flags, so action-time entries open", async () => {
+  await withWx(async () => {
+    const navigations = [];
+    const toasts = [];
+    global.wx.navigateTo = ({ url }) => navigations.push(url);
+    global.wx.showToast = ({ title }) => toasts.push(title);
+    const definition = loadPage("../pages/profile/index");
+    const page = instantiate(definition);
+    page.setData({
+      runtimeCapabilities: [contracts.Capability.GuardianSummaryView],
+      digitalSelfEntryAllowed: true,
+      guardianEntryAllowed: true,
+      rawVoiceEntryAllowed: true,
+    });
+
+    assert.equal(page._allowSensitiveEntry("数字分身", contracts.Capability.DigitalSelfPreview), true);
+    page.openPrivacy();
+    assert.deepEqual(navigations, ["/pages/privacy/index"]);
+    assert.deepEqual(toasts, []);
+
+    page.setData({ rawVoiceEntryAllowed: false, profileUnavailableReason: "profile 已过期" });
+    page.openPrivacy();
+    assert.deepEqual(navigations, ["/pages/privacy/index"]);
+    assert.equal(toasts.length, 1);
+    assert.match(toasts[0], /原始语音授权暂未开放：profile 已过期/);
+  });
+});

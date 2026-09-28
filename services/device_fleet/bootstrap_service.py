@@ -75,10 +75,8 @@ from services.device_fleet.bootstrap_domain import (
     verify_bootstrap_qr,
     verify_signed_payload,
 )
-from services.device_fleet.bootstrap_store import (
-    BootstrapStorePort,
-    SQLiteBootstrapStore,
-)
+from services.device_fleet.bootstrap_port import BootstrapStorePort
+from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
 
 
 def _id(prefix: str) -> str:
@@ -241,28 +239,19 @@ class DeviceOnboardingService:
         return b64url_encode(hmac.new(key, message, hashlib.sha256).digest())
 
     def _device(self, device_id: str) -> DeviceRecord:
-        device = cast(
-            DeviceRecord | None,
-            self.store.get_device(device_id),  # type: ignore[attr-defined]
-        )
+        device = self.store.get_device(device_id)
         if device is None:
             raise DeviceNotFound()
         return device
 
     def _session(self, onboarding_session_id: str) -> BootstrapSession:
-        session = cast(
-            BootstrapSession | None,
-            self.store.get_session(onboarding_session_id),  # type: ignore[attr-defined]
-        )
+        session = self.store.get_session(onboarding_session_id)
         if session is None:
             raise SessionNotFound()
         return session
 
     def _claim(self, claim_id: str) -> ClaimReservation:
-        claim = cast(
-            ClaimReservation | None,
-            self.store.get_claim(claim_id),  # type: ignore[attr-defined]
-        )
+        claim = self.store.get_claim(claim_id)
         if claim is None:
             raise ClaimNotFound()
         return claim
@@ -286,12 +275,7 @@ class DeviceOnboardingService:
             BootstrapState.CANCELLED,
             BootstrapState.ACTIVATED,
         }:
-            return cast(
-                BootstrapSession,
-                self.store.expire_session(  # type: ignore[attr-defined]
-                    session.onboarding_session_id, now=self._now()
-                ),
-            )
+            return self.store.expire_session(session.onboarding_session_id, now=self._now())
         return session
 
     # ------------------------------------------------------------------
@@ -331,7 +315,7 @@ class DeviceOnboardingService:
             # A bound board shows its QR again when it cannot reach any known
             # network.  Only the account it is bound to may use that QR, and
             # only to deliver new Wi-Fi; every other actor keeps the conflict.
-            if not self.store.is_actor_bound_to_device(  # type: ignore[attr-defined]
+            if not self.store.is_actor_bound_to_device(
                 actor_id=actor_id, device_id=device.device_id
             ):
                 raise DeviceAlreadyBound()
@@ -345,7 +329,7 @@ class DeviceOnboardingService:
         # misleading "another account" conflict.  The stored client id lets
         # us deterministically derive the original mobile nonce without
         # persisting its plaintext.
-        existing_qr = self.store.find_session_by_qr(  # type: ignore[attr-defined]
+        existing_qr = self.store.find_session_by_qr(
             device_id=device.device_id, qr_nonce_hash=qr_nonce_hash
         )
         if existing_qr is not None:
@@ -382,7 +366,7 @@ class DeviceOnboardingService:
             device_id=device.device_id,
             qr_nonce_hash=qr_nonce_hash,
         )
-        existing_client = self.store.find_session_by_client(  # type: ignore[attr-defined]
+        existing_client = self.store.find_session_by_client(
             actor_id=actor_id, client_onboarding_id=client_onboarding_id
         )
         if existing_client is not None:
@@ -401,7 +385,7 @@ class DeviceOnboardingService:
             }:
                 raise ClaimConflict("client onboarding session is terminal")
             return self._session_view(existing_client, mobile_nonce=mobile_nonce)
-        active_claim = self.store.active_claim_for_device(  # type: ignore[attr-defined]
+        active_claim = self.store.active_claim_for_device(
             device_id=device.device_id, now=self._now()
         )
         if active_claim is not None and active_claim.actor_id != actor_id:
@@ -430,7 +414,7 @@ class DeviceOnboardingService:
             failure_code=None,
             purpose=purpose,
         )
-        self.store.create_session(session)  # type: ignore[attr-defined]
+        self.store.create_session(session)
         return self._session_view(session, mobile_nonce=mobile_nonce)
 
     def _session_view(
@@ -443,7 +427,7 @@ class DeviceOnboardingService:
         device = self._device(session.device_id)
         reprovision = session.purpose is BootstrapPurpose.REPROVISION
         claim_status = "bound" if reprovision else "unclaimed"
-        claim = self.store.get_claim_for_session(  # type: ignore[attr-defined]
+        claim = self.store.get_claim_for_session(
             session.onboarding_session_id
         )
         if claim is not None:
@@ -480,7 +464,7 @@ class DeviceOnboardingService:
         activation = (
             None
             if reprovision
-            else self.store.latest_activation_for_device(  # type: ignore[attr-defined]
+            else self.store.latest_activation_for_device(
                 session.device_id
             )
         )
@@ -508,7 +492,7 @@ class DeviceOnboardingService:
             BootstrapState.ACTIVATED,
         }:
             raise BindingConflict("activated onboarding cannot be cancelled")
-        updated = self.store.transition_session(  # type: ignore[attr-defined]
+        updated = self.store.transition_session(
             onboarding_session_id,
             expected_state_version=session.state_version,
             target=BootstrapState.CANCELLED,
@@ -533,7 +517,7 @@ class DeviceOnboardingService:
             raise InvalidDeviceProof("device identity does not match onboarding session")
         require_bootstrap_device(device, session)
         if session.state is BootstrapState.QR_VERIFIED:
-            session = self.store.transition_session(  # type: ignore[attr-defined]
+            session = self.store.transition_session(
                 onboarding_session_id,
                 expected_state_version=session.state_version,
                 target=BootstrapState.BLE_CONNECTING,
@@ -560,7 +544,7 @@ class DeviceOnboardingService:
             expires_at=min(now + self.challenge_ttl, session.expires_at),
             used_at=None,
         )
-        self.store.issue_challenge(challenge)  # type: ignore[attr-defined]
+        self.store.issue_challenge(challenge)
         return {
             "challenge_id": challenge.challenge_id,
             "nonce": nonce,
@@ -592,7 +576,7 @@ class DeviceOnboardingService:
             raise FirmwareBlocked()
         if normalized.capability_manifest_hash != device.capability_manifest_hash:
             raise InvalidDeviceProof("device capability manifest is not registered")
-        challenge = self.store.get_challenge(normalized.challenge_id)  # type: ignore[attr-defined]
+        challenge = self.store.get_challenge(normalized.challenge_id)
         if challenge is None:
             raise ChallengeReplay("device challenge not found")
         if challenge.onboarding_session_id != onboarding_session_id:
@@ -612,7 +596,7 @@ class DeviceOnboardingService:
             payload=normalized.signing_dict(),
             signature=normalized.signature,
         )
-        updated = self.store.accept_online_proof(  # type: ignore[attr-defined]
+        updated = self.store.accept_online_proof(
             challenge_id=normalized.challenge_id,
             onboarding_session_id=onboarding_session_id,
             device_id=normalized.device_id,
@@ -651,7 +635,7 @@ class DeviceOnboardingService:
             raise ClaimConflict("onboarding session is not ready to claim")
         if not session.proximity_verified_at or not session.device_online_at:
             raise ProximityRequired("nearby device proof is required")
-        existing = self.store.get_claim_for_session(  # type: ignore[attr-defined]
+        existing = self.store.get_claim_for_session(
             onboarding_session_id
         )
         if existing is not None and existing.status in {
@@ -681,7 +665,7 @@ class DeviceOnboardingService:
             committed_at=None,
             released_at=None,
         )
-        reserved = self.store.reserve_claim(  # type: ignore[attr-defined]
+        reserved = self.store.reserve_claim(
             claim, expected_state_version=expected_state_version, now=now
         )
         return self._claim_view(reserved)
@@ -699,7 +683,7 @@ class DeviceOnboardingService:
     def get_claim(self, *, actor_id: str, claim_id: str) -> dict[str, object]:
         claim = self._claim(claim_id)
         self._assert_actor(claim.actor_id, actor_id)
-        claim = self.store.expire_claim_if_needed(claim_id, now=self._now())  # type: ignore[attr-defined]
+        claim = self.store.expire_claim_if_needed(claim_id, now=self._now())
         return self._claim_view(claim)
 
     def binding_begin(
@@ -747,7 +731,7 @@ class DeviceOnboardingService:
             created_at=self._now(),
             committed_at=None,
         )
-        draft = self.store.begin_binding(  # type: ignore[attr-defined]
+        draft = self.store.begin_binding(
             binding=binding,
             idempotency_key=key,
             expected_state_version=expected_state_version,
@@ -771,7 +755,7 @@ class DeviceOnboardingService:
             raise InvalidOnboardingRequest("reason is invalid")
         claim = self._claim(claim_id)
         self._assert_actor(claim.actor_id, actor_id)
-        released = self.store.release_binding(  # type: ignore[attr-defined]
+        released = self.store.release_binding(
             claim_id=claim_id,
             actor_id=actor_id,
             reason_code=reason,
@@ -868,7 +852,7 @@ class DeviceOnboardingService:
             if not isinstance(value, str) or not value or len(value) > 512:
                 raise BindingConflict("binding authority returned an invalid result")
         if claim.status is ClaimStatus.COMMITTED:
-            activation = self.store.latest_activation_for_device(claim.device_id)  # type: ignore[attr-defined]
+            activation = self.store.latest_activation_for_device(claim.device_id)
             if activation is None:
                 raise BindingConflict("committed claim is missing activation")
             return self._binding_commit_view(binding, activation)
@@ -911,7 +895,7 @@ class DeviceOnboardingService:
         manifest = {**unsigned_manifest, "signature": signature}
         validate_activation_manifest(manifest)
         manifest_hash = sha256_hex(canonical_json_bytes(manifest))
-        committed_binding, activation = self.store.commit_binding(  # type: ignore[attr-defined]
+        committed_binding, activation = self.store.commit_binding(
             claim_id=claim.claim_id,
             actor_id=actor_id,
             binding_id=authority.binding_id,
@@ -941,7 +925,7 @@ class DeviceOnboardingService:
 
         claim = self._claim(claim_id)
         self._assert_actor(claim.actor_id, actor_id)
-        binding = self.store.adopt_binding_authority(  # type: ignore[attr-defined]
+        binding = self.store.adopt_binding_authority(
             claim_id=claim_id,
             actor_id=actor_id,
             binding_id=authority.binding_id,
@@ -961,16 +945,16 @@ class DeviceOnboardingService:
 
         claim = self._claim(claim_id)
         self._assert_actor(claim.actor_id, actor_id)
-        return self.store.get_binding_for_claim(claim_id)  # type: ignore[attr-defined,no-any-return]
+        return self.store.get_binding_for_claim(claim_id)
 
     def binding_commit(self, *, actor_id: str, claim_id: str) -> dict[str, object]:
         claim = self._claim(claim_id)
         self._assert_actor(claim.actor_id, actor_id)
-        binding = self.store.get_binding_for_claim(claim_id)  # type: ignore[attr-defined]
+        binding = self.store.get_binding_for_claim(claim_id)
         if binding is None:
             raise BindingConflict("binding begin is required")
         if claim.status is ClaimStatus.COMMITTED:
-            activation = self.store.latest_activation_for_device(claim.device_id)  # type: ignore[attr-defined]
+            activation = self.store.latest_activation_for_device(claim.device_id)
             if activation is None:
                 raise BindingConflict("committed claim is missing activation")
             return self._binding_commit_view(binding, activation)
@@ -1038,9 +1022,9 @@ class DeviceOnboardingService:
     # ------------------------------------------------------------------
 
     def get_activation_status(self, *, actor_id: str, device_id: str) -> dict[str, object]:
-        if not self.store.is_actor_bound_to_device(actor_id=actor_id, device_id=device_id):  # type: ignore[attr-defined]
+        if not self.store.is_actor_bound_to_device(actor_id=actor_id, device_id=device_id):
             raise ActorMismatch()
-        activation = self.store.latest_activation_for_device(device_id)  # type: ignore[attr-defined]
+        activation = self.store.latest_activation_for_device(device_id)
         if activation is None:
             raise IntegrationUnavailable("activation has not been created")
         return self._activation_status_view(activation)
@@ -1091,7 +1075,7 @@ class DeviceOnboardingService:
                 payload=self.device_manifest_request_payload(device_id, certificate_id),
                 signature=request_signature,
             )
-        activation = self.store.mark_activation_downloaded(  # type: ignore[attr-defined]
+        activation = self.store.mark_activation_downloaded(
             device_id=device_id, now=self._now()
         )
         return dict(activation.manifest)
@@ -1114,7 +1098,7 @@ class DeviceOnboardingService:
             signature=normalized.signature,
         )
         payload = normalized.signing_dict()
-        accepted = self.store.accept_activation_ack(  # type: ignore[attr-defined]
+        accepted = self.store.accept_activation_ack(
             ack_payload=payload,
             now=self._now(),
         )
@@ -1155,10 +1139,7 @@ class DeviceOnboardingService:
             or device.binding_version is None
         ):
             raise DeviceMediaNotReady("device has no active binding")
-        activation = cast(
-            ActivationRecord | None,
-            self.store.latest_activation_for_device(device.device_id),  # type: ignore[attr-defined]
-        )
+        activation = self.store.latest_activation_for_device(device.device_id)
         if (
             activation is None
             or activation.status is not ActivationStatus.READY_FOR_CONVERSATION
@@ -1194,7 +1175,7 @@ class DeviceOnboardingService:
             expires_at=issued_at + self.challenge_ttl,
             used_at=None,
         )
-        self.store.issue_media_challenge(challenge)  # type: ignore[attr-defined]
+        self.store.issue_media_challenge(challenge)
         return {
             "challenge_id": challenge.challenge_id,
             "device_id": device_id,
@@ -1224,10 +1205,7 @@ class DeviceOnboardingService:
         if device.certificate_id != certificate_id:
             raise InvalidDeviceProof("certificate does not belong to device")
         self._assert_device_media_ready(device)
-        challenge = cast(
-            DeviceMediaChallenge | None,
-            self.store.get_media_challenge(challenge_id),  # type: ignore[attr-defined]
-        )
+        challenge = self.store.get_media_challenge(challenge_id)
         if challenge is None:
             raise ChallengeReplay("device media challenge was not found")
         if (
@@ -1251,7 +1229,7 @@ class DeviceOnboardingService:
             ),
             signature=signature,
         )
-        self.store.consume_media_challenge(  # type: ignore[attr-defined]
+        self.store.consume_media_challenge(
             challenge_id=challenge.challenge_id,
             device_id=device_id,
             nonce_hash=challenge.nonce_hash,
@@ -1259,10 +1237,8 @@ class DeviceOnboardingService:
         )
         current = self._device(device_id)
         activation = self._assert_device_media_ready(current)
-        binding = cast(
-            BindingRecord | None,
-            self.store.get_binding(current.binding_id),  # type: ignore[attr-defined]
-        )
+        assert current.binding_id is not None  # _assert_device_media_ready checked it
+        binding = self.store.get_binding(current.binding_id)
         if binding is None:
             raise BindingConflict("active device binding is unavailable")
         subject_id = str(binding.initialization.primary_subject.get("person_id", ""))
@@ -1327,7 +1303,7 @@ class DeviceOnboardingService:
             activation_version=0,
             last_activation_counter=0,
         )
-        self.store.register_manufactured_device(record)  # type: ignore[attr-defined]
+        self.store.register_manufactured_device(record)
         return {
             "device_id": record.device_id,
             "certificate_id": record.certificate_id,

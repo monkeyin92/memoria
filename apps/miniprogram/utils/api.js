@@ -389,14 +389,6 @@ function getProfile(userId) {
   return rawRequest(`/v1/memory/profile/${encodeURIComponent(userId)}`);
 }
 
-/*
- * 主人声纹初始化只读取服务端状态。原始 PCM 和声纹模板不进入小程序；
- * 设备端登记完成后，页面重新拉取这里的权威结果。
- */
-function getSpeakerEnrollmentStatus() {
-  return rawRequest("/v1/speakers/status");
-}
-
 function grantVoiceCloneConsent() {
   return rawRequest("/v1/voices/consent", {
     method: "POST",
@@ -451,16 +443,6 @@ function enrollVoiceClone({
       timeout: 120000,
       data: legacy,
     });
-  });
-}
-
-function createSpeakerEnrollmentIntent() {
-  return rawRequest("/v1/speakers/enrollment-intents", {
-    method: "POST",
-    data: {
-      consent_policy_version: "speaker-biometric-v1",
-      consent_accepted: true,
-    },
   });
 }
 
@@ -615,10 +597,6 @@ function recordGuardianPushSubscription({ templateId, result, loginCode = "" }) 
       ...(loginCode ? { login_code: loginCode } : {}),
     },
   });
-}
-
-function getTutorLessons(focus = "tutor_english") {
-  return rawRequest(`/v1/tutor/lessons?focus=${encodeURIComponent(focus)}`);
 }
 
 function updateProfile(userId, profile) {
@@ -1014,13 +992,6 @@ async function syncDeviceBindings() {
 }
 
 /*
- * 查询设备当前绑定（PR-04 后端提供；展示 declared_mode 与角色）。
- */
-function getDeviceBinding(deviceId) {
-  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding`);
-}
-
-/*
  * 解除绑定。服务端先停止该使用人的记忆，再按 purge_subject_data 决定是否
  * 同时删除 TA 的记忆与对话数据；false 表示保留，重新绑定后可恢复。成功后
  * 清理本地绑定上下文，由调用方重新同步账号设备。
@@ -1329,8 +1300,6 @@ module.exports = {
   logoutAllDevices,
   requestAccountDeletion,
   getProfile,
-  getSpeakerEnrollmentStatus,
-  createSpeakerEnrollmentIntent,
   grantVoiceCloneConsent,
   listVoiceProfiles,
   readyVoiceForDevice,
@@ -1355,7 +1324,6 @@ module.exports = {
   getGuardianPushConfig,
   recordGuardianPushSubscription,
   wechatLoginCode,
-  getTutorLessons,
   updateProfile,
   getMemoryDays,
   summarizeDay,
@@ -1379,10 +1347,8 @@ module.exports = {
   getDeviceClaim,
   getActivationStatus,
   createDeviceBinding,
-  listDeviceBindings,
   syncDeviceBindings,
   selectDeviceBinding,
-  getDeviceBinding,
   unbindDevice,
   getDeviceSettings,
   getWakeWordCatalog,

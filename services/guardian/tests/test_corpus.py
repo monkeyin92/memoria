@@ -55,7 +55,8 @@ async def test_expired_corpus_sample_is_deleted_from_object_store_and_projection
             granted_at=now - timedelta(days=2),
             expires_at=now + timedelta(days=1),
             evidence_event_id="corpus-consent-a",
-        )
+        ),
+        actor_user_id="guardian-a",
     )
     reference = await objects.put(
         account_id="minor-a",
@@ -140,7 +141,8 @@ async def test_corpus_store_rechecks_consent_and_enforces_atomic_limit(
             granted_at=now,
             expires_at=now + timedelta(days=2),
             evidence_event_id="corpus-consent-limit",
-        )
+        ),
+        actor_user_id="guardian-limit",
     )
 
     def sample(index: int) -> CorpusSample:

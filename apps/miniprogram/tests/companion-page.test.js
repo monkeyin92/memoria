@@ -72,3 +72,22 @@ test("a pick without a device just says saved", async () => {
   await page.chooseCompanion({ currentTarget: { dataset: { id: "taoxi" } } });
   assert.deepEqual(toasts.at(-1), { title: "已保存", icon: "success" });
 });
+
+test("a failed save puts the card back on the account's companion", async () => {
+  toasts.length = 0;
+  const originalUpdate = api.updateProfile;
+  api.updateProfile = async () => {
+    throw new Error("网络不可用");
+  };
+  try {
+    const page = instantiate(pageDefinition);
+    page.setData({ "profile.companion_id": "taoxi", currentName: "桃喜", currentTone: "tone-a" });
+    await page.chooseCompanion({ currentTarget: { dataset: { id: "axu" } } });
+    assert.equal(page.data.profile.companion_id, "taoxi");
+    assert.equal(page.data.currentName, "桃喜");
+    assert.equal(page.data.currentTone, "tone-a");
+    assert.equal(toasts.at(-1).title, "网络不可用");
+  } finally {
+    api.updateProfile = originalUpdate;
+  }
+});

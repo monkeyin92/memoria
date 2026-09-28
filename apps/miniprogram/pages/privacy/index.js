@@ -5,6 +5,8 @@ const { capabilityGateMessage, configActionGate } = require("../../utils/device-
 
 Page({
   data: {
+    configOpen: configActionGate("raw_audio_consent").allowed,
+    configNote: configActionGate("raw_audio_consent").message,
     loading: false,
     acting: false,
     error: "",

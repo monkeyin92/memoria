@@ -126,9 +126,14 @@ func (s *VoiceCoreSession) SendKeywordAtFence(keyword string, confidence float32
 	}
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
+	// stateMu only guards the fence snapshot. The receive loop needs it to
+	// validate Core events, so it must not be held across a gRPC Send that can
+	// block on flow control. Callers that need the check and the write to be
+	// atomic hold the Session gate (withActiveGeneration) around this call.
 	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	if !s.current.Equal(fence) {
+	stale := !s.current.Equal(fence)
+	s.stateMu.Unlock()
+	if stale {
 		return fmt.Errorf("keyword belongs to a stale generation")
 	}
 	keywordEvent := &mediav1.KeywordEvent{

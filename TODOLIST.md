@@ -206,6 +206,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已完成：PR #42 删除无消费者代码约 3.09 万行，行数预算覆盖全部超 1,500 行模块，跨包依赖图冻结；② 第一、二步已上线（`20260926-edge-flush-v1`）：`create_app()` 与 lifespan 共用装配函数 `_wire_services`，启动资源按创建倒序关闭；同用 archive DSN 的 10 个存储共享一个池（上限 20、语句超时 15s，线上 `memoria_app` 连接 5 → 1），`main.py` 1643 → 1518 行。
 - 待完成，按收益排序：① 账号/会话/设备从生产 SQLite（`/data/memoria.sqlite3`）迁到 PostgreSQL，再逐域删除 SQLite 孪生存储（约 4 万行），API 测试改走真实 PG；② 剩余：对象仍在 eager 与 live 各构建一次（需先把 API 测试迁到走 lifespan 的客户端），consent/identity/guardian 等其他 DSN 的池未合并（consent 其一带连接 `init`）；③ 版本化迁移替代 `initialize()` 内建表；④ 先把重度依赖私有字段的测试迁到公开接口，再拆 `DuplexRuntime` 与媒体会话 registry；⑤ 逐步消除 `common`→`agent`/`archive`、`governance`/`memory_scope`→`control_api` 等反向依赖。
+- 2026-09-28 双视角评审后的批次顺序（先修缺陷，再做减法，再做需授权的存储迁移，最后拆大对象；每批一个 PR）：第 0 批 media-edge 写循环/CloseSend/accept 后登记与小程序 tab 导航已合并（PR #86、#87，media-edge 已单独发布）；第 1 批正确性修复见下；第 2 批删除零消费者路由与域包、一次性迁移、声纹残留、Python 设备网关残留；第 3 批即 ①③；第 4 批即 P1-12 加 `ReplyPipeline` 抽取、`TTS_PROVIDER` 工厂与跨语言 fence 向量；第 5 批即 ④ 加测试瘦身（可控时钟、按 mixin 切分）；第 6 批 `ControlSettings` 按域拆分、Go `%w` 与结构化日志、固件 CI 编译、⑤。
+- 第 1 批（代码已完成，待发布）：media-edge 开槽等待跟随请求 context，超载答 503；关键词发送不再持 `stateMu` 做 gRPC 写（`Session.mu` 原子门保留，因关键词事件无 fence、Voice Core 不能迟到拒收）；guardian SQLite `grant_consent` 补上与 PG 一致的 actor/`guardian_user_id` 校验；`BootstrapStorePort` 由空类改为 Protocol（`bootstrap_port.py`），删除 41 处 `attr-defined` 忽略并修正一处被掩盖的类型收窄；删零导入依赖 `sqlalchemy`；小程序「我的」敏感入口改用 `entryAllowed` 结果（数字分身/原始语音不再永远「暂未开放」），监护与原始语音授权的未接入状态提前显示并禁用控件，首页唤醒词读设备设置，回顾页文案改为「点确认后才会留下」，换伙伴保存失败回滚，删 5 个无引用 API 导出。
 - 约束：①③涉及生产数据迁移，须另获授权并先演练恢复；不做大爆炸重写，每步可独立发布与回滚。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 

@@ -170,6 +170,11 @@ func (s *Session) RestoreGeneration(fence Fence, active bool) error {
 	return nil
 }
 
+// withActiveGeneration runs action while holding the Session gate, so a
+// cancel cannot slip between the fence check and the bridge write. Keyword
+// events carry no fence on the wire and Voice Core cannot reject them late,
+// which is why this gate is held across the send. action must not take locks
+// that the Voice Core receive loop holds while waiting for Session.mu.
 func (s *Session) withActiveGeneration(fence Fence, action func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
