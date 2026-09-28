@@ -1623,7 +1623,7 @@ async def _speaker_retention_inputs(
         return cast(str | None, category), consent
     identity = cast(IdentityService, request.app.state.identity_service)
     try:
-        person = await identity.get_person(subject_id)
+        person = await identity.get_person(subject_id, actor_person_id=account_id)
     except IdentityNotFoundError:
         return None, False
     category = person.subject_category
