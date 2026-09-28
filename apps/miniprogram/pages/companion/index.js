@@ -212,12 +212,19 @@ Page({
   async chooseCompanion(event) {
     const companionId = event.currentTarget.dataset.id;
     const companion = companionById(companionId);
+    const previous = {
+      "profile.companion_id": this.data.profile?.companion_id,
+      currentName: this.data.currentName,
+      currentTone: this.data.currentTone,
+    };
     this.setData({
       "profile.companion_id": companion.id,
       currentName: companion.name,
       currentTone: companion.tone,
     });
-    await this._saveCatalog(companion.id);
+    // The card flips optimistically; if the save does not land (login declined,
+    // already saving, server error) show the companion the account still has.
+    if (!(await this._saveCatalog(companion.id))) this.setData(previous);
   },
 
   // 自定义声音在「我的」里录制/上传；这一行只是入口，不在这里采集音频。
@@ -226,9 +233,9 @@ Page({
   },
 
   async _saveCatalog(companionId) {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    if (!(await requireLogin({ reason: "edit_profile" }))) return false;
     const identity = api.currentIdentity();
-    if (!identity || this.data.saving) return;
+    if (!identity || this.data.saving) return false;
     this.setData({ saving: true });
     try {
       const profile = await api.updateProfile(identity.user_id, {
@@ -244,8 +251,10 @@ Page({
       const title = savedToastTitle();
       // 带图标的 toast 只显示 7 个字；较长的提示用纯文字。
       wx.showToast({ title, icon: title.length > 7 ? "none" : "success" });
+      return true;
     } catch (error) {
       wx.showToast({ title: error?.message || "保存失败", icon: "none" });
+      return false;
     } finally {
       this.setData({ saving: false });
     }

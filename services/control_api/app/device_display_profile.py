@@ -17,17 +17,15 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from services.common.companions import DEFAULT_COMPANION_ID
 from services.control_api.app.multi_subject_runtime import _persona_assignment_for
 from services.control_api.app.session_companion import CUSTOM_PERSONA_PREFIX
 from services.device_fleet.bootstrap_domain import (
     BindingConflict,
-    BindingRecord,
     DeviceLifecycle,
     DeviceNotFound,
-    DeviceRecord,
     DeviceRevoked,
     InvalidDeviceProof,
     public_key_from_bytes,
@@ -85,7 +83,7 @@ def display_binding(
     row, so a device may poll it every few seconds.
     """
     store = service.store
-    device = cast(DeviceRecord | None, store.get_device(device_id))  # type: ignore[attr-defined]
+    device = store.get_device(device_id)
     if device is None:
         raise DeviceNotFound()
     if device.certificate_id != certificate_id:
@@ -104,7 +102,7 @@ def display_binding(
         )
     if device.actor_id is None or device.binding_id is None:
         raise BindingConflict("device has no active binding")
-    binding = cast(BindingRecord | None, store.get_binding(device.binding_id))  # type: ignore[attr-defined]
+    binding = store.get_binding(device.binding_id)
     subject_id = (
         str(binding.initialization.primary_subject.get("person_id", ""))
         if binding is not None

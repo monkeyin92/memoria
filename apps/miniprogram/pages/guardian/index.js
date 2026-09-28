@@ -71,6 +71,10 @@ function personConsentError(error) {
 
 Page({
   data: {
+    // The config seam is closed until the server consent/policy decision API
+    // exists; show that up front instead of after the form is filled in.
+    configOpen: configActionGate("guardian_manage").allowed,
+    configNote: configActionGate("guardian_manage").message,
     authenticated: false,
     loading: false,
     working: false,

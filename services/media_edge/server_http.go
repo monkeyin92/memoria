@@ -49,7 +49,11 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer releaseOpen()
-	release := s.acquireOpenSlot()
+	release, slotOK := s.acquireOpenSlot(r.Context())
+	if !slotOK {
+		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "edge is at session-open capacity"})
+		return
+	}
 	defer release()
 	created, err := NewSession(request, s.MaxPendingFrames)
 	if err != nil {
@@ -151,7 +155,11 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		defer releaseOpen()
 		session.lifecycleMu.Lock()
 		defer session.lifecycleMu.Unlock()
-		release := s.acquireOpenSlot()
+		release, slotOK := s.acquireOpenSlot(r.Context())
+		if !slotOK {
+			writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "edge is at session-open capacity"})
+			return
+		}
 		defer release()
 		s.openMu.Lock()
 		current, currentOK := s.Directory.Get(id)

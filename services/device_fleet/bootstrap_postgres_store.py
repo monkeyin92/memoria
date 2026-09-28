@@ -62,10 +62,10 @@ from services.device_fleet.bootstrap_domain import (
     require_transition,
     validate_activation_manifest,
 )
+from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_store import (
     _DEVICE_ACTIVE_CLAIMS,
     _TERMINAL_SESSION_STATES,
-    BootstrapStorePort,
 )
 
 BootstrapPostgresRole = Literal["api", "maintenance"]

@@ -1,7 +1,7 @@
 <view class="page-shell">
   <page-backdrop theme="mist"></page-backdrop>
   <text class="page-title">回顾</text>
-  <text class="page-lede">留下一些事，也可以选择不留。</text>
+  <text class="page-lede">想记住的事，点确认后才会留下。</text>
 
   <view wx:if="{{!authenticated}}">
     <view class="notice">登录后查看你的专属回顾。未登录时不会读取或展示任何对话整理内容。</view>

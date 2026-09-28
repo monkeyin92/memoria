@@ -56,13 +56,7 @@ from services.device_fleet.bootstrap_domain import (
     require_transition,
     validate_activation_manifest,
 )
-
-
-class BootstrapStorePort:
-    """Structural store boundary shared by SQLite and PostgreSQL."""
-
-    pass
-
+from services.device_fleet.bootstrap_port import BootstrapStorePort
 
 _DEVICE_ACTIVE_CLAIMS: Final[tuple[str, ...]] = (
     ClaimStatus.RESERVED.value,
@@ -1831,4 +1825,4 @@ class SQLiteBootstrapStore(BootstrapStorePort):
         return row is not None
 
 
-__all__ = ["BootstrapStorePort", "SQLiteBootstrapStore"]
+__all__ = ["SQLiteBootstrapStore"]

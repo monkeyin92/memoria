@@ -33,7 +33,8 @@
       <picker range="{{birthBands}}" range-key="label" value="{{birthBandIndex}}" bindchange="onBirthBand">
         <view class="picker-row"><text class="picker-label">年龄段</text><text class="picker-value">{{birthBands[birthBandIndex].label}}</text></view>
       </picker>
-      <button class="primary-button empty-button" loading="{{working}}" data-link-id="{{item.linkId}}" bindtap="confirmLink">确认并开通学生模式</button>
+      <button class="primary-button empty-button" loading="{{working}}" disabled="{{!configOpen}}" data-link-id="{{item.linkId}}" bindtap="confirmLink">确认并开通学生模式</button>
+      <text wx:if="{{!configOpen}}" class="caption">{{configNote}}</text>
     </view>
   </block>
 
@@ -47,7 +48,8 @@
       <text class="l2-card-sub">打开家人的「我的」，复制「账号编号」后填在这里。生成的 8 位码由家人本人确认。</text>
       <text class="field-label">家人账号编号</text>
       <input class="field-input" value="{{minorUserId}}" placeholder="家人账号编号" bindinput="onMinorUserId" />
-      <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId}}" bindtap="createLink">生成绑定码</button>
+      <button class="primary-button empty-button" loading="{{working}}" disabled="{{!minorUserId || !configOpen}}" bindtap="createLink">生成绑定码</button>
+      <text wx:if="{{!configOpen}}" class="caption">{{configNote}}</text>
       <view wx:if="{{createdBindingCode}}" class="binding-result">
         <text class="caption">请告诉{{createdMinorName}}这个绑定码</text>
         <text class="binding-code">{{createdBindingCode}}</text>
@@ -87,7 +89,7 @@
           <switch
             checked="{{consent.active}}"
             color="#326e70"
-            disabled="{{working}}"
+            disabled="{{working || !configOpen}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
             data-policy-version="{{consent.policyVersion}}"
