@@ -1545,19 +1545,30 @@ BEGIN
                     )
                 )
             )
+            -- The maintenance scope may also write: the corpus retention
+            -- service marks a sample deleted on revoke and on expiry.
             WITH CHECK (
-                COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
-                AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
-                AND minor_user_id = current_setting('memoria.guardian_subject_id', true)
-                AND (
-                    minor_user_id = current_setting('memoria.guardian_actor_id', true)
-                    OR EXISTS (
-                        SELECT 1
-                        FROM guardian_consents consent
-                        JOIN guardian_links link ON link.link_id = consent.link_id
-                        WHERE consent.consent_id = guardian_corpus_samples.consent_id
-                          AND link.minor_user_id = current_setting('memoria.guardian_subject_id', true)
-                          AND link.guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                (
+                    current_user = 'memoria_guardian_maintenance'
+                    AND COALESCE(
+                        current_setting('memoria.guardian_maintenance_scope', true),
+                        ''
+                    ) = '1'
+                )
+                OR (
+                    COALESCE(current_setting('memoria.guardian_actor_id', true), '') <> ''
+                    AND COALESCE(current_setting('memoria.guardian_subject_id', true), '') <> ''
+                    AND minor_user_id = current_setting('memoria.guardian_subject_id', true)
+                    AND (
+                        minor_user_id = current_setting('memoria.guardian_actor_id', true)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM guardian_consents consent
+                            JOIN guardian_links link ON link.link_id = consent.link_id
+                            WHERE consent.consent_id = guardian_corpus_samples.consent_id
+                              AND link.minor_user_id = current_setting('memoria.guardian_subject_id', true)
+                              AND link.guardian_user_id = current_setting('memoria.guardian_actor_id', true)
+                        )
                     )
                 )
             );
