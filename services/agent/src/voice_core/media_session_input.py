@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import replace
@@ -39,6 +40,10 @@ media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
 _EMPTY_VAD_RMS = 1e-4
+# How long a turn that already has text may stay reopened by vad.start
+# without the new speech producing any text of its own. Field 2026-09-28:
+# background sound kept reopening an answered weather question for 17 s.
+_REOPEN_EVIDENCE_WINDOW_S = 2.0
 
 
 def _is_spurious_connect_vad(segment: SpeechSegment, context: _MediaVoiceSession) -> bool:
@@ -138,6 +143,17 @@ class MediaSessionInputMixin:
             self, context: _MediaVoiceSession, start_sample: int
         ) -> None: ...
 
+        @staticmethod
+        def _reply_in_flight(context: _MediaVoiceSession) -> bool: ...
+
+        @staticmethod
+        def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool: ...
+
+        @staticmethod
+        def _asr_covers_endpoint(
+            context: _MediaVoiceSession, result_end_sample: int | None, endpoint_sample: int
+        ) -> bool: ...
+
     def _admit_vad_start(self, context: _MediaVoiceSession, segment: SpeechSegment) -> bool:
         """Open accepted speech synchronously, before projection can yield."""
 
@@ -177,6 +193,8 @@ class MediaSessionInputMixin:
             if voice_decision is PlaybackInputDecision.IGNORE:
                 return False
             context.turn_input_fence = context.runtime.fence
+        if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
+            self._arm_reopen_evidence_window(context, pending_endpoint)
         task = context.turn_endpoint_task
         if task is not None and not task.done():
             task.cancel()
@@ -206,6 +224,87 @@ class MediaSessionInputMixin:
             context.max_user_speech_task is not None, context.owner_silence_activity_revision,
         )
         return True
+
+    def _arm_reopen_evidence_window(
+        self, context: _MediaVoiceSession, endpoint_sample: int
+    ) -> None:
+        """Bound how long speech without any text may hold an answered turn open.
+
+        A vad.start after a text-covered endpoint reopens the turn, and every
+        later one does again, so steady background sound defers the reply
+        indefinitely. The window starts at the first such reopen and is never
+        extended by later ones: if the new speech has produced no text of its
+        own when it closes, the turn commits at the text-covered endpoint.
+        """
+
+        if context.reopen_evidence_handle is not None:
+            return
+        if (
+            context.identity.client_type != "device"
+            or not self._pending_turn_has_text_evidence(context)
+            or not self._asr_covers_endpoint(context, context.turn_end_sample, endpoint_sample)
+            or self._reply_in_flight(context)
+        ):
+            return
+        context.reopen_evidence_endpoint = endpoint_sample
+        context.reopen_evidence_turn_end = context.turn_end_sample
+        context.reopen_evidence_turn_start = context.turn_start_sample
+        context.reopen_evidence_handle = asyncio.get_running_loop().call_later(
+            _REOPEN_EVIDENCE_WINDOW_S,
+            self._expire_reopen_evidence_window,
+            context.identity.session_id,
+            context.stream_epoch,
+            endpoint_sample,
+        )
+
+    def _expire_reopen_evidence_window(
+        self, session_id: str, stream_epoch: int, endpoint_sample: int
+    ) -> None:
+        context = self._sessions.get(session_id)
+        if context is None or context.reopen_evidence_endpoint != endpoint_sample:
+            return
+        turn_end_at_reopen = context.reopen_evidence_turn_end
+        turn_start_at_reopen = context.reopen_evidence_turn_start
+        context.reopen_evidence_handle = None
+        context.reopen_evidence_endpoint = None
+        context.reopen_evidence_turn_end = None
+        context.reopen_evidence_turn_start = None
+        partial = context.pending_partial
+        new_text = (context.turn_end_sample or 0) > (turn_end_at_reopen or 0) or (
+            partial is not None
+            and partial.text.strip()
+            and partial.capture_end_sample > endpoint_sample
+        )
+        if (
+            context.closed
+            or context.standby_requested
+            or context.stream_epoch != stream_epoch
+            # The same logical turn: a turn that committed meanwhile and a
+            # newer one must never be committed at this older endpoint.
+            or context.turn_start_sample is None
+            or context.turn_start_sample != turn_start_at_reopen
+            or new_text
+            or self._reply_in_flight(context)
+        ):
+            return
+        # Back to the text-covered endpoint: a VAD end inside the noise would
+        # never be covered by ASR, so committing there would stall again.
+        if context.turn_endpoint_timeout_handle is not None:
+            context.turn_endpoint_timeout_handle.cancel()
+            context.turn_endpoint_timeout_handle = None
+        context.turn_endpoint_sample = endpoint_sample
+        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint_sample)
+        context.turn_endpoint_grace_deadline = time.monotonic()
+        context.turn_endpoint_tail_deadline = None
+        self._cancel_max_user_speech_watchdog(context)
+        logger.info(
+            "media reopened turn committing without new text session=%s "
+            "endpoint=%s window_s=%.1f",
+            session_id,
+            endpoint_sample,
+            _REOPEN_EVIDENCE_WINDOW_S,
+        )
+        self._schedule_turn_commit(context)
 
     async def on_audio_frame(
         self,

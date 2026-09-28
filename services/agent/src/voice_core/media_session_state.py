@@ -74,6 +74,13 @@ class MediaVoiceSessionState:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # A turn that already has text, reopened by a later vad.start: the
+    # text-covered endpoint to fall back to, the transcript end it had, and
+    # the bounded window for the new speech to produce any text of its own.
+    reopen_evidence_endpoint: int | None = None
+    reopen_evidence_turn_end: int | None = None
+    reopen_evidence_turn_start: int | None = None
+    reopen_evidence_handle: asyncio.TimerHandle | None = None
     # When admitted output first waited behind the floor; bounds how long a
     # pending turn with no text evidence (room-noise VAD) may keep holding it.
     evidence_less_hold_since: float | None = None
