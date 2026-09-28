@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
 import pytest
-from services.control_api.app.database import MemoryStore
+from services.control_api.app.database import MemoryStore, migrations
 from services.control_api.app.database.backend import translate_sql
 from services.control_api.app.database.schema import POSTGRES_TABLES, initialize_postgres
 
@@ -153,7 +153,7 @@ def test_every_table_is_owned_by_the_nologin_owner_with_force_rls(
             """
         ).fetchall()
     tables = {str(name): (str(owner), bool(forced)) for name, owner, forced in rows}
-    assert set(tables) == set(POSTGRES_TABLES)
+    assert set(tables) == {*POSTGRES_TABLES, "control_schema_migrations"}
     assert {value for value in tables.values()} == {("memoria_control_owner", True)}
 
 
@@ -213,3 +213,87 @@ def test_migration_copies_verifies_and_refuses_a_second_run(
 
     with pytest.raises(SystemExit, match="not empty"):
         migrate(source_path, control_schema["admin_dsn"], dry_run=False)
+
+
+def test_baseline_records_version_one_and_the_runtime_role_only_reads_it(
+    control_schema: dict[str, str],
+) -> None:
+    with psycopg.connect(control_schema["control_dsn"]) as connection:
+        assert connection.execute(
+            "SELECT version, name FROM control_schema_migrations"
+        ).fetchall() == [(1, "baseline")]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                "INSERT INTO control_schema_migrations VALUES (2, 'forged', 'now')"
+            )
+
+
+def _write_migration(directory: Path, name: str, sql: str) -> None:
+    directory.mkdir(exist_ok=True)
+    (directory / name).write_text(sql, encoding="utf-8")
+
+
+def test_pending_migrations_apply_once_in_order_and_gate_startup(
+    control_schema: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "migrations"
+    _write_migration(
+        directory,
+        "0002_profiles_note.sql",
+        "ALTER TABLE profiles ADD COLUMN note TEXT NOT NULL DEFAULT '';",
+    )
+    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", directory)
+    # The code now needs version 2; the runtime role refuses a database at 1.
+    with pytest.raises(RuntimeError, match="version 1, code needs 2"):
+        initialize_postgres(control_schema["control_dsn"], apply_schema=False)
+
+    with psycopg.connect(control_schema["admin_dsn"], autocommit=True) as admin:
+        assert migrations.apply_pending(admin) == ["0002_profiles_note"]
+        assert migrations.apply_pending(admin) == []
+        assert migrations.applied_version(admin) == 2
+    initialize_postgres(control_schema["control_dsn"], apply_schema=False).close()
+
+    # Ahead of the code (a rolled-back release) still starts.
+    monkeypatch.setattr(migrations, "MIGRATIONS_DIR", tmp_path / "none")
+    initialize_postgres(control_schema["control_dsn"], apply_schema=False).close()
+
+
+def test_a_failing_migration_leaves_no_trace(
+    control_schema: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "migrations"
+    _write_migration(
+        directory,
+        "0002_half_done.sql",
+        "ALTER TABLE profiles ADD COLUMN half TEXT; SELECT 1 / 0;",
+    )
+    with psycopg.connect(control_schema["admin_dsn"], autocommit=True) as admin:
+        with pytest.raises(psycopg.errors.DivisionByZero):
+            migrations.apply_pending(admin, directory)
+        assert migrations.applied_version(admin) == 1
+        assert admin.execute(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'profiles' "
+            "AND column_name = 'half'"
+        ).fetchone() == (0,)
+
+
+def test_migration_files_must_be_contiguous(tmp_path: Path) -> None:
+    _write_migration(tmp_path, "0003_skips_two.sql", "SELECT 1;")
+    with pytest.raises(RuntimeError, match="numbered"):
+        migrations.migrations(tmp_path)
+    _write_migration(tmp_path, "notes.sql", "SELECT 1;")
+    with pytest.raises(RuntimeError, match="misnamed"):
+        migrations.migrations(tmp_path)
+
+
+def test_release_schema_step_applies_the_same_directory() -> None:
+    release = (Path(__file__).resolve().parents[3] / "scripts" / "release_ops.sh").read_text(
+        encoding="utf-8"
+    )
+    relative = migrations.MIGRATIONS_DIR.relative_to(Path(__file__).resolve().parents[3])
+    assert f'"$R"/{relative.as_posix()}/[0-9][0-9][0-9][0-9]_*.sql' in release
+    assert "psql -U memoria_admin -d memoria -1 -v ON_ERROR_STOP=1" in release

@@ -68,6 +68,7 @@ required_tables(table_name, force_rls) AS (
         ('digital_self_preview_feedback', TRUE),
         ('digital_self_fidelity_evaluations', TRUE),
         ('digital_self_fidelity_trials', TRUE),
+        ('control_schema_migrations', TRUE),
         ('identity_persons', FALSE),
         ('identity_relationships', FALSE),
         ('identity_device_bindings', FALSE),

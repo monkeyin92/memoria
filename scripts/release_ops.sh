@@ -197,6 +197,20 @@ step_schema() {
   docker exec -i memoria-data-postgres-1 psql -U memoria_admin -d memoria -v ON_ERROR_STOP=1 -q \
     < "$R/services/control_api/app/database/postgres_schema.sql" \
     2>&1 | grep -vE '^(psql:.*NOTICE|NOTICE)' | tail -5
+  # Versioned control migrations (database/migrations.py): each pending file
+  # runs once, with its ledger row, in one transaction (psql -1).
+  local mig v name
+  for mig in "$R"/services/control_api/app/database/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+    [[ -e "$mig" ]] || continue
+    name="$(basename "$mig" .sql)"; v=$((10#${name:0:4}))
+    if [[ "$(docker exec memoria-data-postgres-1 psql -U memoria_admin -d memoria -tAc \
+        "SELECT count(*) FROM control_schema_migrations WHERE version >= $v")" != 0 ]]; then
+      continue
+    fi
+    { cat "$mig"; printf "\nINSERT INTO control_schema_migrations (version, name, applied_at) VALUES (%d, '%s', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"+00:00\"'));\n" "$v" "$name"; } \
+      | docker exec -i memoria-data-postgres-1 psql -U memoria_admin -d memoria -1 -v ON_ERROR_STOP=1 -q
+    log "control migration applied: $name"
+  done
   POSTGRES_CONTAINER=memoria-data-postgres-1 sh "$R/scripts/verify_authoritative_postgres.sh"
   log "schema=PASS"
 }
