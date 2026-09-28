@@ -34,6 +34,7 @@ from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
     InterruptSemanticClassifierConfig,
 )
+from services.agent.src.providers.tts_factory import tts_provider_label
 from services.agent.src.response_planner_client import ResponsePlannerClient
 from services.agent.src.runtime_speaker import KeywordSpotterBinding
 from services.agent.src.tutor_session import production_system_prompt
@@ -965,7 +966,7 @@ async def entrypoint(ctx: Any) -> None:
         fast_model_warmer=fast_model_warmer if callable(fast_model_warmer) else None,
         llm_provider=runtime_settings.llm_provider,
         llm_model=runtime_settings.llm_fast_model,
-        tts_provider="volcengine_doubao",
+        tts_provider=tts_provider_label(runtime_settings),
         tts_model=runtime_settings.doubao_tts_resource_id,
     )
 

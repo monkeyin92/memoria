@@ -29,12 +29,18 @@ from services.agent.src.orchestration.handlers import (
     SpeechSynthesisHandler,
 )
 from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
-from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS
-from services.agent.src.providers.doubao_tts import DoubaoTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.handlers import (
     build_language_model_handler,
     build_realtime_search_resolver,
+)
+from services.agent.src.providers.tts_factory import (
+    build_clone_tts,
+    build_tts,
+    close_tts,
+    tts_provider_label,
+    wants_clone_tts,
+    warm_tts,
 )
 from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
@@ -116,14 +122,11 @@ class ProductionMediaSessionFactory:
     async def __call__(self, identity: SessionIdentity) -> MediaSessionResources:
         if not identity.session_id:
             raise ValueError("production media session requires a session id")
-        tts = DoubaoTTS.from_env()
+        tts = build_tts(self.settings)
         runtime: DuplexRuntime | None = None
         owned: list[object] = []
         try:
-            warm = getattr(getattr(tts, "pool", None), "warm", None)
-            if callable(warm):
-                with contextlib.suppress(Exception):
-                    await warm()
+            await warm_tts(tts)
             language_model = build_language_model_handler(
                 settings=self.settings,
                 llm_factory=self.llm_factory,
@@ -204,7 +207,7 @@ class ProductionMediaSessionFactory:
                 fast_model_warmer=warmer if callable(warmer) else None,
                 llm_provider=self.settings.llm_provider,
                 llm_model=self.settings.llm_fast_model,
-                tts_provider="volcengine_doubao",
+                tts_provider=tts_provider_label(self.settings),
                 tts_model=self.settings.doubao_tts_resource_id,
             )
             handler = _SessionLanguageModel(
@@ -394,20 +397,14 @@ class ProductionMediaSessionFactory:
         return client
 
     async def _maybe_use_cosyvoice_clone_tts(self, runtime: DuplexRuntime, tts: Any) -> Any:
-        if dict(runtime.mode_policy.references).get("voice_provider") != "alibaba_model_studio":
+        # The mode policy that names the clone voice arrives only once the
+        # runtime is bound, so the runtime synthesizer is replaced here.
+        if not wants_clone_tts(runtime.mode_policy):
             return tts
-        if not frozen_companion_clone_permitted(runtime.mode_policy):
-            return tts
-        close_tts = getattr(tts, "aclose", None)
-        if callable(close_tts):
-            with contextlib.suppress(Exception):
-                await close_tts()
-        clone_tts = CosyVoiceTTS.from_env()
+        await close_tts(tts)
+        clone_tts = build_clone_tts()
         runtime.tts = clone_tts
-        warm = getattr(getattr(clone_tts, "pool", None), "warm", None)
-        if callable(warm):
-            with contextlib.suppress(Exception):
-                await warm()
+        await warm_tts(clone_tts)
         return clone_tts
 
     async def _bind_archive(self, runtime: DuplexRuntime) -> None:
