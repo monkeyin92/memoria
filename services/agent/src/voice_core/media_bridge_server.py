@@ -223,7 +223,7 @@ class MediaBridgeSession:
         """Measure post-pacer admission of one accepted bridge frame."""
 
         now = time.monotonic()
-        # The device downlink is 24 kHz mono PCM (device_client's downlink
+        # The device downlink is 24 kHz mono PCM (the media-v1 downlink
         # AudioFormat), so pacing is expressed against that rate.
         self._pacing_audio_ms += frame.frame_samples / 24_000 * 1000.0
         self._pacing_frames += 1

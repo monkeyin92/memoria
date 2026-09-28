@@ -63,29 +63,13 @@ from services.evolution.release_policy import (
     EvolutionReleasePolicy,
     parse_runtime_prompt_families,
 )
-from services.evolution.replay import (
-    OfflineTrajectoryEvaluator,
-    OfflineTrajectoryReplayRequest,
-    OfflineTrajectoryReplayResult,
-    OfflineTrajectoryReplayWorker,
-)
 from services.evolution.resolver import EvolutionResolver, ResolvedEvolutionArtifact
-from services.evolution.runtime import EvolutionRuntimeCapture, pending_key
-from services.evolution.skill import SkillActivationObserver
 from services.evolution.store import (
     MIN_STABLE_CANARY_OBSERVATIONS,
     EvolutionConflictError,
     EvolutionNotFoundError,
     EvolutionStore,
     EvolutionTransitionError,
-)
-from services.evolution.trajectory import (
-    CanonicalTrajectory,
-    CanonicalTrajectoryError,
-    EvaluatedToolAction,
-    TrajectoryAssessment,
-    TrajectoryReplayInput,
-    evaluation_signal_id,
 )
 from services.evolution.verifier import (
     TrajectoryObservation,
@@ -112,15 +96,7 @@ __all__ = [
     "EvolutionTransitionError",
     "RuntimeControlPlaneMetrics",
     "RuntimeControlPlaneReport",
-    "EvolutionRuntimeCapture",
     "EvolutionResolver",
-    "CanonicalTrajectory",
-    "CanonicalTrajectoryError",
-    "EvaluatedToolAction",
-    "OfflineTrajectoryEvaluator",
-    "OfflineTrajectoryReplayRequest",
-    "OfflineTrajectoryReplayResult",
-    "OfflineTrajectoryReplayWorker",
     "PostgresEvolutionStore",
     "EvidenceRef",
     "FailureCluster",
@@ -132,7 +108,6 @@ __all__ = [
     "REQUIRED_VALIDATION_GATES",
     "ResolvedEvolutionArtifact",
     "SignalScope",
-    "SkillActivationObserver",
     "EvolutionSleepWorker",
     "ArmMetrics",
     "EvolutionHoldoutCase",
@@ -152,9 +127,6 @@ __all__ = [
     "SleepCycleReport",
     "SleepLearningPolicy",
     "TrajectoryObservation",
-    "TrajectoryAssessment",
-    "TrajectoryReplayInput",
-    "evaluation_signal_id",
     "ValidationReport",
     "Verdict",
     "VerificationReport",
@@ -166,7 +138,6 @@ __all__ = [
     "run_evolution_evaluation",
     "run_runtime_control_plane_evaluation",
     "runtime_control_plane_report_json",
-    "pending_key",
     "parse_runtime_prompt_families",
     "sign_resolution_receipt",
     "verify_resolution_receipt",

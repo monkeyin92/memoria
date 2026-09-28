@@ -420,10 +420,6 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_EVOLUTION_CONTROL_TOKEN",
     )
-    memoria_evolution_validator_token: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_EVOLUTION_VALIDATOR_TOKEN",
-    )
     archive_object_store_path: str = Field(
         default="data/archive-objects",
         alias="MEMORIA_ARCHIVE_OBJECT_STORE_PATH",
@@ -1031,12 +1027,6 @@ class ControlSettings(BaseSettings):
             return configured
         return self.memoria_archive_internal_token.get_secret_value()
 
-    def evolution_validator_token(self) -> str:
-        configured = self.memoria_evolution_validator_token.get_secret_value().strip()
-        if configured or self.environment == "production":
-            return configured
-        return self.evolution_internal_token()
-
     def evolution_sqlite_path(self) -> str:
         configured = self.evolution_db_path.strip()
         if configured:
@@ -1405,10 +1395,9 @@ class ControlSettings(BaseSettings):
             "MEMORIA_INTERACTION_POLICY_TOKEN": self.internal_token("interaction_policy"),
             "MEMORIA_RESPONSE_PLAN_TOKEN": self.internal_token("response_plan"),
             "MEMORIA_EVOLUTION_CONTROL_TOKEN": self.evolution_internal_token(),
-            "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": self.evolution_validator_token(),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires eight capability-scoped internal tokens")
+            raise ValueError("production requires seven capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):

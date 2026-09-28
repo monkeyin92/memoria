@@ -25,7 +25,6 @@ from services.evolution.evaluation import (
     evaluate_all_modes,
     evaluate_runtime_control_plane_all_modes,
 )
-from services.evolution.runtime import EvolutionRuntimeCapture
 from services.evolution.store import (
     EvolutionConflictError,
     EvolutionStore,
@@ -223,86 +222,6 @@ def test_evaluator_cannot_relabel_a_process_violation_as_a_prompt_failure() -> N
     report = verify_trajectory(observation)
 
     assert report.failure_code == "privacy_violation"
-
-
-def test_runtime_capture_requires_independent_evaluation_before_persisting_signal(tmp_path) -> None:
-    store = EvolutionStore(tmp_path / "evolution.sqlite3")
-    plane = EvolutionControlPlane(store, trusted_root_sha256="c" * 64)
-    capture = EvolutionRuntimeCapture(plane)
-    user_event = {
-        "event_id": "user-event",
-        "account_id": "account-a",
-        "event_type": "speech.utterance_finalized",
-        "speaker_class": "owner",
-        "session_id": "session-a",
-        "turn_id": 4,
-        "generation_id": 2,
-        "tool_epoch": 1,
-        "occurred_at": "2026-08-08T08:00:00+00:00",
-        "payload": {
-            "text": "这段原文不应该进入进化存储",
-            "history_eligible": True,
-            "owner_projection_eligible": True,
-            "speaker_reason_code": "formal_owner",
-        },
-    }
-    assistant_event = {
-        "event_id": "assistant-event",
-        "account_id": "account-a",
-        "event_type": "assistant.playout_stopped",
-        "speaker_class": "assistant",
-        "session_id": "session-a",
-        "turn_id": 4,
-        "generation_id": 2,
-        "tool_epoch": 1,
-        "occurred_at": "2026-08-08T08:00:00+00:00",
-        "payload": {
-            "actual_heard": True,
-            "evolution_observation": {"task_family": "weather", "task_completed": True}
-        },
-    }
-    assert capture.capture_pair(user_event, assistant_event) is None
-    assert store.list_signals() == ()
-    signal_id = capture.capture_evaluation_pair(
-        user_event,
-        assistant_event,
-        evaluation_id="weather-replay-v1",
-        evaluation={
-            "evaluator_version": "offline-rubric-v1",
-            "task_family": "weather",
-            "environment_version": "weather-replay-v1",
-            "task_completed": True,
-            "quality_dimensions": {"factuality": "pass"},
-            "commitment_action_consistent": True,
-        },
-    )
-    assert signal_id is not None and signal_id.startswith("evaluation:")
-    signal = store.list_signals()[0]
-    assert signal.source_event_ids == ("user-event", "assistant-event")
-    assert "这段原文" not in signal.to_dict().__repr__()
-
-
-def test_runtime_capture_fails_closed_on_missing_fence(tmp_path) -> None:
-    store = EvolutionStore(tmp_path / "evolution.sqlite3")
-    capture = EvolutionRuntimeCapture(EvolutionControlPlane(store, trusted_root_sha256="d" * 64))
-    assert (
-        capture.capture_event(
-            {
-                "event_id": "missing-fence",
-                "account_id": "account-a",
-                "event_type": "speech.utterance_finalized",
-                "speaker_class": "owner",
-                "session_id": "session-a",
-                "payload": {
-                    "history_eligible": True,
-                    "owner_projection_eligible": True,
-                    "speaker_reason_code": "formal_owner",
-                },
-            }
-        )
-        is None
-    )
-    assert capture.pending_count() == 0
 
 
 def test_store_diagnosis_candidate_validation_and_lifecycle(tmp_path) -> None:

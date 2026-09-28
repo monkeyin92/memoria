@@ -240,10 +240,11 @@ async def test_production_lifespan_closes_initialized_store_when_startup_body_fa
 ) -> None:
     app, lifecycle = _patch_production_lifespan_dependencies(monkeypatch, tmp_path)
 
-    def fail_after_runtime_install(_app: object) -> None:
+    def fail_after_runtime_install(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("startup failed after Session Runtime installation")
 
-    monkeypatch.setattr(main, "_install_tutor_authority", fail_after_runtime_install)
+    # DeviceRegistry is built right after Session Runtime and MemoryScope install.
+    monkeypatch.setattr(main, "DeviceRegistry", fail_after_runtime_install)
 
     with pytest.raises(RuntimeError, match="startup failed"):
         async with main.lifespan(app):

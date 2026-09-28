@@ -134,6 +134,9 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
 _RETIRED_KEYS = frozenset(
     {
         "MEDIA_BRIDGE_GO_SHADOW_ENABLED",
+        # /v1/evolution (and its validator token) was removed on 2026-09-28;
+        # it had no caller.
+        "MEMORIA_EVOLUTION_VALIDATOR_TOKEN",
         # The agent-side persona capsule fetch and its control endpoint were
         # removed on 2026-09-26; persona reaches the agent via response-plan.
         # /v1/archive/session-context and its memory_read token were removed

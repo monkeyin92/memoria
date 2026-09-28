@@ -8,11 +8,9 @@ from typing import cast
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.security import mint_memoria_access_token
 from services.memory_scope.domain import (
-    MemoryScope,
     MemoryWriteDraft,
     ResolutionContext,
     WriteFence,
@@ -212,249 +210,15 @@ def _authenticated_app() -> tuple[FastAPI, dict[str, str]]:
     return app, {"Authorization": f"Bearer {token}"}
 
 
-async def _installed(
-    authority: FakeAuthority,
-    *,
-    shared_action_executor: FakeShared | None = None,
-) -> tuple[FastAPI, dict[str, str], MemoryProductionWiring]:
-    stack, settings, service = await _build()
-    app, headers = _authenticated_app()
-    wiring = install_memory_production(
-        app,
-        settings,
-        receipt_verifier=service.receipt_verifier,
-        family_membership_verifier=service.family_membership_verifier,
-        consent_verifier=service.consent_verifier,
-        grant_resolver=service.grant_resolver,
-        authority=authority,
-        stack=stack,
-        shared_action_executor=shared_action_executor,
-    )
-    return app, headers, wiring
-
-
-def _capture_payload() -> dict[str, object]:
-    return {
-        "session_id": "voice-session-1",
-        "requested_scope": MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE.value,
-        "content": "今天一起去了公园",
-        "source_evidence_ids": ["evidence-1"],
-    }
-
-
-@pytest.mark.asyncio
-async def test_capture_uses_bearer_actor_and_one_explicit_voice_session_snapshot() -> None:
-    authority = FakeAuthority(_snapshot())
-    app, headers, wiring = await _installed(authority)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories",
-            headers=headers,
-            json=_capture_payload(),
-        )
-        assert response.status_code == 201, response.text
-        record_id = response.json()["record_id"]
-        response = await client.get(
-            f"/v1/production/memories/{record_id}",
-            headers=headers,
-            params={"session_id": "voice-session-1"},
-        )
-        assert response.status_code == 200, response.text
-    assert authority.calls == [
-        ("person-a", "voice-session-1"),
-        ("person-a", "voice-session-1"),
-    ]
-    await wiring.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
-        ("actor_subject_id", "person-b"),
-        ("subject_id", "person-b"),
-        ("policy_receipt_id", "forged"),
-        ("consent_snapshot_id", "forged"),
-        ("family_space_id", "forged"),
-        ("actor_family_space_id", "forged"),
-        ("subject_category", "adult"),
-        ("age_band", "adult"),
-        ("speaker_state", "confirmed"),
-        ("registered", True),
-    ),
-)
-async def test_capture_rejects_all_client_authority_claims(
-    field: str,
-    value: object,
-) -> None:
-    authority = FakeAuthority(_snapshot())
-    app, headers, wiring = await _installed(authority)
-    payload = _capture_payload()
-    payload[field] = value
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories",
-            headers=headers,
-            json=payload,
-        )
-    assert response.status_code == 422, response.text
-    assert authority.calls == []
-    await wiring.close()
-
-
-@pytest.mark.asyncio
-async def test_capture_cannot_bypass_family_shared_confirmation() -> None:
-    authority = FakeAuthority(_snapshot())
-    app, headers, wiring = await _installed(authority)
-    payload = _capture_payload()
-    payload["requested_scope"] = MemoryScope.MEMORY_SCOPE_FAMILY_SHARED.value
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories",
-            headers=headers,
-            json=payload,
-        )
-    assert response.status_code == 403, response.text
-    await wiring.close()
-
-
-@pytest.mark.asyncio
-async def test_missing_or_unavailable_session_fails_closed() -> None:
-    for authority, expected in (
-        (FakeAuthority(None), 403),
-        (FakeAuthority(_snapshot(), error=RuntimeError("revision mismatch")), 503),
-    ):
-        app, headers, wiring = await _installed(authority)
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.post(
-                "/v1/production/memories",
-                headers=headers,
-                json=_capture_payload(),
-            )
-        assert response.status_code == expected, response.text
-        await wiring.close()
-
-
-@pytest.mark.asyncio
-async def test_shared_actions_use_one_port_and_authoritative_snapshot() -> None:
-    authority = FakeAuthority(_snapshot())
-    shared = FakeShared()
-    app, headers, wiring = await _installed(
-        authority,
-        shared_action_executor=shared,
-    )
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories/shared-proposals",
-            headers=headers,
-            json={
-                "session_id": "voice-session-1",
-                "title": "家庭记忆",
-                "content": "一起旅行",
-                "source_evidence_ids": ["evidence-1"],
-                "co_subject_ids": ["person-b"],
-            },
-        )
-        assert response.status_code == 201, response.text
-        assert response.json() == {"proposal_id": "proposal-1", "status": "pending"}
-        for operation in ("confirm", "object", "withdraw"):
-            response = await client.post(
-                f"/v1/production/memories/shared-proposals/proposal-1/{operation}",
-                headers=headers,
-                json={"session_id": "voice-session-1"},
-            )
-            assert response.status_code == 200, response.text
-
-    assert authority.calls == [("person-a", "voice-session-1")] * 4
-    assert [call[0] for call in shared.calls] == [
-        "propose", "confirm", "object", "withdraw"
-    ]
-    assert all(call[1] == "person-a" for call in shared.calls)
-    assert all(call[2] == "voice-session-1" for call in shared.calls)
-    assert shared.calls[0][3].co_subject_ids == ("person-b",)
-    assert shared.calls[1][3].proposal_id == "proposal-1"
-    await wiring.close()
-
-
-@pytest.mark.asyncio
-async def test_shared_action_payload_rejects_authority_claims() -> None:
-    authority = FakeAuthority(_snapshot())
-    shared = FakeShared()
-    app, headers, wiring = await _installed(
-        authority,
-        shared_action_executor=shared,
-    )
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories/shared-proposals/proposal-1/confirm",
-            headers=headers,
-            json={
-                "session_id": "voice-session-1",
-                "subject_id": "person-b",
-                "family_space_id": "forged",
-                "consent_snapshot_id": "forged",
-                "policy_receipt_id": "forged",
-                "fence": "forged",
-            },
-        )
-    assert response.status_code == 422, response.text
-    assert shared.calls == []
-    await wiring.close()
-
-
-@pytest.mark.asyncio
-async def test_default_shared_adapter_is_unavailable_and_fails_closed() -> None:
-    authority = FakeAuthority(_snapshot())
-    app, headers, wiring = await _installed(authority)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories/shared-proposals",
-            headers=headers,
-            json={
-                "session_id": "voice-session-1",
-                "title": "家庭记忆",
-                "content": "一起旅行",
-                "source_evidence_ids": ["evidence-1"],
-                "co_subject_ids": ["person-b"],
-            },
-        )
-    assert response.status_code == 503, response.text
-    await wiring.close()
-
-
 def test_readiness_requires_capture_and_family_shared_action_executors() -> None:
     stack = cast(object, type("Stack", (), {})())
     stack.outbox_dispatcher = object()
     stack.sensitive_executor = object()
     wiring = MemoryProductionWiring(
         service=cast(object, object()),
-        capture=cast(object, object()),
-        recall=cast(object, object()),
         shared=MemorySharedLifecycleAdapter(cast(object, stack)),
         authority=FakeAuthority(_snapshot()),
         outbox_worker=cast(object, object()),
-        router=cast(object, object()),
     )
     wiring._stack = stack
     wiring._settings = cast(object, object())
@@ -462,30 +226,6 @@ def test_readiness_requires_capture_and_family_shared_action_executors() -> None
     wiring._outbox_task = cast(object, type("Task", (), {"done": lambda self: False})())
 
     assert wiring.ready is False
-
-
-@pytest.mark.asyncio
-async def test_missing_shared_port_is_503() -> None:
-    authority = FakeAuthority(_snapshot())
-    app, headers, wiring = await _installed(authority)
-    wiring.shared = cast(object, None)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.post(
-            "/v1/production/memories/shared-proposals",
-            headers=headers,
-            json={
-                "session_id": "voice-session-1",
-                "title": "家庭记忆",
-                "content": "一起旅行",
-                "source_evidence_ids": ["evidence-1"],
-                "co_subject_ids": ["person-b"],
-            },
-        )
-    assert response.status_code == 503, response.text
-    await wiring.close()
 
 
 @pytest.mark.asyncio
@@ -545,12 +285,9 @@ async def test_close_closes_the_complete_stack() -> None:
     stack = Stack()
     wiring = MemoryProductionWiring(
         service=cast(object, object()),
-        capture=cast(object, object()),
-        recall=cast(object, object()),
         shared=cast(object, object()),
         authority=FakeAuthority(_snapshot()),
         outbox_worker=None,
-        router=cast(object, object()),
     )
     wiring._stack = cast(object, stack)
     wiring._settings = cast(object, object())

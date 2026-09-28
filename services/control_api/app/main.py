@@ -9,7 +9,6 @@ from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Protocol, cast
@@ -77,12 +76,10 @@ from services.control_api.app.routes import custom_personas as custom_personas_r
 from services.control_api.app.routes import device_control as device_control_routes
 from services.control_api.app.routes import device_onboarding as device_onboarding_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
-from services.control_api.app.routes import evolution as evolution_routes
 from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import guardian as guardian_routes
 from services.control_api.app.routes import identity_lifecycle as identity_lifecycle_routes
 from services.control_api.app.routes import interaction as interaction_routes
-from services.control_api.app.routes import legacy as legacy_routes
 from services.control_api.app.routes import media as media_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import multi_subject as multi_subject_routes
@@ -91,12 +88,9 @@ from services.control_api.app.routes import (
     persona_assignment as persona_assignment_routes,
 )
 from services.control_api.app.routes import readiness as readiness_routes
-from services.control_api.app.routes import self_model as self_model_routes
 from services.control_api.app.routes import self_preview as self_preview_routes
 from services.control_api.app.routes import session as session_routes
-from services.control_api.app.routes import skills as skill_routes
 from services.control_api.app.routes import speaker as speaker_routes
-from services.control_api.app.routes import tutor as tutor_routes
 from services.control_api.app.routes import voice as voice_routes
 from services.control_api.app.session_directory import (
     InMemorySessionDirectory,
@@ -131,7 +125,6 @@ from services.evolution.release_policy import (
     parse_runtime_prompt_families,
 )
 from services.evolution.resolver import EvolutionResolver
-from services.evolution.runtime import EvolutionRuntimeCapture
 from services.evolution.store import EvolutionStore
 from services.evolution.worker import EvolutionSleepWorker
 from services.governance.account_data import (
@@ -182,7 +175,6 @@ from services.memory_scope.shared_actions import PostgresFamilySharedActionExecu
 from services.memory_scope.subject_erasure import PostgresSubjectMemoryScope
 from services.memory_scope.wiring import (
     MemoryProductionWiring,
-    build_memory_router,
     install_memory_production,
 )
 from services.persona.custom_persona_structurer import QwenCustomPersonaStructurer
@@ -205,11 +197,6 @@ from services.speaker.campplus_http import (
 )
 from services.speaker.domain import SpeakerAuthorityPort, SpeakerEmbeddingAdapter
 from services.speaker.postgres_authority import PostgresSpeakerAuthority
-from services.tutor.authority import (
-    TutorEvidenceGate,
-    TutorFenceSnapshot,
-    TutorScoringRubric,
-)
 from services.voice_profile.cosyvoice_enrollment import (
     CosyVoiceEnrollmentClient,
     CosyVoiceEnrollmentConfig,
@@ -233,65 +220,6 @@ from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
 
 
-class _PostgresRuntimeProfileFencePort:
-    """Adapt the persistent Session Runtime profile to Tutor's fence port."""
-
-    def __init__(self, runtime: PostgresMultiSubjectRuntimeControl) -> None:
-        self._runtime = runtime
-
-    async def resolve_fence(
-        self,
-        *,
-        actor_id: str,
-        voice_session_id: str,
-        now: datetime,
-    ) -> TutorFenceSnapshot | None:
-        profile = await self._runtime.tutor_profile(
-            actor_id=actor_id,
-            session_id=voice_session_id,
-            now=now,
-        )
-        if profile is None or profile.active_subject_id is None:
-            return None
-        return TutorFenceSnapshot(
-            voice_session_id=voice_session_id,
-            actor_id=profile.actor_id,
-            active_subject_id=profile.active_subject_id,
-            device_id=profile.device_id,
-            binding_id=profile.binding_id,
-            binding_version=profile.binding_version,
-            subject_revision=profile.subject_revision,
-            session_epoch=profile.session_epoch,
-            runtime_profile_id=profile.runtime_profile_id,
-            policy_receipt_ids=tuple(profile.policy_receipt_ids),
-            expires_at=profile.expires_at,
-            resolved_at=now,
-        )
-
-
-def _install_tutor_authority(app: FastAPI) -> None:
-    """PR-13: wire server-owned tutor subject fence and evidence gate.
-
-    The assessment authority (voice-agent seam) is intentionally not wired:
-    practice scoring fails closed with 503 until the agent-side evidence
-    producer lands.  The action-receipt verifier (Policy transaction-bound
-    seam) is also not wired yet: practice writes fail closed with 503 until
-    the Policy port lands.  The fence and signing gate are real.
-    """
-
-    runtime = app.state.multi_subject_runtime
-    if isinstance(runtime, PostgresMultiSubjectRuntimeControl):
-        app.state.tutor_session_fence = _PostgresRuntimeProfileFencePort(runtime)
-    else:
-        from services.control_api.app.routes.tutor import RuntimeProfileFencePort
-
-        app.state.tutor_session_fence = RuntimeProfileFencePort(runtime)
-    app.state.tutor_receipt_verifier = None
-    app.state.tutor_evidence_gate = TutorEvidenceGate(
-        signing_key=app.state.settings.runtime_profile_signing_key()
-    )
-    app.state.tutor_scoring_rubric = TutorScoringRubric()
-    app.state.tutor_assessment_authority = None
 def _memory_account_guard(
     gate: AccountOperationGate,
     store: MemoryStore,
@@ -995,7 +923,6 @@ async def _install_memory_scope(w: _Wiring) -> None:
         context_builder=capture_policy.context_builder,
         outbox_dispatcher=dispatcher,
         shared_action_executor=shared_actions,
-        include_router=False,
     )
     # Registered before start: a wiring that fails to start still closes.
     w.on_close(wiring.close)
@@ -1106,10 +1033,6 @@ async def _wire_services(w: _Wiring) -> None:
     app.state.multi_subject_binding_manifests = {}
     await _install_session_runtime(w)
     await _install_memory_scope(w)
-    if app.state.multi_subject_runtime is None:
-        app.state.tutor_session_fence = None
-    else:
-        _install_tutor_authority(app)
     app.state.device_registry = DeviceRegistry(
         store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
@@ -1142,7 +1065,6 @@ async def _wire_services(w: _Wiring) -> None:
         await w.init_blocking(sqlite_guardian.initialize, eager=True)
         guardian_store = sqlite_guardian
     app.state.guardian_store = guardian_store
-    app.state.tutor_store = guardian_store
 
     archive_url = w.url(settings.archive_database_url.get_secret_value())
     # The archive-DSN stores borrow one pool; it closes after all of them.
@@ -1275,7 +1197,6 @@ async def _wire_services(w: _Wiring) -> None:
     )
     app.state.evolution_store = evolution_store
     app.state.evolution_control_plane = evolution_control_plane
-    app.state.evolution_runtime_capture = EvolutionRuntimeCapture(evolution_control_plane)
     app.state.evolution_resolver = EvolutionResolver(
         evolution_store,
         trusted_root_sha256=settings.evolution_trusted_root(),
@@ -1480,16 +1401,13 @@ def create_app() -> FastAPI:
     app.include_router(auth_routes.router)
     app.include_router(account_insights_routes.router)
     app.include_router(interaction_routes.router)
-    app.include_router(legacy_routes.router)
     app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
     app.include_router(media_routes.router)
     app.include_router(media_routes.device_router)
     app.include_router(media_routes.internal_router)
-    app.include_router(skill_routes.router)
     app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
-    app.include_router(build_memory_router())
     app.include_router(multi_subject_routes.router)
     app.include_router(persona_assignment_routes.router)
     app.include_router(device_onboarding_routes.router)
@@ -1499,12 +1417,9 @@ def create_app() -> FastAPI:
     app.include_router(persona_routes.router)
     app.include_router(custom_personas_routes.router)
     app.include_router(digital_self_routes.router)
-    app.include_router(evolution_routes.router)
     app.include_router(self_preview_routes.router)
-    app.include_router(self_model_routes.router)
     app.include_router(growth_routes.router)
     app.include_router(guardian_routes.router)
-    app.include_router(tutor_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)
 

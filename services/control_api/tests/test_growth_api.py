@@ -10,6 +10,32 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.control_api.app.main import create_app
+from services.self_model.policy import activation_decision
+
+
+async def _decision_cases(app: object, account_id: str) -> list[dict[str, object]]:
+    """Read decision cases from the Self Model registry the growth route writes to."""
+
+    registry = app.state.self_model_registry  # type: ignore[attr-defined]
+    cases = await registry.decision_cases(account_id=account_id)
+    return [
+        {
+            "decision_kind": case.kind,
+            "status": case.status,
+            "effective": activation_decision(case).effective,
+            "context": case.context,
+            "options": list(case.options),
+            "constraints": list(case.constraints),
+            "chosen_option": case.chosen_option,
+            "rejected_options": list(case.rejected_options),
+            "outcome": case.outcome,
+            "reflection": case.reflection,
+            "still_endorsed": case.still_endorsed,
+            "sources": [{"source_event_id": source.source_event_id} for source in case.sources],
+        }
+        for case in cases
+    ]
+
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -219,10 +245,10 @@ async def test_structured_decision_review_preserves_fields_and_creates_a_real_ca
             headers=headers,
             json=response_body,
         )
-        self_model = await client.get("/v1/self-model", headers=headers)
+        decision_cases = await _decision_cases(app, owner["user_id"])
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
-    decisions = self_model.json()["decision_cases"]
+    decisions = decision_cases
     payload = next(
         item["payload"]
         for item in timeline.json()["items"]
@@ -284,10 +310,10 @@ async def test_plain_text_decision_review_stays_an_unresolved_hypothetical_candi
                 "answer": "当时想了很多，最后觉得还可以。",
             },
         )
-        self_model = await client.get("/v1/self-model", headers=headers)
+        decision_cases = await _decision_cases(app, owner["user_id"])
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
-    decision = self_model.json()["decision_cases"][0]
+    decision = decision_cases[0]
     payload = next(
         item["payload"]
         for item in timeline.json()["items"]
@@ -348,10 +374,10 @@ async def test_decision_review_without_constraints_cannot_become_a_real_candidat
                 "still_endorsed": True,
             },
         )
-        self_model = await client.get("/v1/self-model", headers=headers)
+        decision_cases = await _decision_cases(app, owner["user_id"])
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
-    decision = self_model.json()["decision_cases"][0]
+    decision = decision_cases[0]
     payload = next(
         item["payload"]
         for item in timeline.json()["items"]
@@ -404,9 +430,9 @@ async def test_scenario_choice_remains_hypothetical_with_structured_fields(
                 "still_endorsed": True,
             },
         )
-        self_model = await client.get("/v1/self-model", headers=headers)
+        decision_cases = await _decision_cases(app, owner["user_id"])
 
-    decision = self_model.json()["decision_cases"][0]
+    decision = decision_cases[0]
     assert response.status_code == 200
     assert decision["decision_kind"] == "hypothetical"
     assert decision["status"] == "candidate"
