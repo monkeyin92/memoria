@@ -111,6 +111,9 @@ async def _ensure_roles(
             await admin.execute(
                 f"CREATE ROLE {role} LOGIN PASSWORD '{password}' NOBYPASSRLS"
             )
+        else:
+            # Roles are cluster-wide; another suite may have set its own password.
+            await admin.execute(f"ALTER ROLE {role} LOGIN PASSWORD '{password}'")
         created.append(not exists)
     return tuple(created)  # type: ignore[return-value]
 
@@ -233,6 +236,13 @@ async def test_postgres_guardian_schema_and_corpus_consent_fence() -> None:
                     expires_at=now + timedelta(days=1),
                 )
             )
+
+        # Revocation purges the sample: the maintenance role marks it deleted
+        # (the corpus retention service, both on revoke and on expiry).
+        deleted = await store.mark_corpus_sample_deleted(
+            sample_id=sample.sample_id, deleted_at=now + timedelta(minutes=3)
+        )
+        assert deleted.deleted_at is not None
 
         connection = await asyncpg.connect(dsn)
         try:
