@@ -363,6 +363,21 @@ async def test_real_catalog_http_exits_and_review_ids_are_subject_scoped(
             age_evidence_id="test-child-evidence",
             now=datetime.now(UTC),
         )
+        # The account is related to the claimed person, as on a real device
+        # binding; Identity only shows the person to a related account.
+        await app.state.identity_service.register_person(
+            person_id=owner["user_id"], actor_person_id=owner["user_id"],
+            display_name="账号本人", timezone="Asia/Shanghai",
+            subject_category="adult", age_band="adult",
+            age_evidence_status="verified", age_evidence_id="test-owner-evidence",
+            now=datetime.now(UTC),
+        )
+        await app.state.identity_service.attest_binding_relationship(
+            source_person_id=owner["user_id"],
+            target_person_id="child",
+            relation_type="delegate_for",
+            actor_person_id=owner["user_id"],
+        )
         now = datetime.now(UTC)
         for i, (subject, name) in enumerate(
             ((owner["user_id"], "李梅"), ("child", "王芳"), (None, "赵兰"))
