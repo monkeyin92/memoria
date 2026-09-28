@@ -56,6 +56,10 @@ from services.control_api.app.account_gate import AccountDeletingError, AccountO
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.governance_wiring import (
+    account_data_governance,
+    install_subject_deletion,
+)
 from services.control_api.app.guardian_push import (
     app_display_name_resolver,
     build_crisis_push_worker,
@@ -128,15 +132,8 @@ from services.evolution.resolver import EvolutionResolver
 from services.evolution.store import EvolutionStore
 from services.evolution.worker import EvolutionSleepWorker
 from services.governance.account_data import (
-    AccountDataGovernance,
     AccountDeletionWorker,
-    AccountRepository,
-    PostgresAccountRepository,
-    SqliteAccountRepository,
 )
-from services.governance.subject_archive import PostgresSubjectArchive, SqliteSubjectArchive
-from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
-from services.governance.subject_ports import SubjectGuardianPort
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.reader import GrowthReader
 from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
@@ -627,87 +624,6 @@ def _guardian_revocation_hook(
     return on_revoked
 
 
-def _subject_archive(settings: ControlSettings) -> PostgresSubjectArchive | SqliteSubjectArchive:
-    # One repository serves account deletion and a bound subject's deletion.
-    archive_url = settings.archive_database_url.get_secret_value()
-    if archive_url:
-        return PostgresSubjectArchive(archive_url)
-    return SqliteSubjectArchive(settings.memoria_db_path)
-
-
-def _install_subject_deletion(
-    app: FastAPI,
-    settings: ControlSettings,
-    *,
-    guardian_store: GuardianStorePort,
-    archive_object_store: ObjectStore,
-    corpus_retention_service: CorpusRetentionService,
-    session_terminator: AccountSessionTerminator,
-) -> SubjectDeletionService:
-    """Erase one bound subject inside their owner's account (not account-wide)."""
-
-    ledger = SubjectDeletionLedger(settings.memoria_db_path)
-    ledger.initialize()
-    identity = cast(IdentityService, app.state.identity_service)
-
-    async def redact(subject_id: str, account_id: str) -> None:
-        await identity.redact_bound_subject(person_id=subject_id, actor_person_id=account_id)
-
-    async def purge_corpus(subject_id: str) -> int:
-        return await corpus_retention_service.purge_minor(minor_user_id=subject_id)
-    service = SubjectDeletionService(
-        ledger=ledger,
-        archive=_subject_archive(settings),
-        object_store=archive_object_store,
-        guardian=cast(SubjectGuardianPort, guardian_store),
-        memory_scope=getattr(app.state, "subject_memory_scope", None),
-        terminate_sessions=session_terminator.terminate_subject,
-        purge_corpus=purge_corpus,
-        redact_identity=redact,
-        persona=app.state.persona_engine,
-    )
-    app.state.subject_deletion = service
-    return service
-
-
-def _account_data_governance(
-    settings: ControlSettings,
-    *,
-    store: MemoryStore,
-    voice_profiles: VoiceProfilePort,
-    archive_object_store: ObjectStore,
-    realtime_connections: RealtimeConnectionRegistry,
-    account_operations: AccountOperationGate,
-    legacy_registry: LegacyRegistryPort,
-    evolution_repository: AccountRepository,
-    guardian_repository: GuardianStorePort,
-    corpus_retention_service: CorpusRetentionService,
-    session_terminator: AccountSessionTerminator,
-) -> AccountDataGovernance:
-    archive_url = settings.archive_database_url.get_secret_value()
-    archive_repository = _subject_archive(settings)
-    speaker_url = settings.speaker_database_url.get_secret_value() or archive_url
-    speaker_repository = (
-        PostgresAccountRepository.speaker(speaker_url)
-        if speaker_url
-        else SqliteAccountRepository.speaker(settings.speaker_database_path)
-    )
-    return AccountDataGovernance(
-        memory_store=store,
-        archive_repository=archive_repository,
-        speaker_repository=speaker_repository,
-        evolution_repository=evolution_repository,
-        guardian_repository=guardian_repository,
-        corpus_retention_service=corpus_retention_service,
-        voice_profiles=voice_profiles,
-        legacy_registry=legacy_registry,
-        archive_object_store=archive_object_store,
-        session_terminator=session_terminator,
-        operation_blocker=account_operations,
-        account_read_guard=account_operations.sync_read,
-    )
-
-
 def _evolution_release_policy(settings: ControlSettings) -> EvolutionReleasePolicy:
     return EvolutionReleasePolicy(
         parse_runtime_prompt_families(settings.evolution_runtime_prompt_families)
@@ -955,9 +871,14 @@ async def _wire_services(w: _Wiring) -> None:
     )
     app.state.media_slo_gate = media_slo_gate
     w.on_close(media_slo_gate.close)
-    # Eager: the store initializes lazily for ASGI clients without a lifespan.
-    store = MemoryStore(settings.memoria_db_path)
+    # Eager wiring stays on SQLite; live wiring uses PostgreSQL once a URL is set.
+    store = MemoryStore(
+        settings.memoria_db_path,
+        dsn=w.url(settings.control_database_url.get_secret_value().strip()),
+        initialize_schema=not production,
+    )
     await w.init_blocking(store.initialize)
+    w.on_close(store.close)
     app.state.memory_store = store
     if w.live or not production:
         _replace_device_onboarding_service(app, settings)
@@ -1228,7 +1149,7 @@ async def _wire_services(w: _Wiring) -> None:
         await w.init_blocking(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
-    self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
+    self_preview_registry = SelfPreviewRegistry.beside(store, settings.memoria_db_path)
     await w.init_blocking(self_preview_registry.initialize)
     app.state.self_preview_registry = self_preview_registry
     if archive_url:
@@ -1315,7 +1236,7 @@ async def _wire_services(w: _Wiring) -> None:
         if crisis_push_worker is not None:
             w.start(crisis_push_worker)
         app.state.crisis_push_worker = crisis_push_worker
-    app.state.account_data_governance = _account_data_governance(
+    app.state.account_data_governance = account_data_governance(
         settings,
         store=store,
         voice_profiles=voice_profile_manager,
@@ -1336,7 +1257,7 @@ async def _wire_services(w: _Wiring) -> None:
         deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
         w.start(deletion_worker)
         app.state.account_deletion_worker = deletion_worker
-    subject_deletion = _install_subject_deletion(
+    subject_deletion = install_subject_deletion(
         app,
         settings,
         guardian_store=guardian_store,

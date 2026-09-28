@@ -250,8 +250,7 @@ async def test_owner_preview_grant_freezes_self_preview_session_and_is_one_time(
                 "idempotency_key": "preview-grant-2",
             },
         )
-        with sqlite3.connect(path) as connection:
-            connection.execute("PRAGMA foreign_keys=ON")
+        with app.state.memory_store.connection() as connection:
             connection.execute(
                 """
                 DELETE FROM digital_self_fidelity_evaluations

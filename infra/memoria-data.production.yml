@@ -87,6 +87,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ../services/control_api/app/database/postgres_schema.sql
+        target: /docker-entrypoint-initdb.d/011-control-schema.sql
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       memoria:
         aliases:

@@ -21,6 +21,7 @@ COPY --chown=65532:65532 memoria/services /app/services
 COPY --chown=65532:65532 memoria/packages /app/packages
 COPY --chown=65532:65532 memoria/scripts/mark_readiness.py /app/scripts/mark_readiness.py
 COPY --chown=65532:65532 memoria/scripts/rebuild_memory_projections.py /app/scripts/rebuild_memory_projections.py
+COPY --chown=65532:65532 memoria/scripts/migrate_control_sqlite_to_postgres.py /app/scripts/migrate_control_sqlite_to_postgres.py
 COPY --chown=65532:65532 memoria/scripts/verify_control_release_artifact.py /app/scripts/verify_control_release_artifact.py
 RUN chmod -R u=rwX,go=rX /app/services /app/packages /app/scripts
 

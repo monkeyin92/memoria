@@ -111,6 +111,13 @@ PRODUCTION_POSTGRES_ROLES = (
         role="memoria_memory_maintenance",
         control_dsn_env="MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL",
     ),
+    # No automatic DSN: MEMORIA_CONTROL_DATABASE_URL is written only by the
+    # authorized SQLite-to-PostgreSQL cutover, after the data has moved.
+    ProductionPostgresRole(
+        password_env="MEMORIA_DB_CONTROL_PASSWORD",
+        role="memoria_control",
+        control_dsn_env=None,
+    ),
 )
 
 

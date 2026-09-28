@@ -59,6 +59,7 @@ EXPECTED_PASSWORD_ROLES = {
     "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
     "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
     "MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD": "memoria_memory_maintenance",
+    "MEMORIA_DB_CONTROL_PASSWORD": "memoria_control",
 }
 
 

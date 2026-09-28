@@ -20,7 +20,8 @@ import json
 import logging
 import sqlite3
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,19 +68,55 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+class DbConnection(Protocol):
+    def execute(self, sql: str, parameters: Sequence[Any] = ..., /) -> Any: ...
+
+
+class ControlStore(Protocol):
+    """The control store the ledger shares when it runs on PostgreSQL."""
+
+    def initialize(self) -> None: ...
+
+    def connection(self) -> AbstractContextManager[DbConnection]: ...
+
+
 class SubjectDeletionLedger:
     """Durable checkpoint and fence for subject deletions (control SQLite)."""
 
-    def __init__(self, path: str | Path) -> None:
-        self._path = Path(path).expanduser().resolve()
+    @classmethod
+    def beside(cls, store: ControlStore, sqlite_path: str | Path) -> SubjectDeletionLedger:
+        """Live wherever the control store lives: its PostgreSQL schema or file."""
 
-    def _connect(self) -> sqlite3.Connection:
+        return cls(sqlite_path, store=store if getattr(store, "is_postgres", False) else None)
+
+    def __init__(self, path: str | Path, *, store: ControlStore | None = None) -> None:
+        # With a PostgreSQL control store the ledger lives in its schema;
+        # otherwise it shares the control SQLite file.
+        self._path = Path(path).expanduser().resolve()
+        self._store = store
+
+    @contextmanager
+    def _connect(self) -> Iterator[DbConnection]:
+        if self._store is not None:
+            with self._store.connection() as connection:
+                yield connection
+            return
         connection = sqlite3.connect(self._path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=5000")
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def initialize(self) -> None:
+        if self._store is not None:
+            self._store.initialize()  # the table is part of the store's schema
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute(
@@ -119,10 +156,19 @@ class SubjectDeletionLedger:
                 # the device kept collecting after the last erase.
                 connection.execute(
                     """
-                    INSERT OR REPLACE INTO subject_deletions (
+                    INSERT INTO subject_deletions (
                         account_id_hash, subject_id_hash, account_id, subject_id,
                         request_id, status, step, redact_identity, started_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, 'deleting', 'started', ?, ?, ?)
+                    ON CONFLICT (account_id_hash, subject_id_hash) DO UPDATE SET
+                        account_id = excluded.account_id,
+                        subject_id = excluded.subject_id,
+                        request_id = excluded.request_id,
+                        status = 'deleting', step = 'started',
+                        redact_identity = excluded.redact_identity,
+                        lineage_json = '{}', progress_json = '{}', last_error = NULL,
+                        started_at = excluded.started_at,
+                        updated_at = excluded.updated_at, completed_at = NULL
                     """,
                     (
                         *key,
@@ -163,7 +209,7 @@ class SubjectDeletionLedger:
                 UPDATE subject_deletions
                 SET step = ?, status = ?, progress_json = ?, lineage_json = ?,
                     last_error = ?, updated_at = ?,
-                    completed_at = CASE WHEN ? THEN ? ELSE completed_at END
+                    completed_at = CASE WHEN ? = 1 THEN ? ELSE completed_at END
                 WHERE account_id_hash = ? AND subject_id_hash = ?
                 """,
                 (
@@ -181,7 +227,7 @@ class SubjectDeletionLedger:
             )
 
     def is_deleting(self, *, account_id: str, subject_id: str) -> bool:
-        if not self._path.is_file():
+        if self._store is None and not self._path.is_file():
             return False
         with self._connect() as connection:
             try:

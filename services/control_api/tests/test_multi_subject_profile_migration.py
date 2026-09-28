@@ -1,5 +1,6 @@
 import sqlite3
 
+import pytest
 from services.control_api.app.database import MemoryStore
 
 
@@ -13,6 +14,7 @@ def test_new_profile_defaults_to_unknown_unverified_subject(tmp_path) -> None:
     assert profile["age_evidence_status"] == "unverified"
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_legacy_default_adult_profiles_are_quarantined_during_migration(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as connection:

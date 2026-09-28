@@ -33,6 +33,8 @@ dependencies = [
   "PyJWT>=2.9,<3",
   "cryptography>=45,<47",
   "boto3>=1.40,<2",
+  "psycopg[binary]>=3.2,<4",
+  "psycopg-pool>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -142,7 +144,7 @@ show_missing = true
 "services/control_api/app/routes/session.py" = 1798
 "services/voice_profile/postgres_manager.py" = 1755
 "services/memory_scope/postgres_store.py" = 1727
-"services/control_api/app/main.py" = 1433
+"services/control_api/app/main.py" = 1354
 "services/memory_scope/sqlite_store.py" = 1641
 "services/control_api/app/routes/media.py" = 1540
 "services/self_model/registry.py" = 1518

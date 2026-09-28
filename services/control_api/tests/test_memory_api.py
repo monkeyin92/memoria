@@ -158,7 +158,7 @@ async def test_messages_are_idempotent_per_client_message_id(
     assert retried.status_code == 200
     assert retried.json() == created.json()
     assert conflicting.status_code == 409
-    with sqlite3.connect(tmp_path / "nested" / "memoria.sqlite3") as connection:
+    with app.state.memory_store.connection() as connection:
         assert connection.execute("SELECT count(*) FROM messages").fetchone()[0] == 1
 
 
@@ -197,7 +197,7 @@ async def test_idempotency_rejects_different_sensitive_requests_that_redact_iden
     assert created.status_code == 201
     assert conflict.status_code == 409
     assert "fingerprint" not in conflict.text.lower()
-    with sqlite3.connect(tmp_path / "nested" / "memoria.sqlite3") as connection:
+    with app.state.memory_store.connection() as connection:
         fingerprint = connection.execute(
             "SELECT request_fingerprint FROM messages WHERE client_message_id = ?",
             (client_message_id,),
@@ -448,6 +448,7 @@ async def test_memory_api_validates_user_and_text_lengths(
     assert invalid_companion.status_code == 422
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_existing_registered_profiles_migrate_to_starlight(tmp_path: Path) -> None:
     path = tmp_path / "legacy-companion.sqlite3"
     with sqlite3.connect(path) as connection:
@@ -489,6 +490,7 @@ def test_existing_registered_profiles_migrate_to_starlight(tmp_path: Path) -> No
     assert profile["companion_id"] == "starlight"
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_existing_messages_migrate_without_fabricating_request_fingerprints(
     tmp_path: Path,
 ) -> None:
@@ -534,6 +536,7 @@ def test_existing_messages_migrate_without_fabricating_request_fingerprints(
     assert migrated == (None, None)
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_existing_readiness_evidence_accepts_bailian_deepseek_after_migration(
     tmp_path: Path,
 ) -> None:
@@ -742,6 +745,7 @@ def test_old_summary_source_constraint_migrates_to_qwen(tmp_path: Path) -> None:
     assert stored["source"] == "qwen"
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_old_voice_sessions_default_to_cascade_backend(tmp_path: Path) -> None:
     path = tmp_path / "legacy-voice.sqlite3"
     with sqlite3.connect(path) as connection:

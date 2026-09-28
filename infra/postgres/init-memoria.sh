@@ -20,9 +20,19 @@ set -eu
 : "${MEMORIA_DB_MEMORY_API_PASSWORD:?MEMORIA_DB_MEMORY_API_PASSWORD is required}"
 : "${MEMORIA_DB_MEMORY_WORKER_PASSWORD:?MEMORIA_DB_MEMORY_WORKER_PASSWORD is required}"
 : "${MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD:?MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD is required}"
+: "${MEMORIA_DB_CONTROL_PASSWORD:?MEMORIA_DB_CONTROL_PASSWORD is required}"
+
+# The control store schema is mounted from the next data-compose rollout on.
+# Until the PostgreSQL container is recreated with that mount, release_ops.sh
+# applies the same file over stdin, so an older container still upgrades.
+CONTROL_SCHEMA_PRESENT=false
+if [ -f /docker-entrypoint-initdb.d/011-control-schema.sql ]; then
+  CONTROL_SCHEMA_PRESENT=true
+fi
 
 psql \
   --set=ON_ERROR_STOP=1 \
+  --set=control_schema_present="$CONTROL_SCHEMA_PRESENT" \
   --set=app_password="$MEMORIA_DB_APP_PASSWORD" \
   --set=compiler_password="$MEMORIA_DB_COMPILER_PASSWORD" \
   --set=evolution_password="$MEMORIA_DB_EVOLUTION_PASSWORD" \
@@ -42,6 +52,7 @@ psql \
   --set=memory_api_password="$MEMORIA_DB_MEMORY_API_PASSWORD" \
   --set=memory_worker_password="$MEMORIA_DB_MEMORY_WORKER_PASSWORD" \
   --set=memory_maintenance_password="$MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD" \
+  --set=control_password="$MEMORIA_DB_CONTROL_PASSWORD" \
   --username "$POSTGRES_USER" \
   --dbname postgres <<'SQL'
 SELECT format(
@@ -304,6 +315,18 @@ SELECT format(
 )
 \gexec
 
+SELECT format(
+    'CREATE ROLE memoria_control LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'control_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_control')
+\gexec
+SELECT format(
+    'ALTER ROLE memoria_control WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'control_password'
+)
+\gexec
+
 SELECT 'CREATE DATABASE memoria OWNER memoria_app'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'memoria')
 \gexec
@@ -328,7 +351,8 @@ GRANT CONNECT ON DATABASE memoria TO
     memoria_session_maintenance,
     memoria_memory_api,
     memoria_memory_worker,
-    memoria_memory_maintenance;
+    memoria_memory_maintenance,
+    memoria_control;
 
 \connect memoria
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -352,6 +376,10 @@ RESET ROLE;
 RESET ROLE;
 \i /docker-entrypoint-initdb.d/010-device-onboarding-schema.sql
 RESET ROLE;
+\if :control_schema_present
+\i /docker-entrypoint-initdb.d/011-control-schema.sql
+RESET ROLE;
+\endif
 
 -- Runtime credentials are never DDL principals.  Schema owner roles created
 -- by the SQL files are NOLOGIN and remain the only domain object owners.
@@ -373,7 +401,8 @@ GRANT USAGE ON SCHEMA public TO
     memoria_session_maintenance,
     memoria_memory_api,
     memoria_memory_worker,
-    memoria_memory_maintenance;
+    memoria_memory_maintenance,
+    memoria_control;
 REVOKE CREATE ON SCHEMA public FROM
     memoria_compiler,
     memoria_evolution,
@@ -392,5 +421,6 @@ REVOKE CREATE ON SCHEMA public FROM
     memoria_session_maintenance,
     memoria_memory_api,
     memoria_memory_worker,
-    memoria_memory_maintenance;
+    memoria_memory_maintenance,
+    memoria_control;
 SQL

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+
+from services.control_api.app.database.backend import DbConnection, IntegrityError
 
 
 class MessageIdempotencyConflictError(ValueError):
@@ -19,11 +20,11 @@ class RecordStoreMixin:
     if TYPE_CHECKING:
         from contextlib import AbstractContextManager
 
-        def _connection(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        def _connection(self) -> AbstractContextManager[DbConnection]: ...
 
         @staticmethod
         def _ensure_profile(
-            connection: sqlite3.Connection, user_id: str, now: str
+            connection: DbConnection, user_id: str, now: str
         ) -> None: ...
 
     def add_message(
@@ -47,6 +48,7 @@ class RecordStoreMixin:
                         user_id, client_message_id, request_fingerprint,
                         role, text, emotion, local_date, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
                     """,
                     (
                         user_id,
@@ -59,7 +61,7 @@ class RecordStoreMixin:
                         created_at,
                     ),
                 )
-            except sqlite3.IntegrityError as exc:
+            except IntegrityError as exc:
                 row = connection.execute(
                     """
                     SELECT id, user_id, client_message_id, request_fingerprint,
@@ -74,12 +76,13 @@ class RecordStoreMixin:
                 if existing.pop("request_fingerprint") != request_fingerprint:
                     raise MessageIdempotencyConflictError(client_message_id) from exc
                 return existing, True
+            inserted_id = cursor.fetchone()[0]
             row = connection.execute(
                 """
                 SELECT id, user_id, client_message_id, role, text, emotion, local_date, created_at
                 FROM messages WHERE id = ?
                 """,
-                (cursor.lastrowid,),
+                (inserted_id,),
             ).fetchone()
         if row is None:  # pragma: no cover - SQLite guarantees RETURNING row here
             raise RuntimeError("message insert failed")
