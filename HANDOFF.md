@@ -2,7 +2,7 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（tag → `6180893`，main 上 PR #114 的合并提交 `173aba0` 与之同树）。5 个角色经 `release-ops.sh` 全链 PASS；media-edge 随后以组件方式单独切换到同一 tag。之后执行控制库 dry-run，结果 PASS。
+- **最近生产收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（tag → `6180893`，main 上 PR #114 的合并提交 `173aba0` 与之同树）。5 个角色经 `release-ops.sh` 全链 PASS；media-edge 随后以组件方式单独切换到同一 tag。之后控制库 dry-run 与 apply 均 PASS，控制库已在 PostgreSQL 上。
 - **上一次整栈收据**：2026-09-28 14:54–15:00（CST）整栈发布 `20260928-reopen-window-v1`（`173445d`），它是本次的回滚目标。media-edge 的回滚目标是 `20260928-writer-teardown-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
@@ -49,7 +49,13 @@
   - 前两次 dry-run 分别拦下两处历史数据差异：`messages` 中有 294 行 2026-07 的测试消息缺少 `client_message_id`/`request_fingerprint`；`device_media_sessions` 多一列废弃的 `runtime_profile_id`，当前代码不读写这一列。
   - 经用户同意（"老的数据可以删除了，都是测试数据"），删掉这 294 行，并删掉这一列。删除前的备份：`/data/memoria.pre-legacy-message-delete-20260928T153147Z.sqlite3`、`/data/memoria.pre-legacy-column-drop-20260928T153246Z.sqlite3`，完整性检查 ok。
   - 第三次 dry-run 通过：28 张表，18 张非空，共 2266 行，逐表行数与校验和一致，事务已回滚，PG 中没有留下数据。收据在 `releases/20260928-review-batches-v1/.control-store-20260928T153253Z/dry-run-receipt.json`。
-  - control-api 仍在 SQLite 上。`apply` 会停机约一分钟，需要另行授权。
+  - **apply（用户授权，23:35:26–23:35:43）PASS**：
+    - control-api 停机约 17 s。
+    - 切换前备份了 SQLite 三件套和 `pg_dump`，与收据 `.control-store-20260928T153526Z/apply-receipt.json` 放在同一目录。
+    - 迁移了 28 张表共 2266 行，与 dry-run 一致；PG 中 `profiles` 110 行、`voice_sessions` 649 行、`device_media_sessions` 347 行，`messages_id_seq` 续接到 441。
+    - 写入 `MEMORIA_CONTROL_DATABASE_URL` 后重建 control-api，healthy、重启 0 次，内外 readiness 均为 200。
+    - readiness 刷新由 `memoria_control` 写入 PG，`marked_at` 为 15:36:50，写入路径正常。
+    - 控制库现在是 PostgreSQL。`/data/memoria.sqlite3` 保持原样，可用于回滚，回滚方法见运行手册；切换之后写入的数据不会回到 SQLite。
 - **未验证**：发布后还没有真机对话。设备重连和语音链路要等下次唤醒验证。
 - **测试底座**：CI 新增 `control-api-postgres` 作业。Control API 与 governance 测试在生产形态的 PG 上运行：用真实 init 脚本建库，按生产角色连接，FORCE RLS 生效。上面这些缺陷都是它找出来的。
 
