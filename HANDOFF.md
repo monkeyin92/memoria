@@ -27,7 +27,7 @@
 - **五角色**：`verify-load` PASS → `freeze` PASS → `env` 首跑 FAIL（FunASR 样本识别为「慢慢说就好。」）；我的命令没在失败时停下，`schema` 紧接着跑了（PASS，无文件更新），随后 `env` 原样重跑 PASS → `cutover` PASS（09:41:48–09:42:42）→ `finish` 两次 FAIL（第 1 次 readiness 刷新同一 FunASR 样本失败；第 2 次 readiness 已 `ready` 但 systemd 定时刷新在同一样本失败）→ 第 3 次 PASS（09:52:52，readiness `ready` 且为新 tag，`Result=success`，外部 8443 就绪 200，全部 restarts=0）。media-edge 第 5 次重连连上新 bridge。
 - **已知问题**：FunASR 冒烟的「慢慢说就好。」样本 09-27 以来 6 次里失败 4 次，已不像偶发抖动，会让 `env`/`finish` 与定时 readiness 刷新间歇失败（不影响设备与小程序）。需要另行排查该样本或 FunASR 侧变化。
 - **上线后实测**：control-api 运行代码含新判定；control-api、agent、bridge 切换后无 error/traceback。开发板 07:41 起没有任何请求（发布前已离线）。**待用户**：机器人开机联网后扫新码，「给孩子使用」完成绑定。
-- **遗留数据**：每次失败的孩子绑定都在 Identity 新建了一个未绑定的孩子人物及其 `guardian_of`（至少 09-27 22:20、23:19 与 09-28 00:13 三次），不影响重新绑定，待另行清理。
+- **遗留数据（09-28 10:07 已清理）**：失败的孩子绑定在 Identity 留下 3 个未绑定的孩子人物（09-27 22:20、23:19，09-28 00:13）。经用户同意，在一次性 control-api 容器里对每个人物按解绑路由的做法跑 `forget_subject_plans` + `SubjectDeletionService.delete_subject(redact_identity=True)`：删除台账 3 条 `completed`，人物 `disabled`、名字改为「已删除的使用人」，Identity 审计/outbox 与配网绑定/激活表中不再含原名。按设计保留不含内容的 `guardian_of` 关系与人物占位行（Identity 删除保护，不做物理删除）。
 - **回滚**（未实跑）：`TAG=20260928-child-binding-v2 COMMIT=87f3560824ef16cd74a07133f8a921ce835c56ba release-ops.sh rollback`，6 个角色按 `20260927-child-binding-v1` 整栈 compose 重建。
 
 ## 2026-09-28 整栈发布 20260927-child-binding-v1（孩子绑定 + 冲突提示）
