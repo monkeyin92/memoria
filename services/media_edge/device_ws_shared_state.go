@@ -238,7 +238,7 @@ func (s *redisTicketState) consume(jti string, expiry int64) error {
 	defer cancel()
 	accepted, err := s.client.SetNX(ctx, s.ticketKey(jti), "1", ttl).Result()
 	if err != nil {
-		return fmt.Errorf("%w: ticket replay store: %v", ErrDeviceSharedStateUnavailable, err)
+		return fmt.Errorf("%w: ticket replay store: %w", ErrDeviceSharedStateUnavailable, err)
 	}
 	if !accepted {
 		s.replays.Add(1)
@@ -289,7 +289,7 @@ func (s *redisLeaseState) install(lease DeviceLease) (DeviceLease, bool, error) 
 		s.channelPrefix,
 	).Slice()
 	if err != nil {
-		return DeviceLease{}, false, fmt.Errorf("%w: install lease: %v", ErrDeviceSharedStateUnavailable, err)
+		return DeviceLease{}, false, fmt.Errorf("%w: install lease: %w", ErrDeviceSharedStateUnavailable, err)
 	}
 	if len(result) != 2 {
 		return DeviceLease{}, false, fmt.Errorf("device lease store returned an invalid result")
@@ -338,7 +338,7 @@ func (s *redisLeaseState) refresh(lease DeviceLease) (bool, error) {
 		s.ttl.Milliseconds(),
 	).Int64()
 	if err != nil {
-		return false, fmt.Errorf("%w: refresh lease: %v", ErrDeviceSharedStateUnavailable, err)
+		return false, fmt.Errorf("%w: refresh lease: %w", ErrDeviceSharedStateUnavailable, err)
 	}
 	if result != 1 {
 		s.removeActive(lease)

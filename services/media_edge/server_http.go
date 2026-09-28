@@ -4,7 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -356,6 +356,6 @@ func writeStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := writeJSON(w, value); err != nil {
-		log.Printf("media edge response write failed: %v", err)
+		slog.Warn("media edge response write failed", "err", err)
 	}
 }

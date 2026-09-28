@@ -8,7 +8,7 @@ package mediaedge
 import (
 	"encoding/base64"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -111,10 +111,7 @@ func (c *DeviceConnection) acceptControlSequence(sequence uint64) bool {
 func (c *DeviceConnection) ignoreForbiddenBarge(source string) {
 	c.server.metrics.controlRejected.Add(1)
 	c.server.metrics.bargeIgnored.Add(1)
-	log.Printf(
-		"media edge ignored barge from a forbidden source session=%s device=%s epoch=%d source=%s",
-		c.sessionID, c.deviceID, c.epoch, source,
-	)
+	slog.Warn("media edge ignored barge from a forbidden source", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "source", source)
 }
 
 func (c *DeviceConnection) handleVAD(envelope deviceControlEnvelope, runtime *VoiceCoreMediaRuntime) bool {
