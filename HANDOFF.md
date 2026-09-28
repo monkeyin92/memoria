@@ -17,7 +17,7 @@
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
 - **发布身份**：`20260928-reopen-window-v1` / `173445d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-reopen-window-v1`。上一栈 `20260928-followup-endpoint-v1` / `a2ea41e` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：用户在公众平台设体验版 `0.2.20260928.2`、伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
+- **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
 ## 2026-09-28 小程序 tab 页导航修复（PR #86，体验版 `0.2.20260928.2`）
@@ -25,7 +25,8 @@
 - **缺陷**：tabBar 页只能用 `wx.switchTab` 打开，另外三处用了其他方式，都会静默失败。第一处，登录页的 tab 路由表漏了伙伴页，从伙伴页触发登录后改用 `redirectTo` 回跳而失败。第二处，「我的」→「人格与声音」用 `navigateTo` 打开伙伴 tab。第三处，设备页敏感入口「私人回顾」（`/pages/memory/index`）经 `openEntry` 统一 `navigateTo`。
 - **修复**：新增 `utils/tab-routes.js` 作为 tab 路由的唯一来源，登录回跳与设备页入口遇到 tab 页改用 `switchTab`（去掉 query），「人格与声音」改为 `switchTab`。
 - **防回归**：`tests/tab-navigation.test.js` 校验路由表与 `app.json` 的 `tabBar.list` 一致，静态扫描全部 `navigateTo`/`redirectTo` 字面目标（不得是 tab 页，且须在 `pages` 中声明）和指向 tab 页的 `<navigator>`（须 `open-type="switchTab"`），并覆盖登录回跳每个 tab 页；profile、device 页各加一条行为用例。四个新用例在修复前的源码上均失败。`npm test` 316/316，全量 `node --check` 通过。PR #86 于 2026-09-28 17:26（CST）合并（`ac05da0`，CI 全绿）。
-- **体验版**：从 main `ac05da0` 用开发者工具 CLI 上传 `0.2.20260928.2`（包 1.58 MB），替代 `0.2.20260928.1`（其内容全部包含在内）；需在公众平台设为体验版，未真机验证，待办见 TODOLIST。
+- **体验版**：从 main `ac05da0` 用开发者工具 CLI 上传 `0.2.20260928.2`（包 1.58 MB），替代 `0.2.20260928.1`（其内容全部包含在内）。用户已在公众平台设为体验版。
+- **真机验收（2026-09-28，用户确认）**：伙伴页触发登录后回到伙伴 tab、「我的」→「人格与声音」进入伙伴 tab、设备页「私人回顾」入口进入回顾 tab，三处均正常。
 
 ## 2026-09-28 media-edge 发布 20260928-writer-teardown-v1（写失败即关连接）
 
