@@ -2,29 +2,27 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-28 17:26（CST）media-edge 单独发布 `20260928-writer-teardown-v1`（tag → main `5e358ec`，PR #87），其余 5 个角色未动。
-- **最近整栈收据**：2026-09-28 14:54–15:00（CST）整栈发布 `20260928-reopen-window-v1`（tag → main `173445d`，含 PR #83：无文字的背景声不能再无限推迟已识别的问句；同 PR 内 release-ops PREV），5 个角色经仓库版 `release-ops.sh` 全链一次 PASS。
-- **上一次整栈收据**：2026-09-28 13:50–14:03（CST）整栈发布 `20260928-followup-endpoint-v1`（`a2ea41e`），为本次回滚目标。
+- **最近生产收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（tag → `6180893`，main 上 PR #114 的合并提交 `173aba0` 与之同树）。5 个角色经 `release-ops.sh` 全链 PASS；media-edge 随后以组件方式单独切换到同一 tag。之后执行控制库 dry-run，结果 PASS。
+- **上一次整栈收据**：2026-09-28 14:54–15:00（CST）整栈发布 `20260928-reopen-window-v1`（`173445d`），它是本次的回滚目标。media-edge 的回滚目标是 `20260928-writer-teardown-v1`。
 
-| component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
-|---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260928-reopen-window-v1` | `sha256:13c5bd33e3e0ec1cb7d3313bb1430544854cb0cab0517e3755d8483eec7d69b1`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 | `2026-09-28T06:58:14Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260928-reopen-window-v1/.cutover/` | `memoria-control-api:rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
-| Agent / Bridge | `memoria-agent:20260928-reopen-window-v1` | `sha256:296849ce335082b179f1ddc2a16e5e28782bcd76e3c54a227ede95808e89c47d`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 each | `2026-09-28T06:58:29Z` | 同上 | `memoria-agent:rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
-| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-reopen-window-v1` | `sha256:5009cf92…` / `sha256:7263e350…` / `sha256:c1d70e5c…`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 each | `2026-09-28T06:58:07Z`–`06:58:54Z` | 同上 | 各自 `rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
-| Media Edge | `memoria-media-edge:20260928-writer-teardown-v1` | `sha256:beacac33897b4da13ac41bdb473746662da10be9e56043ad7ff04b68fb401bc2`（服务器 image id） | `5e358ec470a2fd9211f94eabadc1a8772c7a75af` | `not set / not applicable` | healthy | 0 | `2026-09-28T09:26:11Z` | `/opt/memoria/component-releases/20260928-writer-teardown-v1/`（`pre-state.txt`、`pre-all.txt`、`post-all.txt`） | `memoria-media-edge:20260926-minor-safety-v1`（override `component-releases/20260928-writer-teardown-v1/media-edge-rollback.override.yml`） |
+| component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
+|---|---|---|---|---|---:|---|---|---|
+| Control API | `memoria-control-api:20260928-review-batches-v1` | `sha256:e08a40d3…`（服务器 image id） | `6180893209fd24c4244a986b60659389ccedcecc` | healthy | 0 | `2026-09-28T15:27:02Z` | `/opt/memoria/releases/20260928-review-batches-v1/.cutover/` | `memoria-control-api:rollback-20260928-review-batches-v1-pre`（= `20260928-reopen-window-v1`） |
+| Agent / Bridge | `memoria-agent:20260928-review-batches-v1` | `sha256:2d29fb1c…` | 同上 | healthy | 0 each | `2026-09-28T15:27:15Z` | 同上 | `memoria-agent:rollback-20260928-review-batches-v1-pre` |
+| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-review-batches-v1` | `sha256:03ec051b…` / `sha256:e4438925…` / `sha256:e6683f79…` | 同上 | healthy | 0 each | `15:26:54Z`–`15:27:40Z` | 同上 | 各自的 `rollback-20260928-review-batches-v1-pre` |
+| Media Edge | `memoria-media-edge:20260928-review-batches-v1` | `sha256:f25ee796…` | 同上 | healthy | 0 | `2026-09-28T15:29:54Z` | `/opt/memoria/component-releases/20260928-review-batches-v1-media-edge/`（`pre-all.txt`、`post-all.txt`） | `memoria-media-edge:20260928-writer-teardown-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260928-reopen-window-v1` / `173445d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-reopen-window-v1`。上一栈 `20260928-followup-endpoint-v1` / `a2ea41e` 为回滚目标。
+- **发布身份**：`20260928-review-batches-v1` / `6180893`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-review-batches-v1`。上一栈 `20260928-reopen-window-v1` / `173445d` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **main 领先生产**：评审整改批次已合并但未发布，其中 3 个是已在生产生效的缺陷，见下节「双视角评审整改」。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
-## 2026-09-28 双视角评审整改（已合并 main，未发布）
+## 2026-09-28 整栈发布 20260928-review-batches-v1（双视角评审整改）
 
-- **范围**：按评审计划的第 1–6 批合并了 #89–#112（进度见 TODOLIST P2-08）。其中 media-edge 只有 #87 已单独发布，其余都没有上生产，main 已领先生产。
-- **已在生产生效、随下次整栈发布修复的缺陷**：
+- **范围**：评审计划第 1–6 批合并的 #89–#115（进度见 TODOLIST P2-08），已全部随本次整栈发布上线，media-edge 也包含在内。
+- **本次修复的生产缺陷**：
   - 账号删除会停在 evolution 一步：`memoria_evolution` 对 `evolution_lifecycle_events` 没有 DELETE 权限（只读核实：权限缺失，control-api 使用该 DSN）。#100 修复，经 `schema` 步骤重放 `007-evolution-schema.sql` 生效。
   - 含监护记录的账号导出返回 500：PG 监护行里的 UUID 和时间无法 JSON 序列化，生产有 1 条 person consent。#103 修复。
   - 自助导出不含任何证据：PG 的 JSONB 列没有解码，证据全部被计为 `unparsed_payload`。#102 修复。
@@ -38,7 +36,21 @@
   - 本轮新增控制库版本台账 `control_schema_migrations`（#98）。`schema` 步骤会先重放基线，再按编号执行 `database/migrations/`。
   - control-api 的 identity 不再有 SQLite 回退（#112），生产本来就要求 `MEMORIA_IDENTITY_DATABASE_URL`。
   - `ControlSettings` 按域拆分（#111），环境变量名不变。
-- **控制库切换（SQLite→PG）仍待授权**：先整栈发布包含 #92/#98 的版本，再执行 `CONTROL_STORE_MODE=dry-run`，确认后执行 `apply`，步骤见运行手册。
+- **发布过程**：
+  - 依赖有变化（新增 psycopg，删掉 sqlalchemy），所以在本机完整构建 linux/amd64 镜像。
+  - 阿里云 PyPI 镜像还没有 `psycopg-pool 3.3.3`，pypi.org 当晚又极慢，最后改用清华源；依赖按哈希锁定，换源不影响内容。
+  - 以 `20260928-reopen-window-v1` 为基座增量上传，实传 265 MB。各项摘要：verifier `c8b2aac0…`，manifest `d4a5ea2e…`，source `8a434741…`，images `c8e477dd…`。
+  - `release-ops.sh` 依次执行 `verify-load`→`freeze`→`env`→`schema`→`cutover`（23:26:54–23:27:47）→`finish`。
+  - `env` 只新增了 `MEMORIA_DB_CONTROL_PASSWORD`，provider smoke 一次通过。
+  - `schema` 第一次运行时，控制库 schema 已经完整应用（29 张表、`1:baseline`、`memoria_control` 可登录），但因为 psql 只输出了 NOTICE，`grep -v` 过滤后没有输出，在 pipefail 下判为失败，脚本中途退出。#115 修复这个问题，重跑后 `schema=PASS`。
+  - `finish` 时，内外 readiness 均为 200，所有容器重启 0 次。
+- **media-edge**：同一 tag 按 #87 的先例单独切换，时间 23:29:54。新旧渲染配置只有构建参数和镜像不同；其余容器没有变化，设备入口未带凭证时返回 401，Voice Core 通道已重连。
+- **控制库切换 dry-run（PASS，23:32）**：
+  - 前两次 dry-run 分别拦下两处历史数据差异：`messages` 中有 294 行 2026-07 的测试消息缺少 `client_message_id`/`request_fingerprint`；`device_media_sessions` 多一列废弃的 `runtime_profile_id`，当前代码不读写这一列。
+  - 经用户同意（"老的数据可以删除了，都是测试数据"），删掉这 294 行，并删掉这一列。删除前的备份：`/data/memoria.pre-legacy-message-delete-20260928T153147Z.sqlite3`、`/data/memoria.pre-legacy-column-drop-20260928T153246Z.sqlite3`，完整性检查 ok。
+  - 第三次 dry-run 通过：28 张表，18 张非空，共 2266 行，逐表行数与校验和一致，事务已回滚，PG 中没有留下数据。收据在 `releases/20260928-review-batches-v1/.control-store-20260928T153253Z/dry-run-receipt.json`。
+  - control-api 仍在 SQLite 上。`apply` 会停机约一分钟，需要另行授权。
+- **未验证**：发布后还没有真机对话。设备重连和语音链路要等下次唤醒验证。
 - **测试底座**：CI 新增 `control-api-postgres` 作业。Control API 与 governance 测试在生产形态的 PG 上运行：用真实 init 脚本建库，按生产角色连接，FORCE RLS 生效。上面这些缺陷都是它找出来的。
 
 ## 2026-09-28 小程序 tab 页导航修复（PR #86，体验版 `0.2.20260928.2`）
