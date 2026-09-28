@@ -2,22 +2,30 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-28 12:42–12:46（CST）整栈发布 `20260928-session-trust-v1`（tag → main `5ae5929`，含 PR #76 配网后「连接中」/伙伴一致/设备页整改、#77 会话设备信任跟随 onboarding 权威、#78 release-ops PREV），5 个角色经仓库版 `release-ops.sh` 全链一次 PASS；media-edge 未重建，仍为 `20260926-minor-safety-v1`。
-- **上一次整栈收据**：2026-09-28 09:40–09:53（CST）整栈发布 `20260928-child-binding-v2`（main `87f3560`），为本次回滚目标。
+- **最近生产收据**：2026-09-28 13:50–14:03（CST）整栈发布 `20260928-followup-endpoint-v1`（tag → main `a2ea41e`，含 PR #80：播放后追问不再在说话途中超时待命；#81 release-ops PREV），5 个角色经仓库版 `release-ops.sh` 全链一次 PASS；media-edge 未重建，仍为 `20260926-minor-safety-v1`。
+- **上一次整栈收据**：2026-09-28 12:42–12:46（CST）整栈发布 `20260928-session-trust-v1`（`5ae5929`），为本次回滚目标。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260928-session-trust-v1` | `sha256:e73257c819808dcfeae77a072516d59ace599f028d26e81f93b35af06d5de0cd`（服务器 image id） | `5ae5929ccfa57d0c671b4ee565a3c2a70d53c71f` | `20260928-session-trust-v1` / `5ae5929` | healthy | 0 | `2026-09-28T04:43:56Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260928-session-trust-v1/.cutover/` | `memoria-control-api:rollback-20260928-session-trust-v1-pre`（= `20260928-child-binding-v2`） |
-| Agent / Bridge | `memoria-agent:20260928-session-trust-v1` | `sha256:93a95c115e824c6c7a5d36b472df4bd0fa9ceb95f13dddecc6cd97eb08b46e40`（服务器 image id） | `5ae5929ccfa57d0c671b4ee565a3c2a70d53c71f` | `20260928-session-trust-v1` / `5ae5929` | healthy | 0 each | `2026-09-28T04:44:10Z` | 同上 | `memoria-agent:rollback-20260928-session-trust-v1-pre`（= `20260928-child-binding-v2`） |
-| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-session-trust-v1` | `sha256:7a2d2f10…` / `sha256:8e9efdb5…` / `sha256:e2572329…`（服务器 image id） | `5ae5929ccfa57d0c671b4ee565a3c2a70d53c71f` | `20260928-session-trust-v1` / `5ae5929` | healthy | 0 each | `2026-09-28T04:43:49Z`–`04:44:35Z` | 同上 | 各自 `rollback-20260928-session-trust-v1-pre`（= `20260928-child-binding-v2`） |
+| Control API | `memoria-control-api:20260928-followup-endpoint-v1` | `sha256:fbbcccccf216bc22446a48fd295909dfa7dbdcad230246bf92c366e59b5c2bf3`（服务器 image id） | `a2ea41eab3d62914cfb9f727d448f80f94d49e5b` | `20260928-followup-endpoint-v1` / `a2ea41e` | healthy | 0 | `2026-09-28T06:00:44Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260928-followup-endpoint-v1/.cutover/` | `memoria-control-api:rollback-20260928-followup-endpoint-v1-pre`（= `20260928-session-trust-v1`） |
+| Agent / Bridge | `memoria-agent:20260928-followup-endpoint-v1` | `sha256:d912dd693a07a00c3e37123595a3a2fdd9e14f1ac9cd179ef64942d3cbcf0986`（服务器 image id） | `a2ea41eab3d62914cfb9f727d448f80f94d49e5b` | `20260928-followup-endpoint-v1` / `a2ea41e` | healthy | 0 each | `2026-09-28T06:00:58Z` | 同上 | `memoria-agent:rollback-20260928-followup-endpoint-v1-pre`（= `20260928-session-trust-v1`） |
+| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-followup-endpoint-v1` | `sha256:2634b6f2…` / `sha256:e956c5bc…` / `sha256:181c45f1…`（服务器 image id） | `a2ea41eab3d62914cfb9f727d448f80f94d49e5b` | `20260928-followup-endpoint-v1` / `a2ea41e` | healthy | 0 each | `2026-09-28T06:00:37Z`–`06:01:23Z` | 同上 | 各自 `rollback-20260928-followup-endpoint-v1-pre`（= `20260928-session-trust-v1`） |
 | Media Edge | `memoria-media-edge:20260926-minor-safety-v1` | `sha256:abee9b82f5e349445eeffb6b56d4bc5308edc9e9e26a1acd3a7175183698c561`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `not set / not applicable` | healthy | 0 | `2026-09-26T11:40:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-edge-flush-v1`（override `component-releases/20260926-minor-safety-v1/media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260928-session-trust-v1` / `5ae5929`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-session-trust-v1`。上一栈 `20260928-child-binding-v2` / `87f3560` 为回滚目标。
+- **发布身份**：`20260928-followup-endpoint-v1` / `a2ea41e`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-followup-endpoint-v1`。上一栈 `20260928-session-trust-v1` / `5ae5929` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：手机上在伙伴页选一次绵绵（账号伙伴仍是桃喜，未代改），装体验版 `0.2.20260928.1` 后看设备页不再 403；机器人上喊「茉莉」验证对话（修数据与发布后尚无真实对话请求）。真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
+- **下一步必须动作**：手机上在伙伴页选一次绵绵（账号伙伴仍是桃喜，未代改），装体验版 `0.2.20260928.1` 后看设备页不再 403；机器人上喊「茉莉」后问天气，验证 #80（12:59 那次会话已能建立，但追问在说话途中超时待命）。真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-28 整栈发布 20260928-followup-endpoint-v1（追问不再中途待命）+ 证书续期 + 固件 build 10
+
+- **现象与根因**：12:59 真机唤醒后问天气，机器人没回答就回到待命。会话 `19bb6bd1` 已能建立（`media-sessions` 200，说明会话信任修复生效）。bridge 在唤醒应答播完后，因一个**空文本** final 走「播放后追问」路径定下端点，启动了 2.5 s 绝对截止。用户继续说话，端点随之推进，但只刷新了短宽限；绝对截止在完整问句（9 字）到达的同一瞬间到期，bridge 请求待命（`turn_prepare_timeout`）。修复（PR #80）：空文本 final 不定端点；推进端点时宽限与绝对截止一起重新计时（`MediaVoiceSessionState.restart_endpoint_bounds`，`media_session_turns.py` 预算下调到 1858）。两条回归测试不带修复时失败。
+- **发布**：tag `20260928-followup-endpoint-v1` → `a2ea41e`（#81 分支头，与合并提交 `a9373b1` 同树）；仅 agent 源码与 release-ops 变更，无 schema、compose、env、依赖变更。seeded 上传（基座 `20260928-session-trust-v1`，实传 180 MB）PASS；摘要：verifier `c8b2aac0…`，manifest `5621a247…`，source `82d0af88…`，images `b92a944f…`。`release_ops.sh` 仓库版（sha256 `ec0f5a03…`），旧版备份 `release-ops.sh.pre-20260928-followup-endpoint-v1`。`verify-load`→`freeze`→`env`（provider smoke 一次通过）→`schema`（无文件更新）→`cutover`（14:00:36–14:01:29）→`finish` 全部一次 PASS，restarts=0，外部 8443 就绪 200；运行中 bridge 已含 `restart_endpoint_bounds`。**待用户**：真机问天气验证。
+- **证书**：腾讯云证书开了自动续费，但「未托管、未关联资源」，新签的证书不会自动到服务器，服务器仍是 10-18 到期的 `ZLjud9yE`。用户下载续期证书（Nginx 格式，`atJtgIDd`，TrustAsia DV，SAN aigcnice.com/www，**有效至 2026-12-17 02:59:59 GMT**），核对证书与私钥配对后原位替换 `/etc/nginx/ssl/aigcnice.com_bundle.crt` 与 `.key`（旧对备份在 `/etc/nginx/ssl/backup-pre-20260928-renewal/`），`nginx -t` 通过后 reload。443、8443 均返回新序列号 `50460EFB…`，配网链接页与 8443 就绪 200，开发板 display-profile 在 reload 后正常。本机解压的私钥副本已删除。下次续期同样需要手动下载安装。
+- **固件 build 10**：`MemoriaMascotDisplay::SetStatus` 吞掉上游待机时每 10 s 写入的 `HH:MM`，屏幕不再显示时间（用户要求）。USB 写入开发板 `ota_0`（app sha256 `7bdfd9b3…`），启动为 build 10、idle、伙伴绵绵；**用户已亲眼确认不显示时间**。写前未整槽回读（被覆盖的 build 9 可由 tag `20260928-session-trust-v1` 重建；build 8 回读在 `pre-build9-20260928/`）。未发布 OTA。
+- **Docker 镜像清理（用户批准）**：仓库 `docker_image_retention.sh` 在 dry-run 时 0 候选，因为全部 `rollback-*`、`agent-runtime-base` 以及 `.cutover/pre-state.txt` 引用的 tag 都受保护。按运维手册「当前 + 一个紧邻回滚」手动清单删除 211 个 tag（155 个镜像，`docker rmi` 不带 `-f`，0 失败），根分区 90% → 55%。保留：运行中镜像、`20260928-child-binding-v2` 与各 `rollback-20260928-session-trust-v1-pre`、media-edge 当前与 `20260926-edge-flush-v1`、最新 2 个 runtime-base、sensevoice、全部第三方镜像。早于 09-25 的版本已无法从本机镜像回滚。
 
 ## 2026-09-28 整栈发布 20260928-session-trust-v1（会话设备信任跟随 onboarding）
 
@@ -77,7 +85,7 @@
 - **问题**：体验版 `0.2.20260926` 早于 #57，严格契约拒收 introspect 的 `purpose`（「包含未声明字段 purpose」）→ 体验版 `0.2.20260927` 已上传。微信「扫一扫」只显示裸载荷 → 固件构建 4 把二维码改为 `https://aigcnice.com/memoria-bind/?b=<载荷>`，小程序拆包，体验版 `0.2.20260927.1` 已上传（**需在公众平台设为体验版**）。
 - **线上**：WMS 的 443 server 块新增 `include /etc/nginx/snippets/memoria-bind.conf;`（备份 `/etc/nginx/wms.pre-20260927-bind-link`），`/var/www/memoria-bind/index.html` 说明页；访问日志关闭。构建 4（sha256 `f1e06234…`）已签名发布为 `current.json`；开发板 USB 刷入构建 4（未绑定设备不跑 OTA）。
 - **公众平台规则**：前缀 `https://aigcnice.com/memoria-bind/`、页面 `pages/device-onboarding/index`。校验文件 `w1ET0CkeeZ.txt` 已放在 `/var/www/memoria-bind/`（公网 200、字节一致；不入仓库，迁移服务器时要一并带走）。**待用户**：公众平台点校验、保存；发布后对正式版生效。
-- **风险**：`/etc/nginx/ssl/aigcnice.com_bundle.crt`（443 与 8443 上 aigcnice.com 共用）**2026-10-18 到期**，非 certbot 管理，需在到期前续期，否则设备、小程序与该规则同时失效。
+- **风险**：`/etc/nginx/ssl/aigcnice.com_bundle.crt`（443 与 8443 上 aigcnice.com 共用）原定 2026-10-18 到期，**2026-09-28 已换为续期证书，至 2026-12-17**（见当日证书一节），非 certbot 管理，需在到期前续期，否则设备、小程序与该规则同时失效。
 
 ## 2026-09-27 整栈发布 20260927-unbind-release-v1（重新配网 + 解绑释放设备）
 
