@@ -112,11 +112,12 @@ async def test_deepseek_retries_once_before_first_content(scenario: str) -> None
             DeepSeekConfig(
                 api_key="t",
                 base_url=srv.base_url,
-                # Keep the timeout far below the mock's 5-second first request,
-                # but leave enough headroom for the immediate retry under a
-                # concurrently loaded test process.
-                fast_first_token_timeout_s=0.2,
-                fast_total_timeout_s=1.0,
+                # timeout_once: far below the mock's 5-second first request.
+                # 500_once: the 503 is immediate, so give it room; a 0.2 s window
+                # let a loaded runner time the first attempt out before the mock
+                # read it, and the retry then drew the scripted 503 itself.
+                fast_first_token_timeout_s=0.2 if scenario == "timeout_once" else 2.0,
+                fast_total_timeout_s=1.0 if scenario == "timeout_once" else 3.0,
             )
         )
         content = ""
