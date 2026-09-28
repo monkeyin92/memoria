@@ -39,7 +39,6 @@ from services.memory_scope.postgres_store import PostgresMemoryStore
 from services.memory_scope.repository import MemoryStore
 from services.memory_scope.resolver import MemoryScopeResolver
 from services.memory_scope.service import MemoryScopeService
-from services.memory_scope.sqlite_store import SqliteMemoryStore
 
 __all__ = [
     "ActorNotAuthorizedError",
@@ -69,7 +68,6 @@ __all__ = [
     "ScopeResolution",
     "SharedMemoryProposal",
     "SharedVisibility",
-    "SqliteMemoryStore",
     "SubjectContext",
     "WriteFence",
     "WriteFenceError",

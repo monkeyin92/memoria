@@ -23,7 +23,6 @@ from services.memory_scope.domain import (
     SharedMemoryProposal,
 )
 from services.memory_scope.in_memory_store import InMemoryMemoryStore
-from services.memory_scope.sqlite_store import SqliteMemoryStore
 
 
 def _proposal(proposal_id: str | None = None) -> SharedMemoryProposal:
@@ -264,32 +263,27 @@ async def scenario_freeze_lost_cas_reports_real_state(store: object) -> None:
 @pytest.fixture
 async def adapter_store(request: pytest.FixtureRequest):
     kind = request.param
-    if kind == "in_memory":
-        store = InMemoryMemoryStore()
-        await store.initialize()
-    else:
-        store = SqliteMemoryStore(
-            request.getfixturevalue("tmp_path") / "contract.db"
-        )
-        await store.initialize()
+    assert kind == "in_memory"
+    store = InMemoryMemoryStore()
+    await store.initialize()
     yield store
     await store.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adapter_store", ["in_memory", "sqlite"], indirect=True)
+@pytest.mark.parametrize("adapter_store", ["in_memory"], indirect=True)
 async def test_pending_freeze_contract(adapter_store: object) -> None:
     await scenario_pending_freeze(adapter_store)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adapter_store", ["in_memory", "sqlite"], indirect=True)
+@pytest.mark.parametrize("adapter_store", ["in_memory"], indirect=True)
 async def test_approvals_complete_freeze_contract(adapter_store: object) -> None:
     await scenario_approvals_complete_freeze(adapter_store)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adapter_store", ["in_memory", "sqlite"], indirect=True)
+@pytest.mark.parametrize("adapter_store", ["in_memory"], indirect=True)
 async def test_pending_not_directly_promotable_contract(
     adapter_store: object,
 ) -> None:
@@ -297,7 +291,7 @@ async def test_pending_not_directly_promotable_contract(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adapter_store", ["in_memory", "sqlite"], indirect=True)
+@pytest.mark.parametrize("adapter_store", ["in_memory"], indirect=True)
 async def test_freeze_lost_cas_reports_real_state_contract(
     adapter_store: object,
 ) -> None:

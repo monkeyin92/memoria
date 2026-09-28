@@ -33,7 +33,6 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SubjectCategory as CanonicalSubjectCategory,
 )
 from services.memory_scope import domain
-from services.memory_scope.sqlite_store import DEV_TEST_ONLY as SQLITE_DEV_TEST_ONLY
 
 
 def test_memory_scope_is_the_generated_enum() -> None:
@@ -111,10 +110,6 @@ def test_postgres_schema_declares_tables_before_foreign_keys() -> None:
     )
     create_votes = schema.index("CREATE TABLE IF NOT EXISTS memory_shared_votes")
     assert create_votes > fk_position
-
-
-def test_sqlite_adapter_is_marked_dev_test_only() -> None:
-    assert SQLITE_DEV_TEST_ONLY is True
 
 
 def test_postgres_schema_family_policy_requires_context_for_family_rows() -> None:

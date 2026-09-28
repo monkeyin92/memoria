@@ -14,7 +14,6 @@ from services.consent.evidence import (
     RelationshipEvidence,
 )
 from services.consent.in_memory_store import InMemoryConsentStore
-from services.consent.sqlite_store import SqliteConsentStore
 from services.consent.store import ConsentConflictError, ConsentStorePort
 from services.consent.tests.fakes import PersistingFixtureAuthority as ConsentAuthority
 
@@ -23,11 +22,11 @@ def utc(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(UTC)
 
 
-@pytest.fixture(params=["in_memory", "sqlite"])
+@pytest.fixture(params=["in_memory"])
 def store(request: pytest.FixtureRequest) -> ConsentStorePort:
-    if request.param == "in_memory":
-        return InMemoryConsentStore()
-    return SqliteConsentStore(":memory:")
+    # The PostgreSQL adapter has its own contract suite (test_postgres_store.py).
+    assert request.param == "in_memory"
+    return InMemoryConsentStore()
 
 
 def make_context(now: datetime) -> tuple[SubjectProof, BindingEvidence, RelationshipEvidence]:
