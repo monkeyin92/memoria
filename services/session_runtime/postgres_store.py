@@ -152,6 +152,7 @@ _ACTION_EXECUTOR_TABLES = frozenset(
         "device_fleet_devices",
         "device_fleet_certificates",
         "device_fleet_attestations",
+        "device_onboarding_devices",
     }
 )
 _ACTION_EXECUTOR_FUNCTION_SIGNATURES = frozenset(
