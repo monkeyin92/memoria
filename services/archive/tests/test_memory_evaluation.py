@@ -36,6 +36,7 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 
 DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1.json"
 UNSEEN_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v1_unseen.json"
+HELDOUT_DATASET = Path(__file__).parents[1] / "evaluation" / "memory_eval_zh_v2_unseen.json"
 DEMO_DATASET = Path(__file__).parents[1] / "evaluation" / "demo_scenarios_zh_v1.json"
 
 # DEMO-02: the current fixed set is seven cases, not the original six storyboards.
@@ -729,3 +730,21 @@ async def test_demo_scenario_dataset_matches_its_measured_offline_state() -> Non
     assert report.metrics.cross_session_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.comfort_recall_at_5 == pytest.approx(1.0)
     assert report.metrics.cross_account_leakage == 0
+
+
+@pytest.mark.asyncio
+async def test_heldout_set_never_leaks_and_is_not_tuned_to() -> None:
+    """P1-06: a held-out set that no planner expansion was written for.
+
+    Only safety invariants are locked here. Recall and nDCG are measured and
+    reported (docs/memory-evaluation-rules-unseen-v2-*.json), never asserted,
+    so nobody tunes the rules to this set and it stays a real unseen check.
+    """
+    dataset = load_memory_evaluation_dataset(HELDOUT_DATASET)
+    assert dataset.version == "memory-eval-zh-v2-unseen"
+    assert len(dataset.cases) == 8
+    report = await run_memory_evaluation(dataset, CatalogMemoryEvaluationAdapter())
+
+    assert report.metrics.cross_account_leakage == 0
+    assert report.metrics.candidate_leakage == 0
+    assert report.metrics.source_attribution_accuracy == pytest.approx(1.0)

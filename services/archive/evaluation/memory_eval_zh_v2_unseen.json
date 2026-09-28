@@ -1,0 +1,433 @@
+{
+  "version": "memory-eval-zh-v2-unseen",
+  "cases": [
+    {
+      "case_id": "v2-paraphrase-lactose",
+      "scenario": "paraphrase",
+      "evidence": [
+        {
+          "event_id": "v2-lactose-001",
+          "account_id": "eval-owner-a",
+          "text": "我一喝牛奶就肚子疼。",
+          "occurred_at": "2026-08-11T08:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-lactose-001",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "milk-discomfort",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "牛奶"
+          ],
+          "source_event_ids": [
+            "v2-lactose-001"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-lactose-query",
+          "account_id": "eval-owner-a",
+          "text": "早餐饮品有什么要注意的？",
+          "mode": "context",
+          "relevance": {
+            "milk-discomfort": 3
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "v2-paraphrase-height-fear",
+      "scenario": "paraphrase",
+      "evidence": [
+        {
+          "event_id": "v2-height-001",
+          "account_id": "eval-owner-a",
+          "text": "我恐高，站在高处腿就发软。",
+          "occurred_at": "2026-08-12T19:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-height-001",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "fear-of-heights",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "恐高"
+          ],
+          "source_event_ids": [
+            "v2-height-001"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-height-query",
+          "account_id": "eval-owner-a",
+          "text": "周末去玻璃栈道合适吗？",
+          "mode": "context",
+          "relevance": {
+            "fear-of-heights": 3
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "v2-comfort-exam-stress",
+      "scenario": "comfort_recall",
+      "evidence": [
+        {
+          "event_id": "v2-exam-001",
+          "account_id": "eval-owner-a",
+          "text": "下个月要考教师资格证，最近压力很大睡不好。",
+          "occurred_at": "2026-08-13T22:00:00+08:00",
+          "session_id": "v2-exam-session-a"
+        },
+        {
+          "event_id": "v2-exam-002",
+          "account_id": "eval-owner-a",
+          "text": "我养了一只叫豆豆的猫。",
+          "occurred_at": "2026-08-02T10:00:00+08:00",
+          "session_id": "v2-exam-session-b"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-exam-001",
+          "action": "confirm"
+        },
+        {
+          "source_event_id": "v2-exam-002",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "exam-pressure",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "教师资格证"
+          ],
+          "source_event_ids": [
+            "v2-exam-001"
+          ]
+        },
+        {
+          "key": "cat-doudou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "豆豆"
+          ],
+          "source_event_ids": [
+            "v2-exam-002"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-exam-query",
+          "account_id": "eval-owner-a",
+          "text": "我又失眠了，心里很乱。",
+          "mode": "context",
+          "relevance": {
+            "exam-pressure": 3,
+            "cat-doudou": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "v2-cross-session-marathon",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "v2-marathon-001",
+          "account_id": "eval-owner-a",
+          "text": "报名了十一月的半程马拉松，每周跑三次。",
+          "occurred_at": "2026-08-14T07:00:00+08:00",
+          "session_id": "v2-marathon-session-a"
+        },
+        {
+          "event_id": "v2-marathon-002",
+          "account_id": "eval-owner-a",
+          "text": "今天中午吃了牛肉面。",
+          "occurred_at": "2026-08-15T12:30:00+08:00",
+          "session_id": "v2-marathon-session-b"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-marathon-001",
+          "action": "confirm"
+        },
+        {
+          "source_event_id": "v2-marathon-002",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "half-marathon-plan",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "马拉松"
+          ],
+          "source_event_ids": [
+            "v2-marathon-001"
+          ]
+        },
+        {
+          "key": "beef-noodles",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "牛肉面"
+          ],
+          "source_event_ids": [
+            "v2-marathon-002"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-marathon-query",
+          "account_id": "eval-owner-a",
+          "text": "我之前说的那个比赛准备得怎么样了？",
+          "mode": "context",
+          "relevance": {
+            "half-marathon-plan": 3,
+            "beef-noodles": 0
+          },
+          "now": "2026-08-20T20:00:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "v2-cross-session-grandma",
+      "scenario": "cross_session_followup",
+      "evidence": [
+        {
+          "event_id": "v2-grandma-001",
+          "account_id": "eval-owner-a",
+          "text": "奶奶下周三做白内障手术。",
+          "occurred_at": "2026-08-16T18:00:00+08:00",
+          "session_id": "v2-grandma-session-a"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-grandma-001",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "grandma-cataract-surgery",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "白内障"
+          ],
+          "source_event_ids": [
+            "v2-grandma-001"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-grandma-query",
+          "account_id": "eval-owner-a",
+          "text": "家里老人最近有什么事要操心？",
+          "mode": "context",
+          "relevance": {
+            "grandma-cataract-surgery": 3
+          },
+          "now": "2026-08-18T09:00:00+08:00"
+        }
+      ]
+    },
+    {
+      "case_id": "v2-exact-fact-hometown",
+      "scenario": "exact_fact",
+      "evidence": [
+        {
+          "event_id": "v2-hometown-001",
+          "account_id": "eval-owner-a",
+          "text": "我老家在江西赣州。",
+          "occurred_at": "2026-08-01T20:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-hometown-001",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "hometown-ganzhou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "赣州"
+          ],
+          "source_event_ids": [
+            "v2-hometown-001"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-hometown-query",
+          "account_id": "eval-owner-a",
+          "text": "我是哪里人来着？",
+          "mode": "context",
+          "relevance": {
+            "hometown-ganzhou": 3
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "v2-exact-fact-allergy",
+      "scenario": "exact_fact",
+      "evidence": [
+        {
+          "event_id": "v2-allergy-001",
+          "account_id": "eval-owner-a",
+          "text": "我对青霉素过敏。",
+          "occurred_at": "2026-08-03T09:30:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-allergy-001",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "penicillin-allergy",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "青霉素"
+          ],
+          "source_event_ids": [
+            "v2-allergy-001"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-allergy-query",
+          "account_id": "eval-owner-a",
+          "text": "看病时我需要提醒医生什么？",
+          "mode": "context",
+          "relevance": {
+            "penicillin-allergy": 3
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "v2-cross-account-birthday",
+      "scenario": "cross_account_isolation",
+      "evidence": [
+        {
+          "event_id": "v2-birthday-a",
+          "account_id": "eval-owner-a",
+          "text": "我的生日是三月十二号。",
+          "occurred_at": "2026-08-04T10:00:00+08:00"
+        },
+        {
+          "event_id": "v2-birthday-b",
+          "account_id": "eval-owner-b",
+          "text": "我的生日是十月五号。",
+          "occurred_at": "2026-08-04T10:05:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "v2-birthday-a",
+          "action": "confirm"
+        },
+        {
+          "source_event_id": "v2-birthday-b",
+          "action": "confirm"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "owner-a-birthday",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "三月十二"
+          ],
+          "source_event_ids": [
+            "v2-birthday-a"
+          ]
+        },
+        {
+          "key": "owner-b-birthday",
+          "account_id": "eval-owner-b",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": [
+            "十月五"
+          ],
+          "source_event_ids": [
+            "v2-birthday-b"
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "v2-birthday-owner-a",
+          "account_id": "eval-owner-a",
+          "text": "我哪天过生日？",
+          "mode": "context",
+          "relevance": {
+            "owner-a-birthday": 3
+          }
+        },
+        {
+          "query_id": "v2-birthday-owner-b",
+          "account_id": "eval-owner-b",
+          "text": "我哪天过生日？",
+          "mode": "context",
+          "relevance": {
+            "owner-b-birthday": 3
+          }
+        }
+      ]
+    }
+  ]
+}
