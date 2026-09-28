@@ -43,8 +43,18 @@ def fetch_all(sqlite_path: str | Path, sql: str, params: Sequence[Any] = ()) -> 
         return [tuple(row) for row in connection.execute(sql, tuple(params)).fetchall()]
 
 
-def execute(sqlite_path: str | Path, sql: str, params: Sequence[Any] = ()) -> None:
-    """Write fixture rows (``?`` placeholders) where the app will read them."""
+def execute(
+    sqlite_path: str | Path,
+    sql: str,
+    params: Sequence[Any] = (),
+    *,
+    bypass_triggers: bool = False,
+) -> None:
+    """Write fixture rows (``?`` placeholders) where the app will read them.
+
+    ``bypass_triggers`` (PostgreSQL only) forces a state the database's own
+    guards refuse, for tests that start from an otherwise unreachable row.
+    """
 
     if _CURRENT:
         import psycopg
@@ -53,6 +63,8 @@ def execute(sqlite_path: str | Path, sql: str, params: Sequence[Any] = ()) -> No
 
         database = _CURRENT[0]
         with psycopg.connect(_with_database(database.admin_dsn, database.name)) as connection:
+            if bypass_triggers:
+                connection.execute("SET LOCAL session_replication_role = replica")
             connection.execute(translate_sql(sql), tuple(params))
         return
     with sqlite3.connect(sqlite_path) as connection:
