@@ -19,8 +19,8 @@ from services.consent.evidence import BindingEvidence
 from services.consent.in_memory_store import InMemoryConsentStore
 from services.identity.authority import DeterministicConsentSnapshotResolver
 from services.identity.domain import AgeEvidenceError, IdentityAccessDeniedError
+from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import IdentityService
-from services.identity.sqlite_store import SqliteIdentityStore
 from services.identity.tests.test_service import _TEST_AUTHORITY
 
 NOW = datetime(2026, 9, 25, 10, 0, tzinfo=UTC)
@@ -54,7 +54,7 @@ class _AsyncStore:
 
 async def _identity(tmp_path: Path) -> IdentityService:
     return IdentityService(
-        SqliteIdentityStore(tmp_path / "identity.sqlite3"),
+        InMemoryIdentityStore(),
         transfer_verifier=_TEST_AUTHORITY,
         consent_resolver=DeterministicConsentSnapshotResolver(),
     )

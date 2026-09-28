@@ -24,7 +24,6 @@ NOT_IN_PRODUCTION = {
     # SQLite development twins; production sets the PostgreSQL DSNs.
     "MEMORIA_CONSENT_DB_PATH": "SQLite development store",
     "MEMORIA_EVOLUTION_DB_PATH": "SQLite development store",
-    "MEMORIA_IDENTITY_DB_PATH": "SQLite development store",
     # Baked into the image by the release build (Dockerfile ARG).
     "MEMORIA_RELEASE_TAG": "set by the image build",
     # Test-only switch (production environments ignore it).

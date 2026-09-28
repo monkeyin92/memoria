@@ -248,13 +248,6 @@ class ControlSettings(
         memory_path = Path(self.memoria_db_path)
         return str(memory_path.with_name(f"{memory_path.stem}-evolution.sqlite3"))
 
-    def identity_sqlite_path(self) -> str:
-        configured = self.identity_db_path.strip()
-        if configured:
-            return configured
-        memory_path = Path(self.memoria_db_path)
-        return str(memory_path.with_name(f"{memory_path.stem}-identity.sqlite3"))
-
     def consent_sqlite_path(self) -> str:
         configured = self.consent_db_path.strip()
         if configured:

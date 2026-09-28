@@ -102,9 +102,14 @@ def _guardian_permissions(payload: dict, person_id: str) -> tuple[str, ...]:
 
 
 def _outbox_rows(app) -> list[dict]:
+    if not app_store.postgres_active():
+        # Without an identity DSN the app runs the in-memory store.
+        return [
+            {"topic": event.topic, "payload": dict(event.payload)}
+            for event in app.state.identity_store.outbox_events()
+        ]
     rows = app_store.fetch_all(
-        app.state.settings.identity_sqlite_path(),
-        "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at",
+        "", "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at"
     )
     return [
         {

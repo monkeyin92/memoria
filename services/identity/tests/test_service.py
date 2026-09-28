@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from services.identity.domain import (
@@ -31,22 +29,19 @@ from services.identity.domain import (
 )
 from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import IdentityService
-from services.identity.sqlite_store import SqliteIdentityStore
 from services.identity.testing_authorities import (
     TestTransferAuthority,
-    make_test_service,
 )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def store(request: pytest.FixtureRequest, tmp_path: Path) -> InMemoryIdentityStore | SqliteIdentityStore:
-    if request.param == "memory":
-        return InMemoryIdentityStore()
-    return SqliteIdentityStore(tmp_path / "identity.sqlite3")
+@pytest.fixture
+def store() -> InMemoryIdentityStore:
+    # The PostgreSQL adapter has its own contract suite (test_postgres_store.py).
+    return InMemoryIdentityStore()
 
 
 @pytest.fixture
-def service(store: InMemoryIdentityStore | SqliteIdentityStore) -> IdentityService:
+def service(store: InMemoryIdentityStore) -> IdentityService:
     from services.identity.authority import DeterministicConsentSnapshotResolver
 
     return IdentityService(
@@ -62,7 +57,7 @@ def _now() -> datetime:
 
 @pytest.mark.asyncio
 async def test_registration_reconciliation_is_audited_and_idempotent(
-    service: IdentityService, store: InMemoryIdentityStore | SqliteIdentityStore,
+    service: IdentityService, store: InMemoryIdentityStore,
 ) -> None:
     original = await service.register_person(
         person_id="old-owner", display_name="主人", timezone="Asia/Shanghai", now=_now(),
@@ -105,7 +100,7 @@ async def test_registration_reconciliation_is_audited_and_idempotent(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protected", ["minor", "disputed", "disabled"])
 async def test_registration_reconciliation_does_not_override_protected_subjects(
-    service: IdentityService, store: InMemoryIdentityStore | SqliteIdentityStore,
+    service: IdentityService, store: InMemoryIdentityStore,
     protected: str,
 ) -> None:
     original = await service.register_person(
@@ -142,7 +137,7 @@ _TEST_AUTHORITY = TestTransferAuthority(b"test-secret-that-is-at-least-32-bytes"
 @pytest.mark.asyncio
 async def test_register_exact_replay_returns_persisted_object(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     first = await service.register_person(
@@ -1081,7 +1076,7 @@ async def test_expire_timeboxed_binding(service: IdentityService) -> None:
 @pytest.mark.asyncio
 async def test_list_active_manifests_for_person_is_scoped_to_owner_and_active_roles(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     owner = await _adult(service, "列表主人", now)
@@ -1230,7 +1225,7 @@ async def test_list_active_manifests_for_person_is_scoped_to_owner_and_active_ro
 @pytest.mark.asyncio
 async def test_list_active_bindings_for_person_actor_contract(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     """Store list mirrors the Postgres api-role double visibility."""
     now = _now()
@@ -1881,32 +1876,6 @@ async def test_get_active_manifest_is_serializable_round_trip(
     assert decoded.to_dict() == manifest.to_dict()
 
 
-@pytest.mark.asyncio
-async def test_sqlite_store_persists_across_instances(tmp_path: Path) -> None:
-    now = _now()
-    path = tmp_path / "identity-persist.sqlite3"
-    first = SqliteIdentityStore(path)
-    service = make_test_service(first)[0]
-    owner = await _adult(service, "本人", now)
-    await service.create_binding(
-        device_id="dev-persist",
-        declared_mode="self_use",
-        account_owner_person_id=owner,
-        primary_subject_ids=(owner,),
-        service_profile_version="self-v1",
-        policy_bundle_version="policy-self-v1",
-        now=now,
-    )
-    reopened = SqliteIdentityStore(path)
-    service = make_test_service(reopened)[0]
-    manifest = await service.get_active_manifest("dev-persist", now=now)
-    assert manifest is not None
-    assert manifest.binding_version == 1
-    assert manifest.account_owner_id == owner
-    person = await service.get_person(owner)
-    assert person.subject_category == "adult"
-
-
 # ---------------------------------------------------------------------------
 # Persona assignments (person -> persona, subject 级)
 # ---------------------------------------------------------------------------
@@ -1915,7 +1884,7 @@ async def test_sqlite_store_persists_across_instances(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_persona_assignment_crud_is_idempotent_and_subject_scoped(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     owner = await _adult(service, "主人", now)
@@ -2063,7 +2032,7 @@ def _structured(**overrides: object) -> StructuredPersonaFields:
 @pytest.mark.asyncio
 async def test_custom_persona_create_list_get_delete_is_account_scoped(
     service: IdentityService,
-    store: InMemoryIdentityStore | SqliteIdentityStore,
+    store: InMemoryIdentityStore,
 ) -> None:
     now = _now()
     owner = await _adult(service, "主人", now)
@@ -2316,45 +2285,6 @@ async def test_persona_assignment_accepts_own_custom_and_rejects_foreign(
             persona_selection=theirs.persona_id,
             actor_person_id=owner,
             now=now,
-        )
-
-
-@pytest.mark.asyncio
-async def test_sqlite_custom_persona_update_is_rejected_by_trigger(
-    tmp_path: Path,
-) -> None:
-    """The storage layer refuses any update: create-once, not app-level only."""
-    store = SqliteIdentityStore(tmp_path / "identity.sqlite3")
-    from services.identity.authority import DeterministicConsentSnapshotResolver
-
-    service = IdentityService(
-        store,
-        transfer_verifier=_TEST_AUTHORITY,
-        consent_resolver=DeterministicConsentSnapshotResolver(),
-    )
-    now = _now()
-    owner = await _adult(service, "主人", now)
-    record = await service.create_custom_persona(
-        owner_person_id=owner, display_name="小岸", structured=_structured(),
-        actor_person_id=owner, now=now,
-    )
-    with store._connect() as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            connection.execute(
-                "UPDATE identity_custom_personas SET display_name = '改名' "
-                "WHERE persona_id = ?",
-                (record.persona_id,),
-            )
-        # DELETE is allowed (the ordinary delete path drops the row).
-        connection.execute(
-            "DELETE FROM identity_custom_personas WHERE persona_id = ?",
-            (record.persona_id,),
-        )
-        assert (
-            connection.execute(
-                "SELECT count(*) FROM identity_custom_personas"
-            ).fetchone()[0]
-            == 0
         )
 
 
