@@ -144,6 +144,5 @@ show_missing = true
 "services/voice_profile/postgres_manager.py" = 1755
 "services/memory_scope/postgres_store.py" = 1727
 "services/control_api/app/main.py" = 1287
-"services/memory_scope/sqlite_store.py" = 1641
 "services/control_api/app/routes/media.py" = 1540
 "services/self_model/registry.py" = 1518

@@ -1,9 +1,8 @@
 """Storage seam for the memory scope domain.
 
 ``MemoryStore`` is the only persistence contract the service depends on.
-Adapters: ``InMemoryMemoryStore`` (Control API dev fixtures),
-``SqliteMemoryStore`` (local development) and ``PostgresMemoryStore``
-(production authority with FORCE RLS, section 11.7 / PR-17).
+Adapters: ``PostgresMemoryStore`` (the authority, FORCE RLS, section 11.7 /
+PR-17) and ``InMemoryMemoryStore`` (unit tests and development fixtures).
 
 Repository-level subject scoping (section 13.5): every read path filters by
 the caller's own subject id / family space inside the store, so a bug in a

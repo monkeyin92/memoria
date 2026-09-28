@@ -9,15 +9,11 @@ PostgreSQL contract (``test_subject_erasure_postgres``).
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Protocol
 
-import pytest
-from services.governance.subject_ports import SubjectMemoryScopePort
 from services.memory_scope.domain import (
     ConfirmationVote,
     MemoryAuditEvent,
@@ -27,7 +23,6 @@ from services.memory_scope.domain import (
     MemoryScope,
     SharedMemoryProposal,
 )
-from services.memory_scope.sqlite_store import SqliteMemoryStore
 
 OWNER = "person-owner"
 CHILD = "person-child"
@@ -273,113 +268,3 @@ async def assert_subject_erasure(
     again = await erasure.erase_subject(subject_id=CHILD)
     assert set(again.values()) == {0}
     assert await erasure.remaining_subject_rows(subject_id=CHILD) == {}
-
-
-# -- SQLite ------------------------------------------------------------------
-
-
-@pytest.fixture
-async def store(tmp_path: Path) -> AsyncIterator[SqliteMemoryStore]:
-    store = SqliteMemoryStore(tmp_path / "memory.db")
-    await store.initialize()
-    yield store
-    await store.close()
-
-
-def _sqlite_vote_keys(store: SqliteMemoryStore) -> VoteKeys:
-    async def keys() -> set[tuple[str, str, str]]:
-        rows = store._connect().execute(  # noqa: SLF001
-            "SELECT proposal_id, subject_id, decision FROM memory_shared_votes"
-        )
-        return {(row[0], row[1], row[2]) for row in rows}
-
-    return keys
-
-
-async def test_sqlite_erases_subject_and_keeps_others(store: SqliteMemoryStore) -> None:
-    port: SubjectMemoryScopePort = store
-    assert port is store
-    seeded = await seed_subject_scenario(store, store)
-    await store.mark_outbox_processed("out-r-child")
-    await assert_subject_erasure((store, store), store, seeded, _sqlite_vote_keys(store))
-
-    connection = store._connect()  # noqa: SLF001
-    outbox = {
-        row["outbox_id"]: (row["payload"], row["status"])
-        for row in connection.execute("SELECT * FROM memory_outbox")
-    }
-    assert outbox["out-r-child"] == ("{}", "processed")
-    assert outbox["out-proposal-child"] == ("{}", "processed")
-    assert outbox["out-r-owner"][1] == "pending" and OWNER in outbox["out-r-owner"][0]
-    audit = {
-        row["event_id"]: row
-        for row in connection.execute("SELECT * FROM memory_audit_events")
-    }
-    # Content-free audit rows are kept; the erasure itself is audited once.
-    assert audit["audit-r-child"]["payload"] == "{}"
-    assert audit["audit-r-child"]["subject_id"] == CHILD
-    assert audit["audit-r-owner"]["payload"] != "{}"
-    assert audit[f"memory.subject.erased:{CHILD}"]["payload"] == "{}"
-
-
-async def test_sqlite_append_only_survives_erasure(
-    store: SqliteMemoryStore, tmp_path: Path
-) -> None:
-    await seed_subject_scenario(store, store)
-    connection = store._connect()  # noqa: SLF001
-    # Outside an erase even the subject's own rows cannot be deleted.
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-        connection.execute("DELETE FROM memory_records WHERE record_id = 'r-child'")
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-        connection.execute("DELETE FROM memory_shared_votes WHERE subject_id = ?", (CHILD,))
-    await store.erase_subject(subject_id=CHILD)
-    for statement in (
-        "DELETE FROM memory_records WHERE record_id = 'r-owner'",
-        "UPDATE memory_records SET payload = '{}' WHERE record_id = 'r-owner'",
-        "DELETE FROM memory_status_events WHERE record_id = 'r-owner'",
-        "DELETE FROM memory_shared_votes WHERE subject_id = 'person-elder'",
-    ):
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            connection.execute(statement)
-    # Another connection never has the permit function: it fails closed.
-    foreign = sqlite3.connect(tmp_path / "memory.db")
-    try:
-        with pytest.raises(sqlite3.OperationalError, match="memory_subject_erase_permits"):
-            foreign.execute("DELETE FROM memory_records WHERE record_id = 'r-owner'")
-    finally:
-        foreign.close()
-    assert await _read((store, store), "r-owner", (OWNER, None)) is not None
-
-
-async def test_sqlite_upgrades_unguarded_delete_triggers(tmp_path: Path) -> None:
-    path = tmp_path / "legacy.db"
-    first = SqliteMemoryStore(path)
-    await first.initialize()
-    await first.close()
-    legacy = sqlite3.connect(path)
-    legacy.executescript(
-        """
-        DROP TRIGGER trg_memory_records_no_delete;
-        CREATE TRIGGER trg_memory_records_no_delete
-        BEFORE DELETE ON memory_records
-        BEGIN
-            SELECT RAISE(ABORT, 'memory_records is append-only');
-        END;
-        """
-    )
-    legacy.close()
-    store = SqliteMemoryStore(path)
-    await store.initialize()
-    try:
-        await seed_subject_scenario(store, store)
-        assert (await store.erase_subject(subject_id=CHILD))["memory_records"] == 2
-        assert await store.remaining_subject_rows(subject_id=CHILD) == {}
-    finally:
-        await store.close()
-
-
-async def test_sqlite_rejects_unbounded_subject(store: SqliteMemoryStore) -> None:
-    with pytest.raises(ValueError, match="bounded"):
-        await store.erase_subject(subject_id=" ")
-    with pytest.raises(ValueError, match="bounded"):
-        await store.remaining_subject_rows(subject_id="x" * 129)

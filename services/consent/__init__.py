@@ -39,7 +39,6 @@ from services.consent.evidence import (
 )
 from services.consent.in_memory_store import InMemoryConsentStore
 from services.consent.postgres_store import PostgresConsentStore
-from services.consent.sqlite_store import SqliteConsentStore
 from services.consent.store import (
     AsyncConsentStorePort,
     ConsentConflictError,
@@ -83,7 +82,6 @@ __all__ = [
     "InMemoryConsentStore",
     "PostgresConsentStore",
     "RelationshipEvidence",
-    "SqliteConsentStore",
     "SubjectProof",
     "TransactionBoundConsentAuthorizer",
     "canonical_json",
