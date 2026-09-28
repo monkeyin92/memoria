@@ -363,6 +363,11 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
         exported = await archive.export_account(account_id)
         speaker_export = await speaker.export_account(account_id)
         serialized = str({"archive": exported, "speaker": speaker_export})
+        # JSONB comes back from asyncpg as text; the portable export decodes it
+        # so the subject export can read the payload (not only find a substring).
+        events = exported["archive_evidence_events"]
+        assert events
+        assert all(isinstance(row["payload"], dict) for row in events)
 
         assert "postgres governance" in serialized
         assert "表达直接" in serialized

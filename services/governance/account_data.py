@@ -743,16 +743,18 @@ class PostgresAccountRepository:
         json_columns: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         result = {key: cls._portable_value(value) for key, value in row.items()}
+        # asyncpg returns JSONB as text too: decode JSONB columns in place and
+        # TEXT ``*_json`` columns under their bare name, as the SQLite export does.
         for column in json_columns:
-            if not column.endswith("_json"):
-                continue
             value = result.get(column)
             if isinstance(value, str):
                 try:
-                    result[column.removesuffix("_json")] = json.loads(value)
-                    del result[column]
+                    decoded = json.loads(value)
                 except json.JSONDecodeError:
-                    pass
+                    continue
+                if column.endswith("_json"):
+                    del result[column]
+                result[column.removesuffix("_json")] = decoded
         return result
 
     @classmethod
