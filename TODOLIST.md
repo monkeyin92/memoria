@@ -1,12 +1,12 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-26｜线上为整栈发布 `20260926-minor-safety-v1`（main `048a83a`，含 PR #52–#54；media-edge 同版本单独切换），上一栈 `20260926-edge-flush-v1` 为回滚目标。本次上线 P0-04 八项产品决定（未成年人只学表达风格、时长与夜间时段强制、年龄段显示与修改、年龄不明允许辅导、孩子与老人危机提醒、话术加 12356）、孩子危机提醒入队缺陷修复与 ASR 救援「我。」幻觉修复；设备验收尚未执行。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-28｜线上为整栈发布 `20260928-reopen-window-v1`（main `173445d`，当日第 3 次整栈发布；media-edge 仍为 `20260926-minor-safety-v1`），上一栈 `20260928-followup-endpoint-v1` 为回滚目标。当日上线：配网后激活卡「连接中」修复（固件 build 9/10）、伙伴一致与设备页/伙伴页整改（小程序 `0.2.20260928.1`）、会话设备信任跟随 onboarding（#77）、追问不再中途待命（#80）、背景声不能再拖住已识别的问句（#83），并把 aigcnice.com 证书换成续期证书（至 2026-12-17）。当日遗留见下方「2026-09-28 收尾待办」。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260926-minor-safety-v1  # main 048a83a；agent/bridge、control-api、两个网关、speaker-model 与 media-edge 均为该 tag；ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260926-minor-safety-v1-pre，media-edge 回 20260926-edge-flush-v1
-control_api_release_lane: 可审计链已多次用通（`scripts/deploy_control_component.sh` 的 cutover 块）；整栈走仓库版 `scripts/release_ops.sh`（已安装到服务器 `/root/memoria-release/release-ops.sh`，2026-09-26 `20260926-minor-safety-v1` 全链 PASS；仓库版常量已指向本次链）
+enabled_release: 20260928-reopen-window-v1  # main 173445d；agent/bridge、control-api、两个网关、speaker-model 为该 tag，media-edge 仍为 20260926-minor-safety-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260928-reopen-window-v1-pre（= 20260928-followup-endpoint-v1），media-edge 回 20260926-edge-flush-v1
+control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`，2026-09-28 三次整栈全链一次 PASS）；PREV 常量已指向 `20260928-followup-endpoint-v1`，下次发布前须改为 `20260928-reopen-window-v1`（小改，随发布 PR 一起带上）；control-api 组件链支持已移除，单组件发布前须先补回
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,10 +21,38 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ## 下一步与执行边界
 
-1. 真机窗口（用户推动）：⓪ 先重新绑定设备并勾选长期记忆（现有绑定早于绑定授权，对话不入档），再按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
+1. 真机窗口（用户推动）：设备已于 2026-09-28 重新绑定为「给孩子使用」并勾选长期记忆（`e8a27e45` v3，`growth_summary`），⓪ 已完成；当日真机项见「2026-09-28 收尾待办」。之后按 HANDOFF 验收清单验 P1-11 三种绑定、P1-03 孩子人格隔天生效、P2-04 终止性拒绝不再续连，以及 P0-03 的 TLS/WSS 重连与剩余设备矩阵。不得把核心通过扩大为完整 P0-03 或全双工通过。
 2. 可直接推进的代码项：P0-04 按 2026-09-26 产品决定实现（进行中）、P1-02 救援 sidecar 可复现、P1-04 自定义声音闭环、P2-08 ③ 版本化迁移、P2-06 回放评测、P2-04 Python 侧进程退出注入。
 3. 需用户决定：P1-02 两项线上调整、旧媒体链去留（P1-12）、WAL 保留策略（P1-08）、readiness 逾期的告警渠道（P1-09）、P2-07 第 2/3 项、P2-03 已知缺口是否接受、P0-04 未成年人人格学习口径。
 4. 边界：生产切流、回滚演练和制品清理须另获授权；删除、重启、定时任务、自动备份和异地副本不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+
+## 2026-09-28 收尾待办
+
+当日工作的遗留事项汇总在这里（收据见 `HANDOFF.md` 当日各节）。处理完删除对应行；长期事项已并入下方原有条目。
+
+**等用户在手机/机器人上做**
+
+- [ ] 公众平台把体验版 `0.2.20260928.1` 设为体验版（开发者工具 CLI 上传；上传密钥的 IP 白名单挡住本机 IPv6 出口，用户决定一律用 CLI）。
+- [ ] 伙伴页选一次「绵绵」：账号伙伴仍是 09-25 的桃喜，绑定所选只写进了设备人格；#76 修复只对之后的绑定生效，存量数据未代改。
+- [ ] 有背景声时（电视、音乐、旁人说话）问一个非天气问题（天气走实时查询快速通道，不经过这段逻辑），验证 #83：日志应出现 `media reopened turn committing without new text`，说完到开口约 3 s 内。09-28 15:18 的测试环境安静，窗口未触发。
+- [ ] 确认公众平台「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`）已点校验并保存（09-27 起的待办，文档里没有确认记录）。
+- [ ] 需要时重新配网一次，真机验证固件 build 9 的「重试激活成功→重启进已绑定路径」（开发板当前 build 10，这条路径尚未真机触发）。
+
+**需要用户决定**
+
+- [ ] 固件 build 9/10 只 USB 刷了开发板，未签名发布 OTA；是否发布（`publish_firmware_release.py sign/upload --build 10`）。
+- [ ] stash 存档 `outputs/stash-archive-20260928/stash2-realtime-scope-wording.patch`：联网查询隐私约束「只用本轮地点」→「本会话说过的也行」，当时未上线；是否作为产品改动重新评估。
+
+**待查（有现场证据，原因未定）**
+
+- [ ] `response_plan_cached reason=no_verified_runtime_profile mode=companion fallback=True`：09-28 下午 6 h 内 2 次。设备信任为 `untrusted`（无 Device Fleet 证明）是否使回复规划走兜底、影响记忆与个性化，需查 `services/agent/src/agent.py` 的判定。
+- [ ] SenseVoice 救援 `httpx.ReadTimeout`：09-28 04:59:40、06:23:46 各一次，都在空闲后的首个救援请求上，符合 P1-02 ① 的 swap 问题。
+- [ ] 回复首音时延：09-28 追问一轮从提交到开口约 2.2 s（`qwen3.7-flash` 首 token + Doubao 首段合成），尚未拆分；用户暂缓埋点（归 P0-03 的时延项）。
+
+**定期运维**
+
+- [ ] **2026-12-17 前**更换 aigcnice.com 证书：腾讯云会自动续签，但「未托管、未关联资源」，新证书不会自动到服务器；需下载 Nginx 格式，原位替换 `/etc/nginx/ssl/aigcnice.com_bundle.crt` 与 `.key`，`nginx -t` 后 reload，核对 443/8443（09-28 流程见 HANDOFF）。
+- [ ] 发布制品随发布累积：每次整栈在 `/opt/memoria/incoming/` 留约 3 GB，加载镜像另占数 GB；09-28 清理后根分区约 69%（118 GB）。约定一个保留规则（例如只留当前 + 紧邻回滚两批），按授权定期清理；仓库 `docker_image_retention.sh` 因保护全部 `rollback-*`/runtime-base 与 pre-state 引用而 0 候选，需要改或另写。
 
 ## P0：发布前必须闭环
 
@@ -39,6 +67,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 ### [ ] P0-03 TTS、续问竞态、设备停滞与真实时延
 
+- 2026-09-28 现场修复（收据见 HANDOFF 当日各节）：播放后追问的端点以空文本 final 钉住、且推进时不重置 2.5 s 绝对截止，导致问天气说到一半即待命（#80，真机已验证能完整回答）；已有文字的轮次被背景声反复 `vad start` 重开，回答被拖 17 s（#83 加 2 s 证据窗口，已上线，嘈杂环境尚未实测）。
 - 待完成：G 的 owner-silence/endpoint/commit/watchdog 真实配置矩阵；B/D 的 Bridge→Edge→设备接收/解码/播放同 fence 证据；部分音频失败后的设备终态；ACK→正文 <1.5s 的链路拆分与达标。
 - 设备窗口发现（2026-09-20，已启用候选 `d96d4c2`，收据见 `HANDOFF.md`）：**F1 owner-silence 待命过早已修复并发布**——旧语义播后只沿用剩余预算（本例 ~4.4s）即待命，多轮续问接不上；现改为**任何被接受的主人话轮都重新给足整段窗口**、默认 `MEDIA_OWNER_SILENCE_TIMEOUT_S` 10s→30s、助手自发提示不得延长、明确告别立即待命；2026-09-21 设备窗口有 30s owner-silence 观察，但不替代当前 P0-03 的完整设备验收。**F2 待命后再唤醒被拒已修复并发布**——`barge_source_forbidden retryable=0` 曾终止整段会话并弹错；现：禁止源 barge 只拒绝交接话语权（不转发/不关连接/不发 session.error，`device_barge_ignored_total` 可观测），且 `playbackActive` 与 **fence** 绑定、**只由设备自己的 `button.stop`（本地 flush）撤销**；`generation.cancelled` 不清窗口（它携带后继 generation，既不匹配回执 fence 也不证明设备已停播，清它会 fail-open），残余情形保持 fail-closed。已有设备窗口只覆盖 `button.stop` happy path；禁止源 barge 尚未在设备旁真实触发，完整 F2 契约保持未验证。固件侧「播放期不发 `vad.start`」为可选加固（需刷机），voice barge 长期走 P1-07 签名授权。
 - 设备验收：同一已启用候选完成天气→续问→播后告别至少三轮、>45s 与 B/D 同类长答、临近静默和部分下发后故障；补待机、五表情及点屏/摇晃/短拍/BOOT 不回归。2026-09-24 已完成缺陷 A 核心续问的真实设备证据：3/5/8s 精确格通过，30 分钟基础长稳通过但带 TLS/WSS 自动重连观察项；工具查询最终回答已于 2026-09-24（`docs/acceptance/run-20260924-d1d2-deploy/findings.md`）与 2026-09-25 整栈真机验收走通；TLS/WSS 重连、长答/故障/待机/表情及交互矩阵仍待补齐。
@@ -73,6 +102,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 - 已完成（2026-09-26，代码与文档，见 `docs/runbooks/sensevoice-asr.md`）：`infra/sensevoice-asr/` 入库 Dockerfile（基础镜像按 digest 锁定，与线上逐层一致）、哈希锁定的 17 个依赖（即线上 `pip freeze`）与模型校验值；重建镜像的依赖、Python 版本、脚本与线上一致，4 段合成中文语音在本地 amd64/arm64 与线上实例上转写逐字相同。`scripts/evaluate_sensevoice_rescue.py` 用 12 段真机录音切出的 69 句评测：无外文输出，降 20 dB/8 倍削波后相似度 0.971/0.984，4 路并发与串行一致。空结果分类（`vendor_error`/`vendor_silent`/`gating`/`low_rms`）已由 `funasr_empty_accounting.py` 提供。
 - 已修（随 `20260926-minor-safety-v1` 上线）：模型对静音和任意噪声都返回「我。」，原先 `min_text_chars=2` 按原始长度计数让它成为一轮用户输入；现只计文字字符（`SenseVoiceRescueConfig.accepts_text`），回归覆盖。
+- 现场证据（2026-09-28）：两次对话的首个救援请求 `httpx.ReadTimeout`（04:59:40、06:23:46），与 ① 一致。
 - 待授权（线上问题，建议见手册）：① 空闲约 7h 后首请求解码 12.7s（模型匿名内存被换到主机 swap，VmSwap 约 450MB），空闲后的首次救援必超 2.5s 预算，建议 `--memory 1536m --memory-swap 1536m` 重建容器禁用 swap；② 27–30s 语段解码 2.5–2.8s 必超时，建议 agent `SENSEVOICE_MAX_AUDIO_S=12`。
 - 约束：主链是云服务商 FunASR，救援后端单独核验；不把本地 FunASR PyPI、仓内 sherpa-onnx 或云模型版本混为一体，也不顺手改 NumPy/设备 VAD。
 - 完成条件：两项线上调整执行后，用合成语音在线上复测首请求与长语段时延均在 2.5s 内；「我。」修复随 agent 发布上线。
@@ -116,7 +146,8 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 产品决定（用户 2026-09-25）：暂不用声纹（09-03 起生产 0 次 owner_match，主人得分 0.41–0.67 对门槛 0.78，profile 未评估）；设备只服务绑定时选定的使用人（孩子/老人/本人）。家长只看摘要、趋势、风险提醒，不看孩子原文；孩子的长期记忆需家长在绑定时勾选（默认不勾、非必选）；实名家长声明即监护关系；老人记忆由子女代为同意（如实记为代理）；同意长期有效直到撤销；解绑撤销同意并询问是否删除。
 - 已做并上线（本地 + 临时 PG 验证，生产 `MEMORIA_SPEAKER_AUTHORITY_ENABLED` 已于 09-25 改为 false）：Agent 在无声纹的设备会话上以签名 profile 为据给出 `device_bound_subject` 主人（仅数据权限，`current_speaker_authority_verified` 仍为假，回声/打断门不变），Control 用同一 profile 核验；播放后 3s 内机器人自己说过的告别词不能结束会话；策略 `subject_presence=device_bound`（家长 App 切到孩子仍读不到孩子记忆）；绑定时写入同意权威授予（guardian/subject/新 `delegate`），认定关系 `guardian_attestation_v1`/`delegate_attestation_v1`，老人登记为经绑定人认定的成年人（`child_for_parent` 此前根本无法绑定）；家长页开关双写、解绑撤销、换版延续；无账号孩子可由绑定人导出；生产 env 模板关闭 `MEMORIA_SPEAKER_AUTHORITY_ENABLED`；小程序隐藏声纹入口、绑定勾选与解绑/导出/删除入口。顺带修复：任何已生效关系都会让 profile 落库复核指纹不一致（收据只锁选中的关系）。
 - 按使用人删除（2026-09-25 同分支）：可续跑、有进度记录的删除流程（删除期间拒收该使用人的新证据），依次关闭该使用人的设备会话、删归档证据及其派生记忆（含引用了 TA 的合并条目）、文件对象、危机提醒与学习记录、MemoryScope（新维护角色 `memoria_memory_maintenance` 专用函数，只增不改约束对其他调用方不变）、语料；解绑并选删除时再把 TA 的身份隐去为占位并清掉审计中的旧名；最后逐库核对为空。保留的仅有无内容审计（同意记录、策略收据、关系/绑定、会话档案）。部署前须在 `/etc/memoria-postgres.env` 加 `MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD`，控制面 env 加 `MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL`。已知残留：已推送到 Redis 的记忆事件无法撤回（随流修剪老化）；`speech_style_stats` 聚合、persona/digital-self 快照、`entity_ids` 数组无行级来源可追。
-- 未做：已有生产绑定的旧"待确认"声明不自动升级（目前无真实用户），用户需重新绑定设备以写入绑定时 consent grant 后再验证 `memory_recall_private`；声纹代码与 `speaker-model` 容器待设备验证后清理；危机推送订阅号未开通（功能另分支，默认关闭）。
+- 已重新绑定（2026-09-28）：开发板以「给孩子使用」绑定为 `e8a27e45` v3 并勾选长期记忆，绑定时写入 consent grant；重新绑定曾因会话信任表未跟随而拒绝设备会话（#77 修复并上线，09-28 设备页 runtime-profile 与机器人 media-sessions 均已 200）。待验证 `memory_recall_private` 与隔天记忆。
+- 未做：声纹代码与 `speaker-model` 容器待设备验证后清理；危机推送订阅号未开通（功能另分支，默认关闭）。
 - 监护小结（2026-09-26 已上线；用户决定随长期记忆一起授予）：家长给孩子绑定并勾选长期记忆时，同时授予 `guardian_summary_view`（`GUARDIAN_MEMORY_CAPABILITIES`），家长页长期记忆开关同步授予/撤销；真实 PG 下家长 app 的签名 profile 因此出现该能力，孩子私人记忆仍不给。周小结接口新增无账号孩子分支：以孩子的长期记忆同意放行，只聚合家长账号下标注为该孩子的记录（不含原文），小程序在没有监护链接时自动加载绑定孩子的小结。老人（子女代同意）不授予监护小结。存量绑定需重新绑定或在家长页重开长期记忆开关后才会获得授予。
 - 完成条件：设备上孩子/老人/本人三种绑定各一次：隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声"再见"不结束会话、真人"再见"能结束；家长端看不到孩子原文；撤销后不再记忆。
 
