@@ -12,8 +12,8 @@ from typing import Any, cast
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from services.agent.src.providers.crisis_semantic_classifier import CrisisSemanticVerdict
 from services.archive.domain import EvidenceEvent
+from services.common.crisis_policy import CrisisSemanticVerdict
 from services.control_api.app.account_gate import (
     SUBJECT_CAPABILITY_RULES,
     SubjectCapability,

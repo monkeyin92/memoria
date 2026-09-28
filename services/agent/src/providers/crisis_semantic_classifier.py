@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 
 import httpx
+
+from services.common.crisis_policy import CrisisSemanticVerdict as CrisisSemanticVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,6 @@ _SYSTEM_PROMPT = """\
 - NO_CRISIS：没有上述语义。
 - UNSURE：上下文不足，不能可靠判断。
 只输出且必须只输出一个枚举词：SELF_CRISIS、SUPPORT_FOR_OTHER、NO_CRISIS 或 UNSURE。"""
-
-
-class CrisisSemanticVerdict(StrEnum):
-    SELF_CRISIS = "SELF_CRISIS"
-    SUPPORT_FOR_OTHER = "SUPPORT_FOR_OTHER"
-    NO_CRISIS = "NO_CRISIS"
-    UNSURE = "UNSURE"
 
 
 @dataclass(frozen=True, slots=True)
