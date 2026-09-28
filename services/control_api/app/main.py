@@ -259,7 +259,8 @@ def _evidence_subject_category_resolver(
     The account owner and a blank subject keep the existing profile lookup.
     ``None`` from that lookup is an unknown category and still compiles on the
     non-minor path; it is not a reason to skip.  Any other subject is read from
-    identity on the compiler's own event loop, matching ``_speaker_retention_inputs``.
+    identity on the compiler's own event loop, matching ``_speaker_retention_inputs``,
+    as the evidence account (an actor-less PostgreSQL read hides every person).
     A fresh thread plus ``asyncio.run`` cannot use the Postgres identity pool,
     which is bound to the loop that created it, so that path is not a fallback.
     Identity being down, or the person being missing, raises
@@ -277,9 +278,6 @@ def _evidence_subject_category_resolver(
         if not subject_id or subject_id == event.account_id:
             return owner_category(event.account_id)
         try:
-            # Read as the account that owns the evidence: PostgreSQL Identity
-            # hides a person from an actor-less read, and shows it to an
-            # account related to that person.
             person = await identity.get_person(subject_id, actor_person_id=event.account_id)
         except IdentityNotFoundError as exc:
             raise SubjectCategoryUnresolved(subject_id) from exc
