@@ -378,6 +378,76 @@ async def test_concurrent_member_appends_never_overwrite_on_real_pg() -> None:
 
 
 
+@pytest.mark.asyncio
+async def test_owner_reads_superseded_versions_with_their_rosters() -> None:
+    """An owner who is not a primary subject still sees each old version whole.
+
+    Superseding marks the old version's role rows ``superseded``. The owner
+    can read every version of their binding, so they must also read who was
+    on it; otherwise the old version decodes without a primary subject and
+    the version history fails. A stranger still sees none of it.
+    """
+    database = f"memoria_roster_{uuid.uuid4().hex[:10]}"
+    dsns = await _bootstrap(database)
+    store = None
+    try:
+        store, service, _pg_authority = await _service(dsns)
+        now = datetime(2026, 9, 28, 6, 0, tzinfo=UTC)
+
+        async def person(name: str, category: str, band: str) -> str:
+            return (
+                await service.register_person(
+                    display_name=name,
+                    timezone="Asia/Shanghai",
+                    subject_category=category,
+                    age_band=band,
+                    age_evidence_status="verified" if category == "adult" else "unverified",
+                    age_evidence_id="evidence-" + name if category == "adult" else None,
+                    now=now,
+                )
+            ).person_id
+
+        owner = await person("家长", "adult", "adult")
+        stranger = await person("路人", "adult", "adult")
+        child = await person("老大", "minor", "under_14")
+        sibling = await person("老二", "minor", "14_17")
+        v1 = await service.create_binding(
+            device_id="dev-pg-roster",
+            declared_mode="family_shared",
+            account_owner_person_id=owner,
+            primary_subject_ids=(child,),
+            family_space_id="family-pg-roster",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            now=now,
+        )
+        await service.supersede_binding(
+            device_id="dev-pg-roster",
+            declared_mode="family_shared",
+            primary_subject_ids=(child, sibling),
+            family_space_id="family-pg-roster",
+            service_profile_version="family-v1",
+            policy_bundle_version="policy-family-v1",
+            actor_person_id=owner,
+            now=now + timedelta(minutes=1),
+            expected_binding_id=v1.binding_id,
+        )
+        versions = await service.list_binding_versions(
+            "dev-pg-roster", actor_person_id=owner
+        )
+        assert [item.binding_version for item in versions] == [1, 2]
+        assert versions[0].primary_subject_ids == (child,)
+        assert set(versions[1].primary_subject_ids) == {child, sibling}
+        assert (
+            await service.list_binding_versions("dev-pg-roster", actor_person_id=stranger)
+            == ()
+        )
+    finally:
+        if store is not None:
+            await store.close()
+        await _drop_database(database)
+
+
 async def test_schema_roles_rls_and_version_chain() -> None:
     database = f"memoria_identity_{uuid.uuid4().hex[:10]}"
     dsns = await _bootstrap(database)

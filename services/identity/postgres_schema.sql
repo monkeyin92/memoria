@@ -939,6 +939,9 @@ CREATE OR REPLACE FUNCTION identity_role_visible(
 ) RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET row_security = on AS $$
 BEGIN
+    -- The account owner reads every version of their binding (the bindings
+    -- policy), so they read its roster too; superseded versions keep only
+    -- superseded role rows, which the membership branch does not match.
     RETURN (SELECT actor IS NOT NULL AND actor <> '' AND (
         person_id = actor
         OR EXISTS (
@@ -946,6 +949,11 @@ BEGIN
             WHERE mine.binding_id = identity_role_visible.binding_id
               AND mine.person_id = actor
               AND mine.status = 'active'
+        )
+        OR EXISTS (
+            SELECT 1 FROM identity_device_bindings owned
+            WHERE owned.binding_id = identity_role_visible.binding_id
+              AND owned.account_owner_person_id = actor
         )
     ));
 END
