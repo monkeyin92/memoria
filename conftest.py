@@ -139,7 +139,21 @@ if _APP_POSTGRES:
         original_create_app = control_main.create_app
 
         with cloned_database(_app_template()) as database:
-            injected = {**database.control_env(), "MEMORIA_EAGER_POSTGRES": "true"}
+            # MEMORIA_TEST_APP_POSTGRES_SKIP lists DSN settings to leave unset.
+            # MEMORIA_CONSENT_DATABASE_URL is not only a backend: without it the
+            # bound-subject consent feature is off, which is how most tests were
+            # written, so switching it is a separate step.
+            skip = {
+                name.strip()
+                for name in os.environ.get(
+                    "MEMORIA_TEST_APP_POSTGRES_SKIP", "MEMORIA_CONSENT_DATABASE_URL"
+                ).split(",")
+                if name.strip()
+            }
+            injected = {
+                **{key: value for key, value in database.control_env().items() if key not in skip},
+                "MEMORIA_EAGER_POSTGRES": "true",
+            }
 
             def recording_create_app(*args: Any, **kwargs: Any) -> Any:
                 # Only the app sees the DSNs: settings a test builds itself keep
