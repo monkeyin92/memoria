@@ -118,6 +118,19 @@ def _source_payloads(sources: tuple[SourceInput, ...]) -> tuple[dict[str, object
     )
 
 
+def _text_list(value: object, field: str) -> tuple[str, ...]:
+    """Decode a JSONB list of strings.
+
+    asyncpg hands JSONB over as its JSON text unless a codec is registered, so
+    iterating the raw value would yield single characters.
+    """
+
+    decoded = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(decoded, list) or not all(isinstance(item, str) for item in decoded):
+        raise ValueError(f"{field} must be a JSON list of strings")
+    return tuple(decoded)
+
+
 class PostgresSelfModelRegistry:
     """Keeps candidate material and derives effective material on every read."""
 
@@ -1017,10 +1030,10 @@ class PostgresSelfModelRegistry:
             account_id=account_id,
             kind=cast(DecisionKind, str(row["kind"])),
             context=str(row["context"]),
-            options=tuple(cast(list[str], row["options"])),
-            constraints=tuple(cast(list[str], row["constraints"])),
+            options=_text_list(row["options"], "options"),
+            constraints=_text_list(row["constraints"], "constraints"),
             chosen_option=str(row["chosen_option"]),
-            rejected_options=tuple(cast(list[str], row["rejected_options"])),
+            rejected_options=_text_list(row["rejected_options"], "rejected_options"),
             outcome=str(row["outcome"]),
             reflection=str(row["reflection"]),
             still_endorsed=bool(row["still_endorsed"]),
@@ -1048,7 +1061,7 @@ class PostgresSelfModelRegistry:
             tone=str(row["tone"]),
             advice_style=str(row["advice_style"]),
             sharing_scope=str(row["sharing_scope"]),
-            boundaries=tuple(cast(list[str], row["boundaries"])),
+            boundaries=_text_list(row["boundaries"], "boundaries"),
             status=cast(RelationshipProfileStatus, str(row["status"])),
             unresolved_conflict=bool(row["unresolved_conflict"]),
             sources=await self._sources(

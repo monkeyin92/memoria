@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import asyncpg
 
@@ -101,8 +101,12 @@ def _hash(value: str) -> str:
     return normalized
 
 
+def _json_decoded(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def _json_array(value: object, *, field: str) -> list[object]:
-    decoded = json.loads(value) if isinstance(value, str) else value
+    decoded = _json_decoded(value)
     if not isinstance(decoded, list):
         raise RuntimeError(f"{field} must be a JSON array")
     return decoded
@@ -1656,7 +1660,7 @@ class PostgresGuardianStore:
                 kind=cast(TutorAggregateKind, str(row["kind"])),
                 subject_id=str(row["subject_id"]),
                 actor_id=str(row["actor_id"]),
-                archive_payload=dict(row["archive_payload_json"]),
+                archive_payload=dict(_json_decoded(row["archive_payload_json"])),
                 created_at=cast(datetime, row["created_at"]),
             )
             for row in rows
@@ -2260,22 +2264,15 @@ class PostgresGuardianStore:
                 """,
                 account_id,
             )
+        tutor = json.loads(tutor_result)
         return {
             "links": int(link_result.rsplit(" ", 1)[-1]),
             "consents": int(consent_result.rsplit(" ", 1)[-1]),
             "person_consents": int(person_consent_result.rsplit(" ", 1)[-1]),
-            "tutor_practice_sessions": int(
-                json.loads(tutor_result).get("tutor_practice_sessions") or 0
-            ),
-            "tutor_study_progress": int(
-                json.loads(tutor_result).get("tutor_study_progress") or 0
-            ),
-            "tutor_practice_evidence": int(
-                json.loads(tutor_result).get("tutor_practice_evidence") or 0
-            ),
-            "tutor_commit_outbox": int(
-                json.loads(tutor_result).get("tutor_commit_outbox") or 0
-            ),
+            "tutor_practice_sessions": int(tutor.get("tutor_practice_sessions") or 0),
+            "tutor_study_progress": int(tutor.get("tutor_study_progress") or 0),
+            "tutor_practice_evidence": int(tutor.get("tutor_practice_evidence") or 0),
+            "tutor_commit_outbox": int(tutor.get("tutor_commit_outbox") or 0),
             "crisis_events": int(crisis_result.rsplit(" ", 1)[-1]),
             "guardian_notifications": int(notification_result.rsplit(" ", 1)[-1]),
             "corpus_samples": int(corpus_result.rsplit(" ", 1)[-1]),
@@ -2366,27 +2363,16 @@ class PostgresGuardianStore:
                 "SELECT guardian_tutor_account_scope_remaining($1)",
                 account_id,
             )
-        practice_sessions = int(
-            json.loads(tutor_result).get("tutor_practice_sessions") or 0
-        )
-        study_progress = int(
-            json.loads(tutor_result).get("tutor_study_progress") or 0
-        )
-        practice_evidence = int(
-            json.loads(tutor_result).get("tutor_practice_evidence") or 0
-        )
-        commit_outbox = int(
-            json.loads(tutor_result).get("tutor_commit_outbox") or 0
-        )
+        tutor = json.loads(tutor_result)
         return {
             key: value
             for key, value in {
                 "links": links,
                 "consents": consents,
-                "tutor_practice_sessions": practice_sessions,
-                "tutor_study_progress": study_progress,
-                "tutor_practice_evidence": practice_evidence,
-                "tutor_commit_outbox": commit_outbox,
+                "tutor_practice_sessions": int(tutor.get("tutor_practice_sessions") or 0),
+                "tutor_study_progress": int(tutor.get("tutor_study_progress") or 0),
+                "tutor_practice_evidence": int(tutor.get("tutor_practice_evidence") or 0),
+                "tutor_commit_outbox": int(tutor.get("tutor_commit_outbox") or 0),
                 "crisis_events": crisis_events,
                 "guardian_notifications": notifications,
                 "corpus_samples": corpus_samples,

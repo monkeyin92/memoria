@@ -362,6 +362,10 @@ async def test_postgres_registry_enforces_rls_effective_policy_immutability_and_
                 sources=(SourceInput(source_event_id=source_id),),
             )
             assert decision.version == 2
+            # JSONB lists decode back to the strings that were stored.
+            assert decision.options == ("搬家", "不搬")
+            assert decision.constraints == ("预算",)
+            assert decision.rejected_options == ()
             reviewed_decision = await registry.review_decision_case(
                 account_id=account_a,
                 case_id=decision.case_id,
@@ -393,6 +397,7 @@ async def test_postgres_registry_enforces_rls_effective_policy_immutability_and_
                 sources=(SourceInput(source_event_id=source_id),),
             )
             assert profile.version_number == 1
+            assert profile.boundaries == ("不分享私密经历",)
             second_profile = await registry.create_relationship_profile(
                 account_id=account_a,
                 idempotency_key="relationship-2",
