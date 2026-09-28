@@ -16,6 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.identity_test_helpers import (
+    assert_stranger_denied,
     install_test_identity_authority,
 )
 
@@ -316,16 +317,14 @@ async def test_non_member_cannot_read_or_write(
         headers = _auth(stranger)
 
         read = await client.get(_path("dev-stranger"), headers=headers)
-        assert read.status_code == 403
-        assert read.json()["detail"]["code"] == "subject_not_binding_member"
+        assert_stranger_denied(read, "subject_not_binding_member")
 
         write = await client.put(
             _path("dev-stranger", stranger["user_id"]),
             headers=headers,
             json={"persona_selection": "taoxi"},
         )
-        assert write.status_code == 403
-        assert write.json()["detail"]["code"] == "subject_not_binding_member"
+        assert_stranger_denied(write, "subject_not_binding_member")
 
 
 @pytest.mark.asyncio

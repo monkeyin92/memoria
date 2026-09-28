@@ -41,3 +41,29 @@ def fetch_all(sqlite_path: str | Path, sql: str, params: Sequence[Any] = ()) -> 
             return [tuple(row) for row in connection.execute(translate_sql(sql), tuple(params)).fetchall()]
     with sqlite3.connect(sqlite_path) as connection:
         return [tuple(row) for row in connection.execute(sql, tuple(params)).fetchall()]
+
+
+def execute(sqlite_path: str | Path, sql: str, params: Sequence[Any] = ()) -> None:
+    """Write fixture rows (``?`` placeholders) where the app will read them."""
+
+    if _CURRENT:
+        import psycopg
+        from services.control_api.app.database.backend import translate_sql
+        from testing.postgres_harness import _with_database
+
+        database = _CURRENT[0]
+        with psycopg.connect(_with_database(database.admin_dsn, database.name)) as connection:
+            connection.execute(translate_sql(sql), tuple(params))
+        return
+    with sqlite3.connect(sqlite_path) as connection:
+        connection.execute(sql, tuple(params))
+
+
+async def initialized(component: Any) -> None:
+    """Run ``component.initialize()`` whether the backend's is sync or async."""
+
+    import inspect
+
+    result = component.initialize()
+    if inspect.isawaitable(result):
+        await result

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
 from services.control_api.app.main import create_app
 from services.digital_self.preview import (
     FIDELITY_CATEGORIES,
     FidelityTrialSpec,
 )
 from services.speaker.domain import SpeakerProfileSummary
+from testing import app_store
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -70,7 +69,7 @@ async def _approved_version(
 ) -> dict[str, object]:
     occurred_at = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
     event_id = "preview-owner-source"
-    await LifeArchive.sqlite(path).record(
+    await app.state.life_archive.record(  # type: ignore[attr-defined]
         EvidenceEvent(
             event_id=event_id,
             account_id=owner["user_id"],
@@ -86,10 +85,10 @@ async def _approved_version(
             },
         )
     )
-    app.state.digital_self_registry.initialize()
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
+    await app_store.initialized(app.state.digital_self_registry)  # type: ignore[attr-defined]
+    app_store.execute(
+        path,
+        """
             INSERT INTO memory_claims (
                 claim_id, account_id, category, domain_category,
                 subject_key, predicate, value,
@@ -107,7 +106,7 @@ async def _approved_version(
                 occurred_at.isoformat(),
                 occurred_at.isoformat(),
             ),
-        )
+    )
     headers = {"Authorization": f"Bearer {owner['access_token']}"}
     built = (await client.post("/v1/digital-self/versions", headers=headers)).json()
     await client.post(

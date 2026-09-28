@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
 from services.control_api.app.main import create_app
 from services.digital_self.preview import (
     FIDELITY_CATEGORIES,
     FidelityTrialSpec,
 )
-from services.digital_self.registry import DigitalSelfRegistry
+from testing import app_store
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -67,7 +65,7 @@ async def _seed_confirmed_owner_memory(
 ) -> str:
     event_id = f"digital-self-source-{account_id}"
     occurred_at = datetime(2026, 7, 22, 8, 0, tzinfo=UTC)
-    await LifeArchive.sqlite(path).record(
+    await app.state.life_archive.record(  # type: ignore[attr-defined]
         EvidenceEvent(
             event_id=event_id,
             account_id=account_id,
@@ -83,14 +81,12 @@ async def _seed_confirmed_owner_memory(
             },
         )
     )
-    registry = app.state.digital_self_registry
-    assert isinstance(registry, DigitalSelfRegistry)
-    registry.initialize()
+    await app_store.initialized(app.state.digital_self_registry)  # type: ignore[attr-defined]
     now = occurred_at.isoformat()
     claim_id = "00000000-0000-0000-0000-000000000001"
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
+    app_store.execute(
+        path,
+        """
             INSERT INTO memory_claims (
                 claim_id, account_id, category, domain_category,
                 subject_key, predicate, value,
@@ -100,8 +96,8 @@ async def _seed_confirmed_owner_memory(
                       'preference', ?, 0.9, 'confirmed', 'personal',
                       'test-v1', ?, ?, ?, ?)
             """,
-            (claim_id, account_id, value, event_id, now, now, now),
-        )
+        (claim_id, account_id, value, event_id, now, now, now),
+    )
     return claim_id
 
 
@@ -310,11 +306,11 @@ async def test_digital_self_source_correction_creates_new_version_without_mutati
         headers = _headers(owner)
         claim_id = await _seed_confirmed_owner_memory(app, path, account_id=owner["user_id"])
         first = (await client.post("/v1/digital-self/versions", headers=headers)).json()
-        with sqlite3.connect(path) as connection:
-            connection.execute(
-                "UPDATE memory_claims SET value = '我更喜欢晴天散步。' WHERE claim_id = ?",
-                (claim_id,),
-            )
+        app_store.execute(
+            path,
+            "UPDATE memory_claims SET value = '我更喜欢晴天散步。' WHERE claim_id = ?",
+            (claim_id,),
+        )
         second = (await client.post("/v1/digital-self/versions", headers=headers)).json()
         reloaded_first = await client.get(
             f"/v1/digital-self/versions/{first['version_id']}", headers=headers
