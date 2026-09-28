@@ -287,16 +287,22 @@ func validateFloorEffect(effect *mediav1.FloorEffect) (Fence, error) {
 	}, nil
 }
 
+// CloseSend half-closes the stream under sendMu: grpc-go forbids CloseSend
+// concurrently with SendMsg on another goroutine.
 func (s *VoiceCoreSession) CloseSend() error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	return s.stream.CloseSend()
 }
 
 // Close cancels this stream.  The parent bridge connection remains reusable.
+// Cancelling first unblocks an in-flight SendMsg (e.g. waiting on flow
+// control), so taking sendMu for CloseSend cannot wait on a stuck send.
 func (s *VoiceCoreSession) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	return s.stream.CloseSend()
+	return s.CloseSend()
 }
 
 // PlaybackProgress is the Go-side equivalent of the media-v1 playback ACK.

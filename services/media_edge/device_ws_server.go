@@ -108,6 +108,19 @@ func (s *DeviceWSServer) registerConn(connection *DeviceConnection) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.conns[connection.connID] = connection
+}
+
+// routeSession makes an accepted connection the Core-event route for its
+// session. It runs only after acceptance: a newer socket that fails before
+// hello/lease install must not take over (and on teardown delete) the route of
+// the older, still-accepted connection. The state check under s.mu orders it
+// against close(), which stores closed before unregisterConn.
+func (s *DeviceWSServer) routeSession(connection *DeviceConnection) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if connection.state.Load() != deviceConnAccepted {
+		return
+	}
 	s.connsBySession[connection.sessionID] = connection
 }
 
