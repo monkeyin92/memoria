@@ -16,6 +16,8 @@ from services.agent.src.persona_renderer import (
     parse_persona_definition,
 )
 from services.agent.src.prompt_composition import (
+    PROMPT_SECTIONS,
+    SERVICE_MODE_BLOCKS,
     SERVICE_MODES,
     ComposedPrompt,
     SubjectContext,
@@ -54,16 +56,6 @@ def _custom_companion() -> CompanionDefinition:
         default_voice_rate=1.0,
     )
 
-SECTION_HEADERS = (
-    "【不可变安全底线】",
-    "【人格】",
-    "【服务模式】",
-    "【策略义务】",
-    "【主体与关系】",
-    "【可用上下文】",
-    "【本轮任务】",
-)
-
 
 def _clarification() -> IdentityObligation:
     return parse_obligation_event(
@@ -90,21 +82,19 @@ def _full_prompt(**overrides: object) -> ComposedPrompt:
     return compose_system_prompt(**kwargs)
 
 
-def _header_indices(system: str) -> dict[str, int]:
-    return {header: system.index(header) for header in SECTION_HEADERS if header in system}
-
-
 def test_fixed_section_order() -> None:
     prompt = _full_prompt()
-    indices = _header_indices(prompt.system)
-    assert list(indices) == list(SECTION_HEADERS)
-    positions = list(indices.values())
-    assert positions == sorted(positions)
+    assert prompt.section_ids == tuple(section_id for section_id, _ in PROMPT_SECTIONS)
+    # The ids describe the rendered text exactly: header + body, in order.
+    headers = dict(PROMPT_SECTIONS)
+    assert prompt.system == "\n\n".join(prompt.sections)
+    for section_id, text in zip(prompt.section_ids, prompt.sections, strict=True):
+        assert text == f"{headers[section_id]}\n{prompt.section(section_id)}"
 
 
 def test_no_obligation_no_identity_section() -> None:
     prompt = _full_prompt(obligations=())
-    assert "【策略义务】" not in prompt.system
+    assert prompt.section("obligations") is None
     assert prompt.policy_obligations == ()
     # Truthful when asked, but never a per-turn mechanical identity demand.
     assert "如实说明你是由人工智能驱动的机器人伙伴" in prompt.system
@@ -115,7 +105,7 @@ def test_obligations_are_rendered_before_injection() -> None:
     prompt = _full_prompt(
         subject=SubjectContext.from_mapping({"subject_category": "adult"})
     )
-    obligations_block = prompt.system.split("【策略义务】")[1].split("【主体与关系】")[0]
+    obligations_block = (prompt.section("obligations") or "")
     assert "由 AI 驱动的机器人伙伴" in obligations_block
     assert len(prompt.policy_obligations) == 1
     assert "不是真人" in prompt.policy_obligations[0]
@@ -140,11 +130,11 @@ def test_policy_effect_invariant_across_personas() -> None:
         normalize(text) for text in axu.policy_obligations
     )
     assert star_normalized == axu_normalized
-    star_obligations = starlight.system.split("【策略义务】")[1].split("【主体与关系】")[0]
-    axu_obligations = axu.system.split("【策略义务】")[1].split("【主体与关系】")[0]
+    star_obligations = (starlight.section("obligations") or "")
+    axu_obligations = (axu.section("obligations") or "")
     assert normalize(star_obligations) == normalize(axu_obligations)
-    star_persona = starlight.system.split("【人格】")[1].split("【服务模式】")[0]
-    axu_persona = axu.system.split("【人格】")[1].split("【服务模式】")[0]
+    star_persona = (starlight.section("persona") or "")
+    axu_persona = (axu.section("persona") or "")
     assert star_persona != axu_persona
 
 
@@ -187,7 +177,7 @@ def test_subject_context_unknown_keys_never_reach_prompt() -> None:
     prompt = _full_prompt(subject=subject)
     assert "parent-private-history" not in prompt.system
     assert "can_view_memory" not in prompt.system
-    subject_block = prompt.system.split("【主体与关系】")[1].split("【可用上下文】")[0]
+    subject_block = (prompt.section("subject") or "")
     assert "儿童/学生" in subject_block
     assert "孩子本人" in subject_block
 
@@ -213,8 +203,8 @@ def test_subject_context_rejects_invalid_values() -> None:
 
 def test_memory_and_task_after_obligations() -> None:
     prompt = _full_prompt()
-    indices = _header_indices(prompt.system)
-    assert indices["【策略义务】"] < indices["【可用上下文】"] < indices["【本轮任务】"]
+    order = prompt.section_ids
+    assert order.index("obligations") < order.index("memory") < order.index("task")
     assert prompt.task == "孩子说：我们继续练英语吧。"
 
 
@@ -230,14 +220,14 @@ def test_unknown_service_mode_fail_closed() -> None:
 
 def test_unknown_safe_has_no_memory_by_default() -> None:
     prompt = _full_prompt(service_mode="unknown_safe", memory_block=None)
-    assert "【可用上下文】" not in prompt.system
+    assert prompt.section("memory") is None
     assert "不写入长期记忆" in prompt.system
     assert "本会话里用户已经公开说过的地点" in prompt.system
 
 
 def test_safety_baseline_is_transparent_and_keeps_crisis_rule() -> None:
     prompt = _full_prompt()
-    safety = prompt.system.split("【不可变安全底线】")[1].split("【人格】")[0]
+    safety = (prompt.section("safety") or "")
     assert "不得自称或讨论" not in safety
     assert "如实说明你是由人工智能驱动的机器人伙伴" in safety
     assert "自伤、轻生或正在发生的紧迫危险" in safety
@@ -276,7 +266,7 @@ def test_tutor_focus_overlay_is_independent_dimension() -> None:
     homework = tutor_focus_overlay("tutor_homework")
     assert homework is not None and "作业" in homework
     composed = _full_prompt(focus="tutor_english")
-    assert "【服务模式】" in composed.system
+    assert "service_mode" in composed.section_ids
     assert "student_minor" not in composed.system
     assert "英语口语陪练" in composed.system
     assert composed.service_mode == "student_minor"
@@ -310,7 +300,7 @@ def test_production_prompt_without_profile_fails_closed_unknown_safe() -> None:
     assert "owner-private-history" not in composed.system
     assert "不写入长期记忆" in composed.system
     assert "伙伴" in composed.system  # default safe persona, never account persona
-    subject_block = composed.system.split("【主体与关系】")[1].split("【可用上下文】")[0]
+    subject_block = (composed.section("subject") or "")
     assert "未确认" in subject_block
     assert "身份尚未确认" in subject_block
 
@@ -354,7 +344,7 @@ def test_senior_expression_is_derived_from_service_mode() -> None:
     )
     composed = compose_production_prompt(profile=senior)
     assert "老年人" in composed.system
-    assert "当前是适老陪伴模式" in composed.system
+    assert SERVICE_MODE_BLOCKS["senior_companion"] in (composed.section("service_mode") or "")
 
 
 def test_unknown_persona_id_falls_back_to_default_safe_persona() -> None:
@@ -385,9 +375,9 @@ def test_student_persona_cannot_override_policy() -> None:
             service_mode="student_minor",
             obligations=(obligation,),
         )
-        obligations_block = prompt.system.split("【策略义务】")[1].split("【主体与关系】")[0]
+        obligations_block = (prompt.section("obligations") or "")
         assert "不能代替真实的朋友和家人" in obligations_block
-        persona_block = prompt.system.split("【人格】")[1].split("【服务模式】")[0]
+        persona_block = (prompt.section("persona") or "")
         for marker in ("权限", "绕过", "允许我", "override", "bypass", "policy"):
             assert marker.lower() not in persona_block.lower()
 
@@ -421,7 +411,7 @@ def test_explicit_persona_definition_prompt() -> None:
 def test_blank_task_is_omitted() -> None:
     prompt = _full_prompt(task="   ")
     assert prompt.task is None
-    assert "【本轮任务】" not in prompt.system
+    assert prompt.section("task") is None
 
 
 def _custom_profile() -> VerifiedRuntimeProfile:
@@ -449,7 +439,7 @@ def test_custom_persona_renders_through_the_same_companion_path() -> None:
         profile=_custom_profile(), custom_persona=_custom_companion()
     )
     assert composed.persona_id == CUSTOM_PERSONA_ID
-    persona_block = composed.system.split("【人格】")[1].split("【服务模式】")[0]
+    persona_block = (composed.section("persona") or "")
     assert "小北" in persona_block
     assert "星澜" not in persona_block
 
