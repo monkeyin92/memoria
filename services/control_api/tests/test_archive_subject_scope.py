@@ -1106,3 +1106,26 @@ async def test_evidence_subject_category_is_read_as_the_evidence_account() -> No
     )
     assert await resolve(event) == "minor"
     assert calls == [("child-1", "account-1")]
+
+
+@pytest.mark.asyncio
+async def test_speaker_retention_reads_a_bound_subject_as_the_account() -> None:
+    """Retention for a bound subject's speech reads Identity as the account."""
+    from services.control_api.app.routes.archive import _speaker_retention_inputs
+    from services.identity.domain import IdentityNotFoundError
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def get_person(person_id: str, actor_person_id: str | None = None) -> Any:
+        calls.append((person_id, actor_person_id))
+        if actor_person_id != "account-1":
+            raise IdentityNotFoundError(person_id)
+        return SimpleNamespace(subject_category="adult")
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(identity_service=SimpleNamespace(get_person=get_person)))
+    )
+    assert await _speaker_retention_inputs(
+        request, account_id="account-1", subject_id="adult-2"  # type: ignore[arg-type]
+    ) == ("adult", False)
+    assert calls == [("adult-2", "account-1")]
