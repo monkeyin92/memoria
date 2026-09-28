@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -249,10 +249,7 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 	s.mu.Unlock()
 
 	attempt := s.redialAttempts.Add(1)
-	log.Printf(
-		"media edge Voice Core channel redial attempt=%d generation=%d state=%s health_err=%v unavailable_ms=%d",
-		attempt, generation, state, probeErr, unavailableFor.Milliseconds(),
-	)
+	slog.Info("media edge Voice Core channel redial", "attempt", attempt, "generation", generation, "state", state, "health_err", probeErr, "unavailable_ms", unavailableFor.Milliseconds())
 	dialCtx, cancel := context.WithTimeout(s.ctx, s.connectTimeout)
 	candidate, err := s.settings.dialer(dialCtx, s.config)
 	cancel()
@@ -315,10 +312,7 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 		s.mu.Unlock()
 		_ = candidate.Close()
 		s.redialDiscarded.Add(1)
-		log.Printf(
-			"media edge Voice Core channel redial discarded attempt=%d reason=current_channel_recovered",
-			attempt,
-		)
+		slog.Warn("media edge Voice Core channel redial discarded", "attempt", attempt, "reason", "current_channel_recovered")
 		return
 	}
 	old := s.bridge
@@ -337,10 +331,7 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 	// transports must reconnect with a higher stream_epoch; the supervisor
 	// intentionally has no session registry and cannot replay them.
 	_ = old.Close()
-	log.Printf(
-		"media edge Voice Core channel redial succeeded attempt=%d generation=%d",
-		attempt, newGeneration,
-	)
+	slog.Info("media edge Voice Core channel redial succeeded", "attempt", attempt, "generation", newGeneration)
 }
 
 func (s *VoiceCoreBridgeSupervisor) probe(bridge voiceCoreBridgeTransport) (connectivity.State, error) {
@@ -375,10 +366,7 @@ func (s *VoiceCoreBridgeSupervisor) recordRedialFailure(attempt uint64, err erro
 	}
 	s.mu.Unlock()
 	s.redialFailures.Add(1)
-	log.Printf(
-		"media edge Voice Core channel redial failed attempt=%d retry_in_ms=%d err=%v",
-		attempt, delay.Milliseconds(), err,
-	)
+	slog.Warn("media edge Voice Core channel redial failed", "attempt", attempt, "retry_in_ms", delay.Milliseconds(), "err", err)
 }
 
 func (s *VoiceCoreBridgeSupervisor) Ready() bool {

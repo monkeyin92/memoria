@@ -9,7 +9,7 @@ package mediaedge
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -233,16 +233,16 @@ func (c *DeviceConnection) run() {
 		switch messageType {
 		case websocket.TextMessage:
 			if !c.handleControl(data) {
-				log.Printf("media edge device WSS handler rejected session=%s device=%s epoch=%d kind=text", c.sessionID, c.deviceID, c.epoch)
+				slog.Warn("media edge device WSS handler rejected", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "kind", "text")
 				return
 			}
 		case websocket.BinaryMessage:
 			if !c.handleAudio(data) {
-				log.Printf("media edge device WSS handler rejected session=%s device=%s epoch=%d kind=binary", c.sessionID, c.deviceID, c.epoch)
+				slog.Warn("media edge device WSS handler rejected", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "kind", "binary")
 				return
 			}
 		default:
-			log.Printf("media edge device WSS unsupported message type session=%s device=%s epoch=%d type=%d", c.sessionID, c.deviceID, c.epoch, messageType)
+			slog.Warn("media edge device WSS unsupported message type", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "type", messageType)
 			return
 		}
 	}
@@ -254,10 +254,10 @@ func (c *DeviceConnection) run() {
 func (c *DeviceConnection) logSocketError(phase string, err error) {
 	var closeErr *websocket.CloseError
 	if errors.As(err, &closeErr) {
-		log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=%s close_code=%d close_text=%q", c.sessionID, c.deviceID, c.epoch, phase, closeErr.Code, closeErr.Text)
+		slog.Warn("media edge device WSS socket error", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "phase", phase, "close_code", closeErr.Code, "close_text", closeErr.Text)
 		return
 	}
-	log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=%s err=%v", c.sessionID, c.deviceID, c.epoch, phase, err)
+	slog.Warn("media edge device WSS socket error", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "phase", phase, "err", err)
 }
 
 // leaseWatchLoop is the Pub/Sub-loss backstop for cross-host takeovers. A
@@ -345,7 +345,7 @@ func (c *DeviceConnection) close() {
 		_ = c.ws.Close()
 		close(c.closed)
 		if cause != "" {
-			log.Printf("media edge device WSS closed session=%s device=%s epoch=%d accepted=%t reason=%s cause=%s", c.sessionID, c.deviceID, c.epoch, accepted, reason, cause)
+			slog.Info("media edge device WSS closed", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "accepted", accepted, "reason", reason, "cause", cause)
 		}
 		if !accepted {
 			// Hello-failed or pre-accept connections never owned a live
@@ -454,10 +454,7 @@ func (c *DeviceConnection) clearPlaybackActive(reason string, fence deviceFence)
 	}
 	c.stateMu.Unlock()
 	if cleared {
-		log.Printf(
-			"media edge cleared playback window session=%s device=%s epoch=%d reason=%s generation=%d",
-			c.sessionID, c.deviceID, c.epoch, reason, fence.GenerationID,
-		)
+		slog.Info("media edge cleared playback window", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "reason", reason, "generation", fence.GenerationID)
 	}
 }
 

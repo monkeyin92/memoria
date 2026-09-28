@@ -11,7 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"math"
 	"time"
 
@@ -244,7 +244,7 @@ func (c *DeviceConnection) writeLaneItem(item deviceLaneItem) bool {
 	}
 	_ = c.ws.SetWriteDeadline(time.Now().Add(deviceWriteTimeout))
 	if err := c.ws.WriteMessage(messageType, item.payload); err != nil {
-		log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=message_write kind=%s generation=%d sequence=%d err=%v", c.sessionID, c.deviceID, c.epoch, item.kind, item.generation, item.sequence, err)
+		slog.Warn("media edge device WSS socket error", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "phase", "message_write", "kind", item.kind, "generation", item.generation, "sequence", item.sequence, "err", err)
 		return false
 	}
 	if item.kind == "audio" {
@@ -414,12 +414,9 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			return
 		}
 		if playbackWasActive {
-			log.Printf(
-				"media edge cleared playback window session=%s device=%s epoch=%d reason=conversation_close",
-				c.sessionID, c.deviceID, c.epoch,
-			)
+			slog.Info("media edge cleared playback window", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "reason", "conversation_close")
 		}
-		log.Printf("media edge projected conversation close session=%s device=%s epoch=%d reason=%s control_sequence=%d", c.sessionID, c.deviceID, c.epoch, reason, controlSequence)
+		slog.Info("media edge projected conversation close", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "reason", reason, "control_sequence", controlSequence)
 		c.sendControl(deviceControlPriority("session.close"), payload)
 	case event.GetClient() != nil:
 		client := event.GetClient()
@@ -497,7 +494,7 @@ func (s *DeviceWSServer) HandleBridgeError(request OpenSessionRequest, bridgeErr
 	if connection == nil {
 		return
 	}
-	log.Printf("media edge device Voice Core stream closing session=%s device=%s epoch=%d err=%v", connection.sessionID, connection.deviceID, connection.epoch, bridgeErr)
+	slog.Warn("media edge device Voice Core stream closing", "session", connection.sessionID, "device", connection.deviceID, "epoch", connection.epoch, "err", bridgeErr)
 	connection.sendSessionError("voice_core_unavailable", true)
 	connection.closeWithCode(1011, "voice core stream failed")
 	connection.close()

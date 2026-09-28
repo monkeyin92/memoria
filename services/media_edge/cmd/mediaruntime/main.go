@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,7 +82,7 @@ func loadMediaPublicKeys() (map[string]ed25519.PublicKey, error) {
 func runHealthcheck() int {
 	client, err := buildHealthcheckClient()
 	if err != nil {
-		log.Printf("media edge healthcheck misconfigured: %v", err)
+		slog.Warn("media edge healthcheck misconfigured", "err", err)
 		return 1
 	}
 	url := strings.TrimSpace(os.Getenv("MEDIA_EDGE_HEALTHCHECK_URL"))
@@ -94,12 +95,12 @@ func runHealthcheck() int {
 	}
 	response, err := client.Get(url)
 	if err != nil {
-		log.Printf("media edge healthcheck request failed: %v", err)
+		slog.Warn("media edge healthcheck request failed", "err", err)
 		return 1
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		log.Printf("media edge healthcheck status %d", response.StatusCode)
+		slog.Warn("media edge healthcheck unhealthy", "status", response.StatusCode)
 		return 1
 	}
 	return 0
@@ -332,7 +333,7 @@ func buildDeviceSessionCloseHook(production, enabled bool) (func(mediaedge.Devic
 func (r *deviceCloseReporter) report(report mediaedge.DeviceSessionCloseReport) {
 	body, err := json.Marshal(report)
 	if err != nil {
-		log.Printf("media edge device close report marshal failed: %v", err)
+		slog.Warn("media edge device close report marshal failed", "err", err)
 		return
 	}
 	go r.postWithRetry(body)
@@ -368,14 +369,14 @@ func (r *deviceCloseReporter) retryDelay(attempt int) time.Duration {
 func (r *deviceCloseReporter) postOnce(body []byte, attempt int) bool {
 	request, err := http.NewRequest(http.MethodPost, r.url, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("media edge device close report request build failed: %v", err)
+		slog.Warn("media edge device close report request build failed", "err", err)
 		return false
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(deviceCloseReportHeader, r.token)
 	response, err := r.client.Do(request)
 	if err != nil {
-		log.Printf("media edge device close report attempt %d/%d failed: %v", attempt, deviceCloseReportMaxAttempts, err)
+		slog.Warn("media edge device close report attempt failed", "attempt", attempt, "max_attempts", deviceCloseReportMaxAttempts, "err", err)
 		return false
 	}
 	defer func() {
@@ -385,7 +386,7 @@ func (r *deviceCloseReporter) postOnce(body []byte, attempt int) bool {
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return true
 	}
-	log.Printf("media edge device close report attempt %d/%d rejected status=%d", attempt, deviceCloseReportMaxAttempts, response.StatusCode)
+	slog.Warn("media edge device close report attempt rejected", "attempt", attempt, "max_attempts", deviceCloseReportMaxAttempts, "status", response.StatusCode)
 	return false
 }
 
@@ -543,7 +544,7 @@ func buildDeviceWSS(
 				return nil, err
 			}
 			onError := func(bridgeErr error) {
-				log.Printf("media edge device Voice Core stream failed session=%s err=%v", request.SessionID, bridgeErr)
+				slog.Warn("media edge device Voice Core stream failed", "session", request.SessionID, "err", bridgeErr)
 				deviceServer.HandleBridgeError(request, bridgeErr)
 			}
 			return mediaedge.NewVoiceCoreMediaRuntimeWithDownlinkSender(
@@ -594,7 +595,7 @@ func buildDeviceWSS(
 		}
 		sharedState.Install(deviceServer)
 	}
-	log.Printf("media edge device WSS enabled endpoint=%s", mediaedge.DeviceMediaEndpoint)
+	slog.Info("media edge device WSS enabled", "endpoint", mediaedge.DeviceMediaEndpoint)
 	return true, nil
 }
 
@@ -637,9 +638,9 @@ func main() {
 	if voiceCore != nil {
 		server.ReadyProbe = voiceCore.Ready
 		server.BridgeMetricsWriter = voiceCore.WriteMetrics
-		log.Printf("media edge Voice Core bridge enabled address=%s", strings.TrimSpace(os.Getenv("MEDIA_EDGE_VOICE_CORE_ADDR")))
+		slog.Info("media edge Voice Core bridge enabled", "address", strings.TrimSpace(os.Getenv("MEDIA_EDGE_VOICE_CORE_ADDR")))
 	} else {
-		log.Printf("media edge running provider-neutral HTTP reference; Voice Core bridge is not configured")
+		slog.Info("media edge running provider-neutral HTTP reference; Voice Core bridge is not configured")
 	}
 	deviceVerifier := mediaedge.DeviceJWTVerifier{
 		PublicKeys:        publicKeys,
@@ -695,16 +696,16 @@ func main() {
 		// its real close reason through this hook (device_close / superseded /
 		// network / edge_shutdown). No global empty payload is ever sent.
 		server.DeviceWSS.SessionCloseReportHook = sessionCloseHook
-		log.Printf("media edge device session close reporter configured url=%s", strings.TrimSpace(os.Getenv("MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL")))
+		slog.Info("media edge device session close reporter configured", "url", strings.TrimSpace(os.Getenv("MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL")))
 	}
 	addr := strings.TrimSpace(os.Getenv("MEDIA_EDGE_HTTP_ADDR"))
 	if addr == "" {
 		addr = ":8080"
 	}
 	internalAddr := strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERNAL_HTTP_ADDR"))
-	log.Printf("memoria media edge listening on %s", addr)
+	slog.Info("memoria media edge listening", "addr", addr)
 	if internalAddr != "" {
-		log.Printf("memoria media edge internal listener on %s", internalAddr)
+		slog.Info("memoria media edge internal listener", "addr", internalAddr)
 	}
 	publicHandler := server.Handler()
 	if internalAddr != "" {
@@ -733,7 +734,7 @@ func main() {
 		deviceMux := http.NewServeMux()
 		deviceMux.Handle(mediaedge.DeviceMediaEndpoint, deviceWSS)
 		deviceServer = &http.Server{Addr: deviceWSSAddr, Handler: deviceMux, ReadHeaderTimeout: 5 * time.Second}
-		log.Printf("media edge direct device WSS listener on %s endpoint=%s", deviceWSSAddr, mediaedge.DeviceMediaEndpoint)
+		slog.Info("media edge direct device WSS listener", "addr", deviceWSSAddr, "endpoint", mediaedge.DeviceMediaEndpoint)
 		go func() { errors <- deviceServer.ListenAndServe() }()
 	}
 	select {
