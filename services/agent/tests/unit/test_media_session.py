@@ -13112,6 +13112,87 @@ async def test_media_playback_followup_advances_with_continued_speech(
 
 
 @pytest.mark.asyncio
+async def test_media_playback_followup_empty_final_does_not_pin_the_endpoint(
+    device_media_session: Any,
+) -> None:
+    """2026-09-28 field: an empty post-playback final pinned the endpoint.
+
+    Pinned before a single word was recognized, the turn's absolute tail
+    bound ran out while the user was still asking about the weather.
+    """
+
+    window = await device_media_session("followup-empty-final-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.active_vad_start_sample = 195_000
+    await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id="followup-empty",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="",
+    )
+    assert context.turn_endpoint_sample is None
+    assert context.turn_endpoint_tail_deadline is None
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=226_000,
+        end_sample=236_000,
+        text="今天天气怎么样",
+    )
+    assert context.turn_endpoint_sample == 236_000
+    await _wait_until(lambda: window.provider.prepared == ["今天天气怎么样"], timeout=3.0)
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_advance_restarts_the_absolute_tail_bound(
+    device_media_session: Any,
+) -> None:
+    """Continued speech moves the absolute tail bound with the endpoint.
+
+    Kept from the first pin, the bound expired mid-sentence and the device
+    was put on standby (turn_prepare_timeout) with the question unanswered.
+    """
+
+    window = await device_media_session("followup-tail-bound-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.active_vad_start_sample = 195_000
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="今天",
+    )
+    first_deadline = context.turn_endpoint_tail_deadline
+    first_handle = context.turn_endpoint_timeout_handle
+    assert first_deadline is not None and first_handle is not None
+
+    await asyncio.sleep(0.05)
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-2",
+        start_sample=230_000,
+        end_sample=240_000,
+        text="天气怎么样",
+        revision=2,
+    )
+    assert context.turn_endpoint_sample == 240_000
+    assert context.turn_endpoint_tail_deadline is not None
+    assert context.turn_endpoint_tail_deadline > first_deadline
+    assert first_handle.cancelled()
+    assert context.turn_endpoint_timeout_handle is not None
+    assert not context.standby_requested
+
+
+@pytest.mark.asyncio
 async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
     device_media_session: Any,
 ) -> None:

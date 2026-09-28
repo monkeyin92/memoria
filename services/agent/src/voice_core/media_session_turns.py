@@ -274,8 +274,8 @@ class MediaTurnEndpointMixin:
         waiting for a VAD edge that may never arrive.
         """
 
-        if context.identity.client_type != "device":
-            return
+        if context.identity.client_type != "device" or not result.text.strip():
+            return  # An empty final is not speech and must not pin the endpoint.
         playback_end = context.last_playback_end_sample
         if playback_end is None or result.capture_start_sample < playback_end:
             # Echo guard: a final that begins before the playback boundary may
@@ -297,9 +297,7 @@ class MediaTurnEndpointMixin:
                 context.turn_endpoint_sample = endpoint
                 context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
                 context.playback_followup_endpoint_sample = endpoint
-                context.turn_endpoint_grace_deadline = (
-                    time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
-                )
+                context.restart_endpoint_bounds(_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S)
                 logger.info(
                     "media playback-followup endpoint advanced session=%s "
                     "boundary=%s endpoint=%s text_len=%s",

@@ -14,6 +14,7 @@
 #include <esp_timer.h>
 #include <miniz.h>
 
+#include <cctype>
 #include <cstring>
 
 #define TAG "MemoriaMascot"
@@ -61,6 +62,13 @@ bool RomInflate(const uint8_t* in, std::size_t in_size, uint8_t* out, std::size_
 lv_color_t Color(uint32_t rgb) { return lv_color_hex(rgb); }
 
 bool Equals(const char* a, const char* b) { return a != nullptr && b != nullptr && std::strcmp(a, b) == 0; }
+
+// Upstream's idle status bar writes the wall clock as "HH:MM" every 10 s.
+bool IsClockText(const char* text) {
+    return text != nullptr && std::strlen(text) == 5 && std::isdigit(static_cast<unsigned char>(text[0])) &&
+           std::isdigit(static_cast<unsigned char>(text[1])) && text[2] == ':' &&
+           std::isdigit(static_cast<unsigned char>(text[3])) && std::isdigit(static_cast<unsigned char>(text[4]));
+}
 
 void StylePill(lv_obj_t* obj, uint32_t ink) {
     lv_obj_set_style_bg_color(obj, lv_color_white(), 0);
@@ -449,9 +457,11 @@ void MemoriaMascotDisplay::SetStatus(const char* status) {
     if (status == nullptr) {
         return;
     }
-    // Conversation states are shown by the companion and the ring, not text.
+    // Conversation states are shown by the companion and the ring, not text;
+    // the idle clock is not shown at all.
     if (Equals(status, Lang::Strings::STANDBY) || Equals(status, Lang::Strings::LISTENING) ||
-        Equals(status, Lang::Strings::SPEAKING) || Equals(status, Lang::Strings::INITIALIZING)) {
+        Equals(status, Lang::Strings::SPEAKING) || Equals(status, Lang::Strings::INITIALIZING) ||
+        IsClockText(status)) {
         LvglDisplay::SetStatus("");
         return;
     }

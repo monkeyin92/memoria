@@ -327,3 +327,14 @@ def test_patch_adds_assets_hooks_and_overridable_qr() -> None:
     assert "+    virtual bool ShowQrCode(" in patch
     assert "+    virtual void ClearQrCode();" in patch
     assert "+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT" in patch
+
+
+def test_idle_clock_is_never_shown_on_the_screen() -> None:
+    # Upstream's idle status bar writes "HH:MM" every 10 s; the product shows
+    # no clock (user decision 2026-09-28), so SetStatus swallows it.
+    display = (BOARD_DIR / "memoria_mascot_display.cc").read_text(encoding="utf-8")
+    assert "bool IsClockText(const char* text)" in display
+    set_status = display[display.index("void MemoriaMascotDisplay::SetStatus") :]
+    set_status = set_status[: set_status.index("void MemoriaMascotDisplay::ShowNotification")]
+    clock_branch = set_status[: set_status.index('LvglDisplay::SetStatus("");')]
+    assert "IsClockText(status)" in clock_branch

@@ -170,3 +170,18 @@ class MediaVoiceSessionState:
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None
     closed: bool = False
+
+    def restart_endpoint_bounds(self, grace_s: float) -> None:
+        """Start a moved endpoint's grace and absolute tail bound over.
+
+        A playback follow-up extends its pinned endpoint while the user keeps
+        talking. Kept from the first pin, the absolute bound expired
+        mid-sentence and put the device on standby with the question
+        unanswered (turn_prepare_timeout, 2026-09-28).
+        """
+
+        self.turn_endpoint_grace_deadline = time.monotonic() + grace_s
+        if self.turn_endpoint_timeout_handle is not None:
+            self.turn_endpoint_timeout_handle.cancel()
+        self.turn_endpoint_timeout_handle = None
+        self.turn_endpoint_tail_deadline = None
