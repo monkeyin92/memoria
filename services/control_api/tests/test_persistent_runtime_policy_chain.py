@@ -323,7 +323,7 @@ async def _activate_link_and_grant_retention(
     )
     await store.grant_consent(
         ConsentRecord(
-            consent_id="consent-retention-real-runtime",
+            consent_id=str(uuid.uuid4()),
             link_id=link.link_id,
             consent_kind="memory_retention",
             policy_version="minor-retention-v1",

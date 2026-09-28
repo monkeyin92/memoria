@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -162,7 +163,7 @@ async def test_revoked_consent_blocks_every_private_read_exit(
         minor = await _register_minor(client, app, username="scope-minor")
         headers = {"Authorization": f"Bearer {minor['access_token']}"}
         consent = PersonConsentRecord(
-            consent_id="scope-consent", subject_person_id=minor["user_id"],
+            consent_id=str(uuid.uuid4()), subject_person_id=minor["user_id"],
             grantor_person_id="guardian", consent_kind="memory_retention",
             policy_version="test-v1", granted_at=datetime.now(UTC), evidence_event_id="grant",
         )
@@ -697,7 +698,7 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
 
         consent = await app.state.guardian_store.grant_person_consent(
             PersonConsentRecord(
-                consent_id="minor-retention",
+                consent_id=str(uuid.uuid4()),
                 subject_person_id="person-minor-child",
                 grantor_person_id="guardian",
                 consent_kind="memory_retention",
