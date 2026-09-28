@@ -2,7 +2,8 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-28 14:54–15:00（CST）整栈发布 `20260928-reopen-window-v1`（tag → main `173445d`，含 PR #83：无文字的背景声不能再无限推迟已识别的问句；同 PR 内 release-ops PREV），5 个角色经仓库版 `release-ops.sh` 全链一次 PASS；media-edge 未重建，仍为 `20260926-minor-safety-v1`。
+- **最近生产收据**：2026-09-28 17:26（CST）media-edge 单独发布 `20260928-writer-teardown-v1`（tag → main `5e358ec`，PR #87），其余 5 个角色未动。
+- **最近整栈收据**：2026-09-28 14:54–15:00（CST）整栈发布 `20260928-reopen-window-v1`（tag → main `173445d`，含 PR #83：无文字的背景声不能再无限推迟已识别的问句；同 PR 内 release-ops PREV），5 个角色经仓库版 `release-ops.sh` 全链一次 PASS。
 - **上一次整栈收据**：2026-09-28 13:50–14:03（CST）整栈发布 `20260928-followup-endpoint-v1`（`a2ea41e`），为本次回滚目标。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
@@ -10,20 +11,29 @@
 | Control API | `memoria-control-api:20260928-reopen-window-v1` | `sha256:13c5bd33e3e0ec1cb7d3313bb1430544854cb0cab0517e3755d8483eec7d69b1`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 | `2026-09-28T06:58:14Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260928-reopen-window-v1/.cutover/` | `memoria-control-api:rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
 | Agent / Bridge | `memoria-agent:20260928-reopen-window-v1` | `sha256:296849ce335082b179f1ddc2a16e5e28782bcd76e3c54a227ede95808e89c47d`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 each | `2026-09-28T06:58:29Z` | 同上 | `memoria-agent:rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
 | Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-reopen-window-v1` | `sha256:5009cf92…` / `sha256:7263e350…` / `sha256:c1d70e5c…`（服务器 image id） | `173445def1981b4d714c7ef44614af8b6cd07549` | `20260928-reopen-window-v1` / `173445d` | healthy | 0 each | `2026-09-28T06:58:07Z`–`06:58:54Z` | 同上 | 各自 `rollback-20260928-reopen-window-v1-pre`（= `20260928-followup-endpoint-v1`） |
-| Media Edge | `memoria-media-edge:20260926-minor-safety-v1` | `sha256:abee9b82f5e349445eeffb6b56d4bc5308edc9e9e26a1acd3a7175183698c561`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `not set / not applicable` | healthy | 0 | `2026-09-26T11:40:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-edge-flush-v1`（override `component-releases/20260926-minor-safety-v1/media-edge-rollback.override.yml`） |
+| Media Edge | `memoria-media-edge:20260928-writer-teardown-v1` | `sha256:beacac33897b4da13ac41bdb473746662da10be9e56043ad7ff04b68fb401bc2`（服务器 image id） | `5e358ec470a2fd9211f94eabadc1a8772c7a75af` | `not set / not applicable` | healthy | 0 | `2026-09-28T09:26:11Z` | `/opt/memoria/component-releases/20260928-writer-teardown-v1/`（`pre-state.txt`、`pre-all.txt`、`post-all.txt`） | `memoria-media-edge:20260926-minor-safety-v1`（override `component-releases/20260928-writer-teardown-v1/media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
 - **发布身份**：`20260928-reopen-window-v1` / `173445d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-reopen-window-v1`。上一栈 `20260928-followup-endpoint-v1` / `a2ea41e` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
-- **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：用户在公众平台设体验版 `0.2.20260928.1`、伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
+- **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
-## 2026-09-28 小程序 tab 页导航修复（未上传体验版）
+## 2026-09-28 小程序 tab 页导航修复（PR #86，体验版 `0.2.20260928.2`）
 
 - **缺陷**：tabBar 页只能用 `wx.switchTab` 打开，另外三处用了其他方式，都会静默失败。第一处，登录页的 tab 路由表漏了伙伴页，从伙伴页触发登录后改用 `redirectTo` 回跳而失败。第二处，「我的」→「人格与声音」用 `navigateTo` 打开伙伴 tab。第三处，设备页敏感入口「私人回顾」（`/pages/memory/index`）经 `openEntry` 统一 `navigateTo`。
 - **修复**：新增 `utils/tab-routes.js` 作为 tab 路由的唯一来源，登录回跳与设备页入口遇到 tab 页改用 `switchTab`（去掉 query），「人格与声音」改为 `switchTab`。
-- **防回归**：`tests/tab-navigation.test.js` 校验路由表与 `app.json` 的 `tabBar.list` 一致，静态扫描全部 `navigateTo`/`redirectTo` 字面目标（不得是 tab 页，且须在 `pages` 中声明）和指向 tab 页的 `<navigator>`（须 `open-type="switchTab"`），并覆盖登录回跳每个 tab 页；profile、device 页各加一条行为用例。四个新用例在修复前的源码上均失败。`npm test` 316/316，全量 `node --check` 通过。未上传体验版，未真机验证，待办见 TODOLIST。
+- **防回归**：`tests/tab-navigation.test.js` 校验路由表与 `app.json` 的 `tabBar.list` 一致，静态扫描全部 `navigateTo`/`redirectTo` 字面目标（不得是 tab 页，且须在 `pages` 中声明）和指向 tab 页的 `<navigator>`（须 `open-type="switchTab"`），并覆盖登录回跳每个 tab 页；profile、device 页各加一条行为用例。四个新用例在修复前的源码上均失败。`npm test` 316/316，全量 `node --check` 通过。PR #86 于 2026-09-28 17:26（CST）合并（`ac05da0`，CI 全绿）。
+- **体验版**：从 main `ac05da0` 用开发者工具 CLI 上传 `0.2.20260928.2`（包 1.58 MB），替代 `0.2.20260928.1`（其内容全部包含在内）。用户已在公众平台设为体验版。
+- **真机验收（2026-09-28，用户确认）**：伙伴页触发登录后回到伙伴 tab、「我的」→「人格与声音」进入伙伴 tab、设备页「私人回顾」入口进入回顾 tab，三处均正常。
+
+## 2026-09-28 media-edge 发布 20260928-writer-teardown-v1（写失败即关连接）
+
+- **修复（PR #87，读代码发现，未见线上事故）**：设备 WSS 写循环在 ping 或消息写失败时只退出写协程，不关连接。gorilla 的写错误是粘滞的且不关底层连接，读协程继续把上行送进 Voice Core、控制通道继续收控制，设备却什么都收不到；读超时只由 pong 刷新，而 ping 停了 pong 也停，最长拖到 90 s。现在写循环退出即走现有 `close()`：上报 reason 仍为 `network`（Control 的 close report 是严格白名单，新值会被 422 拒收，且语义本就是可重连的传输中断），Edge 本地原因 `downlink_write_failed` 写进关闭日志，并计入新指标 `device_downlink_write_failed_total`；已由主动关闭设定的原因不会被覆盖。同 PR 两处相邻修复：`VoiceCoreSession.Close/CloseSend` 在 `sendMu` 下执行（grpc-go 禁止与 `SendMsg` 并发），`Close` 先 cancel 以解除阻塞中的发送；`connsBySession` 改为连接被接受后才写入，新 socket 握手失败不再删掉仍在线老连接的 Core 事件路由。三条回归测试不带修复时失败；`go test -race` 通过，新测试 `-count=50` 稳定。
+- **发布**：干净 detached worktree（`5e358ec`）按 compose 定义构建 linux/amd64 镜像（revision/version 标签核对无误，二进制含新代码），`docker save` 后 scp 到 `/opt/memoria/incoming/20260928-writer-teardown-v1-media-edge/`，服务器侧 sha256 `dfafe5da…` 校验通过后导入（上传目录已于当日经用户同意删除，镜像仍在本机）。同日经用户同意清理 `/opt/memoria/incoming/` 下 8 个更早的整栈上传目录（`20260925-full-stack-v1` 至 `20260928-session-trust-v1`，约 23 GB），只保留 `20260928-reopen-window-v1`（下次 seeded 上传基座）与 `20260928-followup-endpoint-v1`（回滚目标）；根分区 69% → 49%。切换链为当前栈发布树 `releases/20260928-reopen-window-v1` 的 compose + `component-releases/20260928-writer-teardown-v1/media-edge-component.override.yml`；新旧渲染配置除 build context/参数与镜像外一致（对比用的渲染文件含 env 展开值，比对后立即删除）。17:26:11 切换，healthy、restarts=0，其余 memoria 容器镜像与启动时间未变；外部 readiness 200，未带凭证的设备入口 401。
+- **未验证**：切换前 30 分钟内无设备会话，设备重连与新版本下的真机对话需下次唤醒验证；内部 8081 为 TLS，本次未读取运行中进程的新指标值。
+- **回滚**（未实跑）：`cd /opt/memoria/releases/20260928-reopen-window-v1 && docker compose -f docker-compose.production.yml -f /opt/memoria/component-releases/20260928-writer-teardown-v1/media-edge-rollback.override.yml --profile media-runtime up -d --no-deps --no-build media-edge`（回到 `20260926-minor-safety-v1`，镜像仍在本机）。
 
 ## 2026-09-28 整栈发布 20260928-reopen-window-v1（背景声不再拖住已识别的问句）
 

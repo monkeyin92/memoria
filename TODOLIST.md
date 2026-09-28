@@ -1,11 +1,11 @@
 # Memoria 优先级执行清单
 
-更新于 2026-09-28｜线上为整栈发布 `20260928-reopen-window-v1`（main `173445d`，当日第 3 次整栈发布；media-edge 仍为 `20260926-minor-safety-v1`），上一栈 `20260928-followup-endpoint-v1` 为回滚目标。当日上线：配网后激活卡「连接中」修复（固件 build 9/10）、伙伴一致与设备页/伙伴页整改（小程序 `0.2.20260928.1`）、会话设备信任跟随 onboarding（#77）、追问不再中途待命（#80）、背景声不能再拖住已识别的问句（#83），并把 aigcnice.com 证书换成续期证书（至 2026-12-17）。当日遗留见下方「2026-09-28 收尾待办」。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
+更新于 2026-09-28｜线上为整栈发布 `20260928-reopen-window-v1`（main `173445d`，当日第 3 次整栈发布；media-edge 随后单独发布为 `20260928-writer-teardown-v1`，main `5e358ec`），上一栈 `20260928-followup-endpoint-v1` 为回滚目标。当日上线：配网后激活卡「连接中」修复（固件 build 9/10）、伙伴一致与设备页/伙伴页整改（小程序 `0.2.20260928.1`）、会话设备信任跟随 onboarding（#77）、追问不再中途待命（#80）、背景声不能再拖住已识别的问句（#83），并把 aigcnice.com 证书换成续期证书（至 2026-12-17）。当日遗留见下方「2026-09-28 收尾待办」。本文件只保留未完成事项、执行边界和验收条件，完成收据归 `HANDOFF.md`。
 
 ## 当前边界（不得越界宣称）
 
 ```yaml
-enabled_release: 20260928-reopen-window-v1  # main 173445d；agent/bridge、control-api、两个网关、speaker-model 为该 tag，media-edge 仍为 20260926-minor-safety-v1；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260928-reopen-window-v1-pre（= 20260928-followup-endpoint-v1），media-edge 回 20260926-edge-flush-v1
+enabled_release: 20260928-reopen-window-v1  # main 173445d；agent/bridge、control-api、两个网关、speaker-model 为该 tag，media-edge 为 20260928-writer-teardown-v1（main 5e358ec）；LLM qwen3.7-flash（联网查询 qwen-plus），ASR fun-asr-realtime，TTS Doubao；回滚 *:rollback-20260928-reopen-window-v1-pre（= 20260928-followup-endpoint-v1），media-edge 回 20260926-minor-safety-v1
 control_api_release_lane: 整栈走仓库版 `scripts/release_ops.sh`（安装在服务器 `/root/memoria-release/release-ops.sh`，2026-09-28 三次整栈全链一次 PASS）；PREV 常量已指向 `20260928-followup-endpoint-v1`，下次发布前须改为 `20260928-reopen-window-v1`（小改，随发布 PR 一起带上）；control-api 组件链支持已移除，单组件发布前须先补回
 memory_candidate_visibility: code=main 0059368 / enabled=true（随整栈上线）/ verified=SQLite/HTTP/主体隔离/评测适配器回归；四份 2026-09-23 评测收据为上线前 parent_baseline（固定集 recall@5/10=0.857、未见集 0.4、双泄漏 0），真实 PG candidate 行为与线上带鉴权读口未单独取证
 direct_real_device_verified: false
@@ -32,10 +32,9 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 
 **等用户在手机/机器人上做**
 
-- [ ] 公众平台把体验版 `0.2.20260928.1` 设为体验版（开发者工具 CLI 上传；上传密钥的 IP 白名单挡住本机 IPv6 出口，用户决定一律用 CLI）。
-- [ ] 下一版体验版带上 tab 导航修复（`utils/tab-routes.js`，尚未上传）后真机点三处：在伙伴页触发登录后应回到伙伴 tab；「我的」→「人格与声音」应进入伙伴 tab；Runtime Profile 开放私人回顾时，设备页「私人回顾」入口应进入回顾 tab。
 - [ ] 伙伴页选一次「绵绵」：账号伙伴仍是 09-25 的桃喜，绑定所选只写进了设备人格；#76 修复只对之后的绑定生效，存量数据未代改。
 - [ ] 有背景声时（电视、音乐、旁人说话）问一个非天气问题（天气走实时查询快速通道，不经过这段逻辑），验证 #83：日志应出现 `media reopened turn committing without new text`，说完到开口约 3 s 内。09-28 15:18 的测试环境安静，窗口未触发。
+- [ ] 唤醒一次机器人并完整对话一轮，确认 media-edge `20260928-writer-teardown-v1` 下设备能连上、能回答（17:26 切换前后都没有设备会话，重连尚无真机证据）。
 - [ ] 确认公众平台「扫普通链接二维码打开小程序」规则（前缀 `https://aigcnice.com/memoria-bind/`）已点校验并保存（09-27 起的待办，文档里没有确认记录）。
 - [ ] 需要时重新配网一次，真机验证固件 build 9 的「重试激活成功→重启进已绑定路径」（开发板当前 build 10，这条路径尚未真机触发）。
 
