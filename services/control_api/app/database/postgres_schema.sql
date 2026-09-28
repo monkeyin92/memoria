@@ -551,3 +551,25 @@ BEGIN
     GRANT USAGE, SELECT, UPDATE ON SEQUENCE messages_id_seq TO memoria_control;
 END
 $control_rls$;
+
+-- Schema version ledger. This file is the idempotent baseline (version 1) and
+-- is re-applied every release; any change it cannot express idempotently goes
+-- in database/migrations/NNNN_<name>.sql, applied once, in order, each in one
+-- transaction that also records its row here. The runtime role only reads the
+-- ledger to refuse a database that is behind the code.
+CREATE TABLE IF NOT EXISTS control_schema_migrations (
+    version INTEGER PRIMARY KEY CHECK (version >= 1),
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+ALTER TABLE control_schema_migrations OWNER TO memoria_control_owner;
+ALTER TABLE control_schema_migrations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE control_schema_migrations FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON control_schema_migrations FROM PUBLIC;
+GRANT SELECT ON control_schema_migrations TO memoria_control;
+DROP POLICY IF EXISTS control_role_reads_versions ON control_schema_migrations;
+CREATE POLICY control_role_reads_versions ON control_schema_migrations
+    FOR SELECT TO memoria_control USING (true);
+INSERT INTO control_schema_migrations (version, name, applied_at)
+VALUES (1, 'baseline', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"+00:00"'))
+ON CONFLICT (version) DO NOTHING;

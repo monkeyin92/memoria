@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING, Any
 from psycopg_pool import ConnectionPool
 
 from services.control_api.app.database.backend import open_pool
+from services.control_api.app.database.migrations import (
+    applied_version,
+    apply_pending,
+    expected_version,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -460,6 +465,7 @@ def initialize_postgres(dsn: str, *, apply_schema: bool) -> ConnectionPool[Any]:
                 # No parameters: psycopg sends the script as-is.
                 connection.execute(POSTGRES_SCHEMA_PATH.read_text(encoding="utf-8"))
                 connection.commit()
+                apply_pending(connection)
             rows = connection.execute(
                 """
                 SELECT c.relname, c.relforcerowsecurity
@@ -470,7 +476,15 @@ def initialize_postgres(dsn: str, *, apply_schema: bool) -> ConnectionPool[Any]:
                 """,
                 (list(POSTGRES_TABLES),),
             ).fetchall()
+            version = applied_version(connection)
             connection.rollback()
+        # Behind the code fails closed; ahead is allowed so a code rollback
+        # still starts on a migrated database.
+        if version < expected_version():
+            raise RuntimeError(
+                f"PostgreSQL control store schema is at version {version}, "
+                f"code needs {expected_version()}: run the release schema step"
+            )
         found = {str(name): bool(forced) for name, forced in rows}
         missing = sorted(set(POSTGRES_TABLES) - set(found))
         unforced = sorted(name for name, forced in found.items() if not forced)
