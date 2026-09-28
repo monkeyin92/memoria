@@ -56,13 +56,20 @@ function indexOfOption(options, value, key = "value") {
   return index >= 0 ? index : 0;
 }
 
+// 目录里的 note 是写给工程的（板卡、模型、音节建议），给用户看的说明按字数给。
+function wakeWordNoteFor(item) {
+  const syllables = Number(item?.syllables);
+  if (!Number.isInteger(syllables) || syllables <= 0) return "";
+  return syllables >= 3 ? `${syllables} 个字，不容易被误唤醒` : `${syllables} 个字，叫起来顺口`;
+}
+
 function selectableWakeWordOptions(items) {
   return (items || [])
     .filter((item) => item && item.device_ready === true)
     .map((item) => ({
       id: item.id,
       label: item.display,
-      note: item.note || "",
+      note: wakeWordNoteFor(item),
     }));
 }
 
@@ -173,9 +180,9 @@ function currentUserLabel(profile, candidates) {
 // 年龄申报只有三档，且文案必须是「申报」而不是「已核验」。
 // adult / verified 不在选项里，服务端也不接受。
 const AGE_DECLARATION_OPTIONS = Object.freeze([
-  { value: "unknown", label: "年龄未知" },
-  { value: "under_14", label: "申报 14 岁以下" },
-  { value: "14_17", label: "申报 14 至 17 岁" },
+  { value: "unknown", label: "年龄未知", short: "未知" },
+  { value: "under_14", label: "申报 14 岁以下", short: "14 岁以下" },
+  { value: "14_17", label: "申报 14 至 17 岁", short: "14–17 岁" },
 ]);
 
 function ageDeclarationRows(binding) {
@@ -265,7 +272,6 @@ Page({
     sensitiveEntries: [],
     currentUserLabel: "",
     subjectAliasLabel: "",
-    subjectAliasDraft: "",
     personaRows: [],
     personaOptions: [],
     accountCompanionId: "",
@@ -304,7 +310,7 @@ Page({
     wakeModeOptions: WAKE_MODE_OPTIONS,
     wakeModeIndex: 0,
     wakeModeLabel: "未读取",
-    wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "当前板卡默认唤醒词。" }],
+    wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "2 个字，叫起来顺口" }],
     wakeWordIndex: 0,
     wakeWordLabel: "未读取",
     wakeWordNote: "",
@@ -315,7 +321,8 @@ Page({
     bargeInChecked: {},
     allowedAudioModesLabel: "",
     wakeSheetVisible: false,
-    wakeSheetIndex: 0,
+    wakeSheetSelection: "",
+    sheetOpen: false,
     diagExpanded: false,
     unbindSheetVisible: false,
     unbindPurgeChoice: "",
@@ -332,7 +339,7 @@ Page({
 
   async onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 3 });
+      this.getTabBar().setData({ selected: 3, hidden: Boolean(this.data.sheetOpen) });
     }
     const authenticated = api.hasAuthenticatedSession();
     this.setData({ authenticated });
@@ -375,8 +382,8 @@ Page({
       currentUserLabel: "",
       currentUserLabelConfirmed: false,
       subjectAliasLabel: "",
-      subjectAliasDraft: "",
       personaRows: [],
+      personaSheetVisible: false,
       ageRows: [],
     subjectPersonas: [],
     elderSafetyVisible: false,
@@ -405,7 +412,7 @@ Page({
       audioModeIndex: 0,
       wakeModeIndex: 0,
       wakeModeLabel: "未读取",
-      wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "当前板卡默认唤醒词。" }],
+      wakeWordOptions: [{ id: "mo_li", label: "茉莉", note: "2 个字，叫起来顺口" }],
       wakeWordIndex: 0,
       wakeWordLabel: "未读取",
       wakeWordNote: "",
@@ -419,7 +426,9 @@ Page({
       unbindPurgeChoice: "",
       unbinding: false,
       unbindError: "",
+      wakeSheetVisible: false,
     });
+    this._syncSheetOpen();
   },
 
   /* 绑定人查看孩子/老人的表达风格：不阻塞设备页主体加载，失败只影响本区块。 */
@@ -566,7 +575,6 @@ Page({
         needsBindingChoice: false,
         hasPendingOnboarding,
         subjectAliasLabel: "",
-        subjectAliasDraft: "",
       });
       return;
     }
@@ -701,7 +709,6 @@ Page({
         elderSafetyVisible: false,
         elderAlerts: [],
         subjectAliasLabel,
-        subjectAliasDraft: subjectAliasLabel,
         personaRows: personaRows(
           binding,
           personaAssignmentsResult.status === "fulfilled"
@@ -818,8 +825,9 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
+  // 伙伴页是 tabBar 页，navigateTo 打不开它。
   openCompanion() {
-    wx.navigateTo({ url: "/pages/companion/index" });
+    wx.switchTab({ url: "/pages/companion/index" });
   },
 
   openGuardian() {
@@ -829,7 +837,7 @@ Page({
   showConnectionHelp() {
     wx.showModal({
       title: "检查连接",
-      content: "请确认设备已通电，并连上家庭 Wi-Fi。已同步的回顾仍可查看，绑定关系不受影响。",
+      content: "请确认设备已通电，并连上 Wi‑Fi。已同步的回顾仍可查看，绑定关系不受影响。换了 Wi‑Fi 可以用「重新配网」。",
       showCancel: false,
       confirmText: "知道了",
     });
@@ -868,11 +876,13 @@ Page({
   openUnbindSheet() {
     if (!this.data.binding?.device_id) return;
     this.setData({ unbindSheetVisible: true, unbindPurgeChoice: "", unbindError: "" });
+    this._syncSheetOpen();
   },
 
   closeUnbindSheet() {
     if (this.data.unbinding) return;
     this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "", unbindError: "" });
+    this._syncSheetOpen();
   },
 
   pickUnbindChoice(event) {
@@ -910,6 +920,7 @@ Page({
       const result = await api.unbindDevice(binding.device_id, { purgeSubjectData });
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ unbindSheetVisible: false, unbindPurgeChoice: "" });
+      this._syncSheetOpen();
       // 删除分步执行、可续跑；未跑完时服务端返回 pending，后台会继续删完。
       const purgePending = purgeSubjectData && result?.subject_deletion === "pending";
       wx.showToast({
@@ -1080,11 +1091,13 @@ Page({
       personaSheetSelection: row.persona_id,
       personaAssignmentError: "",
     });
+    this._syncSheetOpen();
   },
 
   closePersonaSheet() {
     if (this.data.personaSaving) return;
     this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+    this._syncSheetOpen();
   },
 
   pickPersonaOption(event) {
@@ -1106,6 +1119,7 @@ Page({
       );
       await this.reloadPersonaAssignments(binding.device_id);
       this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+      this._syncSheetOpen();
       wx.showToast({ title: "已分配人格", icon: "success" });
     } catch (error) {
       this.setData({
@@ -1126,6 +1140,7 @@ Page({
       await api.clearPersonaAssignment(binding.device_id, personId);
       await this.reloadPersonaAssignments(binding.device_id);
       this.setData({ personaSheetVisible: false, personaSheetSubjectId: "" });
+      this._syncSheetOpen();
       wx.showToast({ title: "已恢复设备默认人格", icon: "success" });
     } catch (error) {
       this.setData({
@@ -1155,23 +1170,32 @@ Page({
     }
   },
 
-  onSubjectAliasInput(event) {
-    this.setData({ subjectAliasDraft: event.detail.value, error: "" });
+  editSubjectAlias() {
+    if (!this.data.binding?.binding_id) return;
+    wx.showModal({
+      title: "使用者备注",
+      editable: true,
+      placeholderText: "例如：亲爱的儿子、老爸",
+      content: this.data.subjectAliasLabel || "",
+      confirmText: "保存",
+      success: (result) => {
+        if (result.confirm) this.saveSubjectAlias(result.content);
+      },
+    });
   },
-  saveSubjectAlias() {
+  saveSubjectAlias(label) {
     const binding = this.data.binding;
     if (!binding?.binding_id || !binding?.device_id) return;
     const saved = saveSubjectLabel({
       bindingId: binding.binding_id,
       deviceId: binding.device_id,
-      label: this.data.subjectAliasDraft,
+      label: typeof label === "string" ? label : "",
     });
     if (!saved) {
-      this.setData({ error: "请填写使用者备注，例如：老爸。" });
+      wx.showToast({ title: "请填写使用者备注，例如：老爸", icon: "none" });
       return;
     }
-    const subjectAliasLabel = readSubjectLabel(binding);
-    this.setData({ subjectAliasLabel, subjectAliasDraft: subjectAliasLabel, error: "" });
+    this.setData({ subjectAliasLabel: readSubjectLabel(binding), error: "" });
     wx.showToast({ title: "已保存备注", icon: "success" });
   },
 
@@ -1223,8 +1247,8 @@ Page({
     const display = (this.data.customWakeWordDisplay || "").trim();
     const pinyin = (this.data.customWakeWordPinyin || "").trim();
     if (!display || !pinyin) {
-      wx.showToast({ title: "请填写显示名和拼音", icon: "none" });
-      return;
+      wx.showToast({ title: "请填写唤醒词和拼音", icon: "none" });
+      return false;
     }
     try {
       const validated = await api.validateWakeWord({
@@ -1232,7 +1256,7 @@ Page({
         wake_word_display: display,
         wake_word_pinyin: pinyin,
       });
-      await this.saveDeviceSetting(
+      const saved = await this.saveDeviceSetting(
         {
           wake_word_id: "custom",
           wake_word_display: validated.wake_word_display,
@@ -1241,6 +1265,7 @@ Page({
         { silentWakeWordNotice: Boolean((validated.warnings || []).length) },
       );
       this.setData({ customWakeWordWarnings: validated.warnings || [] });
+      if (!saved) return false;
       if ((validated.warnings || []).length) {
         wx.showModal({
           title: "自定义唤醒词已保存",
@@ -1248,8 +1273,10 @@ Page({
           showCancel: false,
         });
       }
+      return true;
     } catch (error) {
       wx.showToast({ title: error?.message || "唤醒词无效", icon: "none" });
+      return false;
     }
   },
 
@@ -1264,13 +1291,13 @@ Page({
   async saveDeviceSetting(changes, options = {}) {
     const binding = this.data.binding;
     const current = this.data.settings;
-    if (!binding || !current || this.data.settingsSaving) return;
+    if (!binding || !current || this.data.settingsSaving) return false;
     if (
       changes.allowed_barge_in !== undefined &&
       (!Array.isArray(changes.allowed_barge_in) || changes.allowed_barge_in.length === 0)
     ) {
       wx.showToast({ title: "至少保留一种打断方式", icon: "none" });
-      return;
+      return false;
     }
     const previous = { ...current };
     this.setData({ settingsSaving: true, settingsError: "", error: "" });
@@ -1317,34 +1344,78 @@ Page({
           confirmText: "知道了",
         });
       }
+      return true;
     } catch (error) {
       // 服务端没有确认就不保留本地假状态；重新展示最后一个权威版本。
       this.setData({
         settings: previous,
         settingsError: error?.message || "设备设置未能保存，请刷新后重试。",
       });
+      return false;
     } finally {
       this.setData({ settingsSaving: false });
     }
   },
 
-  /* 纯 UI 状态：唤醒词底部抽屉与诊断折叠面板，不触碰设置业务逻辑。 */
+  /* 唤醒词底部抽屉：目录唤醒词与自定义唤醒词二选一，保存成功才收起。 */
   openWakeSheet() {
-    this.setData({ wakeSheetVisible: true, wakeSheetIndex: this.data.wakeWordIndex || 0 });
+    const settings = this.data.settings;
+    if (!settings) {
+      wx.showToast({ title: "设备设置暂时无法读取，请下拉刷新", icon: "none" });
+      return;
+    }
+    const selection =
+      settings.wake_word_id === "custom"
+        ? "custom"
+        : this.data.wakeWordOptions[this.data.wakeWordIndex]?.id || "";
+    this.setData({
+      wakeSheetVisible: true,
+      wakeSheetSelection: selection,
+      settingsError: "",
+      customWakeWordWarnings: [],
+    });
+    this._syncSheetOpen();
   },
   closeWakeSheet() {
+    if (this.data.settingsSaving) return;
     this.setData({ wakeSheetVisible: false });
+    this._syncSheetOpen();
   },
   pickWakeSheetOption(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    if (!Number.isInteger(index)) return;
-    this.setData({ wakeSheetIndex: index });
+    const id = event.currentTarget.dataset.id;
+    if (typeof id !== "string" || !id) return;
+    this.setData({ wakeSheetSelection: id, settingsError: "" });
   },
   async confirmWakeSheet() {
-    const index = this.data.wakeSheetIndex || 0;
-    this.setData({ wakeSheetVisible: false });
-    await this.selectWakeWord({ detail: { value: String(index) } });
+    const selection = this.data.wakeSheetSelection;
+    let saved = false;
+    if (selection === "custom") {
+      saved = await this.saveCustomWakeWord();
+    } else {
+      const index = this.data.wakeWordOptions.findIndex((option) => option.id === selection);
+      if (index < 0) return;
+      if (selection === this.data.settings?.wake_word_id) {
+        saved = true;
+      } else {
+        saved = await this.saveDeviceSetting({ wake_word_id: selection });
+      }
+    }
+    if (saved) {
+      this.setData({ wakeSheetVisible: false });
+      this._syncSheetOpen();
+    }
   },
+  // 有底部抽屉时锁住页面滚动，并把 tabBar 藏起来：它在页面之上，会挡住抽屉底部的按钮。
+  _syncSheetOpen() {
+    const sheetOpen = Boolean(
+      this.data.wakeSheetVisible || this.data.unbindSheetVisible || this.data.personaSheetVisible,
+    );
+    if (sheetOpen !== this.data.sheetOpen) this.setData({ sheetOpen });
+    if (typeof this.getTabBar === "function" && this.getTabBar()) {
+      this.getTabBar().setData({ hidden: sheetOpen });
+    }
+  },
+  noop() {},
   toggleDiag() {
     this.setData({ diagExpanded: !this.data.diagExpanded });
   },

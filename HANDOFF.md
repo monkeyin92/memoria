@@ -19,6 +19,16 @@
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-28 配网后卡「连接中」、伙伴显示不一致与设备页整改（分支 `fix/onboarding-activation-and-device-page`，未合并）
+
+- **卡「连接中」根因（固件）**：未绑定开机时 `ActivationTask` 里 `protocol_->Start()` 返回 false 后直接退出，不发 `MAIN_EVENT_ACTIVATION_DONE`；手机完成绑定后 `RunActivationRetry` 激活成功，只调 `on_connected_`（仅 DismissAlert），设备永远停在 `activating`：屏幕「连接中」、音频引擎不启动、只在 idle 跑的 display-profile 轮询不跑（线上 10:39:04 激活确认后再无设备请求）。重启后走已绑定路径即正常。修复：重试激活成功后停 BLE、`esp_restart()` 进已绑定启动路径（与「被服务器释放→重启」同一模式）。**固件 build 9**（app sha256 `28073ebe…`）已 USB 写入开发板 `ota_0`（写前回读 `firmware/esp32/artifacts/backups/pre-build9-20260928/ota0-before.bin`，sha256 `b48a915e…`），已验证已绑定启动 → idle → 显示绵绵；**「配网→重试激活→重启」这条修复路径未真机触发**（需重新配网）。未签名发布 OTA。
+- **伙伴不一致根因（小程序）**：绑定时的 `persona_selection` 只写进设备绑定默认人格（线上 `e8a27e45` v3 = `mianmian:v1`，设备屏正确），账号资料 `companion_id` 仍是 09-25 选的桃喜，而首页/设备页/伙伴页读账号资料。修复：绑定成功后把所选伙伴写成账号伙伴（`PUT /v1/memory/profile`，失败不影响绑定）。**现有账号数据未改**：用户需在伙伴页选一次绵绵。
+- **设备页**：「角色与声音」用 `navigateTo` 打开 tabBar 页（静默失败）→ `switchTab`；自定义 tabBar 在页面之上，挡住所有底部抽屉的确认按钮 → tabBar 增加 `hidden`，抽屉打开时隐藏并锁页面滚动，选项区 `scroll-view`；唤醒词抽屉内置自定义唤醒词，删掉底部重复卡片，目录工程说明改为按字数的通俗说明；网络只显示「已连接/未连接」（不再写「家庭网络」）；年龄申报改为带间距的三格选项；备注改为点击弹窗编辑；去掉与顶部卡重复的双格统计与模式胶囊；按「设备 / 使用者 / 设备管理」分组，解除绑定置底。按使用人分配人格保留（自建人格唯一入口）。「在线」仍由激活就绪推导，不是实时心跳。
+- **伙伴页**：横向拼接卡片改为堆叠卡组（五位伙伴循环，前卡可拖动切换、点后面的卡直达，卡上试听包内音频），导航标题改为「伙伴」。实时媒体门禁放行伙伴页试听（与绑定页同一约束：只播 `assets/voices/`）。
+- **验证**：`npm test` 310/310；固件 `test_memoria_protocol_source.py` 通过；微信开发者工具自动化（mock 登录与接口）截图确认伙伴卡组、设备页各分组、唤醒词与人格抽屉按钮可见、点「角色与声音」进入伙伴 tab。未在真机上看。体验版 `0.2.20260928.1`（包 1.58 MB）已用微信开发者工具 CLI 上传（miniprogram-ci 本次因出口 IPv6 不在上传 IP 白名单被拒 `-10008`），**需在公众平台设为体验版**。
+- **新发现的线上阻塞（数据已修，代码未修）**：会话运行时的设备信任表 `device_fleet_devices`/`device_fleet_certificates` 仍指向 08-28 回填的旧绑定 `d1c67b2e` v2，重新配网只写 onboarding 存储与 Identity，没有任何代码更新这两张表 → `action_device_lock_trust` 返回 `device_binding_mismatch`（revoked）。设备页 `runtime-profile` 一直 403；按代码，机器人 `POST …/media-sessions` 走同一 `PostgresSessionRuntimeService.start`，也会被拒（重新绑定后尚无机器人对话请求，未实测）。
+- **数据修复（2026-09-28 11:45 CST，用户批准）**：生产库单事务把 `device_fleet_devices`（`state_version` 2→3、`binding_version_floor` 3）与唯一 active 证书行改指向 `e8a27e45` v3，行数守卫各 =1。之后 `action_device_lock_trust` 返回 `untrusted / device_attestation_unavailable`（允许启动会话，与重新绑定前同级）。机器人对话与设备页 runtime-profile 尚未在修复后实测。下次重新配网会再次失配，代码根治另行处理（projection 或让信任函数读 onboarding 存储）。
+
 ## 2026-09-28 整栈发布 20260928-child-binding-v2（孩子绑定真正放行）
 
 - **根因**：v1 的 #67 判定只认 `identity_relationship_source_confirmed`（要求 `status='pending'`），而绑定路由对账号所有者的 `guardian_of` 调 `attest_binding_relationship`，写的是 `active`（证据 `guardian_attestation_v1:device_binding`，只有 `confirmed_by_source_at`）。#67 的单测造的是 pending 声明，所以没测出。PR #72：所有者兼监护人时，active 或 pending 的 `guardian_of` 都算；非所有者仍需 `emergency_contact_for`。新增路由级测试按线上被拒请求原样重放（三项授权、同样偏好），不带修复时返回线上同一条 409。
@@ -281,7 +291,7 @@ uv run python scripts/voice_session_report.py "$CAPTURE_DIR"
 
 - **状态**：`code=done`（overlay 新增 `memoria_mascot_{pack,scene,display}`、patch `0027`（原编号 0026，2026-09-26 为消除 0025 重号顺延）、`memoria_display_hooks`，白描脸源文件与测试已删除）；`wired=开发板已刷`（app `0x20000` + assets `0x800000`，identity/nvs/otadata 未动；刷前回读备份在 `firmware/esp32/artifacts/backups/pre-mascot-20260925/device-readback/`，stub 读 `0x322000` 起会断，需 `--no-stub`）；`enabled=true`（control-api `20260925-device-mascot-sync` 已上线，真机首轮轮询已切换伙伴）；`hardware_verified=false`（串口只证明启动、解码 139 ms、空闲约 240 重绘/分钟、每次约 8 ms 纯合成；画面需亲眼确认）。
 - **手机同步链路**：小程序保存 `companion_id` → control-api 为该账号作为 owner/admin 的每个 active binding 的 primary subject 写 persona assignment（幂等、失败只记日志、`next_session` 投影，不打断进行中的回复）→ 设备空闲时每 20 s 签名 `GET /v1/devices/{id}/display-profile`（与 activation-manifest 同签名对象，仅 path 不同；409=未绑定）→ `display_version` 变化即换装并写 NVS `memoria_ui/companion`。已随 control-api `20260925-device-mascot-sync` 上线（无 schema/nginx 变更）。
-- **注意**：「我的」页每次保存都带 `companion_id`，会把设备页对主使用人单独分配的人格改回账号伙伴（一对一产品下符合"选TA陪伴为准"）；若要只在值变化时同步，改 `companion_device_sync.py` 一处即可。
+- **注意**：「我的」页与伙伴页每次保存都带 `companion_id`，会把设备页对主使用人单独分配的人格（含自建人格）改回账号伙伴（一对一产品下符合"选TA陪伴为准"）；绑定页选的伙伴自 2026-09-28 起也写成账号伙伴。若要只在值变化时同步，改 `companion_device_sync.py` 一处即可。
 - **构建**：`common.sh` 现导出 `IDF_COMPONENT_CHECK_NEW_VERSION=0`；否则组件管理器读取 registry 最新 esp_video 的 esp_h264 规则，CMake 连跑两次后报 `Missing required kconfig option after retry`。全新 clone + `apply-overlay.sh`（0001–0026 全部干净应用）+ `build.sh` + `check-overlay.sh` 已通过；app `0x325850`（剩 20%），assets 5.8 MB / 8 MB。
 
 | 看什么 | 期望 |

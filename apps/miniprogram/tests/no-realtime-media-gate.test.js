@@ -58,19 +58,25 @@ test("production package contains no realtime voice surface at all", () => {
   matches(files, /wss:\/\//, "媒体 Gateway WSS 地址");
   matches(files, /MiniProgramMediaSession/, "小程序媒体会话");
   matches(files, /MINIPROGRAM_MEDIA_GATEWAY_URL/, "媒体网关环境变量");
-  // The one audio surface is the bind page's persona preview: a short clip
-  // bundled with the package, never a stream or a remote/TTS source.
-  const PREVIEW_PAGE = path.join(root, "pages", "bind", "index.js");
+  // The only audio surfaces are the persona previews on the bind and 伙伴
+  // pages: short clips bundled with the package, never a stream or a
+  // remote/TTS source.
+  const PREVIEW_PAGES = new Map([
+    [path.join(root, "pages", "bind", "index.js"), /audio\.src = persona\.previewSrc;/],
+    [path.join(root, "pages", "companion", "index.js"), /audio\.src = card\.previewSrc;/],
+  ]);
   matches(
-    files.filter((file) => file !== PREVIEW_PAGE),
+    files.filter((file) => !PREVIEW_PAGES.has(file)),
     /createWebAudioContext|createInnerAudioContext|InnerAudioContext/,
     "实时 TTS 播放",
   );
-  const preview = fs.readFileSync(PREVIEW_PAGE, "utf8");
-  assert.doesNotMatch(preview, /createWebAudioContext/);
-  assert.match(preview, /previewSrc: `\/assets\/voices\/\$\{companion\.voiceId\}\.mp3`/);
-  assert.match(preview, /audio\.src = persona\.previewSrc;/);
-  assert.equal((preview.match(/\.src = /g) || []).length, 1, "试听只能播放包内音频");
+  for (const [file, assignment] of PREVIEW_PAGES) {
+    const preview = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(preview, /createWebAudioContext/);
+    assert.match(preview, /previewSrc: `\/assets\/voices\/\$\{companion\.voiceId\}\.mp3`/);
+    assert.match(preview, assignment);
+    assert.equal((preview.match(/\.src = /g) || []).length, 1, "试听只能播放包内音频");
+  }
   for (const companion of require("../utils/companions").companions) {
     assert.ok(fs.existsSync(path.join(root, "assets", "voices", `${companion.voiceId}.mp3`)), companion.voiceId);
   }

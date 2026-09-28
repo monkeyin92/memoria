@@ -3,38 +3,78 @@
   <text class="page-title">伙伴</text>
   <text class="page-lede">当前伙伴 · {{currentName}}在陪你</text>
 
-  <scroll-view class="role-flow" scroll-x="true" enable-flex="true">
+  <!-- 堆叠卡组：当前卡在最前，其余伙伴叠在后面左右露出；左右拖动或点露出的卡切换 -->
+  <view
+    class="deck {{dragging ? 'deck-dragging' : ''}}"
+    bindtouchstart="onDeckTouchStart"
+    bindtouchmove="onDeckTouchMove"
+    bindtouchend="onDeckTouchEnd"
+    bindtouchcancel="onDeckTouchEnd"
+  >
     <view
-      wx:for="{{companions}}"
+      wx:for="{{cards}}"
       wx:key="id"
-      class="role-card {{profile.companion_id === item.id ? 'role-card-selected' : ''}}"
+      class="deck-card {{item.front ? 'deck-card-front' : 'deck-card-back'}} {{profile.companion_id === item.id ? 'deck-card-picked' : ''}}"
+      style="{{item.style}}"
       data-role="{{item.id}}"
+      data-offset="{{item.offset}}"
+      bindtap="onCardTap"
     >
-      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal companion-current">当前伙伴</view>
-      <view class="companion-face">
-        <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{profile.companion_id === item.id}}"></face-badge>
+      <view class="deck-body">
+      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-teal deck-current">当前伙伴</view>
+      <view class="deck-face">
+        <face-badge role="{{item.id}}" size="xl" plain="{{true}}" animated="{{item.front}}"></face-badge>
       </view>
-      <text class="role-card-name">{{item.name}}</text>
-      <text class="role-card-tagline">{{item.tagline}} · {{item.voiceName}}</text>
-      <text class="companion-desc">{{item.description}}</text>
-      <text class="companion-tone">{{item.tone}}</text>
-      <view class="button-row companion-actions">
-        <button wx:if="{{profile.companion_id === item.id}}" class="secondary-button btn-sm" disabled="true">✓ 已选择</button>
-        <button wx:else class="primary-button btn-sm" data-id="{{item.id}}" bindtap="chooseCompanion">选TA陪伴</button>
+      <text class="deck-name">{{item.name}}</text>
+      <text class="deck-tagline">{{item.tagline}}</text>
+      <text class="deck-desc">{{item.description}}</text>
+      <view class="deck-voice">
+        <text class="deck-voice-name">声音 · {{item.voiceName}}（{{item.tone}}）</text>
+        <button
+          wx:if="{{item.front}}"
+          class="deck-play {{previewingId === item.id ? 'deck-play-on' : ''}}"
+          data-id="{{item.id}}"
+          catchtap="togglePreview"
+        >{{previewingId === item.id ? '停止' : '▶ 试听'}}</button>
+      </view>
       </view>
     </view>
-  </scroll-view>
-  <text class="caption">左右滑动，认识每一位伙伴</text>
+  </view>
+
+  <view class="deck-dots">
+    <view
+      wx:for="{{cards}}"
+      wx:key="id"
+      class="deck-dot {{index === currentIndex ? 'deck-dot-on' : ''}}"
+      data-index="{{index}}"
+      bindtap="onDotTap"
+    ></view>
+  </view>
+
+  <button
+    wx:if="{{profile.companion_id === browsingId}}"
+    class="secondary-button deck-action"
+    disabled="true"
+  >✓ {{browsingName}}正在陪你</button>
+  <button
+    wx:else
+    class="primary-button deck-action"
+    loading="{{saving}}"
+    disabled="{{saving}}"
+    data-id="{{browsingId}}"
+    bindtap="chooseCompanion"
+  >选{{browsingName}}陪伴</button>
+  <text class="caption deck-hint">左右滑动卡片，认识每一位伙伴</text>
 
   <view class="section-head">
-    <text class="section-head-title">声音设置</text>
+    <text class="section-head-title">声音</text>
   </view>
   <view class="l2-card companion-voice">
-    <view class="setting-row" bindtap="chooseCatalogVoice">
+    <view class="setting-row">
       <view class="row-icon"><glass-icon name="volume" size="72"></glass-icon></view>
       <view class="row-copy">
         <text class="row-title">角色默认声音</text>
-        <text class="row-meta">{{currentTone}}</text>
+        <text class="row-meta">{{currentName}} · {{currentTone}}</text>
       </view>
       <view class="pill pill-teal">使用中</view>
     </view>
@@ -48,7 +88,6 @@
     </view>
   </view>
 
-  <text class="caption">角色只影响表达风格，不改变你的资料权限。换角色后，下次唤醒才会换成对应声音。</text>
-  <button class="primary-button empty-button" loading="{{saving}}" bindtap="saveCurrent">使用{{currentName}}的默认声音</button>
+  <text class="caption">角色只影响表达风格，不改变你的资料权限。换伙伴后，机器人下一次对话起换成 TA 的声音。</text>
   <text class="privacy-note">声音数据加密传输与存储于云端，可随时更换或撤回。</text>
 </view>

@@ -75,7 +75,7 @@ test("device wake word copy tells users it syncs then restarts", () => {
   assert.doesNotMatch(template, /下次连接生效/);
   assert.match(template, /不按客厅、卧室这类房间来标记/);
   assert.match(template, /使用者备注/);
-  assert.match(template, /保存备注/);
+  assert.match(template, /bindtap="editSubjectAlias"/);
   assert.match(template, /此刻是谁在用/);
 });
 

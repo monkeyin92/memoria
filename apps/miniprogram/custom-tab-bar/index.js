@@ -2,7 +2,9 @@ Component({
   properties: {
     selected: { type: Number, value: 0 },
   },
+  // 页面的底部弹窗盖不住 tabBar（它在页面之上的独立层），弹窗打开时由页面把它藏起来。
   data: {
+    hidden: false,
     tabs: [
       {
         pagePath: "/pages/home/index",
