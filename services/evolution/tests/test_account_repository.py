@@ -319,3 +319,72 @@ async def test_postgres_account_repository_exports_and_erases_only_owner_private
             )
         finally:
             await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL evolution account contract",
+)
+async def test_postgres_account_erasure_runs_as_the_production_evolution_role() -> None:
+    """The Control API erases evolution rows as ``memoria_evolution``, not an admin.
+
+    Every owner-private table must grant that role DELETE (append-only
+    triggers still refuse it outside the account-deletion setting), or account
+    deletion stops at the first table the role cannot touch.
+    """
+
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_evo_role_{uuid.uuid4().hex[:10]}"
+    password = uuid.uuid4().hex
+    admin = await asyncpg.connect(admin_dsn)
+    try:
+        await admin.execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles "
+            "WHERE rolname = 'memoria_evolution') THEN "
+            "CREATE ROLE memoria_evolution LOGIN NOSUPERUSER NOBYPASSRLS; END IF; END $$"
+        )
+        await admin.execute(f"ALTER ROLE memoria_evolution LOGIN PASSWORD '{password}'")
+        await admin.execute(f'CREATE DATABASE "{database}"')
+    finally:
+        await admin.close()
+    parts = urlsplit(admin_dsn)
+    admin_db = urlunsplit((parts.scheme, parts.netloc, f"/{database}", parts.query, ""))
+    role_db = urlunsplit(
+        (
+            parts.scheme,
+            f"memoria_evolution:{quote(password)}@{parts.hostname}:{parts.port or 5432}",
+            f"/{database}",
+            parts.query,
+            "",
+        )
+    )
+    try:
+        store = PostgresEvolutionStore(admin_db)
+        store.initialize()
+        owner_id, _other_id, _owner_candidate, _global_candidate = _seed(
+            store, suffix=uuid.uuid4().hex
+        )
+        repository = PostgresEvolutionAccountRepository(role_db)
+        deleted = await repository.delete_account(owner_id)
+        assert deleted["evolution_lifecycle_events"] > 0
+        assert await repository.remaining_account_rows(owner_id) == {}
+        role = await asyncpg.connect(role_db)
+        try:
+            # Outside account deletion the evidence stays append-only.
+            with pytest.raises(asyncpg.RaiseError, match="append-only"):
+                await role.execute("DELETE FROM evolution_lifecycle_events")
+        finally:
+            await role.close()
+    finally:
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
+                database,
+            )
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database}"')
+        finally:
+            await admin.close()
