@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal
 
-from services.agent.src.providers.crisis_semantic_classifier import CrisisSemanticVerdict
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
     companion_safety_decision,
 )
 
 CrisisAction = Literal["crisis_support", "support_request", "none"]
+
+
+class CrisisSemanticVerdict(StrEnum):
+    """The semantic classifier's verdict; the policy below is its only reader."""
+
+    SELF_CRISIS = "SELF_CRISIS"
+    SUPPORT_FOR_OTHER = "SUPPORT_FOR_OTHER"
+    NO_CRISIS = "NO_CRISIS"
+    UNSURE = "UNSURE"
+
 # v2 adds the national psychological assistance hotline 12356 (P0-04 D8);
 # still a draft until a professional review signs it off.
 CRISIS_SCRIPT_VERSION = "crisis-transfer-draft-v2"

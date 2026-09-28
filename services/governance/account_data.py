@@ -20,7 +20,6 @@ from typing import Any, Literal, Protocol, cast
 import asyncpg
 
 from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
-from services.control_api.app.database import MemoryStore
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
 from services.governance.subject_export import (
     build_subject_export,
@@ -774,11 +773,41 @@ class PostgresAccountRepository:
         return value
 
 
+class AccountStore(Protocol):
+    """The Control account store calls account governance makes (structural)."""
+
+    def export_account_data(self, *, user_id: str) -> dict[str, Any]: ...
+
+    def pending_account_deletions(self, *, limit: int = 100) -> tuple[str, ...]: ...
+
+    def begin_account_deletion(self, *, user_id: str, started_at: str) -> dict[str, Any]: ...
+
+    def update_account_deletion(
+        self,
+        *,
+        user_id: str,
+        request_id: str,
+        step: str,
+        updated_at: str,
+        progress: Mapping[str, int] | None = None,
+        last_error: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def finalize_account_deletion(
+        self,
+        *,
+        user_id: str,
+        request_id: str,
+        completed_at: str,
+        deleted_counts: Mapping[str, int],
+    ) -> dict[str, int]: ...
+
+
 class AccountDataGovernance:
     def __init__(
         self,
         *,
-        memory_store: MemoryStore,
+        memory_store: AccountStore,
         archive_repository: AccountRepository,
         speaker_repository: AccountRepository,
         evolution_repository: AccountRepository,

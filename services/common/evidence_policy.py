@@ -4,11 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
-
-from services.archive.domain import EvidenceEvent
+from typing import Any, Literal, Protocol
 
 EvidenceWeight = Literal["strong", "normal", "weak"]
+
+
+class EvidenceEvent(Protocol):
+    """What this policy reads of an archive evidence event (structural)."""
+
+    @property
+    def event_type(self) -> str: ...
+
+    @property
+    def speaker_class(self) -> str: ...
+
+    @property
+    def payload(self) -> Mapping[str, Any]: ...
+
 
 _POSITIVE_ACTIONS = frozenset({"reflection", "choice", "decision_review", "correction"})
 _NEGATIVE_ACTIONS = frozenset({"not_me", "would_not_say"})

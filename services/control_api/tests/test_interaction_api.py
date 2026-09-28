@@ -14,7 +14,6 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileV2,
 )
 from services.agent.src.mode_policy_client import ModePolicyClient
-from services.agent.src.providers.crisis_semantic_classifier import CrisisSemanticVerdict
 from services.agent.src.response_planner_client import ResponsePlannerClient
 from services.archive.memory_domain import (
     MemorySearchItem,
@@ -22,6 +21,7 @@ from services.archive.memory_domain import (
     MemorySearchResult,
     PersonItem,
 )
+from services.common.crisis_policy import CrisisSemanticVerdict
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
