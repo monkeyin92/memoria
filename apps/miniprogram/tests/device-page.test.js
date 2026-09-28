@@ -330,8 +330,18 @@ test("device page can set the bind-time subject remark used on home", async () =
   const page = instantiate(pageDefinition);
   await page.onShow();
   assert.equal(page.data.subjectAliasLabel, "");
-  page.onSubjectAliasInput({ detail: { value: "老爸" } });
-  page.saveSubjectAlias();
+  const previousShowModal = global.wx.showModal;
+  const modals = [];
+  global.wx.showModal = (options) => {
+    modals.push(options);
+    options.success({ confirm: true, content: "老爸" });
+  };
+  try {
+    page.editSubjectAlias();
+  } finally {
+    global.wx.showModal = previousShowModal;
+  }
+  assert.equal(modals[0].editable, true, "备注在弹窗里编辑，不在页面上常驻输入框");
   assert.equal(page.data.subjectAliasLabel, "老爸");
   assert.equal(readSubjectLabel(familyManifest()), "老爸");
   binding.clearBindingManifest();
@@ -1387,6 +1397,93 @@ test("persona assignment failure keeps the sheet open and reports the error", as
     1,
   );
   personaFailure = false;
+});
+
+test("角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open", async () => {
+  const switched = [];
+  const navigated = [];
+  const previous = { switchTab: global.wx.switchTab, navigateTo: global.wx.navigateTo };
+  global.wx.switchTab = (options) => switched.push(options.url);
+  global.wx.navigateTo = (options) => navigated.push(options.url);
+  try {
+    const page = instantiate(pageDefinition);
+    page.openCompanion();
+    assert.deepEqual(switched, ["/pages/companion/index"]);
+    assert.deepEqual(navigated, []);
+    const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
+    assert.ok(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"));
+  } finally {
+    global.wx.switchTab = previous.switchTab;
+    global.wx.navigateTo = previous.navigateTo;
+  }
+});
+
+test("wake sheet saves a custom wake word, then closes and gives the tab bar back", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_sheet", session_id: "ses_sheet", session_epoch: 1 });
+  settingsPayload = wireSettings({ settings_version: 3, wake_word_id: "mo_li", wake_word_display: "茉莉" });
+  diagnosticsPayload = wireDiagnostics();
+  settingsPatchResult = wireSettings({
+    settings_version: 4,
+    wake_word_id: "custom",
+    wake_word_display: "小黑",
+    wake_word_pinyin: "xiao hei",
+  });
+  settingsPatchCalls.length = 0;
+  nextRequestResult = null;
+  const tabBar = { data: {}, setData(update) { Object.assign(this.data, update); } };
+  const page = instantiate(pageDefinition);
+  page.getTabBar = () => tabBar;
+  await page.onShow();
+  assert.deepEqual(
+    page.data.wakeWordOptions.map((option) => option.note),
+    ["2 个字，叫起来顺口", "4 个字，不容易被误唤醒"],
+    "不把板卡、模型这类工程说明展示给用户",
+  );
+
+  page.openWakeSheet();
+  assert.equal(page.data.wakeSheetVisible, true);
+  assert.equal(page.data.wakeSheetSelection, "mo_li");
+  assert.equal(tabBar.data.hidden, true, "tabBar 会挡住抽屉底部的保存按钮");
+
+  page.pickWakeSheetOption({ currentTarget: { dataset: { id: "custom" } } });
+  page.onCustomWakeWordDisplayInput({ detail: { value: "小黑" } });
+  page.onCustomWakeWordPinyinInput({ detail: { value: "xiao hei" } });
+  await page.confirmWakeSheet();
+  assert.deepEqual(settingsPatchCalls[0].changes, {
+    wake_word_id: "custom",
+    wake_word_display: "小黑",
+    wake_word_pinyin: "xiao hei",
+  });
+  assert.equal(page.data.wakeSheetVisible, false);
+  assert.equal(tabBar.data.hidden, false);
+  assert.equal(page.data.wakeWordLabel, "小黑");
+});
+
+test("wake sheet stays open when the save is refused", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_sheet2", session_id: "ses_sheet2", session_epoch: 1 });
+  settingsPayload = wireSettings({ settings_version: 3, wake_word_id: "mo_li", wake_word_display: "茉莉" });
+  diagnosticsPayload = wireDiagnostics();
+  settingsPatchResult = null;
+  settingsPatchCalls.length = 0;
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  page.openWakeSheet();
+  page.pickWakeSheetOption({ currentTarget: { dataset: { id: "mei_mo_li_ya" } } });
+  await page.confirmWakeSheet();
+  assert.deepEqual(settingsPatchCalls[0].changes, { wake_word_id: "mei_mo_li_ya" });
+  assert.equal(page.data.wakeSheetVisible, true, "没保存成功就不收起");
+  assert.ok(page.data.settingsError);
+});
+
+test("device page shows the network as connected without claiming it is a home network", () => {
+  const wxml = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
+  assert.ok(!wxml.includes("家庭网络"));
+  assert.ok(wxml.includes("{{online ? '已连接' : '未连接'}}"));
+  assert.equal((wxml.match(/bindtap="openWakeSheet"/g) || []).length, 1, "唤醒词只有一个入口");
+  assert.ok(!wxml.includes('bindtap="saveCustomWakeWord"'), "自定义唤醒词在抽屉里保存，页面底部不再重复一张卡");
 });
 
 async function bootBoundDevicePage() {

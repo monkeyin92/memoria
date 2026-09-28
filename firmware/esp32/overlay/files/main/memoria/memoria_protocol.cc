@@ -407,13 +407,17 @@ void MemoriaProtocol::RunActivationRetry() {
         MemoriaActivationClient activation_client(identity_);
         const esp_err_t result = activation_client.Activate(&activation_);
         if (result == ESP_OK) {
+            // Application's activation task gave up when the first attempt
+            // found the board unbound, so nothing here would move it out of
+            // "activating": the screen stayed on 连接中, the audio engine
+            // never started and the idle-only display-profile poll never ran.
+            // Restart into the bound boot path instead (activation_v is now
+            // stored): it brings the audio engine up without the BLE stack
+            // ever having shared internal RAM with it.
             MemoriaBootstrap::GetInstance().Stop();
-            ESP_LOGI(kTag, "Activation completed after nearby bootstrap");
-            StartDisplayProfilePoll();
-            if (on_connected_ != nullptr) {
-                on_connected_();
-            }
-            return;
+            ESP_LOGW(kTag, "Activation completed after nearby bootstrap; restarting into the bound boot path");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
         }
         ESP_LOGW(kTag, "Activation retry pending, code=%s", esp_err_to_name(result));
     }

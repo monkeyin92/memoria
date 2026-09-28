@@ -1,5 +1,5 @@
 {
-  "navigationBarTitleText": "角色与声音",
+  "navigationBarTitleText": "伙伴",
   "usingComponents": {
     "face-badge": "/components/face-badge/index",
     "page-backdrop": "/components/page-backdrop/index",

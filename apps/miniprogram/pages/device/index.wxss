@@ -33,20 +33,77 @@
   font-size: 22rpx;
 }
 
-/* L3 行内数值：唤醒词当前值 */
+/* L3 行内数值：唤醒词、网络、备注的当前值 */
 .row-value {
   flex-shrink: 0;
+  max-width: 240rpx;
+  overflow: hidden;
   color: #474e54;
   color: var(--text-secondary);
   font-size: 26rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.alias-edit {
-  padding: 0 0 28rpx;
+.row-value-warn {
+  color: #8a4c10;
+  color: var(--warning);
 }
 
-.alias-edit .field-input {
-  margin-bottom: 16rpx;
+.list-row-hover {
+  opacity: 0.6;
+}
+
+.row-title-danger,
+.row-copy .row-title-danger {
+  color: #a3221b;
+  color: var(--danger);
+}
+
+/* 年龄申报：三个选项各占一格，间距分开 */
+.option-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 24rpx;
+}
+
+.option-chip {
+  box-sizing: border-box;
+  flex: 1 1 180rpx;
+  min-height: 84rpx;
+  padding: 18rpx 20rpx;
+  border: 2rpx solid rgba(30, 45, 70, 0.12);
+  border-radius: 24rpx;
+  background: rgba(255, 255, 255, 0.7);
+  color: #16191c;
+  color: var(--text-primary);
+  font-size: 26rpx;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.option-chip-on {
+  border-color: #326e70;
+  background: rgba(227, 237, 236, 0.9);
+  color: #285c5e;
+  color: var(--brand-teal);
+  font-weight: 600;
+}
+
+.card-action {
+  margin-top: 28rpx;
+}
+
+.style-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 20rpx;
+}
+
+.alert-row {
+  margin-top: 16rpx;
 }
 
 .summary-row {
@@ -68,7 +125,35 @@
   overflow-wrap: anywhere;
 }
 
-/* 唤醒词底部抽屉选项：复用全局 .sheet / .sheet-grab / .sheet-title / .sheet-sub */
+/* 底部抽屉：高度封顶，选项区单独滚动，按钮始终露在底部 */
+.device-sheet {
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+}
+
+.sheet-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: 56vh;
+}
+
+.sheet-custom {
+  padding: 4rpx 4rpx 12rpx;
+}
+
+.sheet-action {
+  flex-shrink: 0;
+  margin-top: 24rpx;
+}
+
+.sheet-cancel {
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: 8rpx;
+}
+
+/* 底部抽屉选项：复用全局 .sheet / .sheet-grab / .sheet-title / .sheet-sub */
 .sheet-opt {
   display: flex;
   align-items: center;

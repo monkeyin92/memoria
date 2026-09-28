@@ -546,6 +546,7 @@ Page({
         deviceId: manifest.device_id,
         label: this._subjectLabel(),
       });
+      await this._adoptPickedCompanion(request.persona_selection);
       this.setData({
         manifest,
         step: "done",
@@ -562,6 +563,21 @@ Page({
       });
     } finally {
       this.setData({ submitting: false });
+    }
+  },
+
+  // The binding only sets the device's persona. Home, 设备 and 伙伴 read the
+  // account's companion, so the pick made here must become it too; otherwise
+  // they keep an older companion and the next save there switches the robot
+  // back. Best effort: the binding already succeeded, and the 伙伴 page can
+  // still set it.
+  async _adoptPickedCompanion(companionId) {
+    const identity = api.currentIdentity();
+    if (!identity || !companions.some((item) => item.id === companionId)) return;
+    try {
+      await api.updateProfile(identity.user_id, { companion_id: companionId });
+    } catch {
+      // Keep the binding result; the 伙伴 page remains the way to fix it.
     }
   },
 

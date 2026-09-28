@@ -312,7 +312,9 @@ def test_display_profile_poll_follows_the_phone_pick() -> None:
     assert "GetDeviceState() == kDeviceStateIdle" in task
     assert "PublishCompanion(" in task
     assert "profile.display_version != applied_version" in task
-    assert protocol.count("StartDisplayProfilePoll();") >= 2  # first boot and after binding
+    # Started on a bound boot; after a nearby binding the board restarts into
+    # that same boot path instead of starting a second poll.
+    assert protocol.count("StartDisplayProfilePoll();") == 1
 
 
 def test_patch_adds_assets_hooks_and_overridable_qr() -> None:

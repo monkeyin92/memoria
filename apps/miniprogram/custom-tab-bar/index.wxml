@@ -1,4 +1,4 @@
-<view class="mem-tabbar">
+<view class="mem-tabbar {{hidden ? 'mem-tabbar-hidden' : ''}}">
   <view
     class="mem-tab {{index === selected ? 'mem-tab-on' : ''}}"
     wx:for="{{tabs}}"

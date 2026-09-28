@@ -12,6 +12,7 @@ const storage = {};
 let lastWxRequest = null;
 let nextResponse = null;
 const navigations = [];
+const profileWrites = [];
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -33,6 +34,11 @@ global.wx = {
     navigations.push(options.url);
   },
   request(options) {
+    if (options.url.includes("/v1/memory/profile/")) {
+      profileWrites.push({ method: options.method, data: options.data });
+      options.success({ statusCode: 200, data: { user_id: "person_owner", ...options.data } });
+      return;
+    }
     lastWxRequest = options;
     options.success(nextResponse);
   },
@@ -164,6 +170,20 @@ test("binding page collects a required subject remark after choosing who it is f
   assert.equal(page.data.reviewSubjectLabel, "亲爱的儿子");
   await page.submitBinding();
   assert.equal(readSubjectLabel(page.data.manifest), "亲爱的儿子");
+});
+
+test("the companion picked while binding becomes the account's companion", async () => {
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  profileWrites.length = 0;
+  const page = await bootSelfUseReady("阿宁");
+  const index = page.data.personaOptions.findIndex((option) => option.id === "mianmian");
+  page.onPersonaSwipe({ detail: { current: index } });
+  page.goToReview();
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  assert.equal(lastWxRequest.data.persona_selection, "mianmian");
+  // 首页、设备、伙伴页读的是账号伙伴；不写它，这些页面会停在旧伙伴上。
+  assert.deepEqual(profileWrites, [{ method: "PUT", data: { companion_id: "mianmian" } }]);
 });
 
 test("self_use flow keeps sensitive offers off by default and submits clean payload", async () => {

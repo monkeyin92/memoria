@@ -34,3 +34,4 @@
 .mem-tab-icon rich-text { width: 100%; height: 100%; display: block; }
 .mem-tab-text { font-size: 20rpx; line-height: 1.3; }
 .mem-tab-on { color: #172f43; font-weight: 700; }
+.mem-tabbar-hidden { display: none; }

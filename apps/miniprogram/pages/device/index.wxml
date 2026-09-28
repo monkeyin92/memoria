@@ -1,3 +1,4 @@
+<page-meta page-style="{{sheetOpen ? 'overflow: hidden;' : ''}}"></page-meta>
 <view class="page-shell">
   <page-backdrop theme="mist"></page-backdrop>
   <view wx:if="{{!authenticated}}">
@@ -47,13 +48,13 @@
     <block wx:else>
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
 
-      <!-- L1 情感层：设备状态卡 -->
+      <!-- 设备状态卡 -->
       <view class="mem-hero">
         <text class="mem-hero-eyebrow">设备 · {{bindingModeLabel}}</text>
         <view class="mem-hero-row">
           <view class="row-copy">
             <text class="mem-hero-title">{{devicePlaceName}}</text>
-            <text class="mem-hero-sub">{{onlineLabel}} · {{currentUserLabel}}正在使用</text>
+            <text class="mem-hero-sub">{{onlineLabel}}{{currentUserLabelConfirmed ? ' · ' + currentUserLabel + '正在使用' : ''}}</text>
           </view>
           <face-badge role="{{heroRoleId}}" size="xl" plain="{{true}}" animated="{{true}}" dim="{{!online}}"></face-badge>
         </view>
@@ -62,28 +63,21 @@
             <view class="pill-dot"></view>
             <text>{{online ? '在线' : '离线'}}</text>
           </view>
-          <view class="pill pill-teal">{{bindingModeLabel}}</view>
+          <view class="pill pill-teal">{{personaName}}</view>
         </view>
       </view>
 
       <view wx:if="{{!online}}" class="notice notice-warn">
         <text class="notice-title">设备暂时无法连接</text>
-        <text>请检查电源和家庭 Wi-Fi。绑定关系仍在，无需重新认领。</text>
+        <text>请检查电源和 Wi‑Fi。绑定关系仍在，无需重新认领。</text>
       </view>
 
-      <!-- 双 stat 小卡 -->
-      <view class="two-stats">
-        <view class="two-stats-cell">
-          <text class="two-stats-value">{{onlineLabel}}</text>
-          <text class="two-stats-label">最近状态</text>
-        </view>
-        <view class="two-stats-cell">
-          <text class="two-stats-value">{{currentUserLabel}}</text>
-          <text class="two-stats-label">当前使用者</text>
-        </view>
+      <view wx:if="{{degradation}}" class="notice notice-warn">
+        <text class="notice-title">安全模式</text>
+        <text wx:for="{{degradation.reasons}}" wx:key="*this">{{item}}</text>
       </view>
 
-      <!-- L2 功能层：音量 -->
+      <!-- 音量 -->
       <view class="l2-card" wx:if="{{settings}}">
         <view class="setting-row">
           <glass-icon name="volume" size="80"></glass-icon>
@@ -97,9 +91,9 @@
         <view class="slider-scale"><text>安静</text><text>响亮</text></view>
       </view>
 
-      <!-- L3 信息层：角色与声音 / 唤醒词 / 网络 -->
+      <!-- 角色与声音 / 唤醒词 / 网络 -->
       <view class="list">
-        <view class="list-row" bindtap="openCompanion">
+        <view class="list-row" hover-class="list-row-hover" bindtap="openCompanion">
           <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">角色与声音</text>
@@ -107,7 +101,7 @@
           </view>
           <text class="row-chevron">›</text>
         </view>
-        <view class="list-row" bindtap="openWakeSheet">
+        <view class="list-row" hover-class="{{settings ? 'list-row-hover' : 'none'}}" bindtap="openWakeSheet">
           <view class="row-icon"><glass-icon name="mic" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">唤醒词</text>
@@ -116,138 +110,13 @@
           <text class="row-value">{{wakeWordLabel}}</text>
           <text class="row-chevron">›</text>
         </view>
-        <view class="list-row" bindtap="{{online ? '' : 'showConnectionHelp'}}">
+        <view class="list-row" hover-class="{{online ? 'none' : 'list-row-hover'}}" bindtap="{{online ? '' : 'showConnectionHelp'}}">
           <view class="row-icon"><glass-icon name="wifi" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">网络连接</text>
-            <text class="row-meta">{{online ? '家庭网络已连接' : '等待重新连接'}}</text>
           </view>
-        </view>
-      </view>
-
-      <view class="section-head">
-        <text class="section-head-title">使用者与设备</text>
-      </view>
-      <view class="list">
-        <view class="list-row">
-          <view class="row-copy">
-            <text class="row-title">使用者备注</text>
-            <text class="row-meta">首页显示这条备注，不是微信昵称。不按客厅、卧室这类房间来标记。</text>
-          </view>
-        </view>
-        <view class="alias-edit">
-          <input class="field-input" value="{{subjectAliasDraft}}" placeholder="例如：亲爱的儿子、老爸" placeholder-class="field-placeholder" maxlength="16" bindinput="onSubjectAliasInput" />
-          <button class="secondary-button" bindtap="saveSubjectAlias">保存备注</button>
-        </view>
-        <view class="list-row" bindtap="openGuardian">
-          <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
-          <view class="row-copy">
-            <text class="row-title">家庭成员</text>
-            <text class="row-meta">邀请与权限分别管理</text>
-          </view>
-          <text class="row-chevron">›</text>
-        </view>
-        <block wx:if="{{personaRows.length > 0}}">
-          <view
-            wx:for="{{personaRows}}"
-            wx:key="person_id"
-            class="list-row"
-            data-person-id="{{item.person_id}}"
-            bindtap="openPersonaSheet"
-          >
-            <view class="row-copy">
-              <text class="row-title">{{item.persona_name}}</text>
-              <text class="row-meta">{{item.role_label}} · {{item.source_label}}</text>
-            </view>
-            <text class="row-chevron">›</text>
-          </view>
-          <text class="caption">在「选TA陪伴」里选的伙伴会自动分配给主要使用者；也可以按使用人单独分配。分配从下一次对话起生效。</text>
-          <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
-        </block>
-        <block wx:if="{{subjectPersonas.length > 0}}">
-          <view wx:for="{{subjectPersonas}}" wx:key="personId" class="list-row">
-            <view class="row-copy">
-              <text class="row-title">TA 的表达风格</text>
-              <text wx:if="{{item.loadError}}" class="error-text">{{item.loadError}}</text>
-              <block wx:elif="{{item.styleLabels.length > 0}}">
-                <text wx:for="{{item.styleLabels}}" wx:for-item="label" wx:key="*this" class="row-meta">· {{label}}</text>
-              </block>
-              <text wx:else class="row-meta">还没有学到稳定的表达风格。</text>
-              <text class="caption">机器人跟着使用它的人学习说话方式。这里只显示通用的风格标签，不含对话原文。</text>
-              <button
-                class="secondary-button"
-                data-person-id="{{item.personId}}"
-                loading="{{personaResetting}}"
-                disabled="{{personaResetting}}"
-                bindtap="resetSubjectPersona"
-              >重置表达风格</button>
-            </view>
-          </view>
-        </block>
-        <!-- P0-04 D7：老人在对话中出现安全风险时，提醒代为同意的子女；不含对话原文。 -->
-        <block wx:if="{{elderSafetyVisible}}">
-          <view class="list-row">
-            <view class="row-copy">
-              <text class="row-title">安全提醒</text>
-              <text class="caption">TA 在对话中出现安全风险时，机器人会先安抚 TA，并在这里提醒你；不含对话原文。</text>
-              <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button" bindtap="enableElderCrisisPush">开启一次微信提醒</button>
-              <text wx:if="{{elderAlerts.length === 0}}" class="row-meta">暂无提醒。</text>
-              <view wx:for="{{elderAlerts}}" wx:key="notification_id" class="row-copy">
-                <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
-                <text class="caption">{{item.occurred_at}}</text>
-              </view>
-            </view>
-          </view>
-        </block>
-        <block wx:if="{{ageRows.length > 0}}">
-          <view wx:for="{{ageRows}}" wx:key="person_id" class="list-row">
-            <view class="row-copy">
-              <text class="row-title">年龄资料申报</text>
-              <text class="row-meta">{{item.declaredLabel}} · {{item.evidenceLabel}}。申报不是核验，不能申报已成年。</text>
-              <view class="alias-edit">
-                <button
-                  wx:for="{{item.options}}"
-                  wx:for-item="option"
-                  wx:key="value"
-                  class="secondary-button"
-                  data-person-id="{{item.person_id}}"
-                  data-age-band="{{option.value}}"
-                  disabled="{{ageSaving}}"
-                  bindtap="selectAgeBand"
-                >{{item.selected === option.value ? '当前：' : ''}}{{option.label}}</button>
-              </view>
-              <button
-                class="secondary-button"
-                data-person-id="{{item.person_id}}"
-                loading="{{ageSaving}}"
-                disabled="{{ageSaving}}"
-                bindtap="declareAge"
-              >提交年龄申报</button>
-            </view>
-          </view>
-          <text wx:if="{{ageError}}" class="error-text">{{ageError}}</text>
-        </block>
-        <view class="list-row" bindtap="openOnboarding">
-          <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
-          <view class="row-copy">
-            <text class="row-title">添加其他设备</text>
-          </view>
-          <text class="row-chevron">›</text>
-        </view>
-        <view class="list-row" bindtap="openReprovision">
-          <view class="row-icon"><glass-icon name="bluetooth" size="72"></glass-icon></view>
-          <view class="row-copy">
-            <text class="row-title">重新配网</text>
-            <text class="row-meta">只更新 Wi-Fi，不解除绑定</text>
-          </view>
-          <text class="row-chevron">›</text>
-        </view>
-        <view class="list-row" bindtap="openUnbindSheet">
-          <view class="row-copy">
-            <text class="row-title">解除绑定</text>
-            <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
-          </view>
-          <text class="row-chevron">›</text>
+          <text class="row-value {{online ? '' : 'row-value-warn'}}">{{online ? '已连接' : '未连接'}}</text>
+          <text wx:if="{{!online}}" class="row-chevron">›</text>
         </view>
       </view>
 
@@ -266,103 +135,133 @@
         </view>
       </block>
 
-      <view wx:if="{{settings}}" class="card">
-        <text class="setting-name">唤醒词</text>
-        <text class="setting-desc">保存后会在线同步到设备。重启后生效，请保持设备在线。</text>
-        <view class="list-row" bindtap="openWakeSheet">
+      <!-- 使用者 -->
+      <view class="section-head">
+        <text class="section-head-title">使用者</text>
+      </view>
+      <view class="list">
+        <view class="list-row" hover-class="list-row-hover" bindtap="editSubjectAlias">
+          <view class="row-icon"><glass-icon name="pen" size="72"></glass-icon></view>
           <view class="row-copy">
-            <text class="row-title">当前唤醒词</text>
-            <text class="row-meta">{{wakeWordLabel}}</text>
+            <text class="row-title">使用者备注</text>
+            <text class="row-meta">首页用这个称呼 TA，不按客厅、卧室这类房间来标记</text>
+          </view>
+          <text class="row-value">{{subjectAliasLabel || '未设置'}}</text>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" hover-class="list-row-hover" bindtap="openGuardian">
+          <view class="row-icon"><glass-icon name="family" size="72"></glass-icon></view>
+          <view class="row-copy">
+            <text class="row-title">家庭成员</text>
+            <text class="row-meta">邀请与权限分别管理</text>
           </view>
           <text class="row-chevron">›</text>
         </view>
-        <text wx:if="{{wakeWordNote}}" class="caption">{{wakeWordNote}}</text>
-        <text class="field-label">自定义唤醒词</text>
-        <input class="field-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="显示名，例如：小黑" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
-        <input class="field-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="拼音，例如：xiao hei" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
-        <button class="secondary-button empty-button" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="saveCustomWakeWord">保存自定义唤醒词</button>
-        <text wx:for="{{customWakeWordWarnings}}" wx:key="*this" class="caption">{{item}}</text>
-        <text wx:if="{{settingsSaving}}" class="caption">正在保存…</text>
-        <text wx:if="{{settingsError}}" class="error-text">{{settingsError}}</text>
-      </view>
-
-      <!-- 唤醒词底部抽屉：选项单选 + 确认回写 -->
-      <view wx:if="{{wakeSheetVisible}}" class="sheet-mask" bindtap="closeWakeSheet"></view>
-      <view wx:if="{{wakeSheetVisible}}" class="sheet">
-        <view class="sheet-grab"></view>
-        <text class="sheet-title">唤醒词</text>
-        <text class="sheet-sub">叫它一声，它就应你</text>
         <view
-          wx:for="{{wakeWordOptions}}"
-          wx:key="id"
-          class="sheet-opt {{wakeSheetIndex === index ? 'on' : ''}}"
-          data-index="{{index}}"
-          bindtap="pickWakeSheetOption"
+          wx:for="{{personaRows}}"
+          wx:key="person_id"
+          class="list-row"
+          hover-class="list-row-hover"
+          data-person-id="{{item.person_id}}"
+          bindtap="openPersonaSheet"
         >
-          <view class="choice-radio"></view>
+          <view class="row-icon"><glass-icon name="star" size="72"></glass-icon></view>
           <view class="row-copy">
-            <text class="row-title">{{item.label}}</text>
-            <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
+            <text class="row-title">{{item.role_label}}的人格</text>
+            <text class="row-meta">{{item.source_label}} · 可选自建人格</text>
           </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
+          <text class="row-value">{{item.persona_name}}</text>
+          <text class="row-chevron">›</text>
         </view>
-        <button class="primary-button" style="margin-top: 16rpx;" loading="{{settingsSaving}}" bindtap="confirmWakeSheet">确认</button>
+      </view>
+      <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的伙伴会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
+      <text wx:if="{{personaAssignmentError && !personaSheetVisible}}" class="error-text">{{personaAssignmentError}}</text>
+
+      <view wx:for="{{ageRows}}" wx:key="person_id" class="l2-card">
+        <text class="l2-card-title">年龄资料申报</text>
+        <text class="l2-card-sub">{{item.declaredLabel}} · {{item.evidenceLabel}}。申报不是核验，不能申报已成年。</text>
+        <view class="option-grid">
+          <view
+            wx:for="{{item.options}}"
+            wx:for-item="option"
+            wx:key="value"
+            class="option-chip {{item.selected === option.value ? 'option-chip-on' : ''}}"
+            data-person-id="{{item.person_id}}"
+            data-age-band="{{option.value}}"
+            bindtap="selectAgeBand"
+          >{{option.short}}</view>
+        </view>
+        <button
+          class="primary-button card-action"
+          data-person-id="{{item.person_id}}"
+          loading="{{ageSaving}}"
+          disabled="{{ageSaving}}"
+          bindtap="declareAge"
+        >提交年龄申报</button>
+        <text wx:if="{{ageError}}" class="error-text">{{ageError}}</text>
       </view>
 
-      <!-- 人格分配底部抽屉：按使用人选择内置人格或恢复默认 -->
-      <view wx:if="{{personaSheetVisible}}" class="sheet-mask" bindtap="closePersonaSheet"></view>
-      <view wx:if="{{personaSheetVisible}}" class="sheet">
-        <view class="sheet-grab"></view>
-        <text class="sheet-title">选择人格</text>
-        <text class="sheet-sub">{{personaSheetSubjectLabel}} · 分配后下一次设备同步生效</text>
-        <view
-          wx:for="{{personaOptions}}"
-          wx:key="id"
-          class="sheet-opt {{personaSheetSelection === item.id ? 'on' : ''}}"
-          data-persona-id="{{item.id}}"
-          bindtap="pickPersonaOption"
-        >
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">{{item.label}}</text>
-            <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
-          </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
+      <view wx:for="{{subjectPersonas}}" wx:key="personId" class="l2-card">
+        <text class="l2-card-title">TA 的表达风格</text>
+        <text class="l2-card-sub">机器人跟着使用它的人学习说话方式。这里只显示通用的风格标签，不含对话原文。</text>
+        <text wx:if="{{item.loadError}}" class="error-text">{{item.loadError}}</text>
+        <view wx:elif="{{item.styleLabels.length > 0}}" class="style-labels">
+          <text wx:for="{{item.styleLabels}}" wx:for-item="label" wx:key="*this" class="pill pill-neutral">{{label}}</text>
         </view>
-        <button class="primary-button" style="margin-top: 16rpx;" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
-        <button class="text-button" style="margin-top: 8rpx;" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
+        <text wx:else class="row-meta">还没有学到稳定的表达风格。</text>
+        <button
+          wx:if="{{!item.loadError}}"
+          class="secondary-button card-action"
+          data-person-id="{{item.personId}}"
+          loading="{{personaResetting}}"
+          disabled="{{personaResetting}}"
+          bindtap="resetSubjectPersona"
+        >重置表达风格</button>
       </view>
 
-      <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->
-      <view wx:if="{{unbindSheetVisible}}" class="sheet-mask" bindtap="closeUnbindSheet"></view>
-      <view wx:if="{{unbindSheetVisible}}" class="sheet">
-        <view class="sheet-grab"></view>
-        <text class="sheet-title">解除绑定</text>
-        <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
-        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">保留数据（重新绑定后可恢复）</text>
-            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
-          </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
+      <!-- P0-04 D7：老人在对话中出现安全风险时，提醒代为同意的子女；不含对话原文。 -->
+      <view wx:if="{{elderSafetyVisible}}" class="l2-card">
+        <text class="l2-card-title">安全提醒</text>
+        <text class="l2-card-sub">TA 在对话中出现安全风险时，机器人会先安抚 TA，并在这里提醒你；不含对话原文。</text>
+        <text wx:if="{{elderAlerts.length === 0}}" class="row-meta">暂无提醒。</text>
+        <view wx:for="{{elderAlerts}}" wx:key="notification_id" class="alert-row">
+          <text class="row-meta">{{item.minor_display_name}}：{{item.message}}</text>
+          <text class="caption">{{item.occurred_at}}</text>
         </view>
-        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
-          <view class="choice-radio"></view>
-          <view class="row-copy">
-            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
-            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
-          </view>
-          <view class="opt-check"><view class="icon-check"></view></view>
-        </view>
-        <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
-        <button class="danger-button" style="margin-top: 16rpx;" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>
-        <button class="text-button" style="margin-top: 8rpx;" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
+        <button wx:if="{{elderCrisisPush.enabled}}" class="secondary-button card-action" bindtap="enableElderCrisisPush">开启一次微信提醒</button>
       </view>
 
-      <!-- 设备信息诊断折叠面板 -->
-      <view class="fold">
-        <view class="list-row" bindtap="toggleDiag">
+      <view wx:if="{{sensitiveEntries.length > 0}}" class="list">
+        <view wx:for="{{sensitiveEntries}}" wx:key="key" class="list-row" hover-class="list-row-hover" data-page="{{item.page}}" bindtap="openEntry">
+          <view class="row-copy">
+            <text class="row-title">{{item.title}}</text>
+            <text class="row-meta">{{item.description}}</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+      </view>
+
+      <!-- 设备管理 -->
+      <view class="section-head">
+        <text class="section-head-title">设备管理</text>
+      </view>
+      <view class="list">
+        <view class="list-row" hover-class="list-row-hover" bindtap="openReprovision">
+          <view class="row-icon"><glass-icon name="bluetooth" size="72"></glass-icon></view>
+          <view class="row-copy">
+            <text class="row-title">重新配网</text>
+            <text class="row-meta">换了 Wi‑Fi 时用，不解除绑定</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" hover-class="list-row-hover" bindtap="openOnboarding">
+          <view class="row-icon"><glass-icon name="device" size="72"></glass-icon></view>
+          <view class="row-copy">
+            <text class="row-title">添加其他设备</text>
+          </view>
+          <text class="row-chevron">›</text>
+        </view>
+        <view class="list-row" hover-class="list-row-hover" bindtap="toggleDiag">
           <view class="row-icon"><glass-icon name="receipt" size="72"></glass-icon></view>
           <view class="row-copy">
             <text class="row-title">设备信息与诊断</text>
@@ -384,24 +283,117 @@
           <text class="caption">设备归属、在线状态、使用人和私密权限分别确认，不能互相替代。</text>
           <button class="text-button" bindtap="retryBindingSync">重新同步账号设备</button>
         </view>
-      </view>
-
-      <view wx:if="{{degradation}}" class="notice notice-warn">
-        <text class="notice-title">安全模式</text>
-        <text wx:for="{{degradation.reasons}}" wx:key="*this">{{item}}</text>
-      </view>
-
-      <view wx:if="{{sensitiveEntries.length > 0}}" class="list">
-        <view wx:for="{{sensitiveEntries}}" wx:key="key" class="list-row" data-page="{{item.page}}" bindtap="openEntry">
+        <view class="list-row" hover-class="list-row-hover" bindtap="openUnbindSheet">
+          <view class="row-icon"><glass-icon name="shield" size="72"></glass-icon></view>
           <view class="row-copy">
-            <text class="row-title">{{item.title}}</text>
-            <text class="row-meta">{{item.description}}</text>
+            <text class="row-title row-title-danger">解除绑定</text>
+            <text class="row-meta">停止记忆，再决定保留还是删除 TA 的数据</text>
           </view>
           <text class="row-chevron">›</text>
         </view>
       </view>
 
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
+
+      <!-- 唤醒词底部抽屉：目录选项与自定义唤醒词，选项多时可滚动 -->
+      <view wx:if="{{wakeSheetVisible}}" class="sheet-mask" bindtap="closeWakeSheet" catchtouchmove="noop"></view>
+      <view wx:if="{{wakeSheetVisible}}" class="sheet device-sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">唤醒词</text>
+        <text class="sheet-sub">叫它一声，它就应你。保存后在线同步到设备，设备重启后生效。</text>
+        <scroll-view class="sheet-scroll" scroll-y="true" enhanced="true" show-scrollbar="{{false}}">
+          <view
+            wx:for="{{wakeWordOptions}}"
+            wx:key="id"
+            class="sheet-opt {{wakeSheetSelection === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="pickWakeSheetOption"
+          >
+            <view class="choice-radio"></view>
+            <view class="row-copy">
+              <text class="row-title">{{item.label}}</text>
+              <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
+            </view>
+            <view class="opt-check"><view class="icon-check"></view></view>
+          </view>
+          <view
+            class="sheet-opt {{wakeSheetSelection === 'custom' ? 'on' : ''}}"
+            data-id="custom"
+            bindtap="pickWakeSheetOption"
+          >
+            <view class="choice-radio"></view>
+            <view class="row-copy">
+              <text class="row-title">自定义唤醒词</text>
+              <text class="row-meta">{{settings.wake_word_id === 'custom' && settings.wake_word_display ? '当前：' + settings.wake_word_display : '起一个你喜欢的名字，2–6 个字'}}</text>
+            </view>
+            <view class="opt-check"><view class="icon-check"></view></view>
+          </view>
+          <view wx:if="{{wakeSheetSelection === 'custom'}}" class="sheet-custom">
+            <text class="field-label">唤醒词</text>
+            <input class="field-input" value="{{customWakeWordDisplay}}" maxlength="16" placeholder="例如：小黑" cursor-spacing="140" bindinput="onCustomWakeWordDisplayInput" disabled="{{settingsSaving}}" />
+            <text class="field-label">拼音</text>
+            <input class="field-input" value="{{customWakeWordPinyin}}" maxlength="64" placeholder="用空格分开，例如：xiao hei" cursor-spacing="140" bindinput="onCustomWakeWordPinyinInput" disabled="{{settingsSaving}}" />
+            <text class="caption">机器人按拼音识别，音节越多越不容易误唤醒；两个字的唤醒词请在安静环境试一试。</text>
+            <text wx:for="{{customWakeWordWarnings}}" wx:key="*this" class="caption">{{item}}</text>
+          </view>
+        </scroll-view>
+        <text wx:if="{{settingsError}}" class="error-text">{{settingsError}}</text>
+        <button class="primary-button sheet-action" loading="{{settingsSaving}}" disabled="{{settingsSaving}}" bindtap="confirmWakeSheet">保存</button>
+      </view>
+
+      <!-- 人格分配底部抽屉：按使用人选择内置伙伴或自建人格，或恢复默认 -->
+      <view wx:if="{{personaSheetVisible}}" class="sheet-mask" bindtap="closePersonaSheet" catchtouchmove="noop"></view>
+      <view wx:if="{{personaSheetVisible}}" class="sheet device-sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">选择人格</text>
+        <text class="sheet-sub">{{personaSheetSubjectLabel}} · 分配后下一次对话起生效</text>
+        <scroll-view class="sheet-scroll" scroll-y="true" enhanced="true" show-scrollbar="{{false}}">
+          <view
+            wx:for="{{personaOptions}}"
+            wx:key="id"
+            class="sheet-opt {{personaSheetSelection === item.id ? 'on' : ''}}"
+            data-persona-id="{{item.id}}"
+            bindtap="pickPersonaOption"
+          >
+            <view class="choice-radio"></view>
+            <view class="row-copy">
+              <text class="row-title">{{item.label}}</text>
+              <text wx:if="{{item.note}}" class="row-meta">{{item.note}}</text>
+            </view>
+            <view class="opt-check"><view class="icon-check"></view></view>
+          </view>
+        </scroll-view>
+        <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
+        <button class="primary-button sheet-action" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
+        <button class="text-button sheet-cancel" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
+      </view>
+
+      <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->
+      <view wx:if="{{unbindSheetVisible}}" class="sheet-mask" bindtap="closeUnbindSheet" catchtouchmove="noop"></view>
+      <view wx:if="{{unbindSheetVisible}}" class="sheet device-sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">解除绑定</text>
+        <text class="sheet-sub">解除后设备会立即停止记忆 TA 的对话。TA 的数据怎么处理？</text>
+        <view class="sheet-opt {{unbindPurgeChoice === 'keep' ? 'on' : ''}}" data-choice="keep" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">保留数据（重新绑定后可恢复）</text>
+            <text class="row-meta">记忆和对话数据继续保存，TA 重新绑定后接着用</text>
+          </view>
+          <view class="opt-check"><view class="icon-check"></view></view>
+        </view>
+        <view class="sheet-opt {{unbindPurgeChoice === 'purge' ? 'on' : ''}}" data-choice="purge" bindtap="pickUnbindChoice">
+          <view class="choice-radio"></view>
+          <view class="row-copy">
+            <text class="row-title">同时删除 TA 的记忆和对话数据</text>
+            <text class="row-meta">永久删除，重新绑定也无法恢复</text>
+          </view>
+          <view class="opt-check"><view class="icon-check"></view></view>
+        </view>
+        <text wx:if="{{unbindError}}" class="error-text">{{unbindError}}</text>
+        <button class="danger-button sheet-action" loading="{{unbinding}}" disabled="{{unbinding || !unbindPurgeChoice}}" bindtap="confirmUnbind">解除绑定</button>
+        <button class="text-button sheet-cancel" disabled="{{unbinding}}" bindtap="closeUnbindSheet">取消</button>
+      </view>
     </block>
   </block>
 </view>

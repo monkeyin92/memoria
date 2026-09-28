@@ -1,37 +1,166 @@
-.companion-shell .role-flow {
-  padding-bottom: 20rpx;
+/* 堆叠卡组：卡片不透明（白底 + 角色色渐变），叠放时没有拼接色块，也不露出页面灰底 */
+.deck {
+  position: relative;
+  height: 760rpx;
+  margin: 24rpx 0 0;
 }
 
-.companion-current {
-  align-self: flex-start;
-  margin-bottom: 16rpx;
-}
-
-.companion-face {
+.deck-card {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  box-sizing: border-box;
   display: flex;
-  justify-content: center;
-  margin: 8rpx 0 20rpx;
+  flex-direction: column;
+  align-items: center;
+  width: 560rpx;
+  height: 700rpx;
+  margin-left: -280rpx;
+  padding: 36rpx 32rpx 28rpx;
+  border-radius: 52rpx;
+  border-radius: var(--radius-l1);
+  background: #ffffff;
+  background: linear-gradient(180deg, var(--role-soft) 0%, #ffffff 70%);
+  border: 2rpx solid #ffffff;
+  box-shadow: 0 20rpx 56rpx rgba(34, 52, 84, 0.14);
+  transform-origin: 50% 100%;
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 320ms ease;
+  overflow: hidden;
 }
 
-.companion-desc {
-  display: block;
-  margin-top: 10rpx;
+/* 后面的卡片只露出各自角色色的卡面，内容翻到最前面时再淡入 */
+.deck-card-back {
+  background: #dde6f5;
+  background: var(--role-soft);
+}
+
+.deck-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  transition: opacity 240ms ease;
+}
+
+.deck-card-back .deck-body {
+  opacity: 0;
+}
+
+.deck-card-front {
+  box-shadow: 0 28rpx 72rpx rgba(34, 52, 84, 0.2);
+}
+
+.deck-card-picked {
+  border-color: #3d5a80;
+  border-color: var(--role-primary);
+}
+
+.deck-dragging .deck-card-front {
+  transition: none;
+}
+
+.deck-current {
+  position: absolute;
+  top: 24rpx;
+  right: 24rpx;
+}
+
+.deck-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 280rpx;
+}
+
+.deck-name {
+  margin-top: 12rpx;
+  color: #22344d;
+  color: var(--role-ink);
+  font-size: 44rpx;
+  font-weight: 700;
+}
+
+.deck-tagline {
+  margin-top: 6rpx;
+  color: #22344d;
+  color: var(--role-ink);
+  font-size: 27rpx;
+}
+
+.deck-desc {
+  margin-top: 14rpx;
   color: #474e54;
   color: var(--text-secondary);
-  font-size: 26rpx;
-  line-height: 1.65;
+  font-size: 25rpx;
+  line-height: 1.6;
+  text-align: center;
 }
 
-.companion-tone {
-  display: block;
-  margin-top: 8rpx;
-  color: #5a6167;
-  color: var(--text-tertiary);
+.deck-voice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  width: 100%;
+  min-height: 60rpx;
+  margin-top: auto;
+  padding-top: 18rpx;
+  border-top: 1rpx solid rgba(30, 45, 70, 0.08);
+  border-top: 1rpx solid var(--border-default);
+}
+
+.deck-voice-name {
+  flex: 1;
+  min-width: 0;
+  color: #474e54;
+  color: var(--text-secondary);
   font-size: 24rpx;
 }
 
-.companion-actions {
-  margin-top: 24rpx;
+.deck-play {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 28rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  border-radius: 999rpx;
+  background: #3d5a80;
+  background: var(--role-primary);
+  color: #ffffff;
+  font-size: 25rpx;
+}
+
+.deck-play-on {
+  background: #22344d;
+  background: var(--role-ink);
+}
+
+.deck-dots {
+  display: flex;
+  justify-content: center;
+  gap: 12rpx;
+  margin: 4rpx 0 28rpx;
+}
+
+.deck-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: rgba(30, 45, 70, 0.18);
+  transition: width 250ms ease;
+}
+
+.deck-dot-on {
+  width: 32rpx;
+  border-radius: 999rpx;
+  background: #172f43;
+  background: var(--brand-deep);
+}
+
+.deck-hint {
+  display: block;
+  text-align: center;
 }
 
 .companion-voice {
@@ -42,10 +171,4 @@
 
 .companion-voice .setting-row + .setting-row {
   border-top: 1rpx solid rgba(30, 45, 70, 0.08);
-}
-
-.choice-radio-on {
-  border-color: #172f43;
-  background: #172f43;
-  box-shadow: inset 0 0 0 8rpx #fff;
 }

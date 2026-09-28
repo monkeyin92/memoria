@@ -194,6 +194,12 @@ def test_unbound_activation_retries_after_nearby_binding_and_clears_qr() -> None
     assert "activation_client.Activate(&activation_)" in retry
     assert "MemoriaBootstrap::GetInstance().Stop();" in retry
     assert "Activation completed after nearby bootstrap" in retry
+    # Application's activation task has already returned by then, so only a
+    # restart into the bound boot path gets the board out of "activating".
+    retry_body = retry[: retry.index("void MemoriaProtocol::StartDisplayProfilePoll")]
+    success = retry_body[retry_body.index("if (result == ESP_OK)") :]
+    assert "esp_restart();" in success[: success.index("ESP_LOGW(kTag, \"Activation retry pending")]
+    assert "on_connected_" not in success[: success.index("ESP_LOGW(kTag, \"Activation retry pending")]
 
 
 def test_wifi_config_mode_always_offers_the_nearby_bootstrap_qr() -> None:
