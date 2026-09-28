@@ -27,6 +27,7 @@ jobs:
           filters: |
             agent:
               - 'services/agent/**'
+              - 'packages/contracts/generation-fence-vectors.json'
               - 'services/control_api/tests/test_production_compose.py'
               - 'infra/Dockerfile.agent-source-overlay'
               - 'scripts/deploy_agent_component.sh'
@@ -57,6 +58,7 @@ jobs:
               - 'infra/Dockerfile.speaker-model'
             media_edge:
               - 'packages/proto/**'
+              - 'packages/contracts/generation-fence-vectors.json'
               - 'services/media_edge/**'
               - 'scripts/generate_media_go_proto.sh'
               - 'infra/Dockerfile.media-edge'

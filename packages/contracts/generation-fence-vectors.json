@@ -1,0 +1,24 @@
+{
+  "schema": "memoria-generation-fence-vectors-v1",
+  "description": "Shared generation-fence semantics for the Go Media Edge and the Python Voice Core. Both suites read this file; changing a rule means changing it here and in both languages. Fence fields: session_id, turn_id, generation_id, tool_epoch, session_epoch. Order is lexicographic by (session_epoch, turn_id, generation_id, tool_epoch). A cancel of fence F is F with generation_id + 1 and every other field unchanged.",
+  "order_cases": [
+    {"name": "identical", "current": [1, 3, 7, 2], "candidate": [1, 3, 7, 2], "equal": true, "order": "same"},
+    {"name": "new generation", "current": [1, 3, 7, 2], "candidate": [1, 3, 8, 2], "equal": false, "order": "after"},
+    {"name": "new turn resets nothing below it", "current": [1, 3, 7, 2], "candidate": [1, 4, 1, 0], "equal": false, "order": "after"},
+    {"name": "new tool epoch", "current": [1, 3, 7, 2], "candidate": [1, 3, 7, 3], "equal": false, "order": "after"},
+    {"name": "subject switch outranks larger turn numbers", "current": [1, 9, 9, 9], "candidate": [2, 1, 1, 0], "equal": false, "order": "after"},
+    {"name": "late result of an older generation", "current": [1, 3, 7, 2], "candidate": [1, 3, 6, 9], "equal": false, "order": "before"},
+    {"name": "late result of an older turn", "current": [1, 3, 7, 2], "candidate": [1, 2, 99, 99], "equal": false, "order": "before"},
+    {"name": "late result from before a subject switch", "current": [2, 1, 1, 0], "candidate": [1, 9, 9, 9], "equal": false, "order": "before"},
+    {"name": "older tool epoch", "current": [1, 3, 7, 2], "candidate": [1, 3, 7, 1], "equal": false, "order": "before"}
+  ],
+  "cancel_cases": [
+    {"name": "cancel bumps only the generation", "current": [1, 3, 7, 2], "cancelled": [1, 3, 8, 2], "accepted": true},
+    {"name": "a cancel must not skip a generation", "current": [1, 3, 7, 2], "cancelled": [1, 3, 9, 2], "accepted": false},
+    {"name": "a cancel must not change the turn", "current": [1, 3, 7, 2], "cancelled": [1, 4, 8, 2], "accepted": false},
+    {"name": "a cancel must not change the tool epoch", "current": [1, 3, 7, 2], "cancelled": [1, 3, 8, 3], "accepted": false},
+    {"name": "a cancel must not change the session epoch", "current": [1, 3, 7, 2], "cancelled": [2, 3, 8, 2], "accepted": false}
+  ],
+  "session_id": "fence-vector-session",
+  "field_order": ["session_epoch", "turn_id", "generation_id", "tool_epoch"]
+}
