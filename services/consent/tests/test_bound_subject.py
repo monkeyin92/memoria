@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from services.consent.bound_subject import (
     BoundSubjectGrant,
     IdentityEvidenceResolver,
 )
-from services.consent.evidence import BindingEvidence
+from services.consent.evidence import BindingEvidence, ConsentParams
 from services.consent.in_memory_store import InMemoryConsentStore
 from services.identity.authority import DeterministicConsentSnapshotResolver
 from services.identity.domain import AgeEvidenceError, IdentityAccessDeniedError
@@ -241,3 +241,67 @@ def test_only_a_subject_grant_names_the_subject_as_actor() -> None:
             capabilities=(),
             source_key="key",
         )
+
+
+@pytest.mark.asyncio
+async def test_carry_forward_keeps_the_guardians_session_limits(tmp_path: Path) -> None:
+    """A supersede re-grants what the guardian set, including quiet hours (P0-04 D3)."""
+    identity = await _identity(tmp_path)
+    parent, child_id, binding_id = await _parent_and_child(identity)
+    clock = [NOW]
+    service = BoundSubjectConsentService(
+        store=_AsyncStore(),  # type: ignore[arg-type]
+        identity=identity,
+        now=lambda: clock[0],
+    )
+    limits = ConsentParams(max_session_seconds=1200, quiet_hours=("20:30", "07:00"))
+    await service.grant(
+        BoundSubjectGrant(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            kind="guardian",
+            capabilities=MINOR_SESSION_CAPABILITIES,
+            source_key="snapshot-session",
+            params=limits,
+        )
+    )
+    await service.grant(
+        BoundSubjectGrant(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            kind="guardian",
+            capabilities=MEMORY_CAPABILITIES,
+            source_key="snapshot-memory",
+        )
+    )
+    successor = await identity.supersede_binding(
+        device_id="device-1",
+        declared_mode="parent_for_child",
+        primary_subject_ids=(child_id,),
+        roles=(("parent", "guardian"), ("parent", "device_admin")),
+        service_profile_version="parent_for_child-v1",
+        policy_bundle_version="multi-subject-v1",
+        actor_person_id=parent,
+        now=NOW + timedelta(minutes=1),
+        expected_binding_id=binding_id,
+    )
+    clock[0] = NOW + timedelta(minutes=2)
+
+    await service.carry_forward(
+        actor_person_id=parent,
+        subject_person_id=child_id,
+        previous_binding_id=binding_id,
+        previous_binding_version=1,
+        binding_id=successor.binding_id,
+    )
+    carried = await service.active(
+        subject_person_id=child_id,
+        binding_id=successor.binding_id,
+        binding_version=successor.binding_version,
+    )
+    params = {item.capability: item.params for item in carried}
+    assert set(params) == {*MINOR_SESSION_CAPABILITIES, *MEMORY_CAPABILITIES}
+    assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {limits}
+    assert {params[capability] for capability in MEMORY_CAPABILITIES} == {ConsentParams()}

@@ -608,8 +608,11 @@ test("ordinary parent_for_child can resolve and confirm with app_confirm", async
     ["unknown", "under_14", "14_17"],
   );
   assert.equal(page.data.ageRows[0].evidenceLabel, "未核验");
+  // Session limits come only from a minor's signed obligations; an adult profile shows none.
+  assert.equal(page.data.sessionLimits, null);
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.match(template, /申报不是核验/);
+  assert.match(template, /wx:if="\{\{sessionLimits\}\}"[\s\S]*使用时段/);
   assert.doesNotMatch(template, /已核验|adult/);
 
   page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });

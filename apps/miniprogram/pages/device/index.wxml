@@ -177,6 +177,29 @@
       <text wx:if="{{personaRows.length > 0}}" class="caption">「角色与声音」里选的伙伴会自动分配给主要使用者；想用自建人格，在这里单独分配。分配从下一次对话起生效。</text>
       <text wx:if="{{personaAssignmentError && !personaSheetVisible}}" class="error-text">{{personaAssignmentError}}</text>
 
+      <!-- P0-04 D3：监护人在绑定时设定的使用时段，值取自设备实际执行的已签名 Runtime Profile。 -->
+      <view wx:if="{{sessionLimits}}" class="l2-card">
+        <text class="l2-card-title">使用时段</text>
+        <view class="list">
+          <view wx:if="{{sessionLimits.quietHoursLabel}}" class="list-row">
+            <view class="row-copy">
+              <text class="row-title">夜间休息</text>
+              <text class="row-meta">这段时间唤醒，机器人会说晚安并回到待命，不会继续聊天</text>
+            </view>
+            <text class="row-value">{{sessionLimits.quietHoursLabel}}</text>
+          </view>
+          <view wx:if="{{sessionLimits.maxSessionLabel}}" class="list-row">
+            <view class="row-copy">
+              <text class="row-title">单次最长</text>
+              <text class="row-meta">一次对话到时后自动结束，可以再次唤醒</text>
+            </view>
+            <text class="row-value">{{sessionLimits.maxSessionLabel}}</text>
+          </view>
+        </view>
+        <text wx:if="{{sessionLimits.inQuietHours}}" class="pill pill-neutral">现在是休息时间</text>
+        <text class="caption">按北京时间执行，在绑定时设定。</text>
+      </view>
+
       <view wx:for="{{ageRows}}" wx:key="person_id" class="l2-card">
         <text class="l2-card-title">年龄资料申报</text>
         <text class="l2-card-sub">{{item.declaredLabel}} · {{item.evidenceLabel}}。申报不是核验，不能申报已成年。</text>
