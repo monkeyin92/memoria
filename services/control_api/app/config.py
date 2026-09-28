@@ -161,10 +161,7 @@ class ControlSettings(BaseSettings):
     device_challenge_ttl_ms: int = Field(
         default=120_000, ge=10_000, le=600_000, alias="DEVICE_CHALLENGE_TTL_MS"
     )
-    miniprogram_media_gateway_url: str = Field(
-        default="",
-        alias="MINIPROGRAM_MEDIA_GATEWAY_URL",
-    )
+    miniprogram_media_gateway_url: str = Field(default="", alias="MINIPROGRAM_MEDIA_GATEWAY_URL")
     miniprogram_gateway_ticket_ttl_s: int = Field(
         default=90,
         ge=30,

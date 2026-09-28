@@ -9,7 +9,6 @@ flow through :mod:`services.consent.authority` and Policy receipts.
 from __future__ import annotations
 
 import asyncio
-
 import hashlib
 import json
 import sqlite3

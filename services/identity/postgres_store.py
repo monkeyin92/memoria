@@ -169,10 +169,7 @@ class PostgresIdentityStore:
         self._initialize_lock = asyncio.Lock()
 
     async def initialize(self, *, expected_role: str | None = None) -> None:
-        """Open and verify both pools once; a failure leaves nothing half-open."""
-
-        if self._pool is not None:
-            return
+        # Once, under a lock (lazy first use); a failure leaves nothing half-open.
         async with self._initialize_lock:
             if self._pool is not None:
                 return
@@ -642,9 +639,7 @@ class PostgresIdentityStore:
     async def _ready(self) -> asyncpg.Pool:
         if self._pool is None:
             await self.initialize()
-        if self._pool is None:  # pragma: no cover - initialize() raised
-            raise RuntimeError("PostgresIdentityStore.initialize() must run first")
-        return self._pool
+        return cast(asyncpg.Pool, self._pool)
 
     async def _registration_ready(self) -> asyncpg.Pool:
         if self._registration_pool is None and self._pool is None:
@@ -770,9 +765,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     """
                     SELECT identity_declare_age_evidence(
@@ -855,9 +848,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     """
                     SELECT identity_self_update_profile(
@@ -908,9 +899,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_persons WHERE person_id = $1", person_id
                 )
@@ -990,9 +979,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if expected_updated_at is not None:
                     existing = await connection.fetchrow(
                         "SELECT updated_at FROM identity_relationships "
@@ -1031,9 +1018,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_relationships WHERE relationship_id = $1",
                     relationship_id,
@@ -1051,9 +1036,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         """
@@ -1086,9 +1069,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         "SELECT * FROM identity_relationships ORDER BY created_at"
@@ -1117,9 +1098,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     binding.device_id,
@@ -1245,9 +1224,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_device_bindings WHERE binding_id = $1",
                     binding_id,
@@ -1271,9 +1248,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings
@@ -1311,9 +1286,7 @@ class PostgresIdentityStore:
         timestamp = _timestamp(now, field="now")
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings AS binding
@@ -1357,9 +1330,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings
@@ -1431,9 +1402,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_device_bindings WHERE binding_id = $1",
                     binding_id,
@@ -1488,9 +1457,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if idempotency_record is not None:
                     await _insert_idempotency_record(
                         connection, idempotency_record
@@ -1527,9 +1494,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_transfer_intents WHERE transfer_id = $1",
                     transfer_id,
@@ -1547,9 +1512,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         """
@@ -1608,9 +1571,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     """
                     SELECT scope_key, idempotency_key, operation, content_hash,
@@ -1644,9 +1605,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 return await _insert_idempotency_record(connection, record)
 
     async def complete_transfer(
@@ -1664,9 +1623,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if idempotency_record is not None:
                     await _insert_idempotency_record(
                         connection, idempotency_record
@@ -1803,9 +1760,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 existing = await connection.fetchrow(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1864,9 +1819,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1887,9 +1840,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1912,9 +1863,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 deleted = await connection.fetchval(
                     """
                     DELETE FROM identity_persona_assignments
@@ -1946,9 +1895,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     record.owner_person_id,
@@ -2022,9 +1969,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_custom_personas WHERE persona_id = $1",
                     persona_id,
@@ -2041,9 +1986,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_custom_personas
@@ -2064,9 +2007,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 count = await connection.fetchval(
                     """
                     SELECT count(*) FROM identity_custom_personas
@@ -2086,9 +2027,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 count = await connection.fetchval(
                     """
                     SELECT count(*) FROM identity_persona_assignments
@@ -2116,9 +2055,7 @@ class PostgresIdentityStore:
         pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 owner = await connection.fetchval(
                     """
                     SELECT owner_person_id FROM identity_custom_personas
