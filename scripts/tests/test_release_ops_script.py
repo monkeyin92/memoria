@@ -155,11 +155,12 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260927-device-ota", "LIVE_CONTROL_RELEASE", "CONTROL_CHAIN",
         "20260927-unbind-release-v1",
         "20260927-child-binding-v1",
+        "20260928-child-binding-v2",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260928-child-binding-v2" in script
-    assert "PREV_COMMIT=87f3560824ef16cd74a07133f8a921ce835c56ba" in script
+    assert "PREV_TAG=20260928-session-trust-v1" in script
+    assert "PREV_COMMIT=5ae5929ccfa57d0c671b4ee565a3c2a70d53c71f" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
