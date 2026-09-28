@@ -17,8 +17,29 @@
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
 - **发布身份**：`20260928-reopen-window-v1` / `173445d`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-reopen-window-v1`。上一栈 `20260928-followup-endpoint-v1` / `a2ea41e` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
+- **main 领先生产**：评审整改批次已合并但未发布，其中 3 个是已在生产生效的缺陷，见下节「双视角评审整改」。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-28 双视角评审整改（已合并 main，未发布）
+
+- **范围**：按评审计划的第 1–6 批合并了 #89–#112（进度见 TODOLIST P2-08）。其中 media-edge 只有 #87 已单独发布，其余都没有上生产，main 已领先生产。
+- **已在生产生效、随下次整栈发布修复的缺陷**：
+  - 账号删除会停在 evolution 一步：`memoria_evolution` 对 `evolution_lifecycle_events` 没有 DELETE 权限（只读核实：权限缺失，control-api 使用该 DSN）。#100 修复，经 `schema` 步骤重放 `007-evolution-schema.sql` 生效。
+  - 含监护记录的账号导出返回 500：PG 监护行里的 UUID 和时间无法 JSON 序列化，生产有 1 条 person consent。#103 修复。
+  - 自助导出不含任何证据：PG 的 JSONB 列没有解码，证据全部被计为 `unparsed_payload`。#102 修复。
+- **潜伏缺陷（生产暂无触发数据）**：
+  - 属主是非主体时，被替代的绑定版本不可见，版本列表返回 500（#99）。
+  - 绑定主体的记忆编译和留存读取没有带 actor，会被 RLS 全部隐藏（#101；生产证据的 `subject_id` 目前全为空）。
+  - 语料维护角色不能标记删除（#104；生产语料 0 条）。
+  - self-model JSONB 列表被按字符解码（#96）。
+  - 长辈绑定先校验年龄后记关系（#97）。
+- **发布时的注意事项**：
+  - 本轮新增控制库版本台账 `control_schema_migrations`（#98）。`schema` 步骤会先重放基线，再按编号执行 `database/migrations/`。
+  - control-api 的 identity 不再有 SQLite 回退（#112），生产本来就要求 `MEMORIA_IDENTITY_DATABASE_URL`。
+  - `ControlSettings` 按域拆分（#111），环境变量名不变。
+- **控制库切换（SQLite→PG）仍待授权**：先整栈发布包含 #92/#98 的版本，再执行 `CONTROL_STORE_MODE=dry-run`，确认后执行 `apply`，步骤见运行手册。
+- **测试底座**：CI 新增 `control-api-postgres` 作业。Control API 与 governance 测试在生产形态的 PG 上运行：用真实 init 脚本建库，按生产角色连接，FORCE RLS 生效。上面这些缺陷都是它找出来的。
 
 ## 2026-09-28 小程序 tab 页导航修复（PR #86，体验版 `0.2.20260928.2`）
 
