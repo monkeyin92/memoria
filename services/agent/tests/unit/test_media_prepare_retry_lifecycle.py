@@ -27,7 +27,7 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceCoreRegistry,
 )
 from services.agent.src.voice_core.speech_timeline import ASRResult, SegmentKind, SpeechSegment
-from services.agent.tests.unit.test_media_session import (
+from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _CapturingMediaBridge,
     _owner_silence_identity,
@@ -233,7 +233,7 @@ def _expire_real_tail(case: _Scenario) -> asyncio.Task[Any]:
     # Advance only this lifecycle module's clock to the OBSERVED deadline; do
     # not overwrite the stored deadline or fast-forward unrelated owner/output
     # timers on the shared event loop. Early manual expiry remains a separate
-    # contract in test_media_session; this callback is genuinely due here.
+    # contract in the media-session tests; this callback is genuinely due here.
     case.clock_patch.setattr(
         media_session_turns, "time",
         SimpleNamespace(monotonic=lambda: deadline, monotonic_ns=time.monotonic_ns),

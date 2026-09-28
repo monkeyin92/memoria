@@ -26,7 +26,7 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.media_session_types import MediaReplyChunk
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
-from services.agent.tests.unit.test_media_session import FakeMediaProvider
+from services.agent.tests.unit.media_session_support import FakeMediaProvider
 
 _CANCEL_GENERATION = media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
 _GENERATION_ACTION_COMPLETE = media_pb2.GENERATION_ACTION_COMPLETE
