@@ -22,6 +22,7 @@ from services.control_api.app.main import create_app
 from services.control_api.app.routes import auth as auth_routes
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult
+from testing import app_store
 
 
 class _RestartEmbeddingAdapter:
@@ -844,7 +845,19 @@ async def test_wechat_restore_rejects_conflicting_identity_without_issuing_sessi
         else replace(original, age_evidence_status="disputed") if protected == "disputed"
         else replace(original, status="disabled")
     )
-    await identity._store.save_person(person)
+    if app_store.postgres_active():
+        # PostgreSQL refuses an unaudited person write and guards age fields
+        # with triggers; force the protected state as the fixture admin.
+        app_store.execute(
+            "",
+            "UPDATE identity_persons SET subject_category = ?, age_band = ?, "
+            "age_evidence_status = ?, status = ? WHERE person_id = ?",
+            (person.subject_category, person.age_band, person.age_evidence_status,
+             person.status, user_id),
+            bypass_triggers=True,
+        )
+    else:
+        await identity._store.save_person(person)
     revision = store.get_subject_profile(user_id=user_id)["subject_revision"]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         result = await client.post(
@@ -1392,6 +1405,12 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
     assert "safe-passphrase" not in stored_password
 
     restarted_app = create_app()
+    # The same speaker file the first app wrote, as on a real restart.
+    restarted_app.state.speaker_authority = SpeakerAuthority.sqlite(
+        speaker_database,
+        template_key=speaker_key,
+        adapter=_RestartEmbeddingAdapter(),
+    )
     async with AsyncClient(
         transport=ASGITransport(app=restarted_app),
         base_url="http://test",

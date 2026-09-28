@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from services.identity.authority import (
     TRANSFER_CAPABILITY,
@@ -147,3 +148,20 @@ def install_test_identity_authority(app, *, secret: bytes) -> IdentityService:
     app.state.identity_service = service
     app.state.transfer_test_authority = authority
     return service
+
+
+def assert_stranger_denied(response: Any, forbidden_code: str | None = None) -> None:
+    """A non-member is refused, whichever Identity backend the app runs on.
+
+    PostgreSQL Identity (FORCE RLS) hides rows the actor has no relationship
+    to, so the lookup itself misses (404, ``*_not_found``); the SQLite twin
+    finds the row and denies (403, ``forbidden_code``). Both fail closed and
+    neither reveals the row.
+    """
+
+    assert response.status_code in {403, 404}, response.text
+    code = response.json()["detail"]["code"]
+    if response.status_code == 404:
+        assert code.endswith("_not_found"), response.text
+    elif forbidden_code is not None:
+        assert code == forbidden_code, response.text

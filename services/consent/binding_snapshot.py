@@ -8,6 +8,7 @@ flow through :mod:`services.consent.authority` and Policy receipts.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -778,23 +779,25 @@ class PostgresBindingConsentStore:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        self._pool = await asyncpg.create_pool(
-            self._dsn,
-            min_size=1,
-            max_size=10,
-        )
+        if self._pool is not None:
+            return
+        async with self._initialize_lock:
+            if self._pool is None:
+                self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10)
 
-    def _ready(self) -> asyncpg.Pool:
-        if self._pool is None:
+    async def _ready(self) -> asyncpg.Pool:
+        await self.initialize()
+        if self._pool is None:  # pragma: no cover - create_pool raised
             raise RuntimeError("PostgresBindingConsentStore not initialized")
         return self._pool
 
     async def save(
         self, snapshot: BindingConsentSnapshot
     ) -> BindingConsentSnapshot:
-        pool = self._ready()
+        pool = await self._ready()
         payload = snapshot.to_canonical_dict()
         async with pool.acquire() as connection:
             async with connection.transaction():
@@ -845,7 +848,7 @@ class PostgresBindingConsentStore:
                 return snapshot
 
     async def get(self, snapshot_id: str) -> BindingConsentSnapshot | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             row = await connection.fetchrow(
                 """

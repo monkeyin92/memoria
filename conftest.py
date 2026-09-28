@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -94,3 +95,104 @@ if _CONTROL_BACKEND == "postgres":
         with psycopg.connect(_BASE_DSN, autocommit=True) as connection:
             for schema in sorted(_SCHEMAS):
                 connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+# MEMORIA_TEST_APP_POSTGRES=1 runs Control API and governance tests against a
+# production-shaped PostgreSQL: every test gets a clone of a template built by
+# the real init script, every DSN connects as its production role, and eager
+# wiring builds the PostgreSQL stores (MEMORIA_EAGER_POSTGRES).
+_APP_POSTGRES = os.environ.get("MEMORIA_TEST_APP_POSTGRES", "").strip() == "1"
+_APP_POSTGRES_ROOTS = ("services/control_api/tests", "services/governance/tests")
+
+if _APP_POSTGRES:
+    import pytest_asyncio
+    from testing.postgres_harness import (
+        TestDatabase,
+        build_template,
+        cloned_database,
+        drop_template,
+    )
+
+    _TEMPLATE: list[TestDatabase] = []
+
+    def _app_template() -> TestDatabase:
+        if not _TEMPLATE:
+            admin = os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip()
+            if not admin:
+                raise RuntimeError("MEMORIA_TEST_APP_POSTGRES=1 needs MEMORIA_TEST_POSTGRES_DSN")
+            _TEMPLATE.append(build_template(admin))
+        return _TEMPLATE[0]
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _app_postgres(
+        request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+    ) -> Any:
+        path = str(request.node.path)
+        if not any(root in path for root in _APP_POSTGRES_ROOTS) or request.node.get_closest_marker(
+            "sqlite_only"
+        ):
+            yield
+            return
+        from services.control_api.app import main as control_main
+
+        apps: list[Any] = []
+        original_create_app = control_main.create_app
+
+        from testing import app_store
+
+        with cloned_database(_app_template()) as database:
+            app_store.set_current(database)
+            # MEMORIA_TEST_APP_POSTGRES_SKIP lists DSN settings to leave unset.
+            # MEMORIA_CONSENT_DATABASE_URL is not only a backend: without it the
+            # bound-subject consent feature is off, which is how most tests were
+            # written, so switching it is a separate step.
+            skip = {
+                name.strip()
+                for name in os.environ.get(
+                    "MEMORIA_TEST_APP_POSTGRES_SKIP", "MEMORIA_CONSENT_DATABASE_URL"
+                ).split(",")
+                if name.strip()
+            }
+            injected = {
+                **{key: value for key, value in database.control_env().items() if key not in skip},
+                "MEMORIA_EAGER_POSTGRES": "true",
+            }
+
+            def recording_create_app(*args: Any, **kwargs: Any) -> Any:
+                # Only the app sees the DSNs: settings a test builds itself keep
+                # testing what is and is not configured. Production-mode apps
+                # are left alone.
+                if os.environ.get("ENVIRONMENT", "").strip() == "production":
+                    return original_create_app(*args, **kwargs)
+                saved = {key: os.environ.get(key) for key in injected}
+                os.environ.update({key: value for key, value in injected.items() if key not in os.environ})
+                try:
+                    app = original_create_app(*args, **kwargs)
+                finally:
+                    for key, value in saved.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
+                apps.append(app)
+                return app
+
+            monkeypatch.setattr(control_main, "create_app", recording_create_app)
+            for module in list(sys.modules.values()):
+                if getattr(module, "create_app", None) is original_create_app and module is not control_main:
+                    monkeypatch.setattr(module, "create_app", recording_create_app)
+            try:
+                yield
+            finally:
+                app_store.set_current(None)
+                for app in apps:
+                    resources = getattr(app.state, "eager_resources", None)
+                    if resources is not None:
+                        try:
+                            await resources.aclose()
+                        except Exception:  # noqa: BLE001 - teardown must reach the drop
+                            pass
+
+    def pytest_unconfigure(config: pytest.Config) -> None:
+        if _TEMPLATE:
+            drop_template(_TEMPLATE.pop())

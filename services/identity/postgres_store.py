@@ -8,6 +8,7 @@ outbox rows are written by the same adapter.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -165,10 +166,20 @@ class PostgresIdentityStore:
         self._registration_dsn = registration_dsn
         self._pool: asyncpg.Pool | None = None
         self._registration_pool: asyncpg.Pool | None = None
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self, *, expected_role: str | None = None) -> None:
-        if self._pool is not None:
-            return
+        # Once, under a lock (lazy first use); a failure leaves nothing half-open.
+        async with self._initialize_lock:
+            if self._pool is not None:
+                return
+            try:
+                await self._open_and_verify(expected_role=expected_role)
+            except BaseException:
+                await self.close()
+                raise
+
+    async def _open_and_verify(self, *, expected_role: str | None) -> None:
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=4)
         assert self._pool is not None
         schema = _SCHEMA_PATH.read_text(encoding="utf-8")
@@ -625,12 +636,14 @@ class PostgresIdentityStore:
             await self._registration_pool.close()
             self._registration_pool = None
 
-    def _ready(self) -> asyncpg.Pool:
+    async def _ready(self) -> asyncpg.Pool:
         if self._pool is None:
-            raise RuntimeError("PostgresIdentityStore.initialize() must run first")
-        return self._pool
+            await self.initialize()
+        return cast(asyncpg.Pool, self._pool)
 
-    def _registration_ready(self) -> asyncpg.Pool:
+    async def _registration_ready(self) -> asyncpg.Pool:
+        if self._registration_pool is None and self._pool is None:
+            await self.initialize()
         if self._registration_pool is None:
             raise RuntimeError(
                 "PostgresIdentityStore registration authority is not "
@@ -678,7 +691,7 @@ class PostgresIdentityStore:
                 "identity registration requires an audit event "
                 "(person + audit + outbox are written atomically)"
             )
-        pool = self._registration_ready()
+        pool = await self._registration_ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 try:
@@ -749,12 +762,10 @@ class PostgresIdentityStore:
             raise IdentityAccessDeniedError(
                 "age declarations require an authenticated actor"
             )
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     """
                     SELECT identity_declare_age_evidence(
@@ -781,7 +792,7 @@ class PostgresIdentityStore:
         # non-empty evidence id and a distinct verified-adult verifier; the
         # evidence-carrying audit/outbox trail is written in the same
         # transaction by the port.
-        pool = self._registration_ready()
+        pool = await self._registration_ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await connection.execute(
@@ -803,7 +814,7 @@ class PostgresIdentityStore:
         evidence_id: str, source_revision: int,
         audit_event: AuditEvent, outbox_event: OutboxEvent,
     ) -> None:
-        pool = self._registration_ready()
+        pool = await self._registration_ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 try:
@@ -834,12 +845,10 @@ class PostgresIdentityStore:
             raise IdentityAccessDeniedError(
                 "profile updates are self-service only"
             )
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     """
                     SELECT identity_self_update_profile(
@@ -866,7 +875,7 @@ class PostgresIdentityStore:
         # The function re-checks the attestation and the absence of a live
         # binding under the owner's RLS context, and writes its own audit.
         del audit_event
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await self._apply_context(
@@ -887,19 +896,17 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> PersonSubject | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_persons WHERE person_id = $1", person_id
                 )
             return _person(row) if row is not None else None
 
     async def person_exists(self, person_id: str) -> bool:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             return bool(
                 await connection.fetchval(
@@ -915,7 +922,7 @@ class PostgresIdentityStore:
         relation_type: str,
         at: datetime,
     ) -> bool:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             return bool(
                 await connection.fetchval(
@@ -943,7 +950,7 @@ class PostgresIdentityStore:
         endpoint, never verified guardianship.
         """
 
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             return bool(
                 await connection.fetchval(
@@ -969,12 +976,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if expected_updated_at is not None:
                     existing = await connection.fetchrow(
                         "SELECT updated_at FROM identity_relationships "
@@ -1010,12 +1015,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> Relationship | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_relationships WHERE relationship_id = $1",
                     relationship_id,
@@ -1030,12 +1033,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[Relationship, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         """
@@ -1065,12 +1066,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[Relationship, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         "SELECT * FROM identity_relationships ORDER BY created_at"
@@ -1096,12 +1095,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     binding.device_id,
@@ -1224,12 +1221,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_device_bindings WHERE binding_id = $1",
                     binding_id,
@@ -1250,12 +1245,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings
@@ -1289,13 +1282,11 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[DeviceBinding, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         timestamp = _timestamp(now, field="now")
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings AS binding
@@ -1336,12 +1327,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[DeviceBinding, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_device_bindings
@@ -1367,7 +1356,7 @@ class PostgresIdentityStore:
         *,
         scope: str = "api",
     ) -> tuple[DeviceBinding, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await self._apply_context(
@@ -1410,12 +1399,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_device_bindings WHERE binding_id = $1",
                     binding_id,
@@ -1467,12 +1454,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if idempotency_record is not None:
                     await _insert_idempotency_record(
                         connection, idempotency_record
@@ -1506,12 +1491,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> TransferIntent | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_transfer_intents WHERE transfer_id = $1",
                     transfer_id,
@@ -1526,12 +1509,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[TransferIntent, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if statuses is None:
                     rows = await connection.fetch(
                         """
@@ -1558,7 +1539,7 @@ class PostgresIdentityStore:
         *,
         scope: str = "api",
     ) -> tuple[TransferIntent, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await self._apply_context(
@@ -1587,12 +1568,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> IdempotencyRecord | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     """
                     SELECT scope_key, idempotency_key, operation, content_hash,
@@ -1623,12 +1602,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> bool:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 return await _insert_idempotency_record(connection, record)
 
     async def complete_transfer(
@@ -1643,12 +1620,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> DeviceBinding:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 if idempotency_record is not None:
                     await _insert_idempotency_record(
                         connection, idempotency_record
@@ -1782,12 +1757,10 @@ class PostgresIdentityStore:
         directly: the API role holds no INSERT on ``identity_audit_events``,
         so the row is synthesized by ``identity_persona_assignments_audit_trigger``.
         """
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 existing = await connection.fetchrow(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1843,12 +1816,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> PersonaAssignmentRecord | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1866,12 +1837,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[PersonaAssignmentRecord, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_persona_assignments
@@ -1891,12 +1860,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> bool:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 deleted = await connection.fetchval(
                     """
                     DELETE FROM identity_persona_assignments
@@ -1925,12 +1892,10 @@ class PostgresIdentityStore:
         ``identity_custom_personas_audit_trigger`` (the API role holds no
         INSERT on ``identity_audit_events``).
         """
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     record.owner_person_id,
@@ -2001,12 +1966,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> CustomPersonaRecord | None:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 row = await connection.fetchrow(
                     "SELECT * FROM identity_custom_personas WHERE persona_id = $1",
                     persona_id,
@@ -2020,12 +1983,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> tuple[CustomPersonaRecord, ...]:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 rows = await connection.fetch(
                     """
                     SELECT * FROM identity_custom_personas
@@ -2043,12 +2004,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> int:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 count = await connection.fetchval(
                     """
                     SELECT count(*) FROM identity_custom_personas
@@ -2065,12 +2024,10 @@ class PostgresIdentityStore:
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> int:
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 count = await connection.fetchval(
                     """
                     SELECT count(*) FROM identity_persona_assignments
@@ -2095,12 +2052,10 @@ class PostgresIdentityStore:
         persona) so no dangling assignment can survive the deletion.  A
         persona absent or owned by another account returns ``0`` untouched.
         """
-        pool = self._ready()
+        pool = await self._ready()
         async with pool.acquire() as connection:
             async with connection.transaction():
-                await self._apply_context(
-                    connection, actor_person_id=actor_person_id, scope=scope
-                )
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope=scope)
                 owner = await connection.fetchval(
                     """
                     SELECT owner_person_id FROM identity_custom_personas

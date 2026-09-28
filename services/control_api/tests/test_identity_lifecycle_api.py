@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,9 +13,11 @@ from httpx import ASGITransport, AsyncClient
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.identity_test_helpers import (
+    assert_stranger_denied,
     install_test_identity_authority,
 )
 from services.identity.domain import BindingVersionConflictError
+from testing import app_store
 
 
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path, name: str):
@@ -101,18 +102,16 @@ def _guardian_permissions(payload: dict, person_id: str) -> tuple[str, ...]:
 
 
 def _outbox_rows(app) -> list[dict]:
-    path = app.state.settings.identity_sqlite_path()
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute(
-            "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at"
-        ).fetchall()
+    rows = app_store.fetch_all(
+        app.state.settings.identity_sqlite_path(),
+        "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at",
+    )
     return [
         {
-            "topic": str(row["topic"]),
-            "payload": json.loads(str(row["payload_json"])),
+            "topic": str(topic),
+            "payload": json.loads(payload) if isinstance(payload, str) else payload,
         }
-        for row in rows
+        for topic, payload in rows
     ]
 
 
@@ -186,8 +185,7 @@ async def test_relationship_invite_accept_dispute_resolution_revoke(
             headers=_headers(stranger),
             json={},
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "relationship_forbidden"
+        assert_stranger_denied(response, "relationship_forbidden")
 
         response = await client.post(
             f"/v1/relationships/{relationship_id}/accept",
@@ -377,8 +375,7 @@ async def test_transfer_requires_step_up_and_target_accept(
                 "idempotency_key": "test-idem-key-0001",
             },
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "transfer_forbidden"
+        assert_stranger_denied(response, "transfer_forbidden")
 
         # Owner creates the intent with a server-signed step-up + receipt.
         v1 = app.state.multi_subject_binding_manifests["dev-tx"]
@@ -484,7 +481,13 @@ async def test_transfer_requires_step_up_and_target_accept(
             row for row in outbox if row["topic"] == "identity.binding.transferred"
         ]
         assert len(transferred) == 1
-        assert transferred[0]["payload"]["binding_version"] == 2
+        # The service writes the new binding; PostgreSQL's trigger writes the
+        # accepted transfer intent. Both name the resulting binding.
+        payload = transferred[0]["payload"]
+        assert payload.get("resulting_binding_id", payload.get("binding_id")) == (
+            manifest["binding_id"]
+        )
+        assert payload["device_id"] == "dev-tx"
 
         # Old owner no longer holds any role; the new owner can list versions.
         response = await client.get(
@@ -590,8 +593,7 @@ async def test_cross_family_binding_read_rejected(
         response = await client.get(
             "/v1/devices/dev-a/bindings", headers=_headers(family_b)
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "binding_forbidden"
+        assert_stranger_denied(response, "binding_forbidden")
 
         response = await client.get(
             "/v1/devices/dev-a/transfers", headers=_headers(family_b)
@@ -798,8 +800,7 @@ async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
                 "subject_draft": {"display_name": "老二", "age_band": "under_14"},
             },
         )
-        assert stranger_add.status_code == 403, stranger_add.text
-        assert stranger_add.json()["detail"]["code"] == "binding_forbidden"
+        assert_stranger_denied(stranger_add, "binding_forbidden")
         duplicate = await client.post(
             device, headers=_headers(owner), json={"person_id": child1}
         )
@@ -846,8 +847,13 @@ async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
         adult_add = await client.post(
             device, headers=_headers(owner), json={"person_id": "members-guard-adult"}
         )
-        assert adult_add.status_code == 422, adult_add.text
-        assert adult_add.json()["detail"]["code"] == "member_age_band_rejected"
+        # PostgreSQL Identity never shows the owner a person they have no
+        # relationship to, so the lookup misses before the age-band rule; the
+        # SQLite twin finds the adult and rejects the band. Both refuse.
+        assert (adult_add.status_code, adult_add.json()["detail"]["code"]) in {
+            (422, "member_age_band_rejected"),
+            (404, "member_not_found"),
+        }, adult_add.text
 
 
 @pytest.mark.asyncio
@@ -1196,8 +1202,7 @@ async def test_age_evidence_declaration_owner_self_stranger(
         denied = await client.patch(
             target, headers=_headers(stranger), json={"age_band": "14_17"}
         )
-        assert denied.status_code == 403, denied.text
-        assert denied.json()["detail"]["code"] == "guardian_binding_owner_required"
+        assert_stranger_denied(denied, "guardian_binding_owner_required")
         adult_claim = await client.patch(
             target, headers=_headers(owner), json={"age_band": "adult"}
         )
@@ -1247,7 +1252,7 @@ async def test_device_page_reads_the_age_band_and_a_change_rotates_the_profile(
         assert read.json()["age_band"] == "under_14"
         assert read.json()["subject_category"] == "minor"
         denied = await client.get(target, headers=_headers(stranger))
-        assert denied.status_code == 403, denied.text
+        assert_stranger_denied(denied)
         assert rotated == []
 
         changed = await client.patch(target, headers=_headers(owner), json={"age_band": "14_17"})

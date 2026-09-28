@@ -3143,7 +3143,7 @@ async def test_conversation_review_subject_matrix_precedes_private_reads_and_wri
         # exits stay closed through the unknown/missing accounts.
         await app.state.guardian_store.grant_person_consent(
             PersonConsentRecord(
-                consent_id="matrix-minor-retention",
+                consent_id=str(uuid.uuid4()),
                 subject_person_id=minor["user_id"],
                 grantor_person_id="matrix-guardian",
                 consent_kind="memory_retention",

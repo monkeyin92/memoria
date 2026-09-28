@@ -161,10 +161,7 @@ class ControlSettings(BaseSettings):
     device_challenge_ttl_ms: int = Field(
         default=120_000, ge=10_000, le=600_000, alias="DEVICE_CHALLENGE_TTL_MS"
     )
-    miniprogram_media_gateway_url: str = Field(
-        default="",
-        alias="MINIPROGRAM_MEDIA_GATEWAY_URL",
-    )
+    miniprogram_media_gateway_url: str = Field(default="", alias="MINIPROGRAM_MEDIA_GATEWAY_URL")
     miniprogram_gateway_ticket_ttl_s: int = Field(
         default=90,
         ge=30,
@@ -264,6 +261,7 @@ class ControlSettings(BaseSettings):
     )
     consent_database_url: SecretStr = Field(default=SecretStr(""), alias="MEMORIA_CONSENT_DATABASE_URL")
     control_database_url: SecretStr = Field(default=SecretStr(""), alias="MEMORIA_CONTROL_DATABASE_URL")
+    eager_postgres: bool = Field(default=False, alias="MEMORIA_EAGER_POSTGRES")  # tests only
     device_onboarding_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_DEVICE_ONBOARDING_DATABASE_URL",

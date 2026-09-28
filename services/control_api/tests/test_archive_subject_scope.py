@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from services.control_api.tests.test_archive_api import (
     _wav,
 )
 from services.guardian.domain import PersonConsentRecord
+from testing import app_store
 
 INTERNAL = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
 
@@ -39,6 +41,25 @@ def _speech(session_id: str, **overrides: Any) -> dict[str, Any]:
         "payload": {"text": "需要隔离的逐字内容"},
         **overrides,
     }
+
+
+async def _relate(app: Any, account_id: str, person_id: str) -> None:
+    """Relate the account to another adult, as a real device binding does.
+
+    PostgreSQL Identity shows a person only to a related account; the SQLite
+    twin shows everyone, so this is a no-op for what those tests assert.
+    """
+    await app.state.identity_service.register_person(
+        person_id=account_id, actor_person_id=account_id,
+        display_name="账号本人", timezone="Asia/Shanghai",
+        subject_category="adult", age_band="adult",
+        age_evidence_status="verified", age_evidence_id=f"test-evidence-{account_id}",
+        now=datetime.now(UTC),
+    )
+    await app.state.identity_service.attest_binding_relationship(
+        source_person_id=account_id, target_person_id=person_id,
+        relation_type="delegate_for", actor_person_id=account_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -162,7 +183,7 @@ async def test_revoked_consent_blocks_every_private_read_exit(
         minor = await _register_minor(client, app, username="scope-minor")
         headers = {"Authorization": f"Bearer {minor['access_token']}"}
         consent = PersonConsentRecord(
-            consent_id="scope-consent", subject_person_id=minor["user_id"],
+            consent_id=str(uuid.uuid4()), subject_person_id=minor["user_id"],
             grantor_person_id="guardian", consent_kind="memory_retention",
             policy_version="test-v1", granted_at=datetime.now(UTC), evidence_event_id="grant",
         )
@@ -279,6 +300,7 @@ async def test_retained_foreign_speech_cannot_train_the_account_persona(
             age_evidence_id="test-adult-evidence",
             now=datetime.now(UTC),
         )
+        await _relate(app, owner["user_id"], "other-persona-adult")
         for i, subject in enumerate(("other-persona-adult", owner["user_id"]), 1):
             result = await client.post(
                 "/v1/archive/session-events", headers=INTERNAL,
@@ -362,6 +384,7 @@ async def test_real_catalog_http_exits_and_review_ids_are_subject_scoped(
             age_evidence_id="test-child-evidence",
             now=datetime.now(UTC),
         )
+        await _relate(app, owner["user_id"], "child")
         now = datetime.now(UTC)
         for i, (subject, name) in enumerate(
             ((owner["user_id"], "李梅"), ("child", "王芳"), (None, "赵兰"))
@@ -552,6 +575,7 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
             age_evidence_id="test-adult-evidence",
             now=now,
         )
+        await _relate(app, owner["user_id"], "person-other-adult")
         for index, (subject, text) in enumerate(
             (
                 (owner["user_id"], "请记住我喜欢散步。"),
@@ -697,7 +721,7 @@ async def test_minor_without_retention_reads_nothing_and_names_the_subject(
 
         consent = await app.state.guardian_store.grant_person_consent(
             PersonConsentRecord(
-                consent_id="minor-retention",
+                consent_id=str(uuid.uuid4()),
                 subject_person_id="person-minor-child",
                 grantor_person_id="guardian",
                 consent_kind="memory_retention",
@@ -829,19 +853,19 @@ async def test_unresolved_identity_does_not_project_the_other_subject(
     assert other_plan.status_code == 200, other_plan.text
     assert "散步" not in other_plan.text
     assert "阅读" not in other_plan.text
-    import sqlite3
-
-    with sqlite3.connect(app.state.memory_catalog._path) as connection:
-        receipt = connection.execute(
-            "SELECT outcome FROM memory_compile_receipts WHERE event_id = ?",
-            ("unresolved-1",),
-        ).fetchone()
-        projected = connection.execute(
-            "SELECT 1 FROM memory_claims WHERE source_event_id = ?",
-            ("unresolved-1",),
-        ).fetchone()
-    assert receipt is not None and receipt[0] == "ignored"
-    assert projected is None
+    catalog_path = getattr(app.state.memory_catalog, "_path", "")
+    receipts = app_store.fetch_all(
+        catalog_path,
+        "SELECT outcome FROM memory_compile_receipts WHERE event_id = ?",
+        ("unresolved-1",),
+    )
+    projected = app_store.fetch_all(
+        catalog_path,
+        "SELECT 1 FROM memory_claims WHERE source_event_id = ?",
+        ("unresolved-1",),
+    )
+    assert receipts == [("ignored",)]
+    assert projected == []
 
 
 @pytest.mark.asyncio

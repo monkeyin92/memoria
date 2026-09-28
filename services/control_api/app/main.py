@@ -6,12 +6,11 @@ import base64
 import binascii
 import hashlib
 from asyncio import Lock, to_thread
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 import asyncpg
@@ -107,6 +106,7 @@ from services.control_api.app.session_termination import (
     LiveKitRoomCloser,
     RealtimeConnectionRegistry,
 )
+from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_service import (
     DeviceOnboardingService,
@@ -654,77 +654,7 @@ def _evolution_plane(
     )
 
 
-class _Worker(Protocol):
-    def start(self) -> None: ...
-
-    async def stop(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class _Wiring:
-    """One build of the object graph: eager (``create_app``) or live (lifespan).
-
-    Live wiring picks PostgreSQL wherever a URL is set, initializes schemas,
-    starts workers and registers every closeable.  Eager wiring is what ASGI
-    test clients see without a lifespan: SQLite, no network, nothing started,
-    and only the schemas ``create_app`` has always initialized inline.
-    """
-
-    app: FastAPI
-    settings: ControlSettings
-    live: bool
-    resources: LifespanResources = field(default_factory=LifespanResources)
-
-    def url(self, value: str) -> str:
-        """A store's backend URL; eager wiring ignores it and stays on SQLite."""
-        return value if self.live else ""
-
-    def on_close(self, close: Callable[[], object]) -> None:
-        if self.live:
-            self.resources.add(close)
-
-    async def open(
-        self,
-        initialize: Callable[[], Awaitable[object]],
-        close: Callable[[], object],
-    ) -> None:
-        """Initialize a live resource, then register its closer."""
-        if self.live:
-            await initialize()
-            self.resources.add(close)
-
-    async def init_blocking(
-        self,
-        initialize: Callable[[], object],
-        *,
-        eager: bool = False,
-    ) -> None:
-        """Blocking schema setup: off-thread when live; inline only if ``eager``."""
-        if self.live:
-            await to_thread(initialize)
-        elif eager:
-            initialize()
-
-    def start(self, worker: _Worker) -> None:
-        worker.start()
-        self.resources.add(worker.stop)
-
-
-def _run_eagerly(wiring: Coroutine[object, None, None]) -> None:
-    """Finish eager wiring synchronously, inside or outside a running loop.
-
-    Eager ``_Wiring`` never awaits I/O, so the coroutine completes on its
-    first step; suspending would mean live-only work leaked into eager mode.
-    """
-    try:
-        wiring.send(None)
-    except StopIteration:
-        return
-    wiring.close()
-    raise RuntimeError("eager Control API wiring must not suspend")
-
-
-async def _install_session_runtime(w: _Wiring) -> None:
+async def _install_session_runtime(w: Wiring) -> None:
     """Install the authoritative Session Runtime for the current profile."""
 
     app, settings = w.app, w.settings
@@ -771,7 +701,7 @@ async def _install_session_runtime(w: _Wiring) -> None:
     )
 
 
-async def _install_memory_scope(w: _Wiring) -> None:
+async def _install_memory_scope(w: Wiring) -> None:
     """Install MemoryScope only from dedicated production PostgreSQL roles."""
 
     app, settings = w.app, w.settings
@@ -845,7 +775,7 @@ async def _install_memory_scope(w: _Wiring) -> None:
     await wiring.start()
 
 
-async def _wire_services(w: _Wiring) -> None:
+async def _wire_services(w: Wiring) -> None:
     """The one place the Control API object graph is wired, eager or live."""
 
     app, settings = w.app, w.settings
@@ -875,7 +805,7 @@ async def _wire_services(w: _Wiring) -> None:
     store = MemoryStore(
         settings.memoria_db_path,
         dsn=w.url(settings.control_database_url.get_secret_value().strip()),
-        initialize_schema=not production,
+        initialize_schema=not w.schema_external,
     )
     await w.init_blocking(store.initialize)
     w.on_close(store.close)
@@ -977,7 +907,7 @@ async def _wire_services(w: _Wiring) -> None:
             worker_dsn=(
                 settings.guardian_worker_database_url.get_secret_value().strip() or None
             ),
-            initialize_schema=not production,
+            initialize_schema=not w.schema_external,
         )
         await w.open(postgres_guardian.initialize, postgres_guardian.close)
         guardian_store = postgres_guardian
@@ -990,7 +920,8 @@ async def _wire_services(w: _Wiring) -> None:
     archive_url = w.url(settings.archive_database_url.get_secret_value())
     # The archive-DSN stores borrow one pool; it closes after all of them.
     pools = SharedPostgresPools(w.resources)
-    archive_pool = await pools.borrow(archive_url) if archive_url else None
+    # Borrowing opens a pool, which eager wiring cannot do; stores then open their own.
+    archive_pool = await pools.borrow(archive_url) if archive_url and w.live else None
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
@@ -1103,7 +1034,7 @@ async def _wire_services(w: _Wiring) -> None:
     if evolution_url:
         postgres_evolution = PostgresEvolutionStore(
             evolution_url,
-            initialize_schema=not production,
+            initialize_schema=not w.schema_external,
         )
         await w.init_blocking(postgres_evolution.initialize)
         w.on_close(partial(to_thread, postgres_evolution.close))
@@ -1281,7 +1212,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 raise
             app.state.config_warning = str(exc)
         app.state.settings = settings
-        await _wire_services(_Wiring(app, settings, live=True, resources=resources))
+        await _wire_services(Wiring(app, settings, live=True, resources=resources))
         yield
     finally:
         await resources.aclose()
@@ -1311,7 +1242,10 @@ def create_app() -> FastAPI:
     # with an account/task advisory lock or revision projection.
     app.state.growth_task_lock = Lock()
     app.state.realtime_connections = RealtimeConnectionRegistry()
-    _run_eagerly(_wire_services(_Wiring(app, settings, live=False)))
+    eager_postgres = settings.eager_postgres and settings.environment != "production"
+    eager = Wiring(app, settings, live=False, eager_postgres=eager_postgres)
+    run_eagerly(_wire_services(eager))
+    app.state.eager_resources = eager.resources
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.origins_list(),

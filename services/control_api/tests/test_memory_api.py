@@ -15,6 +15,7 @@ from services.control_api.app.main import create_app
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes.memory import DailySummaryContent
 from services.control_api.app.security import mint_memoria_access_token
+from testing import app_store
 
 
 def _today() -> str:
@@ -102,7 +103,8 @@ async def test_messages_summary_and_profile_persist(
         assert updated.status_code == 200
         assert updated.json()["display_name"] == "小忆"
 
-    assert database_path.is_file()
+    # The SQLite file backs the store only when no PostgreSQL DSN is set.
+    assert app_store.postgres_active() or database_path.is_file()
     persisted_app = create_app()
     async with AsyncClient(
         transport=ASGITransport(app=persisted_app), base_url="http://test"

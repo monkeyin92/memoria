@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.control_api.app.main import create_app
 from services.self_model.policy import activation_decision
+from testing import app_store
 
 
 async def _decision_cases(app: object, account_id: str) -> list[dict[str, object]]:
@@ -617,16 +617,16 @@ async def test_negative_feedback_vetoes_a_claim_and_retraction_immediately_lower
                 payload={"text": "我在杭州读过书。", "owner_projection_eligible": True},
             )
         )
-        app.state.memory_catalog.initialize()
-        with sqlite3.connect(path) as connection:
-            connection.execute(
-                """
+        await app_store.initialized(app.state.memory_catalog)
+        app_store.execute(
+            path,
+            """
                 INSERT INTO memory_claims (
                     claim_id, account_id, category, domain_category,
                     subject_key, predicate, value, confidence, status,
                     sensitive_domain, extractor_version, source_event_id,
                     valid_at, observed_at, created_at
-                ) VALUES ('growth-claim', ?, 'life_story', 'life_story',
+                ) VALUES ('00000000-0000-4000-8000-00000000c1a1', ?, 'life_story', 'life_story',
                     'self', 'education', '杭州读书', .9, 'confirmed',
                     'personal', 'test', 'growth-confirmed-source', ?, ?, ?)
                 """,
@@ -636,15 +636,18 @@ async def test_negative_feedback_vetoes_a_claim_and_retraction_immediately_lower
                     datetime.now(UTC).isoformat(),
                     datetime.now(UTC).isoformat(),
                 ),
-            )
+        )
         before = await client.get("/v1/growth/overview", headers=headers)
         feedback = await client.post(
             "/v1/growth/owner-actions", headers=headers,
-            json={"event_id": "growth-not-me", "action": "not_me", "target_kind": "memory_claim", "target_id": "growth-claim"},
+            json={"event_id": "growth-not-me", "action": "not_me", "target_kind": "memory_claim", "target_id": "00000000-0000-4000-8000-00000000c1a1"},
         )
         vetoed = await client.get("/v1/growth/overview", headers=headers)
-        with sqlite3.connect(path) as connection:
-            connection.execute("UPDATE memory_claims SET status = 'retracted' WHERE claim_id = 'growth-claim'")
+        app_store.execute(
+            path,
+            "UPDATE memory_claims SET status = 'retracted' "
+            "WHERE claim_id = '00000000-0000-4000-8000-00000000c1a1'",
+        )
         retracted = await client.get("/v1/growth/overview", headers=headers)
 
     def life_chapters(response: object) -> dict[str, object]:
