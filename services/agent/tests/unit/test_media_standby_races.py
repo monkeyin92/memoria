@@ -30,7 +30,7 @@ from services.agent.src.voice_core.speech_timeline import (
     SpeechSegment,
     asr_result_to_segment,
 )
-from services.agent.tests.unit.test_media_session import (
+from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _owner_silence_identity,
     _verified_owner_decision,

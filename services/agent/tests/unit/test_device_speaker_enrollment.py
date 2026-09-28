@@ -17,7 +17,7 @@ from services.agent.src.prompts import (
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
-from services.agent.tests.unit.test_media_session import (
+from services.agent.tests.unit.media_session_support import (
     _AckCapturingProvider,
     _CapturingGenerationBridge,
     _device_identity,

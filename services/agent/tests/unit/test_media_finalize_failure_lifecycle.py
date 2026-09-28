@@ -10,7 +10,7 @@ from services.agent.src.orchestration.conversation_projection import ProjectionP
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_state import MediaVoiceSessionState
 from services.agent.src.voice_core.speech_timeline import ASRResult
-from services.agent.tests.unit.test_media_session import _verified_owner_decision
+from services.agent.tests.unit.media_session_support import _verified_owner_decision
 from services.agent.tests.unit.test_media_standby_races import (
     _device_registry,
     _expire_owner_timer,
