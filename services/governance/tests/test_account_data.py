@@ -681,7 +681,12 @@ async def _fixture(
             sample_rate=24_000,
         )
     )
-    preview = SelfPreviewRegistry.sqlite(database_path)
+    # The same placement main.py uses: preview tables live with the store.
+    preview = (
+        SelfPreviewRegistry.in_control_store(store)
+        if store.is_postgres
+        else SelfPreviewRegistry.sqlite(database_path)
+    )
     now = datetime.now(UTC)
     grant = await preview.issue_grant(
         account_id=account_id,
@@ -843,6 +848,8 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
                 ).fetchone()[0]
                 == 0
             )
+    # The preview tables live with the control store (see main.py).
+    with store.connection() as connection:
         for table in (
             "digital_self_preview_grants",
             "digital_self_preview_feedback",

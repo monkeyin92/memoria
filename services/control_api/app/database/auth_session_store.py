@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+
+from services.control_api.app.database.backend import DbConnection
 
 AUTH_REFRESH_REPLAY_GRACE_S = 5
 AUTH_REFRESH_CONCURRENT_RETRY_AFTER_S = 1
@@ -31,14 +32,14 @@ class AuthSessionStoreMixin:
     if TYPE_CHECKING:
         from contextlib import AbstractContextManager
 
-        def _connection(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        def _connection(self) -> AbstractContextManager[DbConnection]: ...
 
         @staticmethod
         def _user_id_hash(user_id: str) -> str: ...
 
         @staticmethod
         def _ensure_profile(
-            connection: sqlite3.Connection, user_id: str, now: str
+            connection: DbConnection, user_id: str, now: str
         ) -> None: ...
 
     def create_auth_session(

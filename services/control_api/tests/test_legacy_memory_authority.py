@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -166,7 +165,7 @@ async def test_legacy_writes_still_work_outside_production(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    database_path = _configure(monkeypatch, tmp_path, production=False)
+    _configure(monkeypatch, tmp_path, production=False)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_id, headers = await _anonymous_identity(client)
@@ -190,6 +189,6 @@ async def test_legacy_writes_still_work_outside_production(
     assert created.status_code == 201
     assert summarized.status_code == 200
     assert summarized.json()["source"] == "fallback"
-    with sqlite3.connect(database_path) as connection:
+    with app.state.memory_store.connection() as connection:
         assert connection.execute("SELECT count(*) FROM messages").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM daily_summaries").fetchone()[0] == 1

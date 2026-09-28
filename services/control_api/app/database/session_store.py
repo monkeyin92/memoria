@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import TYPE_CHECKING, Any
+
+from services.control_api.app.database.backend import DbConnection
 
 
 class VoiceSessionStoreMixin:
@@ -12,11 +13,11 @@ class VoiceSessionStoreMixin:
     if TYPE_CHECKING:
         from contextlib import AbstractContextManager
 
-        def _connection(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        def _connection(self) -> AbstractContextManager[DbConnection]: ...
 
         @staticmethod
         def _ensure_profile(
-            connection: sqlite3.Connection, user_id: str, now: str
+            connection: DbConnection, user_id: str, now: str
         ) -> None: ...
 
         @staticmethod
@@ -249,12 +250,13 @@ class VoiceSessionStoreMixin:
         with self._connection() as connection:
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO voice_session_tombstones (
+                INSERT INTO voice_session_tombstones (
                     session_id, user_id_hash, deleted_at
                 )
                 SELECT session_id, ?, ? FROM voice_sessions
                 WHERE user_id = ? OR resource_owner_account_id = ?
                    OR legacy_grantee_account_id = ?
+                ON CONFLICT DO NOTHING
                 """,
                 (
                     self._user_id_hash(user_id),

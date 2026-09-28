@@ -485,6 +485,7 @@ async def test_internal_device_enrollment_keeps_intent_when_embedding_fails(
     assert enrollment["intent_id"] == intent_id
 
 
+@pytest.mark.sqlite_only  # an orphaned row PostgreSQL foreign keys cannot hold
 @pytest.mark.asyncio
 async def test_speaker_classify_subject_capability_matrix_blocks_before_authority(
     monkeypatch: pytest.MonkeyPatch,
@@ -543,6 +544,8 @@ async def test_speaker_classify_subject_capability_matrix_blocks_before_authorit
             ("session-missing", missing["user_id"]),
         ):
             _add_voice_session(app, user_id=user_id, session_id=session_id)
+        # A raw connection with foreign keys off leaves an orphaned voice
+        # session, the legacy-SQLite state this guard exists for.
         with sqlite3.connect(app.state.memory_store.path) as connection:
             connection.execute(
                 "DELETE FROM profiles WHERE user_id = ?",

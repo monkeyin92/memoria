@@ -179,7 +179,7 @@ async def _governance(
     archive = LifeArchive.sqlite(database_path)
     for event in _events():
         await archive.record(event)
-    with sqlite3.connect(database_path) as connection:
+    with store.connection() as connection:
         connection.execute(
             """
             INSERT INTO messages (
@@ -198,17 +198,6 @@ async def _governance(
         )
         connection.execute(
             """
-            INSERT INTO consent_grants (
-                consent_grant_id, account_id, purpose, policy_version,
-                retention_policy, granted_at, expires_at, revoked_at,
-                evidence_event_id
-            ) VALUES ('consent-archive', ?, 'raw_voice', 'voice-consent-v1',
-                      'account_lifetime', ?, NULL, NULL, 'evidence-owner')
-            """,
-            (ACCOUNT_ID, _NOW.isoformat()),
-        )
-        connection.execute(
-            """
             UPDATE profiles
             SET bio = ?, avatar_url = ?, phone_number_masked = ?
             WHERE user_id = ?
@@ -222,6 +211,19 @@ async def _governance(
         )
         # A payload that cannot be parsed cannot prove its text was retained
         # under the current ceiling, so the export has to drop it as well.
+    # consent_grants and evidence_events are the archive's SQLite tables.
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO consent_grants (
+                consent_grant_id, account_id, purpose, policy_version,
+                retention_policy, granted_at, expires_at, revoked_at,
+                evidence_event_id
+            ) VALUES ('consent-archive', ?, 'raw_voice', 'voice-consent-v1',
+                      'account_lifetime', ?, NULL, NULL, 'evidence-owner')
+            """,
+            (ACCOUNT_ID, _NOW.isoformat()),
+        )
         connection.execute(
             """
             INSERT INTO evidence_events (

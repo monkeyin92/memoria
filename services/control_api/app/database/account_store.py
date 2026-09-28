@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
+from services.control_api.app.database.backend import DbConnection
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -58,11 +58,14 @@ class AccountStoreMixin:
     if TYPE_CHECKING:
         from contextlib import AbstractContextManager
 
-        def _connection(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        def _connection(self) -> AbstractContextManager[DbConnection]: ...
+
+        @property
+        def is_postgres(self) -> bool: ...
 
         @staticmethod
         def _ensure_profile(
-            connection: sqlite3.Connection, user_id: str, now: str
+            connection: DbConnection, user_id: str, now: str
         ) -> None: ...
 
         def revoke_all_auth_sessions(self, *, user_id: str, now: str) -> int: ...
@@ -185,6 +188,31 @@ class AccountStoreMixin:
                 (user_id, provider),
             ).fetchone()
         return str(row["subject_hash"]) if row is not None else None
+
+    _PREVIEW_TABLES = (
+        "digital_self_preview_grants",
+        "digital_self_preview_feedback",
+        "digital_self_fidelity_evaluations",
+        "digital_self_fidelity_trials",
+    )
+
+    def _existing_preview_tables(self, connection: DbConnection) -> set[str]:
+        """Digital-self preview tables present in this store.
+
+        PostgreSQL always has them (postgres_schema.sql); a SQLite file only
+        once SelfPreviewRegistry has initialized it.
+        """
+
+        if self.is_postgres:
+            return set(self._PREVIEW_TABLES)
+        placeholders = ", ".join("?" for _ in self._PREVIEW_TABLES)
+        return {
+            str(row["name"])
+            for row in connection.execute(
+                f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ({placeholders})",
+                self._PREVIEW_TABLES,
+            ).fetchall()
+        }
 
     def bind_external_identities(
         self,
@@ -571,20 +599,7 @@ class AccountStoreMixin:
                 "fidelity_evaluations": [],
                 "fidelity_trials": [],
             }
-            preview_tables = {
-                str(row["name"])
-                for row in connection.execute(
-                    """
-                    SELECT name FROM sqlite_master
-                    WHERE type = 'table' AND name IN (
-                        'digital_self_preview_grants',
-                        'digital_self_preview_feedback',
-                        'digital_self_fidelity_evaluations',
-                        'digital_self_fidelity_trials'
-                    )
-                    """
-                ).fetchall()
-            }
+            preview_tables = self._existing_preview_tables(connection)
             if "digital_self_preview_grants" in preview_tables:
                 preview["grants"] = [
                     dict(row)
@@ -712,20 +727,7 @@ class AccountStoreMixin:
                 "digital_self_preview_feedback",
                 "digital_self_preview_grants",
             )
-            existing_preview_tables = {
-                str(row["name"])
-                for row in connection.execute(
-                    """
-                    SELECT name FROM sqlite_master
-                    WHERE type = 'table' AND name IN (
-                        'digital_self_preview_grants',
-                        'digital_self_preview_feedback',
-                        'digital_self_fidelity_evaluations',
-                        'digital_self_fidelity_trials'
-                    )
-                    """
-                ).fetchall()
-            }
+            existing_preview_tables = self._existing_preview_tables(connection)
             preview_counts: dict[str, int] = {}
             for table in preview_delete_order:
                 if table not in existing_preview_tables:

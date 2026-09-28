@@ -8,10 +8,11 @@ import secrets
 import sqlite3
 import threading
 import uuid
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 PreviewPerspective = Literal["owner", "child", "friend"]
 PreviewGrantStatus = Literal["active", "revoked", "expired"]
@@ -349,9 +350,20 @@ def _validate_sha256(value: str) -> None:
         raise ValueError("manifest_sha256 must be lowercase hexadecimal")
 
 
+class ControlStore(Protocol):
+    """The Control API store whose PostgreSQL schema holds these tables."""
+
+    def initialize(self) -> None: ...
+
+    def connection(self) -> AbstractContextManager[Any]: ...
+
+
 class SelfPreviewRegistry:
-    def __init__(self, sqlite_path: Path) -> None:
+    def __init__(self, sqlite_path: Path, *, store: ControlStore | None = None) -> None:
+        # Account deletion erases these rows in the control store's own
+        # transaction, so the tables live wherever that store lives.
         self._path = sqlite_path.expanduser().resolve()
+        self._store = store
         self._initialized = False
         self._initialize_lock = threading.Lock()
 
@@ -359,11 +371,27 @@ class SelfPreviewRegistry:
     def sqlite(cls, path: str | Path) -> SelfPreviewRegistry:
         return cls(Path(path))
 
+    @classmethod
+    def in_control_store(cls, store: ControlStore) -> SelfPreviewRegistry:
+        return cls(Path("."), store=store)
+
+    @classmethod
+    def beside(cls, store: ControlStore, sqlite_path: str | Path) -> SelfPreviewRegistry:
+        """Live wherever the control store lives: its PostgreSQL schema or file."""
+
+        if getattr(store, "is_postgres", False):
+            return cls.in_control_store(store)
+        return cls.sqlite(sqlite_path)
+
     def initialize(self) -> None:
         if self._initialized:
             return
         with self._initialize_lock:
             if self._initialized:
+                return
+            if self._store is not None:
+                self._store.initialize()  # the tables are part of its schema
+                self._initialized = True
                 return
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with sqlite3.connect(self._path, timeout=5) as connection:
@@ -373,8 +401,10 @@ class SelfPreviewRegistry:
                 connection.executescript(_SCHEMA)
             self._initialized = True
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[Any]:
         self.initialize()
+        if self._store is not None:
+            return self._store.connection()
         connection = sqlite3.connect(self._path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
@@ -956,10 +986,10 @@ class SelfPreviewRegistry:
 
     def _grant(
         self,
-        row: sqlite3.Row,
+        row: Any,
         *,
         now: datetime,
-        connection: sqlite3.Connection | None = None,
+        connection: Any = None,
     ) -> PreviewGrant:
         status = str(row["status"])
         expires_at = datetime.fromisoformat(str(row["expires_at"]))
@@ -995,7 +1025,7 @@ class SelfPreviewRegistry:
         )
 
     @staticmethod
-    def _feedback(row: sqlite3.Row) -> PreviewFeedback:
+    def _feedback(row: Any) -> PreviewFeedback:
         return PreviewFeedback(
             feedback_id=str(row["feedback_id"]),
             account_id=str(row["account_id"]),
@@ -1021,7 +1051,7 @@ class SelfPreviewRegistry:
 
     def _evaluation(
         self,
-        connection: sqlite3.Connection,
+        connection: Any,
         account_id: str,
         evaluation_id: str,
     ) -> FidelityEvaluation:
@@ -1148,7 +1178,7 @@ class SelfPreviewRegistry:
         )
 
     @staticmethod
-    def _trial(row: sqlite3.Row) -> FidelityTrial:
+    def _trial(row: Any) -> FidelityTrial:
         digital_slot = str(row["digital_self_slot"])
         generic, digital = str(row["generic_answer"]), str(row["digital_self_answer"])
         return FidelityTrial(
@@ -1181,7 +1211,7 @@ class SelfPreviewRegistry:
 
     @staticmethod
     def _version_stale(
-        connection: sqlite3.Connection,
+        connection: Any,
         account_id: str,
         version_id: str,
         manifest_sha256: str,

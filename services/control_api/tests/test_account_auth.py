@@ -1079,6 +1079,8 @@ async def test_wechat_login_rejects_an_identity_while_account_deletion_is_pendin
     assert repeated.status_code == 409
     assert repeated.json()["detail"] == {"code": "account_deletion_in_progress"}
 
+# The fixture fakes the EchoLife source database as a SQLite file.
+@pytest.mark.sqlite_only
 
 def test_echolife_identity_profile_import_is_idempotent_and_keeps_conversations_unfabricated(
     monkeypatch: pytest.MonkeyPatch,
@@ -1148,6 +1150,8 @@ def test_echolife_identity_profile_import_is_idempotent_and_keeps_conversations_
     assert messages == (0,)
     assert summaries == (0,)
 
+# The fixture fakes the EchoLife source database as a SQLite file.
+@pytest.mark.sqlite_only
 
 def test_echolife_sqlite_import_reads_real_store_and_copies_server_avatar(
     monkeypatch: pytest.MonkeyPatch,
@@ -1261,6 +1265,8 @@ def test_echolife_sqlite_import_reads_real_store_and_copies_server_avatar(
     )
     assert avatar == ("image/png", png, hashlib.sha256(png).hexdigest())
 
+# The fixture fakes the EchoLife source database as a SQLite file.
+@pytest.mark.sqlite_only
 
 def test_echolife_import_does_not_resurrect_a_deleted_wechat_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -1377,7 +1383,7 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
     assert message.status_code == 201
     assert voice_consent.status_code == 201
     assert speaker.status_code == 201
-    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
+    with app.state.memory_store.connection() as connection:
         stored_password = connection.execute(
             "SELECT password_hash FROM accounts WHERE user_id = ?",
             (account["user_id"],),

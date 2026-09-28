@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from services.control_api.app.database.backend import DbConnection, IntegrityError
 
 _DEVICE_STREAM_EPOCH_MAX = (1 << 32) - 1
 
@@ -18,11 +19,11 @@ class DeviceStoreMixin:
     if TYPE_CHECKING:
         from contextlib import AbstractContextManager
 
-        def _connection(self) -> AbstractContextManager[sqlite3.Connection]: ...
+        def _connection(self) -> AbstractContextManager[DbConnection]: ...
 
         @staticmethod
         def _ensure_profile(
-            connection: sqlite3.Connection, user_id: str, now: str
+            connection: DbConnection, user_id: str, now: str
         ) -> None: ...
 
     def register_device_identity(
@@ -65,7 +66,7 @@ class DeviceStoreMixin:
                         """,
                         (device_id, account_id, public_key_b64, firmware_channel, now, now),
                     )
-                except sqlite3.IntegrityError as exc:
+                except IntegrityError as exc:
                     raise ValueError("device public key is already registered") from exc
             row = connection.execute(
                 "SELECT * FROM device_identities WHERE device_id = ?",
@@ -481,10 +482,11 @@ class DeviceStoreMixin:
         with self._connection() as connection:
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO device_runtime_profile_acks (
+                INSERT INTO device_runtime_profile_acks (
                     device_id, profile_version, runtime_profile_id,
                     acked_by, acked_at, accepted
                 ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
                 """,
                 (
                     device_id,

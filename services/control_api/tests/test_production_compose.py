@@ -225,6 +225,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
         "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
         "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
         "MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD": "memoria_memory_maintenance",
+        "MEMORIA_DB_CONTROL_PASSWORD": "memoria_control",
     }
     for password_env, role in runtime_roles.items():
         assert password_env in postgres_init
@@ -237,7 +238,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
-    assert compose.count("create_host_path: false") == 13
+    assert compose.count("create_host_path: false") == 14
     schema_mounts = (
         "002-identity-schema.sql",
         "003-consent-schema.sql",
@@ -431,7 +432,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
     maintenance_scripts = (
-        "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py ./scripts/"
+        "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py "
+        "scripts/migrate_control_sqlite_to_postgres.py ./scripts/"
     )
     assert maintenance_scripts in control_dockerfile
     assert maintenance_scripts in delta_builder

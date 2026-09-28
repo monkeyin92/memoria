@@ -24,6 +24,7 @@ set -eu
 : "${MEMORIA_DB_MEMORY_API_PASSWORD:?set the MemoryScope API role password}"
 : "${MEMORIA_DB_MEMORY_WORKER_PASSWORD:?set the MemoryScope worker role password}"
 : "${MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD:?set the MemoryScope subject-erasure role password}"
+: "${MEMORIA_DB_CONTROL_PASSWORD:?set the Control API store role password}"
 
 docker exec \
   -e MEMORIA_DB_APP_PASSWORD \
@@ -45,6 +46,7 @@ docker exec \
   -e MEMORIA_DB_MEMORY_API_PASSWORD \
   -e MEMORIA_DB_MEMORY_WORKER_PASSWORD \
   -e MEMORIA_DB_MEMORY_MAINTENANCE_PASSWORD \
+  -e MEMORIA_DB_CONTROL_PASSWORD \
   "$POSTGRES_CONTAINER" \
   sh /docker-entrypoint-initdb.d/001-init-memoria.sh
 

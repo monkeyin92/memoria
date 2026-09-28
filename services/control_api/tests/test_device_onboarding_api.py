@@ -332,6 +332,7 @@ def test_device_media_stream_epoch_reservation_is_monotonic_and_migration_safe(
     assert memory.next_device_media_stream_epoch(device_id="dev_historical") == 8
 
 
+@pytest.mark.sqlite_only  # exercises the SQLite schema migrations
 def test_device_media_active_subject_migration_backfills_once_and_preserves_null(
     tmp_path: Path,
 ) -> None:

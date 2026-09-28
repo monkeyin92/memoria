@@ -26,6 +26,7 @@ from services.common.security_constants import (
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
     DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
+from services.control_api.app.database.settings import validate_control_database_url
 from services.evolution.release_policy import parse_runtime_prompt_families
 
 _SUBSCRIBE_TEMPLATE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -261,10 +262,8 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_IDENTITY_DATABASE_URL",
     )
-    consent_database_url: SecretStr = Field(
-        default=SecretStr(""),
-        alias="MEMORIA_CONSENT_DATABASE_URL",
-    )
+    consent_database_url: SecretStr = Field(default=SecretStr(""), alias="MEMORIA_CONSENT_DATABASE_URL")
+    control_database_url: SecretStr = Field(default=SecretStr(""), alias="MEMORIA_CONTROL_DATABASE_URL")
     device_onboarding_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_DEVICE_ONBOARDING_DATABASE_URL",
@@ -1483,6 +1482,7 @@ class ControlSettings(BaseSettings):
                 "production requires MEMORIA_CONSENT_DATABASE_URL to use the "
                 "independent memoria_consent role"
             )
+        validate_control_database_url(self.control_database_url.get_secret_value())
         identity_registration_url = self.identity_registration_database_url.get_secret_value()
         if not identity_registration_url.startswith(("postgresql://", "postgres://")):
             raise ValueError(

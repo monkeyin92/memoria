@@ -23,6 +23,7 @@ from services.control_api.app.database import (
     ExternalIdentityConflictError,
     MemoryStore,
 )
+from services.control_api.app.database.backend import IntegrityError
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_account_user_id,
@@ -245,7 +246,7 @@ def register_account(
             display_name=body.display_name,
             now=_utc_now(),
         )
-    except sqlite3.IntegrityError as exc:
+    except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="用户名已存在，请换一个") from exc
     issued = _issue_session(
         request=request,

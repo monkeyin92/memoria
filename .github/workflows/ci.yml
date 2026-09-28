@@ -338,6 +338,7 @@ jobs:
           cp -a packages "$context/memoria/packages"
           cp scripts/mark_readiness.py "$context/memoria/scripts/mark_readiness.py"
           cp scripts/rebuild_memory_projections.py "$context/memoria/scripts/rebuild_memory_projections.py"
+          cp scripts/migrate_control_sqlite_to_postgres.py "$context/memoria/scripts/migrate_control_sqlite_to_postgres.py"
           cp scripts/verify_control_release_artifact.py "$context/memoria/scripts/verify_control_release_artifact.py"
           printf 'overlay_context=%s\n' "$context"
       - name: Build the source overlay with no network

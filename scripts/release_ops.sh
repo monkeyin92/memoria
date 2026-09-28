@@ -2,6 +2,8 @@
 # Server-side full-stack release steps (run as root). Usage:
 #   TAG=... COMMIT=... release_ops.sh <step>
 #   steps: verify-load | freeze | env | schema | cutover | finish | rollback
+#          control-store (CONTROL_STORE_MODE=dry-run|apply; separate, authorized
+#          SQLite-to-PostgreSQL move of the Control API store, see the runbook)
 # Never prints secret values. Every step fails closed.
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
@@ -139,6 +141,13 @@ step_env() {
       || printf 'MEMORIA_MEMORY_MAINTENANCE_DATABASE_URL=postgresql://memoria_memory_maintenance:%s@memoria-postgres:5432/memoria\n' "$pw" >> /etc/memoria-control-api.env
     unset pw
   fi
+  # The control store role exists before its data moves; its DSN reaches the
+  # control-api env only in the separate, authorized SQLite-to-PostgreSQL cutover.
+  if ! grep -q '^MEMORIA_DB_CONTROL_PASSWORD=' /etc/memoria-postgres.env; then
+    local control_pw; control_pw="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    printf 'MEMORIA_DB_CONTROL_PASSWORD=%s\n' "$control_pw" >> /etc/memoria-postgres.env
+    unset control_pw
+  fi
   # The DSN host must match the one the other maintenance DSNs use.
   local host_other host_new
   host_other="$(sed -n 's/^MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL=postgresql:\/\/[^@]*@\([^/]*\)\/.*/\1/p' /etc/memoria-control-api.env)"
@@ -183,6 +192,11 @@ step_schema() {
   (set -a; . /etc/memoria-postgres.env; set +a
     POSTGRES_CONTAINER=memoria-data-postgres-1 sh "$R/scripts/upgrade_authoritative_postgres.sh") \
     2>&1 | grep -vE '^(psql:.*NOTICE|NOTICE|SET|CREATE|ALTER|GRANT|REVOKE|DO|COMMENT|DROP|INSERT|BEGIN|COMMIT|RESET)' | tail -5
+  # The running container may predate the 011-control-schema.sql mount; the
+  # file is idempotent, so apply it over stdin every release.
+  docker exec -i memoria-data-postgres-1 psql -U memoria_admin -d memoria -v ON_ERROR_STOP=1 -q \
+    < "$R/services/control_api/app/database/postgres_schema.sql" \
+    2>&1 | grep -vE '^(psql:.*NOTICE|NOTICE)' | tail -5
   POSTGRES_CONTAINER=memoria-data-postgres-1 sh "$R/scripts/verify_authoritative_postgres.sh"
   log "schema=PASS"
 }
@@ -241,6 +255,78 @@ step_rollback() {
   log "rollback done; compare image ids with $S/pre-state.txt"
 }
 
+# The Control API store moves from /data/memoria.sqlite3 into PostgreSQL once,
+# after a release whose schema step installed the memoria_control role and
+# tables. dry-run copies a snapshot of the live file into PostgreSQL, verifies
+# every table and rolls back; apply stops control-api, backs up both stores,
+# migrates, then points control-api at PostgreSQL. Any failure after the stop
+# restores the env file and starts control-api on SQLite again.
+control_store_dsn() {
+  python3 - <<'PY'
+import urllib.parse
+values = {}
+for path in ("/etc/memoria-postgres.env", "/etc/memoria-control-api.env"):
+    for line in open(path, encoding="utf-8"):
+        key, sep, value = line.rstrip("\n").partition("=")
+        if sep:
+            values[key] = value
+password = values.get("MEMORIA_DB_CONTROL_PASSWORD", "")
+other = values.get("MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL", "")
+host = urllib.parse.urlsplit(other).netloc.rpartition("@")[2]
+if not password or not host:
+    raise SystemExit("missing MEMORIA_DB_CONTROL_PASSWORD or the PostgreSQL host")
+print(f"postgresql://memoria_control:{urllib.parse.quote(password, safe='')}@{host}/memoria")
+PY
+}
+
+step_control_store() {
+  local mode="${CONTROL_STORE_MODE:-}" env=/etc/memoria-control-api.env
+  [[ "$mode" == dry-run || "$mode" == apply ]] || { log "set CONTROL_STORE_MODE=dry-run or apply"; exit 1; }
+  if grep -q '^MEMORIA_CONTROL_DATABASE_URL=.' "$env"; then log "control store is already on PostgreSQL"; exit 1; fi
+  [[ "$(readlink -f /opt/memoria/current)" == "$R" ]] || { log "run on the live release ($R is not current)"; exit 1; }
+  POSTGRES_CONTAINER=memoria-data-postgres-1 sh "$R/scripts/verify_authoritative_postgres.sh"
+  local out; out="$R/.control-store-$(date -u +%Y%m%dT%H%M%SZ)"
+  install -d -m 0700 "$out"
+  MEMORIA_CONTROL_DATABASE_URL="$(control_store_dsn)"; export MEMORIA_CONTROL_DATABASE_URL
+  if [[ "$mode" == dry-run ]]; then
+    local snap=/data/memoria.control-store-dry-run.sqlite3
+    docker exec memoria-control-api-1 /app/.venv/bin/python -c "import sqlite3; s=sqlite3.connect('file:/data/memoria.sqlite3?mode=ro', uri=True); d=sqlite3.connect('$snap'); s.backup(d); d.close()"
+    docker exec -e MEMORIA_CONTROL_DATABASE_URL memoria-control-api-1 /app/.venv/bin/python \
+      scripts/migrate_control_sqlite_to_postgres.py --sqlite "$snap" --dry-run > "$out/dry-run-receipt.json"
+    docker exec memoria-control-api-1 rm -f "$snap"
+    unset MEMORIA_CONTROL_DATABASE_URL
+    log "receipt: $out/dry-run-receipt.json"
+    log "control-store dry-run=PASS"
+    return
+  fi
+  local data; data="$(docker inspect memoria-control-api-1 --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}')"
+  [[ -n "$data" && -f "$data/memoria.sqlite3" ]] || { log "control SQLite file not found on the host"; exit 1; }
+  cp -p "$env" "$out/memoria-control-api.env"
+  restore_sqlite_control() {
+    log "control-store FAILED: restoring the env file and starting control-api on SQLite"
+    cp -p "$out/memoria-control-api.env" "$env"
+    new_compose up -d --no-deps --no-build --force-recreate control-api || true
+    wait_healthy memoria-control-api-1 || true
+  }
+  trap restore_sqlite_control ERR
+  new_compose stop control-api
+  local f
+  for f in memoria.sqlite3 memoria.sqlite3-wal memoria.sqlite3-shm; do
+    [[ -e "$data/$f" ]] && cp -p "$data/$f" "$out/$f"
+  done
+  docker exec memoria-data-postgres-1 pg_dump -U memoria_admin -d memoria -Fc > "$out/memoria-pre-control-store.dump"
+  new_compose run --rm --no-deps -T -e MEMORIA_CONTROL_DATABASE_URL --entrypoint /app/.venv/bin/python \
+    control-api scripts/migrate_control_sqlite_to_postgres.py --sqlite /data/memoria.sqlite3 --apply \
+    > "$out/apply-receipt.json"
+  printf 'MEMORIA_CONTROL_DATABASE_URL=%s\n' "$MEMORIA_CONTROL_DATABASE_URL" >> "$env"
+  unset MEMORIA_CONTROL_DATABASE_URL
+  new_compose up -d --no-deps --no-build --force-recreate control-api
+  wait_healthy memoria-control-api-1
+  trap - ERR
+  log "receipt: $out/apply-receipt.json; the SQLite file stays untouched for rollback"
+  log "control-store apply=PASS"
+}
+
 case "${1:-}" in
   verify-load) step_verify_load ;;
   freeze) step_freeze ;;
@@ -249,5 +335,6 @@ case "${1:-}" in
   cutover) step_cutover ;;
   finish) step_finish ;;
   rollback) step_rollback ;;
-  *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback" >&2; exit 2 ;;
+  control-store) step_control_store ;;
+  *) echo "usage: $0 verify-load|freeze|env|schema|cutover|finish|rollback|control-store" >&2; exit 2 ;;
 esac

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from psycopg_pool import ConnectionPool
+
+from services.control_api.app.database.backend import open_pool
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -406,6 +411,80 @@ _PROFILE_SUBJECT_COLUMNS = {
 }
 
 
+POSTGRES_SCHEMA_PATH = Path(__file__).with_name("postgres_schema.sql")
+
+# Every table of the PostgreSQL control store; each must exist with FORCE RLS.
+POSTGRES_TABLES: tuple[str, ...] = (
+    "profiles",
+    "accounts",
+    "external_identities",
+    "profile_avatars",
+    "auth_sessions",
+    "auth_session_refresh_tokens",
+    "legacy_auth_upgrades",
+    "messages",
+    "daily_summaries",
+    "readiness_evidence",
+    "voice_sessions",
+    "voice_session_tombstones",
+    "account_deletions",
+    "device_identities",
+    "device_challenges",
+    "device_control_intents",
+    "device_acoustic_capabilities",
+    "device_media_epoch_counters",
+    "device_media_sessions",
+    "device_runtime_profile_ledger",
+    "device_runtime_profile_acks",
+    "device_settings",
+    "media_reply_delivery_events",
+    "subject_deletions",
+    "digital_self_preview_grants",
+    "digital_self_preview_feedback",
+    "digital_self_fidelity_evaluations",
+    "digital_self_fidelity_trials",
+)
+
+
+def initialize_postgres(dsn: str, *, apply_schema: bool) -> ConnectionPool[Any]:
+    """Open the pool, optionally apply the schema, and fail closed on drift.
+
+    Production applies the schema with the admin role (init-memoria.sh); the
+    control role then only verifies that every table exists with FORCE RLS.
+    """
+
+    pool = open_pool(dsn)
+    try:
+        with pool.connection() as connection:
+            if apply_schema:
+                # No parameters: psycopg sends the script as-is.
+                connection.execute(POSTGRES_SCHEMA_PATH.read_text(encoding="utf-8"))
+                connection.commit()
+            rows = connection.execute(
+                """
+                SELECT c.relname, c.relforcerowsecurity
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = current_schema() AND c.relkind = 'r'
+                  AND c.relname = ANY(%s)
+                """,
+                (list(POSTGRES_TABLES),),
+            ).fetchall()
+            connection.rollback()
+        found = {str(name): bool(forced) for name, forced in rows}
+        missing = sorted(set(POSTGRES_TABLES) - set(found))
+        unforced = sorted(name for name, forced in found.items() if not forced)
+        if missing or unforced:
+            raise RuntimeError(
+                "PostgreSQL control store schema is incomplete "
+                f"(missing={missing}, without FORCE RLS={unforced})"
+            )
+    except BaseException:
+        pool.close()
+        raise
+    return pool
+
+
 class SchemaMixin:
     """Schema creation, migrations, and store initialization."""
 
@@ -415,12 +494,24 @@ class SchemaMixin:
         path: Path
         _initialized: bool
         _initialize_lock: Any
+        _pool: Any
+        dsn: str
+        initialize_schema: bool
+
+        @property
+        def is_postgres(self) -> bool: ...
 
     def initialize(self) -> None:
         if self._initialized:
             return
         with self._initialize_lock:
             if self._initialized:
+                return
+            if self.is_postgres:
+                self._pool = initialize_postgres(
+                    self.dsn, apply_schema=self.initialize_schema
+                )
+                self._initialized = True
                 return
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if self.path.exists() and not self.path.is_file():
