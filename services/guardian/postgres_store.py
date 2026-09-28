@@ -1656,7 +1656,11 @@ class PostgresGuardianStore:
                 kind=cast(TutorAggregateKind, str(row["kind"])),
                 subject_id=str(row["subject_id"]),
                 actor_id=str(row["actor_id"]),
-                archive_payload=dict(row["archive_payload_json"]),
+                archive_payload=(
+                    json.loads(row["archive_payload_json"])
+                    if isinstance(row["archive_payload_json"], str)
+                    else dict(row["archive_payload_json"])
+                ),
                 created_at=cast(datetime, row["created_at"]),
             )
             for row in rows
