@@ -147,7 +147,7 @@ while IFS= read -r changed; do
       ;;
     services/control_api/*|services/archive/*|services/session_runtime/*)
       ;;
-    scripts/deploy_control_component.sh|scripts/verify_control_release_artifact.py|scripts/resolve_target_images.py|scripts/mark_readiness.py|scripts/rebuild_memory_projections.py|scripts/verify_authoritative_postgres.sh|scripts/tests/test_control_release_contract.py|scripts/tests/test_verify_control_release_artifact.py|scripts/tests/test_resolve_target_images.py)
+    scripts/deploy_control_component.sh|scripts/verify_control_release_artifact.py|scripts/resolve_target_images.py|scripts/mark_readiness.py|scripts/rebuild_memory_projections.py|scripts/migrate_control_sqlite_to_postgres.py|scripts/verify_authoritative_postgres.sh|scripts/tests/test_control_release_contract.py|scripts/tests/test_verify_control_release_artifact.py|scripts/tests/test_resolve_target_images.py)
       ;;
     infra/Dockerfile.control-api-source-overlay|infra/Dockerfile.control-api|infra/voices/designed_voice_ids.json)
       ;;
@@ -176,6 +176,7 @@ git -C "$ROOT" archive --format=tar --prefix=memoria/ "$expected_commit" \
   services packages \
   scripts/mark_readiness.py \
   scripts/rebuild_memory_projections.py \
+  scripts/migrate_control_sqlite_to_postgres.py \
   scripts/verify_control_release_artifact.py \
   >"$artifact"
 git -C "$ROOT" show "$expected_commit:infra/Dockerfile.control-api-source-overlay" >"$dockerfile"
