@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -18,6 +17,7 @@ from services.control_api.tests.identity_test_helpers import (
     install_test_identity_authority,
 )
 from services.identity.domain import BindingVersionConflictError
+from testing import app_store
 
 
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path, name: str):
@@ -102,18 +102,16 @@ def _guardian_permissions(payload: dict, person_id: str) -> tuple[str, ...]:
 
 
 def _outbox_rows(app) -> list[dict]:
-    path = app.state.settings.identity_sqlite_path()
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute(
-            "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at"
-        ).fetchall()
+    rows = app_store.fetch_all(
+        app.state.settings.identity_sqlite_path(),
+        "SELECT topic, payload_json FROM identity_outbox ORDER BY created_at",
+    )
     return [
         {
-            "topic": str(row["topic"]),
-            "payload": json.loads(str(row["payload_json"])),
+            "topic": str(topic),
+            "payload": json.loads(payload) if isinstance(payload, str) else payload,
         }
-        for row in rows
+        for topic, payload in rows
     ]
 
 
@@ -483,7 +481,13 @@ async def test_transfer_requires_step_up_and_target_accept(
             row for row in outbox if row["topic"] == "identity.binding.transferred"
         ]
         assert len(transferred) == 1
-        assert transferred[0]["payload"]["binding_version"] == 2
+        # The service writes the new binding; PostgreSQL's trigger writes the
+        # accepted transfer intent. Both name the resulting binding.
+        payload = transferred[0]["payload"]
+        assert payload.get("resulting_binding_id", payload.get("binding_id")) == (
+            manifest["binding_id"]
+        )
+        assert payload["device_id"] == "dev-tx"
 
         # Old owner no longer holds any role; the new owner can list versions.
         response = await client.get(
@@ -843,8 +847,13 @@ async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
         adult_add = await client.post(
             device, headers=_headers(owner), json={"person_id": "members-guard-adult"}
         )
-        assert adult_add.status_code == 422, adult_add.text
-        assert adult_add.json()["detail"]["code"] == "member_age_band_rejected"
+        # PostgreSQL Identity never shows the owner a person they have no
+        # relationship to, so the lookup misses before the age-band rule; the
+        # SQLite twin finds the adult and rejects the band. Both refuse.
+        assert (adult_add.status_code, adult_add.json()["detail"]["code"]) in {
+            (422, "member_age_band_rejected"),
+            (404, "member_not_found"),
+        }, adult_add.text
 
 
 @pytest.mark.asyncio
