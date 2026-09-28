@@ -19,6 +19,12 @@
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：用户在公众平台设体验版 `0.2.20260928.1`、伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-28 小程序 tab 页导航修复（未上传体验版）
+
+- **缺陷**：tabBar 页只能用 `wx.switchTab` 打开，另外三处用了其他方式，都会静默失败。第一处，登录页的 tab 路由表漏了伙伴页，从伙伴页触发登录后改用 `redirectTo` 回跳而失败。第二处，「我的」→「人格与声音」用 `navigateTo` 打开伙伴 tab。第三处，设备页敏感入口「私人回顾」（`/pages/memory/index`）经 `openEntry` 统一 `navigateTo`。
+- **修复**：新增 `utils/tab-routes.js` 作为 tab 路由的唯一来源，登录回跳与设备页入口遇到 tab 页改用 `switchTab`（去掉 query），「人格与声音」改为 `switchTab`。
+- **防回归**：`tests/tab-navigation.test.js` 校验路由表与 `app.json` 的 `tabBar.list` 一致，静态扫描全部 `navigateTo`/`redirectTo` 字面目标（不得是 tab 页，且须在 `pages` 中声明）和指向 tab 页的 `<navigator>`（须 `open-type="switchTab"`），并覆盖登录回跳每个 tab 页；profile、device 页各加一条行为用例。四个新用例在修复前的源码上均失败。`npm test` 316/316，全量 `node --check` 通过。未上传体验版，未真机验证，待办见 TODOLIST。
+
 ## 2026-09-28 整栈发布 20260928-reopen-window-v1（背景声不再拖住已识别的问句）
 
 - **现象**：#80 上线后真机问天气（14:23，会话 `ad18112b`）已能完整回答，用户确认。但 06:23:41（UTC）问句识别并定下端点后，直到 06:23:58 才提交，延迟 17 s。期间设备 VAD 被背景声触发 5 次，每次 ASR 救援都为空（`empty+vendor_silent`）。每个 `vad start` 都在 `_admit_vad_start` 里撤销端点、重开这一轮，后面噪声段的 VAD 结束位置 ASR 永远覆盖不到，提交因此一再推迟，最终提交的仍是原来的 12 字。

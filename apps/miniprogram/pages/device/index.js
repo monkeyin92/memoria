@@ -12,6 +12,7 @@ const { companions, companionById, defaultCompanionId } = require("../../utils/c
 const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
+const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
 const ROLE_LABELS = Object.freeze({
@@ -1202,6 +1203,10 @@ Page({
   openEntry(event) {
     const page = event.currentTarget.dataset.page;
     if (typeof page !== "string" || !page.startsWith("/pages/")) return;
+    if (isTabRoute(page)) {
+      wx.switchTab({ url: routeOf(page) });
+      return;
+    }
     wx.navigateTo({ url: page });
   },
 

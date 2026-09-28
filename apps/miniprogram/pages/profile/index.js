@@ -1131,7 +1131,7 @@ Page({
   },
 
   openCompanion() {
-    wx.navigateTo({ url: "/pages/companion/index" });
+    wx.switchTab({ url: "/pages/companion/index" });
   },
 
   copyAccountId() {
