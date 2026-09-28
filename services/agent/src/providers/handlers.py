@@ -129,18 +129,16 @@ async def build_voice_provider_handlers(
 
         asr_factory = FunASRSTT.from_env
     if tts_factory is None:
-        from services.agent.src.providers.doubao_tts import DoubaoTTS
+        from services.agent.src.providers.tts_factory import build_tts
 
-        tts_factory = DoubaoTTS.from_env
+        def tts_factory() -> Any:
+            return build_tts(settings)
+
+    from services.agent.src.providers.tts_factory import warm_tts
 
     asr = asr_factory()
     speech_synthesis = tts_factory()
-    warm = getattr(getattr(speech_synthesis, "pool", None), "warm", None)
-    if callable(warm):
-        try:
-            await warm()
-        except Exception as exc:
-            logger.warning("Doubao TTS pool warm failed (will open on demand): %s", exc)
+    await warm_tts(speech_synthesis)
 
     language_model = build_language_model_handler(
         settings=settings,

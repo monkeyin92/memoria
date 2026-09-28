@@ -11,6 +11,7 @@ from services.agent.src.media_agent_factory import build_production_media_sessio
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.handlers import SpeechSynthesisRequest
+from services.agent.src.providers import doubao_tts
 from services.agent.src.response_planner_client import ResponsePlanFetch
 from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 from services.agent.src.voice_core.media_protocol import SessionIdentity
@@ -116,7 +117,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         "build_realtime_search_resolver",
         lambda **_kwargs: Resolver(),
     )
-    monkeypatch.setattr(factory_module.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
+    monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
     monkeypatch.setattr(
         factory_module.FunASRConfig,
         "from_env",
@@ -279,7 +280,7 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
             return None
 
     runtime = Runtime()
-    monkeypatch.setattr(factory_module.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
+    monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
     monkeypatch.setattr(
         factory_module,
         "build_language_model_handler",
