@@ -2,22 +2,33 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-28 00:05–00:10（CST）整栈发布 `20260927-child-binding-v1`（main `56d103b`，含 PR #67 Identity 所有者监护人兼任孩子紧急联系人、#68 重扫接续、#70 发布脚本与冲突提示），5 个角色经仓库版 `release-ops.sh` 全链 PASS；media-edge 未重建，仍为 `20260926-minor-safety-v1`。nginx `memoria-https.conf` 的 `proxy_max_temp_file_size 0`（09-27 就地改）保留。
-- **上一次整栈收据**：2026-09-27 20:36–20:40（CST）整栈发布 `20260927-unbind-release-v1`（main `00a94cb`），为本次回滚目标。
+- **最近生产收据**：2026-09-28 09:40–09:53（CST）整栈发布 `20260928-child-binding-v2`（main `87f3560`，PR #72：所有者的 `guardian_of` 认定为 active 时也可兼任孩子紧急联系人），5 个角色经仓库版 `release-ops.sh` 全链 PASS；media-edge 未重建，仍为 `20260926-minor-safety-v1`。nginx `memoria-https.conf` 的 `proxy_max_temp_file_size 0`（09-27 就地改）保留。
+- **上一次整栈收据**：2026-09-28 00:05–00:10（CST）整栈发布 `20260927-child-binding-v1`（main `56d103b`），为本次回滚目标；它带的 #67 判定只认 pending 声明，孩子绑定在线上仍 409。
 
 | component | actual image/tag | OCI digest | revision | frozen runtime identity | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260927-child-binding-v1` | `sha256:79e0ea98fbbbe97a54324a0f08a198a2691ada109edbb8370ae42520dbb82bbf`（服务器 image id） | `56d103b62cfedfb0d79b51d13c4075853e1fb931` | `20260927-child-binding-v1` / `56d103b` | healthy | 0 | `2026-09-27T16:06:39Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260927-child-binding-v1/.cutover/` | `memoria-control-api:rollback-20260927-child-binding-v1-pre`（= `20260927-unbind-release-v1`） |
-| Agent / Bridge | `memoria-agent:20260927-child-binding-v1` | `sha256:5899ff37ce551e37e177d275f62ee4e96138bc00292bee1f17b80375706911f1`（服务器 image id） | `56d103b62cfedfb0d79b51d13c4075853e1fb931` | `20260927-child-binding-v1` / `56d103b` | healthy | 0 each | `2026-09-27T16:06:52Z` | 同上 | `memoria-agent:rollback-20260927-child-binding-v1-pre`（= `20260927-unbind-release-v1`） |
-| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260927-child-binding-v1` | `sha256:d470bf6b…` / `sha256:d6c1568f…` / `sha256:e14eac57…`（服务器 image id） | `56d103b62cfedfb0d79b51d13c4075853e1fb931` | `20260927-child-binding-v1` / `56d103b` | healthy | 0 each | `2026-09-27T16:06:31Z`–`16:07:17Z` | 同上 | 各自 `rollback-20260927-child-binding-v1-pre`（= `20260927-unbind-release-v1`） |
+| Control API | `memoria-control-api:20260928-child-binding-v2` | `sha256:83e26ce1f6a39ac4fc40d3d5f32aa24071e26004473187efca5590cf5dce6832`（服务器 image id） | `87f3560824ef16cd74a07133f8a921ce835c56ba` | `20260928-child-binding-v2` / `87f3560` | healthy | 0 | `2026-09-28T01:41:57Z` | `release-ops.sh` 全链 PASS，`/opt/memoria/releases/20260928-child-binding-v2/.cutover/` | `memoria-control-api:rollback-20260928-child-binding-v2-pre`（= `20260927-child-binding-v1`） |
+| Agent / Bridge | `memoria-agent:20260928-child-binding-v2` | `sha256:d146f1f40da2074be46f2d581b689c39e1e020d7d87d6061b3516bcb8ca938aa`（服务器 image id） | `87f3560824ef16cd74a07133f8a921ce835c56ba` | `20260928-child-binding-v2` / `87f3560` | healthy | 0 each | `2026-09-28T01:42:10Z` | 同上 | `memoria-agent:rollback-20260928-child-binding-v2-pre`（= `20260927-child-binding-v1`） |
+| Device Media Gateway / Miniprogram Gateway / Speaker Model | `memoria-{device-media-gateway,miniprogram-gateway,speaker-model}:20260928-child-binding-v2` | `sha256:25d6f91e…` / `sha256:785e2cdd…` / `sha256:afa93b2a…`（服务器 image id） | `87f3560824ef16cd74a07133f8a921ce835c56ba` | `20260928-child-binding-v2` / `87f3560` | healthy | 0 each | `2026-09-28T01:41:49Z`–`01:42:36Z` | 同上 | 各自 `rollback-20260928-child-binding-v2-pre`（= `20260927-child-binding-v1`） |
 | Media Edge | `memoria-media-edge:20260926-minor-safety-v1` | `sha256:abee9b82f5e349445eeffb6b56d4bc5308edc9e9e26a1acd3a7175183698c561`（服务器 image id） | `048a83ad8e869b8a3dd0ddc43a777410919f3881` | `not set / not applicable` | healthy | 0 | `2026-09-26T11:40:14Z` | `/opt/memoria/releases/20260926-minor-safety-v1/.cutover/media-edge-pre-state.txt` | `memoria-media-edge:20260926-edge-flush-v1`（override `component-releases/20260926-minor-safety-v1/media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260927-child-binding-v1` / `56d103b`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260927-child-binding-v1`。上一栈 `20260927-unbind-release-v1` / `00a94cb` 为回滚目标。
+- **发布身份**：`20260928-child-binding-v2` / `87f3560`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260928-child-binding-v2`。上一栈 `20260927-child-binding-v1` / `56d103b` 为回滚目标。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：真机窗口先重新绑定（验收孩子场景用「给孩子使用」并勾选长期记忆），再按验收清单验证 P0-04 产品决定（夜间时段唤醒被拒、超时后道别待机、年龄段显示与修改、危机提醒到达家长页）、人格按使用人、media-edge 终止性拒绝不再续连，以及 P0-03 剩余矩阵与 TLS/WSS 重连；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-28 整栈发布 20260928-child-binding-v2（孩子绑定真正放行）
+
+- **根因**：v1 的 #67 判定只认 `identity_relationship_source_confirmed`（要求 `status='pending'`），而绑定路由对账号所有者的 `guardian_of` 调 `attest_binding_relationship`，写的是 `active`（证据 `guardian_attestation_v1:device_binding`，只有 `confirmed_by_source_at`）。#67 的单测造的是 pending 声明，所以没测出。PR #72：所有者兼监护人时，active 或 pending 的 `guardian_of` 都算；非所有者仍需 `emergency_contact_for`。新增路由级测试按线上被拒请求原样重放（三项授权、同样偏好），不带修复时返回线上同一条 409。
+- **范围**：tag `20260928-child-binding-v2` → main `87f3560`，服务端只改 `services/identity/binding_roles.py`；无 schema、compose、env、依赖变更。`release_ops.sh`（sha256 `f0ee5d60…`）PREV = `20260927-child-binding-v1` / `56d103b`；旧版备份 `release-ops.sh.pre-20260928-child-binding-v2`。
+- **构建与上传**：5 个角色本机 linux/amd64，标签核对无误；seeded 上传（基座 `20260927-child-binding-v1`，实传 162 MB）双端校验 PASS。摘要：verifier `c8b2aac0…`，manifest `82c1237e…`，source `08b0e02b…`，images `a6a2f838…`。
+- **五角色**：`verify-load` PASS → `freeze` PASS → `env` 首跑 FAIL（FunASR 样本识别为「慢慢说就好。」）；我的命令没在失败时停下，`schema` 紧接着跑了（PASS，无文件更新），随后 `env` 原样重跑 PASS → `cutover` PASS（09:41:48–09:42:42）→ `finish` 两次 FAIL（第 1 次 readiness 刷新同一 FunASR 样本失败；第 2 次 readiness 已 `ready` 但 systemd 定时刷新在同一样本失败）→ 第 3 次 PASS（09:52:52，readiness `ready` 且为新 tag，`Result=success`，外部 8443 就绪 200，全部 restarts=0）。media-edge 第 5 次重连连上新 bridge。
+- **已知问题**：FunASR 冒烟的「慢慢说就好。」样本 09-27 以来 6 次里失败 4 次，已不像偶发抖动，会让 `env`/`finish` 与定时 readiness 刷新间歇失败（不影响设备与小程序）。需要另行排查该样本或 FunASR 侧变化。
+- **上线后实测**：control-api 运行代码含新判定；control-api、agent、bridge 切换后无 error/traceback。开发板 07:41 起没有任何请求（发布前已离线）。**待用户**：机器人开机联网后扫新码，「给孩子使用」完成绑定。
+- **遗留数据**：每次失败的孩子绑定都在 Identity 新建了一个未绑定的孩子人物及其 `guardian_of`（至少 09-27 22:20、23:19 与 09-28 00:13 三次），不影响重新绑定，待另行清理。
+- **回滚**（未实跑）：`TAG=20260928-child-binding-v2 COMMIT=87f3560824ef16cd74a07133f8a921ce835c56ba release-ops.sh rollback`，6 个角色按 `20260927-child-binding-v1` 整栈 compose 重建。
 
 ## 2026-09-28 整栈发布 20260927-child-binding-v1（孩子绑定 + 冲突提示）
 
@@ -25,7 +36,7 @@
 - **范围**：tag `20260927-child-binding-v1` → main `56d103b`。服务端实际变更只有 `services/identity/binding_roles.py`、`service.py`；无 schema、compose、env、依赖变更。`release_ops.sh`（PR #70，sha256 `394ed8d9…`）PREV 改为 `20260927-unbind-release-v1` / `00a94cb`，六个目标都在 PREV 整栈 compose 上（09-27 23:30 只读核对），去掉 control-api 组件链；旧版备份 `release-ops.sh.pre-20260927-child-binding-v1`。
 - **构建与上传**：5 个角色本机 linux/amd64 用 compose 定义构建，revision/version 标签核对无误。制品在构建机 scratchpad（verifier 必须在源码树外）。seeded 上传（基座 `20260927-unbind-release-v1`，实传 193 MB）双端校验 PASS。摘要：verifier `c8b2aac0…`，manifest `eebe1fb7…`，source `081813dd…`，images `84591c71…`。
 - **五角色**：`verify-load` PASS → `freeze` PASS → `env` PASS（env 键无变化，全部 provider smoke 一次通过）→ `schema` PASS（无文件更新）→ `cutover` PASS（00:06:30–00:07:24，全部 healthy）→ `finish` 首跑 FAIL（readiness 刷新的 provider smoke 报 `Doubao word timestamp alignment is degraded`，外部 TTS 抖动；此时 readiness `not_ready`、外部就绪 503），原样重跑 PASS（readiness `ready` 且为新 tag，定时刷新 `Result=success`，外部 8443 就绪 200，全部 restarts=0）。media-edge 在第 4 次重连连上新 bridge。
-- **上线后实测**：control-api 容器内确认 `parent_emergency_contact_verified` 已在运行代码；control-api、agent、bridge 启动 5 分钟内无 error/traceback；开发板照常轮询激活清单（未绑定，409）。**待用户**：扫新码，用「给孩子使用」完成绑定。
+- **上线后实测**：control-api 容器内确认 `parent_emergency_contact_verified` 已在运行代码；control-api、agent、bridge 启动 5 分钟内无 error/traceback；开发板照常轮询激活清单（未绑定，409）。**更正**：00:13 真机「给孩子使用」仍 409 `binding_conflict`——该判定只认 pending 声明，而绑定路由 `attest_binding_relationship` 写的是 active 认定（线上 `identity_relationship_source_confirmed=f`、`identity_relationship_active=t`），修复在 v1 从未命中；由 `20260928-child-binding-v2` 修正，见上节。
 - **小程序**：体验版 `0.2.20260927.6`（main `56d103b`，编译预检 190 个文件，包 1.58 MB）已上传（**需在公众平台设为体验版**）。认领冲突提示不再说「其他账号」，改为说明有一次未完成的认领、最多 10 分钟后释放；绑定冲突改为在绑定页原地重试，不再提示换码。
 - **回滚**（未实跑）：`TAG=20260927-child-binding-v1 COMMIT=56d103b62cfedfb0d79b51d13c4075853e1fb931 release-ops.sh rollback`，6 个角色按 `20260927-unbind-release-v1` 整栈 compose 重建；schema 不回滚（本次未改）。
 
@@ -37,7 +48,7 @@
 
 ## 2026-09-27 配网体验与孩子绑定修复（PR #67）
 
-- **绑定冲突根因**：「给孩子使用」时 Identity 要求紧急联系人与孩子之间有 `emergency_contact_for` 关系，而声明的监护人本人（账号所有者）没有这条关系 → `ModeConstraintError` → 小程序显示「设备绑定状态发生冲突」。修复在 `services/identity/binding_roles.py`：所有者监护人且 `guardian_of` 已源确认时，可兼任孩子的紧急联系人。已随整栈发布 `20260927-child-binding-v1`（09-28 00:07）上线，见上节。
+- **绑定冲突根因**：「给孩子使用」时 Identity 要求紧急联系人与孩子之间有 `emergency_contact_for` 关系，而声明的监护人本人（账号所有者）没有这条关系 → `ModeConstraintError` → 小程序显示「设备绑定状态发生冲突」。修复在 `services/identity/binding_roles.py`：所有者监护人且 `guardian_of` 已源确认时，可兼任孩子的紧急联系人。判定只认 pending 声明，随 `20260927-child-binding-v1` 上线后仍未命中真实绑定；`20260928-child-binding-v2`（PR #72）修正。
 - **小程序**：扫机器人码进入时先提示微信登录（`scan_device` 原因文案），登录后自动回到配网；人格选择改为左右滑动的重叠卡片（吉祥物、性格、音色、试听），试听音频为生产豆包 TTS 预先渲染、打包在 `assets/voices/`（5 个 mp3，共 156 KB），不走实时媒体；绑定冲突、领取冲突或过期时提示「轻点机器人屏幕换一张新二维码」，并给出重新扫码按钮。体验版 `0.2.20260927.4` 已上传（**需在公众平台设为体验版**）。
 - **固件 build 8**：二维码标题改为「欢迎使用 Memoria」，说明文字改为「微信扫一扫 开始配网」，不再在绑定前显示伙伴名；patch `0030` 让字体资源在二维码显示前加载，避免文字残缺几秒；在二维码界面轻点屏幕会换一张新码（3 秒防抖）。开发板已 USB 刷入；build 8（sha256 `046492ee…`）已签名发布为 `current.json`。
 - **开发板状态**：服务端还留着一个卡住的领取（`binding_committing`）。重新扫码会新建会话，不影响。
