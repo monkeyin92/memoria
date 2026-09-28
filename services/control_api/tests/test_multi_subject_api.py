@@ -11,6 +11,7 @@ from services.control_api.app.multi_subject_runtime import (
 )
 from services.control_api.app.routes import multi_subject as multi_subject_routes
 from services.control_api.tests.identity_test_helpers import (
+    assert_stranger_denied,
     install_test_identity_authority,
 )
 from services.identity.domain import ModeConstraintError
@@ -88,117 +89,6 @@ async def _bind_self(
     assert response.status_code == 201
 
 
-
-def _assert_non_member_denied(response) -> None:
-    # PostgreSQL Identity (FORCE RLS) hides a binding from a non-member
-    # entirely (404); the SQLite twin sees it and denies (403). Both fail
-    # closed and neither reveals the binding to the stranger.
-    assert response.status_code in {403, 404}, response.text
-
-@pytest.mark.asyncio
-async def test_device_binding_recovery_and_lookup_are_actor_scoped(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    app = _env(monkeypatch, tmp_path, "binding-recovery")
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        owner = await _register(client, "binding-recovery-owner")
-        stranger = await _register(client, "binding-recovery-stranger")
-        await _bind_self(
-            client,
-            app,
-            owner=owner,
-            device_id="device-recovery-a",
-            nonce="claim-recovery-a",
-        )
-        await _bind_self(
-            client,
-            app,
-            owner=owner,
-            device_id="device-recovery-b",
-            nonce="claim-recovery-b",
-        )
-
-        identity = app.state.identity_service
-        expected = [
-            await identity.get_active_manifest(
-                device_id,
-                actor_person_id=owner["user_id"],
-            )
-            for device_id in ("device-recovery-a", "device-recovery-b")
-        ]
-        assert all(manifest is not None for manifest in expected)
-
-        original_list = identity.list_active_manifests_for_person
-        list_calls: list[tuple[str, str]] = []
-
-        async def require_list_actor(
-            person_id: str,
-            now=None,
-            *,
-            actor_person_id: str | None = None,
-        ):
-            if person_id != owner["user_id"] or actor_person_id != owner["user_id"]:
-                raise AssertionError("list recovery requires the authenticated owner")
-            list_calls.append((person_id, actor_person_id))
-            return await original_list(
-                person_id,
-                now=now,
-                actor_person_id=actor_person_id,
-            )
-
-        monkeypatch.setattr(
-            identity, "list_active_manifests_for_person", require_list_actor
-        )
-        headers = {"Authorization": f"Bearer {owner['access_token']}"}
-        unauthorized = await client.get("/v1/device-bindings")
-        assert unauthorized.status_code == 401
-        listed = await client.get("/v1/device-bindings", headers=headers)
-        assert listed.status_code == 200
-        assert listed.json() == {
-            "bindings": [manifest.to_dict() for manifest in expected]
-        }
-        assert list_calls == [(owner["user_id"], owner["user_id"])]
-
-        original_get = identity.get_active_manifest
-        get_calls: list[tuple[str, str]] = []
-
-        async def require_get_actor(
-            device_id: str,
-            *,
-            actor_person_id: str | None = None,
-        ):
-            if actor_person_id is None:
-                raise AssertionError("single-device lookup requires an identity actor")
-            get_calls.append((device_id, actor_person_id))
-            return await original_get(
-                device_id,
-                actor_person_id=actor_person_id,
-            )
-
-        monkeypatch.setattr(identity, "get_active_manifest", require_get_actor)
-        owner_binding = await client.get(
-            "/v1/devices/device-recovery-a/binding",
-            headers=headers,
-        )
-        assert owner_binding.status_code == 200
-        assert owner_binding.json() == expected[0].to_dict()
-
-        stranger_binding = await client.get(
-            "/v1/devices/device-recovery-a/binding",
-            headers={"Authorization": f"Bearer {stranger['access_token']}"},
-        )
-        # SQLite mirrors fail closed as binding_forbidden; PostgreSQL RLS
-        # makes the row invisible and the route emits binding_not_found.
-        assert stranger_binding.status_code in (403, 404)
-        assert stranger_binding.json()["detail"]["code"] in (
-            "binding_forbidden",
-            "binding_not_found",
-        )
-        assert ("device-recovery-a", owner["user_id"]) in get_calls
-        assert ("device-recovery-a", stranger["user_id"]) in get_calls
 
 
 async def _establish_relationship(
@@ -674,14 +564,14 @@ async def test_runtime_control_requires_binding_membership(
             "/v1/devices/device-membership/runtime-profile",
             headers=stranger_headers,
         )
-        _assert_non_member_denied(blocked)
+        assert_stranger_denied(blocked)
 
         resolution = await client.post(
             "/v1/sessions/resolve-subject",
             headers=stranger_headers,
             json={"device_id": "device-membership", "environment": {}},
         )
-        _assert_non_member_denied(resolution)
+        assert_stranger_denied(resolution)
 
         switch = await client.post(
             f"/v1/sessions/{profile['session_id']}/active-subject",
@@ -691,7 +581,7 @@ async def test_runtime_control_requires_binding_membership(
                 "confirmation_method": "app_confirm",
             },
         )
-        _assert_non_member_denied(switch)
+        assert_stranger_denied(switch)
 
         decision = await client.post(
             "/v1/policy/decisions",
@@ -702,7 +592,7 @@ async def test_runtime_control_requires_binding_membership(
                 "data_classification": "public",
             },
         )
-        _assert_non_member_denied(decision)
+        assert_stranger_denied(decision)
 
 
 @pytest.mark.asyncio

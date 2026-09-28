@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
 from services.control_api.tests.identity_test_helpers import (
+    assert_stranger_denied,
     install_test_identity_authority,
 )
 from services.identity.domain import BindingVersionConflictError
@@ -186,8 +187,7 @@ async def test_relationship_invite_accept_dispute_resolution_revoke(
             headers=_headers(stranger),
             json={},
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "relationship_forbidden"
+        assert_stranger_denied(response, "relationship_forbidden")
 
         response = await client.post(
             f"/v1/relationships/{relationship_id}/accept",
@@ -377,8 +377,7 @@ async def test_transfer_requires_step_up_and_target_accept(
                 "idempotency_key": "test-idem-key-0001",
             },
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "transfer_forbidden"
+        assert_stranger_denied(response, "transfer_forbidden")
 
         # Owner creates the intent with a server-signed step-up + receipt.
         v1 = app.state.multi_subject_binding_manifests["dev-tx"]
@@ -590,8 +589,7 @@ async def test_cross_family_binding_read_rejected(
         response = await client.get(
             "/v1/devices/dev-a/bindings", headers=_headers(family_b)
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["code"] == "binding_forbidden"
+        assert_stranger_denied(response, "binding_forbidden")
 
         response = await client.get(
             "/v1/devices/dev-a/transfers", headers=_headers(family_b)
@@ -798,8 +796,7 @@ async def test_binding_member_add_rejects_stranger_duplicate_mode_and_adult(
                 "subject_draft": {"display_name": "老二", "age_band": "under_14"},
             },
         )
-        assert stranger_add.status_code == 403, stranger_add.text
-        assert stranger_add.json()["detail"]["code"] == "binding_forbidden"
+        assert_stranger_denied(stranger_add, "binding_forbidden")
         duplicate = await client.post(
             device, headers=_headers(owner), json={"person_id": child1}
         )
@@ -1196,8 +1193,7 @@ async def test_age_evidence_declaration_owner_self_stranger(
         denied = await client.patch(
             target, headers=_headers(stranger), json={"age_band": "14_17"}
         )
-        assert denied.status_code == 403, denied.text
-        assert denied.json()["detail"]["code"] == "guardian_binding_owner_required"
+        assert_stranger_denied(denied, "guardian_binding_owner_required")
         adult_claim = await client.patch(
             target, headers=_headers(owner), json={"age_band": "adult"}
         )
@@ -1247,7 +1243,7 @@ async def test_device_page_reads_the_age_band_and_a_change_rotates_the_profile(
         assert read.json()["age_band"] == "under_14"
         assert read.json()["subject_category"] == "minor"
         denied = await client.get(target, headers=_headers(stranger))
-        assert denied.status_code == 403, denied.text
+        assert_stranger_denied(denied)
         assert rotated == []
 
         changed = await client.patch(target, headers=_headers(owner), json={"age_band": "14_17"})
