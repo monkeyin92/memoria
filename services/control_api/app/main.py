@@ -674,13 +674,22 @@ class _Wiring:
     settings: ControlSettings
     live: bool
     resources: LifespanResources = field(default_factory=LifespanResources)
+    # Test-only (MEMORIA_EAGER_POSTGRES): eager wiring builds the PostgreSQL
+    # stores too, uninitialized; each opens its pool on first use in the
+    # caller's loop, and the test harness closes ``resources``.
+    eager_postgres: bool = False
 
     def url(self, value: str) -> str:
-        """A store's backend URL; eager wiring ignores it and stays on SQLite."""
-        return value if self.live else ""
+        """A store's backend URL; plain eager wiring ignores it and stays on SQLite."""
+        return value if self.live or self.eager_postgres else ""
+
+    @property
+    def schema_external(self) -> bool:
+        """Schemas come from the admin init script, as in production."""
+        return self.settings.environment == "production" or self.eager_postgres
 
     def on_close(self, close: Callable[[], object]) -> None:
-        if self.live:
+        if self.live or self.eager_postgres:
             self.resources.add(close)
 
     async def open(
@@ -692,6 +701,8 @@ class _Wiring:
         if self.live:
             await initialize()
             self.resources.add(close)
+        elif self.eager_postgres:
+            self.resources.add(close)  # initializes lazily on first use
 
     async def init_blocking(
         self,
@@ -875,7 +886,7 @@ async def _wire_services(w: _Wiring) -> None:
     store = MemoryStore(
         settings.memoria_db_path,
         dsn=w.url(settings.control_database_url.get_secret_value().strip()),
-        initialize_schema=not production,
+        initialize_schema=not w.schema_external,
     )
     await w.init_blocking(store.initialize)
     w.on_close(store.close)
@@ -977,7 +988,7 @@ async def _wire_services(w: _Wiring) -> None:
             worker_dsn=(
                 settings.guardian_worker_database_url.get_secret_value().strip() or None
             ),
-            initialize_schema=not production,
+            initialize_schema=not w.schema_external,
         )
         await w.open(postgres_guardian.initialize, postgres_guardian.close)
         guardian_store = postgres_guardian
@@ -990,7 +1001,9 @@ async def _wire_services(w: _Wiring) -> None:
     archive_url = w.url(settings.archive_database_url.get_secret_value())
     # The archive-DSN stores borrow one pool; it closes after all of them.
     pools = SharedPostgresPools(w.resources)
-    archive_pool = await pools.borrow(archive_url) if archive_url else None
+    # Borrowing opens the pool, which eager wiring cannot await; each store
+    # then opens its own pool on first use.
+    archive_pool = await pools.borrow(archive_url) if archive_url and w.live else None
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
@@ -1103,7 +1116,7 @@ async def _wire_services(w: _Wiring) -> None:
     if evolution_url:
         postgres_evolution = PostgresEvolutionStore(
             evolution_url,
-            initialize_schema=not production,
+            initialize_schema=not w.schema_external,
         )
         await w.init_blocking(postgres_evolution.initialize)
         w.on_close(partial(to_thread, postgres_evolution.close))
@@ -1311,7 +1324,9 @@ def create_app() -> FastAPI:
     # with an account/task advisory lock or revision projection.
     app.state.growth_task_lock = Lock()
     app.state.realtime_connections = RealtimeConnectionRegistry()
-    _run_eagerly(_wire_services(_Wiring(app, settings, live=False)))
+    eager = _Wiring(app, settings, live=False, eager_postgres=settings.eager_postgres)
+    _run_eagerly(_wire_services(eager))
+    app.state.eager_resources = eager.resources
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.origins_list(),

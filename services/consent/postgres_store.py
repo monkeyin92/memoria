@@ -88,6 +88,7 @@ class PostgresConsentStore:
             self._pool = None
 
     async def transaction(self) -> AsyncConsentUnitOfWork:
+        await self.ensure_initialized()
         pool = self._pool
         if pool is None:
             raise RuntimeError("PostgresConsentStore not initialized")
@@ -108,6 +109,7 @@ class PostgresConsentStore:
         now: datetime,
     ) -> None:
         """Map (actor, subject, binding) for the consent role, checked by Identity."""
+        await self.ensure_initialized()
         pool = self._pool
         if pool is None:
             raise RuntimeError("PostgresConsentStore not initialized")
@@ -122,6 +124,7 @@ class PostgresConsentStore:
 
     async def outbox_pending(self, limit: int = 100) -> tuple[ConsentOutboxEvent, ...]:
         """Atomically claim pending events through the worker-only DB function."""
+        await self.ensure_initialized()
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be within 1..1000")
         pool = self._pool
@@ -139,6 +142,7 @@ class PostgresConsentStore:
             await pool.release(conn)
 
     async def mark_outbox_processed(self, event_id: str, status: str = "delivered") -> None:
+        await self.ensure_initialized()
         if status not in {"delivered", "dead_lettered"}:
             raise ValueError("status must be delivered or dead_lettered")
         pool = self._pool
