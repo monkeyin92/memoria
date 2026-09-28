@@ -1075,3 +1075,34 @@ async def test_subject_persona_asks_the_engine_for_that_subject(
     assert sent.subject_id == expected_subject
     assert sent.speaker_class == speaker_class
     assert sent.confirmed_style_only is style_only
+
+
+@pytest.mark.asyncio
+async def test_evidence_subject_category_is_read_as_the_evidence_account() -> None:
+    """A bound subject's category comes from Identity, read as the account.
+
+    PostgreSQL Identity hides every person from an actor-less read, so an
+    actor-less lookup would leave every bound subject's evidence unprojected.
+    """
+    from services.control_api.app.main import _evidence_subject_category_resolver
+    from services.identity.domain import IdentityNotFoundError
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def get_person(person_id: str, actor_person_id: str | None = None) -> Any:
+        calls.append((person_id, actor_person_id))
+        if actor_person_id != "account-1":
+            raise IdentityNotFoundError(person_id)
+        return SimpleNamespace(subject_category="minor")
+
+    store = SimpleNamespace(get_subject_profile=lambda user_id: None)
+    identity = SimpleNamespace(get_person=get_person)
+    resolve = _evidence_subject_category_resolver(store, identity)  # type: ignore[arg-type]
+    event = EvidenceEvent(
+        event_id="bound-1", account_id="account-1", subject_id="child-1",
+        event_type="speech.utterance_finalized", occurred_at=datetime.now(UTC),
+        speaker_class="owner", source="test", session_id="s", turn_id=1,
+        generation_id=1, payload={"text": "你好"},
+    )
+    assert await resolve(event) == "minor"
+    assert calls == [("child-1", "account-1")]

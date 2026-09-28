@@ -277,7 +277,10 @@ def _evidence_subject_category_resolver(
         if not subject_id or subject_id == event.account_id:
             return owner_category(event.account_id)
         try:
-            person = await identity.get_person(subject_id)
+            # Read as the account that owns the evidence: PostgreSQL Identity
+            # hides a person from an actor-less read, and shows it to an
+            # account related to that person.
+            person = await identity.get_person(subject_id, actor_person_id=event.account_id)
         except IdentityNotFoundError as exc:
             raise SubjectCategoryUnresolved(subject_id) from exc
         except Exception as exc:
