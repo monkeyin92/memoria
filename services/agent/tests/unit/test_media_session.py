@@ -37,6 +37,7 @@ from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
 )
+from services.agent.src.voice_core import media_session_input
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -13190,6 +13191,142 @@ async def test_media_playback_followup_advance_restarts_the_absolute_tail_bound(
     assert first_handle.cancelled()
     assert context.turn_endpoint_timeout_handle is not None
     assert not context.standby_requested
+
+
+async def _device_vad(
+    window: SimpleNamespace,
+    segment_id: str,
+    sample: int,
+    *,
+    final: bool,
+) -> None:
+    await window.registry.on_speech_segment(
+        window.session,
+        SpeechSegment(
+            session_id=window.identity.session_id,
+            stream_epoch=window.identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id=segment_id,
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=sample,
+            capture_end_sample=sample + 1,
+            final=final,
+            voiced_end_sample=sample if final else None,
+            near_end_rms=0.05,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_textless_vad_cannot_hold_an_answered_question_open(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-09-28 field: background sound deferred a weather answer 17 s.
+
+    The question was recognized and endpointed, then vad.start/vad.end kept
+    cycling on sound that never produced any text; each start reopened the
+    turn, so it committed only when the room went quiet. The reopened turn
+    now commits the question once a bounded window passes with no new text,
+    however many times it is reopened meanwhile.
+    """
+
+    monkeypatch.setattr(media_session_input, "_REOPEN_EVIDENCE_WINDOW_S", 0.2)
+    window = await device_media_session("reopen-noise-session")
+    context = window.context
+    await _complete_previous_device_playback(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="给我讲个小故事吧",
+    )
+    assert context.turn_endpoint_sample == 230_000
+    # Background sound: starts and ends that never bring text.
+    await _device_vad(window, "noise-1", 235_000, final=False)
+    assert context.turn_endpoint_sample is None
+    await _device_vad(window, "noise-1-end", 250_000, final=True)
+    await asyncio.sleep(0.05)
+    await _device_vad(window, "noise-2", 252_000, final=False)
+    await asyncio.sleep(0.05)
+    await _device_vad(window, "noise-3", 260_000, final=False)
+
+    await _wait_until(lambda: window.provider.prepared == ["给我讲个小故事吧"], timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_reopened_turn_keeps_waiting_when_the_new_speech_has_text(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window only ends a reopen that brought no words of its own."""
+
+    monkeypatch.setattr(media_session_input, "_REOPEN_EVIDENCE_WINDOW_S", 0.2)
+    window = await device_media_session("reopen-continued-session")
+    context = window.context
+    await _complete_previous_device_playback(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question-1",
+        start_sample=215_000,
+        end_sample=225_000,
+        text="我今天有点累",
+    )
+    await _device_vad(window, "continued", 228_000, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question-2",
+        start_sample=229_000,
+        end_sample=240_000,
+        text="想早点休息",
+        revision=2,
+    )
+    await asyncio.sleep(0.35)
+    # Past the window, the still-open speech that did bring text has not
+    # been cut at the first endpoint.
+    assert window.provider.prepared == []
+    assert context.turn_end_sample == 240_000
+    await _device_vad(window, "continued-end", 240_000, final=True)
+    await _wait_until(lambda: len(window.provider.prepared) == 1, timeout=3.0)
+    prepared = window.provider.prepared[0]
+    assert "我今天有点累" in prepared and "想早点休息" in prepared
+
+
+@pytest.mark.asyncio
+async def test_reopen_window_never_commits_a_newer_turn_at_the_old_endpoint(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(media_session_input, "_REOPEN_EVIDENCE_WINDOW_S", 60.0)
+    window = await device_media_session("reopen-newer-turn-session")
+    context = window.context
+    await _complete_previous_device_playback(window)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="question",
+        start_sample=215_000,
+        end_sample=230_000,
+        text="给我讲个小故事吧",
+    )
+    await _device_vad(window, "noise", 235_000, final=False)
+    handle = context.reopen_evidence_handle
+    assert handle is not None and context.reopen_evidence_endpoint == 230_000
+    handle.cancel()
+    # The logical turn changed meanwhile (committed, then a new one opened).
+    context.turn_start_sample = 300_000
+    window.registry._expire_reopen_evidence_window(
+        window.identity.session_id, window.identity.stream_epoch, 230_000
+    )
+    assert context.turn_endpoint_sample is None
+    assert context.reopen_evidence_endpoint is None
+    await asyncio.sleep(0.05)
+    assert window.provider.prepared == []
 
 
 @pytest.mark.asyncio
