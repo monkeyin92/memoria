@@ -4479,3 +4479,230 @@ async def test_read_transaction_binding_fence_shares_profile_snapshot(
             now=datetime.now(UTC),
         )
     assert withdrawn is False
+
+
+# ---------------------------------------------------------------------------
+# Device trust follows the onboarding authority (2026-09-28).  A rebind from
+# the Mini Program commits a new binding in Identity and device_onboarding_*
+# only; device_fleet_* keeps the older binding.  Session must follow
+# onboarding, not refuse the device with device_binding_mismatch.
+
+_DEVICE_ONBOARDING_SCHEMA_SQL = Path(
+    "services/device_fleet/bootstrap_postgres_schema.sql"
+).read_text(encoding="utf-8")
+
+
+async def _rebind_through_onboarding(
+    bootstrap_dsn: str,
+    *,
+    lifecycle: str = "bound",
+) -> None:
+    """Rebind device-a to binding-a2 v2 the way the onboarding flow does.
+
+    Identity supersedes binding-a with binding-a2; device_onboarding_devices
+    records the new binding (or, with ``lifecycle='provisioned'``, a release);
+    device_fleet_devices is left on binding-a v1, as in production.
+    """
+    now = datetime.now(UTC)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        # Installed after the Session schema, as on a fresh volume: this
+        # file's own grant is what lets the trust port read the row.
+        await admin.execute(_DEVICE_ONBOARDING_SCHEMA_SQL)
+        await admin.execute("RESET ROLE")
+        await admin.execute(
+            "UPDATE identity_device_bindings SET status = 'superseded', "
+            "valid_until = $2 WHERE binding_id = $1",
+            "binding-a",
+            now,
+        )
+        await admin.execute(
+            """
+            INSERT INTO identity_device_bindings (
+                binding_id, device_id, declared_mode, family_space_id,
+                account_owner_person_id, binding_version, status, reason,
+                valid_from, valid_until, supersedes_binding_id,
+                service_profile_version, policy_bundle_version,
+                consent_snapshot_id, persona_assignment_id, created_at
+            ) VALUES ('binding-a2', 'device-a', 'self_use', NULL, 'actor-a', 2,
+                      'active', 'supersede', $1, NULL, 'binding-a', 'self-v1',
+                      'multi-subject-v2', NULL, 'mianmian:v1', $1)
+            """,
+            now,
+        )
+        await admin.executemany(
+            """
+            INSERT INTO identity_device_binding_roles (
+                binding_id, person_id, role, status, permissions_json,
+                granted_at, ended_at
+            ) VALUES ('binding-a2', 'actor-a', $1, 'active', $2::jsonb, $3, NULL)
+            """,
+            (
+                ("account_owner", '["binding.manage"]', now),
+                ("primary_subject", '["content.read"]', now),
+            ),
+        )
+        bound = lifecycle == "bound"
+        await admin.execute(
+            """
+            INSERT INTO device_onboarding_devices (
+                device_id, certificate_id, public_key_b64, product_model,
+                hardware_revision, firmware_version, firmware_security_version,
+                capability_manifest_hash, minimum_firmware_security_version,
+                lifecycle_status, binding_id, binding_version, actor_id,
+                activation_version, created_at, updated_at
+            ) VALUES ('device-a', 'cert-device-a', $1, 'memoria-esp-vocat',
+                      'r1', '2.4.2', 1, $2, 1, $3, $4, $5, $6, 3, $7, $7)
+            """,
+            "A" * 43,
+            hashlib.sha256(b"manifest:device-a").hexdigest(),
+            lifecycle,
+            "binding-a2" if bound else None,
+            2 if bound else None,
+            "actor-a" if bound else None,
+            now,
+        )
+    finally:
+        await admin.close()
+
+
+async def _device_trust(
+    store: PostgresSessionRuntimeStore, *, binding_id: str, binding_version: int
+) -> dict[str, object]:
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await connection.execute(
+            "SELECT set_config('app.authenticated_binding', $1, true)", binding_id
+        )
+        raw = await connection.fetchval(
+            "SELECT action_device_lock_trust($1, $2, $3, $4, $5)",
+            "actor-a",
+            "device-a",
+            binding_id,
+            binding_version,
+            datetime.now(UTC),
+        )
+    return json.loads(raw) if isinstance(raw, str) else dict(raw)
+
+
+def _start_command(*, session_id: str, binding_version: int) -> object:
+    from services.session_runtime.service import StartPersistentSessionCommand
+
+    return StartPersistentSessionCommand(
+        session_id=session_id,
+        actor_id="actor-a",
+        device_id="device-a",
+        expected_binding_version=binding_version,
+        idempotency_key=f"start-{session_id}",
+        now=datetime.now(UTC),
+        requested_capabilities=("chat",),
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebind_through_onboarding_keeps_session_start_allowed(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    from services.session_runtime.service import build_postgres_session_runtime_service
+
+    store, bootstrap_dsn = postgres_runtime
+    await _rebind_through_onboarding(bootstrap_dsn)
+
+    trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
+    assert trust["device_trust"] == "untrusted"
+    assert trust["reason_code"] == "device_attestation_unavailable"
+
+    service = build_postgres_session_runtime_service(store=store, signing_key=_SIGNING_KEY)
+    profile = await service.start(
+        _start_command(session_id="session-after-rebind", binding_version=2)  # type: ignore[arg-type]
+    )
+    assert profile.binding_id == "binding-a2"
+    assert profile.binding_version == 2
+
+    # The superseded binding is no longer the device's: onboarding says so,
+    # whatever device_fleet_devices still records.
+    stale = await _device_trust(store, binding_id="binding-a", binding_version=1)
+    assert stale == {
+        "available": True,
+        "device_trust": "revoked",
+        "reason_code": "device_binding_mismatch",
+    }
+
+
+@pytest.mark.asyncio
+async def test_released_onboarding_device_cannot_start_a_session(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
+        build_postgres_session_runtime_service,
+    )
+
+    store, bootstrap_dsn = postgres_runtime
+    await _rebind_through_onboarding(bootstrap_dsn, lifecycle="provisioned")
+
+    trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
+    assert trust["device_trust"] == "revoked"
+    assert trust["reason_code"] == "device_lifecycle_not_bound"
+
+    service = build_postgres_session_runtime_service(store=store, signing_key=_SIGNING_KEY)
+    with pytest.raises(PersistentSessionDenied, match="device_lifecycle_not_bound"):
+        await service.start(
+            _start_command(session_id="session-after-release", binding_version=2)  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_fleet_revocation_still_blocks_an_onboarding_bound_device(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    store, bootstrap_dsn = postgres_runtime
+    await _rebind_through_onboarding(bootstrap_dsn)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await admin.execute(
+            "UPDATE device_fleet_devices SET lifecycle_status = 'suspended', "
+            "family_space_id = NULL, binding_id = NULL, binding_version = NULL "
+            "WHERE device_id = 'device-a'"
+        )
+    finally:
+        await admin.close()
+
+    trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
+    assert trust == {
+        "available": True,
+        "device_trust": "revoked",
+        "reason_code": "device_fleet_lifecycle_blocked",
+    }
+
+
+@pytest.mark.asyncio
+async def test_session_schema_grants_the_onboarding_trust_read_when_installed_later(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    store, bootstrap_dsn = postgres_runtime
+    await _rebind_through_onboarding(bootstrap_dsn)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        # An existing volume where onboarding predates this grant: re-running
+        # the Session schema must restore it on its own.
+        await admin.execute(
+            "DROP POLICY device_onboarding_action_bridge_devices ON device_onboarding_devices"
+        )
+        await admin.execute(
+            "DROP POLICY device_onboarding_action_bridge_devices_lock "
+            "ON device_onboarding_devices"
+        )
+        await admin.execute(
+            "REVOKE ALL ON device_onboarding_devices FROM memoria_device_action_bridge_owner"
+        )
+        await admin.execute(SESSION_RUNTIME_SCHEMA_SQL)
+        await admin.execute("RESET ROLE")
+    finally:
+        await admin.close()
+
+    trust = await _device_trust(store, binding_id="binding-a2", binding_version=2)
+    assert trust["device_trust"] == "untrusted"
+    assert (await store.readiness())["action_executor_consent_discover_exec"] is not None

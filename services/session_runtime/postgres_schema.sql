@@ -2338,11 +2338,32 @@ GRANT EXECUTE ON FUNCTION action_identity_binding_is_current(
 RESET ROLE;
 
 -- Device-owned trust lock port.  The NOLOGIN bridge has no public operation
--- other than this fixed SECURITY DEFINER function.  If Device Fleet has not
--- been installed in this database the function reports authority_unavailable;
--- Session may then issue only an unknown-safe profile.
+-- other than this fixed SECURITY DEFINER function.  If neither Device Fleet
+-- nor Device Onboarding has been installed in this database the function
+-- reports authority_unavailable; Session may then issue only an unknown-safe
+-- profile.
 DO $session_runtime_device_grants$
 BEGIN
+    -- Device Onboarding is the binding authority for the devices it
+    -- registered (a rebind never touches device_fleet_*).  Its schema is
+    -- installed after this one on a fresh volume and repeats this grant.
+    IF to_regclass('public.device_onboarding_devices') IS NOT NULL THEN
+        GRANT SELECT, UPDATE ON TABLE device_onboarding_devices
+            TO memoria_device_action_bridge_owner;
+        DROP POLICY IF EXISTS device_onboarding_action_bridge_devices
+            ON device_onboarding_devices;
+        CREATE POLICY device_onboarding_action_bridge_devices
+            ON device_onboarding_devices
+            FOR SELECT TO memoria_device_action_bridge_owner
+            USING (current_user = 'memoria_device_action_bridge_owner');
+        DROP POLICY IF EXISTS device_onboarding_action_bridge_devices_lock
+            ON device_onboarding_devices;
+        CREATE POLICY device_onboarding_action_bridge_devices_lock
+            ON device_onboarding_devices
+            FOR UPDATE TO memoria_device_action_bridge_owner
+            USING (current_user = 'memoria_device_action_bridge_owner')
+            WITH CHECK (false);
+    END IF;
     IF to_regclass('public.device_fleet_devices') IS NOT NULL THEN
         GRANT SELECT, UPDATE ON TABLE device_fleet_devices
             TO memoria_device_action_bridge_owner;
@@ -2401,6 +2422,9 @@ DECLARE
     lifecycle text;
     row_binding_id text;
     row_binding_version bigint;
+    onboarding_lifecycle text;
+    onboarding_binding_id text;
+    onboarding_binding_version bigint;
     certificate_active boolean := false;
     attestation_active boolean := false;
 BEGIN
@@ -2413,38 +2437,74 @@ BEGIN
         RAISE EXCEPTION 'authenticated Device authority context mismatch'
             USING ERRCODE = 'SR403';
     END IF;
-    IF to_regclass('public.device_fleet_devices') IS NULL THEN
+    IF to_regclass('public.device_onboarding_devices') IS NOT NULL THEN
+        EXECUTE
+            'SELECT lifecycle_status, binding_id, binding_version '
+            'FROM public.device_onboarding_devices WHERE device_id = $1 FOR SHARE'
+        INTO onboarding_lifecycle, onboarding_binding_id, onboarding_binding_version
+        USING p_device_id;
+    END IF;
+    IF to_regclass('public.device_fleet_devices') IS NOT NULL THEN
+        EXECUTE
+            'SELECT lifecycle_status, binding_id, binding_version '
+            'FROM public.device_fleet_devices WHERE device_id = $1 FOR SHARE'
+        INTO lifecycle, row_binding_id, row_binding_version
+        USING p_device_id;
+    ELSIF onboarding_lifecycle IS NULL THEN
         RETURN jsonb_build_object(
             'available', false,
             'device_trust', 'untrusted'
         );
     END IF;
-    EXECUTE
-        'SELECT lifecycle_status, binding_id, binding_version '
-        'FROM public.device_fleet_devices WHERE device_id = $1 FOR SHARE'
-    INTO lifecycle, row_binding_id, row_binding_version
-    USING p_device_id;
-    IF lifecycle IS NULL THEN
-        RETURN jsonb_build_object(
-            'available', true,
-            'device_trust', 'revoked',
-            'reason_code', 'device_not_registered'
-        );
-    END IF;
-    IF row_binding_id IS DISTINCT FROM p_binding_id
-       OR row_binding_version IS DISTINCT FROM p_binding_version THEN
-        RETURN jsonb_build_object(
-            'available', true,
-            'device_trust', 'revoked',
-            'reason_code', 'device_binding_mismatch'
-        );
-    END IF;
-    IF lifecycle <> 'bound' THEN
-        RETURN jsonb_build_object(
-            'available', true,
-            'device_trust', 'revoked',
-            'reason_code', 'device_lifecycle_not_bound'
-        );
+    IF onboarding_lifecycle IS NOT NULL THEN
+        -- Onboarding commits and releases this device's bindings, so its row
+        -- decides the current binding; the Device Fleet row, if any, keeps
+        -- only its say on blocking a device (revocation, suspension, wipe).
+        IF lifecycle IN ('suspended', 'revoked', 'wipe_pending', 'wiped', 'retired') THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_fleet_lifecycle_blocked'
+            );
+        END IF;
+        IF onboarding_lifecycle <> 'bound' THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_lifecycle_not_bound'
+            );
+        END IF;
+        IF onboarding_binding_id IS DISTINCT FROM p_binding_id
+           OR onboarding_binding_version IS DISTINCT FROM p_binding_version THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_binding_mismatch'
+            );
+        END IF;
+    ELSE
+        IF lifecycle IS NULL THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_not_registered'
+            );
+        END IF;
+        IF row_binding_id IS DISTINCT FROM p_binding_id
+           OR row_binding_version IS DISTINCT FROM p_binding_version THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_binding_mismatch'
+            );
+        END IF;
+        IF lifecycle <> 'bound' THEN
+            RETURN jsonb_build_object(
+                'available', true,
+                'device_trust', 'revoked',
+                'reason_code', 'device_lifecycle_not_bound'
+            );
+        END IF;
     END IF;
     IF to_regclass('public.device_fleet_certificates') IS NOT NULL THEN
         EXECUTE

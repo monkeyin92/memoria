@@ -467,3 +467,41 @@ GRANT EXECUTE ON FUNCTION device_onboarding_scope_actor(TEXT),
     device_onboarding_scope_maintenance()
 TO memoria_device_onboarding_api,
    memoria_device_onboarding_maintenance;
+
+-- Session Runtime's device trust port (action_device_lock_trust, owned by
+-- memoria_device_action_bridge_owner) reads and share-locks this device's
+-- lifecycle and current binding: onboarding commits and releases bindings,
+-- so it is the authority Session must follow after a rebind.  The Session
+-- schema grants the same when it is installed after this one.
+DO $device_onboarding_session_trust$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'memoria_device_action_bridge_owner'
+    ) THEN
+        GRANT SELECT, UPDATE ON TABLE device_onboarding_devices
+            TO memoria_device_action_bridge_owner;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'public' AND tablename = 'device_onboarding_devices'
+              AND policyname = 'device_onboarding_action_bridge_devices'
+        ) THEN
+            CREATE POLICY device_onboarding_action_bridge_devices
+                ON device_onboarding_devices
+                FOR SELECT TO memoria_device_action_bridge_owner
+                USING (current_user = 'memoria_device_action_bridge_owner');
+        END IF;
+        -- FOR SHARE needs UPDATE; the lock policy admits no new row.
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = 'public' AND tablename = 'device_onboarding_devices'
+              AND policyname = 'device_onboarding_action_bridge_devices_lock'
+        ) THEN
+            CREATE POLICY device_onboarding_action_bridge_devices_lock
+                ON device_onboarding_devices
+                FOR UPDATE TO memoria_device_action_bridge_owner
+                USING (current_user = 'memoria_device_action_bridge_owner')
+                WITH CHECK (false);
+        END IF;
+    END IF;
+END
+$device_onboarding_session_trust$;
