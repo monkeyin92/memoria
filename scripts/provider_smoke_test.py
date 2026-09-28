@@ -24,7 +24,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
     DOUBAO_TTS_MODEL,
     DOUBAO_VOICE_CATALOG,
 )
-from services.agent.src.providers.funasr_protocol import timestamps_monotonic
+from services.agent.src.providers.funasr_protocol import FunASRSentence, timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.handlers import build_realtime_search_resolver
 from services.agent.src.providers.interrupt_semantic_classifier import (
@@ -216,7 +216,10 @@ async def smoke_funasr(
     )
     session = FunASRSession(cfg)
     interim = False
-    final = None
+    # A pause longer than max_sentence_silence splits one utterance into
+    # several finals (low_magnetic's comma pause is ~555 ms against 550 ms);
+    # production joins every final inside the turn range, so the smoke does too.
+    finals: list[FunASRSentence] = []
     finished = False
     try:
         await session.connect()
@@ -229,7 +232,7 @@ async def smoke_funasr(
             event = await asyncio.wait_for(session.events.get(), timeout=cfg.result_timeout_s)
             if event.event == "result-generated" and event.sentence is not None:
                 if event.sentence.sentence_end:
-                    final = event.sentence
+                    finals.append(event.sentence)
                 elif event.sentence.text:
                     interim = True
             elif event.event == "task-failed":
@@ -241,15 +244,17 @@ async def smoke_funasr(
         await session.aclose()
     if not interim:
         raise AssertionError("FunASR returned no interim transcript")
-    if final is None or not all(marker in final.text for marker in expected_markers):
-        raise AssertionError(f"FunASR final mismatch: {getattr(final, 'text', '')!r}")
-    if any(marker in final.text for marker in forbidden_markers):
-        raise AssertionError(f"FunASR unexpectedly transcribed reference context: {final.text!r}")
-    if not final.words or not timestamps_monotonic(final.words):
+    text = "".join(sentence.text for sentence in finals)
+    if not finals or not all(marker in text for marker in expected_markers):
+        raise AssertionError(f"FunASR final mismatch: {[sentence.text for sentence in finals]!r}")
+    if any(marker in text for marker in forbidden_markers):
+        raise AssertionError(f"FunASR unexpectedly transcribed reference context: {text!r}")
+    words = tuple(word for sentence in finals for word in sentence.words)
+    if any(not sentence.words for sentence in finals) or not timestamps_monotonic(words):
         raise AssertionError("FunASR final word timestamps are empty or non-monotonic")
     if not finished:
         raise AssertionError("FunASR task did not finish normally")
-    print("FunASR smoke: PASS (interim + final + monotonic word timestamps)")
+    print(f"FunASR smoke: PASS (interim + {len(finals)} final(s) + monotonic word timestamps)")
 
 
 async def smoke_llm() -> str:
