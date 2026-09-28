@@ -18,7 +18,11 @@ from services.agent.src import media_agent_factory as factory_module
 from services.agent.src import session_entrypoint as entrypoint_module
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.prompt_composition import compose_production_prompt
+from services.agent.src.prompt_composition import (
+    PROMPT_SECTIONS,
+    SERVICE_MODE_BLOCKS,
+    compose_production_prompt,
+)
 from services.agent.src.runtime_profile import (
     VERIFY_KEY_ENV,
     RuntimeProfile,
@@ -121,8 +125,8 @@ def test_real_consumer_invocation_with_profile(monkeypatch: pytest.MonkeyPatch) 
     runtime = _runtime(monkeypatch)
     runtime.set_mode_policy(_policy(_profile(epoch=1)))
     prompt = production_system_prompt(runtime)
-    assert "【不可变安全底线】" in prompt
-    assert "当前是儿童/学生学习陪伴模式" in prompt
+    assert dict(PROMPT_SECTIONS)["safety"] in prompt
+    assert SERVICE_MODE_BLOCKS["student_minor"] in prompt
     assert "儿童/学生" in prompt
     assert "身份已确认" in prompt
     assert "星澜" in prompt  # persona from the signed profile
@@ -136,7 +140,7 @@ def test_real_consumer_invocation_without_profile_fails_closed(
     runtime = _runtime(monkeypatch)
     runtime.set_mode_policy(_policy(None))
     prompt = production_system_prompt(runtime)
-    assert "当前是安全模式" in prompt
+    assert SERVICE_MODE_BLOCKS["unknown_safe"] in prompt
     assert "不写入长期记忆" in prompt
     assert "未确认" in prompt
     assert "私人记忆" not in prompt
@@ -273,7 +277,7 @@ def test_subject_switch_invalidates_old_prompt_and_context(
     assert "owner-private" not in old_composed.system
 
     new_prompt = production_system_prompt(runtime)
-    assert "当前是成人个人陪伴模式" in new_prompt
+    assert SERVICE_MODE_BLOCKS["adult_companion"] in new_prompt
     assert "儿童/学生" not in new_prompt
 
 
@@ -746,7 +750,7 @@ async def test_authority_loss_clears_old_subject_context_and_recovers_on_new_epo
     # Only the new degraded public turn survives; the old private turn is gone.
     assert [turn.content for turn in runtime.orchestrator.context.turns] == ["下一轮。"]
     prompt = production_system_prompt(runtime)
-    assert "当前是安全模式" in prompt
+    assert SERVICE_MODE_BLOCKS["unknown_safe"] in prompt
     assert "周三" not in prompt
     assert "星澜" not in prompt
     # Explicit local degraded surface: conversation-only, everything

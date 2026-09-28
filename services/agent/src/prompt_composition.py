@@ -315,6 +315,19 @@ def _render_obligations(
     return tuple(rendered)
 
 
+# Section ids in the frozen order, with the header each renders under.
+PROMPT_SECTIONS: Final[tuple[tuple[str, str], ...]] = (
+    ("safety", "【不可变安全底线】"),
+    ("persona", "【人格】"),
+    ("service_mode", "【服务模式】"),
+    ("obligations", "【策略义务】"),
+    ("subject", "【主体与关系】"),
+    ("memory", "【可用上下文】"),
+    ("task", "【本轮任务】"),
+)
+_SECTION_HEADERS: Final[dict[str, str]] = dict(PROMPT_SECTIONS)
+
+
 @dataclass(frozen=True, slots=True)
 class ComposedPrompt:
     """The composed system prompt plus its structured sections."""
@@ -326,6 +339,16 @@ class ComposedPrompt:
     persona_id: str
     service_mode: str
     version: str = PROMPT_COMPOSITION_VERSION
+    # Ids (``PROMPT_SECTIONS``) of ``sections``, index for index.
+    section_ids: tuple[str, ...] = ()
+
+    def section(self, section_id: str) -> str | None:
+        """Body of one section without its header, or ``None`` if absent."""
+
+        if section_id not in self.section_ids:
+            return None
+        text = self.sections[self.section_ids.index(section_id)]
+        return text.removeprefix(_SECTION_HEADERS[section_id] + "\n")
 
 
 def compose_system_prompt(
@@ -367,11 +390,16 @@ def compose_system_prompt(
                 metrics.inc_persona_identity_confusion_event(reason)
 
     sections: list[str] = []
-    sections.append(f"【不可变安全底线】\n{safety}")
-    sections.append(f"【人格】\n{persona_block}")
+    section_ids: list[str] = []
+
+    def add(section_id: str, body: str) -> None:
+        sections.append(f"{_SECTION_HEADERS[section_id]}\n{body}")
+        section_ids.append(section_id)
+
+    add("safety", safety)
+    add("persona", persona_block)
     focus_overlay = tutor_focus_overlay(focus)
     mode_section = (
-        "【服务模式】\n"
         f"{mode_block}\n"
         "该模式的服务端约束由系统强制执行，你只负责在表达中体现，"
         "不负责判断或执行权限。"
@@ -380,12 +408,12 @@ def compose_system_prompt(
         mode_section += (
             "\n\n本轮任务焦点（独立于服务模式的表达维度）：\n" + focus_overlay
         )
-    sections.append(mode_section)
+    add("service_mode", mode_section)
     if rendered_obligations:
         obligations_block = "本轮策略义务（已由服务端裁定，按现状自然表达，不解释、不扩展）：\n" + "\n".join(
             f"- {text}" for text in rendered_obligations
         )
-        sections.append(f"【策略义务】\n{obligations_block}")
+        add("obligations", obligations_block)
     if subject is not None:
         subject_lines: list[str] = []
         if subject.category is not None:
@@ -400,15 +428,15 @@ def compose_system_prompt(
             subject_lines.append("身份已确认")
         subject_block = "\n".join(subject_lines)
         _reject_permission_markers(subject_block, "subject context")
-        sections.append(f"【主体与关系】\n{subject_block}")
+        add("subject", subject_block)
     if memory_block is not None:
         memory = memory_block.strip()
         if memory:
             # Memory text is expected to be pre-filtered by the memory scope
             # resolver upstream; the composer only places it after obligations.
-            sections.append(f"【可用上下文】\n{memory}")
+            add("memory", memory)
     if task is not None and task.strip():
-        sections.append(f"【本轮任务】\n{task.strip()}")
+        add("task", task.strip())
 
     task_text = task.strip() if task is not None else None
     return ComposedPrompt(
@@ -418,6 +446,7 @@ def compose_system_prompt(
         policy_obligations=rendered_obligations,
         persona_id=definition.persona_id,
         service_mode=service_mode,
+        section_ids=tuple(section_ids),
     )
 
 
