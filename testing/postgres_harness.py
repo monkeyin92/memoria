@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
+import psycopg.sql
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,15 @@ INIT_SCRIPT = ROOT / "infra" / "postgres" / "init-memoria.sh"
 DATA_COMPOSE = ROOT / "infra" / "memoria-data.production.yml"
 # Every login role gets the same throwaway password inside the test cluster.
 TEST_ROLE_PASSWORD = "memoria-test-" + secrets.token_hex(8)
+
+
+def _login_roles() -> tuple[str, ...]:
+    from scripts.production_postgres_roles import PRODUCTION_POSTGRES_ROLES
+
+    return tuple(role.role for role in PRODUCTION_POSTGRES_ROLES)
+
+
+LOGIN_ROLES = _login_roles()
 
 
 def _mounts() -> dict[str, Path]:
@@ -260,6 +270,14 @@ def cloned_database(template: TestDatabase) -> Iterator[TestDatabase]:
     name = f"memoria_t_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(template.admin_dsn, autocommit=True) as connection:
         connection.execute(f'CREATE DATABASE "{name}" TEMPLATE "{template.name}"')
+        # Roles are cluster-wide and other PostgreSQL tests set their own
+        # passwords on them; restore the harness password every time.
+        for role in LOGIN_ROLES:
+            connection.execute(
+                psycopg.sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+                    psycopg.sql.Identifier(role), psycopg.sql.Literal(TEST_ROLE_PASSWORD)
+                )
+            )
     clone = TestDatabase(name=name, admin_dsn=template.admin_dsn)
     try:
         yield clone

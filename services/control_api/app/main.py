@@ -1324,7 +1324,12 @@ def create_app() -> FastAPI:
     # with an account/task advisory lock or revision projection.
     app.state.growth_task_lock = Lock()
     app.state.realtime_connections = RealtimeConnectionRegistry()
-    eager = _Wiring(app, settings, live=False, eager_postgres=settings.eager_postgres)
+    eager = _Wiring(
+        app,
+        settings,
+        live=False,
+        eager_postgres=settings.eager_postgres and settings.environment != "production",
+    )
     _run_eagerly(_wire_services(eager))
     app.state.eager_resources = eager.resources
     app.add_middleware(

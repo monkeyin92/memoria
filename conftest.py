@@ -138,15 +138,28 @@ if _APP_POSTGRES:
         apps: list[Any] = []
         original_create_app = control_main.create_app
 
-        def recording_create_app(*args: Any, **kwargs: Any) -> Any:
-            app = original_create_app(*args, **kwargs)
-            apps.append(app)
-            return app
-
         with cloned_database(_app_template()) as database:
-            for key, value in database.control_env().items():
-                monkeypatch.setenv(key, value)
-            monkeypatch.setenv("MEMORIA_EAGER_POSTGRES", "true")
+            injected = {**database.control_env(), "MEMORIA_EAGER_POSTGRES": "true"}
+
+            def recording_create_app(*args: Any, **kwargs: Any) -> Any:
+                # Only the app sees the DSNs: settings a test builds itself keep
+                # testing what is and is not configured. Production-mode apps
+                # are left alone.
+                if os.environ.get("ENVIRONMENT", "").strip() == "production":
+                    return original_create_app(*args, **kwargs)
+                saved = {key: os.environ.get(key) for key in injected}
+                os.environ.update({key: value for key, value in injected.items() if key not in os.environ})
+                try:
+                    app = original_create_app(*args, **kwargs)
+                finally:
+                    for key, value in saved.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
+                apps.append(app)
+                return app
+
             monkeypatch.setattr(control_main, "create_app", recording_create_app)
             for module in list(sys.modules.values()):
                 if getattr(module, "create_app", None) is original_create_app and module is not control_main:

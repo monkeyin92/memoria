@@ -1483,8 +1483,6 @@ class ControlSettings(BaseSettings):
                 "production requires MEMORIA_CONSENT_DATABASE_URL to use the "
                 "independent memoria_consent role"
             )
-        if self.eager_postgres:
-            raise ValueError("MEMORIA_EAGER_POSTGRES is a test setting and must be off in production")
         validate_control_database_url(self.control_database_url.get_secret_value())
         identity_registration_url = self.identity_registration_database_url.get_secret_value()
         if not identity_registration_url.startswith(("postgresql://", "postgres://")):
