@@ -27,6 +27,8 @@ NOT_IN_PRODUCTION = {
     "MEMORIA_IDENTITY_DB_PATH": "SQLite development store",
     # Baked into the image by the release build (Dockerfile ARG).
     "MEMORIA_RELEASE_TAG": "set by the image build",
+    # Test-only switch (production environments ignore it).
+    "MEMORIA_EAGER_POSTGRES": "test harness only",
     # Legacy all-access token; split_production_env refuses it in production.
     "MEMORIA_ARCHIVE_INTERNAL_TOKEN": "forbidden in production",
     # Admin DSNs for schema bootstrap: the upgrade helper strips them from the
