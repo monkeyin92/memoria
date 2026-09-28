@@ -172,8 +172,24 @@ func (c *DeviceConnection) downlinkSender(ctx context.Context, frame AudioFrame)
 // P0/P1 controls always preempt audio; audio for a stale generation is
 // dropped, and the oldest audio is dropped when the 80-200 ms ceiling is
 // exceeded instead of growing playout delay.
+//
+// A write error ends the connection, not just the writer: gorilla keeps the
+// error sticky without closing the socket, so the reader would otherwise keep
+// forwarding uplink to Voice Core (and the lane keep accepting controls) with
+// nothing reaching the device until the idle read deadline, which only pongs
+// refresh and pongs stop once pings stop.
 func (c *DeviceConnection) writeLoop() {
-	defer close(c.writeErr)
+	writeFailed := false
+	defer func() {
+		// writeErr first: close() flushes P0 controls and must see the writer
+		// is gone instead of waiting out the flush timeout.
+		close(c.writeErr)
+		if writeFailed {
+			c.server.metrics.writeFailures.Add(1)
+			c.markWriteFailure()
+			c.close()
+		}
+	}()
 	pingTicker := time.NewTicker(devicePingInterval)
 	defer pingTicker.Stop()
 	for {
@@ -187,6 +203,7 @@ func (c *DeviceConnection) writeLoop() {
 				time.Now().Add(deviceWriteTimeout),
 			); err != nil {
 				c.logSocketError("ping_write", err)
+				writeFailed = true
 				return
 			}
 		case <-c.lane.notify:
@@ -198,6 +215,7 @@ func (c *DeviceConnection) writeLoop() {
 				continue
 			}
 			if !c.writeLaneItem(item) {
+				writeFailed = true
 				return
 			}
 		}

@@ -23,6 +23,10 @@ const (
 	deviceConnAccepted int32 = 1
 	deviceConnClosed   int32 = 2
 
+	// deviceCloseCauseDownlinkWrite is the Edge-local close cause for a
+	// socket writer failure; Control's close report sees it as network.
+	deviceCloseCauseDownlinkWrite = "downlink_write_failed"
+
 	deviceIdleReadTimeout = 90 * time.Second
 	deviceWriteTimeout    = 5 * time.Second
 	// deviceCloseFlushTimeout bounds how long a close waits for the writer to
@@ -114,6 +118,10 @@ type DeviceConnection struct {
 	// default network applies to read/write failures; explicit paths mark it
 	// before closing.
 	closeReason string
+	// closeCause is the Edge-local diagnostic behind closeReason when the
+	// bounded report reason is coarser (downlink_write_failed reports as
+	// network). It is logged at teardown and never leaves the Edge.
+	closeCause string
 
 	// playbackActive tracks the signed playback receipts so a VAD start that
 	// arrives while the device renders downlink audio is treated as a barge
@@ -206,6 +214,7 @@ func (c *DeviceConnection) run() {
 	if !c.state.CompareAndSwap(deviceConnHello, deviceConnAccepted) {
 		return
 	}
+	c.server.routeSession(c)
 	c.stateMu.Lock()
 	c.connectedAt = time.Now().UTC()
 	c.stateMu.Unlock()
@@ -316,6 +325,7 @@ func (c *DeviceConnection) close() {
 		if reason == "" {
 			reason = SessionCloseReasonNetwork
 		}
+		cause := c.closeCause
 		connectedAt := c.connectedAt
 		c.runtime = nil
 		c.session = nil
@@ -334,6 +344,9 @@ func (c *DeviceConnection) close() {
 		}
 		_ = c.ws.Close()
 		close(c.closed)
+		if cause != "" {
+			log.Printf("media edge device WSS closed session=%s device=%s epoch=%d accepted=%t reason=%s cause=%s", c.sessionID, c.deviceID, c.epoch, accepted, reason, cause)
+		}
 		if !accepted {
 			// Hello-failed or pre-accept connections never owned a live
 			// media session and are not reported.
@@ -397,6 +410,20 @@ func (c *DeviceConnection) markCloseReason(reason string) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	c.closeReason = reason
+}
+
+// markWriteFailure records a socket writer loss as the close cause unless an
+// explicit close (superseded, edge_shutdown, ...) already claimed the reason:
+// a write that fails while that close flushes its P0 controls is a symptom,
+// not the cause. The report reason stays inside Control's allowlist.
+func (c *DeviceConnection) markWriteFailure() {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.closeReason != "" {
+		return
+	}
+	c.closeReason = SessionCloseReasonNetwork
+	c.closeCause = deviceCloseCauseDownlinkWrite
 }
 
 // isPlaybackActive reports whether the last signed playback receipt opened

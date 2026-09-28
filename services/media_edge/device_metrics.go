@@ -24,6 +24,7 @@ type deviceMetricCounters struct {
 	rateRejected      atomic.Uint64
 	opusErrors        atomic.Uint64
 	runtimeErrors     atomic.Uint64
+	writeFailures     atomic.Uint64 // socket write errors; each closes the connection
 	leaseRejected     atomic.Uint64
 	helloRejected     atomic.Uint64
 	controlRejected   atomic.Uint64
@@ -123,6 +124,7 @@ func (s *DeviceWSServer) writeDeviceMetrics(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "device_barge_ignored_total %d\n", counters.bargeIgnored.Load())
 	_, _ = fmt.Fprintf(w, "device_opus_errors_total %d\n", counters.opusErrors.Load())
 	_, _ = fmt.Fprintf(w, "device_runtime_errors_total %d\n", counters.runtimeErrors.Load())
+	_, _ = fmt.Fprintf(w, "device_downlink_write_failed_total %d\n", counters.writeFailures.Load())
 	_, _ = fmt.Fprintf(w, "device_playback_ack_lag_ms %d\n", ackLagMS)
 	_, _ = fmt.Fprintf(w, "device_audio_mode_half_duplex_safe_total %d\n", half)
 	_, _ = fmt.Fprintf(w, "device_audio_mode_interrupt_assist_total %d\n", interrupt)
