@@ -364,7 +364,10 @@ class BoundSubjectConsentService:
             binding_id=previous_binding_id,
             binding_version=previous_binding_version,
         )
-        by_kind: dict[GrantKind, list[CapabilityValue]] = {}
+        # Grouped by kind *and* params: a guardian's session limits (quiet
+        # hours, session length) ride on the session grants only, and must
+        # survive the supersede instead of falling back to the defaults.
+        groups: dict[tuple[GrantKind, ConsentParams], list[CapabilityValue]] = {}
         for chain in chains:
             if chain.actor_id != actor_person_id or chain.actor_kind not in {
                 "subject",
@@ -372,9 +375,11 @@ class BoundSubjectConsentService:
                 "delegate",
             }:
                 continue
-            by_kind.setdefault(cast(GrantKind, chain.actor_kind), []).append(chain.capability)
+            key = (cast(GrantKind, chain.actor_kind), chain.params)
+            groups.setdefault(key, []).append(chain.capability)
         granted: list[ConsentEvidence] = []
-        for kind, capabilities in sorted(by_kind.items()):
+        source = f"carry:{previous_binding_id}:{previous_binding_version}"
+        for (kind, params), capabilities in sorted(groups.items(), key=lambda item: repr(item[0])):
             granted.extend(
                 await self.grant(
                     BoundSubjectGrant(
@@ -383,7 +388,12 @@ class BoundSubjectConsentService:
                         binding_id=binding_id,
                         kind=kind,
                         capabilities=tuple(sorted(set(capabilities))),
-                        source_key=f"carry:{previous_binding_id}:{previous_binding_version}",
+                        source_key=(
+                            source
+                            if params == ConsentParams()
+                            else f"{source}:{_digest('carry-params', repr(params))[:16]}"
+                        ),
+                        params=params,
                     )
                 )
             )

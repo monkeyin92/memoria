@@ -12,6 +12,7 @@ const { companions, companionById, defaultCompanionId } = require("../../utils/c
 const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
 const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
 const { readSubjectLabel, saveSubjectLabel } = require("../../utils/subject-label");
+const { sessionLimitsFromProfile } = require("../../utils/session-limits");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 
 
@@ -271,6 +272,7 @@ Page({
     switching: false,
     degradation: null,
     sensitiveEntries: [],
+    sessionLimits: null,
     currentUserLabel: "",
     subjectAliasLabel: "",
     personaRows: [],
@@ -380,6 +382,7 @@ Page({
       switching: false,
       degradation: null,
       sensitiveEntries: [],
+    sessionLimits: null,
       currentUserLabel: "",
       currentUserLabelConfirmed: false,
       subjectAliasLabel: "",
@@ -702,6 +705,7 @@ Page({
         ),
         degradation: profile ? degradationFor(profile) : null,
         sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
+        sessionLimits: sessionLimitsFromProfile(profile),
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
         currentUserLabelConfirmed: Boolean(speakerLabel),
         ageRows: ageDeclarationRows(binding),
@@ -1024,6 +1028,7 @@ Page({
         ),
         degradation: degradationFor(nextProfile),
         sensitiveEntries: sensitiveEntriesFor(nextProfile),
+        sessionLimits: sessionLimitsFromProfile(nextProfile),
         currentUserLabel: speakerLabel ? subjectAliasLabel || speakerLabel : "未确认",
         currentUserLabelConfirmed: Boolean(speakerLabel),
       });
