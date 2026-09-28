@@ -17,7 +17,6 @@ from services.guardian.domain import (
     validate_subject_transition,
 )
 from services.guardian.postgres_store import PostgresGuardianStore
-from services.guardian.sqlite_store import SqliteGuardianStore
 
 __all__ = [
     "BirthYearBand",
@@ -33,7 +32,6 @@ __all__ = [
     "Relation",
     "SubjectCategory",
     "SubjectTransitionError",
-    "SqliteGuardianStore",
     "VerifiedVia",
     "validate_subject_transition",
 ]

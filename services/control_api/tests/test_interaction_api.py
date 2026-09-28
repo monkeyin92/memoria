@@ -2037,6 +2037,7 @@ async def test_response_plan_never_grants_companion_private_context_to_non_owner
     assert catalog.queries == []
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_minor_without_memory_retention_cannot_read_private_context(
     monkeypatch: pytest.MonkeyPatch,

@@ -138,8 +138,17 @@ async def test_live_wiring_shares_one_archive_pool_without_leaking_session_state
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
     monkeypatch.setenv("MEMORIA_ARCHIVE_DATABASE_URL", archive_dsn)
+    # Guardian is PostgreSQL-only; this test is about the archive pool, so its store stays idle.
+    monkeypatch.setenv("MEMORIA_GUARDIAN_DATABASE_URL", "postgresql://memoria_guardian:test@db/memoria")
 
+    from services.control_api.app import main
     from services.control_api.app.main import create_app
+
+    async def idle(_store: object) -> None:
+        return None
+
+    monkeypatch.setattr(main.PostgresGuardianStore, "initialize", idle)
+    monkeypatch.setattr(main.PostgresGuardianStore, "close", idle)
 
     app = create_app()
     try:

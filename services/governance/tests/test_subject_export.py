@@ -34,7 +34,7 @@ from services.governance.subject_export import (
     build_subject_export,
 )
 from services.guardian.domain import ConsentRecord, PersonConsentRecord
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
 
 ACCOUNT_ID = "account-subject-export"
 GUARDIAN_ACCOUNT = "account-guardian"
@@ -42,6 +42,10 @@ FOREIGN_ACCOUNT = "account-foreign"
 CHILD_SUBJECT = "child-subject"
 RAW_CONVERSATION_TEXT = "这是账号里的原始对话。"
 GUARDIAN_LINK_ID = "00000000-0000-0000-0000-000000000201"
+# Guardian consent ids are UUIDs (PostgreSQL primary keys).
+CHILD_CONSENT_ID = "00000000-0000-0000-0000-000000000301"
+OTHER_CONSENT_ID = "00000000-0000-0000-0000-000000000302"
+WEEKLY_CONSENT_ID = "00000000-0000-0000-0000-000000000303"
 BINDING_CODE_HASH = hashlib.sha256(b"subject-export-binding-code").hexdigest()
 _NOW = datetime(2026, 9, 18, 4, 0, tzinfo=UTC)
 
@@ -165,7 +169,7 @@ def _events() -> tuple[EvidenceEvent, ...]:
 async def _governance(
     tmp_path: Path,
     *,
-    guardian: SqliteGuardianStore | None = None,
+    guardian: PostgresGuardianStore | None = None,
 ) -> AccountDataGovernance:
     database_path = tmp_path / "memoria.sqlite3"
     store = MemoryStore(str(database_path))
@@ -428,15 +432,15 @@ async def test_subject_export_never_falls_back_to_account_wide_content(
 @pytest.mark.asyncio
 async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
     tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    guardian = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
-    guardian.initialize()
+    guardian = guardian_postgres_store
     await guardian.grant_person_consent(
-        _person_consent(consent_id="consent-child", subject=CHILD_SUBJECT),
+        _person_consent(consent_id=CHILD_CONSENT_ID, subject=CHILD_SUBJECT),
         actor_person_id=ACCOUNT_ID,
     )
     await guardian.grant_person_consent(
-        _person_consent(consent_id="consent-other", subject="other-person"),
+        _person_consent(consent_id=OTHER_CONSENT_ID, subject="other-person"),
         actor_person_id=ACCOUNT_ID,
     )
     governance = await _governance(tmp_path, guardian=guardian)
@@ -467,8 +471,9 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
     }
     assert metadata["withheld_reason"]
     consent = exported["sections"]["consent"]
+    # PostgreSQL returns a uuid.UUID; the export carries its portable string.
     assert [row["consent_id"] for row in consent["subject_person_consents"]] == [
-        "consent-child"
+        CHILD_CONSENT_ID
     ]
     assert list(consent["subject_person_consents"][0]) == list(
         SUBJECT_PERSON_CONSENT_FIELDS
@@ -509,9 +514,9 @@ async def test_guardian_export_withholds_verbatim_content_and_reports_metadata(
 @pytest.mark.asyncio
 async def test_active_link_and_weekly_report_consent_do_not_authorize_verbatim(
     tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    guardian = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
-    guardian.initialize()
+    guardian = guardian_postgres_store
     await guardian.create_link(
         link_id=GUARDIAN_LINK_ID,
         guardian_user_id=GUARDIAN_ACCOUNT,
@@ -537,7 +542,7 @@ async def test_active_link_and_weekly_report_consent_do_not_authorize_verbatim(
     )
     await guardian.grant_consent(
         ConsentRecord(
-            consent_id="consent-weekly-report",
+            consent_id=WEEKLY_CONSENT_ID,
             link_id=GUARDIAN_LINK_ID,
             consent_kind="weekly_report",
             policy_version="guardian-weekly-v1",

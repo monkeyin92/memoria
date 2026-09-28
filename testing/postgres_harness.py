@@ -208,6 +208,10 @@ class TestDatabase:
     def role_dsn(self, role: str) -> str:
         return _with_database(self.admin_dsn, self.name, user=role, password=TEST_ROLE_PASSWORD)
 
+    def owner_dsn(self) -> str:
+        """The clone as the cluster admin, for seeding rows no store API writes."""
+        return _with_database(self.admin_dsn, self.name)
+
     def control_env(self) -> dict[str, str]:
         """Every Control API DSN, each as its production role."""
 

@@ -123,7 +123,6 @@ show_missing = true
 "services/control_api/app/routes/archive.py" = 3072
 "services/identity/service.py" = 3160
 "services/session_runtime/service.py" = 3060
-"services/guardian/sqlite_store.py" = 2844
 "services/identity/postgres_store.py" = 2587
 "services/device_fleet/service.py" = 2610
 "services/control_api/app/routes/interaction.py" = 2422

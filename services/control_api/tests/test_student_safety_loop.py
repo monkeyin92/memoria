@@ -197,6 +197,7 @@ async def _crisis_event_count(app: Any, *, minor_user_id: str) -> int:
     return len(events)
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_device(
     monkeypatch: pytest.MonkeyPatch,
@@ -270,6 +271,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert _CRISIS_QUERY not in json.dumps(payload, ensure_ascii=False)
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_replay_of_the_same_generation_does_not_duplicate_the_notification(
     monkeypatch: pytest.MonkeyPatch,
@@ -346,6 +348,7 @@ async def test_replay_of_the_same_generation_does_not_duplicate_the_notification
         )).json()["items"]) == 1
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_a_later_generation_is_a_separate_crisis_event(
     monkeypatch: pytest.MonkeyPatch,
@@ -476,6 +479,7 @@ async def test_unknown_safe_subject_gets_the_fixed_reply_without_any_notificatio
         assert await _crisis_event_count(app, minor_user_id=owner["user_id"]) == 0
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_minor_crisis_still_delivers_the_fixed_reply_when_the_outbox_is_down(
     monkeypatch: pytest.MonkeyPatch,
@@ -521,6 +525,7 @@ async def test_minor_crisis_still_delivers_the_fixed_reply_when_the_outbox_is_do
         assert crisis.json()["direct_text"] == CRISIS_SUPPORT_REPLY
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_notification_list_is_guardian_scoped_and_needs_an_active_link(
     monkeypatch: pytest.MonkeyPatch,
@@ -583,6 +588,7 @@ async def test_guardian_notification_list_is_guardian_scoped_and_needs_an_active
         }
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_revoked_voice_consent_stops_the_next_minor_turn_immediately(
     monkeypatch: pytest.MonkeyPatch,
@@ -640,6 +646,7 @@ async def test_revoked_voice_consent_stops_the_next_minor_turn_immediately(
         assert app.state.memory_store.get_voice_session_by_id(session_id=first_session_id) is None
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_inviting_family_does_not_elevate_the_child_to_owner(
     monkeypatch: pytest.MonkeyPatch,
@@ -679,6 +686,7 @@ async def test_inviting_family_does_not_elevate_the_child_to_owner(
         assert speakers.json()["detail"]["code"] == "minor_forbidden"
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_adult_account_manages_independent_under_14_subject_without_child_account(
     monkeypatch: pytest.MonkeyPatch,
@@ -838,6 +846,7 @@ async def test_adult_account_manages_independent_under_14_subject_without_child_
         assert len(notifications_final.json()["items"]) == 1
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_accountless_child_profile_reaches_the_device_through_the_real_api(
     monkeypatch: pytest.MonkeyPatch,

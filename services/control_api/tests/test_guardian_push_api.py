@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -22,11 +22,22 @@ from services.control_api.tests.test_guardian_api import (
     _mark_verified_adult,
     _register,
 )
-from services.guardian.push import CrisisPushContent, crisis_push_content
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
+from services.guardian.push import (
+    CrisisPushContent,
+    CrisisPushStorePort,
+    PendingCrisisPush,
+    crisis_push_content,
+)
+from services.guardian.unconfigured import UnconfiguredGuardianStore
 
 TEMPLATE = "CrisisTemplate_01-x"
 LOGIN_CODE = "dev-guardian-push-login"
+
+
+def _unused_store() -> CrisisPushStorePort:
+    # Building the worker never touches the store; any call would raise.
+    return cast(CrisisPushStorePort, UnconfiguredGuardianStore())
 
 
 def _push_settings(**overrides: Any) -> ControlSettings:
@@ -59,7 +70,7 @@ def test_guardian_push_is_disabled_by_default() -> None:
     assert (
         build_crisis_push_worker(
             settings,
-            SqliteGuardianStore(":memory:"),
+            _unused_store(),
             display_name=_no_name,
         )
         is None
@@ -86,7 +97,7 @@ def test_enabled_guardian_push_requires_wechat_credentials_and_template() -> Non
     with pytest.raises(ValueError, match="TEMPLATE_ID"):
         build_crisis_push_worker(
             _push_settings(MEMORIA_WECHAT_SUBSCRIBE_CRISIS_TEMPLATE_ID=""),
-            SqliteGuardianStore(":memory:"),
+            _unused_store(),
             display_name=_no_name,
         )
     for fields in ("title=thing1,title=thing2", "body=thing1", "tip=thing", "", "a"):
@@ -105,7 +116,7 @@ def test_enabled_guardian_push_requires_wechat_credentials_and_template() -> Non
     assert settings.guardian_push_crisis_fields() == {"time": "time2", "title": "thing1"}
     worker = build_crisis_push_worker(
         settings,
-        SqliteGuardianStore(":memory:"),
+        _unused_store(),
         display_name=_no_name,
     )
     assert worker is not None
@@ -319,6 +330,7 @@ async def test_push_endpoints_never_offer_a_prompt_while_disabled(
         assert recorded.json()["detail"] == {"code": "guardian_push_disabled"}
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -411,6 +423,21 @@ async def test_lifespan_starts_the_push_worker_only_when_enabled(
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    # Live startup requires a guardian DSN; the store never connects here and
+    # has no pending alert, so the worker's batches claim nothing.
+    monkeypatch.setenv(
+        "MEMORIA_GUARDIAN_DATABASE_URL", "postgresql://guardian:unused@127.0.0.1:1/guardian"
+    )
+
+    async def noop(_store: object) -> None:
+        return None
+
+    async def no_pending(_store: object, **_kwargs: object) -> tuple[PendingCrisisPush, ...]:
+        return ()
+
+    monkeypatch.setattr(PostgresGuardianStore, "initialize", noop)
+    monkeypatch.setattr(PostgresGuardianStore, "close", noop)
+    monkeypatch.setattr(PostgresGuardianStore, "claim_crisis_pushes", no_pending)
     app = create_app()
     async with app.router.lifespan_context(app):
         assert app.state.crisis_push_worker is None

@@ -1,26 +1,30 @@
+"""Minor crisis notification on the PostgreSQL guardian store."""
+
 from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import asyncpg
 import pytest
 from services.archive.life_archive import LifeArchive
 from services.guardian.crisis import (
     CrisisNotificationService,
     CrisisNotificationUnavailableError,
 )
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
+from testing.guardian_seed import declare_binding_guardian
+from testing.postgres_harness import TestDatabase
 
 
 @pytest.mark.asyncio
 async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity(
+    guardian_postgres_store: PostgresGuardianStore,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "guardian.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    store = SqliteGuardianStore(path)
-    store.initialize()
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    store = guardian_postgres_store
     now = datetime.now(UTC)
     digest = hashlib.sha256(b"binding-code").hexdigest()
     link = await store.create_link(
@@ -81,6 +85,8 @@ async def test_minor_crisis_is_idempotent_and_contains_no_transcript_or_severity
 
 @pytest.mark.asyncio
 async def test_declared_guardian_receives_the_crisis_without_an_active_link(
+    guardian_postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
     tmp_path: Path,
 ) -> None:
     """A declared guardian is a distinct, working notification basis.
@@ -91,11 +97,18 @@ async def test_declared_guardian_receives_the_crisis_without_an_active_link(
     never by fabricating an active ``wechat_identity`` link.
     """
 
-    archive = LifeArchive.sqlite(tmp_path / "guardian.sqlite3")
-    store = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
-    store.initialize()
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    store = guardian_postgres_store
     service = CrisisNotificationService(store, archive)
     now = datetime(2026, 9, 16, 4, 0, tzinfo=UTC)
+    # PostgreSQL re-validates a declared guardian against Identity (P0-04).
+    admin = await asyncpg.connect(guardian_postgres_database.owner_dsn())
+    try:
+        await declare_binding_guardian(
+            admin, guardian_id="guardian-declared", subject_id="minor-declared", at=now
+        )
+    finally:
+        await admin.close()
 
     receipt = await service.record_minor_crisis(
         minor_user_id="minor-declared",
@@ -126,12 +139,11 @@ async def test_declared_guardian_receives_the_crisis_without_an_active_link(
 
 @pytest.mark.asyncio
 async def test_minor_crisis_without_active_guardian_is_not_silently_accepted(
+    guardian_postgres_store: PostgresGuardianStore,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "guardian.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    store = SqliteGuardianStore(path)
-    store.initialize()
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    store = guardian_postgres_store
     service = CrisisNotificationService(store, archive)
 
     with pytest.raises(CrisisNotificationUnavailableError):

@@ -146,7 +146,7 @@ from services.guardian.crisis import CrisisNotificationService, CrisisNotificati
 from services.guardian.domain import ConsentKind, GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import CrisisPushStorePort
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.unconfigured import UnconfiguredGuardianStore
 from services.identity.authority import (
     ConsentSnapshotResolver,
     RejectingTransferEvidenceVerifier,
@@ -910,10 +910,10 @@ async def _wire_services(w: Wiring) -> None:
         )
         await w.open(postgres_guardian.initialize, postgres_guardian.close)
         guardian_store = postgres_guardian
+    elif w.live:
+        raise RuntimeError("MEMORIA_GUARDIAN_DATABASE_URL is required (guardian is PostgreSQL-only)")
     else:
-        sqlite_guardian = SqliteGuardianStore(settings.memoria_db_path)
-        await w.init_blocking(sqlite_guardian.initialize, eager=True)
-        guardian_store = sqlite_guardian
+        guardian_store = cast(GuardianStorePort, UnconfiguredGuardianStore())
     app.state.guardian_store = guardian_store
 
     archive_url = w.url(settings.archive_database_url.get_secret_value())

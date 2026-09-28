@@ -1,22 +1,26 @@
-"""PR-13: subject-scoped tutor persistence in the SQLite guardian store."""
+"""PR-13: subject-scoped tutor persistence in the PostgreSQL guardian store.
+
+Runs on ``guardian_postgres_store`` (production roles, RLS applies).  The
+account-scoped governance of tutor evidence and the commit outbox, and the
+authority-column guard, are covered in ``test_guardian_postgres_store.py``.
+"""
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
 from services.tutor.domain import PracticeConflictError, PracticeSession, StudyProgress
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
+# The PostgreSQL store keys practice sessions by UUID.
+SESSION_ID = "00000000-0000-0000-0000-00000000a001"
 
 
 def _session(
     *,
-    session_id: str = "session-1",
+    session_id: str = SESSION_ID,
     subject_id: str = "subject-1",
     actor_id: str = "actor-1",
     voice_session_id: str = "voice-session-1",
@@ -61,20 +65,19 @@ def _progress(
 
 @pytest.mark.asyncio
 async def test_tutor_rows_are_subject_scoped(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    store = SqliteGuardianStore(tmp_path / "tutor.sqlite3")
-    store.initialize()
+    store = guardian_postgres_store
 
     saved = await store.save_practice_session(_session())
     assert saved.subject_id == "subject-1"
     await store.save_study_progress(_progress(), rebuilt_at=NOW)
 
-    own = await store.practice_session(subject_id="subject-1", session_id="session-1")
+    own = await store.practice_session(subject_id="subject-1", session_id=SESSION_ID)
     assert own is not None
     assert own.actor_id == "actor-1"
     assert own.voice_session_id == "voice-session-1"
-    other = await store.practice_session(subject_id="subject-other", session_id="session-1")
+    other = await store.practice_session(subject_id="subject-other", session_id=SESSION_ID)
     assert other is None
     own_progress = await store.study_progress(subject_id="subject-1")
     assert own_progress is not None
@@ -84,10 +87,9 @@ async def test_tutor_rows_are_subject_scoped(
 
 @pytest.mark.asyncio
 async def test_save_rejects_cross_subject_and_stale_revision_cas(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    store = SqliteGuardianStore(tmp_path / "tutor-cas.sqlite3")
-    store.initialize()
+    store = guardian_postgres_store
     await store.save_practice_session(_session())
 
     with pytest.raises(PracticeConflictError, match="revision_conflict"):
@@ -119,10 +121,9 @@ async def test_save_rejects_cross_subject_and_stale_revision_cas(
 
 @pytest.mark.asyncio
 async def test_progress_upserts_by_subject_and_keeps_actor_account(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    store = SqliteGuardianStore(tmp_path / "tutor-progress.sqlite3")
-    store.initialize()
+    store = guardian_postgres_store
     await store.save_study_progress(_progress(), rebuilt_at=NOW)
     updated = _progress(practiced_seconds=1200, source_event_ids=("turn-1", "turn-2"))
     await store.save_study_progress(updated, rebuilt_at=NOW)
@@ -133,14 +134,18 @@ async def test_progress_upserts_by_subject_and_keeps_actor_account(
     assert progress.source_event_ids == ("turn-1", "turn-2")
 
     exported = await store.export_for_account(account_id="actor-1")
-    assert len(exported["tutor_study_progress"]) == 1
-    assert len(exported["tutor_practice_sessions"]) == 0
+    progress_rows = exported["tutor_study_progress"]
+    session_rows = exported["tutor_practice_sessions"]
+    assert isinstance(progress_rows, list) and isinstance(session_rows, list)
+    assert len(progress_rows) == 1
+    assert len(session_rows) == 0
 
 
 @pytest.mark.asyncio
-async def test_one_owner_holds_progress_for_two_subjects(tmp_path: Path) -> None:
-    store = SqliteGuardianStore(tmp_path / "two-subjects.sqlite3")
-    store.initialize()
+async def test_one_owner_holds_progress_for_two_subjects(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
+    store = guardian_postgres_store
     await store.save_study_progress(_progress(subject_id="subject-1"), rebuilt_at=NOW)
     await store.save_study_progress(
         _progress(subject_id="subject-2", practiced_seconds=300),
@@ -159,7 +164,9 @@ async def test_one_owner_holds_progress_for_two_subjects(tmp_path: Path) -> None
     assert first.actor_id == second.actor_id == "actor-1"
 
     exported = await store.export_for_account(account_id="actor-1")
-    assert [row["subject_id"] for row in exported["tutor_study_progress"]] == [
+    progress_rows = exported["tutor_study_progress"]
+    assert isinstance(progress_rows, list)
+    assert [row["subject_id"] for row in progress_rows] == [
         "subject-1",
         "subject-2",
     ]
@@ -169,325 +176,3 @@ async def test_one_owner_holds_progress_for_two_subjects(tmp_path: Path) -> None
     deleted = await store.delete_for_account(account_id="actor-1")
     assert deleted["tutor_study_progress"] == 2
     assert await store.remaining_account_rows(account_id="actor-1") == {}
-
-
-@pytest.mark.asyncio
-async def test_account_keyed_progress_table_is_rekeyed_in_place(tmp_path: Path) -> None:
-    """A pre-rekey table keeps its rows, its guards and its per-subject upsert."""
-
-    path = tmp_path / "account-keyed.sqlite3"
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE tutor_study_progress (
-                account_id TEXT PRIMARY KEY,
-                subject_id TEXT,
-                actor_id TEXT,
-                practiced_seconds INTEGER NOT NULL DEFAULT 0
-                    CHECK (practiced_seconds >= 0),
-                active_days_json TEXT NOT NULL,
-                current_streak_days INTEGER NOT NULL DEFAULT 0
-                    CHECK (current_streak_days >= 0),
-                weak_points_json TEXT NOT NULL,
-                mastered_skills_json TEXT NOT NULL,
-                source_event_ids_json TEXT NOT NULL,
-                last_practiced_at TEXT,
-                rebuilt_at TEXT NOT NULL
-            );
-            CREATE UNIQUE INDEX idx_tutor_progress_subject
-            ON tutor_study_progress(subject_id) WHERE subject_id IS NOT NULL;
-            """
-        )
-        for account_id, subject_id, actor_id, seconds in (
-            ("actor-1", "subject-1", "actor-1", 600),
-            ("legacy-account", None, None, 120),
-        ):
-            connection.execute(
-                """
-                INSERT INTO tutor_study_progress(
-                    account_id, subject_id, actor_id, practiced_seconds,
-                    active_days_json, current_streak_days, weak_points_json,
-                    mastered_skills_json, source_event_ids_json,
-                    last_practiced_at, rebuilt_at
-                ) VALUES (?, ?, ?, ?, '[]', 0, '[]', '[]', '[]', NULL, ?)
-                """,
-                (account_id, subject_id, actor_id, seconds, NOW.isoformat()),
-            )
-
-    store = SqliteGuardianStore(path)
-    store.initialize()
-    # A second initializer on the rekeyed table is a no-op.
-    SqliteGuardianStore(path).initialize()
-
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        table_info = list(connection.execute("PRAGMA table_info(tutor_study_progress)"))
-        indexes = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA index_list(tutor_study_progress)")
-        }
-        rows = {
-            str(row["account_id"]): (row["subject_id"], row["actor_id"])
-            for row in connection.execute("SELECT * FROM tutor_study_progress")
-        }
-    assert not any(int(row["pk"]) for row in table_info)
-    assert {
-        str(row["name"]) for row in table_info if int(row["notnull"])
-    } >= {"account_id"}
-    assert {"idx_tutor_progress_subject", "idx_tutor_progress_account"} <= indexes
-    assert rows == {
-        "actor-1": ("subject-1", "actor-1"),
-        # The quarantined row survives with its backfilled actor.
-        "legacy-account": (None, "legacy-account"),
-    }
-
-    await store.save_study_progress(
-        _progress(subject_id="subject-2", practiced_seconds=300),
-        rebuilt_at=NOW,
-    )
-    await store.save_study_progress(
-        _progress(subject_id="subject-1", practiced_seconds=900),
-        rebuilt_at=NOW,
-    )
-    first = await store.study_progress(subject_id="subject-1")
-    second = await store.study_progress(subject_id="subject-2")
-    assert first is not None and first.practiced_seconds == 900
-    assert second is not None and second.practiced_seconds == 300
-
-    # The authority guard is recreated on the rebuilt table.
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="tutor authority columns"):
-            connection.execute(
-                """
-                INSERT INTO tutor_study_progress(
-                    account_id, subject_id, actor_id, active_days_json,
-                    weak_points_json, mastered_skills_json,
-                    source_event_ids_json, rebuilt_at
-                ) VALUES ('actor-1', NULL, 'actor-1', '[]', '[]', '[]', '[]', ?)
-                """,
-                (NOW.isoformat(),),
-            )
-
-    exported = await store.export_for_account(account_id="actor-1")
-    assert len(exported["tutor_study_progress"]) == 2
-    deleted = await store.delete_for_account(account_id="actor-1")
-    assert deleted["tutor_study_progress"] == 2
-    assert await store.remaining_account_rows(account_id="legacy-account") == {
-        "tutor_study_progress": 1
-    }
-
-
-@pytest.mark.asyncio
-async def test_legacy_account_rows_are_quarantined_and_still_account_exportable(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "legacy.sqlite3"
-    connection = sqlite3.connect(path)
-    connection.executescript(
-        """
-        CREATE TABLE tutor_practice_sessions (
-            session_id TEXT PRIMARY KEY,
-            account_id TEXT NOT NULL,
-            focus TEXT NOT NULL CHECK (focus IN ('tutor_english', 'tutor_homework')),
-            task_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'paused', 'completed')),
-            revision INTEGER NOT NULL CHECK (revision >= 0),
-            event_ids_json TEXT NOT NULL,
-            practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE tutor_study_progress (
-            account_id TEXT PRIMARY KEY,
-            practiced_seconds INTEGER NOT NULL DEFAULT 0 CHECK (practiced_seconds >= 0),
-            active_days_json TEXT NOT NULL,
-            current_streak_days INTEGER NOT NULL DEFAULT 0 CHECK (current_streak_days >= 0),
-            weak_points_json TEXT NOT NULL,
-            mastered_skills_json TEXT NOT NULL,
-            source_event_ids_json TEXT NOT NULL,
-            last_practiced_at TEXT,
-            rebuilt_at TEXT NOT NULL
-        );
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO tutor_practice_sessions(
-            session_id, account_id, focus, task_id, status, revision,
-            event_ids_json, practiced_seconds, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "legacy-session-1",
-            "legacy-account",
-            "tutor_english",
-            "english-past-story",
-            "draft",
-            0,
-            json.dumps(["legacy-session-1:create"]),
-            0,
-            NOW.isoformat(),
-            NOW.isoformat(),
-        ),
-    )
-    connection.commit()
-    connection.close()
-
-    store = SqliteGuardianStore(path)
-    store.initialize()
-
-    # The legacy row has unknown subject ownership: quarantined from every
-    # subject-scoped read and never projectable.
-    assert await store.practice_session(
-        subject_id="legacy-account",
-        session_id="legacy-session-1",
-    ) is None
-    # It remains visible and deletable on the account-scoped paths.
-    exported = await store.export_for_account(account_id="legacy-account")
-    assert len(exported["tutor_practice_sessions"]) == 1
-    remaining = await store.remaining_account_rows(account_id="legacy-account")
-    assert remaining["tutor_practice_sessions"] == 1
-    deleted = await store.delete_for_account(account_id="legacy-account")
-    assert deleted["tutor_practice_sessions"] == 1
-    assert await store.remaining_account_rows(account_id="legacy-account") == {}
-
-
-def _seed_account_scope_rows(path: Path) -> None:
-    """Insert tutor evidence/outbox rows for two keyed accounts."""
-
-    with sqlite3.connect(path) as connection:
-        for event_id, subject_id, actor_id in (
-            ("evidence-subject-match", "actor-a", "actor-other"),
-            ("evidence-actor-match", "subject-other", "actor-a"),
-            ("evidence-bystander", "subject-other", "actor-b"),
-        ):
-            connection.execute(
-                """
-                INSERT INTO tutor_practice_evidence(
-                    event_id, assessment_id, kind, subject_id, actor_id,
-                    envelope_json, envelope_sha256, commit_sha256,
-                    outcome, skill_key, session_id, session_revision, created_at
-                ) VALUES (
-                    ?, NULL, 'tutor.practice_turn_recorded', ?, ?, '{}', ?, ?,
-                    NULL, NULL, ?, 0, ?
-                )
-                """,
-                (
-                    event_id,
-                    subject_id,
-                    actor_id,
-                    "a" * 64,
-                    "a" * 64,
-                    f"session-{event_id}",
-                    NOW.isoformat(),
-                ),
-            )
-        for event_id, subject_id, actor_id in (
-            ("outbox-subject-match", "actor-a", "actor-other"),
-            ("outbox-bystander", "subject-other", "actor-b"),
-        ):
-            connection.execute(
-                """
-                INSERT INTO tutor_commit_outbox(
-                    event_id, kind, subject_id, actor_id, archive_payload_json,
-                    status, created_at
-                ) VALUES (?, 'tutor.practice_turn_recorded', ?, ?, '{}', 'pending', ?)
-                """,
-                (event_id, subject_id, actor_id, NOW.isoformat()),
-            )
-
-
-@pytest.mark.asyncio
-async def test_account_deletion_covers_tutor_evidence_and_commit_outbox(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "account-scope.sqlite3"
-    store = SqliteGuardianStore(path)
-    store.initialize()
-    _seed_account_scope_rows(path)
-
-    # Both key columns count: one subject-keyed and one actor-keyed row.
-    assert await store.remaining_account_rows(account_id="actor-a") == {
-        "tutor_practice_evidence": 2,
-        "tutor_commit_outbox": 1,
-    }
-    exported = await store.export_for_account(account_id="actor-a")
-    assert {row["event_id"] for row in exported["tutor_practice_evidence"]} == {
-        "evidence-subject-match",
-        "evidence-actor-match",
-    }
-    assert [row["event_id"] for row in exported["tutor_commit_outbox"]] == [
-        "outbox-subject-match"
-    ]
-
-    deleted = await store.delete_for_account(account_id="actor-a")
-    assert deleted["tutor_practice_evidence"] == 2
-    assert deleted["tutor_commit_outbox"] == 1
-    assert await store.remaining_account_rows(account_id="actor-a") == {}
-    # The other account's rows are untouched by the account-scoped delete.
-    assert await store.remaining_account_rows(account_id="actor-b") == {
-        "tutor_practice_evidence": 1,
-        "tutor_commit_outbox": 1,
-    }
-    with sqlite3.connect(path) as connection:
-        surviving_events = {
-            str(row[0])
-            for row in connection.execute("SELECT event_id FROM tutor_practice_evidence")
-        }
-        surviving_outbox = {
-            str(row[0])
-            for row in connection.execute("SELECT event_id FROM tutor_commit_outbox")
-        }
-    assert surviving_events == {"evidence-bystander"}
-    assert surviving_outbox == {"outbox-bystander"}
-
-    # Repeating the deletion stays safe and deletes nothing else.
-    again = await store.delete_for_account(account_id="actor-a")
-    assert again["tutor_practice_evidence"] == 0
-    assert again["tutor_commit_outbox"] == 0
-    assert await store.remaining_account_rows(account_id="actor-a") == {}
-
-
-def test_authority_column_triggers_reject_null_or_blank_new_rows(
-    tmp_path: Path,
-) -> None:
-    store = SqliteGuardianStore(tmp_path / "triggers.sqlite3")
-    store.initialize()
-
-    connection = sqlite3.connect(tmp_path / "triggers.sqlite3")
-    try:
-        with pytest.raises(sqlite3.IntegrityError, match="tutor authority columns"):
-            connection.execute(
-                """
-                INSERT INTO tutor_practice_sessions(
-                    session_id, account_id, subject_id, actor_id,
-                    voice_session_id, focus, task_id, status, revision,
-                    event_ids_json, practiced_seconds, created_at, updated_at
-                ) VALUES ('s-1', 'a-1', NULL, 'a-1', 'v-1',
-                          'tutor_english', 'english-past-story', 'draft',
-                          0, '[]', 0, '2026-08-09T00:00:00+00:00',
-                          '2026-08-09T00:00:00+00:00')
-                """
-            )
-        connection.execute(
-            """
-            INSERT INTO tutor_practice_sessions(
-                session_id, account_id, subject_id, actor_id,
-                voice_session_id, focus, task_id, status, revision,
-                event_ids_json, practiced_seconds, created_at, updated_at
-            ) VALUES ('s-1', 'a-1', 'subject-1', 'a-1', 'v-1',
-                      'tutor_english', 'english-past-story', 'draft',
-                      0, '[]', 0, '2026-08-09T00:00:00+00:00',
-                      '2026-08-09T00:00:00+00:00')
-            """
-        )
-        with pytest.raises(sqlite3.IntegrityError, match="tutor authority columns"):
-            connection.execute(
-                """
-                UPDATE tutor_practice_sessions
-                SET actor_id = NULL WHERE session_id = 's-1'
-                """
-            )
-        connection.commit()
-    finally:
-        connection.close()
