@@ -191,12 +191,14 @@ step_schema() {
   done
   (set -a; . /etc/memoria-postgres.env; set +a
     POSTGRES_CONTAINER=memoria-data-postgres-1 sh "$R/scripts/upgrade_authoritative_postgres.sh") \
-    2>&1 | grep -vE '^(psql:.*NOTICE|NOTICE|SET|CREATE|ALTER|GRANT|REVOKE|DO|COMMENT|DROP|INSERT|BEGIN|COMMIT|RESET)' | tail -5
+    2>&1 | { grep -vE '^(psql:.*NOTICE|NOTICE|SET|CREATE|ALTER|GRANT|REVOKE|DO|COMMENT|DROP|INSERT|BEGIN|COMMIT|RESET)' || true; } | tail -5
   # The running container may predate the 011-control-schema.sql mount; the
-  # file is idempotent, so apply it over stdin every release.
+  # file is idempotent, so apply it over stdin every release. A clean apply
+  # prints only NOTICEs: grep then matches nothing and exits 1, which pipefail
+  # would turn into a failed step (first seen on 20260928-review-batches-v1).
   docker exec -i memoria-data-postgres-1 psql -U memoria_admin -d memoria -v ON_ERROR_STOP=1 -q \
     < "$R/services/control_api/app/database/postgres_schema.sql" \
-    2>&1 | grep -vE '^(psql:.*NOTICE|NOTICE)' | tail -5
+    2>&1 | { grep -vE '^(psql:.*NOTICE|NOTICE)' || true; } | tail -5
   # Versioned control migrations (database/migrations.py): each pending file
   # runs once, with its ledger row, in one transaction (psql -1).
   local mig v name
