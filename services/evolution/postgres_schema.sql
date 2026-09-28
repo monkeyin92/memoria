@@ -147,7 +147,9 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON evolution_candidates TO memoria_evolution;
         GRANT SELECT, INSERT, UPDATE, DELETE ON evolution_validations TO memoria_evolution;
         GRANT SELECT, INSERT, UPDATE, DELETE ON evolution_activation_events TO memoria_evolution;
-        GRANT SELECT, INSERT ON evolution_lifecycle_events TO memoria_evolution;
+        -- DELETE only serves account erasure: evolution_lifecycle_immutable
+        -- refuses it unless app.evolution_account_deletion is set.
+        GRANT SELECT, INSERT, DELETE ON evolution_lifecycle_events TO memoria_evolution;
         GRANT USAGE, SELECT ON SEQUENCE evolution_lifecycle_events_sequence_seq TO memoria_evolution;
         GRANT SELECT, INSERT, UPDATE, DELETE ON evolution_control_state TO memoria_evolution;
         GRANT SELECT, INSERT, UPDATE, DELETE ON evolution_sleep_signal_receipts TO memoria_evolution;
