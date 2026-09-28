@@ -25,7 +25,7 @@
 - **伙伴不一致根因（小程序）**：绑定时的 `persona_selection` 只写进设备绑定默认人格（线上 `e8a27e45` v3 = `mianmian:v1`，设备屏正确），账号资料 `companion_id` 仍是 09-25 选的桃喜，而首页/设备页/伙伴页读账号资料。修复：绑定成功后把所选伙伴写成账号伙伴（`PUT /v1/memory/profile`，失败不影响绑定）。**现有账号数据未改**：用户需在伙伴页选一次绵绵。
 - **设备页**：「角色与声音」用 `navigateTo` 打开 tabBar 页（静默失败）→ `switchTab`；自定义 tabBar 在页面之上，挡住所有底部抽屉的确认按钮 → tabBar 增加 `hidden`，抽屉打开时隐藏并锁页面滚动，选项区 `scroll-view`；唤醒词抽屉内置自定义唤醒词，删掉底部重复卡片，目录工程说明改为按字数的通俗说明；网络只显示「已连接/未连接」（不再写「家庭网络」）；年龄申报改为带间距的三格选项；备注改为点击弹窗编辑；去掉与顶部卡重复的双格统计与模式胶囊；按「设备 / 使用者 / 设备管理」分组，解除绑定置底。按使用人分配人格保留（自建人格唯一入口）。「在线」仍由激活就绪推导，不是实时心跳。
 - **伙伴页**：横向拼接卡片改为堆叠卡组（五位伙伴循环，前卡可拖动切换、点后面的卡直达，卡上试听包内音频），导航标题改为「伙伴」。实时媒体门禁放行伙伴页试听（与绑定页同一约束：只播 `assets/voices/`）。
-- **验证**：`npm test` 310/310；固件 `test_memoria_protocol_source.py` 通过；微信开发者工具自动化（mock 登录与接口）截图确认伙伴卡组、设备页各分组、唤醒词与人格抽屉按钮可见、点「角色与声音」进入伙伴 tab。未在真机上看。
+- **验证**：`npm test` 310/310；固件 `test_memoria_protocol_source.py` 通过；微信开发者工具自动化（mock 登录与接口）截图确认伙伴卡组、设备页各分组、唤醒词与人格抽屉按钮可见、点「角色与声音」进入伙伴 tab。未在真机上看。体验版 `0.2.20260928.1`（包 1.58 MB）已用微信开发者工具 CLI 上传（miniprogram-ci 本次因出口 IPv6 不在上传 IP 白名单被拒 `-10008`），**需在公众平台设为体验版**。
 - **新发现的线上阻塞（数据已修，代码未修）**：会话运行时的设备信任表 `device_fleet_devices`/`device_fleet_certificates` 仍指向 08-28 回填的旧绑定 `d1c67b2e` v2，重新配网只写 onboarding 存储与 Identity，没有任何代码更新这两张表 → `action_device_lock_trust` 返回 `device_binding_mismatch`（revoked）。设备页 `runtime-profile` 一直 403；按代码，机器人 `POST …/media-sessions` 走同一 `PostgresSessionRuntimeService.start`，也会被拒（重新绑定后尚无机器人对话请求，未实测）。
 - **数据修复（2026-09-28 11:45 CST，用户批准）**：生产库单事务把 `device_fleet_devices`（`state_version` 2→3、`binding_version_floor` 3）与唯一 active 证书行改指向 `e8a27e45` v3，行数守卫各 =1。之后 `action_device_lock_trust` 返回 `untrusted / device_attestation_unavailable`（允许启动会话，与重新绑定前同级）。机器人对话与设备页 runtime-profile 尚未在修复后实测。下次重新配网会再次失配，代码根治另行处理（projection 或让信任函数读 onboarding 存储）。
 
