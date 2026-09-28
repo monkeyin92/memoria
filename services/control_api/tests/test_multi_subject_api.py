@@ -1,4 +1,3 @@
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -20,6 +19,7 @@ from services.session_runtime.profile_service import (
     RuntimeProfileRejected,
     verify_runtime_profile_payload,
 )
+from testing import app_store
 
 
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path, name: str):
@@ -87,6 +87,13 @@ async def _bind_self(
     )
     assert response.status_code == 201
 
+
+
+def _assert_non_member_denied(response) -> None:
+    # PostgreSQL Identity (FORCE RLS) hides a binding from a non-member
+    # entirely (404); the SQLite twin sees it and denies (403). Both fail
+    # closed and neither reveals the binding to the stranger.
+    assert response.status_code in {403, 404}, response.text
 
 @pytest.mark.asyncio
 async def test_device_binding_recovery_and_lookup_are_actor_scoped(
@@ -667,15 +674,14 @@ async def test_runtime_control_requires_binding_membership(
             "/v1/devices/device-membership/runtime-profile",
             headers=stranger_headers,
         )
-        assert blocked.status_code == 403
-        assert blocked.json()["detail"]["code"] == "binding_forbidden"
+        _assert_non_member_denied(blocked)
 
         resolution = await client.post(
             "/v1/sessions/resolve-subject",
             headers=stranger_headers,
             json={"device_id": "device-membership", "environment": {}},
         )
-        assert resolution.status_code == 403
+        _assert_non_member_denied(resolution)
 
         switch = await client.post(
             f"/v1/sessions/{profile['session_id']}/active-subject",
@@ -685,7 +691,7 @@ async def test_runtime_control_requires_binding_membership(
                 "confirmation_method": "app_confirm",
             },
         )
-        assert switch.status_code == 403
+        _assert_non_member_denied(switch)
 
         decision = await client.post(
             "/v1/policy/decisions",
@@ -696,7 +702,7 @@ async def test_runtime_control_requires_binding_membership(
                 "data_classification": "public",
             },
         )
-        assert decision.status_code == 403
+        _assert_non_member_denied(decision)
 
 
 @pytest.mark.asyncio
@@ -1460,15 +1466,18 @@ async def test_parent_for_child_binding_attests_the_guardianship(
 
         # Only the guardian's own attestation is audited; nothing is
         # attributed to the child.
-        identity_db = tmp_path / "guardian-declaration-identity.sqlite3"
-        with sqlite3.connect(identity_db) as connection:
-            actions = connection.execute(
-                """
-                SELECT action, actor_person_id FROM identity_audit_events
-                WHERE action IN ('relationship.attest', 'relationship.confirm')
-                """
-            ).fetchall()
-        assert actions == [("relationship.attest", owner["user_id"])]
+        # The action vocabulary differs by backend (the service names it
+        # relationship.attest; PostgreSQL's audit trigger records the insert
+        # as relationship.proposed), so assert the substance: one event on
+        # this relationship, attributed to the guardian.
+        actions = app_store.fetch_all(
+            tmp_path / "guardian-declaration-identity.sqlite3",
+            "SELECT action, actor_person_id FROM identity_audit_events WHERE relationship_id = ?",
+            (declaration.relationship_id,),
+        )
+        assert len(actions) == 1
+        assert actions[0][0] in {"relationship.attest", "relationship.proposed"}
+        assert actions[0][1] == owner["user_id"]
 
         # The attestation must not manufacture a guardian link, and memory
         # consent exists only when the guardian ticked it (not here).

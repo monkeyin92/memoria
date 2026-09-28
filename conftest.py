@@ -138,7 +138,10 @@ if _APP_POSTGRES:
         apps: list[Any] = []
         original_create_app = control_main.create_app
 
+        from testing import app_store
+
         with cloned_database(_app_template()) as database:
+            app_store.set_current(database)
             # MEMORIA_TEST_APP_POSTGRES_SKIP lists DSN settings to leave unset.
             # MEMORIA_CONSENT_DATABASE_URL is not only a backend: without it the
             # bound-subject consent feature is off, which is how most tests were
@@ -181,6 +184,7 @@ if _APP_POSTGRES:
             try:
                 yield
             finally:
+                app_store.set_current(None)
                 for app in apps:
                     resources = getattr(app.state, "eager_resources", None)
                     if resources is not None:

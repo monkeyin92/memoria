@@ -154,9 +154,10 @@ class MultiSubjectRuntimeControl:
         device_id: str,
         *,
         now: datetime,
+        actor_person_id: str,
     ) -> BindingManifest:
         async with self._lock:
-            return await self._active_manifest(device_id, now=now)
+            return await self._active_manifest(device_id, now=now, actor_person_id=actor_person_id)
 
     async def require_binding_member(
         self,
@@ -167,7 +168,7 @@ class MultiSubjectRuntimeControl:
     ) -> BindingManifest:
         """Fail closed unless the user holds a role on the device binding."""
         async with self._lock:
-            manifest = await self._active_manifest(device_id, now=now)
+            manifest = await self._active_manifest(device_id, now=now, actor_person_id=user_id)
             if not self._is_binding_member(manifest, user_id):
                 raise IdentityAccessDeniedError(
                     f"user {user_id} has no role on device {device_id}"
@@ -179,11 +180,16 @@ class MultiSubjectRuntimeControl:
         device_id: str,
         *,
         now: datetime,
+        actor_person_id: str,
     ) -> BindingManifest:
-        manifest = await self.identity.get_active_manifest(device_id, now)
+        # Same visibility as the PostgreSQL runtime: Identity under FORCE RLS
+        # shows a binding only to an account that holds a role on it.
+        manifest = await self.identity.get_active_manifest(
+            device_id, now, actor_person_id=actor_person_id
+        )
         if manifest is None:
             raise IdentityNotFoundError(f"device {device_id} has no active binding")
-        await self._refresh_authority(manifest)
+        await self._refresh_authority(manifest, actor_person_id=actor_person_id)
         return manifest
 
     async def ensure_profile(
@@ -216,7 +222,7 @@ class MultiSubjectRuntimeControl:
         multiple_speakers: bool,
         offline: bool,
     ) -> RuntimeProfile:
-        manifest = await self._active_manifest(device_id, now=now)
+        manifest = await self._active_manifest(device_id, now=now, actor_person_id=actor_id)
         if not self._is_binding_member(manifest, actor_id):
             raise IdentityAccessDeniedError(
                 f"user {actor_id} has no role on device {device_id}"
@@ -298,14 +304,16 @@ class MultiSubjectRuntimeControl:
         ignored so they cannot cut off another person's session.
         """
         async with self._lock:
-            manifest = await self._active_manifest(device_id, now=now)
+            manifest = await self._active_manifest(device_id, now=now, actor_person_id=actor_id)
             if not self._is_binding_member(manifest, actor_id):
                 raise IdentityAccessDeniedError(
                     f"user {actor_id} has no role on device {device_id}"
                 )
             resolved_session_id = session_id or self.default_session_id(device_id)
             current = self.authority.current_profile(resolved_session_id)
-            candidates = await self._candidates(manifest, hint=client_claimed_person_id)
+            candidates = await self._candidates(
+                manifest, hint=client_claimed_person_id, actor_id=actor_id
+            )
             current_confirmed = (
                 current is not None
                 and current.active_subject_id is not None
@@ -399,7 +407,7 @@ class MultiSubjectRuntimeControl:
             current = self.authority.current_profile(session_id)
             if current is None:
                 raise LookupError("active runtime profile is unavailable")
-            manifest = await self._active_manifest(current.device_id, now=now)
+            manifest = await self._active_manifest(current.device_id, now=now, actor_person_id=actor_id)
             if not self._is_binding_member(manifest, actor_id):
                 raise IdentityAccessDeniedError(
                     f"user {actor_id} has no role on device {current.device_id}"
@@ -438,7 +446,7 @@ class MultiSubjectRuntimeControl:
             profile = self.authority.profile_by_id(runtime_profile_id)
             if profile is None:
                 raise LookupError("runtime profile is unavailable")
-            manifest = await self._active_manifest(profile.device_id, now=now)
+            manifest = await self._active_manifest(profile.device_id, now=now, actor_person_id=actor_id)
             if not self._is_binding_member(manifest, actor_id):
                 raise IdentityAccessDeniedError(
                     f"user {actor_id} has no role on device {profile.device_id}"
@@ -472,6 +480,7 @@ class MultiSubjectRuntimeControl:
         manifest: BindingManifest,
         *,
         hint: str | None,
+        actor_id: str,
     ) -> list[dict[str, object]]:
         member_ids = self._member_subject_ids(manifest)
         if hint is not None and hint in member_ids:
@@ -483,7 +492,7 @@ class MultiSubjectRuntimeControl:
             ordered = member_ids
         result: list[dict[str, object]] = []
         for person_id in ordered:
-            person = await self.identity.get_person(person_id)
+            person = await self.identity.get_person(person_id, actor_person_id=actor_id)
             result.append(
                 {
                     "person_id": person.person_id,
@@ -523,7 +532,9 @@ class MultiSubjectRuntimeControl:
             ),
         }
 
-    async def _refresh_authority(self, manifest: BindingManifest) -> None:
+    async def _refresh_authority(
+        self, manifest: BindingManifest, *, actor_person_id: str
+    ) -> None:
         member_ids = self._member_subject_ids(manifest)
         self.authority.upsert_binding(
             BindingSnapshot(
@@ -536,7 +547,9 @@ class MultiSubjectRuntimeControl:
             )
         )
         for person_id in member_ids:
-            person = await self.identity.get_person(person_id)
+            person = await self.identity.get_person(
+                person_id, actor_person_id=actor_person_id
+            )
             self.authority.upsert_subject(self._subject_facts(person))
         assignment_id = manifest.persona_assignment_id or _DEFAULT_PERSONA_ASSIGNMENT_ID
         self.authority.reset_binding_personas(binding_id=manifest.binding_id)
@@ -544,7 +557,7 @@ class MultiSubjectRuntimeControl:
             _persona_assignment(assignment_id), binding_id=manifest.binding_id
         )
         for record in await self.identity.list_persona_assignments(
-            binding_id=manifest.binding_id
+            binding_id=manifest.binding_id, actor_person_id=actor_person_id
         ):
             self.authority.upsert_persona(
                 _persona_assignment(record.assignment_id),
