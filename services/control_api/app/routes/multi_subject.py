@@ -375,18 +375,20 @@ async def _primary_subject(
     elif body.declared_mode == "child_for_parent" and draft.age_band == "adult":
         # The adult child vouches that their parent is an adult and acts as
         # the parent's delegate on this device (their consent is recorded as
-        # a delegate grant, not the parent's own).
-        person = await identity.verify_age_evidence(
-            person_id=person.person_id,
-            evidence_id=f"{_BINDING_OWNER_AGE_ATTESTATION}:{person.person_id}"[:128],
-            verifier_person_id=owner.person_id,
-            now=now,
-        )
+        # a delegate grant, not the parent's own). The relationship comes
+        # first: under PostgreSQL RLS the owner can read the new person only
+        # through it, and the age verification reads the person.
         await identity.attest_binding_relationship(
             source_person_id=owner.person_id,
             target_person_id=person.person_id,
             relation_type="delegate_for",
             actor_person_id=owner.person_id,
+            now=now,
+        )
+        person = await identity.verify_age_evidence(
+            person_id=person.person_id,
+            evidence_id=f"{_BINDING_OWNER_AGE_ATTESTATION}:{person.person_id}"[:128],
+            verifier_person_id=owner.person_id,
             now=now,
         )
     return person
