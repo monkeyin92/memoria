@@ -1222,3 +1222,33 @@ async def test_deletion_worker_retries_pending_sagas_without_an_api_request() ->
     await worker.stop()
 
     assert called.is_set()
+
+
+@pytest.mark.asyncio
+async def test_export_makes_postgres_guardian_rows_portable(tmp_path: Path) -> None:
+    """PostgreSQL guardian rows carry UUID and datetime values; the export is JSON."""
+    import uuid as uuid_module
+
+    governance, *_ = await _fixture(tmp_path)
+    consent_id = uuid_module.uuid4()
+    granted_at = datetime(2026, 9, 28, 8, 0, tzinfo=UTC)
+
+    class _PostgresShapedGuardian:
+        async def export_for_account(self, *, account_id: str) -> dict[str, object]:
+            return {
+                "person_consents": [
+                    {"consent_id": consent_id, "subject_user_id": account_id, "granted_at": granted_at}
+                ]
+            }
+
+    governance._guardian_repository = _PostgresShapedGuardian()  # type: ignore[assignment]
+    exported = await governance.export_account("account-governance")
+
+    assert exported["manifest_sha256"]
+    assert exported["sections"]["guardian"]["person_consents"] == [
+        {
+            "consent_id": str(consent_id),
+            "subject_user_id": "account-governance",
+            "granted_at": granted_at.isoformat(),
+        }
+    ]

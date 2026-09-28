@@ -864,7 +864,10 @@ class AccountDataGovernance:
     async def _export_guardian(self, account_id: str) -> dict[str, object]:
         if self._guardian_repository is None:
             return {}
-        return await self._guardian_repository.export_for_account(account_id=account_id)
+        exported = await self._guardian_repository.export_for_account(account_id=account_id)
+        # The PostgreSQL store returns driver values (UUID, datetime); the
+        # export is JSON and its manifest is hashed over canonical JSON.
+        return cast(dict[str, object], PostgresAccountRepository._portable_value(exported))
 
     async def _export_legacy(self, account_id: str) -> dict[str, Any]:
         return _portable_legacy_export(await self._legacy_snapshot(account_id))
