@@ -104,16 +104,20 @@ jobs:
         run: apt-get update -qq && apt-get install -y -qq ripgrep
       - name: Trust the workspace checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # GitHub's container: skips the image entrypoint, so the IDF Python env
+      # is not exported until export.sh is sourced.
       - name: Build firmware from the locked upstream and overlay
         shell: bash
         run: |
-          export MEMORIA_PYTHON_BIN="$IDF_PYTHON_ENV_PATH/bin/python"
+          . /opt/esp/idf/export.sh >/dev/null
+          export MEMORIA_PYTHON_BIN="$(command -v python)"
           cd firmware/esp32
           ./scripts/build.sh --no-idf-install
       - name: Overlay and artifact checks
         shell: bash
         run: |
-          export MEMORIA_PYTHON_BIN="$IDF_PYTHON_ENV_PATH/bin/python"
+          . /opt/esp/idf/export.sh >/dev/null
+          export MEMORIA_PYTHON_BIN="$(command -v python)"
           cd firmware/esp32
           ./scripts/check-overlay.sh
 
