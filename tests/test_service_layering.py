@@ -26,7 +26,6 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
         {"common", "evolution", "identity", "persona", "policy", "speaker", "tutor"}
     ),
     "archive": frozenset({"common", "evolution", "governance"}),
-    "common": frozenset({"agent", "archive"}),
     "companionship": frozenset({"control_api"}),
     "consent": frozenset({"guardian", "identity", "policy"}),
     "control_api": frozenset(
@@ -60,7 +59,6 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "governance": frozenset(
         {
             "archive",
-            "control_api",
             "evolution",
             "guardian",
             "legacy",

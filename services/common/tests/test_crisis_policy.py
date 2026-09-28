@@ -1,5 +1,8 @@
-from services.agent.src.providers.crisis_semantic_classifier import CrisisSemanticVerdict
-from services.common.crisis_policy import crisis_semantic_candidate, route_crisis
+from services.common.crisis_policy import (
+    CrisisSemanticVerdict,
+    crisis_semantic_candidate,
+    route_crisis,
+)
 
 
 def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> None:
