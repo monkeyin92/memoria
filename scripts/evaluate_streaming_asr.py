@@ -33,7 +33,7 @@ for the old console or ``DOUBAO_ASR_API_KEY`` for the new console;
 ``DOUBAO_ASR_RESOURCE_ID``) and never printed.
 
     uv run python scripts/evaluate_streaming_asr.py \\
-        --reference docs/asr-ab-reading-script-20260929.txt \\
+        --reference docs/acceptance/run-20260929-asr-ab/reading-script.txt \\
         --output outputs/asr-ab/report.json /path/to/tap/*.wav
 """
 

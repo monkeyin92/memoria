@@ -13,7 +13,7 @@
 ## 数据
 
 - 录音：生产 bridge 的上行 PCM tap，3 段 WAV，共 185 s；按停顿切成 43 段，按剧本顺序对齐，**匹配 11 句**，另有 2 段重读、30 段非剧本（机器人回复的回声、底噪、开场说明）。剧本第 1–13 行中读到 11 行，第 14–30 行没有录。
-- 方式：`scripts/evaluate_streaming_asr.py`，1× 实时送流，并发 4，DashScope 两家 `max_sentence_silence=550`（与生产一致），qwen3-realtime 手动 commit，豆包 `bigmodel_async` + `volc.bigasr.sauc.duration`。完整报告（不含转写）：[asr-ab-report-20260929.json](asr-ab-report-20260929.json)。
+- 方式：`scripts/evaluate_streaming_asr.py`，1× 实时送流，并发 4，DashScope 两家 `max_sentence_silence=550`（与生产一致），qwen3-realtime 手动 commit，豆包 `bigmodel_async` + `volc.bigasr.sauc.duration`。完整报告（不含转写）：[report.json](report.json)。
 - 凭据只从生产 env 读进进程环境；录音只在本机，评测后已删除；报告只记字符数，不记转写。
 
 | engine | CER（数字归一） | 完全正确 | 空结果 | final p50 / p90 s | 首 partial p50 s | 非剧本段出字 | 错误 |
