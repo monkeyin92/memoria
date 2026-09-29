@@ -174,6 +174,16 @@ _RETIRED_KEYS = frozenset(
         "LIVEKIT_API_SECRET",
         "LIVEKIT_TURN_DETECTOR_VERSION",
         "LIVEKIT_URL",
+        # The listener-cue (backchannel) scheduler was removed on 2026-09-29:
+        # nothing fed it partial transcripts, so the flags configured nothing.
+        "LISTENER_CUES_ENABLED",
+        "LISTENER_CUE_AEC_VALIDATED",
+        "LISTENER_CUE_COOLDOWN_MS",
+        "LISTENER_CUE_MAX_PER_TURN",
+        "LISTENER_CUE_MIN_SPEECH_MS",
+        "LISTENER_CUE_PAUSE_MS",
+        "LISTENER_CUE_PLAYBACK",
+        "LISTENER_CUE_VOLUME",
         "MEDIA_RUNTIME_DEFAULT",
         "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
         "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",

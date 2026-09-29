@@ -6,10 +6,9 @@ from typing import Any
 
 import pytest
 from livekit.agents import llm
-from services.agent.src import agent as agent_mod
-from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
     ResponsePlan,
     ResponseProvenance,
@@ -18,6 +17,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.src.voice_profile_client import VoiceRuntimeProfile
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
     commit_media_turn,
     set_floor,
 )
@@ -126,10 +126,8 @@ async def test_owner_realtime_agent_answers_without_persona_capsule(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         _tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         yield "好的。"
@@ -137,19 +135,19 @@ async def test_owner_realtime_agent_answers_without_persona_capsule(
     runtime = DuplexRuntime.create(session_id="session-persona-owner")
     await runtime.orchestrator.ready()
     await _prepare_speaker(runtime, "owner")
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="说说你的看法")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await asyncio.wait_for(
         commit_media_turn(agent, Message("说说你的看法")),
         timeout=0.05,
     )
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["好的。"]
+    assert [item async for item in agent.stream_reply(chat_ctx)] == ["好的。"]
 
     system_text = "\n".join(
         message.text_content for message in captured["ctx"].messages() if message.role == "system"
@@ -170,10 +168,8 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     refresh_calls: list[dict[str, object]] = []
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         _tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         yield "你好。"
@@ -181,16 +177,16 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     runtime = DuplexRuntime.create(session_id="session-persona-guest")
     await runtime.orchestrator.ready()
     await _prepare_speaker(runtime, "guest")
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
     )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="你好")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message("你好"))
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["你好。"]
+    assert [item async for item in agent.stream_reply(chat_ctx)] == ["你好。"]
     await asyncio.sleep(0)
 
     assert not any("人格胶囊" in message.text_content for message in captured["ctx"].messages())
@@ -205,10 +201,8 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "我只能根据你现在说的内容回答。"
@@ -224,7 +218,7 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
         "我已经记住这个私人故事。",
         speaker_scope="owner",
     )
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
     )
@@ -232,10 +226,10 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
     chat_ctx.add_message(role="user", content="主人刚才说了一个私人家庭故事。")
     chat_ctx.add_message(role="assistant", content="我已经记住这个私人故事。")
     chat_ctx.add_message(role="user", content="你们刚才聊了什么？")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message("你们刚才聊了什么？"))
-    assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
 
     conversation = [
         (message.role, message.text_content)
@@ -270,10 +264,8 @@ async def test_uncertain_same_session_keeps_safe_followup_context(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         _tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         yield "是笑话太冷，不是天气冷。"
@@ -286,15 +278,15 @@ async def test_uncertain_same_session_keeps_safe_followup_context(
         previous_assistant,
         speaker_scope="public",
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content=previous_user)
     chat_ctx.add_message(role="assistant", content=previous_assistant)
     chat_ctx.add_message(role="user", content=current_user)
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message(current_user))
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
 
     conversation = [
         (message.role, message.text_content)
@@ -345,10 +337,8 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     refresh_calls: list[dict[str, object]] = []
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "简单说，这件事可以先从第一步开始。"
@@ -356,7 +346,7 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     runtime = DuplexRuntime.create(session_id="session-persona-uncertain")
     await runtime.orchestrator.ready()
     await _prepare_speaker(runtime, "uncertain")
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
     )
@@ -364,11 +354,11 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     chat_ctx.add_message(role="user", content="主人之前说过一个私人家庭故事。")
     chat_ctx.add_message(role="assistant", content="这里是不能泄露的旧回答。")
     chat_ctx.add_message(role="user", content="怎么开始？")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message("怎么开始？"))
     await asyncio.sleep(0)
-    assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
 
     conversation = [
         (message.role, message.text_content)
@@ -395,10 +385,8 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "它还以明城墙和秦淮河闻名。"
@@ -417,7 +405,7 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
     )
     await _prepare_speaker(runtime, "uncertain")
 
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     compound_resume = "好的，好的。 等一下。 继续。"
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="主人之前说过一个私人家庭故事。")
@@ -428,10 +416,10 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
         content="你的私人家庭安排是周末回老家，还有更多未播放内容。",
     )
     chat_ctx.add_message(role="user", content=compound_resume)
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message(compound_resume))
-    assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
 
     conversation = [
         (message.role, message.text_content)
@@ -454,10 +442,8 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "它还以明城墙和秦淮河闻名。"
@@ -486,7 +472,7 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
         reason_code="shadow_owner_candidate",
     )
 
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     compound_resume = "好的，好的。 等一下。 继续。"
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="主人之前说过一个私人家庭故事。")
@@ -497,10 +483,10 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
         content="南京是江苏省省会，也是中国四大古都之一，还有更多未播放内容。",
     )
     chat_ctx.add_message(role="user", content=compound_resume)
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message(compound_resume))
-    assert [item async for item in agent.llm_node(chat_ctx, [object()], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
 
     conversation = [
         (message.role, message.text_content)
@@ -655,7 +641,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         include_voice_clone=True,
     )
     await runtime.orchestrator.ready()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         voice_profile_client=VoiceStub(),  # type: ignore[arg-type]
@@ -790,7 +776,7 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
     await runtime.orchestrator.ready()
     runtime.on_user_voice_started()
     await started.wait()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         voice_profile_client=voice,  # type: ignore[arg-type]

@@ -5,8 +5,10 @@ import json
 
 import httpx
 import pytest
-from services.agent.src.agent import _apply_cached_voice_profile
-from services.agent.src.agent_voice_profile import align_tts_voice_to_policy
+from services.agent.src.agent_voice_profile import (
+    _apply_cached_voice_profile,
+    align_tts_voice_to_policy,
+)
 from services.agent.src.generation_output_policy import (
     frozen_companion_clone_permitted,
     generation_voice_reject_reason,

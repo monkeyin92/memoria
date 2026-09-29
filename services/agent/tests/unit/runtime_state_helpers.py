@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
+import inspect
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from livekit.agents import StopResponse
-from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.speaker.domain import SpeakerDecision, SpeakerPermissions, permissions_for_speaker
 
 
@@ -56,17 +59,17 @@ def speaker_permissions(runtime: DuplexRuntime) -> SpeakerPermissions:
     return permissions_for_speaker("owner" if runtime._speaker_class == "owner" else "uncertain")
 
 
-async def commit_media_turn(agent: DuplexVoiceAgent, message: object) -> GenerationFence:
+async def commit_media_turn(agent: ReplyPipeline, message: object) -> GenerationFence:
     """Commit one endpointed audio turn the way the media session does.
 
     Mirrors ``MediaSessionCommit``: await the speaker decision, route the text
-    through ``accept_user_turn``, then prepare the turn on the Agent. A rejected
+    through ``accept_user_turn``, then prepare the turn on the pipeline. A rejected
     turn raises ``StopResponse`` so callers can assert the rejection.
     """
 
     text_content = getattr(message, "text_content", None)
     text = str(text_content() if callable(text_content) else message).strip()
-    runtime = agent._runtime
+    runtime = agent.runtime
     await runtime.await_speaker_classification()
     accepted, reason = runtime.accept_user_turn(
         text,
@@ -78,3 +81,27 @@ async def commit_media_turn(agent: DuplexVoiceAgent, message: object) -> Generat
     if not accepted:
         raise StopResponse(reason)
     return await agent.prepare_committed_turn(text)
+
+
+class ScriptedChatModel:
+    """Chat-model double for ``ReplyPipeline.language_model``.
+
+    ``respond(chat_ctx, tools)`` returns an async iterator of chunks (or an
+    awaitable of one); like ``livekit.plugins.openai.LLM`` the stream is closed when the
+    ``chat()`` context exits.
+    """
+
+    def __init__(self, respond: Callable[[Any], Any]) -> None:
+        self.respond = respond
+
+    @contextlib.asynccontextmanager
+    async def chat(self, *, chat_ctx: Any, tools: list[Any]) -> AsyncIterator[Any]:
+        stream = self.respond(chat_ctx, tools)
+        if inspect.isawaitable(stream):
+            stream = await stream
+        try:
+            yield stream
+        finally:
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                await close()

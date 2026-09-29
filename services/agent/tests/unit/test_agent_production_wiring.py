@@ -9,8 +9,9 @@ from typing import Any
 
 import pytest
 from livekit.agents import FlushSentinel, StopResponse, llm
-from services.agent.src import agent as agent_mod
-from services.agent.src.agent import DuplexVoiceAgent
+from services.agent.src import reply_pipeline as pipeline_mod
+from services.agent.src.agent import plan_is_local_safe
+from services.agent.src.agent_voice_profile import bind_generation_tts_voice
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
@@ -29,7 +30,9 @@ from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.speaker_verify import (
     should_enable_legacy_speaker_verifier,
 )
+from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompts import BRIDGE_PHRASES
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
     ResponseGroundedItem,
     ResponsePlan,
@@ -39,6 +42,7 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import (
+    ScriptedChatModel,
     bind_owner_speaker,
     commit_media_turn,
 )
@@ -85,7 +89,7 @@ async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan
                 "ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
@@ -145,7 +149,7 @@ async def test_response_plan_receives_bounded_owner_recall_context_only() -> Non
                 "ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
@@ -221,11 +225,11 @@ async def test_media_agent_streams_the_configured_llm_without_a_livekit_session(
             return TokenStream()
 
     model = StandaloneLLM()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
-        standalone_llm=model,
+        language_model=model,
     )
 
     fence = await agent.prepare_committed_turn("请回答")
@@ -304,7 +308,7 @@ def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
+async def test_stream_reply_uses_heard_history_and_phrase_segments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
@@ -314,8 +318,7 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     )
     bind_owner_speaker(runtime)
     await runtime.on_turn_committed("当前问题")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._current_speaker_class = "owner"
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     snapshot = await runtime.freeze_context_capsules_for_generation(
         runtime.fence,
         memory_capsule=MemoryCapsule(
@@ -333,7 +336,7 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
         persona_capsule=PersonaCapsule(),
     )
     assert snapshot is not None
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="【控制计划】只使用当前已确认上下文；不要复述未听到的旧回答。",
         grounded_items=(
@@ -347,7 +350,7 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
                 sharing_scope="private",
             ),
         ),
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="旧问题")
     chat_ctx.add_message(role="assistant", content="未听到的完整旧回复")
@@ -369,16 +372,14 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
         )
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        settings: Any,
     ) -> AsyncIterator[Any]:
-        captured.update(ctx=safe_ctx, tools=tools, settings=settings)
+        captured.update(ctx=safe_ctx, tools=tools)
         return _stream()
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
-    output = [item async for item in agent.llm_node(chat_ctx, [], None)]
+    agent.language_model = ScriptedChatModel(fake_llm_node)
+    output = [item async for item in agent.stream_reply(chat_ctx)]
 
     assert [
         message.text_content for message in captured["ctx"].messages() if message.role != "system"
@@ -400,80 +401,8 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     assert runtime.orchestrator.active_llm_task is None
 
 
-@pytest.mark.asyncio
-async def test_livekit_tool_executes_only_through_registered_coordinator_handler(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = DuplexRuntime.create(session_id="coordinated-livekit-tool")
-    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
-    runtime._speaker_class = "owner"
-    await runtime.on_turn_committed("查询南京档案")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
-        runtime.fence,
-        instructions="使用已核验的工具结果。",
-    )
-    calls: list[dict[str, object]] = []
-
-    async def handler(
-        arguments: dict[str, Any],
-        _cancel: asyncio.Event,
-    ) -> dict[str, str]:
-        calls.append(dict(arguments))
-        return {"summary": "南京晴。"}
-
-    runtime.orchestrator.task_manager.register(
-        agent_mod.ToolSpec(
-            name="weather_lookup",
-            description="查询天气",
-            input_schema={"type": "object", "required": ["city"]},
-            cancellable=True,
-            idempotent=True,
-            timeout_s=1,
-            side_effect_policy="read_only",
-        ),
-        handler,
-    )
-
-    async def direct_tool(raw_arguments: dict[str, object]) -> str:
-        raise AssertionError(f"direct LiveKit handler bypassed coordinator: {raw_arguments}")
-
-    tool = llm.function_tool(
-        direct_tool,
-        raw_schema={
-            "name": "weather_lookup",
-            "description": "查询天气",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
-                "required": ["city"],
-            },
-        },
-    )
-
-    async def fake_llm_node(
-        _agent: Any,
-        _safe_ctx: Any,
-        tools: list[Any],
-        _settings: Any,
-    ) -> AsyncIterator[str]:
-        assert len(tools) == 1
-        yield await tools[0](raw_arguments={"city": "南京"})
-
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
-    chat_ctx = llm.ChatContext.empty()
-    chat_ctx.add_message(role="user", content="查询南京档案")
-
-    output = [item async for item in agent.llm_node(chat_ctx, [tool], None)]
-
-    assert output == ["南京晴。"]
-    assert calls == [{"city": "南京"}]
-    await runtime.close()
-
-
-def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -> None:
+def test_high_risk_tool_cannot_register_without_explicit_confirmation() -> None:
     runtime = DuplexRuntime.create(session_id="high-risk-tool-blocked")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
 
     async def handler(
         _arguments: dict[str, Any],
@@ -483,7 +412,7 @@ def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -
 
     with pytest.raises(PermissionError):
         runtime.orchestrator.task_manager.register(
-            agent_mod.ToolSpec(
+            ToolSpec(
                 name="send_message",
                 description="发送消息",
                 input_schema={"type": "object"},
@@ -494,20 +423,6 @@ def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -
             ),
             handler,
         )
-
-    async def direct_tool(_raw_arguments: dict[str, object]) -> str:
-        return "should not run"
-
-    tool = llm.function_tool(
-        direct_tool,
-        raw_schema={
-            "name": "send_message",
-            "description": "发送消息",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    )
-
-    assert agent._coordinated_livekit_tools([tool], fence=runtime.fence) == []
 
 
 @pytest.mark.asyncio
@@ -548,12 +463,12 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
                 reason="ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
     )
-    first = await agent._prepare_committed_turn(
+    first = await agent.prepare_turn(
         text="你还记得我喜欢什么吗？",
         speaker=SimpleNamespace(),
         input_modality="text",
@@ -605,19 +520,19 @@ async def test_snapshot_build_failure_keeps_call_on_safe_fallback() -> None:
                 "ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
     )
-    fence = await agent._prepare_committed_turn(
+    fence = await agent.prepare_turn(
         text="当前问题",
         speaker=SimpleNamespace(classification="owner"),
         input_modality="text",
     )
-    plan = agent._response_plan_by_fence[agent._response_plan_key(fence)]
+    plan = agent.response_plans.get(fence)
 
-    assert agent._is_local_safe_plan(plan)
+    assert plan_is_local_safe(plan)
     assert runtime.orchestrator.context_version_for_fence(fence) == base_version
     await runtime.close()
 
@@ -629,12 +544,12 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-search-recovery")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
     calls = 0
@@ -648,7 +563,7 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
 
     agent._realtime_search_resolver = SearchResolver()
     first_spoken = [
-        item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)
+        item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)
     ]
     assert first_spoken == [BRIDGE_PHRASES[1], REALTIME_UNAVAILABLE_REPLY]
 
@@ -658,14 +573,14 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     )
     chat_ctx.add_message(role="assistant", content="我不知道。")
     await runtime.on_turn_committed(nudge)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="自然回应当前用户。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx.add_message(role="user", content=nudge)
 
-    follow_up = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    follow_up = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert "".join(follow_up) == "南京今天多云，最高气温三十二度。"
     assert runtime.pending_realtime_request is None
@@ -701,12 +616,12 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-bridge-only")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
@@ -717,7 +632,7 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
 
     agent._realtime_search_resolver = SearchResolver()
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
     assert "".join(output) == f"{BRIDGE_PHRASES[1]}{expected}"
     assert (runtime.pending_realtime_request is not None) is pending
 
@@ -728,12 +643,12 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-forced-search")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     queries: list[str] = []
 
     class PublicOnlyResolver:
@@ -752,9 +667,9 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
         raise AssertionError("realtime search must not use the shared chat context")
         yield ""  # pragma: no cover
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+    agent.language_model = ScriptedChatModel(unexpected_default_llm)
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
     assert "".join(output) == f"{BRIDGE_PHRASES[1]}南京今天多云，最高气温三十二度。"
@@ -774,21 +689,21 @@ async def test_realtime_lookup_overrides_static_planner_fallback() -> None:
             assert query == "今天南京天气怎么样"
             return "南京今天多云，最高气温三十二度。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=Resolver(),
     )
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         direct_text="我不知道。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert "".join(output) == f"{BRIDGE_PHRASES[1]}南京今天多云，最高气温三十二度。"
     await runtime.close()
@@ -805,21 +720,21 @@ async def test_realtime_lookup_overrides_a_natural_unknown_weather_fallback() ->
             assert query == "明天上海的天气怎么样"
             return "上海明天小雨，26到31度，降水概率65%。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=Resolver(),
     )
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="天气必须先联网查询，查询失败不得猜测。",
         direct_text="明天上海的天气我不知道。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content=query)
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert "".join(output) == f"{BRIDGE_PHRASES[1]}上海明天小雨，26到31度，降水概率65%。"
     assert runtime.pending_realtime_request is None
@@ -867,12 +782,12 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-forced-search-failure")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     queries: list[str] = []
 
     class UnavailableResolver:
@@ -889,9 +804,9 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
         raise AssertionError("failed forced search must not retry with private chat context")
         yield ""  # pragma: no cover
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+    agent.language_model = ScriptedChatModel(unexpected_default_llm)
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
     assert "".join(output) == f"{BRIDGE_PHRASES[1]}{REALTIME_UNAVAILABLE_REPLY}"
@@ -912,7 +827,7 @@ async def test_committed_realtime_delegation_starts_early_and_is_reused() -> Non
             await release.wait()
             return "南京今天多云。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=SlowResolver(),
@@ -943,7 +858,7 @@ async def test_media_delegation_uses_public_resolver_without_advancing_outer_tas
             queries.append(query)
             return "南京今天多云。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=Resolver(),
@@ -966,7 +881,7 @@ async def test_public_weather_lookup_is_available_without_owner_tool_permission(
             queries.append(query)
             return "南京今天晴，最高气温三十五度。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=Resolver(),
@@ -991,7 +906,7 @@ async def test_media_delegation_returns_a_safe_reply_when_the_resolver_has_no_re
             assert query == "今天南京天气怎么样"
             return None
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=EmptyResolver(),
@@ -1018,7 +933,7 @@ async def test_media_delegation_drops_a_result_after_its_fence_changes() -> None
             await release.wait()
             return "南京今天多云。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=Resolver(),
@@ -1045,21 +960,21 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
             await release.wait()
             return "南京今天多云。"
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=SlowResolver(),
     )
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
-    output = agent.llm_node(chat_ctx, [], None)
+    output = agent.stream_reply(chat_ctx)
     assert await asyncio.wait_for(anext(output), timeout=1) == BRIDGE_PHRASES[1]
     release.set()
     assert [item async for item in output if isinstance(item, str)] == ["南京今天多云。"]
@@ -1075,7 +990,7 @@ async def test_committed_turn_calls_provider_fast_model_prewarm() -> None:
         nonlocal calls
         calls += 1
 
-    DuplexVoiceAgent(
+    ReplyPipeline(
         instructions="test",
         runtime=runtime,
         fast_model_warmer=prewarm,
@@ -1093,12 +1008,12 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-no-search-provider")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="system", content="PRIVATE_HISTORY_MUST_NOT_LEAVE_THE_PROCESS")
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
@@ -1107,9 +1022,9 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
         raise AssertionError("realtime requests must not fall back to the shared chat context")
         yield ""  # pragma: no cover
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+    agent.language_model = ScriptedChatModel(unexpected_default_llm)
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert "".join(output) == REALTIME_UNAVAILABLE_REPLY
     assert runtime.pending_realtime_request is not None
@@ -1121,12 +1036,12 @@ async def test_realtime_provider_exception_emits_fallback_only_for_current_fence
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-provider-error")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
@@ -1137,7 +1052,7 @@ async def test_realtime_provider_exception_emits_fallback_only_for_current_fence
 
     monkeypatch.setattr(agent, "_forced_realtime_search_stream", failed_search)
 
-    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    output = [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
 
     assert "".join(output).endswith(REALTIME_UNAVAILABLE_REPLY)
     await runtime.close()
@@ -1149,13 +1064,13 @@ async def test_stale_realtime_provider_exception_cannot_cross_the_generation_fen
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-provider-error-stale")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     runtime.set_delegation_starter(None)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
@@ -1168,7 +1083,7 @@ async def test_stale_realtime_provider_exception_cannot_cross_the_generation_fen
     monkeypatch.setattr(agent, "_forced_realtime_search_stream", stale_failed_search)
 
     with pytest.raises(RuntimeError, match="late provider failure"):
-        [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+        [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
     await runtime.close()
 
 
@@ -1178,12 +1093,12 @@ async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-stale-buffer")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
@@ -1192,7 +1107,7 @@ async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
         yield "南京今天多云，最高气温三十二度。"
 
     monkeypatch.setattr(agent, "_forced_realtime_search_stream", search_stream)
-    output = agent.llm_node(chat_ctx, [], None)
+    output = agent.stream_reply(chat_ctx)
 
     assert await anext(output) == "南京今天多云，"
     await runtime.orchestrator.bump_tool_epoch_on_condition_change()
@@ -1206,15 +1121,15 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-reply-budget")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="南京天气必须先联网查询，查询失败不得猜测。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
-    monkeypatch.setattr(agent_mod, "MAX_VOICE_REPLY_CHARS", 8)
+    monkeypatch.setattr(pipeline_mod, "MAX_VOICE_REPLY_CHARS", 8)
 
     closed = False
     advanced_past_budget = False
@@ -1233,7 +1148,7 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
     monkeypatch.setattr(agent, "_forced_realtime_search_stream", search_stream)
 
     spoken = "".join(
-        [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+        [item async for item in agent.stream_reply(chat_ctx) if isinstance(item, str)]
     )
 
     assert sum(char.isalnum() for char in spoken) <= 8
@@ -1274,7 +1189,7 @@ async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
         "我查一下。",
         speaker_scope="owner",
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     pending = PendingRealtimeRequest(
         query="今天南京天气怎么样",
         speaker_scope="owner",
@@ -1282,11 +1197,11 @@ async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
     )
     runtime._pending_realtime_request = pending
     await runtime.on_turn_committed("人呢？")
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="自然回应当前用户。",
         speaker_class="uncertain",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
     chat_ctx.add_message(role="assistant", content="我查一下。")
@@ -1294,17 +1209,15 @@ async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         _tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         yield "我在这儿呢。"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["我在这儿呢。"]
+    assert [item async for item in agent.stream_reply(chat_ctx)] == ["我在这儿呢。"]
     visible = [
         (message.role, message.text_content)
         for message in captured["ctx"].messages()
@@ -1362,14 +1275,12 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(
-        agent_mod.Agent.default, "llm_node", staticmethod(lambda *_args: _text_source("好。"))
-    )  # type: ignore[arg-type]
+    agent.language_model = ScriptedChatModel(lambda *_args: _text_source("好。"))  # type: ignore[arg-type]
 
     await commit_media_turn(agent, Message("当前问题"))
 
@@ -1378,7 +1289,7 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
     assert fetch_calls[0]["query"] == "当前问题"
     assert fetch_calls[0]["fence"] == runtime.fence
     assert runtime.response_provenance_for(runtime.fence) is None
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())]
     assert runtime.response_provenance_for(runtime.fence) is not None
 
 
@@ -1429,7 +1340,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
@@ -1438,14 +1349,10 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
         tts_provider="doubao",
         tts_model="seed-tts-2.0",
     )
-    monkeypatch.setattr(
-        agent_mod.Agent.default,
-        "llm_node",
-        staticmethod(lambda *_args: _text_source("你好，我在。")),
-    )  # type: ignore[arg-type]
+    agent.language_model = ScriptedChatModel(lambda *_args: _text_source("你好，我在。"))
 
     await commit_media_turn(agent, Message())
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output
     assert runtime.generation_voice_for(runtime.fence) is not None
@@ -1494,7 +1401,7 @@ async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> No
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
@@ -1504,7 +1411,7 @@ async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> No
         await commit_media_turn(agent, Message())
 
     assert fetch_calls == 1
-    assert agent._response_plan_by_fence == {}
+    assert len(agent.response_plans) == 0
 
 
 @pytest.mark.asyncio
@@ -1537,10 +1444,8 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "安全回答。"
@@ -1549,7 +1454,7 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
@@ -1558,10 +1463,10 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
     chat_ctx.add_message(role="user", content="旧私人问题：保险号码是多少？")
     chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
     chat_ctx.add_message(role="user", content="只回答现在这个问题")
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message())
-    assert [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)] == [
+    assert [item async for item in agent.stream_reply(chat_ctx)] == [
         "安全回答。"
     ]
 
@@ -1592,12 +1497,12 @@ async def test_agent_uses_direct_response_text_without_calling_llm(
 
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("直接回答")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="【控制计划】",
         direct_text="可以，直接说这一句。",
-    )
+    ))
     called = False
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
@@ -1605,9 +1510,9 @@ async def test_agent_uses_direct_response_text_without_calling_llm(
         called = True
         yield "不应触发"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(UnreadableContext(), [], None)]
+    output = [item async for item in agent.stream_reply(UnreadableContext())]
 
     assert called is False
     assert "".join(str(item) for item in output) == "可以，直接说这一句。"
@@ -1626,11 +1531,11 @@ async def test_cascade_response_fails_closed_without_generation_voice_snapshot(
             pass
 
     runtime.tts = TTSWithoutBoundVoice()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="仅生成有完整审计来源的回答。",
-    )
+    ))
     called = False
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
@@ -1638,9 +1543,9 @@ async def test_cascade_response_fails_closed_without_generation_voice_snapshot(
         called = True
         yield "不应播放"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == []
     assert called is False
@@ -1704,7 +1609,7 @@ async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bi
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=planner,  # type: ignore[arg-type]
@@ -1749,10 +1654,10 @@ async def test_live_lookup_does_not_start_when_generation_voice_cannot_bind() ->
     async def starter(text: str, _fence: GenerationFence) -> None:
         started.append(text)
 
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     runtime.set_delegation_starter(starter)
     with pytest.raises(StopResponse):
-        await agent._prepare_committed_turn(
+        await agent.prepare_turn(
             text="今天南京天气怎么样",
             speaker=SimpleNamespace(classification="owner"),
             input_modality="audio",
@@ -1801,13 +1706,13 @@ async def test_runtime_close_is_terminal_and_leaves_no_delegation_task() -> None
                 "ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
     )
     runtime.set_delegation_starter(starter)
-    await agent._prepare_committed_turn(
+    await agent.prepare_turn(
         text="今天南京天气怎么样",
         speaker=SimpleNamespace(classification="owner"),
         input_modality="audio",
@@ -1869,13 +1774,13 @@ async def test_live_lookup_starts_on_the_bound_generation() -> None:
                 "ok",
             )
 
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=Planner(),  # type: ignore[arg-type]
     )
     runtime.set_delegation_starter(starter)
-    fence = await agent._prepare_committed_turn(
+    fence = await agent.prepare_turn(
         text="今天南京天气怎么样",
         speaker=SimpleNamespace(classification="owner"),
         input_modality="audio",
@@ -1914,9 +1819,7 @@ def test_companion_realigns_wrong_designed_tts_before_binding() -> None:
 
     tts = AligningTTS()
     runtime.tts = tts
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    assert agent._bind_current_tts_voice(runtime.fence)
+    assert bind_generation_tts_voice(runtime, runtime.fence)
     assert tts.current_voice_profile_id == "warm_companion"
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
@@ -1969,9 +1872,7 @@ def test_companion_frozen_cosyvoice_clone_binds_without_voice_clone_use() -> Non
         apply_voice_profile=lambda **_kwargs: None,
         use_baseline_voice=lambda: None,
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    assert agent._bind_current_tts_voice(runtime.fence)
+    assert bind_generation_tts_voice(runtime, runtime.fence)
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id == "voice-profile-personal"
@@ -2023,8 +1924,7 @@ async def test_identity_rotation_still_binds_companion_generation_voice() -> Non
         current_voice_kind="designed",
         bind_fence=lambda _fence: None,
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    assert agent._bind_current_tts_voice(runtime.fence)
+    assert bind_generation_tts_voice(runtime, runtime.fence)
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id == "warm_companion"
@@ -2058,9 +1958,7 @@ def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() 
         current_voice="zh_female_tianmeitaozi_uranus_bigtts",
         current_voice_kind="designed",
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    assert agent._bind_current_tts_voice(runtime.fence)
+    assert bind_generation_tts_voice(runtime, runtime.fence)
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id == "bright_peer"
@@ -2076,9 +1974,7 @@ def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> No
         current_voice="zh_male_yangguangqingnian_uranus_bigtts",
         current_voice_kind="designed",
     )
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-
-    assert agent._bind_current_tts_voice(runtime.fence)
+    assert bind_generation_tts_voice(runtime, runtime.fence)
     snapshot = runtime.generation_voice_for(runtime.fence)
     assert snapshot is not None
     assert snapshot.profile_id is None
@@ -2119,10 +2015,8 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured.update(ctx=safe_ctx, tools=tools)
         yield "你好，我是一个人工智能机器人伙伴。"
@@ -2131,7 +2025,7 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         llm_provider="qwen",
@@ -2139,14 +2033,14 @@ async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only
         tts_provider="doubao",
         tts_model="seed-tts-2.0",
     )
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="旧私人问题：我的保险号码是什么？")
     chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
     chat_ctx.add_message(role="user", content="请简单介绍一下你自己")
 
     await commit_media_turn(agent, Message())
-    output = [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)]
+    output = [item async for item in agent.stream_reply(chat_ctx)]
 
     assert output == ["你好，我是一个人工智能机器人伙伴。"]
     conversation = [
@@ -2209,10 +2103,8 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[str]:
         captured["ctx"] = safe_ctx
         captured["tools"] = tools
@@ -2222,7 +2114,7 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
     runtime.on_user_voice_started()
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
-    agent = DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         llm_provider="qwen",
@@ -2230,14 +2122,14 @@ async def test_unknown_safe_followup_keeps_this_session_public_place(
         tts_provider="doubao",
         tts_model="seed-tts-2.0",
     )
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="旧私人问题：我的保险号码是什么？")
     chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
     chat_ctx.add_message(role="user", content="今天适合去哪儿玩")
 
     await commit_media_turn(agent, Message())
-    output = [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)]
+    output = [item async for item in agent.stream_reply(chat_ctx)]
 
     assert "".join(output) == "你刚问了南京天气。如果还在南京，今天比较适合室内。你是在南京吗？"
     conversation = [
@@ -2265,27 +2157,25 @@ async def test_agent_adds_only_the_canonical_response_plan_system_block(
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("帮我安排一个十五分钟的英语口语训练")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="只回答当前训练安排。",
-    )
+    ))
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="帮我安排一个十五分钟的英语口语训练")
     captured: dict[str, Any] = {}
 
     async def fake_llm_node(
-        _agent: Any,
         safe_ctx: Any,
         _tools: list[Any],
-        _settings: Any,
     ) -> AsyncIterator[Any]:
         captured["ctx"] = safe_ctx
         return _text_source("嗯，好，我先理一下。")
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    assert [item async for item in agent.llm_node(chat_ctx, [], None)]
+    assert [item async for item in agent.stream_reply(chat_ctx)]
     system_messages = [
         message for message in captured["ctx"].messages() if message.role == "system"
     ]
@@ -2299,27 +2189,24 @@ async def test_agent_adds_only_the_canonical_response_plan_system_block(
 
 
 @pytest.mark.asyncio
-async def test_agent_llm_node_drops_token_after_fence_change(
+async def test_stream_reply_drops_token_after_fence_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("问题")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="仅回答当前问题。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         yield llm.ChatChunk(id="empty")
+        await runtime.orchestrator.bump_tool_epoch_on_condition_change()
         yield "这段旧回答不应出现。"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
-    stream = agent.llm_node(llm.ChatContext.empty(), [], None)
-    first = await anext(stream)
-    assert isinstance(first, llm.ChatChunk)
-    await runtime.orchestrator.bump_tool_epoch_on_condition_change()
-    assert [item async for item in stream] == []
+    agent.language_model = ScriptedChatModel(fake_llm_node)
+    assert [item async for item in agent.stream_reply(llm.ChatContext.empty())] == []
 
 
 @pytest.mark.asyncio
@@ -2329,7 +2216,7 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
     runtime = DuplexRuntime.create()
     bind_owner_policy(runtime, policy_version="test-policy", private_context=False, owner_evidence=False, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
     await runtime.orchestrator.ready()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
 
     class Message:
         def text_content(self) -> str:
@@ -2338,10 +2225,10 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         yield "你好，有什么可以帮你的吗？"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
     await commit_media_turn(agent, Message())
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert runtime.fence.turn_id == 1
     assert runtime.fence.generation_id == 1
@@ -2356,20 +2243,20 @@ async def test_committed_private_transcript_never_enters_agent_logs(
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.orchestrator.ready()
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
     private_text = "我的私人保险资料只应进入加密档案"
 
     class Message:
         def text_content(self) -> str:
             return private_text
 
-    caplog.set_level(logging.INFO, logger="services.agent.src.agent")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
     await commit_media_turn(agent, Message())
 
     messages = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "services.agent.src.agent"
+        if record.name == "services.agent.src.reply_pipeline"
     ]
     assert private_text not in "\n".join(messages)
     assert any(f"text_len={len(private_text)}" in message for message in messages)
@@ -2381,11 +2268,11 @@ async def test_reply_budget_stops_after_three_spoken_sentences(
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("介绍一下")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="简洁介绍。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in (
@@ -2401,9 +2288,9 @@ async def test_reply_budget_stops_after_three_spoken_sentences(
         ):
             yield sentence
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == [
         "第一句。",
@@ -2423,19 +2310,19 @@ async def test_controlled_turn_reply_budget_stops_after_three_sentences(
 ) -> None:
     runtime = DuplexRuntime.create(barge_in_enabled=False)
     await runtime.on_turn_committed("介绍一下")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="简洁介绍。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
             yield sentence
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == ["第一句。", "第二句。", "第三句。"]
 
@@ -2451,19 +2338,19 @@ async def test_controlled_turn_keeps_short_budget_for_supportive_delivery(
         delivery_mode="supportive",
     )
     await runtime.on_turn_committed("介绍一下")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="简洁介绍。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
             yield sentence
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == ["第一句。", "第二句。", "第三句。"]
 
@@ -2472,14 +2359,14 @@ async def test_controlled_turn_keeps_short_budget_for_supportive_delivery(
 async def test_controlled_turn_speaks_the_complete_fixed_crisis_reply() -> None:
     runtime = DuplexRuntime.create(barge_in_enabled=False)
     await runtime.on_turn_committed("我想自杀")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="直接播放固定危机支持。",
         direct_text=CRISIS_SUPPORT_REPLY,
-    )
+    ))
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SUPPORT_REPLY
     assert CRISIS_SUPPORT_REPLY.endswith("你现在是否正准备伤害自己？")
@@ -2493,19 +2380,19 @@ async def test_controlled_turn_keeps_short_budget_for_ordinary_planning_terms(
 ) -> None:
     runtime = DuplexRuntime.create(barge_in_enabled=False)
     await runtime.on_turn_committed(user_text)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="简洁回答。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
             yield sentence
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == ["第一句。", "第二句。", "第三句。"]
 
@@ -2518,19 +2405,19 @@ async def test_controlled_turn_allows_explicit_longform_requests(
 ) -> None:
     runtime = DuplexRuntime.create(barge_in_enabled=False)
     await runtime.on_turn_committed(user_text)
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="按用户要求展开。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
             yield sentence
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output == ["第一句。", "第二句。", "第三句。", "第四句。"]
 
@@ -2541,21 +2428,21 @@ async def test_reply_budget_truncates_an_oversized_first_segment(
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("详细介绍")
-    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
-    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    agent.response_plans.store(_plan_for_fence(
         runtime.fence,
         instructions="详细介绍。",
-    )
+    ))
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         yield "这" * 140 + "。"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent.language_model = ScriptedChatModel(fake_llm_node)
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
 
     assert output
-    assert sum(ch.isalnum() for text in output for ch in text) <= agent_mod.MAX_VOICE_REPLY_CHARS
+    assert sum(ch.isalnum() for text in output for ch in text) <= pipeline_mod.MAX_VOICE_REPLY_CHARS
 
 
 class _Emitter:
@@ -2609,7 +2496,7 @@ class _FakeTTS:
 async def test_agent_alignment_callback_rejects_a_stale_runtime_fence() -> None:
     fake_tts = _FakeTTS()
     runtime = DuplexRuntime.create(tts=fake_tts)  # type: ignore[arg-type]
-    DuplexVoiceAgent(instructions="test", runtime=runtime)
+    ReplyPipeline(instructions="test", runtime=runtime)
     callback = fake_tts.alignment_callback
     assert callback is not None
 

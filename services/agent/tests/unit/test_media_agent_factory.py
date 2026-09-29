@@ -140,13 +140,6 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         speaker_enroll_timeout_ms=12000,
         speaker_accept_threshold=0.78,
         speaker_min_verify_speech_ms=1200,
-        listener_cues_enabled=True,
-        listener_cue_playback="main_track",
-        listener_cue_aec_validated=False,
-        listener_cue_min_speech_ms=1800,
-        listener_cue_pause_ms=250,
-        listener_cue_cooldown_ms=5000,
-        listener_cue_max_per_turn=2,
         archive_sink_enabled=False,
         archive_spool_key=SimpleNamespace(get_secret_value=lambda: ""),
         voice_profile_enabled=False,
@@ -328,7 +321,7 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
         "_configure_runtime",
         lambda self, bound_runtime, tts: None,
     )
-    monkeypatch.setattr(factory_module, "DuplexVoiceAgent", lambda **_kwargs: object())
+    monkeypatch.setattr(factory_module, "ReplyPipeline", lambda **_kwargs: object())
     monkeypatch.setattr(
         factory_module.FunASRConfig,
         "from_env",
@@ -370,7 +363,6 @@ async def test_device_factory_enables_explicit_subject_fence() -> None:
     tts = SimpleNamespace(pool=object())
     factory = factory_module.ProductionMediaSessionFactory(
         settings=SimpleNamespace(
-            listener_cues_enabled=False,
             use_paralinguistic_tags=False,
             speaker_enroll_speech_ms=1_000,
             speaker_enroll_timeout_ms=10_000,

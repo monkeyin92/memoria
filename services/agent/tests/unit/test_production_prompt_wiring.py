@@ -13,15 +13,16 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from services.agent.src import agent as agent_module
 from services.agent.src import media_agent_factory as factory_module
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.prompt_composition import (
     PROMPT_SECTIONS,
     SERVICE_MODE_BLOCKS,
     compose_production_prompt,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.runtime_profile import (
     VERIFY_KEY_ENV,
     RuntimeProfile,
@@ -2501,7 +2502,6 @@ class _FakePort:
         ("_context_snapshot_prepare_task", "_context_snapshot_prepare_epoch"),
         ("_speaker_classification_task", "_speaker_epoch"),
         ("_voice_profile_refresh_task", "_speaker_epoch"),
-        ("_listener_cue_candidate_task", "_speaker_epoch"),
     ],
 )
 async def test_identity_tasks_are_captured_cancelled_and_void_after_switch(
@@ -2772,7 +2772,7 @@ async def test_production_wiring_has_no_commit_port_and_side_effects_fail_closed
 
             return ResponsePlanFetch(None, "no_profile")
 
-    agent = agent_module.DuplexVoiceAgent(
+    agent = ReplyPipeline(
         instructions="test",
         runtime=runtime,
         response_planner_client=_PlannerClient(),  # type: ignore[arg-type]
@@ -2782,7 +2782,7 @@ async def test_production_wiring_has_no_commit_port_and_side_effects_fail_closed
     assert tm._effect_commit_port is None
     with pytest.raises(PermissionError):
         tm.register(
-            agent_module.ToolSpec(
+            ToolSpec(
                 name="w",
                 description="t",
                 input_schema={},

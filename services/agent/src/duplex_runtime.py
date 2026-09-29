@@ -17,9 +17,6 @@ from services.agent.src.contracts.ids import (
     GenerationFence,
     new_session_id,
 )
-from services.agent.src.cue_playback import (
-    cancel_listener_cue,
-)
 from services.agent.src.event_identity import (
     archive_evidence,
     evidence_fingerprint,
@@ -48,7 +45,6 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     PersonaCapsule,
     scope_context_snapshot_draft,
 )
-from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
 from services.agent.src.orchestration.emotion import (
     EmotionSmoother,
 )
@@ -168,7 +164,6 @@ class DuplexRuntime(
     barge_in_enabled: bool = True
     capture_release_holdoff_s: float = 0.0
     latency_trace: LatencyTrace = field(default_factory=LatencyTrace)
-    cue_scheduler: CueScheduler = field(default_factory=CueScheduler)
     emotion_smoother: EmotionSmoother = field(default_factory=EmotionSmoother)
     speech_plan: SpeechPlan = field(default_factory=lambda: speech_plan_for_emotion("neutral"))
     _generation_records: GenerationRecords = field(default_factory=GenerationRecords)
@@ -233,10 +228,6 @@ class DuplexRuntime(
     _evidence_drain_timeout_s: float = 3.0
     RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float = 0.8
     _pending_tool_results: int = 0
-    _active_listener_cue: ListenerCue | None = None
-    _active_listener_cue_handle: Any | None = None
-    _listener_cue_candidate_task: asyncio.Task[Any] | None = None
-    _listener_cue_aec_healthy: bool = False
     _enroll_fence: GenerationFence | None = None
     _formal_enrollment: FormalSpeakerEnrollment = field(
         default_factory=FormalSpeakerEnrollment
@@ -279,7 +270,6 @@ class DuplexRuntime(
         input_guard_enabled: bool = False,
         barge_in_enabled: bool = True,
         capture_release_holdoff_s: float = 0.0,
-        listener_cues_enabled: bool = False,
         use_paralinguistic_tags: bool = False,
         speaker_verifier: SpeakerVerifier | None = None,
     ) -> DuplexRuntime:
@@ -294,7 +284,6 @@ class DuplexRuntime(
             input_guard=PlaybackInputGuard(enabled=input_guard_enabled),
             barge_in_enabled=barge_in_enabled,
             capture_release_holdoff_s=capture_release_holdoff_s,
-            cue_scheduler=CueScheduler(enabled=listener_cues_enabled),
             use_paralinguistic_tags=use_paralinguistic_tags,
             speaker_verifier=speaker_verifier
             if speaker_verifier is not None
@@ -1006,9 +995,6 @@ class DuplexRuntime(
             and self._speaker_decision.reason_code == "shadow_owner_candidate"
         )
 
-
-    def set_listener_cue_aec_healthy(self, healthy: bool) -> None:
-        self._listener_cue_aec_healthy = healthy
 
     def set_fast_model_warmer(
         self,
@@ -1818,9 +1804,6 @@ class DuplexRuntime(
         )
 
 
-    def cancel_listener_cue(self) -> None:
-        cancel_listener_cue(self)
-
     def _assistant_response_blocks_barge_in(self) -> bool:
         return not self.barge_in_enabled and (
             self._voice_floor.assistant_speaking
@@ -1878,12 +1861,6 @@ class DuplexRuntime(
             self.set_interaction_phase(
                 InteractionPhase.USER_SPEAKING,
                 cause="vad_start",
-            )
-        pending_turn_id = self.fence.turn_id + 1
-        if not self._voice_floor.assistant_speaking:
-            self.cue_scheduler.start_turn(
-                user_turn_id=pending_turn_id,
-                now_ns=now_ns,
             )
         if self._voice_floor.assistant_speaking or self.input_guard.candidate_during_playback:
             # Nearby talker often starts with short energy; require speaker match
@@ -2271,7 +2248,6 @@ class DuplexRuntime(
             and self._pending_realtime_request.speaker_scope != next_speaker_scope
         ):
             self._pending_realtime_request = None
-        self.cancel_listener_cue()
         self._voice_floor.update(last_playback_completed_ns=None)
         if self.orchestrator.state is ConversationState.CONNECTING:
             await self.orchestrator.ready()
@@ -2725,7 +2701,6 @@ class DuplexRuntime(
         candidate_text: str | None = None,
         utterance_route: UtteranceRoute | None = None,
     ) -> GenerationFence:
-        self.cancel_listener_cue()
         mid_reply = self._voice_floor.assistant_speaking
         candidate = (
             candidate_text.strip()
@@ -2842,7 +2817,6 @@ class DuplexRuntime(
     async def close(self) -> None:
         if self.begin_close():
             return
-        self.cancel_listener_cue()
         # A classification already in flight can still emit the final
         # speaker.classified evidence. Give its own bounded provider timeout a
         # chance to finish before closing the evidence admission gate.

@@ -296,48 +296,6 @@ class AgentSettings(BaseSettings):
     doubao_tts_sample_rate: int = Field(default=24000, alias="DOUBAO_TTS_SAMPLE_RATE")
     doubao_tts_pool_size: int = Field(default=4, alias="DOUBAO_TTS_POOL_SIZE")
 
-    # Listener cues: default OFF. BackgroundAudioPlayer is a second room track
-    # (prod dual-voice). Keep off until mixed into the main CosyVoice path.
-    listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
-    listener_cue_playback: str = Field(
-        default="main_track",
-        alias="LISTENER_CUE_PLAYBACK",
-    )
-    listener_cue_aec_validated: bool = Field(
-        default=False,
-        alias="LISTENER_CUE_AEC_VALIDATED",
-    )
-    listener_cue_pause_ms: int = Field(
-        default=250,
-        ge=150,
-        le=350,
-        alias="LISTENER_CUE_PAUSE_MS",
-    )
-    listener_cue_min_speech_ms: int = Field(
-        default=1800,
-        ge=1000,
-        le=10000,
-        alias="LISTENER_CUE_MIN_SPEECH_MS",
-    )
-    listener_cue_cooldown_ms: int = Field(
-        default=5000,
-        ge=3000,
-        le=30000,
-        alias="LISTENER_CUE_COOLDOWN_MS",
-    )
-    listener_cue_max_per_turn: int = Field(
-        default=2,
-        ge=0,
-        le=2,
-        alias="LISTENER_CUE_MAX_PER_TURN",
-    )
-    listener_cue_volume: float = Field(
-        default=0.65,
-        ge=0.1,
-        le=0.85,
-        alias="LISTENER_CUE_VOLUME",
-    )
-
     # Legacy session log-mel is only a playback/noise guard; it is not identity authority.
     speaker_verify_enabled: bool = Field(default=False, alias="SPEAKER_VERIFY_ENABLED")
     speaker_enroll_speech_ms: int = Field(
@@ -563,17 +521,6 @@ class AgentSettings(BaseSettings):
                 "DOUBAO_TTS_WS_URL must use wss:// in production and contain no userinfo "
                 "or fragment"
             )
-        playback = (self.listener_cue_playback or "main_track").strip().lower()
-        if playback not in {"main_track", "background"}:
-            raise ValueError("LISTENER_CUE_PLAYBACK must be main_track or background")
-        object.__setattr__(self, "listener_cue_playback", playback)
-        # Second-track cues need AEC validation; otherwise force main_track safety.
-        if (
-            self.listener_cues_enabled
-            and playback == "background"
-            and not self.listener_cue_aec_validated
-        ):
-            object.__setattr__(self, "listener_cue_playback", "main_track")
         if self.environment == "production":
             if self.media_slo_report_enabled:
                 if not _secure_internal_url(self.media_slo_report_url):

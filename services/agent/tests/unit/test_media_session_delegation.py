@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import MetricsRegistry
@@ -23,6 +22,7 @@ from services.agent.src.prompts import (
     device_wake_phrase,
     is_allowlisted_device_phrase,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -332,7 +332,7 @@ async def test_slow_delegation_never_blocks_media_audio_ingest() -> None:
             await release.wait()
             return "南京今天多云。"
 
-    DuplexVoiceAgent(
+    ReplyPipeline(
         instructions="test",
         runtime=runtime,
         realtime_search_resolver=SlowResolver(),
