@@ -2,22 +2,31 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-29 12:04–12:18（CST）整栈发布 `20260929-livekit-retire-v1`（tag → `57d9075`，main 上 PR #122 的合并提交 `bf00070` 与之同树）。发布 control-api、bridge（`memoria-agent` 镜像）与 speaker-model 三个角色，`release-ops.sh` 全链 PASS；旧媒体链三个容器（LiveKit worker `memoria-agent-1`、两个 Python 网关）在 bridge 健康后停止（未删除）。media-edge 无改动，未发布。
-- **上一次整栈收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（`6180893`），它是本次的回滚目标；主机旧件清理后不再能整体回滚到它，改为按组件回滚（见下）。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
+- **最近生产收据**：2026-09-29 14:52–14:58（CST）整栈发布 `20260929-voice-core-refactor-v1`（tag → `b48218b`，main 上 PR #126 的合并提交 `d7a948f` 与之同树）：第 5 批语音主链重构 #123–#126。control-api、bridge、speaker-model 三个角色经 `release-ops.sh` 全链 PASS（首次使用三角色 PREV）。media-edge 无改动，未发布。
+- **上一次整栈收据**：2026-09-29 12:04–12:18（CST）整栈发布 `20260929-livekit-retire-v1`（`57d9075`），它是本次的回滚目标。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260929-livekit-retire-v1` | `sha256:8d975aa2…`（服务器 image id） | `57d9075d780ad1c73e7270a30f987fdf980c3aa1` | healthy | 0 | `2026-09-29T04:15:59Z` | `/opt/memoria/releases/20260929-livekit-retire-v1/.cutover/` | `memoria-control-api:rollback-20260929-livekit-retire-v1-pre`（= `20260928-review-batches-v1`） |
-| Bridge | `memoria-agent:20260929-livekit-retire-v1` | `sha256:3a3743bf…` | 同上 | healthy | 0 | `2026-09-29T04:16:13Z` | 同上 | `memoria-agent:rollback-20260929-livekit-retire-v1-pre` |
-| Speaker Model | `memoria-speaker-model:20260929-livekit-retire-v1` | `sha256:1c8d0970…` | 同上 | healthy | 0 | `2026-09-29T04:15:51Z` | 同上 | `memoria-speaker-model:rollback-20260929-livekit-retire-v1-pre` |
+| Control API | `memoria-control-api:20260929-voice-core-refactor-v1` | `sha256:82d1be85…`（服务器 image id） | `b48218b1eba2f6fcbd4dbd122cba4e1e2d150652` | healthy | 0 | `2026-09-29T06:56:07Z` | `/opt/memoria/releases/20260929-voice-core-refactor-v1/.cutover/` | `memoria-control-api:rollback-20260929-voice-core-refactor-v1-pre`（= `20260929-livekit-retire-v1`） |
+| Bridge | `memoria-agent:20260929-voice-core-refactor-v1` | `sha256:2b6a5532…` | 同上 | healthy | 0 | `2026-09-29T06:56:22Z` | 同上 | `memoria-agent:rollback-20260929-voice-core-refactor-v1-pre` |
+| Speaker Model | `memoria-speaker-model:20260929-voice-core-refactor-v1` | `sha256:7ee104d7…` | 同上 | healthy | 0 | `2026-09-29T06:56:00Z` | 同上 | `memoria-speaker-model:rollback-20260929-voice-core-refactor-v1-pre` |
 | Media Edge | `memoria-media-edge:20260928-review-batches-v1` | `sha256:f25ee796…` | `6180893` | healthy | 0 | `2026-09-28T15:29:54Z` | `/opt/memoria/component-releases/20260928-review-batches-v1-media-edge/` | `memoria-media-edge:20260928-writer-teardown-v1` |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260929-livekit-retire-v1` / `57d9075`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260929-livekit-retire-v1`。上一栈 `20260928-review-batches-v1` / `6180893` 为回滚目标。主机旧件已清理（2026-09-29 12:25–12:35 CST，用户确认验收后授权）：LiveKit server compose 项目已移除（配置目录改名 `/opt/livekit.retired-20260929`）；nginx 8443 改为直通 9443，删 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf` 及其 include（备份 `/etc/nginx/backup-20260929-livekit-retire/`，改前后 10 个地址状态码只有旧网关路由 502→404）；三个已停容器移除；两份网关 env 移入 `/opt/memoria/releases/20260929-livekit-retire-v1/.cutover/retired-env/`（root 0700）；网关与 LiveKit 镜像 24 个 tag 删除。因此 `release-ops.sh rollback` 不再能整体回到 `20260928-review-batches-v1`；需要时按组件把 control-api/bridge/speaker-model 退回各自的 `rollback-20260929-livekit-retire-v1-pre` 镜像。
+- **发布身份**：`20260929-voice-core-refactor-v1` / `b48218b`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260929-voice-core-refactor-v1`。上一栈 `20260929-livekit-retire-v1` / `57d9075` 为回滚目标（三角色，`release-ops.sh rollback` 可用）。旧媒体链主机旧件已于 2026-09-29 清理，见下方 LiveKit 退役一节。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-29 整栈发布 20260929-voice-core-refactor-v1（第 5 批语音主链重构）
+
+- **范围**：#123 SenseVoice 只救未覆盖尾段 + 公开测试接缝 + `test_media_session_golden.py` 录制基准；#124 `GenerationRecords`（8 张按 fence 的表）与单一发言权状态 owner `VoiceFloorState`（新增 `voice_floor_divergence_total`）；#125 `PendingTurn`/`OutputState` 子对象、删除 LiveKit 时代可信中断死状态；#126 抽出 `ReplyPipeline`（删 `DuplexVoiceAgent`，`turn_committed` 日志改由 `reply_pipeline` 输出）、删除不可达的 listener-cue 链路、`release-ops.sh` 改为三角色 PREV。四个 PR 期间录制基准一字未变。唯一有意行为变化：身份轮换同时清掉上一主体的 TTS 参考文本。
+- **发布过程**：本机完整构建三镜像，`verify-load`（冒烟自带临时 PG）、`freeze`、`env`（provider smoke PASS）、`schema`、`cutover`、`finish` 全部 PASS；readiness ready、心跳 ready、外部 200；media-edge 约 5 s 内重拨新 bridge。
+- **真机验收（2026-09-29 14:58–15:17 CST，用户对话，服务器侧日志）**：三个会话，5 轮提交、12 次开口、11 次完整播放并回执 actual_heard；天气查询走 delegation + 实时搜索、过渡语后给结果；「再见」两次正常收尾；沉默后 `owner_silence_timeout` 按时结束；心跳全部 200。
+- **验收发现的既有缺陷（发布前基线同样存在，已修，待下次发布）**：讲故事时说「停」，第一次被暂缓、第二次直接结束了会话。原因：语义收尾分类器把单字「停」判为告别，路由第 3 步走 `END_SESSION`（需说话人关卡）而不是第 4 步的停止指令（绕过关卡、只打断播放）。修复：纯停止词/完成确认在词表层优先，不再送语义分类器（`conversation_close_router.lexical_playback_control_only`），有回归测试。
+- **SenseVoice**：尾段修复生效（出现 760 ms、4440 ms 的短补救）；整段 30 s 都没有 final 时仍会超时 1 次，默认上限已改为 12 s（`SENSEVOICE_MAX_AUDIO_S`，依据 `docs/runbooks/sensevoice-asr.md` 的实测），待下次发布。
+- **仍待**：按键停止本次未测；`livekit.agents` 依赖（TTS 流、ChatContext、openai 插件）的替换为独立系列。
 
 ## 2026-09-29 整栈发布 20260929-livekit-retire-v1（旧媒体链退役 + PG-only）
 

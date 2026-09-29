@@ -64,7 +64,9 @@ class SenseVoiceRescueConfig:
     timeout_s: float = 2.5
     min_rms: int = 100
     min_peak_abs: int = 350
-    max_audio_s: float = 30.0
+    # ~0.1-0.16 s decode per audio second on the 2-CPU sidecar plus transport:
+    # 12 s stays inside the 2.5 s timeout (docs/runbooks/sensevoice-asr.md).
+    max_audio_s: float = 12.0
     min_text_chars: int = 2
 
     def __post_init__(self) -> None:
@@ -100,7 +102,7 @@ class SenseVoiceRescueConfig:
             timeout_s=float(env.get("SENSEVOICE_TIMEOUT_S", "2.5")),
             min_rms=int(env.get("SENSEVOICE_MIN_RMS", "100")),
             min_peak_abs=int(env.get("SENSEVOICE_MIN_PEAK_ABS", "350")),
-            max_audio_s=float(env.get("SENSEVOICE_MAX_AUDIO_S", "30")),
+            max_audio_s=float(env.get("SENSEVOICE_MAX_AUDIO_S", "12")),
             min_text_chars=int(env.get("SENSEVOICE_MIN_TEXT_CHARS", "2")),
         )
 

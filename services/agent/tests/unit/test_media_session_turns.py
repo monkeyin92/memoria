@@ -2540,6 +2540,69 @@ async def test_device_conversation_close_semantic_final_commits_before_vad_end()
 
 
 @pytest.mark.asyncio
+async def test_bare_stop_word_never_pins_a_conversation_close() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        runtime_factory=lambda session_id: DuplexRuntime.create(
+            session_id=session_id,
+            barge_in_enabled=False,
+        ),
+    )
+    registry.install()
+    identity = _device_identity("device-stop-word-not-farewell")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        calls: list[str] = []
+
+        async def resolver(text: str) -> bool:
+            # The classifier that read a bare 「停」 as a farewell on the device.
+            calls.append(text)
+            return True
+
+        context.runtime.set_conversation_close_semantic_resolver(resolver)
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                provider_task_epoch=1,
+                segment_id="stop-start",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=0,
+                capture_end_sample=1,
+            ),
+        )
+        from services.agent.src.voice_core.speech_timeline import ASRResult
+
+        accepted = ASRResult(
+            stream_epoch=identity.stream_epoch,
+            task_epoch=1,
+            sentence_id="stop-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=8_000,
+            text="停",
+            is_final=True,
+            confidence=0.9,
+        )
+        assert await registry.accept_asr_result(identity.session_id, accepted)
+        task = context.pending.conversation_close_semantic_task
+        if task is not None:
+            await task
+        assert calls == []
+        assert context.pending.conversation_close_endpoint_pinned is None
+        assert not context.standby_requested
+        assert not context.runtime.conversation_close_needed("停")
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_device_clock_fact_pin_blocks_late_vad_end_extension() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
