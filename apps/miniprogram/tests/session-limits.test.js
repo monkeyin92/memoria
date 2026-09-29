@@ -21,6 +21,9 @@ const DAY = new Date(Date.UTC(2026, 8, 28, 2, 0));
 
 test("a minor's signed obligations become the displayed session limits", () => {
   assert.deepEqual(sessionLimitsFromProfile(profile(), NIGHT), {
+    maxSessionMinutes: 30,
+    quietStart: "21:00",
+    quietEnd: "07:00",
     quietHoursLabel: "21:00 – 次日 07:00",
     inQuietHours: true,
     maxSessionLabel: "30 分钟",

@@ -305,3 +305,90 @@ async def test_carry_forward_keeps_the_guardians_session_limits(tmp_path: Path) 
     assert set(params) == {*MINOR_SESSION_CAPABILITIES, *MEMORY_CAPABILITIES}
     assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {limits}
     assert {params[capability] for capability in MEMORY_CAPABILITIES} == {ConsentParams()}
+
+
+async def test_update_session_limits_replaces_the_guardians_limits(tmp_path: Path) -> None:
+    """The guardian can change quiet hours and length after binding, and back again."""
+    identity = await _identity(tmp_path)
+    parent, child_id, binding_id = await _parent_and_child(identity)
+    clock = [NOW]
+    service = BoundSubjectConsentService(
+        store=_AsyncStore(),  # type: ignore[arg-type]
+        identity=identity,
+        now=lambda: clock[0],
+    )
+    original = ConsentParams(max_session_seconds=1200, quiet_hours=("20:30", "07:00"))
+    await service.grant(
+        BoundSubjectGrant(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            kind="guardian",
+            capabilities=MINOR_SESSION_CAPABILITIES,
+            source_key="snapshot-session",
+            params=original,
+        )
+    )
+    await service.grant(
+        BoundSubjectGrant(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            kind="guardian",
+            capabilities=MEMORY_CAPABILITIES,
+            source_key="snapshot-memory",
+        )
+    )
+
+    async def limits() -> dict[str, ConsentParams]:
+        active = await service.active(
+            subject_person_id=child_id, binding_id=binding_id, binding_version=1
+        )
+        return {item.capability: item.params for item in active}
+
+    async def update(seconds: int | None, quiet: tuple[str, str] | None) -> bool:
+        clock[0] += timedelta(minutes=1)
+        return await service.update_session_limits(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            max_session_seconds=seconds,
+            quiet_hours=quiet,
+        )
+
+    assert await update(1200, ("20:30", "07:00")) is False
+
+    assert await update(2700, ("22:00", "06:30")) is True
+    changed = ConsentParams(max_session_seconds=2700, quiet_hours=("22:00", "06:30"))
+    params = await limits()
+    assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {changed}
+    assert {params[capability] for capability in MEMORY_CAPABILITIES} == {ConsentParams()}
+
+    # Going back to an earlier value re-grants it instead of replaying the old grant.
+    assert await update(1200, ("20:30", "07:00")) is True
+    params = await limits()
+    assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {original}
+
+    assert await update(None, None) is True
+    params = await limits()
+    assert {params[capability] for capability in MINOR_SESSION_CAPABILITIES} == {ConsentParams()}
+
+
+async def test_update_session_limits_needs_the_guardians_own_session_consent(
+    tmp_path: Path,
+) -> None:
+    identity = await _identity(tmp_path)
+    parent, child_id, binding_id = await _parent_and_child(identity)
+    service = BoundSubjectConsentService(
+        store=_AsyncStore(),  # type: ignore[arg-type]
+        identity=identity,
+        now=lambda: NOW,
+    )
+    with pytest.raises(LookupError):
+        await service.update_session_limits(
+            actor_person_id=parent,
+            subject_person_id=child_id,
+            binding_id=binding_id,
+            max_session_seconds=600,
+            quiet_hours=None,
+        )

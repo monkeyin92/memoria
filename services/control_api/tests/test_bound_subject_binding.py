@@ -644,3 +644,40 @@ def test_bind_form_session_limits_become_consent_params(
     params = _session_params(preferences)
 
     assert (params.max_session_seconds, params.quiet_hours) == expected
+
+
+@pytest.mark.asyncio
+async def test_session_limits_write_is_refused_without_the_postgres_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A SQLite deployment has no consent authority or Session Runtime to re-issue limits."""
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        app.state.bound_subject_consent = _RecordingConsent()
+        owner_id, headers = await _owner(client, app, "limits-owner")
+        created = await _bind(
+            client,
+            app,
+            owner_id=owner_id,
+            headers=headers,
+            device_id="device-limits",
+            declared_mode="parent_for_child",
+            relationship="guardian_of",
+            age_band="under_14",
+            offers=["offer_minor_voice_session_v1"],
+        )
+        assert created.status_code == 201, created.text
+        refused = await client.put(
+            "/v1/devices/device-limits/session-limits",
+            headers=headers,
+            json={"max_session_minutes": 45, "quiet_hours": {"start": "22:00", "end": "06:30"}},
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "session_limits_unavailable"
+        invalid = await client.put(
+            "/v1/devices/device-limits/session-limits",
+            headers=headers,
+            json={"max_session_minutes": 0},
+        )
+        assert invalid.status_code == 422

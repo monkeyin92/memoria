@@ -19,6 +19,13 @@
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
 
+## 2026-09-29 设备页「使用时段」可修改（待发布）
+
+- **缺陷**：小程序设备页的「使用时段」卡片只读（夜间休息、单次最长），监护人绑定后无处修改；后端也没有绑定后改写限额的通道（同意授权按绑定版本固定，offer id 是确定性的）。
+- **修复**：新增 `PUT /v1/devices/{device_id}/session-limits`（owner/device admin，仅 `parent_for_child`，仅当前监护人自己授予的会话同意；`max_session_minutes` 1–240、`quiet_hours` 起止 HH:MM，传 `null` 取消该项）。`BoundSubjectConsentService.update_session_limits` 用带 `offer_key` 的新 offer 重新授权 chat/tutor/english_practice，原 head 被原子取代（改回旧值也重新授权，不重放旧授权）；`PostgresMultiSubjectRuntimeControl.refresh_profile` 显式轮换控制 profile（`ensure_profile` 只比较人格与主体事实，不会因同意变化轮换），再以 `next_session` 语义投影给设备，进行中的回复不被打断。SQLite 部署没有同意授权与 Session Runtime，接口返回 409 `session_limits_unavailable`。设备页卡片加「修改」，抽屉复用绑定页的时长档位与时间选择，保存后重读已签名 profile 显示设备实际执行的值。
+- **验证**：本机 Postgres 上 `test_a_changed_session_limit_reaches_the_reissued_profile`（改后重发的 profile 带新限额，epoch 递增，普通读取在刷新前仍是旧值）、`test_bound_subject.py` 两条、小程序 `npm test` 324/324。未在真机与线上验证。
+- **边界**：卡片仍只在 profile 带限额时出现（绑定时两项都未设的孩子看不到入口）；抽屉总是同时写入时长与夜间时段，不提供「取消限额」。
+
 ## 2026-09-29 整栈发布 20260929-stop-reconnect-v1（#130）+ media-edge 同 tag
 
 - **发布过程**：本机构建四个 linux/amd64 镜像（Edge 二进制含新日志串核对），seeded 上传双端校验 PASS，media-edge 镜像单独 scp、sha256 核对后导入。`verify-load`、`freeze`、`env`（provider smoke PASS）、`schema` 在 #132 CI 全绿前完成，全绿后 `cutover`（18:36:44）、`finish`（18:38:11）PASS。media-edge 按组件覆盖文件切换：新旧渲染配置对比基准改为当前栈发布树（`20260928-review-batches-v1` 发布树引用的网关 env 已随 LiveKit 清理删除、无法渲染），差异只有构建参数与镜像；其余容器未变，未带凭证的设备入口 401。

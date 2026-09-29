@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import asyncpg
@@ -139,8 +140,16 @@ def _manifest(
 class _IdentityView:
     """Identity as production exposes it: FORCE RLS, no actor means no rows."""
 
-    def __init__(self, manifest: BindingManifest) -> None:
+    def __init__(
+        self, manifest: BindingManifest, persons: dict[str, tuple[str, str]] | None = None
+    ) -> None:
         self.manifest = manifest
+        # person_id -> (subject_category, age_band), for a re-read of a stored profile.
+        self.persons = persons or {}
+
+    async def get_person(self, person_id: str, *, actor_person_id: str | None = None) -> Any:
+        category, age_band = self.persons[person_id]
+        return SimpleNamespace(subject_category=category, age_band=age_band)
 
     async def get_active_manifest(
         self,
@@ -162,10 +171,12 @@ class _IdentityView:
 
 
 def _control(
-    store: PostgresSessionRuntimeStore, manifest: BindingManifest
+    store: PostgresSessionRuntimeStore,
+    manifest: BindingManifest,
+    persons: dict[str, tuple[str, str]] | None = None,
 ) -> PostgresMultiSubjectRuntimeControl:
     return PostgresMultiSubjectRuntimeControl(
-        identity=_IdentityView(manifest),  # type: ignore[arg-type]
+        identity=_IdentityView(manifest, persons),  # type: ignore[arg-type]
         sessions=build_postgres_session_runtime_service(
             store=store,
             signing_key=_SIGNING_KEY,
@@ -454,6 +465,91 @@ async def test_parent_for_child_opens_the_summary_but_the_guardian_never_reads_m
     }
     assert limits["MAX_SESSION_SECONDS"].max_session_seconds == expected_limits[0]
     assert list(limits["QUIET_HOURS"].quiet_hours) == expected_limits[1]
+
+
+@requires_postgres
+@pytest.mark.asyncio
+async def test_a_changed_session_limit_reaches_the_reissued_profile(
+    postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811
+) -> None:
+    store, bootstrap_dsn = postgres_runtime_with_consent
+    now = datetime.now(UTC)
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_delegated_binding(
+            admin,
+            actor_id="parent-1",
+            subject_id="child-1",
+            device_id="dev-child",
+            binding_id="b-child",
+            declared_mode="parent_for_child",
+            subject_category="minor",
+            age_band="under_14",
+        )
+        await _attest(admin, source="parent-1", target="child-1", relation_type="guardian_of")
+        await _seed_verified_device(admin, device_id="dev-child", binding_id="b-child", now=now)
+    finally:
+        await admin.close()
+    manifest = _manifest(
+        mode="parent_for_child",
+        owner="parent-1",
+        subject="child-1",
+        device_id="dev-child",
+        binding_id="b-child",
+        guardian=True,
+    )
+    control = _control(store, manifest, {"child-1": ("minor", "under_14")})
+
+    def limits(profile: RuntimeProfileSignedV2) -> tuple[int | None, list[str] | None]:
+        params = {item.code.value: item.params for item in profile.obligations}
+        quiet = params["QUIET_HOURS"].quiet_hours
+        return (
+            params["MAX_SESSION_SECONDS"].max_session_seconds,
+            list(quiet) if quiet else None,
+        )
+
+    consent, consent_store = await _consent_service(bootstrap_dsn)
+    try:
+        await consent.grant(
+            BoundSubjectGrant(
+                actor_person_id="parent-1",
+                subject_person_id="child-1",
+                binding_id="b-child",
+                kind="guardian",
+                capabilities=MINOR_SESSION_CAPABILITIES,
+                source_key="snapshot-child",
+                params=ConsentParams(max_session_seconds=1800, quiet_hours=("21:00", "07:00")),
+            )
+        )
+        before = await _read(control, manifest, now=now + timedelta(minutes=1))
+        assert limits(before) == (1800, ["21:00", "07:00"])
+
+        assert await consent.update_session_limits(
+            actor_person_id="parent-1",
+            subject_person_id="child-1",
+            binding_id="b-child",
+            max_session_seconds=3600,
+            quiet_hours=("22:30", "06:00"),
+        )
+        # A plain read still serves the stored profile; the explicit refresh
+        # is what makes the guardian's change reach the device.
+        assert limits(await _read(control, manifest, now=now + timedelta(minutes=2))) == (
+            1800,
+            ["21:00", "07:00"],
+        )
+        after = await control.refresh_profile(
+            device_id="dev-child", actor_id="parent-1", now=now + timedelta(minutes=3)
+        )
+    finally:
+        await consent_store.close()
+
+    assert limits(after) == (3600, ["22:30", "06:00"])
+    assert after.session_epoch > before.session_epoch
+    assert after.active_subject_id == "child-1"
+    assert limits(await _read(control, manifest, now=now + timedelta(minutes=4))) == (
+        3600,
+        ["22:30", "06:00"],
+    )
 
 
 @requires_postgres

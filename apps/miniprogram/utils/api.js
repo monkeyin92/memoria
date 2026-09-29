@@ -1218,6 +1218,20 @@ function setPersonaAssignment(deviceId, personId, personaSelection) {
   );
 }
 
+function setSessionLimits(deviceId, { maxSessionMinutes, quietStart, quietEnd }) {
+  const manifest = readBindingManifest();
+  if (!manifest || manifest.device_id !== deviceId) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法修改使用时段。", { status: 403 }));
+  }
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/session-limits`, {
+    method: "PUT",
+    data: {
+      max_session_minutes: maxSessionMinutes,
+      quiet_hours: quietStart && quietEnd ? { start: quietStart, end: quietEnd } : null,
+    },
+  });
+}
+
 function clearPersonaAssignment(deviceId, personId) {
   const manifest = readBindingManifest();
   if (!manifest || manifest.device_id !== deviceId) {
@@ -1360,6 +1374,7 @@ module.exports = {
   setActiveSubject,
   listPersonaAssignments,
   setPersonaAssignment,
+  setSessionLimits,
   clearPersonaAssignment,
   listPersonas,
   structureCustomPersona,

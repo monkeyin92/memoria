@@ -179,7 +179,10 @@
 
       <!-- P0-04 D3：监护人在绑定时设定的使用时段，值取自设备实际执行的已签名 Runtime Profile。 -->
       <view wx:if="{{sessionLimits}}" class="l2-card">
-        <text class="l2-card-title">使用时段</text>
+        <view class="card-lead">
+          <text class="l2-card-title">使用时段</text>
+          <text class="text-button limits-edit" bindtap="openLimitsSheet">修改</text>
+        </view>
         <view class="list">
           <view wx:if="{{sessionLimits.quietHoursLabel}}" class="list-row">
             <view class="row-copy">
@@ -197,7 +200,7 @@
           </view>
         </view>
         <text wx:if="{{sessionLimits.inQuietHours}}" class="pill pill-neutral">现在是休息时间</text>
-        <text class="caption">按北京时间执行，在绑定时设定。</text>
+        <text class="caption">按北京时间执行。修改后从下一次对话起生效。</text>
       </view>
 
       <view wx:for="{{ageRows}}" wx:key="person_id" class="l2-card">
@@ -389,6 +392,25 @@
         <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
         <button class="primary-button sheet-action" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
         <button class="text-button sheet-cancel" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
+      </view>
+
+      <!-- 使用时段底部抽屉：监护人修改单次时长与夜间休息，保存后设备从下一次对话起按新值执行 -->
+      <view wx:if="{{limitsSheetVisible}}" class="sheet-mask" bindtap="closeLimitsSheet" catchtouchmove="noop"></view>
+      <view wx:if="{{limitsSheetVisible}}" class="sheet device-sheet">
+        <view class="sheet-grab"></view>
+        <text class="sheet-title">修改使用时段</text>
+        <text class="sheet-sub">按北京时间 · 下一次对话起生效</text>
+        <picker range="{{limitsMinuteOptions}}" value="{{limitsMinuteIndex}}" bindchange="onLimitsMinutesChange">
+          <view class="limits-row"><text class="row-title">单次最长</text><text class="row-value">{{limitsMinuteOptions[limitsMinuteIndex]}} 分钟</text></view>
+        </picker>
+        <picker mode="time" value="{{limitsQuietStart}}" bindchange="onLimitsQuietStartChange">
+          <view class="limits-row"><text class="row-title">夜间休息开始</text><text class="row-value">{{limitsQuietStart}}</text></view>
+        </picker>
+        <picker mode="time" value="{{limitsQuietEnd}}" bindchange="onLimitsQuietEndChange">
+          <view class="limits-row"><text class="row-title">夜间休息结束</text><text class="row-value">{{limitsQuietEnd}}</text></view>
+        </picker>
+        <text wx:if="{{limitsError}}" class="error-text">{{limitsError}}</text>
+        <button class="primary-button sheet-action" loading="{{limitsSaving}}" disabled="{{limitsSaving}}" bindtap="confirmLimitsSheet">保存</button>
       </view>
 
       <!-- 解除绑定底部抽屉：先停止记忆，再二选一保留或删除使用人数据 -->

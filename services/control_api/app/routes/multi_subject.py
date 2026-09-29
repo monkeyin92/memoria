@@ -25,7 +25,10 @@ from services.consent.bound_subject import (
     BoundSubjectGrant,
 )
 from services.consent.evidence import ConsentParams
-from services.control_api.app.account_gate import require_capability_for_subject_category
+from services.control_api.app.account_gate import (
+    require_capability_for_subject_category,
+    require_writable_account,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_binding_token import (
     DeviceBindingTokenError,
@@ -831,6 +834,110 @@ async def get_device_runtime_profile(
     # the signature covers the exact RuntimeProfile v2 shape. Device settings
     # use /settings and /runtime-profile/changes as an explicit projection.
     return payload
+
+
+_HH_MM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class QuietHoursRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: str = Field(pattern=_HH_MM)
+    end: str = Field(pattern=_HH_MM)
+
+
+class SessionLimitsRequest(BaseModel):
+    """The guardian's replacement limits; ``None`` removes that limit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_session_minutes: int | None = Field(default=None, ge=1, le=240)
+    quiet_hours: QuietHoursRequest | None = None
+
+
+@router.put("/v1/devices/{device_id}/session-limits")
+async def set_device_session_limits(
+    device_id: str,
+    body: SessionLimitsRequest,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, object]:
+    """Change the child's session length and quiet hours after binding.
+
+    Only the guardian who set them at binding may replace them: the write
+    re-grants that guardian's own session consents, so the signed Runtime
+    Profile the device enforces carries the new values from the next session.
+    """
+
+    now = datetime.now(UTC)
+    service = cast(
+        BoundSubjectConsentService | None,
+        getattr(request.app.state, "bound_subject_consent", None),
+    )
+    control = _runtime(request)
+    if service is None or not isinstance(control, PostgresMultiSubjectRuntimeControl):
+        raise HTTPException(status_code=409, detail={"code": "session_limits_unavailable"})
+    try:
+        manifest = await control.require_binding_member(
+            device_id=device_id, user_id=user.user_id, now=now
+        )
+    except IdentityAccessDeniedError as exc:
+        raise _binding_forbidden() from exc
+    except IdentityNotFoundError as exc:
+        raise _binding_not_found() from exc
+    if user.user_id not in {manifest.account_owner_id, *manifest.device_admin_ids}:
+        raise _binding_forbidden()
+    if manifest.declared_mode != "parent_for_child" or len(manifest.primary_subject_ids) != 1:
+        raise HTTPException(status_code=409, detail={"code": "session_limits_not_applicable"})
+    quiet = body.quiet_hours
+    quiet_hours = (
+        (quiet.start, quiet.end) if quiet is not None and quiet.start != quiet.end else None
+    )
+    try:
+        changed = await service.update_session_limits(
+            actor_person_id=user.user_id,
+            subject_person_id=manifest.primary_subject_ids[0],
+            binding_id=manifest.binding_id,
+            max_session_seconds=(
+                body.max_session_minutes * 60 if body.max_session_minutes is not None else None
+            ),
+            quiet_hours=quiet_hours,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "session_limits_not_applicable"}
+        ) from exc
+    except IdentityAccessDeniedError as exc:
+        raise _binding_forbidden() from exc
+    except IdentityNotFoundError as exc:
+        raise _binding_not_found() from exc
+    if changed:
+        # The consent write has committed; rotate the profile and tell the
+        # device with next-session semantics so a live reply is never cut. A
+        # deferred projection never fails the write: the profile is re-issued
+        # on its next renewal anyway.
+        try:
+            payload = control.serialize_profile(
+                await control.refresh_profile(
+                    device_id=device_id, actor_id=user.user_id, now=now
+                )
+            )
+            await project_device_profile_change(
+                request, payload=payload, now=now, apply_at="next_session"
+            )
+        except Exception as exc:
+            logger.warning(
+                "session limits projection deferred device_id=%s error=%s",
+                device_id,
+                type(exc).__name__,
+            )
+    return {
+        "changed": changed,
+        "max_session_seconds": (
+            body.max_session_minutes * 60 if body.max_session_minutes is not None else None
+        ),
+        "quiet_hours": list(quiet_hours) if quiet_hours is not None else None,
+    }
 
 
 @router.post("/v1/sessions/resolve-subject")
