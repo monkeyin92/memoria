@@ -32,6 +32,9 @@ type deviceTestCore struct {
 	keywords  []string
 	playback  []PlaybackProgress
 	authority mediav1.InteractionAuthority
+	// strictPlayback mirrors VoiceCoreSession.SendPlaybackProgress: progress
+	// for any generation but current is rejected as stale.
+	strictPlayback bool
 }
 
 func newDeviceTestCore() *deviceTestCore {
@@ -102,6 +105,13 @@ func (c *deviceTestCore) SendKeywordAtFence(keyword string, _ float32, _, _ uint
 func (c *deviceTestCore) SendPlaybackProgress(progress PlaybackProgress) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.strictPlayback && !c.current.Equal(Fence{
+		SessionID: c.current.SessionID, TurnID: progress.TurnID,
+		GenerationID: progress.GenerationID, ToolEpoch: progress.ToolEpoch,
+		SessionEpoch: progress.SessionEpoch,
+	}) {
+		return fmt.Errorf("playback progress belongs to a stale generation")
+	}
 	c.playback = append(c.playback, progress)
 	return nil
 }

@@ -145,6 +145,13 @@ func (r *VoiceCoreMediaRuntime) SendVAD(
 	return sender.SendVadWithVoicedEnd(sample, voicedEnd, probability, rms, noiseFloor, start)
 }
 
+// GenerationReplaced reports whether fence names a generation this transport
+// has already moved past, such as the one a CANCEL_GENERATION flush replaced.
+func (r *VoiceCoreMediaRuntime) GenerationReplaced(fence Fence) bool {
+	current, _ := r.session.GenerationSnapshot()
+	return fence.SessionID == current.SessionID && !current.Equal(fence) && fence.monotonic(current)
+}
+
 func (r *VoiceCoreMediaRuntime) SendPlaybackProgress(progress PlaybackProgress) error {
 	sender, ok := r.core.(playbackProgressStream)
 	if !ok {

@@ -375,6 +375,12 @@ class MediaSessionLifecycleMixin:
                     if endpoint_task is not None and not endpoint_task.done():
                         endpoint_task.cancel()
                     self._clear_pending_turn_state(current)
+                    # Sample positions are local to an epoch: the device
+                    # restarts its uplink clock at 0. An old playback boundary
+                    # endpointed new-epoch speech as a post-playback follow-up
+                    # (2026-09-29, boundary 90560 from the previous epoch).
+                    current.last_playback_end_sample = None
+                    current.last_asr_evidence_end_sample = 0
                     self._audio_ingress.reset_for_reconnect(current)
                     reconnected = True
         if discarded is not None:

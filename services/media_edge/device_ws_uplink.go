@@ -292,6 +292,24 @@ func (c *DeviceConnection) handlePlaybackReceipt(envelope deviceControlEnvelope,
 		c.server.metrics.controlRejected.Add(1)
 		return false
 	}
+	if runtime != nil && (envelope.Type == "playback.ended" || envelope.Type == "playback.error") &&
+		runtime.GenerationReplaced(Fence{
+			SessionID: c.sessionID, TurnID: receipt.Fence.TurnID,
+			GenerationID: receipt.Fence.GenerationID, ToolEpoch: receipt.Fence.ToolEpoch,
+			SessionEpoch: receipt.Fence.SessionEpoch,
+		}) {
+		// playback.flush replaces the playing generation before the device
+		// can report its end, and the firmware then sends that terminal for
+		// the flushed fence (HandlePlaybackFlushV2). Voice Core already
+		// finalized it. Rejecting it closed the WSS and forced a reconnect on
+		// a new stream epoch (2026-09-29, spoken stop); it still ends the
+		// playback window it opened, and only that one.
+		c.clearPlaybackActive("replaced_generation_ended", receipt.Fence)
+		slog.Info("media edge dropped replaced-generation playback receipt",
+			"session", c.sessionID, "device", c.deviceID, "epoch", c.epoch,
+			"type", envelope.Type, "generation", receipt.Fence.GenerationID)
+		return true
+	}
 	c.stateMu.Lock()
 	c.playbackActive = envelope.Type == "playback.started" ||
 		envelope.Type == "playback.progress"
