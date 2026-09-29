@@ -11,6 +11,7 @@ stream with a reply that keeps playing until it is stopped.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -37,6 +38,7 @@ from services.agent.tests.unit.test_media_session_golden import (
     _h5_identity,
     _Harness,
     _is_action,
+    _proto_identity,
     _ScriptedProvider,
 )
 
@@ -51,9 +53,10 @@ class _LongStoryProvider(_ScriptedProvider):
     scripted partial result.
     """
 
-    def __init__(self, opening: str = _STORY_OPENING) -> None:
+    def __init__(self, opening: str = _STORY_OPENING, *, story_call: int = 1) -> None:
         super().__init__()
         self.opening = opening
+        self.story_call = story_call
         self.partials: dict[int, tuple[str, int]] = {}
         self.release = asyncio.Event()
 
@@ -88,8 +91,8 @@ class _LongStoryProvider(_ScriptedProvider):
         _fence: GenerationFence,
     ) -> AsyncIterator[MediaReplyChunk]:
         self.reply_calls += 1
-        opening = self.opening if self.reply_calls == 1 else "好的。"
-        release = self.release if self.reply_calls == 1 else None
+        opening = self.opening if self.reply_calls == self.story_call else "好的。"
+        release = self.release if self.reply_calls == self.story_call else None
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
             yield MediaReplyChunk(
@@ -166,6 +169,35 @@ class _StoryHarness(_Harness):
             and delivery["generation_id"] == fence.generation_id
         ]
 
+    async def reconnect(self) -> None:
+        """The device's WSS was closed: it returns on the next stream epoch.
+
+        Its uplink sample clock restarts at 0 (firmware ResetSessionState),
+        exactly as ``stream_epoch=2034 sample=0`` in the 2026-09-29 log.
+        """
+
+        await self._requests.put(None)
+        if self._reader is not None:
+            await asyncio.wait_for(self._reader, timeout=2)
+        self.identity = dataclasses.replace(
+            self.identity, stream_epoch=self.identity.stream_epoch + 1
+        )
+        self.wire_identity = _proto_identity(self.identity)
+        self._requests = asyncio.Queue()
+        self._reader = asyncio.create_task(self._read(), name="story-reader-reconnected")
+        accepted = self.count("accepted")
+        await self.send(
+            media_pb2.MediaToCore(
+                hello=media_pb2.SessionHello(
+                    identity=self.wire_identity,
+                    interaction_authority=media_pb2.INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+                )
+            )
+        )
+        await self.wait_for(lambda: self.count("accepted") == accepted + 1)
+        self.sample = 0
+        self._audio_sequence = 0
+
     async def start_story(self) -> GenerationFence:
         """The owner asks for a story; its first phrase is on the speaker."""
 
@@ -211,8 +243,9 @@ async def _run_story(
     script: Any,
     *,
     opening: str = _STORY_OPENING,
+    story_call: int = 1,
 ) -> None:
-    provider = _LongStoryProvider(opening)
+    provider = _LongStoryProvider(opening, story_call=story_call)
     harness = _StoryHarness(identity, provider)
     await harness.start()
     try:
@@ -406,3 +439,47 @@ async def test_device_stop_after_playback_window_finals_is_its_own_turn(
     assert window.provider.prepared == []
     assert _user_turn_texts(window.context) == []
     assert not window.context.standby_requested
+
+
+@pytest.mark.asyncio
+async def test_device_utterance_after_stop_and_reconnect_is_one_answered_turn() -> None:
+    """Field 2026-09-29 session 2eb6ba0f: after the spoken stop the device came back.
+
+    Edge closed the WSS on the flushed generation's ``playback.ended`` and the
+    device reconnected on stream epoch 2034, its uplink clock back at 0.  The
+    previous epoch's playback boundary (90560) then endpointed the new
+    request as a post-playback follow-up.  Sample positions do not cross an
+    epoch: the utterance must commit whole at its VAD end and be answered.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        # The greeting plays out, leaving a playback boundary in epoch 1.
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.playback_ended()
+        assert harness.context.last_playback_end_sample is not None
+        await harness.utterance("给我讲个故事", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 2)
+        story = harness.runtime.fence
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        assert story in harness.story.cancelled
+
+        await harness.reconnect()
+        # Past the old boundary on the new clock; the owner pauses mid-request
+        # longer than the follow-up grace while the device VAD stays open.
+        await harness.audio_frames(75)
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(10, final_text="讲一个")
+        await asyncio.sleep(1.5)
+        await harness.audio_frames(15, final_text="短一点的故事")
+        await harness.vad_end(harness.sample)
+        await harness.wait_for(lambda: harness.story.reply_calls == 3)
+
+        turns = _user_turn_texts(harness.context)
+        assert turns[:2] == ["你好", "给我讲个故事"]
+        assert len(turns) == 3
+        assert "讲一个" in turns[2] and "短一点的故事" in turns[2]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("stop-then-reconnect"), script, story_call=2)

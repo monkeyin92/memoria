@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
 
@@ -344,5 +346,110 @@ func TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt(t *testing.T) {
 	}
 	if closeErr.Code != 4002 || closeErr.Text != "playback_watermark_precision_mismatch" {
 		t.Fatalf("watermark refusal close code: %d %q", closeErr.Code, closeErr.Text)
+	}
+}
+
+// Field 2026-09-29 (session 2eb6ba0f): a spoken 「停」 made Voice Core cancel the
+// playing generation; Edge sent playback.flush and the firmware then reported
+// the flushed generation's playback.ended, as HandlePlaybackFlushV2 does. Voice
+// Core already names the replacement generation, so the receipt was rejected
+// as stale and the WSS closed; the device reconnected on a new stream epoch.
+func TestDeviceWSSFlushedGenerationEndedReceiptKeepsSession(t *testing.T) {
+	env := newDeviceTestEnv(t, func(server *DeviceWSServer) {
+		server.SessionCloseReportHook = func(DeviceSessionCloseReport) {}
+	})
+	connection, _ := env.dial(t, env.token(t, func(claims *DeviceMediaClaims) {
+		claims.DeviceSettings.AllowedBargeIn = []string{"button", "keyword"}
+	}), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	deviceReadAccepted(t, connection)
+	env.mu.Lock()
+	core := env.cores["session_1"]
+	env.mu.Unlock()
+	serverConn := env.server.connectionBySession("session_1")
+	if serverConn == nil {
+		t.Fatal("server connection not registered")
+	}
+	story := deviceFence{TurnID: 1, GenerationID: 1, ToolEpoch: 0, SessionEpoch: 1}
+	core.mu.Lock()
+	core.strictPlayback = true
+	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
+	core.mu.Unlock()
+	core.inject(deviceGenerationEvent(
+		"session_1", 18, 1, 1, 1,
+		mediav1.GenerationAction_GENERATION_ACTION_START,
+	))
+	readUntil := func(marker string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			messageType, payload, err := readDeviceMessage(connection, time.Until(deadline))
+			if err != nil {
+				t.Fatalf("waiting for %s: %v", marker, err)
+			}
+			if messageType == websocket.TextMessage && strings.Contains(string(payload), marker) {
+				return
+			}
+		}
+		t.Fatalf("device never received %s", marker)
+	}
+	readUntil("generation.started")
+	sendReceipt := func(messageType string, sequence uint64) {
+		serverConn.ledger.recordSent(story, sequence, 4800*sequence)
+		writeDeviceJSON(t, connection, devicePlaybackReceipt{
+			deviceEventBase: deviceEventBase{
+				Type: messageType, Version: 2, StreamEpoch: 18,
+				ControlSequence: sequence, DeviceMonotonicMS: sequence,
+			},
+			Fence:             story,
+			ReceivedSequence:  sequence,
+			RenderedSampleEnd: 4800 * sequence,
+			Approximate:       true,
+		})
+	}
+	sendReceipt("playback.started", 1)
+	waitUntil(t, 3*time.Second, serverConn.isPlaybackActive)
+
+	// Voice Core stops the story: CANCEL_GENERATION names the replacement.
+	core.inject(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: &mediav1.RealtimeEffect{
+			Identity: deviceCoreIdentity("session_1", 18), Sequence: 2,
+			SessionId: "session_1", StreamEpoch: 18,
+			EffectId: "voice-stop-1", EffectKind: mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+			SourceEventId: "voice_stop_command", Payload: []byte(`{"reason":"voice_stop_command"}`),
+			TurnId: 1, GenerationId: 2, ToolEpoch: 0, SessionEpoch: 1,
+		},
+	}})
+	readUntil("playback.flush")
+	core.mu.Lock()
+	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 2, SessionEpoch: 1}
+	core.mu.Unlock()
+
+	// The firmware reports the flushed generation's end after the flush.
+	sendReceipt("playback.ended", 2)
+	waitUntil(t, 3*time.Second, func() bool { return !serverConn.isPlaybackActive() })
+
+	// The same transport keeps serving the owner: the next utterance's VAD
+	// start reaches Voice Core instead of a reconnect on a new stream epoch.
+	writeDeviceJSON(t, connection, deviceVADEvent{
+		deviceEventBase: deviceEventBase{
+			Type: "vad.start", Version: 2, StreamEpoch: 18,
+			ControlSequence: 3, DeviceMonotonicMS: 3,
+		},
+		SamplePosition: 16_000, VoicedEndSample: 16_000, Probability: 1, NearEndRMS: 0.1,
+	})
+	waitUntil(t, 3*time.Second, func() bool {
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		return len(core.vad) == 1
+	})
+	if env.server.Leases.ActiveCount() == 0 {
+		t.Fatal("the flushed generation's receipt closed the device session")
+	}
+	core.mu.Lock()
+	forwarded := len(core.playback)
+	core.mu.Unlock()
+	if forwarded != 1 {
+		t.Fatalf("playback receipts forwarded to Voice Core = %d, want only the live one", forwarded)
 	}
 }
