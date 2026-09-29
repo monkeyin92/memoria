@@ -32,6 +32,18 @@ _RELATION_ALIASES = {
     "同事": ("colleague", ("同事",)),
     "朋友": ("friend", ("朋友",)),
 }
+
+def relation_labels(relationship: str) -> tuple[str, ...]:
+    """Chinese labels for an English relation code (``mother`` -> 妈妈, 母亲)."""
+
+    code = relationship.strip().lower()
+    labels: list[str] = []
+    for relation_code, relation_labels_ in _RELATION_ALIASES.values():
+        if relation_code == code:
+            labels.extend(relation_labels_)
+    return tuple(dict.fromkeys(labels))
+
+
 _PERSON = re.compile(
     r"我(?:的)?(?P<relation>妈妈|母亲|爸爸|父亲|妻子|丈夫|儿子|女儿|同事|朋友)"
     r"(?:叫|名叫|是)?(?P<name>[\u4e00-\u9fff]{2,4}?)(?=今年|负责|[，。,.]|$)"
