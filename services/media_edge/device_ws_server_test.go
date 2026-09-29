@@ -1142,9 +1142,21 @@ func TestDeviceWSSControlPriorityIntegration(t *testing.T) {
 		if messageType != websocket.TextMessage {
 			continue
 		}
-		if strings.Contains(string(payload), "playback.flush") {
-			return
+		if !strings.Contains(string(payload), "playback.flush") {
+			continue
 		}
+		// The firmware rejects a fence without a positive session_epoch as a
+		// wire violation and drops the socket (2026-09-29, every Core stop).
+		var flush devicePlaybackControl
+		if err := json.Unmarshal(payload, &flush); err != nil {
+			t.Fatal(err)
+		}
+		want := deviceFence{TurnID: 1, GenerationID: 2, ToolEpoch: 0, SessionEpoch: 1}
+		if flush.Fence != want || flush.ReplacementGeneration != 2 {
+			t.Fatalf("playback.flush fence = %+v replacement=%d, want %+v replacement=2",
+				flush.Fence, flush.ReplacementGeneration, want)
+		}
+		return
 	}
 }
 
