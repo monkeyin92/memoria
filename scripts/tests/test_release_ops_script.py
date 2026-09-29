@@ -165,13 +165,13 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260927-child-binding-v1",
         "20260928-child-binding-v2",
         "20260928-session-trust-v1",
-        "20260928-review-batches-v1",
+        "20260928-review-batches-v1", "20260929-livekit-retire-v1",
         "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260929-livekit-retire-v1" in script
-    assert "PREV_COMMIT=57d9075d780ad1c73e7270a30f987fdf980c3aa1" in script
+    assert "PREV_TAG=20260929-voice-core-refactor-v1" in script
+    assert "PREV_COMMIT=b48218b1eba2f6fcbd4dbd122cba4e1e2d150652" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
