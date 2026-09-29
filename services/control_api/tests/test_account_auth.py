@@ -118,14 +118,14 @@ def test_production_miniprogram_requires_wechat_credentials_and_independent_iden
         "ENVIRONMENT": "production",
         "PUBLIC_BASE_URL": "https://voice.example.com",
         "ALLOWED_ORIGINS": "https://voice.example.com",
-        "LIVEKIT_URL": "wss://livekit.example.com",
-        "LIVEKIT_API_KEY": "key",
-        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
-        "MINIPROGRAM_MEDIA_GATEWAY_URL": "wss://voice.example.com/media",
     }
+    # The Mini Program is configured by its WeChat app id: half a key pair is
+    # refused, and so is an identity key that is missing or reused.
     with pytest.raises(ValueError, match="WECHAT_MINIPROGRAM_APPID"):
-        ControlSettings(_env_file=None, **common).validate_production()
+        ControlSettings(
+            _env_file=None, **common, WECHAT_MINIPROGRAM_APPID="wx-test"
+        ).validate_production()
     with pytest.raises(ValueError, match="MEMORIA_WECHAT_IDENTITY_SECRET"):
         ControlSettings(
             _env_file=None,
@@ -143,34 +143,42 @@ def test_production_miniprogram_requires_wechat_credentials_and_independent_iden
         ).validate_production()
 
 
-def test_production_device_gateway_requires_wss_and_an_independent_ticket_key() -> None:
+def test_production_device_media_requires_its_onboarding_authority() -> None:
     common = {
         "ENVIRONMENT": "production",
         "PUBLIC_BASE_URL": "https://voice.example.com",
         "ALLOWED_ORIGINS": "https://voice.example.com",
-        "LIVEKIT_URL": "wss://livekit.example.com",
-        "LIVEKIT_API_KEY": "key",
-        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
+        "DEVICE_DIRECT_MEDIA_WSS_URL": "wss://voice.example.com/v1/device/media",
     }
-    with pytest.raises(ValueError, match="secure WSS"):
+    with pytest.raises(ValueError, match="MEMORIA_DEVICE_ONBOARDING_DATABASE_URL"):
+        ControlSettings(_env_file=None, **common).validate_production()
+    with pytest.raises(ValueError, match="memoria_device_onboarding_api"):
         ControlSettings(
             _env_file=None,
             **common,
-            DEVICE_MEDIA_GATEWAY_URL="ws://voice.example.com/v1/device/media",
+            MEMORIA_DEVICE_ONBOARDING_DATABASE_URL="postgresql://someone:pw@db/memoria",
         ).validate_production()
-    with pytest.raises(ValueError, match="device gateway ticket secret"):
+    with pytest.raises(ValueError, match="MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64"):
         ControlSettings(
             _env_file=None,
             **common,
-            DEVICE_MEDIA_GATEWAY_URL="wss://voice.example.com/v1/device/media",
+            MEMORIA_DEVICE_ONBOARDING_DATABASE_URL=(
+                "postgresql://memoria_device_onboarding_api:pw@db/memoria"
+            ),
         ).validate_production()
-    with pytest.raises(ValueError, match="device gateway ticket secret"):
+    # The direct edge stack is validated next (the key/mTLS details are
+    # covered in test_device_media_runtime).
+    with pytest.raises(ValueError, match="production direct device media"):
         ControlSettings(
             _env_file=None,
             **common,
-            DEVICE_MEDIA_GATEWAY_URL="wss://voice.example.com/v1/device/media",
-            MEMORIA_DEVICE_GATEWAY_TICKET_SECRET=common["MEMORIA_AUTH_SECRET"],
+            MEMORIA_DEVICE_ONBOARDING_DATABASE_URL=(
+                "postgresql://memoria_device_onboarding_api:pw@db/memoria"
+            ),
+            MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64=base64.b64encode(
+                bytes(range(32))
+            ).decode("ascii"),
         ).validate_production()
 
 

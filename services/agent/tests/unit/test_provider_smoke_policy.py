@@ -107,23 +107,15 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
         calls.append("llm")
         return "DeepSeek"
 
-    async def fake_interrupt_semantic() -> None:
-        calls.append("interrupt-semantic")
-
     monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
     monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
     monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
     monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
-    monkeypatch.setattr(
-        provider_smoke_test,
-        "smoke_interrupt_semantic",
-        fake_interrupt_semantic,
-    )
 
     assert await provider_smoke_test.main() == 0
-    assert calls == ["realtime-search", "doubao", "funasr", "llm", "interrupt-semantic"]
+    assert calls == ["realtime-search", "doubao", "funasr", "llm"]
     assert (
-        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, DeepSeek, Doubao, InterruptSemantic"
+        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, DeepSeek, Doubao"
         in capsys.readouterr().out
     )
 

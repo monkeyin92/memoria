@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from livekit import api
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import hash_password
 from services.control_api.app.session_termination import (
     AccountSessionTerminator,
-    LiveKitRoomCloser,
     RealtimeConnectionRegistry,
 )
 
@@ -114,23 +111,13 @@ async def test_account_session_termination_closes_live_connections_and_invalidat
         **frozen_companion,
     )
     registry = ConnectionRegistryStub()
-    closed_rooms: list[str] = []
-
-    async def close_room(room_name: str) -> None:
-        closed_rooms.append(room_name)
-
-    terminator = AccountSessionTerminator(
-        store=store,
-        connections=registry,
-        close_room=close_room,
-    )
+    terminator = AccountSessionTerminator(store=store, connections=registry)
 
     count = await terminator.terminate_account("account-delete")
 
     assert count == 2
     assert registry.closed == ["account-delete"]
     assert registry.closed_sessions == [{"cascade-session", "omni-session"}]
-    assert closed_rooms == ["cascade-room"]
     assert store.get_voice_session_by_id(session_id="cascade-session") is None
     assert store.get_voice_session_by_id(session_id="audio-session") is None
 
@@ -209,16 +196,7 @@ async def test_account_session_termination_closes_exact_legacy_sessions_for_eith
             session_id=session_id,
             connection=socket,
         )
-    closed_rooms: list[str] = []
-
-    async def close_room(room_name: str) -> None:
-        closed_rooms.append(room_name)
-
-    terminator = AccountSessionTerminator(
-        store=store,
-        connections=registry,
-        close_room=close_room,
-    )
+    terminator = AccountSessionTerminator(store=store, connections=registry)
 
     count = await terminator.terminate_account(deleted_account)
 
@@ -226,90 +204,8 @@ async def test_account_session_termination_closes_exact_legacy_sessions_for_eith
     assert {
         session_id for session_id, socket in sockets.items() if socket.closed
     } == closed_session_ids
-    assert closed_rooms == [f"{session_id}-room" for session_id in sorted(closed_session_ids)]
     assert all(
         store.get_voice_session_by_id(session_id=session_id) is None
         for session_id in closed_session_ids
     )
     assert store.get_voice_session_by_id(session_id=remaining_session_id) is not None
-
-
-@pytest.mark.asyncio
-async def test_livekit_room_closer_treats_missing_room_as_already_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class MissingRoom:
-        async def delete_room(self, request: object) -> None:
-            del request
-            raise api.ServerError(
-                api.ServerErrorCode.NOT_FOUND,
-                "requested room does not exist",
-                status=404,
-            )
-
-    class FakeLiveKit:
-        room = MissingRoom()
-
-        async def __aenter__(self) -> FakeLiveKit:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            del args
-
-    monkeypatch.setattr(api, "LiveKitAPI", lambda *args: FakeLiveKit())
-    closer = LiveKitRoomCloser(
-        SimpleNamespace(
-            offline_mock=False,
-            livekit_url="wss://livekit.example.com",
-            livekit_api_key="key",
-            livekit_api_secret="secret",
-        )  # type: ignore[arg-type]
-    )
-
-    await closer("stale-room")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("code", "status"),
-    [
-        (api.ServerErrorCode.UNAVAILABLE, 503),
-        (api.ServerErrorCode.NOT_FOUND, 500),
-        (api.ServerErrorCode.UNAVAILABLE, 404),
-    ],
-)
-async def test_livekit_room_closer_keeps_unexpected_errors_visible(
-    monkeypatch: pytest.MonkeyPatch,
-    code: str,
-    status: int,
-) -> None:
-    class BrokenRoom:
-        async def delete_room(self, request: object) -> None:
-            del request
-            raise api.ServerError(
-                code,
-                "livekit unavailable",
-                status=status,
-            )
-
-    class FakeLiveKit:
-        room = BrokenRoom()
-
-        async def __aenter__(self) -> FakeLiveKit:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            del args
-
-    monkeypatch.setattr(api, "LiveKitAPI", lambda *args: FakeLiveKit())
-    closer = LiveKitRoomCloser(
-        SimpleNamespace(
-            offline_mock=False,
-            livekit_url="wss://livekit.example.com",
-            livekit_api_key="key",
-            livekit_api_secret="secret",
-        )  # type: ignore[arg-type]
-    )
-
-    with pytest.raises(api.ServerError):
-        await closer("unavailable-room")

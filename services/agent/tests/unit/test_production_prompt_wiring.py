@@ -15,7 +15,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from services.agent.src import agent as agent_module
 from services.agent.src import media_agent_factory as factory_module
-from services.agent.src import session_entrypoint as entrypoint_module
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.prompt_composition import (
@@ -42,6 +41,9 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     UNKNOWN_SAFE_OBLIGATIONS,
     canonical_wire_payload,
     install_receipt_verifier,
+)
+from services.agent.tests.unit.runtime_state_helpers import (
+    bind_owner_speaker,
 )
 from services.common.companions import designed_voice_speaker_sha256
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -114,10 +116,9 @@ def _runtime(monkeypatch: pytest.MonkeyPatch) -> DuplexRuntime:
     return runtime
 
 
-def test_production_prompt_is_the_shared_seam_for_cascade_and_omni() -> None:
-    """Both production call sites consume the exact same function object."""
+def test_production_prompt_is_the_shared_seam_for_the_media_session() -> None:
+    """The media session factory consumes the shared prompt function object."""
 
-    assert entrypoint_module.production_system_prompt is production_system_prompt
     assert factory_module.production_system_prompt is production_system_prompt
 
 
@@ -290,7 +291,7 @@ async def test_epoch_keyed_permission_caches_never_hit_old_subject(
     runtime = _runtime(monkeypatch)
     gate = runtime.orchestrator.runtime_profiles
     runtime.set_mode_policy(_policy(_profile(epoch=1)))
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
 
     async def _commit() -> None:
         await runtime.on_turn_committed("第一条。", input_modality="text")
@@ -499,7 +500,7 @@ def test_no_profile_never_grants_sensitive_side_effects(
     """Audit 1: without a signed profile, private history/tools are False."""
 
     runtime = _runtime(monkeypatch)
-    runtime.authenticate_text_owner()
+    bind_owner_speaker(runtime)
     runtime.set_mode_policy(_policy(None))
     gate = runtime.orchestrator.runtime_profiles
     assert (
@@ -777,7 +778,6 @@ async def test_authority_loss_clears_old_subject_context_and_recovers_on_new_epo
     )
     assert not any(fence.session_epoch == old_epoch for fence in runtime._input_modality_by_fence)
     assert not runtime._speaker_pcm
-    assert not runtime._trusted_playback_pcm
     assert runtime._speaker_decision is None
     assert runtime._speaker_class == "uncertain"
     assert runtime._pending_assistant_text == ""
@@ -2719,122 +2719,6 @@ async def test_real_voice_profile_refresh_is_captured_and_dropped_on_switch(
     # The refresher reference was dropped during the rotation: nothing can
     # consume the late personal-voice result for the new subject.
     assert runtime._voice_profile_refresh_task is None
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_listener_cue_async_stop_is_awaited_before_switch_completes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """P0: the REAL listener-cue path with an async stop/flush handle.  The
-    playing cue is cancelled by the identity rotation, its owner task awaits
-    the async stop, and the old cue's finally cannot mutate the new epoch's
-    phase or keep old audio playing."""
-
-    from services.agent.src.orchestration.state_machine import InteractionPhase
-    from services.agent.tests.unit.runtime_profile_test_helpers import (
-        TEST_VERIFY_KEY,
-        bind_owner_policy,
-        canonical_wire_payload,
-    )
-
-    class _AsyncCueHandle:
-        def __init__(self) -> None:
-            self.stop_calls: list[str] = []
-            self.playout_started = asyncio.Event()
-            self.release = asyncio.Event()
-
-        def stop(self) -> object:
-            async def _stop() -> None:
-                await asyncio.sleep(0)
-                self.stop_calls.append("stopped")
-
-            return _stop()
-
-        async def wait_for_playout(self) -> None:
-            self.playout_started.set()
-            try:
-                await self.release.wait()
-            except asyncio.CancelledError:
-                pass  # swallow; the finally must still stop the handle
-
-    monkeypatch.setenv(VERIFY_KEY_ENV, TEST_VERIFY_KEY)
-    runtime = DuplexRuntime.create(
-        session_id="cue-async-stop",
-        device_id="dev_01J_test",
-        listener_cues_enabled=True,
-    )
-    bind_owner_policy(runtime)
-    runtime.cue_scheduler.min_speech_ms = 0
-    runtime.cue_scheduler.pause_ms = 0.02
-    runtime.cue_scheduler.cooldown_ms = 0
-    runtime.set_listener_cue_aec_healthy(True)
-    published: list[dict[str, object]] = []
-
-    async def publish(event: dict[str, object]) -> None:
-        published.append(event)
-
-    runtime.set_event_publisher(publish)
-    handle_created = asyncio.Event()
-    holder: dict[str, _AsyncCueHandle] = {}
-
-    async def player(text: str) -> _AsyncCueHandle:
-        del text
-        handle = _AsyncCueHandle()
-        holder["h"] = handle
-        handle_created.set()
-        return handle
-
-    runtime.set_listener_cue_player(player)
-    await runtime.orchestrator.ready()
-    runtime.on_user_voice_started(now_ns=1_000_000_000)
-    runtime.observe_user_transcript(
-        "我还在继续讲这件事",
-        final=False,
-        now_ns=2_100_000_000,
-    )
-    await asyncio.wait_for(handle_created.wait(), timeout=2)
-    handle = holder["h"]
-    await asyncio.wait_for(handle.playout_started.wait(), timeout=2)
-    # Let the spawned UI publisher task run before asserting on events.
-    await asyncio.sleep(0.02)
-    assert runtime.fence.session_epoch == 1
-    assert runtime.interaction_phase is InteractionPhase.BACKCHANNEL
-    assert any(e.get("type") == "listener_cue" and e.get("state") == "started" for e in published)
-    cue_task = runtime._listener_cue_candidate_task
-    assert cue_task is not None and not cue_task.done()
-
-    # Identity switch while the cue is playing.
-    switched = canonical_wire_payload(
-        session_id="cue-async-stop",
-        device_id="dev_01J_test",
-        runtime_profile_id="rp_cue_switched",
-        active_subject_id="person_parent",
-        subject_category="adult",
-        age_band="adult",
-        speaker_state="confirmed",
-        service_mode="adult_companion",
-        session_epoch=2,
-        capabilities=["chat", "tutor", "english_practice"],
-    )
-    applied = runtime.apply_runtime_profile(switched)
-    assert applied is not None
-    phase_after_switch = runtime.interaction_phase
-    handle.release.set()
-    await asyncio.wait_for(cue_task, timeout=2)
-    # The async stop was awaited by the captured owner task (not leaked).
-    assert handle.stop_calls == ["stopped"]
-    assert runtime._active_listener_cue is None
-    assert runtime._active_listener_cue_handle is None
-    # The old cue's finally did not mutate the new epoch's phase and no old
-    # cue audio/event is tagged with the new subject.
-    assert runtime.interaction_phase is phase_after_switch
-    assert not any(
-        e.get("type") == "listener_cue" and e.get("state") == "finished" for e in published
-    )
-    assert not any(
-        e.get("type") == "listener_cue" and e.get("state") == "cancelled" for e in published
-    )
     await runtime.close()
 
 

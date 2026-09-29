@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import Any, Literal, cast
 
 from services.agent.src import generation_output_policy as output_policy
@@ -24,7 +24,6 @@ from services.agent.src.agent_voice_profile import (
     _heard_only_chat_context as _heard_only_chat_context,  # noqa: F401
 )
 from services.agent.src.context_assembler import ContextAssembler
-from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence, same_turn_generation_allows
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
@@ -135,20 +134,6 @@ def _chunk_text(chunk: Any) -> str:
         if isinstance(content, str):
             return content
     return ""
-
-
-def _message_text(message: Any) -> str:
-    content = getattr(message, "text_content", None)
-    if callable(content):
-        content = content()
-    if isinstance(content, str):
-        return content
-    if isinstance(message, str):
-        return message
-    raw = getattr(message, "content", "")
-    if isinstance(raw, list):
-        return "\n".join(part for part in raw if isinstance(part, str))
-    return str(raw or "")
 
 
 class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
@@ -1295,145 +1280,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         )
         return fence
 
-    async def handle_text_input(self, session: Any, event: Any) -> None:
-        text = str(getattr(event, "text", "") or "").strip()
-        participant = getattr(event, "participant", None)
-        if not participant or not text or len(text) > 500:
-            logger.info(
-                "text_input_ignored reason=invalid_input session_id=%s",
-                self._runtime.session_id,
-            )
-            return
-        if self._runtime.mode_policy.mode != "companion":
-            logger.info(
-                "text_input_ignored reason=interaction_mode session_id=%s",
-                self._runtime.session_id,
-            )
-            return
-        async with session._claim_user_turn():
-            await session.interrupt()
-            speaker = self._runtime.authenticate_text_owner()
-            accepted, reason = self._runtime.accept_user_turn(
-                text,
-                input_modality="text",
-            )
-            if not accepted:
-                logger.info(
-                    "text_input_ignored reason=%s session_id=%s",
-                    reason or "guarded",
-                    self._runtime.session_id,
-                )
-                return
-            await self._prepare_committed_turn(
-                text=text,
-                speaker=speaker,
-                input_modality="text",
-            )
-            self._runtime.enable_text_only_delivery()
-            session.output.set_audio_enabled(False)
-            session.generate_reply(user_input=text, input_modality="text")
-
-    async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
-        raw_text = _message_text(new_message) if new_message is not None else ""
-        canonical_text = self._runtime.consume_canonical_user_turn(raw_text)
-        canonical_speech_epoch = self._runtime.consumed_canonical_speech_epoch
-        if canonical_text is None:
-            logger.info(
-                "user_turn_ignored reason=no_canonical_turn session_id=%s",
-                self._runtime.session_id,
-            )
-            raise StopResponse()
-        text = canonical_text
-        if not text.strip():
-            logger.info(
-                "user_turn_ignored reason=empty_transcript session_id=%s",
-                self._runtime.session_id,
-            )
-            raise StopResponse()
-        if new_message is not None and text != raw_text.strip() and hasattr(new_message, "content"):
-            new_message.content = [text]
-        if text.strip():
-            has_speech_metrics = hasattr(new_message, "metrics")
-            metrics = getattr(new_message, "metrics", {}) or {}
-            speech_anchored = (
-                any(
-                    metrics.get(name) is not None
-                    for name in ("started_speaking_at", "stopped_speaking_at")
-                )
-                if has_speech_metrics
-                else None
-            )
-            logger.info(
-                "user_turn_endpoint_timing started_speaking_at=%s "
-                "stopped_speaking_at=%s transcription_delay=%s "
-                "end_of_turn_delay=%s",
-                metrics.get("started_speaking_at"),
-                metrics.get("stopped_speaking_at"),
-                metrics.get("transcription_delay"),
-                metrics.get("end_of_turn_delay"),
-            )
-            speaker, semantic_verdict = await asyncio.gather(
-                self._runtime.await_speaker_classification(),
-                self._runtime.resolve_interrupt_semantic(
-                    text.strip(),
-                    canonical_speech_epoch=canonical_speech_epoch,
-                ),
-            )
-            logger.info(
-                "speaker_authority classification=%s reason=%s model=%s "
-                "template_version=%s session_id=%s",
-                speaker.classification,
-                speaker.reason_code,
-                speaker.model_version,
-                speaker.template_version,
-                self._runtime.session_id,
-            )
-            accepted, reason = self._runtime.accept_user_turn(
-                text.strip(),
-                speech_anchored=speech_anchored,
-                canonical_speech_epoch=canonical_speech_epoch,
-                canonical_snapshot_bound=self._runtime.consumed_canonical_snapshot_bound,
-                semantic_verdict=semantic_verdict,
-            )
-            if not accepted:
-                logger.info(
-                    "%s reason=%s",
-                    (
-                        "post_playback_input_ignored"
-                        if reason
-                        in {
-                            "backchannel",
-                            "assistant_echo",
-                            "non_target_language",
-                            "low_information_fragment",
-                            "speaker_mismatch",
-                            "interrupt_command_only",
-                            "interrupt_replayed_previous_turn",
-                            "interrupt_semantic_control_only",
-                            "interrupt_semantic_unsure",
-                            "stale_interrupt_semantic",
-                            "stale_control_epoch",
-                            "target_non_owner",
-                            "target_insufficient_speech",
-                            "target_unconfirmed",
-                        }
-                        else "user_turn_ignored"
-                    ),
-                    reason,
-                )
-                raise StopResponse()
-            await self._prepare_committed_turn(
-                text=text.strip(),
-                speaker=speaker,
-                input_modality="audio",
-            )
-        parent = getattr(Agent, "on_user_turn_completed", None) if _HAS_LIVEKIT else None
-        if parent is not None:
-            try:
-                await parent(self, turn_ctx, new_message)
-            except TypeError:
-                return
-
     def llm_node(
         self,
         chat_ctx: Any,
@@ -2249,119 +2095,3 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     with contextlib.suppress(Exception):
                         await close()
             self._runtime.orchestrator.clear_active_llm_task(task)
-
-    def tts_node(
-        self,
-        text: AsyncIterable[str],
-        model_settings: Any,
-    ) -> AsyncGenerator[Any, None]:
-        return self._tts_node_impl(text, model_settings)
-
-    async def _tts_node_impl(
-        self,
-        text: AsyncIterable[str],
-        model_settings: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Gate every audio frame through GenerationFence; register cancel task."""
-        if not _HAS_LIVEKIT:
-            return
-            yield  # pragma: no cover
-
-        from services.agent.src.orchestration.prosody import prepare_tts_text
-
-        cancellation = self._runtime.cancellation_context()
-        fence = cancellation.fence
-        speech_plan = self._runtime.speech_plan_for_fence(fence)
-        self._runtime.heard_tracker.expect_utterance(fence)
-        if self._runtime.tts is not None:
-            self._runtime.tts.bind_fence(fence)
-
-        task = asyncio.current_task()
-        self._runtime.orchestrator.set_active_tts_task(task)
-        spoken_parts: list[str] = []
-        first_audio_marked = False
-
-        async def _track_text() -> AsyncGenerator[str, None]:
-            first_segment = True
-            async for part in text:
-                rewritten = prepare_tts_text(
-                    part,
-                    speech_plan,
-                    is_first_segment=first_segment,
-                    use_markup_tags=self._runtime.use_paralinguistic_tags,
-                )
-                first_segment = False
-                if not rewritten:
-                    continue
-                spoken_parts.append(rewritten)
-                self._runtime.update_pending_assistant_text("".join(spoken_parts))
-                yield rewritten
-
-        try:
-            self._runtime.mark_audio_event("tts_task_started")
-            stream = Agent.default.tts_node(self, _track_text(), model_settings)
-            if asyncio.iscoroutine(stream):
-                stream = await stream
-            assert stream is not None
-            async for frame in stream:
-                if task is not None and task.cancelled():
-                    break
-                if self._runtime.orchestrator.tts_cancel_event().is_set():
-                    break
-                pcm = bytes(getattr(frame, "data", b"") or b"")
-                if pcm:
-                    if not first_audio_marked:
-                        self._runtime.mark_audio_event(
-                            "tts_first_audio_received",
-                            detail={"pcm_bytes": len(pcm)},
-                        )
-                        first_audio_marked = True
-                    gated = self._runtime.gate_tts_audio(cancellation, pcm)
-                    if gated is None:
-                        logger.info(
-                            "stale tts audio dropped generation_id=%s",
-                            fence.generation_id,
-                        )
-                        break
-                yield frame
-        finally:
-            self._runtime.orchestrator.clear_active_tts_task(task)
-
-    def transcription_node(
-        self,
-        text: AsyncIterable[Any],
-        model_settings: Any,
-    ) -> AsyncGenerator[Any, None]:
-        return self._transcription_node_impl(text, model_settings)
-
-    async def _transcription_node_impl(
-        self,
-        text: AsyncIterable[Any],
-        model_settings: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Capture timed transcript words into HeardTextTracker."""
-        if not _HAS_LIVEKIT:
-            return
-            yield  # pragma: no cover
-
-        words: list[TimedWord] = []
-        async for delta in Agent.default.transcription_node(self, text, model_settings):
-            if isinstance(delta, TimedString) or (
-                hasattr(delta, "start_time") and hasattr(delta, "end_time")
-            ):
-                try:
-                    start = float(getattr(delta, "start_time", 0.0) or 0.0)
-                    end = float(getattr(delta, "end_time", start) or start)
-                    words.append(
-                        TimedWord(
-                            text=str(delta),
-                            begin_ms=int(start * 1000),
-                            end_ms=int(end * 1000),
-                        )
-                    )
-                except Exception:
-                    pass
-            if not self._runtime.heard_tracker.alignment_degraded:
-                yield delta
-        if words:
-            self._runtime.orchestrator.heard_tracker.add_words(words)

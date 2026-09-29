@@ -103,155 +103,9 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
-  miniprogram-gateway:
-    image: "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-    build:
-      context: .
-      dockerfile: infra/Dockerfile.miniprogram-gateway
-      args:
-        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
-        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
-    env_file:
-      - /etc/memoria-miniprogram-gateway.env
-    environment:
-      ENVIRONMENT: production
-    command:
-      - /app/.venv/bin/uvicorn
-      - services.miniprogram_gateway.app:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8010"
-      - --workers
-      - "1"
-      - --no-access-log
-    ports:
-      - "127.0.0.1:8792:8010"
-    depends_on:
-      control-api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - /app/.venv/bin/python
-        - -c
-        - >-
-          import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8010/health/live', timeout=3).close()
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m
-
-  device-media-gateway:
-    image: "memoria-device-media-gateway:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-    build:
-      context: .
-      dockerfile: infra/Dockerfile.miniprogram-gateway
-      args:
-        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
-        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-        MEMORIA_IMAGE_ROLE: "device-media-gateway"
-        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
-    env_file:
-      - /etc/memoria-device-media-gateway.env
-    environment:
-      ENVIRONMENT: production
-    command:
-      - /app/.venv/bin/uvicorn
-      - services.device_media_gateway.app:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8011"
-      - --workers
-      - "1"
-      - --no-access-log
-    ports:
-      - "127.0.0.1:8793:8011"
-    depends_on:
-      control-api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - /app/.venv/bin/python
-        - -c
-        - >-
-          import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8011/health/live', timeout=3).close()
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m
-
-  agent:
-    image: "memoria-agent:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-    build:
-      context: .
-      dockerfile: infra/Dockerfile.agent
-      args:
-        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
-        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
-    env_file:
-      - /etc/memoria-agent.env
-    environment:
-      ENVIRONMENT: production
-      MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
-      HOME: /tmp
-      XDG_CACHE_HOME: /tmp/.cache
-      # P1-01 隐私门：LiveKit >=1.8 默认采集 GenAI 消息内容，并默认允许非 Cloud
-      # exporter 收到对话内容。这里显式写 0，不依赖 /etc/memoria-agent.env。
-      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "0"
-      LIVEKIT_TELEMETRY_ALLOW_PII: "0"
-    depends_on:
-      control-api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - /app/.venv/bin/python
-        - -m
-        - services.agent.src.heartbeat
-        - --check-health
-      interval: 10s
-      timeout: 3s
-      retries: 2
-      start_period: 20s
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    volumes:
-      - type: bind
-        source: /var/lib/memoria-agent
-        target: /data
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=256m
-
-  # Optional rollout sidecar. It is not part of the default LiveKit profile;
-  # enable the media-runtime profile only after the aggregate metrics are
-  # instrumented and MEDIA_SLO_REPORT_TOKEN is provisioned.
+  # Optional rollout sidecar in the media-runtime profile. It scrapes the
+  # Voice Core media bridge's aggregate metrics; run it only once
+  # MEDIA_SLO_REPORT_TOKEN is provisioned.
   media-slo-reporter:
     profiles:
       - media-runtime
@@ -272,8 +126,6 @@ services:
     depends_on:
       control-api:
         condition: service_healthy
-      agent:
-        condition: service_healthy
       voice-core-media-bridge:
         condition: service_healthy
     restart: unless-stopped
@@ -285,15 +137,23 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
-  # The media-runtime profile is intentionally opt-in. It wires the self-owned
-  # Go edge to the self-owned Python media-v1 bridge and Pion terminator. It
-  # still requires external media acceptance. The shared Agent session factory
-  # keeps memory/persona/permission/tool policy on the established product path
-  # instead of creating a second LLM entry point.
+  # The media-runtime profile carries the only device media chain: the Go
+  # media-edge terminates Direct Device WSS and talks media-v1 gRPC to this
+  # Python Voice Core bridge. The shared Agent session factory keeps
+  # memory/persona/permission/tool policy on the established product path
+  # instead of creating a second LLM entry point. This service owns the
+  # memoria-agent image build (the LiveKit worker that used to own it is gone).
   voice-core-media-bridge:
     profiles:
       - media-runtime
     image: "memoria-agent:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.agent
+      args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
     env_file:
       - /etc/memoria-agent.env
     entrypoint:
@@ -310,7 +170,9 @@ services:
       MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
       MEDIA_OWNER_SILENCE_TIMEOUT_S: "30"
       MEDIA_MAX_USER_SPEECH_DURATION_S: "60"
-      # 与 agent 相同的 P1-01 隐私门：Bridge 也导入 livekit.agents。
+      # P1-01 隐私门：Bridge 导入 livekit.agents，LiveKit >=1.8 默认采集 GenAI
+      # 消息内容并默认允许非 Cloud exporter 收到对话内容。这里显式写 0，
+      # 不依赖 /etc/memoria-agent.env。
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "0"
       LIVEKIT_TELEMETRY_ALLOW_PII: "0"
     command:

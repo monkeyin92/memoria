@@ -39,7 +39,6 @@ class TTSSmokeChecks(BaseModel):
 class SmokeChecks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    livekit: bool
     funasr: bool
     llm: bool
     llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"]
@@ -50,7 +49,6 @@ class SmokeChecks(BaseModel):
     def require_all_passed(self) -> SmokeChecks:
         if not all(
             (
-                self.livekit,
                 self.funasr,
                 self.llm,
                 self.tts.audio,
@@ -62,12 +60,13 @@ class SmokeChecks(BaseModel):
 
 
 class AgentHeartbeat(BaseModel):
+    """Liveness of the voice-core media bridge process (``run_media_bridge``)."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     release_tag: str = Field(min_length=1, max_length=200)
     boot_id: UUID
     worker_ready: bool
-    livekit_ready: bool
     last_loop_at: datetime
 
     @field_validator("last_loop_at")
@@ -88,8 +87,6 @@ def _store(request: Request) -> MemoryStore:
 
 def _missing_config(settings: ControlSettings) -> list[str]:
     missing: list[str] = []
-    if not settings.livekit_api_key or not settings.livekit_api_secret:
-        missing.append("LIVEKIT_CREDENTIALS")
     if not settings.dashscope_api_key.get_secret_value():
         missing.append("DASHSCOPE_API_KEY")
     if settings.llm_provider == "deepseek" and not settings.deepseek_api_key.get_secret_value():
@@ -338,7 +335,6 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
         "release_tag": heartbeat.release_tag,
         "boot_id": str(heartbeat.boot_id),
         "worker_ready": heartbeat.worker_ready,
-        "livekit_ready": heartbeat.livekit_ready,
         "last_loop_at": heartbeat.last_loop_at.isoformat(),
     }
     age_s = (datetime.now(UTC) - heartbeat.last_loop_at).total_seconds()
@@ -348,7 +344,7 @@ def _agent_state(request: Request, settings: ControlSettings) -> dict[str, objec
         status = "invalid"
     elif age_s > AGENT_HEARTBEAT_MAX_AGE_S:
         status = "stale"
-    elif not heartbeat.worker_ready or not heartbeat.livekit_ready:
+    elif not heartbeat.worker_ready:
         status = "starting"
     else:
         status = "ready"
@@ -421,7 +417,6 @@ async def health_ready(request: Request) -> JSONResponse:
                     "config": config_ready,
                     "core": core_checks,
                     "agent": {"status": "skipped"},
-                    "livekit": "skipped",
                     "funasr": "skipped",
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
                     "tts": {"provider": "doubao", "status": "skipped"},
@@ -460,7 +455,6 @@ async def health_ready(request: Request) -> JSONResponse:
                 "config": True,
                 "core": core_checks,
                 "agent": agent_state,
-                "livekit": True,
                 "funasr": True,
                 "llm": {"provider": settings.llm_provider, "passed": True},
                 "tts": {

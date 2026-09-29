@@ -1,4 +1,4 @@
-"""Session token helpers. Permanent LiveKit secrets stay server-side only."""
+"""Account authentication and session token helpers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import base64
 import binascii
 import hashlib
 import hmac
-import logging
 import os
 import secrets
 import time
@@ -20,10 +19,6 @@ from fastapi import Header, HTTPException, Request
 
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
-
-
-def create_room_name() -> str:
-    return f"voice-{uuid.uuid4()}"
 
 
 def create_session_id() -> str:
@@ -275,80 +270,3 @@ def require_active_voice_session(request: Request, session_id: str) -> dict[str,
     if any(store.is_account_unavailable(user_id=account_id) for account_id in account_ids):
         raise HTTPException(status_code=410, detail="voice session was deleted")
     return session
-
-
-def mint_participant_token(
-    settings: ControlSettings,
-    *,
-    room_name: str,
-    identity: str,
-    agent_name: str | None = None,
-    ttl_s: int | None = None,
-) -> tuple[str, int]:
-    """
-    Mint a short-lived LiveKit access token for a single room.
-    When LiveKit API key/secret are missing (offline), return a signed local JWT
-    so the frontend path can still be exercised.
-    """
-    ttl = ttl_s if ttl_s is not None else settings.session_token_ttl_s
-    now = int(time.time())
-    exp = now + ttl
-
-    if settings.livekit_api_key and settings.livekit_api_secret:
-        try:
-            from datetime import timedelta
-
-            from livekit.api import (
-                AccessToken,
-                RoomAgentDispatch,
-                RoomConfiguration,
-                VideoGrants,
-            )
-
-            access_token = (
-                AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
-                .with_identity(identity)
-                .with_name(identity)
-                .with_grants(
-                    VideoGrants(
-                        room_join=True,
-                        room=room_name,
-                        can_publish=True,
-                        can_subscribe=True,
-                    )
-                )
-                .with_ttl(timedelta(seconds=ttl))
-            )
-            if agent_name:
-                access_token.with_room_config(
-                    RoomConfiguration(agents=[RoomAgentDispatch(agent_name=agent_name)])
-                )
-            jwt_token = access_token.to_jwt()
-            return str(jwt_token), ttl
-        except Exception as exc:
-            logging.getLogger(__name__).exception("livekit token mint failed")
-            raise RuntimeError("failed to mint LiveKit participant token") from exc
-
-    if not settings.offline_mock:
-        raise RuntimeError("LiveKit credentials are required outside offline mock mode")
-
-    # Explicit offline mode only. This token must never be returned in production.
-    secret = settings.livekit_api_secret or "offline-dev-secret-not-for-production"
-    payload: dict[str, Any] = {
-        "iss": settings.livekit_api_key or settings.jwt_issuer,
-        "sub": identity,
-        "iat": now,
-        "exp": exp,
-        "video": {
-            "roomJoin": True,
-            "room": room_name,
-            "canPublish": True,
-            "canSubscribe": True,
-        },
-    }
-    if agent_name:
-        payload["roomConfig"] = {"agents": [{"agentName": agent_name}]}
-    encoded = jwt.encode(payload, secret, algorithm="HS256")
-    if isinstance(encoded, bytes):
-        return encoded.decode("utf-8"), ttl
-    return encoded, ttl

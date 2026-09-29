@@ -10,13 +10,14 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_production_services_use_separate_env_files_and_persistent_agent_spool() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
+    control = compose.split("  control-api:\n", 1)[1].split("  media-slo-reporter:\n", 1)[0]
 
     assert "/etc/memoria.env" not in compose
     assert "/etc/memoria-control-api.env" in compose
     assert "/etc/memoria-agent.env" in compose
     assert "/etc/memoria-speaker-model.env" in compose
-    assert "/etc/memoria-miniprogram-gateway.env" in compose
+    assert "/etc/memoria-media-edge.env" in compose
+    assert "-gateway.env" not in compose
     assert "source: /var/lib/memoria-agent" in compose
     assert "target: /data" in compose
     assert "source: /etc/memoria-media-runtime" in control
@@ -58,117 +59,80 @@ def test_python_media_sidecars_run_as_modules_from_app_root() -> None:
     assert "/app/scripts/run_media_bridge.py" not in bridge
 
 
-def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
+def test_production_bridge_healthcheck_and_control_liveness_gate_the_media_chain() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(encoding="utf-8")
-    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
-    agent = compose.split("  agent:\n", 1)[1]
+    control = compose.split("  control-api:\n", 1)[1].split("  media-slo-reporter:\n", 1)[0]
+    reporter = compose.split("\n  media-slo-reporter:\n", 1)[1].split(
+        "\n  voice-core-media-bridge:\n", 1
+    )[0]
+    bridge = compose.split("\n  voice-core-media-bridge:\n", 1)[1].split(
+        "\n  device-state-redis:\n", 1
+    )[0]
 
     assert "http://127.0.0.1:8000/health/live" in control
     assert "AGENT_HEARTBEAT_MAX_AGE_S = 45" in readiness
-    assert "control-api:\n        condition: service_healthy" in agent
-    assert "kill -0 1" not in agent
-    assert "services.agent.src.heartbeat" in agent
-    assert "--check-health" in agent
-    assert "interval: 10s" in agent
-    assert "timeout: 3s" in agent
-    assert "retries: 2" in agent
+    # The reporter only starts once Control is live and the bridge is healthy.
+    assert "control-api:\n        condition: service_healthy" in reporter
+    assert "voice-core-media-bridge:\n        condition: service_healthy" in reporter
+    # The bridge is healthy only when its gRPC port accepts connections, never
+    # by a PID-1 liveness probe.
+    assert "kill -0 1" not in bridge
+    assert "socket.create_connection(('127.0.0.1',7001),3)" in bridge
+    assert "interval: 10s" in bridge
+    assert "timeout: 5s" in bridge
+    assert "retries: 5" in bridge
 
 
 def test_production_control_disables_query_bearing_uvicorn_access_logs() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
+    control = compose.split("  control-api:\n", 1)[1].split("  media-slo-reporter:\n", 1)[0]
     dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
 
     assert "--no-access-log" in control
     assert '"--no-access-log"' in dockerfile
 
 
-def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream() -> None:
-    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-    dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(encoding="utf-8")
-    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
-    media = (ROOT / "infra" / "nginx-memoria-miniprogram-media.conf").read_text(encoding="utf-8")
-    limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
-    loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
-        encoding="utf-8"
-    )
-    gateway = compose.split("  miniprogram-gateway:\n", 1)[1].split("  agent:\n", 1)[0]
-
-    assert "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG" in gateway
-    assert "dockerfile: infra/Dockerfile.miniprogram-gateway" in gateway
-    assert "/etc/memoria-miniprogram-gateway.env" in gateway
-    assert "127.0.0.1:8792:8010" in gateway
-    assert "read_only: true" in gateway
-    assert "no-new-privileges:true" in gateway
-    assert "cap_drop:" in gateway
-    assert "--no-access-log" in gateway
-    assert '"--no-access-log"' in dockerfile
-    assert "USER 65532:65532" in dockerfile
-    assert "include /etc/nginx/snippets/memoria-miniprogram-media.conf;" in nginx
-    assert "location = /memoria-mini-media/v1/mini-program/media {" in media
-    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
-    assert "access_log off;" in media
-    assert "limit_req zone=memoria_media burst=6 nodelay;" in media
-    assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
-    session = nginx.split("location = /memoria-api/v1/sessions {", 1)[1].split("}", 1)[0]
-    assert "limit_req zone=memoria_session burst=6 nodelay;" in session
-    assert (
-        "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
-    )
-
-
-def test_device_media_gateway_is_isolated_and_headers_never_enter_the_url() -> None:
+def test_retired_livekit_media_chain_is_not_part_of_the_production_stack() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
-    device_media = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(
-        encoding="utf-8"
-    )
-    gateway = compose.split("  device-media-gateway:\n", 1)[1].split("  agent:\n", 1)[0]
-
-    assert "memoria-device-media-gateway:${MEMORIA_RELEASE_TAG" in gateway
-    assert "services.device_media_gateway.app:app" in gateway
-    assert "/etc/memoria-device-media-gateway.env" in gateway
-    assert "127.0.0.1:8793:8011" in gateway
-    assert "read_only: true" in gateway
-    assert "no-new-privileges:true" in gateway
-    assert "cap_drop:" in gateway
-    assert "--no-access-log" in gateway
-    assert "include /etc/nginx/snippets/memoria-device-media.conf;" in nginx
-    assert "location = /memoria-device-media/v1/device/media {" in device_media
-    assert "proxy_pass http://127.0.0.1:8793/v1/device/media;" in device_media
-    assert "proxy_set_header Authorization $http_authorization;" in device_media
-    assert "proxy_set_header Device-Id $http_device_id;" in device_media
-    assert "proxy_set_header Client-Id $http_client_id;" in device_media
-    assert "$arg_" not in device_media
-    assert "access_log off;" in device_media
-
-
-def test_miniprogram_media_route_is_explicitly_legacy_rollback_only() -> None:
-    media_path = ROOT / "infra" / "nginx-memoria-miniprogram-media.conf"
-    assert media_path.is_file()
-    media = media_path.read_text(encoding="utf-8")
-    https = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     smoke = (ROOT / "scripts" / "smoke_server_deployment.sh").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
     runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
 
-    assert media.count("location = /memoria-mini-media/v1/mini-program/media {") == 1
-    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
-    assert "access_log off;" in media
-    assert "limit_req zone=memoria_media burst=6 nodelay;" in media
-    include = "include /etc/nginx/snippets/memoria-miniprogram-media.conf;"
-    assert include in https
-    assert "location = /memoria-mini-media/v1/mini-program/media {" not in https
-    assert "/etc/nginx/snippets/memoria-miniprogram-media.conf;" in smoke
-    assert include in runbook
+    # The only device media chain is media-edge -> Voice Core bridge. The
+    # LiveKit worker and both Python gateways are gone from Compose, the image
+    # inputs and the Nginx snippet set.
+    for service in ("agent", "miniprogram-gateway", "device-media-gateway"):
+        assert f"\n  {service}:\n" not in compose
+    for retired in (
+        "infra/Dockerfile.miniprogram-gateway",
+        "infra/nginx-memoria-device-media.conf",
+        "infra/nginx-memoria-miniprogram-media.conf",
+        "infra/nginx-memoria-livekit.conf",
+        "infra/livekit.yaml",
+    ):
+        assert not (ROOT / retired).exists(), retired
+    for retired_include in ("memoria-miniprogram-media.conf", "memoria-device-media.conf"):
+        assert retired_include not in nginx
+        assert retired_include not in smoke
+    assert "/memoria-mini-media/" not in nginx
+    assert "MINIPROGRAM_MEDIA_GATEWAY_URL" not in example
+    assert "DEVICE_MEDIA_GATEWAY_URL" not in example
+    assert "LiveKit 媒体链退役" in runbook
+
+    # What the media chain still depends on stays exposed on its own edge
+    # route: the shared per-IP media rate-limit zone and the session limiter.
+    limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
+    loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
+        encoding="utf-8"
+    )
+    assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
     assert (
-        "MINIPROGRAM_MEDIA_GATEWAY_URL="
-        "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media"
-    ) in example
-    assert "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media" in runbook
-    assert "已退役的原生小程序媒体兼容回滚入口" in runbook
-    assert "只能用于明确的 legacy 回滚" in runbook
+        "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
+    )
+    session = nginx.split("location = /memoria-api/v1/sessions {", 1)[1].split("}", 1)[0]
+    assert "limit_req zone=memoria_session burst=6 nodelay;" in session
 
 
 def test_server_smoke_covers_response_plan_safety_contract() -> None:
@@ -373,7 +337,9 @@ def test_production_stack_contains_pinned_authenticated_campplus_model() -> None
     assert "dockerfile: infra/Dockerfile.speaker-model" in compose
     assert "/etc/memoria-speaker-model.env" in compose
     assert "http://speaker-model:8001/v1/embeddings/speaker" in compose
-    control_dependencies = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
+    control_dependencies = compose.split("  control-api:\n", 1)[1].split(
+        "  media-slo-reporter:\n", 1
+    )[0]
     assert "speaker-model:\n        condition: service_healthy" in control_dependencies
     assert "065629c313eaf1a01c65c640c46d77e61e9607b4" in dockerfile
     assert "v1.0.0" in dockerfile
@@ -398,10 +364,16 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
     assert "-e MEMORIA_PROVIDER_SMOKE_REQUIRED=true" in script
     assert 'provider_output="$(run_required_provider_smoke 2>&1)"' in script
-    assert "Doubao, InterruptSemantic" in script
+    assert "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, $llm_label, Doubao" in script
+    assert "InterruptSemantic" not in script
     assert 'agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"' in script
     assert '"$agent_env"' in script
-    assert "run_agent -m scripts.verify_env" in script
+    # Smokes run in the Voice Core bridge image; the LiveKit worker service is gone.
+    assert "run_bridge -m scripts.verify_env" in script
+    assert "voice-core-media-bridge" in script
+    assert "run_agent" not in script
+    assert "memoria-agent-1" not in script
+    assert "livekit_smoke_test" not in script
     assert "run_control -m scripts.mark_readiness" in script
     assert "--control-api-url http://control-api:8000" in script
     assert "--skip-ready-check" in script
@@ -423,9 +395,9 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     # live container was created with is reused and then checked against the
     # image the container actually runs.
     assert 'com.docker.compose.project.config_files' in script
-    assert "compose_args_for \"$agent_container\"" in script
+    assert "compose_args_for \"$bridge_container\"" in script
     assert "compose_args_for \"$control_container\"" in script
-    assert 'require_live_service_image "$agent_container" agent' in script
+    assert 'require_live_service_image "$bridge_container" voice-core-media-bridge' in script
     assert 'require_live_service_image "$control_container" control-api' in script
     assert "refusing to collect smoke evidence" in script
 
@@ -468,7 +440,7 @@ def test_current_compose_never_builds_the_removed_web_client() -> None:
     assert "Dockerfile.web" not in compose
 
 
-def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_previews() -> None:
+def test_runtime_images_include_voice_registries_needed_by_bridge_and_control() -> None:
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
@@ -477,7 +449,7 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     # Keep full and delta images aligned so a locally green release cannot omit
     # a transitive runtime module.
     assert "COPY services ./services" in agent_dockerfile
-    assert delta_builder.count("COPY services ./services") == 3
+    assert delta_builder.count("COPY services ./services") == 2
     doubao_registry = "COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json"
     cosyvoice_registry = (
         "COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json"
@@ -487,7 +459,9 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     assert cosyvoice_registry in agent_dockerfile
     assert cosyvoice_registry in control_dockerfile
     assert delta_builder.count(cosyvoice_registry) == 2
-    assert "COPY infra/kws/keywords.txt ./infra/kws/keywords.txt" in delta_builder
+    assert "kws" not in delta_builder
+    # A delta image rebuilt on a pre-cutover base must still start the bridge.
+    assert 'CMD ["-m", "scripts.run_media_bridge"]' in delta_builder
     assert "COPY services/speaker_model /app/services/speaker_model" in delta_builder
     for dependency_input in (
         ".dockerignore",
@@ -495,7 +469,6 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
         "uv.lock",
         "infra/Dockerfile.agent",
         "infra/Dockerfile.control-api",
-        "infra/Dockerfile.miniprogram-gateway",
         "infra/Dockerfile.speaker-model",
         "infra/requirements-speaker-model.txt",
         "infra/patches/3d-speaker-campplus-average-pool.patch",
@@ -503,8 +476,9 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     ):
         assert dependency_input in delta_builder
     assert "base images do not share one release commit" in delta_builder
-    assert delta_builder.count("--network=none") == 4
-    assert delta_builder.count("--pull=false") == 4
+    assert "miniprogram-gateway" not in delta_builder
+    assert delta_builder.count("--network=none") == 3
+    assert delta_builder.count("--pull=false") == 3
 
 
 def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> None:
@@ -535,13 +509,21 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "scripts/run_media_bridge.py" in deploy
     assert "--network=none" in deploy
     assert "docker save" not in deploy
-    assert "agent voice-core-media-bridge" in deploy
+    # Only the bridge runs the memoria-agent image; no `agent` service is
+    # recreated, overridden or health-gated any more.
+    assert "up -d --no-deps --no-build" in deploy
+    assert "agent voice-core-media-bridge" not in deploy
+    assert "  agent:\n    image:" not in deploy
+    assert 'agent_container="memoria-agent-1"' not in deploy
+    assert "--services voice-core-media-bridge" in deploy
     assert "--no-deps --no-build" in deploy
     assert "trap rollback ERR" in deploy
     assert "runtime changes escape the Agent component" in deploy
     assert "packages/*|services/common/*)" in deploy
-    assert "infra/voices/*|infra/kws/*|infra/Dockerfile.agent)" in deploy
-    assert "scripts/verify_env.py|scripts/livekit_smoke_test.py" in deploy
+    assert "infra/voices/*|infra/Dockerfile.agent)" in deploy
+    assert "infra/kws" not in deploy
+    assert "scripts/verify_env.py|scripts/provider_smoke_test.py" in deploy
+    assert "livekit_smoke_test" not in deploy
     assert "compose_sha256=$compose_sha" in deploy
     assert "Compose base snapshot was pruned" in deploy
     assert "historical component override was pruned" in deploy
@@ -554,15 +536,14 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'stack_release_tag="$control_stack_release_tag"' in deploy
     assert 'stack_release_commit="$control_stack_release_commit"' in deploy
     assert '"$agent_stack_release_tag" == "$control_release_tag"' not in deploy
-    assert "do not share one stack env, or Control stack tag is missing" in deploy
+    assert "bridge stack env or Control stack tag is missing" in deploy
     assert 'runtime_stack_release_tag=%s\\n' in deploy
     assert "trap - ERR" in deploy
     assert "component rollback=PASS" in deploy
     assert "component rollback=FAILED" in deploy
     assert "do not share one current dependency image" not in deploy
-    assert "do not share one current release authority" in deploy
-    assert "component overrides do not describe one current authority" in deploy
-    assert '"${#previous_files[@]}" -eq "${#bridge_previous_files[@]}"' in deploy
+    assert "bridge does not carry one current release authority" in deploy
+    assert "bridge_previous_files" not in deploy
     assert 'com.memoria.release.kind="agent-running-source-recovery"' in deploy
     assert 'docker cp "$container:/app/services/."' in deploy
     assert 'docker cp "$container:/app/packages/."' in deploy
@@ -572,7 +553,7 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
     assert 'rollback_image="memoria-agent:rollback-${release_tag}-pre"' in deploy
     assert 'image: "$rollback_image"' in deploy
-    assert deploy.count('image: "$rollback_image"') == 2
+    assert deploy.count('image: "$rollback_image"') == 1
     assert 'rollback_agent=' not in deploy
     assert 'rollback_bridge=' not in deploy
     assert 'rollback-${release_tag}-pre-agent' not in deploy
@@ -592,8 +573,6 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'release_tag="${10}"' in deploy
     assert 'manifest_base_image_id amd64 $manifest_base_commit $runtime_base_version agent' in deploy
     assert 'runtime base image is missing, has invalid provenance, or is not independent' in deploy
-    assert 'image_identity_matches' in deploy
-    assert '[[ -n "$expected_repo_digests" && -n "$actual_repo_digests"' in deploy
     assert 'docker cp "$container:/app/scripts/run_media_bridge.py"' in deploy
     assert 'mkdir -p "$recovery_dir/memoria/services" "$recovery_dir/memoria/packages" "$recovery_dir/memoria/scripts"' in deploy
     assert 'ARG MEMORIA_RUNTIME_BASE_ID' in deploy
@@ -604,8 +583,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert 'rollback_existing_arch' in deploy
     assert 'rollback_existing_runtime_base_id' in deploy
     assert 'rollback_kind="$(docker image inspect "$rollback_tag" --format' in deploy
-    assert 'agent_content_identity' in deploy
-    assert 'agent_repo_digests' in deploy
+    assert 'agent_content_identity' not in deploy
+    assert 'agent_repo_digests' not in deploy
     assert 'bridge_content_identity' in deploy
     assert 'bridge_repo_digests' in deploy
     assert 'rollback_content_identity' in deploy
@@ -638,10 +617,13 @@ def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> 
     assert "pytest --import-mode=importlib --cov=services" in workflow
 
 
-def test_agent_image_installs_the_optional_keyword_spotter_runtime() -> None:
+def test_agent_image_runs_the_media_bridge_without_the_retired_keyword_spotter() -> None:
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
 
-    assert "uv export --frozen --no-dev --extra kws" in agent_dockerfile
+    assert "--extra kws" not in agent_dockerfile
+    assert "infra/kws" not in agent_dockerfile
+    assert 'CMD ["-m", "scripts.run_media_bridge"]' in agent_dockerfile
+    assert "services.agent.src.main" not in agent_dockerfile
 
 
 def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> None:
@@ -702,7 +684,7 @@ def test_production_example_declares_control_only_object_read_keyrings() -> None
 
 
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
-    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
+    control, agent, speaker_model, media_edge = split_env(
         {
             "MEMORIA_AUTH_SECRET": "auth",
             "WECHAT_MINIPROGRAM_APPID": "wx-test",
@@ -797,12 +779,10 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == '{"archive-v1":"archive-old-key"}'
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == '{"voice-v1":"voice-old-key"}'
-    assert gateway == {}
-    assert device_gateway == {}
 
 
 def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None:
-    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
+    control, agent, speaker_model, media_edge = split_env(
         {
             "ENVIRONMENT": "production",
             "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": "runtime-profile-key-material",
@@ -811,6 +791,12 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
             "STREAMCORE_EXPERIMENT_PERCENT": "0",
             "STREAMCORE_KILL_SWITCH": "false",
             "STREAMCORE_WHIP_URL": "",
+            "LIVEKIT_URL": "wss://livekit.invalid",
+            "LIVEKIT_API_KEY": "retired-livekit-key",
+            "LIVEKIT_API_SECRET": "retired-livekit-secret",
+            "DEVICE_MEDIA_RUNTIME": "livekit_compat",
+            "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET": "retired-ticket-secret",
+            "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET": "retired-device-ticket-secret",
             "STREAMCORE_TOKEN_SECRET": "streamcore-secret-material-that-is-long-enough",
             "MEDIA_BRIDGE_GO_SHADOW_ENABLED": "false",
             "MEDIA_EDGE_JWT_SECRET": "streamcore-secret-material-that-is-long-enough",
@@ -825,10 +811,23 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
             "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX": "40100",
         }
     )
-    assert control["MEDIA_RUNTIME_DEFAULT"] == "livekit"
-    assert control["STREAMCORE_EXPERIMENT_PERCENT"] == "0"
-    assert control["STREAMCORE_KILL_SWITCH"] == "false"
-    assert control["STREAMCORE_WHIP_URL"] == ""
+    # Keys of the retired LiveKit chain and StreamCore rollout are accepted
+    # from old operator env files but routed to no service; only the shared
+    # token material still reaches Control.
+    for retired_key in (
+        "MEDIA_RUNTIME_DEFAULT",
+        "STREAMCORE_EXPERIMENT_PERCENT",
+        "STREAMCORE_KILL_SWITCH",
+        "STREAMCORE_WHIP_URL",
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "DEVICE_MEDIA_RUNTIME",
+        "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+    ):
+        for routed in (control, agent, speaker_model, media_edge):
+            assert retired_key not in routed
     assert control["STREAMCORE_TOKEN_SECRET"].startswith("streamcore-")
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
@@ -844,7 +843,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
         "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
     ):
-        for routed in (control, agent, speaker_model, gateway, device_gateway, media_edge):
+        for routed in (control, agent, speaker_model, media_edge):
             assert retired not in routed
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
@@ -854,8 +853,6 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert agent["MEMORIA_RUNTIME_PROFILE_VERIFY_KEY"] == "runtime-profile-key-material"
     assert "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET" not in agent
     assert speaker_model == {}
-    assert gateway == {"ENVIRONMENT": "production"}
-    assert device_gateway == {"ENVIRONMENT": "production"}
 
 
 def test_production_example_drops_removed_media_edge_paths() -> None:
@@ -880,7 +877,7 @@ def test_production_example_drops_removed_media_edge_paths() -> None:
     assert "/etc/memoria-media-edge.env" in media_edge
 
 
-def test_production_example_keeps_streamcore_rollout_fail_closed() -> None:
+def test_production_example_keeps_media_token_and_authority_fail_closed() -> None:
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
     values = dict(
         line.split("=", 1)
@@ -888,11 +885,17 @@ def test_production_example_keeps_streamcore_rollout_fail_closed() -> None:
         if line and not line.startswith("#") and "=" in line
     )
 
-    assert values["MEDIA_RUNTIME_DEFAULT"] == "livekit"
-    assert values["STREAMCORE_EXPERIMENT_PERCENT"] == "0"
-    assert values["STREAMCORE_KILL_SWITCH"] == "false"
-    assert values["STREAMCORE_WHIP_URL"] == ""
+    # The StreamCore rollout switches went with the LiveKit fallback; the
+    # template must not offer them again.
+    for retired in (
+        "MEDIA_RUNTIME_DEFAULT",
+        "STREAMCORE_EXPERIMENT_PERCENT",
+        "STREAMCORE_KILL_SWITCH",
+        "STREAMCORE_WHIP_URL",
+    ):
+        assert retired not in values
     assert values["STREAMCORE_TOKEN_SECRET"] == ""
+    assert values["MEDIA_EDGE_JWT_SECRET"] == ""
     assert values["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert "STREAMCORE_TOKEN_SECRET must use the same secret as MEDIA_EDGE_JWT_SECRET" in example
 
@@ -1015,7 +1018,6 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     edge = compose.split("  media-edge:\n", 1)[1]
     device_edge = (ROOT / "infra" / "nginx-memoria-device-edge.conf").read_text(encoding="utf-8")
     https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
-    legacy = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
     runbook = (ROOT / "docs" / "runbooks" / "release-rollback.md").read_text(encoding="utf-8")
 
@@ -1028,7 +1030,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     assert 'MEDIA_EDGE_DEVICE_WSS_ENABLED: "true"' in edge
     assert "profiles:\n      - media-runtime" in edge
     assert "include /etc/nginx/snippets/memoria-device-edge.conf;" in https_conf
-    assert "include /etc/nginx/snippets/memoria-device-media.conf;" in https_conf
+    assert "memoria-device-media.conf" not in https_conf
     exact = "location = /memoria-device-edge/v1/device/media {"
     assert exact in device_edge
     block = device_edge.split(exact, 1)[1].split("}", 1)[0]
@@ -1038,13 +1040,13 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     assert "proxy_buffering off;" in block
     assert "access_log off;" in block
     assert "8793" not in block
-    # Legacy exact gateway route remains untouched.
-    assert "location = /memoria-device-media/v1/device/media {" in legacy
-    assert "proxy_pass http://127.0.0.1:8793/v1/device/media;" in legacy
-    # Direct device media stays default-off.
-    assert "DEVICE_MEDIA_RUNTIME=livekit_compat" in example
-    assert "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE=allowlist" in example
-    assert "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS=" in example
+    # Credentials travel in headers only; nothing is copied from the query.
+    assert "$arg_" not in device_edge
+    # The retired Python gateway has no route or runtime switch left; direct
+    # media is the only path, so there is no rollout mode to select.
+    assert "/memoria-device-media/" not in https_conf
+    for retired in ("DEVICE_MEDIA_RUNTIME", "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE", "livekit_compat"):
+        assert retired not in example
     assert "MEDIA_EDGE_DEVICE_WSS_ENABLED=false" in example
     assert "device-state-redis:" in compose
     assert "--tls-auth-clients" in compose
@@ -1078,8 +1080,6 @@ def test_nginx_publicly_blocks_v1_internal_routes_without_touching_container_url
     assert "http://control-api:8000/v1/internal/media-runtime/slo" not in nginx
     for snippet in (
         "nginx-memoria-device-edge.conf",
-        "nginx-memoria-device-media.conf",
-        "nginx-memoria-miniprogram-media.conf",
         "nginx-memoria-loopback-smoke.conf",
     ):
         assert exact not in (ROOT / "infra" / snippet).read_text(encoding="utf-8")

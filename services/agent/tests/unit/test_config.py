@@ -23,9 +23,7 @@ def mandatory_agent_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUNASR_SAMPLE_RATE", "16000")
-    monkeypatch.setenv("VAD_MIN_SILENCE_DURATION_S", "0.30")
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
-    monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
     monkeypatch.delenv("MEDIA_MAX_USER_SPEECH_DURATION_S", raising=False)
     s = AgentSettings(_env_file=None)
     assert s.funasr_sample_rate == 16000
@@ -40,14 +38,10 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8
-    assert s.interrupt_semantic_enabled is True
-    assert s.interrupt_semantic_model == "qwen-flash"
     assert s.live_lookup_semantic_model == "qwen-flash"
     assert s.conversation_close_semantic_model == "qwen-flash"
     assert s.llm_provider == "qwen"
     assert s.qwen_fast_model == "qwen3.7-flash"
-    assert s.interrupt_semantic_timeout_s == 1.2
-    assert s.miniprogram_kws_enabled is False
     assert s.media_bridge_grpc_enabled is False
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
@@ -63,7 +57,6 @@ def test_production_media_bridge_requires_mtls_material(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEDIA_BRIDGE_GRPC_ENABLED", "true")
     monkeypatch.setenv("MEDIA_BRIDGE_MTLS", "false")
@@ -76,7 +69,6 @@ def test_production_media_slo_reporter_requires_scoped_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEDIA_SLO_REPORT_ENABLED", "true")
     monkeypatch.setenv("MEDIA_SLO_REPORT_URL", "http://control-api:8000/v1/internal/media-runtime/slo")
@@ -90,7 +82,6 @@ def test_production_reply_delivery_reporter_requires_scoped_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEDIA_REPLY_DELIVERY_ENABLED", "true")
     monkeypatch.setenv(
@@ -154,36 +145,6 @@ def test_funasr_vocabulary_and_noise_threshold_are_explicit(
     assert settings.funasr_speech_noise_threshold == pytest.approx(-0.1)
 
 
-def test_miniprogram_kws_settings_keep_model_and_calibration_explicit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MINIPROGRAM_KWS_ENABLED", "true")
-    monkeypatch.setenv("MINIPROGRAM_KWS_MODEL_DIR", "/tmp/kws-model")
-    monkeypatch.setenv("MINIPROGRAM_KWS_KEYWORDS_FILE", "/tmp/kws-keywords.txt")
-    monkeypatch.setenv("MINIPROGRAM_KWS_MIN_CONFIDENCE", "0.72")
-
-    settings = AgentSettings()
-
-    assert settings.miniprogram_kws_enabled is True
-    assert settings.miniprogram_kws_model_dir == "/tmp/kws-model"
-    assert settings.miniprogram_kws_keywords_file == "/tmp/kws-keywords.txt"
-    assert settings.miniprogram_kws_min_confidence == pytest.approx(0.72)
-
-
-def test_interrupt_semantic_settings_are_overridable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("INTERRUPT_SEMANTIC_ENABLED", "false")
-    monkeypatch.setenv("INTERRUPT_SEMANTIC_MODEL", "qwen-turbo")
-    monkeypatch.setenv("INTERRUPT_SEMANTIC_TIMEOUT_S", "0.4")
-
-    settings = AgentSettings()
-
-    assert settings.interrupt_semantic_enabled is False
-    assert settings.interrupt_semantic_model == "qwen-turbo"
-    assert settings.interrupt_semantic_timeout_s == 0.4
-
-
 def test_live_lookup_semantic_settings_are_overridable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -212,13 +173,6 @@ def test_conversation_close_semantic_settings_are_overridable(
     assert settings.conversation_close_semantic_timeout_s == 0.5
 
 
-def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
-    monkeypatch.setenv("LIVEKIT_TURN_DETECTOR_VERSION", "v1")
-    s = AgentSettings()
-    assert s.livekit_turn_detector_version == "v1-mini"
-
-
 def test_rejects_bad_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUNASR_SAMPLE_RATE", "8000")
     with pytest.raises(ValidationError):
@@ -238,9 +192,6 @@ def test_online_settings_require_provider_endpoints_and_keys(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     for name in (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_WS_URL",
         "DOUBAO_TTS_API_KEY",
@@ -249,7 +200,7 @@ def test_online_settings_require_provider_endpoints_and_keys(
     ):
         monkeypatch.delenv(name, raising=False)
 
-    with pytest.raises(ConfigValidationError, match="LIVEKIT_URL.*DASHSCOPE_WS_URL"):
+    with pytest.raises(ConfigValidationError, match="DASHSCOPE_API_KEY.*DASHSCOPE_WS_URL"):
         load_settings(require_keys=True)
 
 
@@ -328,9 +279,6 @@ def test_explicit_deepseek_requires_its_key(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("OFFLINE_MOCK", "false")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
-    monkeypatch.setenv("LIVEKIT_API_KEY", "test-key")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "test-secret")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope")
     monkeypatch.setenv("DOUBAO_TTS_API_KEY", "doubao-test-key")
@@ -344,7 +292,6 @@ def test_production_archive_sink_requires_encryption_and_internal_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.delenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", raising=False)
     monkeypatch.delenv("MEMORIA_ARCHIVE_WRITE_TOKEN", raising=False)
     monkeypatch.delenv("MEMORIA_ARCHIVE_SPOOL_KEY", raising=False)
@@ -358,7 +305,6 @@ def test_production_agent_heartbeat_requires_independent_token() -> None:
         AgentSettings(
             _env_file=None,
             ENVIRONMENT="production",
-            LIVEKIT_URL="wss://test.livekit.cloud",
             MEMORIA_ARCHIVE_SINK_ENABLED=False,
             MEMORIA_AGENT_HEARTBEAT_TOKEN="",
         )
@@ -368,7 +314,6 @@ def test_production_interaction_policy_requires_independent_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.delenv("MEMORIA_INTERACTION_POLICY_TOKEN", raising=False)
 
@@ -382,7 +327,6 @@ def test_production_response_plan_requires_scoped_token(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.delenv("MEMORIA_RESPONSE_PLAN_TOKEN", raising=False)
 
@@ -396,7 +340,6 @@ def test_production_response_plan_requires_secure_internal_url(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv(
         "MEMORIA_RESPONSE_PLAN_URL",
@@ -414,7 +357,6 @@ def test_production_response_plan_token_is_independent(
     monkeypatch.chdir(tmp_path)
     shared = "shared-policy-plan-token-material-32-characters"
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", shared)
     monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", shared)
@@ -427,7 +369,6 @@ def test_production_formal_speaker_authority_requires_independent_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_SPEAKER_AUTHORITY_ENABLED", "true")
     monkeypatch.delenv("MEMORIA_SPEAKER_INTERNAL_TOKEN", raising=False)
@@ -440,7 +381,6 @@ def test_production_voice_profile_requires_internal_auth_even_without_archive_si
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.delenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", raising=False)
@@ -454,7 +394,6 @@ def test_production_plaintext_internal_url_is_limited_to_local_docker_dns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", "voice-resolution-material-that-is-long-enough")
@@ -482,7 +421,6 @@ def test_production_rejects_unsafe_doubao_websocket_urls(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("DOUBAO_TTS_WS_URL", ws_url)
 
@@ -495,7 +433,6 @@ def test_production_enabled_capabilities_require_independent_tokens(
 ) -> None:
     shared = "shared-capability-material-that-is-long-enough"
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
     monkeypatch.setenv("MEMORIA_VOICE_PROFILE_ENABLED", "true")
     monkeypatch.setenv("MEMORIA_VOICE_RESOLUTION_TOKEN", shared)

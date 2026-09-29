@@ -9,7 +9,7 @@ only shrinks.
 Known inversions kept only until they are removed (do not add more of these):
 ``common`` importing ``agent``/``archive``, domain packages importing
 ``control_api`` (governance, companionship) or ``agent``
-(voice_profile, device_media_gateway).
+(voice_profile).
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
         }
     ),
     "device_fleet": frozenset({"policy"}),
-    "device_media_gateway": frozenset({"agent", "common", "miniprogram_gateway"}),
     "digital_self": frozenset({"archive", "common", "persona", "self_model"}),
     "evolution": frozenset({"archive", "common"}),
     "governance": frozenset(
@@ -70,7 +69,6 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "identity": frozenset({"common", "consent"}),
     "legacy": frozenset({"digital_self", "self_model"}),
     "memory_scope": frozenset({"consent", "identity", "policy"}),
-    "miniprogram_gateway": frozenset({"common"}),
     "persona": frozenset({"archive", "common", "identity"}),
     "policy": frozenset({"consent"}),
     "self_model": frozenset({"archive"}),

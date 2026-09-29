@@ -5,9 +5,7 @@ from services.agent.src.providers.funasr_protocol import (
     build_continue_task_context,
     build_finish_task,
     build_run_task,
-    conversation_item_to_funasr_context,
     parse_server_message,
-    result_trace_metrics,
     sentence_to_asr_result,
     timestamps_monotonic,
     words_to_seconds,
@@ -208,16 +206,6 @@ def test_sentence_to_asr_result_downgrades_word_outside_sentence_range() -> None
     assert result.timing_evidence.coverage is ASRTimingCoverage.INVALID
 
 
-def test_context_redaction() -> None:
-    item = conversation_item_to_funasr_context(
-        {"role": "user", "text": "我的手机是13812345678，住北京市朝阳区建国路88号"}
-    )
-    assert item is not None
-    assert "13812345678" not in str(item)
-    assert item["role"] == "user"
-    assert item["content"] == [{"type": "input_text", "text": "我的手机是[手机号]，[地址]"}]
-
-
 def test_control_messages_and_server_event_branches() -> None:
     finish = build_finish_task("t")
     assert finish["header"]["action"] == "finish-task"
@@ -263,16 +251,6 @@ def test_missing_sentence_invalid_words_and_non_monotonic_timestamps() -> None:
     assert not timestamps_monotonic(parsed.sentence.words)
 
 
-def test_context_filters_invalid_role_and_redacts_id_card() -> None:
-    assert conversation_item_to_funasr_context({"role": "system", "text": "x"}) is None
-    item = conversation_item_to_funasr_context(
-        {"role": "assistant", "content": "身份证11010119900101001X"}
-    )
-    assert item is not None
-    assert "11010119900101001X" not in str(item)
-    assert item["content"] == [{"type": "text", "text": "身份证[身份证]"}]
-
-
 def test_task_failed_reads_header_error_message() -> None:
     parsed = parse_server_message(
         {
@@ -307,34 +285,3 @@ def test_task_failed_diagnostics_are_bounded_and_redacted() -> None:
     assert "\n" not in parsed.error_message
 
 
-def test_result_trace_metrics_expose_timing_without_transcript_text() -> None:
-    event = parse_server_message(
-        {
-            "header": {"event": "result-generated", "task_id": "provider-secret-id"},
-            "payload": {
-                "output": {
-                    "sentence": {
-                        "sentence_id": 7,
-                        "begin_time": 120,
-                        "end_time": 980,
-                        "text": "这是不能进入诊断事件的原文",
-                        "sentence_end": True,
-                    }
-                }
-            },
-        }
-    )
-    assert event.sentence is not None
-
-    metrics = result_trace_metrics(event.sentence, task_epoch=2)
-
-    assert metrics == {
-        "task_epoch": 2,
-        "sentence_id": 7,
-        "begin_ms": 120,
-        "end_ms": 980,
-        "duration_ms": 860,
-        "text_len": 13,
-    }
-    assert "text" not in metrics
-    assert "task_id" not in metrics

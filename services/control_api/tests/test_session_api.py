@@ -5,16 +5,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-import jwt
 import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
-from services.common.miniprogram_gateway_ticket import verify_gateway_ticket
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import session as session_routes
-from services.control_api.app.security import mint_participant_token
 
 
 @pytest.fixture
@@ -44,13 +41,8 @@ def _configure(
     monkeypatch.setenv("READINESS_GATE_TTL_S", "86400")
     monkeypatch.setenv("OFFLINE_MOCK", "true" if offline else "false")
     if offline:
-        monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
-        monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
         monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     else:
-        monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
-        monkeypatch.setenv("LIVEKIT_API_KEY", "test-key")
-        monkeypatch.setenv("LIVEKIT_API_SECRET", "test-livekit-material-long-enough")
         monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
 
 
@@ -91,11 +83,11 @@ async def test_anonymous_token_uses_server_generated_subject(
 
 
 @pytest.mark.asyncio
-async def test_create_session_and_stop(
+async def test_create_session_freezes_the_conversation_without_media_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _configure(monkeypatch, tmp_path, offline=True)
+    _configure(monkeypatch, tmp_path, offline=False)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         user_id, headers = await _anonymous_identity(client)
@@ -108,162 +100,31 @@ async def test_create_session_and_stop(
                 "client": {"platform": "web", "timezone": "Asia/Shanghai"},
             },
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
-        claims = jwt.decode(
-            data["participant_token"],
-            options={"verify_signature": False},
-            algorithms=["HS256"],
-        )
-        assert claims["roomConfig"]["agents"] == [{"agentName": "duplex-zh-agent"}]
-        assert data["room_name"].startswith("voice-")
-        assert data["expires_in"] == 300
-        assert data["agent_name"]
-        assert data["voice_backend"] == "cascade"
-        assert "media_gateway" not in data
-
         stop = await client.post(
             f"/v1/sessions/{data['session_id']}/stop-response",
             headers=headers,
             json={"reason": "user_button"},
         )
-        keyed_stop = await client.post(
-            f"/v1/sessions/{data['session_id']}/stop-response",
-            headers={**headers, "Idempotency-Key": "stop-test-1"},
-            json={"reason": "user_button"},
-        )
-        keyed_repeat = await client.post(
-            f"/v1/sessions/{data['session_id']}/stop-response",
-            headers={**headers, "Idempotency-Key": "stop-test-1"},
-            json={"reason": "user_button"},
-        )
-    assert stop.status_code == 200
-    assert stop.json()["action"] == "atomic_cancel"
-    assert stop.json()["create_user_turn"] is False
-    assert keyed_stop.status_code == keyed_repeat.status_code == 200
-    assert keyed_stop.json() == keyed_repeat.json()
-
-
-@pytest.mark.asyncio
-async def test_create_session_returns_service_unavailable_without_livekit_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path, offline=False)
-    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
-    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
-    app = create_app()
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        user_id, headers = await _anonymous_identity(client)
-        response = await client.post(
-            "/v1/sessions",
-            headers=headers,
-            json={
-                "user_id": user_id,
-                "locale": "zh-CN",
-                "client": {"platform": "h5", "timezone": "Asia/Shanghai"},
-            },
-        )
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "livekit_credentials_missing"}}
-
-
-@pytest.mark.asyncio
-async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_token(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path, offline=True)
-    ticket_secret = "miniprogram-ticket-secret-that-is-long-enough"
-    monkeypatch.setenv(
-        "MINIPROGRAM_MEDIA_GATEWAY_URL",
-        "wss://media.example.com/memoria-mini-media/v1/mini-program/media",
-    )
-    monkeypatch.setenv("MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET", ticket_secret)
-    app = create_app()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        user_id, headers = await _anonymous_identity(client)
-        created = await client.post(
-            "/v1/sessions",
-            headers=headers,
-            json={
-                "user_id": user_id,
-                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
-            },
-        )
-        assert created.status_code == 200
-        data = created.json()
-        refreshed = await client.post(
-            f"/v1/sessions/{data['session_id']}/mini-program/gateway-ticket",
-            headers=headers,
-        )
-
-    assert "participant_token" not in data
-    assert "livekit_url" not in data
+    assert set(data) == {
+        "session_id",
+        "voice_backend",
+        "config",
+        "interaction",
+        "learning_task_id",
+        "runtime_profile",
+    }
     assert data["voice_backend"] == "cascade"
-    assert data["media_gateway"]["websocket_url"].startswith("wss://")
-    assert data["media_gateway"]["protocol_version"] == 1
-    assert data["media_gateway"]["audio"] == {
-        "sample_rate": 24000,
-        "channels": 1,
-        "sample_format": "s16le",
-        "frame_ms": 20,
-    }
-    assert data["media_gateway"]["playout"] == {
-        "post_playout_guard_ms": 150,
-    }
-    first_claims = verify_gateway_ticket(
-        data["media_gateway"]["ticket"],
-        secret=ticket_secret,
+    assert data["config"] == {"locale": "zh-CN", "allow_text_fallback": True}
+    record = app.state.memory_store.get_voice_session(
+        session_id=data["session_id"], user_id=user_id
     )
-    assert first_claims.session_id == data["session_id"]
-    assert first_claims.user_id == user_id
-    assert refreshed.status_code == 200
-    refreshed_data = refreshed.json()
-    assert "participant_token" not in refreshed_data
-    assert refreshed_data["ticket"] != data["media_gateway"]["ticket"]
-    assert refreshed_data["playout"] == data["media_gateway"]["playout"]
-    refreshed_claims = verify_gateway_ticket(refreshed_data["ticket"], secret=ticket_secret)
-    assert refreshed_claims.session_id == first_claims.session_id == data["session_id"]
-    assert refreshed_claims.user_id == first_claims.user_id == user_id
-
-
-@pytest.mark.asyncio
-async def test_miniprogram_session_fails_closed_without_gateway_or_non_cascade_backend(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path, offline=True)
-    app = create_app()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        user_id, headers = await _anonymous_identity(client)
-        missing_gateway = await client.post(
-            "/v1/sessions",
-            headers=headers,
-            json={
-                "user_id": user_id,
-                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
-            },
-        )
-        unsupported_backend = await client.post(
-            "/v1/sessions",
-            headers=headers,
-            json={
-                "user_id": user_id,
-                "voice_backend": "qwen_omni",
-                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
-            },
-        )
-
-    assert missing_gateway.status_code == 503
-    assert missing_gateway.json()["detail"]["code"] == "miniprogram_media_gateway_unavailable"
-    assert unsupported_backend.status_code == 409
-    assert unsupported_backend.json()["detail"]["code"] == "miniprogram_requires_cascade"
+    assert record is not None
+    assert record["interaction_mode"] == "companion"
+    # No room exists to message; only a StreamCore route has a stop channel.
+    assert stop.status_code == 409
+    assert stop.json()["detail"] == {"code": "stop_response_runtime_unsupported"}
 
 
 @pytest.mark.asyncio
@@ -272,8 +133,6 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
     tmp_path: Path,
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
-    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
-    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "")
     app = create_app()
 
@@ -741,91 +600,9 @@ async def test_session_control_survives_control_api_restart(
             headers=headers,
             json={},
         )
-        recovered = await client.post(
-            f"/v1/sessions/{created['session_id']}/rtc-recovered",
-            headers=headers,
-        )
-    assert stop.status_code == 200
-    assert recovered.status_code == 200
-    assert recovered.json()["action"] == "advance_generation"
-
-
-@pytest.mark.asyncio
-async def test_stop_response_routes_reliable_server_data(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path, offline=False)
-    routed: dict[str, object] = {}
-
-    async def fake_send(
-        settings: object,
-        *,
-        room_name: str,
-        event: dict[str, object],
-    ) -> None:
-        _ = settings
-        routed.update(room_name=room_name, event=event)
-
-    monkeypatch.setattr(session_routes, "_send_room_control", fake_send)
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        _, headers = await _anonymous_identity(client)
-        created = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        response = await client.post(
-            f"/v1/sessions/{created['session_id']}/stop-response",
-            headers=headers,
-            json={"reason": "user_button"},
-        )
-
-    assert response.status_code == 200
-    assert routed["room_name"] == created["room_name"]
-    assert routed["event"] == {
-        "type": "stop_response",
-        "session_id": created["session_id"],
-        "reason": "user_button",
-        "action": "atomic_cancel",
-        "create_user_turn": False,
-    }
-
-
-@pytest.mark.asyncio
-async def test_rtc_recovery_routes_generation_advance(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure(monkeypatch, tmp_path, offline=False)
-    routed: dict[str, object] = {}
-
-    async def fake_send(
-        settings: object,
-        *,
-        room_name: str,
-        event: dict[str, object],
-    ) -> None:
-        _ = settings
-        routed.update(room_name=room_name, event=event)
-
-    monkeypatch.setattr(session_routes, "_send_room_control", fake_send)
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        _, headers = await _anonymous_identity(client)
-        created = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        response = await client.post(
-            f"/v1/sessions/{created['session_id']}/rtc-recovered",
-            headers=headers,
-        )
-
-    assert response.status_code == 200
-    assert routed == {
-        "room_name": created["room_name"],
-        "event": {
-            "type": "rtc_recovered",
-            "session_id": created["session_id"],
-            "action": "advance_generation",
-            "create_user_turn": False,
-        },
-    }
+    # The persisted session is still found (not 404) by a fresh process.
+    assert stop.status_code == 409
+    assert stop.json()["detail"] == {"code": "stop_response_runtime_unsupported"}
 
 
 @pytest.mark.asyncio
@@ -836,7 +613,6 @@ async def test_readiness_requires_fresh_authenticated_smokes(
     _configure(monkeypatch, tmp_path, offline=False)
     app = create_app()
     mark_body: dict[str, Any] = {
-        "livekit": True,
         "funasr": True,
         "llm": True,
         "llm_provider": "bailian_deepseek",
@@ -922,7 +698,6 @@ async def test_readiness_evidence_survives_restart_and_is_release_bound(
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
     mark_body = {
-        "livekit": True,
         "funasr": True,
         "llm": True,
         "llm_provider": "bailian_deepseek",
@@ -994,33 +769,6 @@ async def test_ready_offline(
     assert response.json()["status"] == "ready"
 
 
-def test_token_mint_fails_closed_without_credentials() -> None:
-    settings = ControlSettings(
-        OFFLINE_MOCK=False,
-        LIVEKIT_API_KEY="",
-        LIVEKIT_API_SECRET="",
-    )
-    with pytest.raises(RuntimeError, match="credentials are required"):
-        mint_participant_token(
-            settings,
-            room_name="voice-session",
-            identity="user-session",
-        )
-
-
-def test_production_config_requires_secure_livekit() -> None:
-    settings = ControlSettings(
-        ENVIRONMENT="production",
-        PUBLIC_BASE_URL="https://voice.example.com",
-        ALLOWED_ORIGINS="https://voice.example.com",
-        LIVEKIT_URL="ws://livekit.example.com",
-        LIVEKIT_API_KEY="key",
-        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
-    )
-    with pytest.raises(ValueError, match="secure LIVEKIT_URL"):
-        settings.validate_production()
-
-
 def test_production_config_requires_immutable_release_tag() -> None:
     settings = _valid_archive_pipeline_settings(
         MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=(
@@ -1042,9 +790,6 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         "ENVIRONMENT": "production",
         "PUBLIC_BASE_URL": "https://voice.example.com",
         "ALLOWED_ORIGINS": "https://voice.example.com",
-        "LIVEKIT_URL": "wss://livekit.example.com",
-        "LIVEKIT_API_KEY": "key",
-        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
         "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": (
             "test-message-idempotency-material-that-is-long-enough"
@@ -1123,7 +868,7 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
     return ControlSettings(_env_file=None, **values)
 
 
-def test_livekit_production_does_not_require_streamcore_coturn() -> None:
+def test_complete_production_config_is_valid() -> None:
     settings = _valid_archive_pipeline_settings(
         MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
         MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
@@ -1148,26 +893,6 @@ def test_production_requires_independent_evolution_database_role() -> None:
     )
 
     with pytest.raises(ValueError, match="independent memoria_evolution role"):
-        settings.validate_production()
-
-
-def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None:
-    settings = _valid_archive_pipeline_settings(
-        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
-        MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
-        MEMORIA_MEMORY_EMBEDDING_URL="http://embedding:8000/v1/embeddings",
-        MEMORIA_MEMORY_EMBEDDING_API_KEY="embedding-api-key",
-        MEMORIA_MEMORY_EMBEDDING_MODEL="embedding-test",
-        MEMORIA_MEMORY_EMBEDDING_DIMENSIONS="3",
-        MEDIA_RUNTIME_DEFAULT="streamcore",
-        STREAMCORE_EXPERIMENT_PERCENT="1",
-        STREAMCORE_WHIP_URL="https://media.example/whip",
-        STREAMCORE_TOKEN_SECRET="streamcore-secret-material-that-is-long-enough",
-        STREAMCORE_SLO_GATE_ENABLED="true",
-        MEDIA_SLO_REPORT_TOKEN="media-slo-report-material-that-is-long-enough",
-    )
-
-    with pytest.raises(ValueError, match="COTURN_URLS"):
         settings.validate_production()
 
 
@@ -1232,9 +957,6 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         ENVIRONMENT="production",
         PUBLIC_BASE_URL="https://voice.example.com",
         ALLOWED_ORIGINS="https://voice.example.com",
-        LIVEKIT_URL="wss://livekit.example.com",
-        LIVEKIT_API_KEY="key",
-        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
         MEMORIA_ARCHIVE_WRITE_TOKEN=shared,
         MEMORIA_AGENT_HEARTBEAT_TOKEN=shared,
@@ -1255,9 +977,6 @@ def test_production_requires_an_independent_message_idempotency_secret() -> None
         ENVIRONMENT="production",
         PUBLIC_BASE_URL="https://voice.example.com",
         ALLOWED_ORIGINS="https://voice.example.com",
-        LIVEKIT_URL="wss://livekit.example.com",
-        LIVEKIT_API_KEY="key",
-        LIVEKIT_API_SECRET="test-livekit-material-that-is-long-enough",
         MEMORIA_AUTH_SECRET=auth_secret,
         MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=auth_secret,
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-that-is-long-enough",
@@ -1278,9 +997,6 @@ def test_production_rejects_the_development_message_idempotency_secret() -> None
         ENVIRONMENT="production",
         PUBLIC_BASE_URL="https://voice.example.com",
         ALLOWED_ORIGINS="https://voice.example.com",
-        LIVEKIT_URL="wss://livekit.example.com",
-        LIVEKIT_API_KEY="key",
-        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
         MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",

@@ -14,7 +14,6 @@ from services.common.security_constants import (
 
 
 class AuthFields(BaseModel):
-    session_token_ttl_s: int = Field(default=300, alias="SESSION_TOKEN_TTL_S")
     jwt_issuer: str = Field(default="voice-agent", alias="JWT_ISSUER")
 
     memoria_auth_secret: SecretStr = Field(

@@ -196,8 +196,6 @@ async def test_online_readiness_reports_unavailable_control_database_as_503(
 ) -> None:
     _configure_local(monkeypatch, tmp_path)
     monkeypatch.setenv("OFFLINE_MOCK", "false")
-    monkeypatch.setenv("LIVEKIT_API_KEY", "test-key")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "test-livekit-secret")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     app = create_app()
     app.state.memory_store = _UnavailableControlDatabase()
@@ -269,8 +267,6 @@ async def test_readiness_rejects_invalid_production_configuration(
         _env_file=None,
         ENVIRONMENT="production",
         OFFLINE_MOCK=True,
-        LIVEKIT_API_KEY="",
-        LIVEKIT_API_SECRET="",
     )
 
     status, body = await _ready(app)
@@ -292,9 +288,6 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         ENVIRONMENT="production",
         PUBLIC_BASE_URL="https://voice.example.com",
         ALLOWED_ORIGINS="https://voice.example.com",
-        LIVEKIT_URL="wss://livekit.example.com",
-        LIVEKIT_API_KEY="key",
-        LIVEKIT_API_SECRET="livekit-secret-material-that-is-long-enough",
         DASHSCOPE_API_KEY="dashscope-key",
         MEMORIA_AUTH_SECRET="control-auth-material-that-is-long-enough",
         MEMORIA_RELEASE_TAG="release-readiness-test",
@@ -302,7 +295,6 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         OFFLINE_MOCK=False,
     )
     body = {
-        "livekit": True,
         "funasr": True,
         "llm": True,
         "llm_provider": "bailian_deepseek",
@@ -355,7 +347,7 @@ async def test_fresh_agent_heartbeat_opens_production_readiness(
         base_url="http://test",
     ) as client:
         missing = await client.get("/health/ready")
-        heartbeat = await client.post(
+        retired_field = await client.post(
             "/internal/readiness/agent-heartbeat",
             headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
             json={
@@ -366,10 +358,22 @@ async def test_fresh_agent_heartbeat_opens_production_readiness(
                 "last_loop_at": datetime.now(UTC).isoformat(),
             },
         )
+        heartbeat = await client.post(
+            "/internal/readiness/agent-heartbeat",
+            headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
+            json={
+                "release_tag": "release-heartbeat-test",
+                "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+                "worker_ready": True,
+                "last_loop_at": datetime.now(UTC).isoformat(),
+            },
+        )
         ready = await client.get("/health/ready")
 
     assert missing.status_code == 503
     assert missing.json()["checks"]["agent"] == {"status": "missing"}
+    # The media bridge heartbeat has no LiveKit field; extra keys are refused.
+    assert retired_field.status_code == 422
     assert heartbeat.status_code == 200
     assert heartbeat.json()["status"] == "recorded"
     assert ready.status_code == 200
@@ -378,7 +382,6 @@ async def test_fresh_agent_heartbeat_opens_production_readiness(
         "release_tag": "release-heartbeat-test",
         "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
         "worker_ready": True,
-        "livekit_ready": True,
         "last_loop_at": heartbeat.json()["last_loop_at"],
     }
 
@@ -417,7 +420,6 @@ async def test_stale_agent_heartbeat_closes_production_readiness(
                 "release_tag": "release-heartbeat-test",
                 "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
                 "worker_ready": True,
-                "livekit_ready": True,
                 "last_loop_at": datetime.fromtimestamp(
                     datetime.now(UTC).timestamp() - 46,
                     tz=UTC,

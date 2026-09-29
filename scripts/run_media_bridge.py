@@ -9,6 +9,7 @@ invent a second orchestration stack.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import logging
 import os
@@ -20,6 +21,7 @@ from typing import Any, cast
 
 from services.agent.src.config import load_settings
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.heartbeat import build_agent_heartbeat
 from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.telemetry_privacy import _apply_telemetry_privacy_defaults
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
@@ -132,9 +134,8 @@ async def run() -> None:
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
-            # The media bridge is a separate process from the LiveKit worker;
-            # expose its own registry so the SLO sidecar never reports the
-            # wrong process's counters.
+            # Expose this process's own registry so the SLO sidecar never
+            # reports another process's counters.
             GLOBAL_METRICS.start_http_server(prometheus_port)
         except OSError:
             logger.warning("media bridge metrics exporter unavailable", exc_info=True)
@@ -143,6 +144,8 @@ async def run() -> None:
         max_pending_messages=settings.media_bridge_max_pending_messages,
     )
     session_factory = _load_session_factory(settings)
+    heartbeat = build_agent_heartbeat(settings)
+    heartbeat_task: asyncio.Task[None] | None = None
     reply_delivery_reporter: ReplyDeliveryReporter | None = None
     if bool(getattr(settings, "media_reply_delivery_enabled", False)):
         token = settings.media_reply_delivery_token.get_secret_value()
@@ -222,6 +225,11 @@ async def run() -> None:
             port,
             tls is not None,
         )
+        if heartbeat is not None:
+            # worker_ready tracks the gRPC server: true from a successful start
+            # until shutdown begins.
+            heartbeat.mark_worker_ready()
+            heartbeat_task = asyncio.create_task(heartbeat.run(), name="agent-heartbeat")
         stopped = asyncio.Event()
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -233,6 +241,12 @@ async def run() -> None:
         await stopped.wait()
     finally:
         primary_error = sys.exception()
+        if heartbeat is not None:
+            heartbeat.mark_worker_stopped()
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
         stop_error: BaseException | None = None
         try:
             await server.stop()

@@ -20,11 +20,9 @@ from services.agent.src.orchestration.formal_speaker_enrollment import (
 )
 from services.agent.src.orchestration.interaction_plane import (
     InteractionDecision,
-    InteractionEvent,
     InteractionSnapshot,
 )
 from services.agent.src.orchestration.interruption_guard import (
-    PlaybackInputDecision,
     PlaybackInputGuard,
     normalize_short,
 )
@@ -33,7 +31,6 @@ from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
     SpeakerVerifier,
     speech_ms_from_pcm,
-    voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.speech_epoch_assembler import (
     SpeechEpochAssembler,
@@ -42,10 +39,8 @@ from services.agent.src.orchestration.state_machine import InteractionPhase
 from services.agent.src.orchestration.utterance_router import (
     InterruptSemanticVerdict,
     TargetSpeakerRoute,
-    UtteranceIntent,
     UtteranceRoute,
     route_target_speaker,
-    route_utterance,
 )
 from services.speaker.domain import (
     DEVICE_BOUND_SUBJECT_MODEL,
@@ -62,11 +57,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
-TRUSTED_PLAYBACK_PCM_MS = 2_000
-TRUSTED_PLAYBACK_VOICE_WINDOW_MS = 900
-TRUSTED_PLAYBACK_MIN_VOICED_MS = 160
-TRUSTED_PLAYBACK_VOICE_WITNESS_MS = 2_500
-KEYWORD_SPOTTER_MIN_PCM_MS = 80
 POST_PLAYBACK_SPEAKER_UNTRUSTED_MS = 2_000
 POST_PLAYBACK_SPEAKER_PREROLL_MS = 400
 POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
@@ -111,9 +101,6 @@ class DuplexSpeakerMixin:
         _speaker_pcm_gate_epoch: int | None
         _speaker_pcm_skip_bytes: int
         _speaker_post_playback_untrusted: bool
-        _trusted_playback_pcm: bytearray
-        _trusted_playback_witness_pcm: bytes
-        _trusted_playback_witness_ns: int | None
         _playback_epoch: int
         _playback_fence: GenerationFence | None
         _pending_keyword_interrupt_binding: KeywordSpotterBinding | None
@@ -121,18 +108,11 @@ class DuplexSpeakerMixin:
         _target_speaker_focus_enabled: bool
         _target_focus_epoch: int | None
         _target_focus_pending_epoch: int | None
-        _target_speaker_interrupt: Callable[[], Awaitable[None]] | None
         _device_conversation_controls_enabled: bool
         _played_assistant_text: str
         _sticky_interrupt_epoch: int | None
         _sticky_interrupt_route: UtteranceRoute | None
         _sticky_interrupt_text: str
-        _interrupt_semantic_speech_epoch: int | None
-        _interrupt_semantic_playback_epoch: int | None
-        _interrupt_semantic_assistant_text: str
-        _interrupt_semantic_result_epoch: int | None
-        _interrupt_semantic_result_fence: GenerationFence | None
-        _interrupt_semantic_result: InterruptSemanticVerdict | None
         _interaction_decision_epoch: int | None
         _interaction_decision: InteractionDecision | None
         _interaction_decision_text: str
@@ -140,14 +120,12 @@ class DuplexSpeakerMixin:
         _trusted_unanchored_playback_epoch: int | None
         _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None
         _speech_epoch_assembler: SpeechEpochAssembler
-        _speech_segment_finalizers: list[Callable[..., None]]
         _enroll_fence: GenerationFence | None
         _formal_enrollment: FormalSpeakerEnrollment
         _formal_enrollment_sample_sink: Callable[[bytes, int], Coroutine[Any, Any, None]] | None
         _enroll_collecting: bool
         _enroll_started_mono: float
         _last_enroll_progress_speech_ms: int
-        _set_interruption_min_words: Callable[[int], None] | None
         _mode_policy: ModePolicy
 
         # Core runtime methods consumed by this mixin.
@@ -219,29 +197,6 @@ class DuplexSpeakerMixin:
         ) -> dict[str, Any]: ...
 
     def feed_speaker_pcm(self, pcm: bytes, *, now_ns: int | None = None) -> None:
-        if self.trusted_aec_playback_control and self._was_speaking and pcm:
-            self._trusted_playback_pcm.extend(pcm)
-            max_bytes = self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_PCM_MS // 1_000
-            if len(self._trusted_playback_pcm) > max_bytes:
-                del self._trusted_playback_pcm[: len(self._trusted_playback_pcm) - max_bytes]
-            window_bytes = self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_VOICE_WINDOW_MS // 1_000
-            recent_pcm = bytes(self._trusted_playback_pcm[-window_bytes:])
-            if (
-                voiced_stats_from_pcm(
-                    pcm,
-                    sample_rate=self._speaker_sample_rate,
-                )["speech_ms"]
-                > 0
-                and voiced_stats_from_pcm(
-                    recent_pcm,
-                    sample_rate=self._speaker_sample_rate,
-                )["speech_ms"]
-                >= TRUSTED_PLAYBACK_MIN_VOICED_MS
-            ):
-                self._trusted_playback_witness_pcm = recent_pcm
-                self._trusted_playback_witness_ns = (
-                    now_ns if now_ns is not None else time.monotonic_ns()
-                )
         if self._speaker_collecting and pcm:
             if getattr(self, "_speaker_pcm_gate_epoch", None) != self._speaker_epoch:
                 self._speaker_pcm_gate_epoch = self._speaker_epoch
@@ -272,146 +227,7 @@ class DuplexSpeakerMixin:
             return
         self.speaker_verifier.feed_pcm(pcm)
 
-    def keyword_spotter_binding(self) -> KeywordSpotterBinding | None:
-        playback_fence = self._playback_fence
-        if (
-            not self.barge_in_enabled
-            or not self.trusted_aec_playback_control
-            or not self._was_speaking
-            or not self.input_guard.candidate_active
-            or not self.input_guard.candidate_during_playback
-            or not self.input_guard.candidate_vad_anchored
-            or playback_fence is None
-            or not playback_fence.matches(self.fence)
-        ):
-            return None
-        return KeywordSpotterBinding(
-            speaker_epoch=self._speaker_epoch,
-            playback_epoch=self._playback_epoch,
-            fence=playback_fence,
-        )
-
-    def _keyword_spotter_binding_is_current(
-        self,
-        binding: KeywordSpotterBinding,
-        *,
-        require_pcm: bool,
-    ) -> bool:
-        current = self.keyword_spotter_binding()
-        if current != binding:
-            return False
-        if not require_pcm:
-            return True
-        minimum_bytes = self._speaker_sample_rate * 2 * KEYWORD_SPOTTER_MIN_PCM_MS // 1_000
-        return len(self._speaker_pcm) >= minimum_bytes
-
-    def observe_keyword_spotter_hit(
-        self,
-        keyword: str,
-        *,
-        binding: KeywordSpotterBinding,
-    ) -> bool:
-        route = route_utterance(
-            keyword,
-            speaker_state=self.speaker_verifier.state,
-            device_conversation=self._device_conversation_controls_enabled,
-        )
-        interaction = self.decide_interaction(
-            InteractionSnapshot(
-                event=InteractionEvent.KEYWORD,
-                assistant_speaking=self._was_speaking,
-                text=keyword,
-                utterance_route=route,
-                keyword_hard_stop=route.intent is UtteranceIntent.INTERRUPT_COMMAND,
-                keyword_confidence=1.0,
-            )
-        )
-        if (
-            not self._keyword_spotter_binding_is_current(binding, require_pcm=True)
-            or not interaction.cancel_generation
-            or self._pending_keyword_interrupt_binding == binding
-            or (
-                self._sticky_interrupt_epoch == binding.speaker_epoch
-                and self._sticky_interrupt_route is not None
-                and self._sticky_interrupt_route.should_interrupt
-            )
-        ):
-            return False
-        self._sticky_interrupt_epoch = binding.speaker_epoch
-        self._sticky_interrupt_route = route
-        self._sticky_interrupt_text = route.normalized_text
-        self._pending_keyword_interrupt_binding = binding
-        self.input_guard.candidate_text = route.normalized_text
-        self.input_guard.candidate_decision = PlaybackInputDecision.ACCEPT
-        self.input_guard.candidate_reason = None
-        self.mark_audio_event(
-            "keyword_spotter_hit",
-            detail={
-                "keyword_len": len(route.normalized_text),
-                "speaker_epoch": binding.speaker_epoch,
-                "playback_epoch": binding.playback_epoch,
-            },
-        )
-        self._spawn(
-            self._confirm_keyword_spotter_interrupt(binding),
-            name=f"keyword-spotter-interrupt-{binding.speaker_epoch}",
-        )
-        return True
-
-    async def _confirm_keyword_spotter_interrupt(
-        self,
-        binding: KeywordSpotterBinding,
-    ) -> None:
-        try:
-            if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
-                return
-            if self._target_speaker_focus_enabled and self._speaker_classifier is not None:
-                self._start_speaker_classification()
-                try:
-                    await self.await_speaker_classification()
-                except asyncio.CancelledError:
-                    return
-                if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
-                    return
-                target_route = self._target_speaker_route(
-                    context="interrupt",
-                    explicit_interrupt=True,
-                )
-                if not target_route.allow_input:
-                    self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
-                    self._reject_target_speaker(
-                        context="keyword_spotter",
-                        route=target_route,
-                    )
-                    self.publish_assistant_audio("restore", gain=1.0)
-                    return
-            callback = self._target_speaker_interrupt
-            if callback is None:
-                self.publish_assistant_audio("restore", gain=1.0)
-                return
-            if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
-                return
-            self._target_focus_epoch = binding.speaker_epoch
-            await callback()
-        finally:
-            if self._pending_keyword_interrupt_binding == binding:
-                self._pending_keyword_interrupt_binding = None
-
-    def _clear_trusted_playback_audio(self) -> None:
-        self._trusted_playback_pcm.clear()
-        self._trusted_playback_witness_pcm = b""
-        self._trusted_playback_witness_ns = None
-
-    def _trusted_playback_has_voice(self, *, now_ns: int | None = None) -> bool:
-        witnessed_at = self._trusted_playback_witness_ns
-        if witnessed_at is None or not self._trusted_playback_witness_pcm:
-            return False
-        now = now_ns if now_ns is not None else time.monotonic_ns()
-        age_ms = (now - witnessed_at) // 1_000_000
-        return 0 <= age_ms <= TRUSTED_PLAYBACK_VOICE_WITNESS_MS
-
     def on_user_voice_stopped(self) -> None:
-        keyword_binding = self.keyword_spotter_binding()
         was_collecting = self._speaker_collecting
         if self._speaker_collecting:
             self.mark_audio_event("last_user_audio")
@@ -439,14 +255,6 @@ class DuplexSpeakerMixin:
             self.publish_formal_speaker_enrollment_progress()
         else:
             self._start_speaker_classification()
-        for finalizer in self._speech_segment_finalizers:
-            try:
-                finalizer(keyword_binding)
-            except Exception:
-                logger.warning(
-                    "speech segment finalization failed; ordinary ASR remains active",
-                    exc_info=True,
-                )
 
     def _start_speaker_classification(self) -> None:
         if (
@@ -467,54 +275,6 @@ class DuplexSpeakerMixin:
         if previous is not None and not previous.done():
             previous.cancel()
         self._speaker_classification_task = None
-
-    def _invalidate_trusted_unanchored_control(self, *, reason: str) -> None:
-        trusted_epoch = self._trusted_unanchored_control_epoch
-        self._trusted_unanchored_control_epoch = None
-        self._trusted_unanchored_playback_epoch = None
-        self._clear_trusted_playback_audio()
-        if trusted_epoch is None:
-            return
-        if self._sticky_interrupt_epoch == trusted_epoch:
-            self._sticky_interrupt_epoch = None
-            self._sticky_interrupt_route = None
-            self._sticky_interrupt_text = ""
-        if trusted_epoch != self._speaker_epoch:
-            return
-        self._reset_speaker_classification_task()
-        self._speaker_epoch += 1
-        self._speech_epoch_assembler.discard_current()
-        self._target_focus_epoch = None
-        self._target_focus_pending_epoch = None
-        self._speaker_class = "uncertain"
-        self._speaker_decision = self._uncertain_speaker_decision(reason)
-        self._speaker_pcm.clear()
-        self._speaker_collecting = False
-        self._fresh_user_speech = False
-        self._interrupt_semantic_speech_epoch = None
-        self._interrupt_semantic_playback_epoch = None
-        self._interrupt_semantic_assistant_text = ""
-        self._interrupt_semantic_result_epoch = None
-        self._interrupt_semantic_result_fence = None
-        self._interrupt_semantic_result = None
-        self._interaction_decision_epoch = None
-        self._interaction_decision = None
-        self._interaction_decision_text = ""
-        self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
-        self.input_guard.candidate_reason = reason
-
-    def revoke_trusted_aec_playback_control(self, *, cause: str) -> bool:
-        if not self.trusted_aec_playback_control:
-            return False
-        self.trusted_aec_playback_control = False
-        self._pending_keyword_interrupt_binding = None
-        self._invalidate_trusted_unanchored_control(reason="aec_trust_revoked")
-        self.mark_audio_event(
-            "trusted_aec_playback_control_revoked",
-            status="degraded",
-            detail={"cause": cause},
-        )
-        return True
 
     async def _classify_speaker(self, epoch: int, pcm: bytes) -> SpeakerDecision:
         assert self._speaker_classifier is not None
@@ -636,64 +396,6 @@ class DuplexSpeakerMixin:
                 ),
             },
         )
-
-    async def _confirm_target_speaker_interrupt(self, epoch: int) -> None:
-        """Release playback only for target voice or an explicit yield command."""
-        trusted_playback_epoch = (
-            self._trusted_unanchored_playback_epoch
-            if self._trusted_unanchored_control_epoch == epoch
-            else None
-        )
-        if epoch != self._speaker_epoch or self._target_focus_epoch == epoch:
-            return
-        if trusted_playback_epoch is not None and (
-            not self._was_speaking or trusted_playback_epoch != self._playback_epoch
-        ):
-            return
-        try:
-            await self.await_speaker_classification()
-        except asyncio.CancelledError:
-            return
-        if epoch != self._speaker_epoch or self._target_focus_epoch == epoch:
-            return
-        if trusted_playback_epoch is not None and (
-            not self._was_speaking or trusted_playback_epoch != self._playback_epoch
-        ):
-            return
-        barge_route = self._route_candidate()
-        route = self._target_speaker_route(
-            context="interrupt",
-            explicit_interrupt=barge_route.intent
-            in {UtteranceIntent.INTERRUPT_COMMAND, UtteranceIntent.END_SESSION},
-        )
-        if not route.allow_input:
-            self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
-            self._reject_target_speaker(context="playback", route=route)
-            self.publish_assistant_audio("restore", gain=1.0)
-            if self._set_interruption_min_words is not None:
-                self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-            return
-        callback = self._target_speaker_interrupt
-        if callback is None:
-            self.publish_assistant_audio("restore", gain=1.0)
-            return
-        self._target_focus_epoch = epoch
-        await callback()
-
-    def _request_playback_interrupt(self) -> bool:
-        """Confirm one accepted playback candidate through the wired LiveKit stop."""
-        if self._target_focus_epoch == self._speaker_epoch:
-            return True
-        callback = self._target_speaker_interrupt
-        if callback is None:
-            return False
-        self._target_focus_epoch = self._speaker_epoch
-
-        async def _interrupt() -> None:
-            await callback()
-
-        self._spawn(_interrupt(), name="playback-input-confirmed")
-        return True
 
     def _publish_speaker_decision(self, epoch: int, decision: SpeakerDecision) -> None:
         if self._evidence_publisher is None:

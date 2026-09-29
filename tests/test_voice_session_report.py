@@ -1012,7 +1012,7 @@ def test_invalid_completion_timestamp_never_proves_completion(timestamp):
 def test_healthy_label_cannot_hide_missing_or_failed_stream_records(defect):
     streams = {
         label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
-        for label in ("bridge", "agent", "edge")
+        for label in ("bridge", "edge")
     }
     if defect == "missing":
         del streams["bridge"]
@@ -1048,8 +1048,28 @@ def test_healthy_capture_requires_and_accepts_every_stream_record():
             "log_stream_health": "healthy",
             "log_streams": {
                 label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
-                for label in ("bridge", "agent", "edge")
+                for label in ("bridge", "edge")
             },
+        }
+    )
+    assert (verdict, reasons) == ("completed", [])
+
+
+def test_a_pre_cutover_capture_with_a_retired_agent_stream_record_is_still_completed():
+    # Captures made while the LiveKit worker ran recorded a third stream; the extra
+    # record is history and must neither be required nor blamed.
+    streams = {
+        label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
+        for label in ("bridge", "agent", "edge")
+    }
+    verdict, reasons = report._capture_integrity(
+        {
+            "capture_mode": "live",
+            "capture_status": "completed",
+            "completed_at_local": "2026-09-15T16:31:42+08:00",
+            "server_logs_requested": True,
+            "log_stream_health": "healthy",
+            "log_streams": streams,
         }
     )
     assert (verdict, reasons) == ("completed", [])
@@ -1058,7 +1078,7 @@ def test_healthy_capture_requires_and_accepts_every_stream_record():
 def _healthy_stream_records() -> dict[str, object]:
     return {
         label: {"status": "stopped_by_capture", "exit_code": -15, "forced_kill": False}
-        for label in ("bridge", "agent", "edge")
+        for label in ("bridge", "edge")
     }
 
 
@@ -1129,10 +1149,10 @@ def test_a_healthy_label_is_verified_even_when_the_requested_flag_is_absent() ->
 @pytest.mark.parametrize("health", [None, "not_requested", "degraded"])
 def test_requested_streams_are_named_even_without_a_healthy_label(health) -> None:
     verdict, reasons = report._capture_integrity(
-        _healthy_completion(log_stream_health=health, log_streams={"agent": {}})
+        _healthy_completion(log_stream_health=health, log_streams={"edge": {}})
     )
     assert verdict == "degraded"
-    for label in ("bridge", "agent", "edge"):
+    for label in ("bridge", "edge"):
         assert any(f"log stream {label}" in reason for reason in reasons)
 
 
@@ -1188,13 +1208,13 @@ def test_a_defective_bridge_record_under_a_healthy_label_is_degraded_and_named(
 
     assert verdict == "degraded"
     assert expected in reasons
-    # The two healthy siblings are never blamed for the one defective record.
-    assert not any("agent" in reason or "edge" in reason for reason in reasons)
+    # The healthy sibling is never blamed for the one defective record.
+    assert not any("edge" in reason for reason in reasons)
 
 
 def test_a_healthy_stream_record_needs_no_matching_log_file_on_disk(tmp_path: Path, capsys) -> None:
     # The records are the capture tool's own metadata.  This report never opens
-    # bridge.log/agent.log/edge.log to re-derive health, so a complete record set is
+    # bridge.log/edge.log to re-derive health, so a complete record set is
     # accepted as such even when no stream file was copied into the directory.
     run = _capture(
         tmp_path,

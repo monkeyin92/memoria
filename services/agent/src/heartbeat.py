@@ -1,4 +1,11 @@
-"""Process-level Agent heartbeat reported through the Control API."""
+"""Voice-core media bridge heartbeat reported through the Control API.
+
+The bridge process posts ``{release_tag, boot_id, worker_ready, last_loop_at}``
+to ``/internal/readiness/agent-heartbeat``. ``worker_ready`` is true only while
+the bridge's gRPC server is serving. Each accepted ready heartbeat refreshes a
+local state file, which the container healthcheck reads through
+``python -m services.agent.src.heartbeat --check-health``.
+"""
 
 from __future__ import annotations
 
@@ -7,18 +14,20 @@ import asyncio
 import json
 import logging
 import os
-import urllib.error
-import urllib.request
+import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
+HEARTBEAT_PATH = "/internal/readiness/agent-heartbeat"
 HEARTBEAT_STATE_PATH = Path("/tmp/memoria-agent-heartbeat.json")
 HEARTBEAT_MAX_AGE_S = 30.0
 
@@ -28,7 +37,6 @@ class AgentHeartbeatConfig:
     endpoint: str
     internal_token: str
     release_tag: str
-    worker_health_url: str = "http://127.0.0.1:8081/"
     interval_s: float = 10.0
     timeout_s: float = 3.0
     state_path: Path = HEARTBEAT_STATE_PATH
@@ -38,7 +46,6 @@ class AgentHeartbeatConfig:
             not self.endpoint.strip()
             or not self.internal_token.strip()
             or not self.release_tag.strip()
-            or not self.worker_health_url.strip()
         ):
             raise ValueError("agent heartbeat requires endpoint, token and release tag")
         if self.interval_s <= 0 or self.timeout_s <= 0:
@@ -50,36 +57,29 @@ class AgentHeartbeat:
         self,
         config: AgentHeartbeatConfig,
         *,
-        registration_probe: Callable[[], bool],
         boot_id: UUID | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
-        self._registration_probe = registration_probe
         self._boot_id = boot_id or uuid4()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_ready = False
 
-    def mark_worker_ready(self, *_: object) -> None:
+    def mark_worker_ready(self) -> None:
         self._worker_ready = True
 
+    def mark_worker_stopped(self) -> None:
+        self._worker_ready = False
+
     async def report(self, client: httpx.AsyncClient) -> None:
-        livekit_ready = False
-        if self._registration_probe():
-            try:
-                worker_health = await client.get(self._config.worker_health_url)
-            except httpx.HTTPError:
-                pass
-            else:
-                livekit_ready = worker_health.is_success
+        worker_ready = self._worker_ready
         response = await client.post(
             self._config.endpoint,
             headers={"X-Memoria-Internal-Token": self._config.internal_token},
             json={
                 "release_tag": self._config.release_tag,
                 "boot_id": str(self._boot_id),
-                "worker_ready": self._worker_ready,
-                "livekit_ready": livekit_ready,
+                "worker_ready": worker_ready,
                 "last_loop_at": self._clock().astimezone(UTC).isoformat(),
             },
         )
@@ -94,7 +94,7 @@ class AgentHeartbeat:
                 request=response.request,
                 response=response,
             )
-        if not self._worker_ready or not livekit_ready:
+        if not worker_ready:
             return
         _write_heartbeat_state(
             self._config.state_path,
@@ -124,6 +124,27 @@ class AgentHeartbeat:
             except (httpx.HTTPError, OSError) as exc:
                 logger.warning("agent heartbeat failed: %s", type(exc).__name__)
             await asyncio.sleep(self._config.interval_s)
+
+
+def heartbeat_endpoint(archive_session_events_url: str) -> str:
+    """Address the Control API readiness route on the archive endpoint's host."""
+
+    archive_url = urlsplit(archive_session_events_url)
+    return urlunsplit((archive_url.scheme, archive_url.netloc, HEARTBEAT_PATH, "", ""))
+
+
+def build_agent_heartbeat(settings: Any) -> AgentHeartbeat | None:
+    """Production bridges report readiness; other environments stay silent."""
+
+    if getattr(settings, "environment", "development") != "production":
+        return None
+    return AgentHeartbeat(
+        AgentHeartbeatConfig(
+            endpoint=heartbeat_endpoint(settings.archive_session_events_url),
+            internal_token=settings.internal_token("agent_heartbeat"),
+            release_tag=os.environ.get("MEMORIA_RELEASE_TAG", "development"),
+        )
+    )
 
 
 def _response_detail(response: httpx.Response) -> str:
@@ -159,16 +180,31 @@ def _write_heartbeat_state(state_path: Path, *, release_tag: str, accepted_at: d
         temporary_path.unlink(missing_ok=True)
 
 
+def _tcp_port_open(address: str, *, timeout_s: float) -> bool:
+    host, separator, port = address.rpartition(":")
+    if not separator or not host or not port.isdigit():
+        return False
+    try:
+        with socket.create_connection((host.strip("[]"), int(port)), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
 def is_agent_heartbeat_healthy(
     *,
     state_path: Path = HEARTBEAT_STATE_PATH,
     release_tag: str,
-    worker_health_url: str = "http://127.0.0.1:8081/",
+    probe_addr: str | None = None,
     now: datetime | None = None,
     max_age_s: float = HEARTBEAT_MAX_AGE_S,
     timeout_s: float = 3.0,
 ) -> bool:
-    """Return whether this Agent has a recent accepted heartbeat and a healthy SDK."""
+    """Return whether the bridge has a recent accepted ready heartbeat.
+
+    ``probe_addr`` (``host:port``) additionally requires the gRPC listener to
+    accept a TCP connection.
+    """
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         accepted_at = datetime.fromisoformat(state["accepted_at"])
@@ -181,13 +217,7 @@ def is_agent_heartbeat_healthy(
     age_s = ((now or datetime.now(UTC)) - accepted_at).total_seconds()
     if age_s < 0 or age_s > max_age_s:
         return False
-
-    try:
-        with urllib.request.urlopen(worker_health_url, timeout=timeout_s) as response:
-            status = response.status
-            return isinstance(status, int) and 200 <= status < 300
-    except (OSError, urllib.error.URLError, ValueError):
-        return False
+    return probe_addr is None or _tcp_port_open(probe_addr, timeout_s=timeout_s)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -195,7 +225,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--check-health", action="store_true")
     parser.add_argument("--state-path", type=Path, default=HEARTBEAT_STATE_PATH)
     parser.add_argument("--release-tag", default=os.environ.get("MEMORIA_RELEASE_TAG", ""))
-    parser.add_argument("--worker-health-url", default="http://127.0.0.1:8081/")
+    parser.add_argument("--probe-addr", default=None)
     args = parser.parse_args(argv)
     if not args.check_health:
         parser.error("--check-health is required")
@@ -203,7 +233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         not is_agent_heartbeat_healthy(
             state_path=args.state_path,
             release_tag=args.release_tag,
-            worker_health_url=args.worker_health_url,
+            probe_addr=args.probe_addr,
         )
     )
 

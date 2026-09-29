@@ -18,11 +18,16 @@ _CANDIDATE_IMAGE = f"memoria-agent:{_CANDIDATE}"
 _STACK_IMAGE = f"memoria-agent:{_STACK}"
 
 
-def _services(agent: str, bridge: str) -> dict[str, dict[str, str]]:
-    return {
-        "agent": {"image": agent},
-        "voice-core-media-bridge": {"image": bridge},
-    }
+# Two services that both run the memoria-agent image, for the multi-target
+# consistency checks; the component lane itself targets only the bridge.
+_PAIR = ("voice-core-media-bridge", "media-slo-reporter")
+
+
+def _services(bridge: str, reporter: str | None = None) -> dict[str, dict[str, str]]:
+    services = {"voice-core-media-bridge": {"image": bridge}}
+    if reporter is not None:
+        services["media-slo-reporter"] = {"image": reporter}
+    return services
 
 
 def _release_dir(tmp_path: Path, *, commit_placeholder: bool = False) -> Path:
@@ -84,11 +89,12 @@ def test_verify_resolved_services_accepts_candidate_tag_distinct_from_stack_tag(
 
 
 def test_verify_resolved_services_rejects_a_missing_candidate_identity() -> None:
-    """Two services on the same live image must never pass on consistency alone."""
+    """Services on the same live image must never pass on consistency alone."""
 
     ok, errors = verify_resolved_services(
         _services(_STACK_IMAGE, _STACK_IMAGE),
         stack_tag=_STACK,
+        target_services=_PAIR,
     )
     assert ok is False
     assert any("candidate identity is required" in error for error in errors)
@@ -106,7 +112,7 @@ def test_verify_resolved_services_names_the_live_stack_image_as_the_cause() -> N
 
 
 def test_verify_resolved_services_fails_when_service_missing() -> None:
-    services = {"agent": {"image": _CANDIDATE_IMAGE}}
+    services = {"media-slo-reporter": {"image": _CANDIDATE_IMAGE}}
     ok, errors = verify_resolved_services(
         services,
         candidate_tag=_CANDIDATE,
@@ -131,6 +137,7 @@ def test_verify_resolved_services_rejects_divergent_target_services() -> None:
         _services(_CANDIDATE_IMAGE, "memoria-agent:20260915-old-tag"),
         candidate_tag=_CANDIDATE,
         stack_tag=_STACK,
+        target_services=_PAIR,
     )
     assert ok is False
     assert any("inconsistent images" in error for error in errors)
@@ -140,9 +147,10 @@ def test_verify_resolved_services_rejects_expected_images_from_two_artifacts() -
     ok, errors = verify_resolved_services(
         _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE),
         expected_images={
-            "agent": _CANDIDATE_IMAGE,
-            "voice-core-media-bridge": "memoria-agent:other",
+            "voice-core-media-bridge": _CANDIDATE_IMAGE,
+            "media-slo-reporter": "memoria-agent:other",
         },
+        target_services=_PAIR,
     )
     assert ok is False
     assert any("one candidate artifact" in error for error in errors)
@@ -151,20 +159,18 @@ def test_verify_resolved_services_rejects_expected_images_from_two_artifacts() -
 def test_verify_resolved_services_rejects_partial_expected_image_map() -> None:
     ok, errors = verify_resolved_services(
         _services(_CANDIDATE_IMAGE, _CANDIDATE_IMAGE),
-        expected_images={"agent": _CANDIDATE_IMAGE},
+        expected_images={"voice-core-media-bridge": _CANDIDATE_IMAGE},
+        target_services=_PAIR,
     )
     assert ok is False
     assert any("do not cover every target service" in error for error in errors)
 
 
 def test_verify_resolved_services_expected_image_exact_match() -> None:
-    services = _services("registry.example.com/agent:v1", "registry.example.com/agent:v1")
+    services = _services("registry.example.com/agent:v1")
     ok, errors = verify_resolved_services(
         services,
-        expected_images={
-            "agent": "registry.example.com/agent:v1",
-            "voice-core-media-bridge": "registry.example.com/agent:v1",
-        },
+        expected_images={"voice-core-media-bridge": "registry.example.com/agent:v1"},
     )
     assert ok is True
     assert errors == []
@@ -315,16 +321,18 @@ def test_main_rejects_duplicate_expected_image_service(
             "--stack-tag",
             _STACK,
             "--expected-image",
-            f"agent={_CANDIDATE_IMAGE}",
+            f"voice-core-media-bridge={_CANDIDATE_IMAGE}",
             "--expected-image",
-            f"agent={_CANDIDATE_IMAGE}",
+            f"voice-core-media-bridge={_CANDIDATE_IMAGE}",
         ]
     )
     assert code == 2
     assert calls == []
 
 
-@pytest.mark.parametrize("services", ["", "agent,agent", "bad/service"])
+@pytest.mark.parametrize(
+    "services", ["", "voice-core-media-bridge,voice-core-media-bridge", "bad/service"]
+)
 def test_main_rejects_invalid_target_services(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -365,7 +373,7 @@ def test_main_rejects_expected_image_for_an_unselected_service(
             "--services",
             "control-api",
             "--expected-image",
-            f"agent={_CANDIDATE_IMAGE}",
+            f"voice-core-media-bridge={_CANDIDATE_IMAGE}",
         ]
     )
     assert code == 2
@@ -522,7 +530,7 @@ def test_main_cli_succeeds_when_verified(
     assert calls[0]["overrides"] == [str(override)]
 
 
-def test_agent_cli_defaults_remain_compatible(
+def test_agent_cli_defaults_target_only_the_media_bridge(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -540,3 +548,5 @@ def test_agent_cli_defaults_remain_compatible(
     )
     assert code == 0
     assert calls[0]["profile"] == "media-runtime"
+    # The retired LiveKit worker is no longer a default target.
+    assert rti.SERVICES == ("voice-core-media-bridge",)

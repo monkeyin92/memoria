@@ -5,6 +5,14 @@ tag="${1:?usage: smoke_server_deployment.sh <release-tag>}"
 release="/opt/memoria/releases/$tag"
 image="memoria-control-api:$tag"
 container="memoria-control-preflight"
+# Guardian and archive data are PostgreSQL-only: a throwaway PostgreSQL on its
+# own network, owned by one NOBYPASSRLS role (the README's local setup), so
+# the preflight never touches the production data layer.
+pg_container="memoria-preflight-postgres"
+pg_image="pgvector/pgvector:0.8.1-pg17-bookworm"
+network="memoria-preflight-net"
+pg_password="preflight-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+pg_dsn="postgresql://memoria_preflight:$pg_password@$pg_container:5432/memoria"
 data_dir="$(mktemp -d /tmp/memoria-preflight-data.XXXXXX)"
 workdir="$(mktemp -d /tmp/memoria-preflight-work.XXXXXX)"
 api_port=18791
@@ -13,8 +21,6 @@ nginx_config="$workdir/nginx.conf"
 nginx_pid="$workdir/nginx.pid"
 nginx_error_log="$workdir/nginx-error.log"
 smoke_https="$workdir/memoria-https.conf"
-smoke_miniprogram_media="$workdir/memoria-miniprogram-media.conf"
-smoke_device_media="$workdir/memoria-device-media.conf"
 smoke_device_edge="$workdir/memoria-device-edge.conf"
 www_root="$workdir/www"
 host_header="Host: aigcnice.com"
@@ -25,14 +31,14 @@ cleanup() {
     sudo nginx -s quit -c "$nginx_config" >/dev/null 2>&1 || true
   fi
   sudo docker rm -f "$container" >/dev/null 2>&1 || true
+  sudo docker rm -f "$pg_container" >/dev/null 2>&1 || true
+  sudo docker network rm "$network" >/dev/null 2>&1 || true
   sudo rm -rf "$data_dir" "$workdir"
 }
 trap cleanup EXIT
 
 test -f "$release/infra/nginx-memoria-loopback-smoke.conf"
 test -f "$release/infra/nginx-memoria-https.conf"
-test -f "$release/infra/nginx-memoria-miniprogram-media.conf"
-test -f "$release/infra/nginx-memoria-device-media.conf"
 test -f "$release/infra/nginx-memoria-device-edge.conf"
 sudo docker image inspect "$image" >/dev/null
 if sudo ss -ltn | grep -qE ":($api_port|$nginx_port)[[:space:]]"; then
@@ -42,14 +48,10 @@ fi
 
 sudo chown 65532:65532 "$data_dir"
 install -d -m 0755 "$www_root"
-cp "$release/infra/nginx-memoria-miniprogram-media.conf" "$smoke_miniprogram_media"
-cp "$release/infra/nginx-memoria-device-media.conf" "$smoke_device_media"
 cp "$release/infra/nginx-memoria-device-edge.conf" "$smoke_device_edge"
 sed \
   -e "s#127\\.0\\.0\\.1:8791#127.0.0.1:$api_port#g" \
   -e "s#root /var/www;#root $www_root;#g" \
-  -e "s#/etc/nginx/snippets/memoria-miniprogram-media.conf;#$smoke_miniprogram_media;#g" \
-  -e "s#/etc/nginx/snippets/memoria-device-media.conf;#$smoke_device_media;#g" \
   -e "s#/etc/nginx/snippets/memoria-device-edge.conf;#$smoke_device_edge;#g" \
   "$release/infra/nginx-memoria-https.conf" >"$smoke_https"
 sed \
@@ -60,8 +62,29 @@ sed \
   "$release/infra/nginx-memoria-loopback-smoke.conf" >"$nginx_config"
 chmod 0755 "$workdir"
 
+start_postgres() {
+  sudo docker network create "$network" >/dev/null
+  sudo docker run -d --name "$pg_container" --network "$network" \
+    --tmpfs /var/lib/postgresql/data:rw,size=512m \
+    -e POSTGRES_USER=preflight_admin -e "POSTGRES_PASSWORD=$pg_password" -e POSTGRES_DB=postgres \
+    "$pg_image" >/dev/null
+  for _ in $(seq 1 30); do
+    if sudo docker exec "$pg_container" pg_isready -U preflight_admin -d postgres -q 2>/dev/null; then
+      sudo docker exec "$pg_container" psql -U preflight_admin -d postgres -v ON_ERROR_STOP=1 -q \
+        -c "CREATE ROLE memoria_preflight LOGIN PASSWORD '$pg_password' NOSUPERUSER NOBYPASSRLS" \
+        -c "CREATE DATABASE memoria OWNER memoria_preflight" >/dev/null \
+        && sudo docker exec "$pg_container" psql -U preflight_admin -d memoria -q \
+          -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null \
+        && return 0
+    fi
+    sleep 1
+  done
+  sudo docker logs "$pg_container" >&2 || true
+  return 1
+}
+
 start_control() {
-  sudo docker run -d --name "$container" \
+  sudo docker run -d --name "$container" --network "$network" \
     --read-only \
     --security-opt no-new-privileges:true \
     --cap-drop ALL \
@@ -72,12 +95,11 @@ start_control() {
     -e "MEMORIA_RELEASE_TAG=$tag-preflight" \
     -e PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api \
     -e ALLOWED_ORIGINS=https://122.51.108.140:8443,https://aigcnice.com:8443,https://www.aigcnice.com:8443 \
-    -e LIVEKIT_URL=wss://preflight.livekit.cloud \
-    -e LIVEKIT_API_KEY=preflight-key \
-    -e LIVEKIT_API_SECRET=preflight-secret \
     -e MEMORIA_AUTH_SECRET=preflight-auth-secret-that-is-longer-than-thirty-two-characters \
     -e "MEMORIA_RESPONSE_PLAN_TOKEN=$response_plan_token" \
     -e MEMORIA_DB_PATH=/data/memoria.sqlite3 \
+    -e "MEMORIA_GUARDIAN_DATABASE_URL=$pg_dsn" \
+    -e "MEMORIA_ARCHIVE_DATABASE_URL=$pg_dsn" \
     -e MEMORIA_SPEAKER_DB_PATH=/data/speakers.sqlite3 \
     -e MEMORIA_ARCHIVE_OBJECT_STORE_PATH=/data/archive-objects \
     -e MEMORIA_VOICE_SAMPLE_STORE_PATH=/data/voice-samples \
@@ -97,6 +119,7 @@ wait_control() {
   return 1
 }
 
+start_postgres
 start_control
 wait_control
 
@@ -236,4 +259,4 @@ python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["dis
 python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["items"] and body["items"][0]["message_count"] == 1' \
   "$workdir/days.get.json"
 
-echo "server deployment smoke: PASS (retired H5, API, owner-only default, SQLite restart)"
+echo "server deployment smoke: PASS (retired H5, API, owner-only default, restart on SQLite control store + PostgreSQL archive)"

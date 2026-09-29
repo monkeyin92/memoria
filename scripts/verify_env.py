@@ -89,7 +89,6 @@ def _mark_smokes_passed(base_url: str) -> bool:
         method="POST",
         authorization=secret,
         payload={
-            "livekit": True,
             "funasr": True,
             "llm": True,
             "llm_provider": os.getenv("LLM_PROVIDER", "qwen"),
@@ -127,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    errors, offline, profile = _validate_environment()
+    errors, offline, _profile = _validate_environment()
     if args.mark_smokes_passed and offline:
         errors.append("--mark-smokes-passed is not used with OFFLINE_MOCK=true")
     if errors:
@@ -139,8 +138,6 @@ def main(argv: list[str] | None = None) -> int:
     print("verify_env OK")
     if offline:
         print("  mode: OFFLINE_MOCK (provider keys not required)")
-    if profile == "cn_self_hosted":
-        print("  note: cn_self_hosted should use LIVEKIT_TURN_DETECTOR_VERSION=v1-mini")
     if args.mark_smokes_passed and not _mark_smokes_passed(args.control_api_url):
         return 1
     if args.check_ready and not _check_ready(args.control_api_url):

@@ -8,7 +8,7 @@
 #
 # Installed on the host as /root/memoria-release/release-ops.sh (root 0700).
 # The PREV_* constants describe the chain this release replaces; they were
-# read-only checked on production on 2026-09-28 22:10 (all six targets on the
+# read-only checked on production on 2026-09-29 11:45 (all six targets on the
 # plain PREV compose file) and must be re-checked before each full-stack
 # release. The freeze step refuses to run when the live containers are on any
 # other chain.
@@ -18,25 +18,33 @@ U=/opt/memoria/incoming/$TAG
 R=/opt/memoria/releases/$TAG
 S=$R/.cutover
 # The stack this release replaces: the rollback target and its identity.
-PREV_TAG=20260928-reopen-window-v1
-PREV_COMMIT=173445def1981b4d714c7ef44614af8b6cd07549
+PREV_TAG=20260928-review-batches-v1
+PREV_COMMIT=6180893209fd24c4244a986b60659389ccedcecc
 PREV=/opt/memoria/releases/$PREV_TAG
 # PostgreSQL still bind-mounts its schema files from this older tree, so schema
 # upgrades are written there (in place, keeping the inode) -- never into PREV.
 DATA_TREE=/opt/memoria/releases/20260827-architecture-split-v1
 # Services recreated from the plain PREV compose file on rollback. media-edge is
-# released separately and is not touched here.
+# released separately and is not touched here. PREV still runs the LiveKit
+# worker (agent) and both Python media gateways, so these two lists describe
+# PREV and keep all six; the rollback brings the retired three back from PREV's
+# own compose file, images and env files.
 PREV_STACK_SERVICES=(speaker-model control-api agent voice-core-media-bridge miniprogram-gateway device-media-gateway)
-ROLES=(agent control-api device-media-gateway miniprogram-gateway speaker-model)
 TARGETS=(memoria-speaker-model-1 memoria-control-api-1 memoria-agent-1 memoria-voice-core-media-bridge-1 memoria-miniprogram-gateway-1 memoria-device-media-gateway-1)
+# Images this release ships (memoria-agent is the Voice Core media bridge image).
+ROLES=(agent control-api speaker-model)
+# PREV containers this release's compose file no longer defines. cutover stops
+# them (without removing them) once the bridge is healthy; rollback recreates
+# them from PREV.
+RETIRED_TARGETS=(memoria-agent-1 memoria-miniprogram-gateway-1 memoria-device-media-gateway-1)
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
 
 live_chain() {
   docker inspect "$1" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
 }
 
-# One status line per container. Some memoria containers (LiveKit, the
-# SenseVoice sidecar) define no healthcheck, and a bare .State.Health.Status
+# One status line per container. Some memoria containers (the SenseVoice
+# sidecar, a LiveKit server left on the host) define no healthcheck, and a bare .State.Health.Status
 # template aborts the whole step under set -e/pipefail.
 container_state() {
   docker inspect "$1" --format '{{.Name}} {{.Config.Image}} {{.Image}} {{.State.StartedAt}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}} restarts={{.RestartCount}}'
@@ -52,11 +60,12 @@ memoria_container_states() {
 # P1-11: a device serves one bound subject and voiceprint authority is off.
 # 20260925-full-stack-v1 shipped with a stale MEMORIA_SPEAKER_AUTHORITY_ENABLED=true
 # in /etc/memoria-agent.env and the first device greeting was dropped as
-# target_non_owner. Check the value the candidate agent and bridge actually see,
-# accepting only values that every reader treats as off.
+# target_non_owner. Check the value the candidate bridge actually sees (the
+# LiveKit worker that also read it is retired), accepting only values that every
+# reader treats as off.
 assert_speaker_authority_disabled() {
   local svc
-  for svc in agent voice-core-media-bridge; do
+  for svc in voice-core-media-bridge; do
     new_compose run --rm --no-deps -T --entrypoint /app/.venv/bin/python "$svc" -c '
 import os, sys
 raw = os.environ.get("MEMORIA_SPEAKER_AUTHORITY_ENABLED", "")
@@ -167,10 +176,10 @@ except ValidationError as e:
 except ValueError as e:
     print("INVALID", e); raise SystemExit(1)
 print("control_env_valid=PASS")'
-  new_compose run --rm --no-deps -T --entrypoint /app/.venv/bin/python agent -m scripts.verify_env
+  new_compose run --rm --no-deps -T --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.verify_env
   assert_speaker_authority_disabled
   new_compose run --rm --no-deps -T -e MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
-    --entrypoint /app/.venv/bin/python agent -m scripts.provider_smoke_test
+    --entrypoint /app/.venv/bin/python voice-core-media-bridge -m scripts.provider_smoke_test
   log "env=PASS"
 }
 
@@ -217,22 +226,37 @@ step_schema() {
   log "schema=PASS"
 }
 
+# The LiveKit worker and both Python media gateways exist only in PREV. Stop
+# (never remove) them after the bridge, which now posts the agent heartbeat,
+# is healthy: a stale worker would keep posting PREV heartbeats. A stopped
+# container keeps its logs, and docker_image_retention.sh keeps every image a
+# container (running or stopped) references, so PREV's image tags survive for
+# the rollback, which force-recreates all three from PREV.
+retire_prev_media_chain() {
+  local c
+  for c in "${RETIRED_TARGETS[@]}"; do
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || true)" == true ]]; then
+      log "retire $c"; docker stop "$c" >/dev/null
+    fi
+  done
+}
+
 step_cutover() {
   new_compose config --format json | python3 -c '
 import json, sys, os
 t = os.environ["TAG"]; s = json.load(sys.stdin)["services"]
-want = {"speaker-model": "memoria-speaker-model", "control-api": "memoria-control-api", "agent": "memoria-agent",
-        "voice-core-media-bridge": "memoria-agent", "miniprogram-gateway": "memoria-miniprogram-gateway",
-        "device-media-gateway": "memoria-device-media-gateway"}
+want = {"speaker-model": "memoria-speaker-model", "control-api": "memoria-control-api",
+        "voice-core-media-bridge": "memoria-agent"}
 bad = [k for k, v in want.items() if s[k]["image"] != f"{v}:{t}"]
 assert not bad, bad
+retired = sorted({"agent", "miniprogram-gateway", "device-media-gateway"} & set(s))
+assert not retired, f"retired services still defined: {retired}"
 print("resolve=PASS")'
   log "speaker-model";  new_compose up -d --no-deps --no-build --force-recreate speaker-model && wait_healthy memoria-speaker-model-1
   log "control-api";    new_compose up -d --no-deps --no-build --force-recreate control-api && wait_healthy memoria-control-api-1
-  log "agent+bridge";   new_compose up -d --no-deps --no-build --force-recreate agent voice-core-media-bridge \
-    && wait_healthy memoria-agent-1 && wait_healthy memoria-voice-core-media-bridge-1
-  log "gateways";       new_compose up -d --no-deps --no-build --force-recreate miniprogram-gateway device-media-gateway \
-    && wait_healthy memoria-miniprogram-gateway-1 && wait_healthy memoria-device-media-gateway-1
+  log "bridge";         new_compose up -d --no-deps --no-build --force-recreate voice-core-media-bridge \
+    && wait_healthy memoria-voice-core-media-bridge-1
+  retire_prev_media_chain
   log "cutover=PASS"
 }
 
@@ -253,6 +277,13 @@ step_finish() {
   log "finish=PASS"
 }
 
+# Rollback returns to PREV as a whole: PREV's compose file still defines the
+# LiveKit worker and both gateways, their PREV image tags stay referenced by
+# the stopped containers (freeze also tags each image rollback-$TAG-pre), and
+# their env files
+# (/etc/memoria-miniprogram-gateway.env, /etc/memoria-device-media-gateway.env)
+# are never touched by this release. Keep them until PREV is no longer a
+# rollback target.
 step_rollback() {
   log "ROLLBACK: restoring env files"
   cp -p "$S/memoria-control-api.env" /etc/memoria-control-api.env

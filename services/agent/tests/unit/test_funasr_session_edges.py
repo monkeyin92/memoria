@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import collections
 import logging
 
 import pytest
-from livekit import rtc
-from livekit.agents import APIConnectionError, stt
-from livekit.agents.utils import aio
+from livekit.agents import APIConnectionError
 from services.agent.src.observability.metrics import MetricsRegistry
-from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers import funasr_stt
-from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import (
     _WS_TRACE_MAX_PER_WINDOW,
     FunASRConfig,
     FunASRSession,
-    FunASRSTT,
-    resample_pcm_16le,
 )
 
 
@@ -62,32 +55,6 @@ def test_session_tracks_sample_watermarks_for_bounded_replay() -> None:
     assert session.last_committed_sample == 800
     with pytest.raises(ValueError):
         session.mark_committed_sample(-1)
-
-
-def test_resample_pcm_and_stt_does_not_forward_chat_history() -> None:
-    pcm = b"\x00\x00" * 160
-    assert resample_pcm_16le(pcm, src_rate=16000, dst_rate=16000) is pcm
-    downsampled = resample_pcm_16le(pcm, src_rate=16000, dst_rate=8000)
-    assert 0 < len(downsampled) < len(pcm)
-
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-
-    class Item:
-        role = "assistant"
-
-        @staticmethod
-        def text_content() -> str:
-            return "已经听到的内容"
-
-    class Event:
-        item = Item()
-
-    plugin._push_conversation_item(Event())
-    plugin.push_conversation_item({"role": "invalid", "text": "ignored"})
-    session = plugin.create_session()
-    assert session._context == ()
-    assert plugin.provider == "alibaba_model_studio"
-    assert plugin.model == "fun-asr-realtime"
 
 
 @pytest.mark.asyncio
@@ -859,108 +826,6 @@ async def test_funasr_recv_loop_preserves_final_on_both_sides_of_task_finished(
 
 
 @pytest.mark.asyncio
-async def test_funasr_recv_events_waits_for_late_final_after_prior_final() -> None:
-    config = FunASRConfig(
-        api_key="test",
-        ws_url="ws://unused",
-        post_finish_tail_grace_s=0.01,
-    )
-    # Construct the stream without starting RecognizeStream's background
-    # network task; this test drives only the provider event consumer.
-    stream = object.__new__(funasr_stt.FunASRRecognizeStream)
-    stream._config = config
-    stream._stt_instance = FunASRSTT(config)
-    stream._event_ch = aio.Chan()
-    stream._prefix_tracker = StablePrefixTracker()
-    stream._speaking = False
-    stream._final_sentence_ids = set()
-    stream._sentence_revisions = {}
-    stream._provider_task_id = ""
-    stream._provider_task_epoch = 0
-    stream._asr_results = collections.deque(maxlen=64)
-    stream._stream_epoch = 1
-    stream._last_emitted_final_sample = 0
-    session = FunASRSession(config)
-    session.task_id = "task-1"
-    session._task_epoch = 1
-    session._segment_epoch = 1
-    session._task_sample_origin = 0
-    session._task_audio_end_sample = 640
-    session._last_sent_sample = 640
-    session._rotation_pending = True
-    session._idle_terminal_event.set()
-
-    def final(sentence_id: int, text: str) -> FunASRServerEvent:
-        return FunASRServerEvent(
-            event="result-generated",
-            task_id="task-1",
-            sentence=FunASRSentence(
-                sentence_id=sentence_id,
-                text=text,
-                begin_ms=0,
-                end_ms=sentence_id * 20,
-                sentence_end=True,
-                heartbeat=False,
-                words=(),
-            ),
-        )
-
-    # The second final models the provider tail observed after task-finished.
-    session.events.put_nowait(final(1, "今天"))
-    session.events.put_nowait(FunASRServerEvent(event="task-finished", task_id="task-1"))
-    session.events.put_nowait(final(2, "今天星期几"))
-
-    await stream._recv_events(session)
-    events = [
-        await asyncio.wait_for(stream._event_ch.recv(), timeout=0.5)
-        for _ in range(4)
-    ]
-
-    assert [event.type for event in events] == [
-        stt.SpeechEventType.START_OF_SPEECH,
-        stt.SpeechEventType.FINAL_TRANSCRIPT,
-        stt.SpeechEventType.FINAL_TRANSCRIPT,
-        stt.SpeechEventType.END_OF_SPEECH,
-    ]
-    assert [event.alternatives[0].text for event in events[1:3]] == ["今天", "今天星期几"]
-
-
-@pytest.mark.asyncio
-async def test_funasr_recv_events_treats_terminal_empty_audio_as_clean_no_speech() -> None:
-    config = FunASRConfig(api_key="test", ws_url="ws://unused")
-    stream = object.__new__(funasr_stt.FunASRRecognizeStream)
-    stream._config = config
-    stream._stt_instance = FunASRSTT(config)
-    stream._event_ch = aio.Chan()
-    stream._prefix_tracker = StablePrefixTracker()
-    stream._speaking = False
-    stream._final_sentence_ids = set()
-    stream._sentence_revisions = {}
-    stream._provider_task_id = ""
-    stream._provider_task_epoch = 0
-    stream._asr_results = collections.deque(maxlen=64)
-    stream._stream_epoch = 1
-    stream._last_emitted_final_sample = 0
-    session = FunASRSession(config)
-    session.task_id = "task-empty"
-    session._finishing = True
-    session._terminal_finishing = True
-    session.events.put_nowait(
-        FunASRServerEvent(
-            event="task-failed",
-            task_id="task-empty",
-            error_code="EmptyAudio",
-            error_message="No effective audio received",
-        )
-    )
-
-    await asyncio.wait_for(stream._recv_events(session), timeout=0.5)
-
-    assert stream._speaking is False
-    assert stream._event_ch.empty()
-
-
-@pytest.mark.asyncio
 async def test_funasr_recv_loop_keeps_old_final_after_new_task_starts() -> None:
     old_final = {
         "header": {"event": "result-generated", "task_id": "task-1"},
@@ -1215,129 +1080,6 @@ def test_ws_trace_rate_limits_and_flushes_suppression_counter(
     assert session._trace_suppressed_total == 0
 
 
-def _final_sentence(text: str) -> FunASRSentence:
-    return FunASRSentence(
-        sentence_id=1,
-        text=text,
-        begin_ms=0,
-        end_ms=100,
-        sentence_end=True,
-        heartbeat=False,
-        words=(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_wait_for_nonempty_final_accepts_text_after_vad_end() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    plugin.trace_result(_final_sentence("旧句"), task_epoch=1)
-    since = plugin._last_nonempty_at + 0.001
-    plugin.trace_result(_final_sentence(""), task_epoch=2)
-
-    waiting = asyncio.create_task(
-        plugin.wait_for_nonempty_final(since=since, timeout=0.2, empty_grace_s=0.2)
-    )
-    await asyncio.sleep(0)
-    assert not waiting.done()
-
-    plugin.trace_result(_final_sentence("今天星期几"), task_epoch=3)
-    assert await waiting is True
-
-
-@pytest.mark.asyncio
-async def test_wait_for_nonempty_final_times_out_without_text() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    since = funasr_stt.monotonic()
-    plugin.trace_result(_final_sentence(""), task_epoch=1)
-
-    assert await plugin.wait_for_nonempty_final(since=since, timeout=0.05) is False
-
-
-@pytest.mark.asyncio
-async def test_wait_for_nonempty_final_gives_up_after_empty_grace() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    since = funasr_stt.monotonic()
-    plugin.trace_result(_final_sentence(""), task_epoch=1)
-    started = funasr_stt.monotonic()
-
-    assert (
-        await plugin.wait_for_nonempty_final(since=since, timeout=8.0, empty_grace_s=0.05)
-        is False
-    )
-    assert funasr_stt.monotonic() - started < 1.0
-
-
-@pytest.mark.asyncio
-async def test_wait_for_nonempty_final_does_not_extend_grace_on_later_empties() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    since = funasr_stt.monotonic()
-    plugin.trace_result(_final_sentence(""), task_epoch=1)
-    started = funasr_stt.monotonic()
-
-    async def _later_empty() -> None:
-        await asyncio.sleep(0.03)
-        plugin.trace_result(_final_sentence(""), task_epoch=2)
-
-    asyncio.create_task(_later_empty())
-    assert (
-        await plugin.wait_for_nonempty_final(since=since, timeout=8.0, empty_grace_s=0.08)
-        is False
-    )
-    assert funasr_stt.monotonic() - started < 0.5
-
-
-def test_set_pcm_enabled_drains_only_when_turning_active_uplink_off() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    assert plugin.pcm_enabled is True
-    assert plugin.pcm_draining is False
-
-    plugin.set_pcm_enabled(False)
-    assert plugin.pcm_enabled is False
-    assert plugin.pcm_draining is True
-
-    plugin.set_pcm_enabled(False)
-    assert plugin.pcm_draining is True
-
-    plugin.clear_pcm_drain()
-    assert plugin.pcm_draining is False
-
-    plugin.set_pcm_enabled(False)
-    assert plugin.pcm_draining is False
-
-    plugin.set_pcm_enabled(True)
-    assert plugin.pcm_enabled is True
-    assert plugin.pcm_draining is False
-
-
-def _pcm_frame(marker: int, samples: int = 1280) -> rtc.AudioFrame:
-    return rtc.AudioFrame(
-        data=bytes((marker, 0)) * samples,
-        sample_rate=16000,
-        num_channels=1,
-        samples_per_channel=samples,
-    )
-
-
-class _FakeFunASRSession:
-    def __init__(self) -> None:
-        self.sent: list[bytes] = []
-        self.rotations = 0
-        self.finished = False
-
-    async def send_pcm(self, pcm: bytes, capture_start_sample: int | None = None) -> None:
-        _ = capture_start_sample
-        self.sent.append(pcm)
-
-    async def rotate_task(self) -> None:
-        self.rotations += 1
-
-    async def finish(self) -> None:
-        self.finished = True
-
-    async def wait_for_task_finished(self) -> None:
-        return None
-
-
 class _ScriptedInput:
     def __init__(self, items: list[object]) -> None:
         self._items = list(items)
@@ -1356,68 +1098,3 @@ class _ScriptedInput:
         raise StopAsyncIteration
 
 
-@pytest.mark.asyncio
-async def test_disabled_pcm_holds_preroll_until_uplink_enables() -> None:
-    plugin = FunASRSTT(
-        FunASRConfig(
-            api_key="test",
-            ws_url="ws://unused",
-            reconnect_audio_ms=80,
-        )
-    )
-    stream = plugin.stream()
-    plugin.set_pcm_enabled(False)
-    plugin.clear_pcm_drain()
-    session = _FakeFunASRSession()
-    silence = _pcm_frame(1)
-    speech = _pcm_frame(2)
-    original_ch = stream._input_ch
-    stream._input_ch = _ScriptedInput(
-        [
-            silence,
-            silence,
-            lambda: plugin.set_pcm_enabled(True),
-            speech,
-            stream._FlushSentinel(),
-        ]
-    )
-    try:
-        await stream._send_audio(session)
-    finally:
-        stream._input_ch = original_ch
-        await stream.aclose()
-        await plugin.aclose()
-
-    assert session.sent == [bytes(silence.data), bytes(speech.data)]
-    assert session.rotations == 1
-    assert session.finished is True
-
-
-@pytest.mark.asyncio
-async def test_disabled_pcm_drains_until_flush_then_drops() -> None:
-    plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url="ws://unused"))
-    stream = plugin.stream()
-    session = _FakeFunASRSession()
-    first = _pcm_frame(3)
-    tail = _pcm_frame(4)
-    dropped = _pcm_frame(5)
-    original_ch = stream._input_ch
-    stream._input_ch = _ScriptedInput(
-        [
-            first,
-            lambda: plugin.set_pcm_enabled(False),
-            tail,
-            stream._FlushSentinel(),
-            dropped,
-        ]
-    )
-    try:
-        await stream._send_audio(session)
-    finally:
-        stream._input_ch = original_ch
-        await stream.aclose()
-        await plugin.aclose()
-
-    assert session.sent == [bytes(first.data), bytes(tail.data)]
-    assert session.rotations == 1
-    assert plugin.pcm_draining is False

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-import json
 import logging
 import re
 import uuid
@@ -28,35 +27,22 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.companion_delivery import freeze_companion_delivery
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.media_runtime import (
-    decide_media_runtime,
-    mint_streamcore_token,
-)
-from services.control_api.app.media_slo import MediaSLOUnavailable
-from services.control_api.app.miniprogram_gateway_session import (
-    CreateMiniProgramSessionResponse,
-    MiniProgramMediaGateway,
-    build_gateway_ticket,
-    require_gateway_url,
-)
+from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_session_id,
-    mint_participant_token,
     require_authenticated_user,
     require_matching_user,
 )
 from services.control_api.app.session_companion import session_companion
 from services.control_api.app.session_directory import (
-    SessionDirectory,
     SessionDirectoryUnavailable,
     SessionDraining,
     SessionEpochConflict,
     SessionNotFound,
     SessionRoute,
 )
-from services.control_api.app.turn_credentials import mint_turn_credentials
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -100,8 +86,6 @@ from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
 telemetry_logger = logging.getLogger("uvicorn.error")
-CONTROL_TOPIC = "voice-agent.control"
-MINIPROGRAM_CLIENT_PLATFORM = "miniprogram"
 QWEN_OMNI_FLASH_MODEL = "qwen3.5-omni-flash-realtime"
 QWEN_OMNI_WORKSPACE_ID = "llm-qp8mf178biax7m6c"
 # WebRTC realtime backends (browser media direct to DashScope).
@@ -284,23 +268,17 @@ class CreateSessionRequest(BaseModel):
 
 
 class CreateSessionResponse(BaseModel):
+    """A frozen conversation session; it carries no media credentials.
+
+    Devices obtain media only through ``POST /v1/devices/{id}/media-sessions``
+    (the direct Media Edge); this session is the text/interaction authority.
+    """
+
     session_id: str
-    livekit_url: str
-    room_name: str
-    participant_token: str
-    expires_in: int
-    agent_name: str
     voice_backend: Literal["cascade"] = "cascade"
     config: dict[str, Any]
     interaction: dict[str, Any]
     learning_task_id: str | None = None
-    media_runtime: Literal["livekit", "streamcore"] = "livekit"
-    fallback_runtime: Literal["livekit"] = "livekit"
-    stream_epoch: int = Field(default=1, ge=1)
-    owner_instance_id: str | None = None
-    ownership_epoch: int | None = Field(default=None, ge=1)
-    streamcore: dict[str, Any] | None = None
-    ice_servers: list[dict[str, Any]] = Field(default_factory=list)
     runtime_profile: RuntimeProfileSignedV2 | None = None
 
 
@@ -314,10 +292,6 @@ class CreateOmniSessionResponse(BaseModel):
     runtime_profile: RuntimeProfileSignedV2 | None = None
 
 
-class CreateMiniProgramSessionRuntimeResponse(CreateMiniProgramSessionResponse):
-    runtime_profile: RuntimeProfileSignedV2 | None = None
-
-
 class StopResponseBody(BaseModel):
     reason: str = "user_button"
     stream_epoch: int | None = Field(default=None, ge=1)
@@ -327,20 +301,6 @@ class StopResponseBody(BaseModel):
 
 
 class MediaHeartbeatBody(BaseModel):
-    stream_epoch: int = Field(ge=1)
-    ownership_epoch: int | None = Field(default=None, ge=1)
-
-
-class MediaReconnectBody(BaseModel):
-    """Optional client CAS fence for rotating a media session epoch."""
-
-    stream_epoch: int = Field(ge=1)
-    ownership_epoch: int | None = Field(default=None, ge=1)
-
-
-class MediaFallbackBody(BaseModel):
-    """CAS fence for returning a failed StreamCore session to LiveKit."""
-
     stream_epoch: int = Field(ge=1)
     ownership_epoch: int | None = Field(default=None, ge=1)
 
@@ -425,11 +385,7 @@ class OmniTelemetryBody(BaseModel):
 
 @router.post(
     "",
-    response_model=(
-        CreateSessionResponse
-        | CreateOmniSessionResponse
-        | CreateMiniProgramSessionRuntimeResponse
-    ),
+    response_model=CreateSessionResponse | CreateOmniSessionResponse,
 )
 async def create_session(
     body: CreateSessionRequest,
@@ -439,11 +395,7 @@ async def create_session(
         str | None,
         Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ] = None,
-) -> (
-    CreateSessionResponse
-    | CreateOmniSessionResponse
-    | CreateMiniProgramSessionRuntimeResponse
-):
+) -> CreateSessionResponse | CreateOmniSessionResponse:
     settings = request.app.state.settings
     user_id = require_matching_user(body.user_id, user) if body.user_id else user.user_id
     store = cast(MemoryStore, request.app.state.memory_store)
@@ -468,7 +420,6 @@ async def create_session(
                 status_code=403,
                 detail={"code": "guardian_consent_required", "capability": "minor_voice_session"},
             )
-    mini_program = body.client.platform == MINIPROGRAM_CLIENT_PLATFORM
     availability = ModePolicy.availability(body.interaction_mode)
     if not availability.conversational:
         raise HTTPException(
@@ -486,13 +437,6 @@ async def create_session(
         )
     if settings.environment == "production" and body.voice_backend in REALTIME_BACKENDS:
         raise HTTPException(status_code=409, detail="端到端实时模型仅限隔离 A/B 环境")
-    if mini_program and body.voice_backend != "cascade":
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "miniprogram_requires_cascade"},
-        )
-    if mini_program:
-        require_gateway_url(settings)
     if body.interaction_mode in {"self_preview", "legacy"} and body.voice_backend != "cascade":
         raise HTTPException(
             status_code=409,
@@ -813,9 +757,9 @@ async def create_session(
                 status_code=503,
                 detail={"code": "session_runtime_authority_unavailable"},
             ) from exc
-    # The room name is also the Agent's trusted source for the public session id.
+    # voice_sessions.room_name is a NOT NULL UNIQUE storage key kept from the
+    # retired LiveKit chain; no media runtime reads it.
     room_name = f"voice-{session_id}"
-    identity = f"user-{user_id}-{session_id[:8]}"
     if preview_frozen is not None:
         frozen = preview_frozen
     elif legacy_frozen is not None:
@@ -1002,235 +946,21 @@ async def create_session(
             runtime_profile=runtime_profile,
         )
 
-    if mini_program:
-        learning_task_id = await persist_voice_session()
-        return CreateMiniProgramSessionRuntimeResponse(
-            session_id=session_id,
-            config={
-                "locale": body.locale,
-                "allow_text_fallback": True,
-            },
-            interaction=_frozen_values(frozen),
-            learning_task_id=learning_task_id,
-            media_gateway=build_gateway_ticket(
-                settings,
-                session_id=session_id,
-                user_id=user_id,
-                room_name=room_name,
-                identity=identity,
-            ),
-            runtime_profile=runtime_profile,
-        )
-
-    try:
-        token, ttl = mint_participant_token(
-            settings,
-            room_name=room_name,
-            identity=identity,
-            agent_name=settings.livekit_agent_name,
-        )
-    except RuntimeError as exc:
-        code = (
-            "livekit_credentials_missing"
-            if not settings.livekit_api_key or not settings.livekit_api_secret
-            else "livekit_token_unavailable"
-        )
-        raise HTTPException(status_code=503, detail={"code": code}) from exc
-    media_runtime = (
-        await _decide_media_runtime(
-            request,
-            user_id=user_id,
-            client_platform=body.client.platform,
-            device_id=body.client.device_id,
-        )
-    ).runtime
-    streamcore: dict[str, Any] | None = None
-    if media_runtime == "streamcore":
-        try:
-            media_token, media_expires_at = mint_streamcore_token(
-                settings,
-                session_id=session_id,
-                user_id=user_id,
-                client_platform=body.client.platform,
-                device_id=body.client.device_id,
-            )
-        except ValueError:
-            # A rollout misconfiguration must not take down the stable path.
-            logger.exception("streamcore token unavailable; using LiveKit fallback")
-            media_runtime = "livekit"
-        else:
-            streamcore = {
-                "whip_url": str(settings.streamcore_whip_url).strip(),
-                "token": media_token,
-                "expires_at": media_expires_at.isoformat().replace("+00:00", "Z"),
-                "stream_epoch": 1,
-            }
     learning_task_id = await persist_voice_session()
-    claimed_route: SessionRoute | None = None
-    if body.client.platform == "h5":
-        try:
-            claimed_route = await claim_session_route(
-                request,
-                session_id=session_id,
-                account_id=user_id,
-                device_id=body.client.device_id or "h5",
-                stream_epoch=1,
-                media_runtime=media_runtime,
-            )
-        except SessionDirectoryUnavailable:
-            # A StreamCore session must never outlive its shared routing
-            # authority.  Return the already-issued LiveKit credentials as a
-            # safe fallback instead of leaking a media session into limbo.
-            if media_runtime == "streamcore":
-                logger.warning("session directory unavailable; using LiveKit fallback")
-                media_runtime = "livekit"
-                streamcore = None
-    if streamcore is not None and claimed_route is not None:
-        streamcore["owner_instance_id"] = claimed_route.owner_instance_id
-        streamcore["ownership_epoch"] = claimed_route.ownership_epoch
     return CreateSessionResponse(
         session_id=session_id,
-        livekit_url=settings.livekit_url,
-        room_name=room_name,
-        participant_token=token,
-        expires_in=ttl,
-        agent_name=settings.livekit_agent_name,
         config={
             "locale": body.locale,
             "allow_text_fallback": True,
         },
         interaction=_frozen_values(frozen),
         learning_task_id=learning_task_id,
-        media_runtime=media_runtime,
-        fallback_runtime="livekit",
-        stream_epoch=1,
-        owner_instance_id=claimed_route.owner_instance_id if claimed_route else None,
-        ownership_epoch=claimed_route.ownership_epoch if claimed_route else None,
-        streamcore=streamcore,
-        ice_servers=turn_ice_servers(
-            settings,
-            session_id=session_id,
-            device_id=body.client.device_id,
-        ),
         runtime_profile=runtime_profile,
     )
 
 
 def _frozen_values(frozen: FrozenMode) -> dict[str, Any]:
     return ModePolicy.session_context(frozen)
-
-
-def turn_ice_servers(
-    settings: Any,
-    *,
-    session_id: str,
-    device_id: str | None,
-) -> list[dict[str, Any]]:
-    """Return per-session coturn credentials, never the shared secret."""
-
-    urls = settings.coturn_urls_list()
-    secret = settings.coturn_shared_secret.get_secret_value().strip()
-    if not urls or not secret:
-        return []
-    scope = hashlib.sha256(
-        f"{session_id}\0{device_id or 'h5'}".encode()
-    ).hexdigest()[:32]
-    credentials = mint_turn_credentials(
-        f"media-{scope}",
-        secret,
-        ttl_s=settings.coturn_credential_ttl_s,
-    )
-    return [
-        {
-            "urls": urls,
-            "username": credentials.username,
-            "credential": credentials.password,
-        }
-    ]
-
-
-async def _decide_media_runtime(
-    request: Request,
-    *,
-    user_id: str,
-    client_platform: str,
-    device_id: str | None,
-) -> Any:
-    settings = request.app.state.settings
-    observed_slo: dict[str, float] | None = None
-    if bool(getattr(settings, "streamcore_slo_gate_enabled", False)):
-        gate = getattr(request.app.state, "media_slo_gate", None)
-        try:
-            snapshot = await gate.current() if gate is not None else None
-        except MediaSLOUnavailable:
-            logger.warning("media SLO gate unavailable; failing closed to LiveKit")
-            snapshot = None
-        if snapshot is not None:
-            observed_slo = snapshot.metrics
-    return decide_media_runtime(
-        settings,
-        user_id=user_id,
-        client_platform=client_platform,
-        device_id=device_id,
-        observed_slo=observed_slo,
-    )
-
-
-async def claim_session_route(
-    request: Request,
-    *,
-    session_id: str,
-    account_id: str,
-    device_id: str,
-    stream_epoch: int,
-    media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
-) -> SessionRoute | None:
-    directory = cast(
-        SessionDirectory | None,
-        getattr(request.app.state, "session_directory", None),
-    )
-    if directory is None:
-        return None
-    return await directory.claim(
-        session_id,
-        media_edge_id=request.app.state.settings.media_edge_id,
-        voice_core_id=request.app.state.settings.voice_core_id,
-        device_id=device_id,
-        account_id=account_id,
-        stream_epoch=stream_epoch,
-        generation=0,
-        media_runtime=media_runtime,
-        owner_instance_id=request.app.state.settings.media_edge_id,
-    )
-
-
-@router.post(
-    "/{session_id}/mini-program/gateway-ticket",
-    response_model=MiniProgramMediaGateway,
-)
-async def refresh_miniprogram_gateway_ticket(
-    session_id: str,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
-) -> MiniProgramMediaGateway:
-    """Recover a media socket without creating a second frozen voice session."""
-    store = cast(MemoryStore, request.app.state.memory_store)
-    rec = store.get_voice_session(session_id=session_id, user_id=user.user_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    if rec["voice_backend"] != "cascade":
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "miniprogram_requires_cascade"},
-        )
-    settings = request.app.state.settings
-    return build_gateway_ticket(
-        settings,
-        session_id=session_id,
-        user_id=user.user_id,
-        room_name=str(rec["room_name"]),
-        identity=f"user-{user.user_id}-{session_id[:8]}",
-    )
 
 
 @router.post("/{session_id}/omni/sdp", response_class=Response)
@@ -1385,25 +1115,6 @@ async def _exchange_omni_sdp(
     return answer_sdp
 
 
-async def _send_room_control(settings: Any, *, room_name: str, event: dict[str, Any]) -> None:
-    """Send a server-originated reliable packet to one LiveKit room."""
-    from livekit import api
-
-    async with api.LiveKitAPI(
-        settings.livekit_url,
-        settings.livekit_api_key,
-        settings.livekit_api_secret,
-    ) as livekit:
-        await livekit.room.send_data(
-            api.SendDataRequest(
-                room=room_name,
-                data=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode(),
-                kind=api.DataPacket.Kind.RELIABLE,
-                topic=CONTROL_TOPIC,
-            )
-        )
-
-
 @router.post("/{session_id}/stop-response")
 async def stop_response(
     session_id: str,
@@ -1412,7 +1123,11 @@ async def stop_response(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    """Same atomic cancel semantics as voice barge-in; no new user turn."""
+    """Same atomic cancel semantics as voice barge-in; no new user turn.
+
+    Dispatched to Media Edge for a StreamCore route; any other session
+    (including direct_voice_core device sessions) gets 409.
+    """
     store = cast(MemoryStore, request.app.state.memory_store)
     rec = store.get_voice_session(session_id=session_id, user_id=user.user_id)
     if rec is None:
@@ -1568,168 +1283,20 @@ async def stop_response(
                 raise HTTPException(status_code=502, detail="media stop dispatch failed") from exc
             event["media_stop_dispatch"] = "dispatched"
         event.pop("idempotency_key", None)
-    elif not settings.offline_mock:
-        try:
-            await _send_room_control(settings, room_name=str(rec["room_name"]), event=event)
-        except Exception as exc:
-            logger.warning("failed to route stop-response to LiveKit room", exc_info=True)
-            raise HTTPException(status_code=502, detail="stop-response routing failed") from exc
+    else:
+        # Only a StreamCore route has a server-side stop channel (Media Edge
+        # dispatch).  A direct_voice_core device stops in-band on its own WSS
+        # control lane, where Voice Core owns the generation fence; there is
+        # no room to message, so the server refuses instead of pretending.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "stop_response_runtime_unsupported"},
+        )
     _STOP_REQUESTS.append(event)
     if normalized_key:
         _STOP_DISPATCH_PENDING.pop(idempotency_scope, None)
         _STOP_IDEMPOTENCY[idempotency_scope] = {"ok": True, **event}
     return {"ok": True, **event}
-
-
-@router.post("/{session_id}/rtc-recovered")
-async def rtc_recovered(
-    session_id: str,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
-) -> dict[str, Any]:
-    """Fence off media/data queued before a successful client RTC reconnect."""
-    store = cast(MemoryStore, request.app.state.memory_store)
-    rec = store.get_voice_session(session_id=session_id, user_id=user.user_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    event = {
-        "type": "rtc_recovered",
-        "session_id": session_id,
-        "action": "advance_generation",
-        "create_user_turn": False,
-    }
-    settings = request.app.state.settings
-    if not settings.offline_mock:
-        try:
-            await _send_room_control(settings, room_name=str(rec["room_name"]), event=event)
-        except Exception as exc:
-            logger.warning("failed to route rtc-recovered to LiveKit room", exc_info=True)
-            raise HTTPException(status_code=502, detail="rtc recovery routing failed") from exc
-    return {"ok": True, **event}
-
-
-@router.post("/{session_id}/media-reconnect")
-async def reconnect_media_session(
-    session_id: str,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
-    body: MediaReconnectBody | None = None,
-) -> dict[str, Any]:
-    """Issue an authoritative StreamCore epoch/token after a media break."""
-
-    store = cast(MemoryStore, request.app.state.memory_store)
-    record = store.get_voice_session(session_id=session_id, user_id=user.user_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    settings = request.app.state.settings
-    directory = getattr(request.app.state, "session_directory", None)
-    if directory is None:
-        raise HTTPException(status_code=503, detail="media session directory unavailable")
-    current = await directory.lookup(session_id)
-    if current is None or current.media_runtime != "streamcore":
-        raise HTTPException(status_code=409, detail="session is not a StreamCore session")
-    current_device_id = None if current.device_id == "h5" else current.device_id
-    if (
-        (
-            await _decide_media_runtime(
-                request,
-                user_id=user.user_id,
-                client_platform="h5",
-                device_id=current_device_id,
-            )
-        ).runtime
-        != "streamcore"
-    ):
-        raise HTTPException(status_code=409, detail="StreamCore rollout is not available")
-    try:
-        route = await directory.reconnect(
-            session_id,
-            expected_stream_epoch=body.stream_epoch if body is not None else None,
-            owner_instance_id=settings.media_edge_id,
-            expected_ownership_epoch=body.ownership_epoch if body is not None else None,
-        )
-        device_id = None if route.device_id == "h5" else route.device_id
-        media_token, media_expires_at = mint_streamcore_token(
-            settings,
-            session_id=session_id,
-            user_id=user.user_id,
-            client_platform="h5",
-            device_id=device_id,
-            stream_epoch=route.stream_epoch,
-        )
-    except SessionNotFound as exc:
-        raise HTTPException(status_code=404, detail="media route not found") from exc
-    except SessionDraining as exc:
-        raise HTTPException(status_code=409, detail="media route is draining") from exc
-    except SessionEpochConflict as exc:
-        raise HTTPException(status_code=409, detail="media route epoch changed") from exc
-    except SessionDirectoryUnavailable as exc:
-        raise HTTPException(status_code=503, detail="media session directory unavailable") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail="StreamCore token unavailable") from exc
-    return {
-        "session_id": session_id,
-        "media_runtime": "streamcore",
-        "fallback_runtime": "livekit",
-            "stream_epoch": route.stream_epoch,
-            "owner_instance_id": route.owner_instance_id,
-            "ownership_epoch": route.ownership_epoch,
-            "streamcore": {
-            "whip_url": str(settings.streamcore_whip_url).strip(),
-            "token": media_token,
-            "expires_at": media_expires_at.isoformat().replace("+00:00", "Z"),
-            "stream_epoch": route.stream_epoch,
-            "owner_instance_id": route.owner_instance_id,
-            "ownership_epoch": route.ownership_epoch,
-        },
-        "ice_servers": turn_ice_servers(
-            settings,
-            session_id=session_id,
-            device_id=device_id,
-        ),
-    }
-
-
-@router.post("/{session_id}/media-fallback")
-async def fallback_media_session(
-    session_id: str,
-    body: MediaFallbackBody,
-    request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
-) -> dict[str, Any]:
-    """CAS-transition an unusable experimental route back to LiveKit."""
-
-    store = cast(MemoryStore, request.app.state.memory_store)
-    record = store.get_voice_session(session_id=session_id, user_id=user.user_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    directory = getattr(request.app.state, "session_directory", None)
-    if directory is None:
-        raise HTTPException(status_code=503, detail="media session directory unavailable")
-    try:
-        route = await directory.fallback_to_livekit(
-            session_id,
-            expected_stream_epoch=body.stream_epoch,
-            owner_instance_id=request.app.state.settings.media_edge_id,
-            expected_ownership_epoch=body.ownership_epoch,
-        )
-    except SessionNotFound as exc:
-        raise HTTPException(status_code=404, detail="media route not found") from exc
-    except SessionDraining as exc:
-        raise HTTPException(status_code=409, detail="media route is draining") from exc
-    except SessionEpochConflict as exc:
-        raise HTTPException(status_code=409, detail="media route epoch changed") from exc
-    except SessionDirectoryUnavailable as exc:
-        raise HTTPException(status_code=503, detail="media session directory unavailable") from exc
-    return {
-        "session_id": session_id,
-        "media_runtime": route.media_runtime,
-        "fallback_runtime": "livekit",
-        "stream_epoch": route.stream_epoch,
-        "generation_id": route.generation,
-        "owner_instance_id": route.owner_instance_id,
-        "ownership_epoch": route.ownership_epoch,
-    }
 
 
 @router.post("/{session_id}/media-heartbeat")

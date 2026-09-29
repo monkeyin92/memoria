@@ -119,27 +119,6 @@ class AgentSettings(BaseSettings):
     llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
     tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
 
-    livekit_url: str = Field(default="", alias="LIVEKIT_URL")
-    livekit_api_key: str = Field(default="", alias="LIVEKIT_API_KEY")
-    livekit_api_secret: str = Field(default="", alias="LIVEKIT_API_SECRET")
-    livekit_agent_name: str = Field(default="duplex-zh-agent", alias="LIVEKIT_AGENT_NAME")
-    livekit_turn_detector_version: str = Field(default="v1", alias="LIVEKIT_TURN_DETECTOR_VERSION")
-    # P1-5: adaptive interruption + Turn Detector (v1-mini on cn_self_hosted).
-    livekit_adaptive_interruption: bool = Field(default=True, alias="LIVEKIT_ADAPTIVE_INTERRUPTION")
-    # LiveKit preemptive LLM before EOU — default off; stream phrase TTS is the safe path.
-    preemptive_generation: bool = Field(default=False, alias="PREEMPTIVE_GENERATION")
-
-    # The media-runtime experiment is deliberately fail-closed.  LiveKit is
-    # still the production default until a separately deployed media edge has
-    # passed the full audio/reconnect gate.
-    media_runtime_default: Literal["livekit", "streamcore"] = Field(
-        default="livekit", alias="MEDIA_RUNTIME_DEFAULT"
-    )
-    streamcore_experiment_percent: int = Field(
-        default=0, ge=0, le=100, alias="STREAMCORE_EXPERIMENT_PERCENT"
-    )
-    streamcore_kill_switch: bool = Field(default=False, alias="STREAMCORE_KILL_SWITCH")
-    streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
     media_bridge_grpc_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"
     )
@@ -247,21 +226,6 @@ class AgentSettings(BaseSettings):
     )
     qwen_fast_model: str = Field(default="qwen3.7-flash", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
-    interrupt_semantic_enabled: bool = Field(
-        default=True,
-        alias="INTERRUPT_SEMANTIC_ENABLED",
-    )
-    interrupt_semantic_model: str = Field(
-        default="qwen-flash",
-        min_length=1,
-        alias="INTERRUPT_SEMANTIC_MODEL",
-    )
-    interrupt_semantic_timeout_s: float = Field(
-        default=1.2,
-        ge=0.1,
-        le=2.0,
-        alias="INTERRUPT_SEMANTIC_TIMEOUT_S",
-    )
     live_lookup_semantic_enabled: bool = Field(
         default=True,
         alias="LIVE_LOOKUP_SEMANTIC_ENABLED",
@@ -291,26 +255,6 @@ class AgentSettings(BaseSettings):
         ge=0.1,
         le=2.0,
         alias="CONVERSATION_CLOSE_SEMANTIC_TIMEOUT_S",
-    )
-    miniprogram_kws_enabled: bool = Field(
-        default=False,
-        alias="MINIPROGRAM_KWS_ENABLED",
-    )
-    miniprogram_kws_model_dir: str = Field(
-        default="/data/models/vosk-model-small-cn-0.22",
-        min_length=1,
-        alias="MINIPROGRAM_KWS_MODEL_DIR",
-    )
-    miniprogram_kws_keywords_file: str = Field(
-        default="/app/infra/kws/keywords.txt",
-        min_length=1,
-        alias="MINIPROGRAM_KWS_KEYWORDS_FILE",
-    )
-    miniprogram_kws_min_confidence: float = Field(
-        default=0.65,
-        ge=0.0,
-        le=1.0,
-        alias="MINIPROGRAM_KWS_MIN_CONFIDENCE",
     )
 
     funasr_model: str = Field(default="fun-asr-realtime", alias="FUNASR_MODEL")
@@ -352,8 +296,6 @@ class AgentSettings(BaseSettings):
     doubao_tts_sample_rate: int = Field(default=24000, alias="DOUBAO_TTS_SAMPLE_RATE")
     doubao_tts_pool_size: int = Field(default=4, alias="DOUBAO_TTS_POOL_SIZE")
 
-    vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
-    preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
     # Listener cues: default OFF. BackgroundAudioPlayer is a second room track
     # (prod dual-voice). Keep off until mixed into the main CosyVoice path.
     listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
@@ -395,7 +337,6 @@ class AgentSettings(BaseSettings):
         le=0.85,
         alias="LISTENER_CUE_VOLUME",
     )
-    qwen_emotion_enabled: bool = Field(default=True, alias="QWEN_EMOTION_ENABLED")
 
     # Legacy session log-mel is only a playback/noise guard; it is not identity authority.
     speaker_verify_enabled: bool = Field(default=False, alias="SPEAKER_VERIFY_ENABLED")
@@ -597,13 +538,6 @@ class AgentSettings(BaseSettings):
             raise ValueError("DOUBAO_TTS_SAMPLE_RATE must be 24000")
         return v
 
-    @field_validator("vad_min_silence_duration_s")
-    @classmethod
-    def _vad_silence(cls, v: float) -> float:
-        if v < 0.25:
-            raise ValueError("VAD_MIN_SILENCE_DURATION_S must be >= 0.25")
-        return v
-
     @field_validator("deepseek_fast_model", "deepseek_deep_model")
     @classmethod
     def _no_deprecated_models(cls, v: str) -> str:
@@ -629,10 +563,6 @@ class AgentSettings(BaseSettings):
                 "DOUBAO_TTS_WS_URL must use wss:// in production and contain no userinfo "
                 "or fragment"
             )
-        if self.deployment_profile == "livekit_cloud" and not self.livekit_adaptive_interruption:
-            raise ValueError("livekit_cloud requires LIVEKIT_ADAPTIVE_INTERRUPTION=true")
-        if self.deployment_profile == "cn_self_hosted":
-            object.__setattr__(self, "livekit_turn_detector_version", "v1-mini")
         playback = (self.listener_cue_playback or "main_track").strip().lower()
         if playback not in {"main_track", "background"}:
             raise ValueError("LISTENER_CUE_PLAYBACK must be main_track or background")
@@ -683,8 +613,6 @@ class AgentSettings(BaseSettings):
                     raise ValueError(
                         "production media bridge requires certificate, key and client CA files"
                     )
-            if self.livekit_url.startswith("ws://") or self.livekit_url.startswith("http://"):
-                raise ValueError("production forbids plaintext media/control URLs")
             heartbeat_token = self.internal_token("agent_heartbeat")
             if len(heartbeat_token) < 32:
                 raise ValueError("production agent heartbeat requires a scoped token")
@@ -747,9 +675,6 @@ def load_settings(*, require_keys: bool = False) -> AgentSettings:
         missing = [
             name
             for name, val in [
-                ("LIVEKIT_URL", settings.livekit_url),
-                ("LIVEKIT_API_KEY", settings.livekit_api_key),
-                ("LIVEKIT_API_SECRET", settings.livekit_api_secret),
                 ("DASHSCOPE_API_KEY", settings.dashscope_api_key),
                 ("DASHSCOPE_WS_URL", settings.dashscope_ws_url),
                 (

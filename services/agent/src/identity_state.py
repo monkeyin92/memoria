@@ -30,8 +30,6 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._input_modality_by_fence.clear()
     runtime._emotion_segments_by_turn.clear()
     runtime._speaker_pcm.clear()
-    runtime._trusted_playback_pcm.clear()
-    runtime._trusted_playback_witness_pcm = b""
     runtime._speaker_decision = None
     runtime._speaker_class = "uncertain"
     runtime._pending_assistant_text = ""
@@ -40,9 +38,8 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._playback_fence = None
     runtime._assistant_expression_fence = None
     runtime._pending_tool_results = 0
-    # The playing cue's async stop/flush is owned by its captured task
-    # (``_play_listener_cue`` finally) and awaited by the drain barrier;
-    # never call a possibly-awaitable stop() synchronously here.
+    # Never call a possibly-awaitable cue stop() synchronously here; the
+    # drain barrier owns any in-flight cue task.
     runtime._active_listener_cue = None
     runtime._active_listener_cue_handle = None
     runtime._enroll_fence = None
@@ -58,11 +55,6 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._paused_reply_binding = None
     runtime._pending_semantic_pause_epoch = None
     runtime._pending_semantic_pause_binding = None
-    runtime._interrupt_semantic_speech_epoch = None
-    runtime._interrupt_semantic_playback_epoch = None
-    runtime._interrupt_semantic_result_epoch = None
-    runtime._interrupt_semantic_result_fence = None
-    runtime._interrupt_semantic_result = None
     voice_task = runtime._voice_profile_refresh_task
     if voice_task is not None and not voice_task.done():
         voice_task.cancel()
@@ -129,8 +121,7 @@ def capture_identity_tasks(runtime: Any) -> list[Any]:
 def invalidate_identity_epochs(runtime: Any) -> None:
     """Bump identity-private epochs so late results are logically void.
 
-    Mirror of ``_invalidate_trusted_unanchored_control``: a higher
-    ``_speaker_epoch`` voids late speaker classifications and every
+    A higher ``_speaker_epoch`` voids late speaker classifications and every
     speech-epoch-bound control binding; a higher
     ``_context_snapshot_prepare_epoch`` voids late snapshot drafts.
     """
@@ -144,12 +135,6 @@ def invalidate_identity_epochs(runtime: Any) -> None:
     runtime._target_focus_pending_epoch = None
     runtime._trusted_unanchored_control_epoch = None
     runtime._trusted_unanchored_playback_epoch = None
-    runtime._interrupt_semantic_speech_epoch = None
-    runtime._interrupt_semantic_playback_epoch = None
-    runtime._interrupt_semantic_assistant_text = ""
-    runtime._interrupt_semantic_result_epoch = None
-    runtime._interrupt_semantic_result_fence = None
-    runtime._interrupt_semantic_result = None
     discard = getattr(runtime._speech_epoch_assembler, "discard_current", None)
     if callable(discard):
         discard()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -23,17 +22,6 @@ if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceProviderHandlers:
-    """LiveKit-compatible provider adapters used by one cascade session."""
-
-    asr: Any
-    language_model: Any
-    speech_synthesis: Any
-    realtime_search_resolver: Any | None = None
-    realtime_search_model: str | None = None
 
 
 class PublicRealtimeSearch:
@@ -113,52 +101,3 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
             )
         )
     return PublicRealtimeSearch(weather=OpenMeteoWeather(), qwen=qwen)
-
-
-async def build_voice_provider_handlers(
-    *,
-    settings: AgentSettings,
-    llm_factory: Callable[..., Any],
-    asr_factory: Callable[[], Any] | None = None,
-    tts_factory: Callable[[], Any] | None = None,
-) -> VoiceProviderHandlers:
-    """Build all remote provider adapters without exposing vendor setup to entrypoint."""
-
-    if asr_factory is None:
-        from services.agent.src.providers.funasr_stt import FunASRSTT
-
-        asr_factory = FunASRSTT.from_env
-    if tts_factory is None:
-        from services.agent.src.providers.tts_factory import build_tts
-
-        def tts_factory() -> Any:
-            return build_tts(settings)
-
-    from services.agent.src.providers.tts_factory import warm_tts
-
-    asr = asr_factory()
-    speech_synthesis = tts_factory()
-    await warm_tts(speech_synthesis)
-
-    language_model = build_language_model_handler(
-        settings=settings,
-        llm_factory=llm_factory,
-    )
-    realtime_search_resolver = build_realtime_search_resolver(settings=settings)
-    return VoiceProviderHandlers(
-        asr=asr,
-        language_model=language_model,
-        speech_synthesis=speech_synthesis,
-        realtime_search_resolver=realtime_search_resolver,
-        realtime_search_model=(
-            str(
-                getattr(
-                    realtime_search_resolver,
-                    "model",
-                    getattr(settings, "qwen_deep_model", "qwen-plus"),
-                )
-            )
-            if realtime_search_resolver is not None
-            else None
-        ),
-    )

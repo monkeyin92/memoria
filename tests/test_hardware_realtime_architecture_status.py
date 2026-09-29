@@ -12,7 +12,8 @@ def test_hardware_runtime_status_separates_delivery_evidence_layers() -> None:
         assert field in STATUS
     assert "hardware_media_interaction_authority: python_authoritative" in STATUS
     assert "hardware_media_target_runtime: go_media_edge_direct_voice_core" in STATUS
-    assert "hardware_media_rollback_runtime: python_device_gateway_livekit_compat" in STATUS
+    # The legacy LiveKit chain is retired; rollback is the previous release of the same runtime.
+    assert "hardware_media_rollback_runtime: previous_release_media_edge_direct_voice_core" in STATUS
 
 
 def test_unverified_hardware_cannot_be_advertised_as_full_duplex() -> None:

@@ -7,13 +7,28 @@ never grant owner permissions or mute a real guest solely because voices differ.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 _EPS = 1e-8
+
+
+def should_enable_legacy_speaker_verifier(settings: Any, *, offline: bool) -> bool:
+    """Keep the old per-session enrollment separate from formal authority."""
+    enabled = bool(getattr(settings, "speaker_verify_enabled", False))
+    authority_enabled = bool(getattr(settings, "speaker_authority_enabled", False))
+    if enabled and authority_enabled:
+        logger.warning(
+            "legacy speaker enrollment disabled because formal speaker authority is enabled"
+        )
+    return enabled and not authority_enabled and not offline
 
 
 class SpeakerGateState(StrEnum):

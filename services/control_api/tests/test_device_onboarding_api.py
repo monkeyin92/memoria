@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,7 +18,6 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     RuntimeProfileV2,
 )
 from pydantic import SecretStr
-from services.common.miniprogram_gateway_ticket import verify_device_gateway_ticket
 from services.control_api.app.account_gate import AccountOperationGate
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import (
@@ -273,17 +271,12 @@ def _direct_media_settings() -> tuple[SimpleNamespace, Ed25519PrivateKey]:
     ).decode("ascii")
     return (
         SimpleNamespace(
-            device_media_runtime="direct_voice_core",
-            device_media_direct_rollout_mode="allowlist",
-            device_media_direct_canary_device_ids="dev_test_01",
             device_direct_media_wss_url="wss://edge.example/v1/device/media",
             device_runtime_profile_ttl_s=3600,
             streamcore_token_private_key_pem=SecretStr(pem),
             streamcore_token_key_id="media-2026-08",
             streamcore_token_ttl_s=120,
             jwt_issuer="memoria-control-api",
-            device_gateway_ticket_ttl_s=300,
-            livekit_agent_name="duplex-zh-agent",
             internal_token=lambda capability: _POLICY_TOKEN,
         ),
         signing_key,
@@ -682,132 +675,7 @@ async def test_real_api_response_shapes_match_miniprogram_contracts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_media_session_uses_fleet_proof_and_device_only_ticket(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service, store, device_key, payload = _fixture()
-    manifest = _activate_device(service, store, device_key, payload)
-    app = _app(service)
-    secret = "device-ticket-secret-material-that-is-long-enough"
-    app.state.settings = SimpleNamespace(
-        device_media_gateway_url="wss://media.example/v1/device/media",
-        memoria_device_gateway_ticket_secret=SecretStr(secret),
-        device_gateway_ticket_ttl_s=300,
-        livekit_agent_name="duplex-zh-agent",
-    )
-
-    class Memory:
-        @staticmethod
-        def is_account_unavailable(*, user_id: str) -> bool:
-            assert user_id == "person_a"
-            return False
-
-    class AccountOperations:
-        @asynccontextmanager
-        async def write(self, account_id: str):
-            assert account_id == "person_a"
-            yield
-
-    app.state.memory_store = Memory()
-    app.state.account_operations = AccountOperations()
-
-    async def fake_create(
-        body: object,
-        request: object,
-        user: AuthenticatedUser,
-        *,
-        device_id: str | None = None,
-        binding_version: int | None = None,
-    ) -> media.MediaSessionResponse:
-        del body, request
-        assert user.user_id == "person_a"
-        assert device_id == "dev_test_01"
-        assert binding_version is None
-        return media.MediaSessionResponse(
-            session_id="session-device-api",
-            media_runtime="livekit",
-            stream_epoch=1,
-            fallback={"media_runtime": "livekit"},
-            livekit={
-                "url": "wss://livekit.example",
-                "room_name": "voice-session-device-api",
-                "participant_token": "must-not-leak",
-            },
-            device_id=device_id,
-        )
-
-    monkeypatch.setattr(media, "_create", fake_create)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        challenge_response = await client.post(
-            "/v1/devices/dev_test_01/media-challenge",
-            headers={
-                "X-Device-Certificate-ID": "cert_test_01",
-                "X-Client-ID": "esp-installation-1",
-            },
-        )
-        assert challenge_response.status_code == 200, challenge_response.text
-        challenge = challenge_response.json()
-        issued_at = datetime.fromisoformat(challenge["issued_at"].replace("Z", "+00:00"))
-        signed_payload = service.media_challenge_signing_payload(
-            challenge_id=challenge["challenge_id"],
-            device_id="dev_test_01",
-            certificate_id="cert_test_01",
-            client_id="esp-installation-1",
-            nonce=challenge["nonce"],
-            issued_at=issued_at,
-        )
-        session_response = await client.post(
-            "/v1/devices/dev_test_01/media-sessions",
-            json={
-                "certificate_id": "cert_test_01",
-                "challenge_id": challenge["challenge_id"],
-                "nonce": challenge["nonce"],
-                "signature": b64url_encode(device_key.sign(canonical_json_bytes(signed_payload))),
-                "client_id": "esp-installation-1",
-                "supported_protocol_versions": [2, 1],
-            },
-        )
-        replay = await client.post(
-            "/v1/devices/dev_test_01/media-sessions",
-            json={
-                "certificate_id": "cert_test_01",
-                "challenge_id": challenge["challenge_id"],
-                "nonce": challenge["nonce"],
-                "signature": b64url_encode(device_key.sign(canonical_json_bytes(signed_payload))),
-                "client_id": "esp-installation-1",
-                "supported_protocol_versions": [2, 1],
-            },
-        )
-    assert session_response.status_code == 200, session_response.text
-    response = session_response.json()
-    assert response["websocket_url"] == "wss://media.example/v1/device/media"
-    assert response["runtime"] == "livekit_compat"
-    assert response["protocol_version"] == 1
-    assert response["interaction_authority"] == "python_authoritative"
-    assert response["uplink"] == {
-        "codec": "opus",
-        "sample_rate": 16000,
-        "channels": 1,
-        "frame_ms": 20,
-    }
-    assert response["downlink"]["sample_rate"] == 24000
-    assert "participant_token" not in session_response.text
-    assert "room_name" not in session_response.text
-    claims = verify_device_gateway_ticket(
-        response["media_token"],
-        secret=secret,
-    )
-    assert claims.device_id == "dev_test_01"
-    assert claims.client_id == "esp-installation-1"
-    assert claims.binding_id == manifest["binding_id"]
-    assert claims.binding_version == manifest["binding_version"]
-    assert claims.stream_epoch == 1
-    assert replay.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_direct_device_media_session_never_touches_livekit(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_device_media_session_issues_a_direct_media_edge_ticket(
     tmp_path: Path,
 ) -> None:
     service, store, device_key, payload = _fixture()
@@ -820,19 +688,6 @@ async def test_direct_device_media_session_never_touches_livekit(
         subject_id="person_a",
     )
     app = _direct_app(service, memory, authority, settings_value)
-
-    async def fail_livekit_create(
-        body: object,
-        request: object,
-        user: AuthenticatedUser,
-        *,
-        device_id: str | None = None,
-        binding_version: int | None = None,
-    ) -> media.MediaSessionResponse:
-        del body, request, user, device_id, binding_version
-        raise AssertionError("direct device media must not create a LiveKit session")
-
-    monkeypatch.setattr(media, "_create", fail_livekit_create)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -961,38 +816,16 @@ async def test_direct_device_media_session_never_touches_livekit(
 
 
 @pytest.mark.asyncio
-async def test_direct_runtime_requires_explicit_v2_advertisement_and_legacy_defaults_to_v1(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_device_media_session_refuses_firmware_without_v2_before_any_authority(
     tmp_path: Path,
 ) -> None:
     service, store, device_key, payload = _fixture()
     _activate_device(service, store, device_key, payload)
     settings_value, _ = _direct_media_settings()
-    # Capability negotiation must choose the legacy endpoint before touching
-    # the direct Session authority when an old firmware omits the new field.
-    settings_value.device_media_gateway_url = "wss://legacy.example/v1/device/media"
-    settings_value.memoria_device_gateway_ticket_secret = SecretStr(
-        "legacy-device-gateway-ticket-secret-32chars"
-    )
     memory = _direct_memory(tmp_path)
+    # No Session authority is wired: reaching it would be a 503, so the 409
+    # proves the refusal happens first and nothing is created.
     app = _direct_app(service, memory, None, settings_value)
-
-    async def fake_legacy_create(*args: object, **kwargs: object) -> media.MediaSessionResponse:
-        del args, kwargs
-        return media.MediaSessionResponse(
-            session_id="legacy-session",
-            media_runtime="livekit",
-            stream_epoch=1,
-            fallback={"media_runtime": "livekit"},
-            livekit={
-                "url": "wss://livekit.example",
-                "room_name": "legacy-room",
-                "participant_token": "server-only",
-            },
-            device_id="dev_test_01",
-        )
-
-    monkeypatch.setattr(media, "_create", fake_legacy_create)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         challenge_response = await client.post(
             "/v1/devices/dev_test_01/media-challenge",
@@ -1023,51 +856,25 @@ async def test_direct_runtime_requires_explicit_v2_advertisement_and_legacy_defa
                 "client_id": "esp-installation-1",
             },
         )
-    assert response.status_code == 200, response.text
-    assert response.json()["runtime"] == "livekit_compat"
-    assert response.json()["protocol_version"] == 1
-    assert response.json()["websocket_url"] == "wss://legacy.example/v1/device/media"
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {"code": "device_media_protocol_v2_required"}
 
 
 @pytest.mark.asyncio
-async def test_direct_canary_allowlist_keeps_non_matching_v2_device_on_legacy(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_device_media_session_is_unavailable_without_the_direct_edge_url(
     tmp_path: Path,
 ) -> None:
     service, store, device_key, payload = _fixture()
     _activate_device(service, store, device_key, payload)
     settings_value, _ = _direct_media_settings()
-    settings_value.device_media_direct_canary_device_ids = "dev_other"
-    settings_value.device_media_gateway_url = "wss://legacy.example/v1/device/media"
-    settings_value.memoria_device_gateway_ticket_secret = SecretStr(
-        "legacy-device-gateway-ticket-secret-32chars"
-    )
+    settings_value.device_direct_media_wss_url = ""
     memory = _direct_memory(tmp_path)
     app = _direct_app(service, memory, None, settings_value)
-
-    async def fake_legacy_create(*args: object, **kwargs: object) -> media.MediaSessionResponse:
-        del args, kwargs
-        return media.MediaSessionResponse(
-            session_id="legacy-canary-fence",
-            media_runtime="livekit",
-            stream_epoch=1,
-            fallback={"media_runtime": "livekit"},
-            livekit={
-                "url": "wss://livekit.example",
-                "room_name": "legacy-room",
-                "participant_token": "server-only",
-            },
-            device_id="dev_test_01",
-        )
-
-    monkeypatch.setattr(media, "_create", fake_legacy_create)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await _post_direct_media_session(client, service, device_key)
 
-    assert response.status_code == 200, response.text
-    assert response.json()["runtime"] == "livekit_compat"
-    assert response.json()["protocol_version"] == 1
-    assert response.json()["websocket_url"] == "wss://legacy.example/v1/device/media"
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == {"code": "device_direct_media_unavailable"}
 
 
 @pytest.mark.asyncio

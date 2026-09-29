@@ -12,6 +12,11 @@ Two defects surfaced during the 20260925-full-stack-v1 release:
 20260927-unbind-release-v1 folded the device OTA control-api component back
 into the full stack, so all six targets run from the plain PREV compose file
 and freeze and rollback carry no component chain.
+
+The LiveKit retirement release ships only speaker-model, control-api and the
+Voice Core media bridge. PREV still runs the LiveKit worker and both Python
+media gateways, so freeze and rollback keep all six PREV targets while cutover
+stops (never removes) the three retired containers after the bridge is healthy.
 """
 
 from __future__ import annotations
@@ -89,10 +94,10 @@ def test_finish_fails_only_on_unhealthy_or_starting(line: str, blocks: bool) -> 
     assert found is blocks
 
 
-def test_env_checks_speaker_authority_for_agent_and_bridge() -> None:
+def test_env_checks_speaker_authority_for_the_bridge() -> None:
     env_step = _function("step_env")
     guard = _function("assert_speaker_authority_disabled")
-    assert "for svc in agent voice-core-media-bridge" in guard
+    assert "for svc in voice-core-media-bridge; do" in guard
     assert "new_compose run" in guard
     assert "assert_speaker_authority_disabled" in env_step
     # After the env is validated, before the slower provider smoke.
@@ -102,6 +107,10 @@ def test_env_checks_speaker_authority_for_agent_and_bridge() -> None:
     assert env_step.index("assert_speaker_authority_disabled") < env_step.index(
         "provider_smoke_test"
     )
+    # The retired LiveKit worker service no longer exists in the candidate compose.
+    assert "python agent " not in env_step
+    assert "voice-core-media-bridge -m scripts.verify_env" in env_step
+    assert "voice-core-media-bridge -m scripts.provider_smoke_test" in env_step
 
 
 @pytest.mark.parametrize(
@@ -160,8 +169,8 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260928-reopen-window-v1" in script
-    assert "PREV_COMMIT=173445def1981b4d714c7ef44614af8b6cd07549" in script
+    assert "PREV_TAG=20260928-review-batches-v1" in script
+    assert "PREV_COMMIT=6180893209fd24c4244a986b60659389ccedcecc" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
@@ -180,6 +189,50 @@ def test_targets_and_rollback_services_are_the_same_six_roles() -> None:
     assert containers == set(targets.group(1).split())
     # media-edge is released on its own and never recreated by this script.
     assert "media-edge" not in _code().replace("memoria-media-edge-1", "")
+
+
+def _array(name: str) -> list[str]:
+    match = re.search(rf"^{name}=\(([^)]*)\)", _script(), re.M)
+    assert match, name
+    return match.group(1).split()
+
+
+def test_release_ships_only_the_bridge_media_chain() -> None:
+    assert _array("ROLES") == ["agent", "control-api", "speaker-model"]
+    cutover = _function("step_cutover")
+    for retired in ("miniprogram-gateway", "device-media-gateway", "memoria-agent-1"):
+        assert retired not in cutover.replace('{"agent", "miniprogram-gateway", "device-media-gateway"}', "")
+    assert "force-recreate voice-core-media-bridge" in cutover
+    assert 'retired services still defined' in cutover
+    # Retire the PREV worker and gateways only once the bridge is healthy.
+    assert cutover.index("wait_healthy memoria-voice-core-media-bridge-1") < cutover.index(
+        "retire_prev_media_chain"
+    )
+
+
+def test_retired_targets_are_prev_targets_outside_the_new_stack() -> None:
+    retired = _array("RETIRED_TARGETS")
+    assert set(retired) == {
+        "memoria-agent-1",
+        "memoria-miniprogram-gateway-1",
+        "memoria-device-media-gateway-1",
+    }
+    assert set(retired) < set(_array("TARGETS"))
+    retire = _function("retire_prev_media_chain")
+    assert 'for c in "${RETIRED_TARGETS[@]}"' in retire
+    # Stopped, never removed: rollback recreates them and retention keeps their images.
+    assert "docker stop" in retire
+    assert "docker rm" not in retire
+    assert "--remove-orphans" not in _code()
+
+
+def test_rollback_recreates_the_retired_prev_services() -> None:
+    rollback = _function("step_rollback")
+    services = _array("PREV_STACK_SERVICES")
+    for retired in ("agent", "miniprogram-gateway", "device-media-gateway"):
+        assert retired in services
+    assert '-f "$PREV/docker-compose.production.yml" --profile media-runtime' in rollback
+    assert "--force-recreate" in rollback
 
 
 def test_schema_writes_the_data_tree_and_rollback_returns_to_prev() -> None:

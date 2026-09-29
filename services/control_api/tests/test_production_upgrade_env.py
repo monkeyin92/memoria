@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime
 import json
 import sys
@@ -73,56 +74,6 @@ def _env_values(path: Path) -> dict[str, str]:
     }
 
 
-def _upgrade_inputs(
-    auth: dict[str, str] | None = None,
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    legacy = {
-        "ENVIRONMENT": "production",
-        "DEPLOYMENT_PROFILE": "cn_self_hosted",
-        "LLM_PROVIDER": "bailian_deepseek",
-        "PUBLIC_BASE_URL": "https://voice.example.com/memoria-api",
-        "ALLOWED_ORIGINS": "https://voice.example.com",
-        "LIVEKIT_URL": "wss://voice.example.com",
-        "LIVEKIT_API_KEY": "livekit-key",
-        "LIVEKIT_API_SECRET": "livekit-secret-material-that-is-long-enough",
-        "DASHSCOPE_API_KEY": "dashscope-secret",
-        "DASHSCOPE_WS_URL": "wss://dashscope.example/ws",
-        "DASHSCOPE_COMPATIBLE_BASE_URL": "https://dashscope.example/v1",
-        "DASHSCOPE_BASE_URL": "https://dashscope.example/v1",
-        "FUNASR_MODEL": "fun-asr-realtime",
-        "FUNASR_SAMPLE_RATE": "16000",
-        "ENDPOINTING_MIN_DELAY_S": "1.50",
-        "ENDPOINTING_MAX_DELAY_S": "2.20",
-        "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
-        "TTS_PROVIDER": "doubao",
-        "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
-        "DOUBAO_TTS_SAMPLE_RATE": "24000",
-        "MEMORIA_AUTH_SECRET": "auth-secret-material-that-is-long-enough",
-        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
-        "WECHAT_MINIPROGRAM_APPID": "wx-test",
-        "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
-        "QWEN_OMNI_PLUS_VAD_THRESHOLD": "ignored-legacy-key",
-    }
-    legacy.update(
-        auth
-        if auth is not None
-        else {
-            "DOUBAO_TTS_APP_ID": "doubao-app-id",
-            "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
-        }
-    )
-    postgres = {
-        password_env: f"{role}-pass" for password_env, role in EXPECTED_PASSWORD_ROLES.items()
-    }
-    minio = {
-        "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
-        "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY": "archive-secret",
-        "MEMORIA_VOICE_OBJECT_ACCESS_KEY": "voice-access",
-        "MEMORIA_VOICE_OBJECT_SECRET_KEY": "voice-secret",
-    }
-    return legacy, postgres, minio
-
-
 def _ed25519_pem_pair() -> tuple[str, str]:
     private = ed25519.Ed25519PrivateKey.generate()
     private_pem = private.private_bytes(
@@ -188,18 +139,67 @@ def _control_edge_mtls_bundle(tmp_path: Path) -> dict[str, str]:
     }
 
 
-def _direct_upgrade_inputs(
+
+
+def _upgrade_inputs(
     tmp_path: Path,
+    auth: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """Complete direct_voice_core bundle as an operator would leave it in the
-    source env after a direct generation run."""
-    legacy, postgres, minio = _upgrade_inputs()
+    """Operator env as it stands at upgrade time.
+
+    Direct Device WSS through the Go media-edge is the only device media path,
+    so the base input carries the complete direct bundle (Ed25519 token keys,
+    mTLS material on disk, shared TLS device-state Redis). The retired LiveKit
+    and gateway keys stay in it on purpose: old operator env files still carry
+    them, and they must be accepted but never routed.
+    """
     private_pem, public_pem = _ed25519_pem_pair()
+    legacy = {
+        "ENVIRONMENT": "production",
+        "DEPLOYMENT_PROFILE": "cn_self_hosted",
+        "LLM_PROVIDER": "bailian_deepseek",
+        "PUBLIC_BASE_URL": "https://voice.example.com/memoria-api",
+        "ALLOWED_ORIGINS": "https://voice.example.com",
+        "LIVEKIT_URL": "wss://voice.example.com",
+        "LIVEKIT_API_KEY": "livekit-key",
+        "LIVEKIT_API_SECRET": "livekit-secret-material-that-is-long-enough",
+        "DASHSCOPE_API_KEY": "dashscope-secret",
+        "DASHSCOPE_WS_URL": "wss://dashscope.example/ws",
+        "DASHSCOPE_COMPATIBLE_BASE_URL": "https://dashscope.example/v1",
+        "DASHSCOPE_BASE_URL": "https://dashscope.example/v1",
+        "FUNASR_MODEL": "fun-asr-realtime",
+        "FUNASR_SAMPLE_RATE": "16000",
+        "ENDPOINTING_MIN_DELAY_S": "1.50",
+        "ENDPOINTING_MAX_DELAY_S": "2.20",
+        "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
+        "TTS_PROVIDER": "doubao",
+        "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
+        "DOUBAO_TTS_SAMPLE_RATE": "24000",
+        "MEMORIA_AUTH_SECRET": "auth-secret-material-that-is-long-enough",
+        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
+        "WECHAT_MINIPROGRAM_APPID": "wx-test",
+        "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
+        "QWEN_OMNI_PLUS_VAD_THRESHOLD": "ignored-legacy-key",
+        "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64": base64.b64encode(
+            b"activation-seed-32-bytes-long!!!"
+        ).decode("ascii"),
+        "DEVICE_MEDIA_RUNTIME": "livekit_compat",
+        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE": "allowlist",
+        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS": "dev_test_01",
+        "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET": "retired-miniprogram-ticket-secret",
+        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET": "retired-device-ticket-secret",
+        "INTERRUPT_SEMANTIC_ENABLED": "true",
+    }
+    legacy.update(
+        auth
+        if auth is not None
+        else {
+            "DOUBAO_TTS_APP_ID": "doubao-app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
+        }
+    )
     legacy.update(
         {
-            "DEVICE_MEDIA_RUNTIME": "direct_voice_core",
-            "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE": "allowlist",
-            "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS": "dev_test_01",
             "STREAMCORE_TOKEN_PRIVATE_KEY_PEM": private_pem,
             "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM": public_pem,
             "MEDIA_EDGE_INTERNAL_CONTROL_URL": "https://media-edge:8081",
@@ -220,16 +220,10 @@ def _direct_upgrade_inputs(
             "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE": (
                 "/etc/memoria-media-runtime/edge-healthcheck-client.key"
             ),
-            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL": (
-                "http://control-api:8000/v1/internal/device-close"
-            ),
             "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN": (
                 "direct-close-report-token-material-32+"
             ),
             "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS": "2500",
-            "MEDIA_EDGE_DEVICE_JWT_ISSUER": "voice-agent",
-            "MEDIA_EDGE_DEVICE_JWT_AUDIENCE": "memoria-media-edge",
-            "MEDIA_EDGE_DEVICE_WSS_ADDR": ":8082",
             "MEDIA_EDGE_DEVICE_STATE_REDIS_URL": "rediss://device-state.example:6379/4",
             "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE": (
                 "/etc/memoria-media-runtime/device-state-redis-ca.crt"
@@ -247,6 +241,15 @@ def _direct_upgrade_inputs(
             **_control_edge_mtls_bundle(tmp_path),
         }
     )
+    postgres = {
+        password_env: f"{role}-pass" for password_env, role in EXPECTED_PASSWORD_ROLES.items()
+    }
+    minio = {
+        "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
+        "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY": "archive-secret",
+        "MEMORIA_VOICE_OBJECT_ACCESS_KEY": "voice-access",
+        "MEMORIA_VOICE_OBJECT_SECRET_KEY": "voice-secret",
+    }
     return legacy, postgres, minio
 
 
@@ -256,25 +259,26 @@ def test_endpointing_defaults_match_operator_templates() -> None:
         "ENDPOINTING_MIN_DELAY_S": "1.50",
         "ENDPOINTING_MAX_DELAY_S": "2.20",
         "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
-        "INTERRUPT_SEMANTIC_ENABLED": "true",
-        "INTERRUPT_SEMANTIC_MODEL": "qwen-flash",
-        "INTERRUPT_SEMANTIC_TIMEOUT_S": "1.2",
     }
 
     for relative in (".env.example", "infra/memoria.env.production.example"):
         values = _env_values(root / relative)
         assert {key: values[key] for key in expected} == expected
+        # The semantic interrupt classifier went with the LiveKit worker.
+        assert not {key for key in values if key.startswith("INTERRUPT_SEMANTIC_")}
 
 
-def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent(
+    tmp_path: Path,
+) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     legacy["DOUBAO_TTS_SECRET_KEY"] = "not-a-websocket-credential"
     archive_read_keys = {"archive-v1": Fernet.generate_key().decode("ascii")}
     voice_read_keys = {"voice-v1": Fernet.generate_key().decode("ascii")}
     legacy["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] = json.dumps(archive_read_keys)
     legacy["MEMORIA_VOICE_SAMPLE_READ_KEYS"] = json.dumps(voice_read_keys)
 
-    control, agent, speaker_model, gateway, device_gateway, media_edge = prepare(
+    control, agent, speaker_model, media_edge = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -304,13 +308,10 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["ENDPOINTING_MIN_DELAY_S"] == "1.50"
     assert agent["ENDPOINTING_MAX_DELAY_S"] == "2.20"
     assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
-    assert agent["INTERRUPT_SEMANTIC_ENABLED"] == "true"
     assert agent["LLM_PROVIDER"] == "qwen"
     assert agent["QWEN_FAST_MODEL"] == "qwen3.7-flash"
-    assert agent["INTERRUPT_SEMANTIC_MODEL"] == "qwen-flash"
     assert agent["LIVE_LOOKUP_SEMANTIC_MODEL"] == "qwen-flash"
     assert agent["CONVERSATION_CLOSE_SEMANTIC_MODEL"] == "qwen-flash"
-    assert agent["INTERRUPT_SEMANTIC_TIMEOUT_S"] == "1.2"
     assert control["CRISIS_SEMANTIC_ENABLED"] == "true"
     assert control["CRISIS_SEMANTIC_MODEL"] == "qwen-flash"
     assert control["DASHSCOPE_SUMMARY_MODEL"] == "qwen-flash"
@@ -319,20 +320,30 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert "CRISIS_SEMANTIC_ENABLED" not in agent
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
-    assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
+    assert media_edge["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"] == legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"]
     assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
     assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
-    assert control["DEVICE_MEDIA_RUNTIME"] == "livekit_compat"
-    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "false"
-    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "false"
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "true"
+    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "true"
     assert media_edge["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"] == control[
         "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"
     ]
-    assert device_gateway["MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"] == control[
-        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"
-    ]
-    assert "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET" not in device_gateway
-    assert device_gateway["LIVEKIT_API_SECRET"] == gateway["LIVEKIT_API_SECRET"]
+    # Retired LiveKit/gateway/rollout keys in an old operator env are accepted
+    # but routed to no service.
+    for retired in (
+        "DEVICE_MEDIA_RUNTIME",
+        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
+        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+        "MINIPROGRAM_MEDIA_GATEWAY_URL",
+        "INTERRUPT_SEMANTIC_ENABLED",
+    ):
+        for service_env in (control, agent, speaker_model, media_edge):
+            assert retired not in service_env
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_JWT_SECRET" not in agent
     assert "DOUBAO_TTS_APP_ID" not in control
@@ -345,7 +356,7 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert "MEMORIA_VOICE_SAMPLE_READ_KEYS" not in speaker_model
     assert all(
         "DOUBAO_TTS_SECRET_KEY" not in service_env
-        for service_env in (control, agent, speaker_model, gateway, media_edge)
+        for service_env in (control, agent, speaker_model, media_edge)
     )
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in control
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in agent
@@ -382,16 +393,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert speaker_model == {
         "MEMORIA_SPEAKER_MODEL_TOKEN": control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"]
     }
-    assert gateway["LIVEKIT_API_KEY"] == "livekit-key"
-    assert gateway["LIVEKIT_API_SECRET"] == "livekit-secret-material-that-is-long-enough"
-    assert (
-        gateway["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"]
-        == (control["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"])
-    )
-    assert gateway["MINIPROGRAM_GATEWAY_TICKET_MAX_TTL_S"] == "300"
-    assert control["MINIPROGRAM_MEDIA_GATEWAY_URL"] == (
-        "wss://voice.example.com/memoria-mini-media/v1/mini-program/media"
-    )
+    # The Go edge is its own trust boundary: no storage, auth or provider
+    # secret may reach its env.
     for forbidden in (
         "MEMORIA_AUTH_SECRET",
         "MEMORIA_ARCHIVE_DATABASE_URL",
@@ -401,11 +404,11 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
         "DOUBAO_TTS_API_KEY",
         "DOUBAO_TTS_ACCESS_TOKEN",
     ):
-        assert forbidden not in gateway
+        assert forbidden not in media_edge
 
 
-def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrings() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrings(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     preserved = {
         "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": "preserved-message-idempotency-secret-material",
         "MEMORIA_WECHAT_IDENTITY_SECRET": "preserved-wechat-identity-secret-material",
@@ -429,7 +432,7 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
     }
     legacy.update(preserved)
 
-    control, agent, _, _, _, _ = prepare(
+    control, agent, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -441,10 +444,10 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
     assert agent["MEMORIA_ARCHIVE_SPOOL_KEY"] == preserved["MEMORIA_ARCHIVE_SPOOL_KEY"]
 
 
-def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+def test_upgrade_env_generates_only_missing_encryption_keys(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
 
-    control, agent, _, _, _, _ = prepare(
+    control, agent, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -521,9 +524,17 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     secret = Fernet.generate_key().decode("ascii")
     legacy["MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY"] = secret
+    # An env file cannot carry multi-line PEM values, so the CLI path uses the
+    # *_FILE forms of the Ed25519 pair.
+    private_file = tmp_path / "streamcore-token.key"
+    public_file = tmp_path / "streamcore-token.pub"
+    private_file.write_text(legacy.pop("STREAMCORE_TOKEN_PRIVATE_KEY_PEM"), encoding="ascii")
+    public_file.write_text(legacy.pop("MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"), encoding="ascii")
+    legacy["STREAMCORE_TOKEN_PRIVATE_KEY_FILE"] = str(private_file)
+    legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_FILE"] = str(public_file)
     legacy_path = tmp_path / "legacy.env"
     postgres_path = tmp_path / "postgres.env"
     minio_path = tmp_path / "minio.env"
@@ -554,10 +565,6 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
             str(tmp_path / "agent.env"),
             "--speaker-model",
             str(tmp_path / "speaker.env"),
-            "--gateway",
-            str(tmp_path / "gateway.env"),
-            "--device-gateway",
-            str(tmp_path / "device-gateway.env"),
             "--media-edge",
             str(tmp_path / "media-edge.env"),
         ],
@@ -572,8 +579,8 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
     )
 
 
-def test_upgrade_env_rejects_missing_doubao_authentication() -> None:
-    legacy, postgres, minio = _upgrade_inputs({})
+def test_upgrade_env_rejects_missing_doubao_authentication(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path, {})
 
     with pytest.raises(ValueError, match="exactly one complete authentication mode"):
         prepare(
@@ -597,9 +604,10 @@ def test_upgrade_env_rejects_missing_doubao_authentication() -> None:
     ],
 )
 def test_upgrade_env_rejects_ambiguous_or_half_configured_doubao_authentication(
+    tmp_path: Path,
     auth: dict[str, str],
 ) -> None:
-    legacy, postgres, minio = _upgrade_inputs(auth)
+    legacy, postgres, minio = _upgrade_inputs(tmp_path, auth)
 
     with pytest.raises(ValueError, match="exactly one complete authentication mode"):
         prepare(
@@ -610,10 +618,10 @@ def test_upgrade_env_rejects_ambiguous_or_half_configured_doubao_authentication(
         )
 
 
-def test_upgrade_env_accepts_doubao_api_key_authentication() -> None:
-    legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "doubao-api-key"})
+def test_upgrade_env_accepts_doubao_api_key_authentication(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path, {"DOUBAO_TTS_API_KEY": "doubao-api-key"})
 
-    control, agent, _, _, _, _ = prepare(
+    control, agent, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -626,8 +634,8 @@ def test_upgrade_env_accepts_doubao_api_key_authentication() -> None:
     assert "DOUBAO_TTS_ACCESS_TOKEN" not in agent
 
 
-def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     legacy.update(
         {
             "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
@@ -638,7 +646,7 @@ def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> No
         }
     )
 
-    control, agent, speaker_model, _, _, _ = prepare(
+    control, agent, speaker_model, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -652,8 +660,8 @@ def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> No
     assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in speaker_model
 
 
-def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key() -> None:
-    legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "shared-key"})
+def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path, {"DOUBAO_TTS_API_KEY": "shared-key"})
     legacy.update(
         {
             "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
@@ -673,8 +681,8 @@ def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key() -> None:
         )
 
 
-def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping() -> None:
-    legacy, postgres, minio = _upgrade_inputs()
+def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping(tmp_path: Path) -> None:
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     legacy.update(
         {
             "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
@@ -695,18 +703,15 @@ def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping() -> None:
 def test_upgrade_env_direct_voice_core_generates_complete_direct_bundle(
     tmp_path: Path,
 ) -> None:
-    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
 
-    control, agent, _, _, _, media_edge = prepare(
+    control, agent, _, media_edge = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
         release_tag="20260813-direct",
     )
 
-    assert control["DEVICE_MEDIA_RUNTIME"] == "direct_voice_core"
-    assert control["DEVICE_MEDIA_DIRECT_ROLLOUT_MODE"] == "allowlist"
-    assert control["DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"] == "dev_test_01"
     assert control["DEVICE_DIRECT_MEDIA_WSS_URL"] == (
         "wss://voice.example.com/memoria-device-edge/v1/device/media"
     )
@@ -770,7 +775,7 @@ def test_upgrade_env_direct_voice_core_generates_complete_direct_bundle(
 def test_upgrade_env_direct_voice_core_requires_shared_device_state_redis(
     tmp_path: Path,
 ) -> None:
-    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     legacy.pop("MEDIA_EDGE_DEVICE_STATE_REDIS_URL")
 
     with pytest.raises(
@@ -788,7 +793,7 @@ def test_upgrade_env_direct_voice_core_requires_shared_device_state_redis(
 def test_upgrade_env_direct_voice_core_rejects_plaintext_device_state_redis(
     tmp_path: Path,
 ) -> None:
-    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     legacy["MEDIA_EDGE_DEVICE_STATE_REDIS_URL"] = "redis://device-state.example:6379/4"
 
     with pytest.raises(ValueError, match="must use rediss://"):
@@ -800,100 +805,61 @@ def test_upgrade_env_direct_voice_core_rejects_plaintext_device_state_redis(
         )
 
 
-def test_upgrade_env_direct_canary_requires_a_nonempty_device_allowlist(
+@pytest.mark.parametrize(
+    "missing_key",
+    [
+        "MEDIA_EDGE_INTERNAL_CONTROL_URL",
+        "MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
+    ],
+)
+def test_upgrade_env_requires_the_complete_direct_bundle_with_no_compat_fallback(
     tmp_path: Path,
+    missing_key: str,
 ) -> None:
-    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
-    legacy.pop("DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS")
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
+    legacy.pop(missing_key)
 
-    with pytest.raises(ValueError, match="DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"):
+    with pytest.raises(ValueError, match=missing_key):
         prepare(
             legacy=legacy,
             postgres=postgres,
             minio=minio,
-            release_tag="20260814-direct-empty-canary",
+            release_tag="20260929-direct-incomplete",
         )
 
 
-@pytest.mark.parametrize(
-    "runtime_value",
-    [None, "livekit_compat"],
-    ids=["runtime-removed", "runtime-livekit-compat"],
-)
-def test_upgrade_env_rollback_removes_direct_only_edge_config(
+@pytest.mark.parametrize("runtime_value", [None, "livekit_compat", "direct_voice_core"])
+def test_upgrade_env_ignores_the_retired_device_media_runtime_selector(
     tmp_path: Path,
     runtime_value: str | None,
 ) -> None:
-    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy, postgres, minio = _upgrade_inputs(tmp_path)
     if runtime_value is None:
         legacy.pop("DEVICE_MEDIA_RUNTIME")
     else:
         legacy["DEVICE_MEDIA_RUNTIME"] = runtime_value
-    direct_only_keys = {
-        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
-        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
-        "DEVICE_DIRECT_MEDIA_WSS_URL",
-        "MEDIA_EDGE_DEVICE_WSS_ADDR",
-        "MEDIA_EDGE_DEVICE_JWT_ISSUER",
-        "MEDIA_EDGE_DEVICE_JWT_AUDIENCE",
-        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL",
-        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN",
-        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS",
-        "MEDIA_EDGE_DEVICE_STATE_REDIS_URL",
-        "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
-        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE",
-        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE",
-        "MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME",
-        "MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX",
-        "MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS",
-        "MEDIA_EDGE_DEVICE_LEASE_TTL_MS",
-        "MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS",
-        "MEDIA_EDGE_INSTANCE_ID",
-        "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
-        "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE",
-        "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE",
-        "MEDIA_EDGE_HEALTHCHECK_CA_FILE",
-        "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE",
-        "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
-    }
 
-    control, agent, _, gateway, device_gateway, media_edge = prepare(
+    control, agent, speaker_model, media_edge = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
-        release_tag="20260813-rollback",
+        release_tag="20260929-selector-retired",
     )
 
-    assert control["DEVICE_MEDIA_RUNTIME"] == "livekit_compat"
-    for service_env in (control, agent, gateway, device_gateway, media_edge):
-        for key in direct_only_keys:
-            assert key not in service_env
-    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "false"
-    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "false"
-    assert media_edge["MEDIA_EDGE_HEALTHCHECK_URL"] == "http://127.0.0.1:8081/readyz"
-    # The Go edge must boot the plaintext compatibility shape: JWT identity
-    # for H5/StreamCore stays, internal control token stays, and the device
-    # listener is off.
-    assert media_edge["MEDIA_EDGE_HTTP_ADDR"] == ":8080"
-    assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
-    assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
-    assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
-    assert media_edge["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"] == (
-        legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"]
-    )
+    # The selector never changes the outcome: the edge always boots the
+    # direct shape and the Control env never names a runtime.
+    for service_env in (control, agent, speaker_model, media_edge):
+        assert "DEVICE_MEDIA_RUNTIME" not in service_env
+        assert "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE" not in service_env
+        assert "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS" not in service_env
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "true"
+    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "true"
+    assert media_edge["MEDIA_EDGE_HEALTHCHECK_URL"] == "https://127.0.0.1:8081/readyz"
+    assert media_edge["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"] == legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"]
     assert media_edge["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"] == (
         control["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"]
     )
-    # General keys survive rollback untouched: the internal control endpoint
-    # is documented for both runtimes (direct mode only additionally requires
-    # HTTPS/mTLS), so it must never be stripped for legacy H5.
     assert control["MEDIA_EDGE_INTERNAL_CONTROL_URL"] == "https://media-edge:8081"
-    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE"] == (
-        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE"]
-    )
-    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE"] == (
-        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE"]
-    )
-    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE"] == (
-        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE"]
-    )

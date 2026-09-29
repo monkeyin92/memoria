@@ -55,9 +55,6 @@ def _production_settings(**overrides: str) -> ControlSettings:
         "ENVIRONMENT": "production",
         "PUBLIC_BASE_URL": "https://voice.example.com",
         "ALLOWED_ORIGINS": "https://voice.example.com",
-        "LIVEKIT_URL": "wss://livekit.example.com",
-        "LIVEKIT_API_KEY": "key",
-        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
         "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": (
             "test-message-idempotency-material-that-is-long-enough"

@@ -679,7 +679,10 @@ async def create_device_binding(
             )
         if onboarding is not None:
             assert body.claim_id is not None
-            gateway_url = request.app.state.settings.device_media_gateway_url.strip()
+            # The activation manifest names the one device media endpoint: the
+            # direct Media Edge WSS (firmware still connects to the per-session
+            # websocket_url that media-sessions returns).
+            media_url = request.app.state.settings.device_direct_media_wss_url.strip()
             onboarding.binding_commit_with_authority(
                 actor_id=user.user_id,
                 claim_id=body.claim_id,
@@ -694,7 +697,7 @@ async def create_device_binding(
                     robot_name=str(body.service_preferences.get("robot_name") or "Memoria"),
                     primary_subject_display_name=subject.display_name,
                     control_api_endpoint=request.app.state.settings.public_base_url.rstrip("/"),
-                    device_media_endpoint=gateway_url or "wss://media.invalid",
+                    device_media_endpoint=media_url or "wss://media.invalid",
                 ),
             )
         await _grant_bound_subject_consents(

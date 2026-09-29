@@ -6,10 +6,6 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
-from services.device_media_gateway.protocol import (
-    FrameType,
-    decode_audio_frame,
-)
 
 ROOT = Path(__file__).parents[1]
 CONTRACT = json.loads(
@@ -22,6 +18,40 @@ VALIDATOR = Draft202012Validator(CONTRACT)
 
 def _validate(value: object) -> None:
     VALIDATOR.validate(value)
+
+
+# Network-order binary audio header shared by the firmware and the Go
+# media-edge (the Python device gateway that used to decode it was retired).
+_HEADER = struct.Struct("!BBHIIQIIH")
+_UPLINK_AUDIO = 1
+_DOWNLINK_AUDIO = 2
+
+
+def _decode_audio_frame(raw: bytes, *, expected_type: int) -> dict[str, object]:
+    assert len(raw) >= _HEADER.size == CONTRACT["binary_audio"]["header_size"]
+    (
+        version,
+        frame_type,
+        _flags,
+        stream_epoch,
+        sequence,
+        sample_start,
+        frame_samples,
+        generation_id,
+        payload_size,
+    ) = _HEADER.unpack(raw[: _HEADER.size])
+    payload = raw[_HEADER.size :]
+    assert version == 1
+    assert frame_type == expected_type
+    assert payload_size == len(payload)
+    return {
+        "stream_epoch": stream_epoch,
+        "sequence": sequence,
+        "sample_start": sample_start,
+        "frame_samples": frame_samples,
+        "generation_id": generation_id,
+        "payload": payload,
+    }
 
 
 def _v2_hello() -> dict[str, object]:
@@ -236,21 +266,21 @@ def test_generation_complete_is_an_ordered_audio_lane_barrier() -> None:
 
 def test_binary_golden_frames_match_the_existing_network_order_header() -> None:
     expected_types = {
-        "uplink-v1": FrameType.UPLINK_AUDIO,
-        "downlink-24k-v1": FrameType.DOWNLINK_AUDIO,
-        "downlink-16k-negotiated": FrameType.DOWNLINK_AUDIO,
+        "uplink-v1": _UPLINK_AUDIO,
+        "downlink-24k-v1": _DOWNLINK_AUDIO,
+        "downlink-16k-negotiated": _DOWNLINK_AUDIO,
     }
     for fixture in CONTRACT["binary_audio"]["golden_frames"]:
-        frame = decode_audio_frame(
+        frame = _decode_audio_frame(
             bytes.fromhex(fixture["frame_hex"]),
             expected_type=expected_types[fixture["name"]],
         )
-        assert frame.stream_epoch == fixture["stream_epoch"]
-        assert frame.sequence == fixture["sequence"]
-        assert frame.sample_start == fixture["sample_start"]
-        assert frame.frame_samples == fixture["frame_samples"]
-        assert frame.generation_id == fixture["generation_id"]
-        assert frame.payload.hex() == fixture["payload_hex"]
+        assert frame["stream_epoch"] == fixture["stream_epoch"]
+        assert frame["sequence"] == fixture["sequence"]
+        assert frame["sample_start"] == fixture["sample_start"]
+        assert frame["frame_samples"] == fixture["frame_samples"]
+        assert frame["generation_id"] == fixture["generation_id"]
+        assert frame["payload"].hex() == fixture["payload_hex"]
 
 
 def test_direct_path_generation_contract_forbids_n_plus_one_mapping() -> None:
@@ -278,7 +308,7 @@ def test_discontinuity_flag_is_downlink_only_bit_zero_at_header_offset_two() -> 
     assert flags["discontinuity"] == 1
     assert flags["uplink_allowed"] is False
     # The flag occupies header bytes 2-3 (network order), bit 0, exactly like
-    # the gateway header layout: !BBHIIQIIH with flags 0x0001.
+    # the shared header layout: !BBHIIQIIH with flags 0x0001.
     flagged = struct.pack(
         "!BBHIIQIIH",
         1,   # version

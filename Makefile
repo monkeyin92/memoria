@@ -1,4 +1,4 @@
-.PHONY: install verify dev-api dev-agent test e2e smoke lint module-budget typecheck offline
+.PHONY: install verify dev-api test e2e smoke lint module-budget typecheck offline
 
 install:
 	uv sync --frozen --all-extras
@@ -11,9 +11,6 @@ smoke:
 
 dev-api:
 	uv run uvicorn services.control_api.app.main:app --host 0.0.0.0 --port 8000 --reload
-
-dev-agent:
-	uv run python -m services.agent.src.main dev
 
 lint:
 	uv run ruff check .

@@ -71,11 +71,9 @@ CATEGORIES: tuple[str, ...] = (
 
 RESULTS: tuple[str, ...] = ("pass", "blocked", "failed")
 EVIDENCE_KINDS: tuple[str, ...] = ("metrics", "log", "screenshot", "photo", "report")
-RUN_TIMES: tuple[str, ...] = (
-    "go_media_edge_direct_voice_core",
-    "python_device_gateway_livekit_compat",
-    "livekit",
-)
+# The Python device gateway (livekit_compat) and LiveKit were retired; the Go
+# media-edge direct Voice Core path is the only device runtime.
+RUN_TIMES: tuple[str, ...] = ("go_media_edge_direct_voice_core",)
 
 DEFAULT_TTL_HOURS: dict[str, int] = {
     CATEGORY_LOCAL_DEPENDENCY: 168,
@@ -370,7 +368,7 @@ ITEMS: tuple[_Item, ...] = (
         "完整单轮",
         CATEGORY_REAL_HARDWARE,
         "Mic → VAD → ASR → Turn → LLM → TTS → DAC",
-        "完整单轮不经过 LiveKit 仍能完成：VAD/ASR final/LLM 回复/TTS/DAC 全链路。",
+        "完整单轮经 Go media-edge 直连 Voice Core 完成：VAD/ASR final/LLM 回复/TTS/DAC 全链路。",
     ),
     _Item(
         "T8",

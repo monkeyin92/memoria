@@ -3,105 +3,91 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
 import pytest
-from services.agent.src import heartbeat as heartbeat_module
 from services.agent.src.heartbeat import (
     AgentHeartbeat,
     AgentHeartbeatConfig,
+    build_agent_heartbeat,
+    heartbeat_endpoint,
     is_agent_heartbeat_healthy,
+    main,
 )
+
+_ENDPOINT = "http://control-api:8000/internal/readiness/agent-heartbeat"
+
+
+def _heartbeat(
+    state_path: Path,
+    *,
+    release_tag: str = "release-heartbeat-test",
+    interval_s: float = 10.0,
+    clock: object = None,
+) -> AgentHeartbeat:
+    return AgentHeartbeat(
+        AgentHeartbeatConfig(
+            endpoint=_ENDPOINT,
+            internal_token="agent-heartbeat-token",
+            release_tag=release_tag,
+            state_path=state_path,
+            interval_s=interval_s,
+        ),
+        boot_id=UUID("8f819a3b-ec8f-4319-94ab-7cace979145f"),
+        clock=clock,  # type: ignore[arg-type]
+    )
 
 
 @pytest.mark.asyncio
-async def test_agent_heartbeat_reports_boot_and_worker_readiness() -> None:
+async def test_heartbeat_reports_the_bridge_contract_without_livekit_fields(
+    tmp_path: Path,
+) -> None:
     requests: list[httpx.Request] = []
-    registered = False
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200, text="OK")
         requests.append(request)
         return httpx.Response(200, json={"status": "recorded"})
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-        ),
-        registration_probe=lambda: registered,
-        boot_id=UUID("8f819a3b-ec8f-4319-94ab-7cace979145f"),
+    heartbeat = _heartbeat(
+        tmp_path / "heartbeat.json",
         clock=lambda: datetime(2026, 7, 22, 10, 11, 12, tzinfo=UTC),
     )
-    heartbeat.mark_worker_ready()
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await heartbeat.report(client)
-        registered = True
+        heartbeat.mark_worker_ready()
+        await heartbeat.report(client)
+        heartbeat.mark_worker_stopped()
         await heartbeat.report(client)
 
-    first = json.loads(requests[0].content)
-    second = json.loads(requests[1].content)
+    assert [request.method for request in requests] == ["POST", "POST", "POST"]
     assert requests[0].headers["X-Memoria-Internal-Token"] == "agent-heartbeat-token"
-    assert first == {
+    payloads = [json.loads(request.content) for request in requests]
+    assert payloads[1] == {
         "release_tag": "release-heartbeat-test",
         "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
         "worker_ready": True,
-        "livekit_ready": False,
         "last_loop_at": "2026-07-22T10:11:12+00:00",
     }
-    assert second["livekit_ready"] is True
+    assert [payload["worker_ready"] for payload in payloads] == [False, True, False]
 
 
 @pytest.mark.asyncio
-async def test_agent_heartbeat_reports_livekit_not_ready_when_worker_health_fails() -> None:
-    payloads: list[dict[str, object]] = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "127.0.0.1":
-            return httpx.Response(503, text="failed to connect to livekit")
-        payloads.append(json.loads(request.content))
-        return httpx.Response(200, json={"status": "recorded"})
-
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-        ),
-        registration_probe=lambda: True,
-    )
-    heartbeat.mark_worker_ready()
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        await heartbeat.report(client)
-
-    assert payloads[0]["worker_ready"] is True
-    assert payloads[0]["livekit_ready"] is False
-
-
-@pytest.mark.asyncio
-async def test_accepted_heartbeat_writes_non_secret_local_health_state(tmp_path: Path) -> None:
+async def test_accepted_ready_heartbeat_writes_non_secret_local_health_state(
+    tmp_path: Path,
+) -> None:
     state_path = tmp_path / "heartbeat.json"
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200)
+    async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "recorded"})
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-            state_path=state_path,
-        ),
-        registration_probe=lambda: True,
+    heartbeat = _heartbeat(
+        state_path,
         clock=lambda: datetime(2026, 7, 22, 10, 11, 12, tzinfo=UTC),
     )
     heartbeat.mark_worker_ready()
@@ -123,21 +109,10 @@ async def test_accepted_not_ready_heartbeat_does_not_refresh_local_health_state(
     original = '{"release_tag":"old","accepted_at":"2026-07-22T10:00:00+00:00"}'
     state_path.write_text(original, encoding="utf-8")
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(503)
+    async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "recorded"})
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-            state_path=state_path,
-        ),
-        registration_probe=lambda: True,
-    )
-    heartbeat.mark_worker_ready()
+    heartbeat = _heartbeat(state_path)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await heartbeat.report(client)
@@ -162,20 +137,11 @@ async def test_failed_or_rejected_heartbeat_does_not_refresh_local_health_state(
     original = '{"release_tag":"old","accepted_at":"2026-07-22T10:00:00+00:00"}'
     state_path.write_text(original, encoding="utf-8")
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200)
+    async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json=body)
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-            state_path=state_path,
-        ),
-        registration_probe=lambda: True,
-    )
+    heartbeat = _heartbeat(state_path)
+    heartbeat.mark_worker_ready()
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(httpx.HTTPStatusError):
@@ -185,79 +151,21 @@ async def test_failed_or_rejected_heartbeat_does_not_refresh_local_health_state(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_rechecks_registration_and_recovers_after_reconnect(
-    tmp_path: Path,
-) -> None:
-    state_path = tmp_path / "heartbeat.json"
-    payloads: list[dict[str, object]] = []
-    registered = True
-    now = datetime(2026, 7, 22, 10, 11, 12, tzinfo=UTC)
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200)
-        payloads.append(json.loads(request.content))
-        return httpx.Response(200, json={"status": "recorded"})
-
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-            state_path=state_path,
-        ),
-        registration_probe=lambda: registered,
-        clock=lambda: now,
-    )
-    heartbeat.mark_worker_ready()
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        await heartbeat.report(client)
-        accepted_state = state_path.read_text(encoding="utf-8")
-
-        registered = False
-        now = datetime(2026, 7, 22, 10, 11, 22, tzinfo=UTC)
-        await heartbeat.report(client)
-        assert state_path.read_text(encoding="utf-8") == accepted_state
-
-        registered = True
-        now = datetime(2026, 7, 22, 10, 11, 32, tzinfo=UTC)
-        await heartbeat.report(client)
-
-    assert [payload["livekit_ready"] for payload in payloads] == [True, False, True]
-    assert json.loads(state_path.read_text(encoding="utf-8"))["accepted_at"] == (
-        "2026-07-22T10:11:32+00:00"
-    )
-
-
-@pytest.mark.asyncio
 async def test_release_tag_rejection_logs_status_and_reported_tag(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A stack tag split must be distinguishable from Control API being down.
-
-    Control API answers 409 when its own MEMORIA_RELEASE_TAG differs from the
-    one reported here, which leaves the container permanently unhealthy. The
-    log has to carry the status and the reported tag or the cause is invisible.
-    """
+    """A stack tag split must be distinguishable from Control API being down."""
 
     caplog.set_level(logging.WARNING, logger="services.agent.src.heartbeat")
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200)
+    async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"detail": "agent release tag does not match config"})
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="20260831-2215-miniprogram-bind-view-control-api",
-            state_path=tmp_path / "heartbeat.json",
-            interval_s=0.01,
-        ),
-        registration_probe=lambda: True,
+    heartbeat = _heartbeat(
+        tmp_path / "heartbeat.json",
+        release_tag="20260831-2215-miniprogram-bind-view-control-api",
+        interval_s=0.01,
     )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -285,19 +193,10 @@ async def test_transport_failure_still_logs_generic_reason(
 ) -> None:
     caplog.set_level(logging.WARNING, logger="services.agent.src.heartbeat")
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("control api unreachable")
 
-    heartbeat = AgentHeartbeat(
-        AgentHeartbeatConfig(
-            endpoint="http://control-api:8000/internal/readiness/agent-heartbeat",
-            internal_token="agent-heartbeat-token",
-            release_tag="release-heartbeat-test",
-            state_path=tmp_path / "heartbeat.json",
-            interval_s=0.01,
-        ),
-        registration_probe=lambda: False,
-    )
+    heartbeat = _heartbeat(tmp_path / "heartbeat.json", interval_s=0.01)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         task = asyncio.create_task(heartbeat.run_with_client(client))
@@ -311,39 +210,51 @@ async def test_transport_failure_still_logs_generic_reason(
     )
 
 
+def test_heartbeat_endpoint_targets_the_archive_host_readiness_route() -> None:
+    assert (
+        heartbeat_endpoint("https://control-api:8443/v1/archive/session-events?x=1")
+        == "https://control-api:8443/internal/readiness/agent-heartbeat"
+    )
+
+
+def test_build_agent_heartbeat_is_production_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-under-test")
+    tokens: list[str] = []
+
+    def internal_token(capability: str) -> str:
+        tokens.append(capability)
+        return "x" * 32
+
+    production = SimpleNamespace(
+        environment="production",
+        archive_session_events_url="http://control-api:8000/v1/archive/session-events",
+        internal_token=internal_token,
+    )
+
+    assert build_agent_heartbeat(SimpleNamespace(environment="development")) is None
+    assert isinstance(build_agent_heartbeat(production), AgentHeartbeat)
+    assert tokens == ["agent_heartbeat"]
+
+
 @pytest.mark.parametrize(
-    ("state", "sdk_status", "expected"),
+    ("state", "expected"),
     [
-        (None, 200, False),
-        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:10:41+00:00"}, 200, False),
-        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:10:42+00:00"}, 200, True),
-        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:11:13+00:00"}, 200, False),
-        ({"release_tag": "wrong", "accepted_at": "2026-07-22T10:11:12+00:00"}, 200, False),
-        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:11:12+00:00"}, 503, False),
-        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:11:12+00:00"}, 204, True),
+        (None, False),
+        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:10:41+00:00"}, False),
+        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:10:42+00:00"}, True),
+        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:11:13+00:00"}, False),
+        ({"release_tag": "wrong", "accepted_at": "2026-07-22T10:11:12+00:00"}, False),
+        ({"release_tag": "expected", "accepted_at": "2026-07-22T10:11:12"}, False),
     ],
 )
-def test_agent_heartbeat_health_requires_fresh_matching_state_and_sdk_health(
+def test_health_requires_fresh_matching_accepted_state(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     state: dict[str, str] | None,
-    sdk_status: int,
     expected: bool,
 ) -> None:
     state_path = tmp_path / "heartbeat.json"
     if state is not None:
         state_path.write_text(json.dumps(state), encoding="utf-8")
-
-    class Response:
-        status = sdk_status
-
-        def __enter__(self) -> Response:
-            return self
-
-        def __exit__(self, *_: object) -> None:
-            return None
-
-    monkeypatch.setattr(heartbeat_module.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
 
     assert (
         is_agent_heartbeat_healthy(
@@ -353,3 +264,51 @@ def test_agent_heartbeat_health_requires_fresh_matching_state_and_sdk_health(
         )
         is expected
     )
+
+
+def test_health_probe_addr_requires_a_listening_port(tmp_path: Path) -> None:
+    state_path = tmp_path / "heartbeat.json"
+    now = datetime(2026, 7, 22, 10, 11, 12, tzinfo=UTC)
+    state_path.write_text(
+        json.dumps({"release_tag": "expected", "accepted_at": now.isoformat()}),
+        encoding="utf-8",
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        assert is_agent_heartbeat_healthy(
+            state_path=state_path,
+            release_tag="expected",
+            probe_addr=f"127.0.0.1:{port}",
+            now=now,
+        )
+    assert not is_agent_heartbeat_healthy(
+        state_path=state_path,
+        release_tag="expected",
+        probe_addr=f"127.0.0.1:{port}",
+        now=now,
+        timeout_s=0.2,
+    )
+    assert not is_agent_heartbeat_healthy(
+        state_path=state_path,
+        release_tag="expected",
+        probe_addr="not-an-address",
+        now=now,
+    )
+
+
+def test_check_health_cli_exit_code(tmp_path: Path) -> None:
+    state_path = tmp_path / "heartbeat.json"
+    state_path.write_text(
+        json.dumps(
+            {"release_tag": "expected", "accepted_at": datetime.now(UTC).isoformat()}
+        ),
+        encoding="utf-8",
+    )
+
+    args = ["--check-health", "--state-path", str(state_path)]
+    assert main([*args, "--release-tag", "expected"]) == 0
+    assert main([*args, "--release-tag", "other"]) == 1
+    with pytest.raises(SystemExit):
+        main(["--state-path", str(state_path)])

@@ -11,11 +11,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scripts.split_production_env import _aliases
+from scripts.split_production_env import _RETIRED_KEYS, _aliases
 from services.agent.src.config import AgentSettings
 from services.control_api.app.config import ControlSettings
-from services.device_media_gateway.config import DeviceMediaGatewaySettings
-from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "infra" / "memoria.env.production.example"
 
@@ -44,12 +42,7 @@ def _named(template: str, key: str) -> bool:
 def test_every_settings_alias_is_in_the_production_template() -> None:
     template = TEMPLATE.read_text(encoding="utf-8")
     aliases: set[str] = set()
-    for settings in (
-        ControlSettings,
-        AgentSettings,
-        MiniProgramGatewaySettings,
-        DeviceMediaGatewaySettings,
-    ):
+    for settings in (ControlSettings, AgentSettings):
         aliases |= _aliases(settings)
     missing = sorted(
         key for key in aliases if key not in NOT_IN_PRODUCTION and not _named(template, key)
@@ -60,3 +53,33 @@ def test_every_settings_alias_is_in_the_production_template() -> None:
 def test_the_exemption_list_names_only_real_settings() -> None:
     aliases = _aliases(ControlSettings) | _aliases(AgentSettings)
     assert set(NOT_IN_PRODUCTION) <= aliases
+
+
+def test_retired_media_chain_keys_are_gone_from_both_templates() -> None:
+    """LiveKit, its worker and the Python media gateways were retired.
+
+    split_production_env still accepts these keys from old operator files and
+    routes them nowhere, but the templates must not advertise them again.
+    """
+
+    aliases = _aliases(ControlSettings) | _aliases(AgentSettings)
+    retired = {
+        key
+        for key in _RETIRED_KEYS
+        if key.startswith(("LIVEKIT_", "MINIPROGRAM_GATEWAY_", "DEVICE_MEDIA_GATEWAY_"))
+        or key
+        in {
+            "DEVICE_MEDIA_RUNTIME",
+            "MEDIA_RUNTIME_DEFAULT",
+            "MINIPROGRAM_MEDIA_GATEWAY_URL",
+            "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+            "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+        }
+    }
+    assert retired
+    # A retired key that a service still reads would be silently dropped.
+    assert not set(_RETIRED_KEYS) & aliases
+    for template_path in (TEMPLATE, TEMPLATE.parents[1] / ".env.example"):
+        template = template_path.read_text(encoding="utf-8")
+        named = sorted(key for key in retired if _named(template, key))
+        assert named == [], f"{template_path.name} still names retired keys: {named}"
