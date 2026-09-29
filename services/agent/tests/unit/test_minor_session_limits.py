@@ -139,7 +139,7 @@ def _context(profile: VerifiedRuntimeProfile, *, started_ago: float = 0.0, reply
         closed=False,
         standby_requested=False,
         crisis_reply_heard=False,
-        assistant_text=reply,
+        output=SimpleNamespace(assistant_text=reply),
         started_at=monotonic_clock.monotonic() - started_ago,
     )
 

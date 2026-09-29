@@ -59,12 +59,12 @@ async def _expire_owner_timer(registry: MediaVoiceCoreRegistry, context: Any) ->
 
 
 async def _expire_speech_watchdog(registry: MediaVoiceCoreRegistry, context: Any) -> None:
-    old = context.max_user_speech_task
+    old = context.pending.max_user_speech_task
     assert old is not None
     old.cancel()
     await asyncio.gather(old, return_exceptions=True)
     task = asyncio.create_task(registry._max_user_speech_watch(context, 0))
-    context.max_user_speech_task = task
+    context.pending.max_user_speech_task = task
     await asyncio.wait_for(task, 1)
 
 
@@ -88,7 +88,7 @@ async def test_admitted_final_is_protected_before_projection_finishes(monkeypatc
     task = asyncio.create_task(registry.accept_asr_result(identity.session_id, _final(identity)))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         await _expire_owner_timer(registry, context)
         assert not context.standby_requested
         assert context.owner_silence_grace_used
@@ -98,7 +98,7 @@ async def test_admitted_final_is_protected_before_projection_finishes(monkeypatc
         assert context.owner_silence_deadline == deadline
         release.set()
         assert await asyncio.wait_for(task, 1)
-        assert context.turn_start_sample == 0
+        assert context.pending.turn_start_sample == 0
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
@@ -218,10 +218,10 @@ async def _ingest_accepted_final(
 def _arm_endpoint(context: Any, *, end: int = 320) -> None:
     """Mirror the VAD-end endpoint state _commit_pending_turn reads."""
 
-    context.turn_start_sample = 0
-    context.turn_end_sample = end
-    context.turn_endpoint_sample = end
-    context.turn_retire_sample = end
+    context.pending.turn_start_sample = 0
+    context.pending.turn_end_sample = end
+    context.pending.turn_endpoint_sample = end
+    context.pending.turn_retire_sample = end
 
 
 def _user_turns(runtime: Any) -> list[str]:
@@ -253,10 +253,10 @@ async def test_accepted_vad_retracts_processing_grace_without_refreshing_budget(
     try:
         if asr_opened_turn:
             assert await registry.accept_asr_result(identity.session_id, _final(identity))
-            assert context.turn_start_sample == 0
+            assert context.pending.turn_start_sample == 0
         else:
             # ASR admission may precede its projection/turn-range update.
-            context.admitted_input_stream_epoch = identity.stream_epoch
+            context.pending.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
         grace_task = context.owner_silence_task
         assert context.owner_silence_grace_deadline is not None
@@ -265,14 +265,14 @@ async def test_accepted_vad_retracts_processing_grace_without_refreshing_budget(
         assert context.owner_silence_remaining_s == 0.0
         assert context.owner_silence_grace_used
         assert context.owner_silence_task is None
-        assert context.max_user_speech_task is not None
-        watchdog = context.max_user_speech_task
-        deadline = context.max_user_speech_deadline
+        assert context.pending.max_user_speech_task is not None
+        watchdog = context.pending.max_user_speech_task
+        deadline = context.pending.max_user_speech_deadline
         await registry.on_speech_segment(session, _vad(identity, start=960))
         registry._sync_owner_silence_phase(context, "listening")
         assert context.owner_silence_task is None
-        assert context.max_user_speech_task is watchdog
-        assert context.max_user_speech_deadline == deadline
+        assert context.pending.max_user_speech_task is watchdog
+        assert context.pending.max_user_speech_deadline == deadline
         assert not context.standby_requested
         if grace_task is not None:
             await asyncio.wait_for(grace_task, 1)
@@ -285,7 +285,7 @@ async def test_accepted_vad_is_protected_before_projection_await(monkeypatch: An
     registry, context, _, _, identity = await _device_registry("vad-before-projection")
     registry.max_user_speech_duration_s = 60
     session = open_bridge_connection(registry.bridge, identity).session
-    context.admitted_input_stream_epoch = identity.stream_epoch
+    context.pending.admitted_input_stream_epoch = identity.stream_epoch
     await _expire_owner_timer(registry, context)
     entered, release = asyncio.Event(), asyncio.Event()
     original = registry._apply_projection_segment
@@ -299,10 +299,10 @@ async def test_accepted_vad_is_protected_before_projection_await(monkeypatch: An
     task = asyncio.create_task(registry.on_speech_segment(session, _vad(identity)))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        assert context.turn_start_sample == 640
+        assert context.pending.turn_start_sample == 640
         assert context.owner_silence_grace_deadline is None
         assert context.owner_silence_task is None
-        assert context.max_user_speech_task is not None
+        assert context.pending.max_user_speech_task is not None
         assert not context.standby_requested
         release.set()
         await asyncio.wait_for(task, 1)
@@ -322,7 +322,7 @@ async def test_accepted_vad_only_invalidates_parked_close_with_a_live_watchdog(
     registry.max_user_speech_duration_s = watchdog_duration
     session = open_bridge_connection(registry.bridge, identity).session
     if with_grace:
-        context.admitted_input_stream_epoch = identity.stream_epoch
+        context.pending.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
     entered = asyncio.Event()
     original = registry._request_device_standby
@@ -349,7 +349,7 @@ async def test_accepted_vad_only_invalidates_parked_close_with_a_live_watchdog(
         assert context.owner_silence_remaining_s == 0.0
         assert context.owner_silence_task is None
         assert context.owner_silence_grace_deadline is None
-        assert context.max_user_speech_task is not None
+        assert context.pending.max_user_speech_task is not None
         # Vetoing the old close must transfer, not remove, the absolute bound.
         await _expire_speech_watchdog(registry, context)
         assert context.closed
@@ -365,12 +365,12 @@ async def test_disabled_watchdog_keeps_processing_grace_bounded() -> None:
     registry, context, _, _, identity = await _device_registry("vad-watchdog-disabled")
     session = open_bridge_connection(registry.bridge, identity).session
     try:
-        context.admitted_input_stream_epoch = identity.stream_epoch
+        context.pending.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
         deadline = context.owner_silence_grace_deadline
         await registry.on_speech_segment(session, _vad(identity))
         assert context.owner_silence_grace_deadline == deadline
-        assert context.max_user_speech_task is None
+        assert context.pending.max_user_speech_task is None
         await _expire_owner_timer(registry, context)
         assert context.standby_reason == "owner_silence_timeout"
         assert context.closed
@@ -387,7 +387,7 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
     registry, context, _, runtime, identity = await _device_registry(f"vad-reject-{rejection}")
     registry.max_user_speech_duration_s = 60
     session = open_bridge_connection(registry.bridge, identity).session
-    context.admitted_input_stream_epoch = identity.stream_epoch
+    context.pending.admitted_input_stream_epoch = identity.stream_epoch
     await _expire_owner_timer(registry, context)
     deadline = context.owner_silence_grace_deadline
     revision = context.owner_silence_activity_revision
@@ -397,14 +397,14 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
             type(runtime), "on_user_voice_started", lambda self: PlaybackInputDecision.IGNORE,
         )
     elif rejection == "clock_pin":
-        context.clock_fact_endpoint_pinned = 320
+        context.pending.clock_fact_endpoint_pinned = 320
     elif rejection == "close_pin":
-        context.conversation_close_endpoint_pinned = 320
+        context.pending.conversation_close_endpoint_pinned = 320
     elif rejection == "query_pin":
-        context.live_query_endpoint_pinned = 320
+        context.pending.live_query_endpoint_pinned = 320
     elif rejection == "forced":
-        context.live_query_forced_authoritative = True
-        context.live_query_forced_text = "未来三天南京天气"
+        context.pending.live_query_forced_authoritative = True
+        context.pending.live_query_forced_text = "未来三天南京天气"
     elif rejection == "empty":
         segment = replace(segment, near_end_rms=0.0)
     elif rejection == "stale":
@@ -415,9 +415,9 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
         await registry.on_speech_segment(session, segment)
         assert context.owner_silence_grace_deadline == deadline
         assert context.owner_silence_activity_revision == revision
-        assert context.active_vad_stream_epoch is None
-        assert context.max_user_speech_task is None
-        assert context.turn_start_sample is None
+        assert context.pending.active_vad_stream_epoch is None
+        assert context.pending.max_user_speech_task is None
+        assert context.pending.turn_start_sample is None
         if rejection not in {"terminal", "empty", "stale"}:
             # Pinned/ignored edges remain observations, preserving projection
             # semantics, but never receive timer or turn admission.
@@ -444,8 +444,8 @@ async def test_active_vad_cannot_veto_authoritative_close(terminal_reason: str) 
             assert await registry._request_device_standby(context, reason=terminal_reason)
             assert context.standby_reason == terminal_reason
         assert context.closed
-        assert context.active_vad_stream_epoch is None
-        assert context.active_vad_start_sample is None
+        assert context.pending.active_vad_stream_epoch is None
+        assert context.pending.active_vad_start_sample is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -470,23 +470,23 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
     task: asyncio.Task[None] | None = None
     try:
         if with_grace:
-            context.admitted_input_stream_epoch = identity.stream_epoch
+            context.pending.admitted_input_stream_epoch = identity.stream_epoch
             await _expire_owner_timer(registry, context)
         await registry.on_speech_segment(session, _vad(identity))
-        watchdog = context.max_user_speech_task
-        deadline = context.max_user_speech_deadline
+        watchdog = context.pending.max_user_speech_task
+        deadline = context.pending.max_user_speech_deadline
         context.asr.last_sent_sample = 960
         task = asyncio.create_task(
             registry.on_speech_segment(session, _vad(identity, start=960, final=True))
         )
         await asyncio.wait_for(entered.wait(), 1)
-        assert context.active_vad_stream_epoch == identity.stream_epoch
-        assert context.active_vad_start_sample == 640
-        assert context.max_user_speech_task is watchdog
+        assert context.pending.active_vad_stream_epoch == identity.stream_epoch
+        assert context.pending.active_vad_start_sample == 640
+        assert context.pending.max_user_speech_task is watchdog
         assert watchdog is not None
-        assert context.max_user_speech_deadline == deadline
+        assert context.pending.max_user_speech_deadline == deadline
         assert context.owner_silence_task is None
-        assert context.turn_endpoint_timeout_handle is None
+        assert context.pending.turn_endpoint_timeout_handle is None
         registry._sync_owner_silence_phase(context, "listening")
         assert context.owner_silence_task is None
         if expires:
@@ -495,19 +495,19 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
             assert context.standby_reason == "max_user_speech_duration_timeout"
         release.set()
         await asyncio.wait_for(task, 1)
-        assert context.active_vad_stream_epoch is None
-        assert context.active_vad_start_sample is None
-        assert context.max_user_speech_task is None
+        assert context.pending.active_vad_stream_epoch is None
+        assert context.pending.active_vad_start_sample is None
+        assert context.pending.max_user_speech_task is None
         if expires:
             # A late provider return cannot resurrect the expired utterance.
             assert registry.session_state(identity.session_id) is None
-            assert context.turn_endpoint_sample is None
+            assert context.pending.turn_endpoint_sample is None
             assert context.turn_endpoint_task is None
             assert _user_turns(runtime) == []
         else:
             assert not context.closed
-            assert context.turn_endpoint_sample == 960
-            assert context.turn_endpoint_timeout_handle is not None
+            assert context.pending.turn_endpoint_sample == 960
+            assert context.pending.turn_endpoint_timeout_handle is not None
     finally:
         release.set()
         if task is not None:
@@ -523,17 +523,17 @@ async def test_pinned_vad_end_keeps_the_existing_watchdog(pin: str) -> None:
     session = open_bridge_connection(registry.bridge, identity).session
     try:
         await registry.on_speech_segment(session, _vad(identity))
-        watchdog = context.max_user_speech_task
+        watchdog = context.pending.max_user_speech_task
         if pin == "forced":
-            context.live_query_forced_authoritative = True
-            context.live_query_forced_text = "南京天气怎么样"
+            context.pending.live_query_forced_authoritative = True
+            context.pending.live_query_forced_text = "南京天气怎么样"
         else:
-            setattr(context, f"{pin}_endpoint_pinned", 800)
+            setattr(context.pending, f"{pin}_endpoint_pinned", 800)
         await registry.on_speech_segment(session, _vad(identity, start=960, final=True))
-        assert context.max_user_speech_task is watchdog
+        assert context.pending.max_user_speech_task is watchdog
         assert watchdog is not None
-        assert context.active_vad_start_sample == 640
-        assert context.turn_endpoint_sample is None
+        assert context.pending.active_vad_start_sample == 640
+        assert context.pending.turn_endpoint_sample is None
         await _expire_speech_watchdog(registry, context)
         assert context.closed
     finally:
@@ -571,13 +571,13 @@ async def test_older_vad_end_cannot_stop_newer_speech(monkeypatch: Any, wait_sta
         )
         await asyncio.wait_for(entered.wait(), 1)
         await registry.on_speech_segment(session, _vad(identity, start=1280))
-        watchdog = context.max_user_speech_task
+        watchdog = context.pending.max_user_speech_task
         release.set()
         await asyncio.wait_for(task, 1)
-        assert context.max_user_speech_task is watchdog
+        assert context.pending.max_user_speech_task is watchdog
         assert watchdog is not None
-        assert context.active_vad_start_sample == 1280
-        assert context.turn_endpoint_sample is None
+        assert context.pending.active_vad_start_sample == 1280
+        assert context.pending.turn_endpoint_sample is None
     finally:
         release.set()
         if task is not None:
@@ -603,9 +603,9 @@ async def test_turn_cleanup_releases_active_vad_without_resetting_revision(clean
             await registry._reuse_session(
                 context, replace(identity, stream_epoch=identity.stream_epoch + 1),
             )
-        assert context.active_vad_stream_epoch is None
-        assert context.active_vad_start_sample is None
-        assert context.max_user_speech_task is None
+        assert context.pending.active_vad_stream_epoch is None
+        assert context.pending.active_vad_start_sample is None
+        assert context.pending.max_user_speech_task is None
         assert context.owner_silence_activity_revision == revision
         registry._sync_owner_silence_phase(context, "listening")
         assert context.owner_silence_task is not None
@@ -776,11 +776,11 @@ async def test_close_during_generation_start_records_a_terminal_minted_fence(
 
     assert outcome == "session_closed"
     assert _user_turns(runtime) == ["请给我讲一个故事"]
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     terminal = delivery.terminal_event if delivery is not None else None
     recorded = [
         (result.status, result.reason)
-        for result in context.output_results
+        for result in context.output.output_results
         if result.fence.matches(fence)
     ]
     assert terminal is not None or any(
@@ -844,7 +844,7 @@ async def test_reply_cancellation_drain_is_bounded_when_old_task_absorbs_cancel(
             cleaned.set()
 
     old_reply = asyncio.create_task(stubborn_reply(), name="test-stubborn-reply")
-    context.reply_task = old_reply
+    context.output.reply_task = old_reply
     await asyncio.wait_for(started.wait(), 1)
 
     try:
@@ -863,7 +863,7 @@ async def test_reply_cancellation_drain_is_bounded_when_old_task_absorbs_cancel(
         release.set()
         await asyncio.wait_for(cleaned.wait(), 1)
         await asyncio.gather(old_reply, return_exceptions=True)
-        context.reply_task = None
+        context.output.reply_task = None
         await registry.finalize_session(identity.session_id)
 
 
@@ -899,14 +899,14 @@ async def test_stale_epoch_final_is_refused_before_admission_and_recovery(
     )
     assert decision.accepted is None
     assert decision.reason is ASRDecisionReason.STALE_STREAM_EPOCH
-    assert context.admitted_input_stream_epoch is None
+    assert context.pending.admitted_input_stream_epoch is None
     assert recovered == [], "an old-epoch final must not enter final recovery"
     assert _user_turns(runtime) == []
 
     assert await registry.accept_asr_result(
         identity.session_id, _final_at(identity, "请给我讲一个故事")
     )
-    assert context.admitted_input_stream_epoch == context.stream_epoch
+    assert context.pending.admitted_input_stream_epoch == context.stream_epoch
     await registry.finalize_session(identity.session_id)
 
 
@@ -965,8 +965,8 @@ async def test_grace_expiry_closes_while_projection_is_pending(monkeypatch: Any)
     )
     try:
         await asyncio.wait_for(projection_entered.wait(), 1)
-        assert context.turn_start_sample is None
-        assert context.admitted_input_stream_epoch == context.stream_epoch
+        assert context.pending.turn_start_sample is None
+        assert context.pending.admitted_input_stream_epoch == context.stream_epoch
         await _expire_owner_timer(registry, context)
         assert not context.standby_requested
         assert context.owner_silence_grace_deadline is not None
@@ -1187,7 +1187,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
     context.runtime.publish_transcript = recording_publish_transcript  # type: ignore[method-assign]
 
     fence = await runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     assert await bridge.emit_generation(
         identity.session_id,
         fence,
@@ -1230,14 +1230,14 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
     assert connection.session.last_downlink_sequence == 0
     assert connection.session.last_downlink_ack_sequence == 0
     assert published == [], "a transcript was published after the terminal close"
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert ReplyDeliveryEvent.PROVIDER_COMPLETED not in delivery.events
     assert delivery.provider_completed is False
     assert delivery.terminal_event is ReplyDeliveryEvent.ERROR
     assert delivery.terminal_reason == "session_closed"
-    assert context.output_owner is None
-    assert context.provider_complete is False
+    assert context.output.output_owner is None
+    assert context.output.provider_complete is False
     assert finalize is not None and finalize.done() and not finalize.cancelled()
     assert context.closed
 
@@ -1260,10 +1260,10 @@ async def test_active_vad_with_armed_watchdog_supersedes_owner_silence_grace() -
         context.owner_silence_deadline = context.owner_silence_grace_deadline
 
         # Now VAD is admitted while grace was pending
-        context.turn_start_sample = 160
+        context.pending.turn_start_sample = 160
         registry._admit_owner_silence_vad(context, start_sample=160)
-        assert context.active_vad_stream_epoch == identity.stream_epoch
-        assert context.max_user_speech_task is not None
+        assert context.pending.active_vad_stream_epoch == identity.stream_epoch
+        assert context.pending.max_user_speech_task is not None
 
         # Expire owner timer: watchdog has taken ownership, so standby must NOT be requested
         await _expire_owner_timer(registry, context)
@@ -1289,7 +1289,7 @@ async def test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace() ->
     session = open_bridge_connection(registry.bridge, identity).session
     try:
         # A recognized result is pending, so the spent budget moves to grace.
-        context.admitted_input_stream_epoch = identity.stream_epoch
+        context.pending.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
         assert context.owner_silence_grace_deadline is not None
         assert context.owner_silence_remaining_s == 0.0
@@ -1297,7 +1297,7 @@ async def test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace() ->
         # The VAD that belongs to that speech arrives late, through the seam.
         await registry.on_speech_segment(session, _vad(identity, start=640))
         assert context.owner_silence_grace_deadline is None
-        assert context.max_user_speech_task is not None
+        assert context.pending.max_user_speech_task is not None
         assert context.owner_silence_remaining_s == 0.0
 
         # The endpoint must not resurrect the window either.
@@ -1320,7 +1320,7 @@ async def test_accepted_final_can_veto_a_parked_grace_close(monkeypatch: Any) ->
 
     registry, context, _, _, identity = await _device_registry("final-vetoes-parked-close")
     try:
-        context.admitted_input_stream_epoch = identity.stream_epoch
+        context.pending.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
         assert context.owner_silence_grace_deadline is not None
 

@@ -29,12 +29,7 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._speaker_pcm.clear()
     runtime._speaker_decision = None
     runtime._speaker_class = "uncertain"
-    runtime._voice_floor.update(
-        pending_assistant_text="",
-        played_assistant_text="",
-        pending_assistant_text_epoch=0,
-        playback_fence=None,
-    )
+    runtime._voice_floor.update(pending_assistant_text="", played_assistant_text="")
     runtime._assistant_expression_fence = None
     runtime._pending_tool_results = 0
     # Never call a possibly-awaitable cue stop() synchronously here; the
@@ -42,7 +37,6 @@ def clear_identity_private_state(runtime: Any) -> None:
     runtime._active_listener_cue = None
     runtime._active_listener_cue_handle = None
     runtime._enroll_fence = None
-    runtime._pending_keyword_interrupt_binding = None
     runtime._sticky_interrupt_epoch = None
     runtime._sticky_interrupt_route = None
     runtime._sticky_interrupt_text = ""
@@ -132,8 +126,6 @@ def invalidate_identity_epochs(runtime: Any) -> None:
     runtime._interaction_decision_text = ""
     runtime._target_focus_epoch = None
     runtime._target_focus_pending_epoch = None
-    runtime._trusted_unanchored_control_epoch = None
-    runtime._trusted_unanchored_playback_epoch = None
     discard = getattr(runtime._speech_epoch_assembler, "discard_current", None)
     if callable(discard):
         discard()

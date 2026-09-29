@@ -57,7 +57,7 @@ def test_update_keeps_every_field_it_is_not_given() -> None:
     assert floor.assistant_speaking is True
     assert floor.pending_assistant_text == "回答"
     assert floor.echo_reference_text == "回答"
-    floor.update(pending_assistant_text="", playback_started_ns=None)
+    floor.update(pending_assistant_text="", last_playback_completed_ns=None)
     assert floor.echo_reference_text == "已播放"
     assert floor.set_phase(InteractionPhase.CONNECTING) is None
     assert floor.set_phase(InteractionPhase.LISTENING) is InteractionPhase.CONNECTING

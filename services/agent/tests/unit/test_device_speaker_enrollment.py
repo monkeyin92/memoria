@@ -39,10 +39,10 @@ async def _finish_current_playback(
 ) -> None:
     context = registry.session_state(identity.session_id)
     await _wait_until(
-        lambda: context.output_owner is not None or bool(bridge.frames),
+        lambda: context.output.output_owner is not None or bool(bridge.frames),
         timeout=2.0,
     )
-    if context.output_owner is not None:
+    if context.output.output_owner is not None:
         await _finish_output_owner_playback(registry, identity, bridge, session)
         return
     ack_frame = bridge.frames[-1]
@@ -151,7 +151,7 @@ async def test_device_session_speaks_enrollment_prompts_when_requested(
         await _finish_current_playback(registry, identity, bridge, session)
         await _wait_until(
             lambda: (
-                context.output_owner is None
+                context.output.output_owner is None
                 and context.runtime.orchestrator.state is ConversationState.LISTENING
             ),
             timeout=2.0,
@@ -247,7 +247,7 @@ async def test_device_vad_end_collects_enrollment_sample_without_asr(
         await asyncio.sleep(0)
         assert received
         assert received[0][1] == 16_000
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         assert identity.stream_epoch in provider.pause_asr_calls
         assert context.runtime.formal_speaker_enrollment_active is True
     finally:

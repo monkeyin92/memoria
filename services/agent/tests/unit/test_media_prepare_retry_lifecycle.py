@@ -119,7 +119,7 @@ class _Scenario:
         assert not self.context.turn_commit_task.done()
         assert self.context.turn_commit_lock.locked()
         if call > 1:
-            retry = self.context.turn_commit_retry_task
+            retry = self.context.pending.turn_commit_retry_task
             assert retry is not None and not retry.done()
             self.track(retry)
         return step
@@ -179,8 +179,8 @@ async def _scenario(
                 assert context.owner_silence_grace_deadline is not None
                 assert context.owner_silence_grace_used
             await registry.on_speech_segment(session, _vad(identity))
-            assert context.max_user_speech_task is not None
-            assert context.active_vad_stream_epoch == identity.stream_epoch
+            assert context.pending.max_user_speech_task is not None
+            assert context.pending.active_vad_stream_epoch == identity.stream_epoch
             if not with_grace:
                 assert await registry.accept_asr_result(identity.session_id, final)
             else:
@@ -189,18 +189,19 @@ async def _scenario(
             await registry.on_speech_segment(
                 session, _vad(identity, start=_RETIRE, final=True),
             )
-            assert context.max_user_speech_task is None
-            assert context.active_vad_stream_epoch is None
+            assert context.pending.max_user_speech_task is None
+            assert context.pending.active_vad_stream_epoch is None
         assert not runtime.current_speaker_authority_verified
         yield case
     finally:
         # Release every provider before acquiring lifecycle locks in teardown.
         for step in steps:
             step.release.set()
-        for attr in (
-            "turn_commit_task", "turn_commit_retry_task", "turn_endpoint_task",
+        for task in (
+            context.turn_commit_task,
+            context.pending.turn_commit_retry_task,
+            context.turn_endpoint_task,
         ):
-            task = getattr(context, attr)
             if task is not None:
                 case.track(task)
         try:
@@ -216,8 +217,8 @@ async def _scenario(
 
 def _live_tail(case: _Scenario) -> tuple[asyncio.TimerHandle, float]:
     context = case.context
-    handle = context.turn_endpoint_timeout_handle
-    deadline = context.turn_endpoint_tail_deadline
+    handle = context.pending.turn_endpoint_timeout_handle
+    deadline = context.pending.turn_endpoint_tail_deadline
     assert handle is not None, (
         "matching prepare retry has no armed endpoint-tail timer; a retry task/backoff "
         "does not bound provider.prepare_committed_turn"
@@ -230,7 +231,7 @@ def _live_tail(case: _Scenario) -> tuple[asyncio.TimerHandle, float]:
 
 def _expire_real_tail(case: _Scenario) -> asyncio.Task[Any]:
     handle, deadline = _live_tail(case)
-    assert case.context.turn_endpoint_sample == _ENDPOINT
+    assert case.context.pending.turn_endpoint_sample == _ENDPOINT
     # Advance only this lifecycle module's clock to the OBSERVED deadline; do
     # not overwrite the stored deadline or fast-forward unrelated owner/output
     # timers on the shared event loop. Early manual expiry remains a separate
@@ -326,7 +327,7 @@ async def test_prepare_retries_succeed_once_without_extending_tail(
             if verified_owner:
                 _verify_owner(case)
             steps[call - 1].release.set()
-        retry = case.context.turn_commit_retry_task
+        retry = case.context.pending.turn_commit_retry_task
         assert retry is not None
         await asyncio.wait_for(asyncio.shield(retry), 1)
         await asyncio.wait_for(case.provider.reply_started.wait(), 1)
@@ -338,8 +339,8 @@ async def test_prepare_retries_succeed_once_without_extending_tail(
             if turn.role == "user"
         ] == [_TEXT]
         assert case.context.asr.last_committed_sample == _RETIRE
-        assert case.context.turn_commit_retry_task is None
-        assert case.context.turn_endpoint_tail_deadline is None
+        assert case.context.pending.turn_commit_retry_task is None
+        assert case.context.pending.turn_endpoint_tail_deadline is None
         assert handle.cancelled()
         # The accepted turn refills the follow-up window with or without
         # speaker authority (2026-09-20 product contract); the retries before it
@@ -371,7 +372,7 @@ async def test_prepare_retry_exhaustion_retires_once_without_refilling_owner_bud
             if verified_owner:
                 _verify_owner(case)
             steps[call - 1].release.set()
-        retry = case.context.turn_commit_retry_task
+        retry = case.context.pending.turn_commit_retry_task
         assert retry is not None
         await asyncio.wait_for(asyncio.shield(retry), 1)
         discarded = case.events("turn.provisional.discarded")
@@ -381,8 +382,8 @@ async def test_prepare_retry_exhaustion_retires_once_without_refilling_owner_bud
         assert case.provider.reply_calls == 0
         assert not case.events("turn.committed")
         assert case.context.projection.provisional is None
-        assert case.context.turn_start_sample is None
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_start_sample is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert case.context.asr.last_committed_sample == _RETIRE
         assert case.context.runtime.speech_timeline.committed_sample == _RETIRE
         assert handle.cancelled()
@@ -419,7 +420,7 @@ async def test_hung_prepare_is_stopped_by_the_armed_absolute_tail(
             assert case.context.owner_silence_grace_used
             assert case.context.owner_silence_remaining_s == 0
             assert case.context.owner_silence_task is None
-            assert case.context.max_user_speech_task is None
+            assert case.context.pending.max_user_speech_task is None
         expiring = _expire_real_tail(case)
         await _must_settle(
             expiring,
@@ -430,7 +431,7 @@ async def test_hung_prepare_is_stopped_by_the_armed_absolute_tail(
         assert not steps[blocked_call - 1].release.is_set()
         assert case.context.projection.provisional is None
         assert case.context.turn_commit_task is None
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert not case.events("turn.committed")
         assert case.provider.reply_calls == 0
         assert case.context.closed or (
@@ -464,7 +465,7 @@ async def test_prepare_failure_after_retracted_grace_cannot_buy_another_budget(
         assert case.provider.reply_calls == 0
         assert case.context.owner_silence_grace_used
         assert case.context.owner_silence_task is None
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert case.context.projection.provisional is None
         assert handle.cancelled()
         assert not case.events("turn.committed")
@@ -496,9 +497,9 @@ async def test_owner_grace_terminal_fences_late_retry_result(
         assert case.provider.closed
         assert case.context.owner_silence_grace_used
         assert case.context.owner_silence_task is None
-        assert case.context.turn_commit_retry_task is None
-        assert case.context.max_user_speech_task is None
-        assert case.context.active_vad_stream_epoch is None
+        assert case.context.pending.turn_commit_retry_task is None
+        assert case.context.pending.max_user_speech_task is None
+        assert case.context.pending.active_vad_stream_epoch is None
         assert case.context.projection.provisional is None
         assert not case.events("turn.committed")
         assert case.provider.reply_calls == 0
@@ -518,7 +519,7 @@ async def test_reconnect_fences_old_retry_result_before_new_input(
         steps[0].release.set()
         await case.entered(2)
         old_handle, _ = _live_tail(case)
-        old_retry = case.context.turn_commit_retry_task
+        old_retry = case.context.pending.turn_commit_retry_task
         if verified_owner:
             _verify_owner(case)
         assert 0 <= case.context.owner_silence_remaining_s <= _BUDGET
@@ -533,7 +534,7 @@ async def test_reconnect_fences_old_retry_result_before_new_input(
         await asyncio.wait_for(asyncio.shield(old_retry), 1)
         assert case.context.stream_epoch == replacement.stream_epoch
         assert case.context.projection.provisional is None
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert old_handle.cancelled()
         assert not case.events("turn.committed")
         assert case.provider.reply_calls == 0
@@ -543,11 +544,11 @@ async def test_reconnect_fences_old_retry_result_before_new_input(
         assert case.context.owner_silence_task is not None
         assert not case.context.owner_silence_task.done()
         await case.registry.on_speech_segment(new_session, _vad(replacement, start=960))
-        assert case.context.turn_start_sample == 960
-        assert case.context.active_vad_stream_epoch == replacement.stream_epoch
-        assert case.context.active_vad_start_sample == 960
-        assert case.context.max_user_speech_task is not None
-        assert not case.context.max_user_speech_task.done()
+        assert case.context.pending.turn_start_sample == 960
+        assert case.context.pending.active_vad_stream_epoch == replacement.stream_epoch
+        assert case.context.pending.active_vad_start_sample == 960
+        assert case.context.pending.max_user_speech_task is not None
+        assert not case.context.pending.max_user_speech_task.done()
         assert 0 <= case.context.owner_silence_remaining_s <= _BUDGET
 
 
@@ -586,7 +587,7 @@ async def test_terminal_while_reconnect_waits_cannot_install_the_new_epoch(
         assert case.registry.context(identity.session_id) is None
         assert case.bridge.bridge.get(identity.session_id) is None
         assert case.context.turn_commit_task is None
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert case.provider.closed
         assert not case.events("turn.committed")
         assert case.provider.reply_calls == 0
@@ -608,18 +609,18 @@ async def test_new_vad_serializes_retry_result_without_merging_turns(
         )))
         await asyncio.sleep(0)
         assert not arriving.done()
-        assert case.context.active_vad_start_sample is None
+        assert case.context.pending.active_vad_start_sample is None
         # The candidate is not yet admitted: the old successful result may
         # commit, but cannot be merged into the subsequently admitted input.
         steps[1].release.set()
         await asyncio.wait_for(asyncio.shield(arriving), 1)
-        assert case.context.turn_start_sample == 960
-        assert case.context.turn_endpoint_sample is None
-        assert case.context.active_vad_start_sample == 960
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_start_sample == 960
+        assert case.context.pending.turn_endpoint_sample is None
+        assert case.context.pending.active_vad_start_sample == 960
+        assert case.context.pending.turn_commit_retry_task is None
         assert case.context.projection.provisional is not None
         assert case.context.projection.provisional.capture_start_sample == 960
-        assert case.context.max_user_speech_task is not None
+        assert case.context.pending.max_user_speech_task is not None
         assert old_handle.cancelled()
         assert case.context.asr.last_committed_sample == _RETIRE
         assert len(case.events("turn.committed")) == (late_outcome == "commit")
@@ -638,7 +639,7 @@ async def test_new_vad_waiting_on_hung_retry_is_released_by_real_tail_expiry() -
         )))
         await asyncio.sleep(0)
         assert not arriving.done()
-        assert case.context.active_vad_start_sample is None
+        assert case.context.pending.active_vad_start_sample is None
         expiring = _expire_real_tail(case)
         await _must_settle(
             expiring, "real tail expiry is shielded behind hung retry; the new VAD cannot be admitted",
@@ -648,9 +649,9 @@ async def test_new_vad_waiting_on_hung_retry_is_released_by_real_tail_expiry() -
         assert not steps[1].release.is_set()
         assert not case.events("turn.committed")
         assert case.context.closed or (
-            case.context.turn_start_sample == 960
-            and case.context.active_vad_start_sample == 960
-            and case.context.max_user_speech_task is not None
+            case.context.pending.turn_start_sample == 960
+            and case.context.pending.active_vad_start_sample == 960
+            and case.context.pending.max_user_speech_task is not None
         )
 
 
@@ -753,7 +754,7 @@ async def test_due_tail_rechecks_its_owner_after_waiting_for_standby_lock(
         await case.entered(1)
         steps[0].release.set()
         await case.entered(2)
-        retry = case.context.turn_commit_retry_task
+        retry = case.context.pending.turn_commit_retry_task
         assert retry is not None
         await case.context.standby_lock.acquire()
         try:
@@ -774,7 +775,7 @@ async def test_due_tail_rechecks_its_owner_after_waiting_for_standby_lock(
                 assert not arriving.done()
                 steps[1].release.set()
                 await asyncio.wait_for(asyncio.shield(arriving), 1)
-                assert case.context.active_vad_start_sample == 960
+                assert case.context.pending.active_vad_start_sample == 960
             else:
                 identity = replace(case.identity, stream_epoch=case.identity.stream_epoch + 1)
                 session = open_bridge_connection(case.bridge, identity).session
@@ -813,7 +814,7 @@ async def test_reconnect_retires_hung_old_prepare_without_stale_tail_close(
         _live_tail(case)
         if with_grace:
             assert case.context.owner_silence_task is None
-            assert case.context.max_user_speech_task is None
+            assert case.context.pending.max_user_speech_task is None
             assert case.context.owner_silence_remaining_s == 0
             assert case.context.owner_silence_grace_used
         # Start the already-wired old timeout while a new transport is being
@@ -838,7 +839,7 @@ async def test_reconnect_retires_hung_old_prepare_without_stale_tail_close(
         assert steps[blocked_call - 1].cancelled.is_set()
         assert not steps[blocked_call - 1].release.is_set()
         assert case.context.stream_epoch == identity.stream_epoch
-        assert case.context.turn_commit_retry_task is None
+        assert case.context.pending.turn_commit_retry_task is None
         assert case.context.turn_commit_task is None
         assert not case.events("turn.committed")
         assert case.provider.reply_calls == 0

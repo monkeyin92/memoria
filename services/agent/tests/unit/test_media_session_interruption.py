@@ -209,11 +209,11 @@ async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generat
     fence = await runtime.on_turn_committed("你好")
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
     await asyncio.wait_for(reply_started.wait(), timeout=1)
-    assert context.output_owner is not None
-    assert context.playback.register_audio(fence, 0, 0, 2)
-    assert context.playback.add_span(PlaybackSpan(fence, 0, 1, 0, 2, text="你", sequence=0))
-    assert context.playback.acknowledge(fence, 2, received_sequence=0)
-    stale_before = context.playback.stale_ack_count
+    assert context.output.output_owner is not None
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    assert context.output.playback.add_span(PlaybackSpan(fence, 0, 1, 0, 2, text="你", sequence=0))
+    assert context.output.playback.acknowledge(fence, 2, received_sequence=0)
+    stale_before = context.output.playback.stale_ack_count
     runtime_before = runtime.fence
     turns_before = [
         (turn.role, turn.content) for turn in context.runtime.orchestrator.context.turns
@@ -238,8 +238,8 @@ async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generat
     assert seam is not None
     await seam()
 
-    assert context.output_owner is None
-    assert context.reply_task is None
+    assert context.output.output_owner is None
+    assert context.output.reply_task is None
     assert reply.done()
     assert reply_drained.is_set()
     assert provider.cancelled == [fence]
@@ -251,9 +251,9 @@ async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generat
             "identity_epoch_rotated",
         )
     ]
-    assert context.playback.actual_heard_text(fence) == ""
-    assert context.playback.acknowledge(fence, 2, received_sequence=0) == ()
-    assert context.playback.stale_ack_count == stale_before + 1
+    assert context.output.playback.actual_heard_text(fence) == ""
+    assert context.output.playback.acknowledge(fence, 2, received_sequence=0) == ()
+    assert context.output.playback.stale_ack_count == stale_before + 1
     assert interrupted == [(runtime_before, "")]
     assert [
         (turn.role, turn.content) for turn in context.runtime.orchestrator.context.turns
@@ -395,15 +395,15 @@ async def test_reply_owner_and_task_are_revoked_before_slow_provider_cancel() ->
     identity = SessionIdentity("slow-provider-cancel")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
     await asyncio.wait_for(reply_started.wait(), timeout=1)
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
 
     cancellation = asyncio.create_task(registry._cancel_reply_task(context, fence))
     await asyncio.wait_for(cancel_started.wait(), timeout=1)
     try:
-        assert context.output_owner is None
+        assert context.output.output_owner is None
         await asyncio.wait_for(reply_drained.wait(), timeout=1)
         assert reply.done()
     finally:
@@ -450,13 +450,13 @@ async def test_provider_cancel_failure_is_contained_and_reply_task_is_drained() 
     identity = SessionIdentity("failing-provider-cancel")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
     await asyncio.wait_for(reply_started.wait(), timeout=1)
 
     try:
         await registry._cancel_reply_task(context, fence)
-        assert context.output_owner is None
+        assert context.output.output_owner is None
         assert reply_drained.is_set()
         assert reply.done()
     finally:
@@ -493,7 +493,7 @@ async def test_empty_connect_vad_does_not_cancel_device_wake_ack() -> None:
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert is_allowlisted_device_phrase(provider.texts[0])
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         await _wait_until(lambda: context.device_wake_ack_pending is False)
     finally:
         await registry.finalize_session(identity.session_id)
@@ -530,7 +530,7 @@ async def test_energy_connect_vad_at_sample_zero_does_not_cancel_device_wake_ack
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         assert provider.texts == [device_wake_phrase(identity.session_id)]
         assert is_allowlisted_device_phrase(provider.texts[0])
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         await _wait_until(lambda: context.device_wake_ack_pending is False)
     finally:
         await registry.finalize_session(identity.session_id)
@@ -591,7 +591,7 @@ async def test_energy_connect_vad_after_admit_before_first_frame_does_not_cancel
                 segment_id="wake-tail-start",
             ),
         )
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         assert context.runtime.interaction_phase is not InteractionPhase.USER_SPEAKING
         provider.release.set()
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
@@ -633,12 +633,12 @@ async def test_media_delegation_initial_decision_timeout_replies_locally_and_can
     query = "今天南京天气怎么样"
     try:
         fence = await context.runtime.on_turn_committed(query)
-        context.playback.start(fence)
+        context.output.playback.start(fence)
         # The normal reply outlives the initial decision window: it must
         # release the claim, speak locally, and later cancel the late
         # delegation instead of accepting deep output.
         await registry.generate_reply(identity.session_id, query, fence)
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         assert claim.state is DelegationOutputState.RELEASED
         assert provider.reply_calls == 1
         assert provider.output_kinds == []
@@ -734,7 +734,7 @@ async def test_started_live_lookup_ack_cancelled_does_not_repeat_filler() -> Non
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         await registry._cancel_reply_task(context, ack_owner.fence, reason="preempted")
         provider.ack_hold.set()
@@ -819,17 +819,17 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         )
         provider.release.set()
         await _wait_until(lambda: len(bridge.frames) == 2)
-        first_owner = context.output_owner
+        first_owner = context.output.output_owner
         assert first_owner is not None
-        first_dispatch = context.output_dispatch_task
+        first_dispatch = context.output.output_dispatch_task
         assert first_dispatch is not None and not first_dispatch.done()
-        assert context.reply_delivery.get(first_owner.fence).first_frame_sent
+        assert context.output.reply_delivery.get(first_owner.fence).first_frame_sent
 
         cancellation = asyncio.create_task(
             registry._cancel_reply_task(context, first_owner.fence),
         )
         await asyncio.wait_for(provider.first_draining.wait(), timeout=2)
-        assert context.output_owner is None
+        assert context.output.output_owner is None
         _bind_verified_owner_classifier(context.runtime)
         context.runtime._speaker_pcm.extend(b"\x00\x20" * 8_000)
         second_fence, reason = await _qa_commit_repeat_question(
@@ -838,9 +838,9 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         )
         assert second_fence is not None, reason
         await _wait_until(
-            lambda: any(work.fence.matches(second_fence) for work in context.output_work.values()),
+            lambda: any(work.fence.matches(second_fence) for work in context.output.output_work.values()),
         )
-        assert context.output_dispatch_task is first_dispatch
+        assert context.output.output_dispatch_task is first_dispatch
         assert not first_dispatch.done()
         assert not any(frame.turn_id == second_fence.turn_id for frame in bridge.frames)
 
@@ -849,10 +849,10 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         await _wait_until(
             lambda: any(
                 result.fence.turn_id == second_fence.turn_id and result.emitted_audio
-                for result in context.output_results
+                for result in context.output.output_results
             ),
         )
-        second_owner = context.output_owner
+        second_owner = context.output.output_owner
         assert second_owner is not None
         assert second_owner.fence.turn_id == second_fence.turn_id
         assert second_owner.fence in bridge.generation_starts
@@ -861,13 +861,13 @@ async def test_qa_weather_interrupt_restarts_output_after_old_dispatch_drains() 
         assert second_frames[0].first
         assert second_frames[0].sequence == second_frames[0].source_start_sample == 0
         assert sum(text.endswith("答案：明天南京天气怎么样。") for text in provider.output_texts) == 1
-        assert context.reply_delivery.get(first_owner.fence).terminal_event is ReplyDeliveryEvent.PREEMPTED
-        assert not any(result.reason == "output_intent_inactive" for result in context.output_results)
+        assert context.output.reply_delivery.get(first_owner.fence).terminal_event is ReplyDeliveryEvent.PREEMPTED
+        assert not any(result.reason == "output_intent_inactive" for result in context.output.output_results)
         await _finish_output_owner_playback(registry, identity, bridge, session)
-        await _wait_until(lambda: context.output_dispatch_task is None)
-        assert context.output_retry_task is None
-        assert context.output_owner is None
-        assert not context.output_work
+        await _wait_until(lambda: context.output.output_dispatch_task is None)
+        assert context.output.output_retry_task is None
+        assert context.output.output_owner is None
+        assert not context.output.output_work
     finally:
         provider.release.set()
         provider.finish_first.set()
@@ -1331,7 +1331,7 @@ async def test_device_swallowed_cancel_finishes_without_clearing_the_next_task(
         end_sample=264_640,
         text=text,
     )
-    abandoned = window.context.conversation_close_semantic_task
+    abandoned = window.context.pending.conversation_close_semantic_task
     assert abandoned is not None
     await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
 
@@ -1344,26 +1344,26 @@ async def test_device_swallowed_cancel_finishes_without_clearing_the_next_task(
         end_sample=508_800,
         text=text,
     )
-    current = window.context.conversation_close_semantic_task
+    current = window.context.pending.conversation_close_semantic_task
     assert current is not None and current is not abandoned
     for _ in range(2):
         await asyncio.sleep(0)
     # The cancellation really was swallowed: the old evaluation is still alive,
     # and the new same-text handle survived it.
     assert not abandoned.done()
-    assert window.context.conversation_close_semantic_task is current
+    assert window.context.pending.conversation_close_semantic_task is current
 
     # Finish only the swallowed old evaluation: the new same-text handle must
     # still be installed after its finally has run.
     window.close_semantic.gate.set()
     await asyncio.wait_for(asyncio.shield(abandoned), timeout=1.0)
     assert abandoned.done()
-    assert window.context.conversation_close_semantic_task is current
-    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.pending.conversation_close_semantic_task is current
+    assert window.context.pending.conversation_close_endpoint_pinned is None
 
     window.close_semantic.late_gate.set()
     await asyncio.wait_for(asyncio.shield(current), timeout=1.0)
-    assert window.context.conversation_close_semantic_task is None
+    assert window.context.pending.conversation_close_semantic_task is None
 
 
 @pytest.mark.asyncio
@@ -1386,7 +1386,7 @@ async def test_device_swallowed_cancel_true_verdict_cannot_pin_the_new_pending_t
         end_sample=264_640,
         text=abandoned_text,
     )
-    abandoned = window.context.conversation_close_semantic_task
+    abandoned = window.context.pending.conversation_close_semantic_task
     assert abandoned is not None
     await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
 
@@ -1399,26 +1399,26 @@ async def test_device_swallowed_cancel_true_verdict_cannot_pin_the_new_pending_t
         end_sample=508_800,
         text="下午一起出发吗",
     )
-    current = window.context.conversation_close_semantic_task
+    current = window.context.pending.conversation_close_semantic_task
     assert current is not None and current is not abandoned
-    assert window.context.pending_turn_onset_floor == 484_480
+    assert window.context.pending.pending_turn_onset_floor == 484_480
     await asyncio.sleep(0)
     assert not abandoned.done()  # the cancel was swallowed
 
     # ABA: the boundary field returns to the value this evaluation captured, so
     # the floor re-check alone cannot reject it -- only task ownership can.
-    window.context.pending_turn_onset_floor = None
+    window.context.pending.pending_turn_onset_floor = None
     window.close_semantic.gate.set()
     await asyncio.wait_for(asyncio.shield(abandoned), timeout=1.0)
     assert abandoned.done()
     # The abandoned window's True verdict arrived after the boundary moved.
-    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.pending.conversation_close_endpoint_pinned is None
     assert window.context.standby_requested is False
-    assert window.context.conversation_close_semantic_task is current
+    assert window.context.pending.conversation_close_semantic_task is current
 
     window.close_semantic.late_gate.set()
     await asyncio.wait_for(asyncio.shield(current), timeout=1.0)
-    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.pending.conversation_close_endpoint_pinned is None
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
     assert window.provider.prepared == ["下午一起出发吗"]
@@ -1441,9 +1441,9 @@ async def test_device_split_cancels_an_in_flight_close_verdict(
         text="我不想继续聊这个话题",
         revision=1,
     )
-    assert window.context.conversation_close_semantic_task is not None
+    assert window.context.pending.conversation_close_semantic_task is not None
 
-    abandoned_task = window.context.conversation_close_semantic_task
+    abandoned_task = window.context.pending.conversation_close_semantic_task
     await asyncio.wait_for(window.close_semantic.entered.wait(), timeout=1.0)
     _start_retained_utterance(window)
     await _accept_media_asr_final(
@@ -1462,7 +1462,7 @@ async def test_device_split_cancels_an_in_flight_close_verdict(
     window.close_semantic.gate.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.pending.conversation_close_endpoint_pinned is None
     assert window.context.standby_requested is False
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
@@ -1539,13 +1539,13 @@ async def test_interruption_records_only_provider_timed_prefix_before_fence_chan
     identity = SessionIdentity("timed-interrupt-session")
     context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0)
-    context.playback.start(fence)
-    assert context.playback.register_audio(fence, 0, 0, 2)
-    assert context.playback.acknowledge(fence, 2, received_sequence=0) == ()
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    assert context.output.playback.acknowledge(fence, 2, received_sequence=0) == ()
 
     await registry._record_interrupted_timed_spans(context, fence)
 
-    assert context.playback.actual_heard_text(fence) == "你好。"
+    assert context.output.playback.actual_heard_text(fence) == "你好。"
 
 
 @pytest.mark.asyncio
@@ -1561,8 +1561,8 @@ async def test_client_stop_during_interruption_pending_finalizes_heard_prefix() 
     identity = SessionIdentity("pending-stop-session")
     session = bridge.bridge.open(identity)
     context, fence = await _start_speaking_reply(registry, session, identity)
-    assert context.playback.register_audio(fence, 0, 0, 2)
-    assert context.playback.add_span(
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    assert context.output.playback.add_span(
         PlaybackSpan(
             fence=fence,
             text_start=0,
@@ -1572,8 +1572,8 @@ async def test_client_stop_during_interruption_pending_finalizes_heard_prefix() 
             text="你好。",
         )
     )
-    assert context.playback.acknowledge(fence, 2)
-    assert context.playback.actual_heard_text(fence) == "你好。"
+    assert context.output.playback.acknowledge(fence, 2)
+    assert context.output.playback.actual_heard_text(fence) == "你好。"
     assert context.runtime.orchestrator.state is ConversationState.SPEAKING
     # VAD has already moved the runtime into INTERRUPTION_PENDING; the client
     # stop must still run the interrupted-playback finalize with the heard
@@ -1620,8 +1620,8 @@ async def test_kws_stop_during_interruption_pending_finalizes_heard_prefix() -> 
     identity = SessionIdentity("kws-pending-stop-session")
     session = bridge.bridge.open(identity)
     context, fence = await _start_speaking_reply(registry, session, identity)
-    assert context.playback.register_audio(fence, 0, 0, 2)
-    assert context.playback.add_span(
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    assert context.output.playback.add_span(
         PlaybackSpan(
             fence=fence,
             text_start=0,
@@ -1631,7 +1631,7 @@ async def test_kws_stop_during_interruption_pending_finalizes_heard_prefix() -> 
             text="你好。",
         )
     )
-    assert context.playback.acknowledge(fence, 2)
+    assert context.output.playback.acknowledge(fence, 2)
     context.runtime.orchestrator.state_machine.state = ConversationState.INTERRUPTION_PENDING
     interrupted: list[str] = []
     original = context.runtime.on_media_playback_interrupted

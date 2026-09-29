@@ -449,8 +449,8 @@ async def test_device_conversation_close_rule_hit_skips_semantic_resolver() -> N
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.turn_endpoint_sample == 16_000
-        assert context.conversation_close_semantic_task is None
+        assert context.pending.turn_endpoint_sample == 16_000
+        assert context.pending.conversation_close_semantic_task is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -514,9 +514,9 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.live_query_forced_text is None
-        assert context.conversation_close_endpoint_pinned == 336_960
-        assert context.turn_endpoint_sample == 336_960
+        assert context.pending.live_query_forced_text is None
+        assert context.pending.conversation_close_endpoint_pinned == 336_960
+        assert context.pending.turn_endpoint_sample == 336_960
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -620,7 +620,7 @@ async def test_device_close_verdict_resolved_after_the_boundary_advanced_cannot_
     crossed_text = "我不想继续聊这个话题"
     window.close_semantic.verdict_text = crossed_text
     window.close_semantic.on_resolve = lambda: setattr(
-        context, "pending_turn_onset_floor", 484_480
+        context.pending, "pending_turn_onset_floor", 484_480
     )
 
     await _accept_media_asr_final(
@@ -631,14 +631,14 @@ async def test_device_close_verdict_resolved_after_the_boundary_advanced_cannot_
         end_sample=264_640,
         text=crossed_text,
     )
-    task = context.conversation_close_semantic_task
+    task = context.pending.conversation_close_semantic_task
     assert task is not None
     await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
 
-    assert context.conversation_close_endpoint_pinned is None
+    assert context.pending.conversation_close_endpoint_pinned is None
     assert context.standby_requested is False
     # The owning evaluation cleared its own handle; nothing else may have.
-    assert context.conversation_close_semantic_task is None
+    assert context.pending.conversation_close_semantic_task is None
 
 
 @pytest.mark.asyncio

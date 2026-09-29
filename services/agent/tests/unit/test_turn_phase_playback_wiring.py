@@ -65,9 +65,11 @@ def _build_context() -> tuple[_PlaybackWiringHost, SimpleNamespace]:
         identity=identity,
         closed=False,
         runtime=SimpleNamespace(fence=runtime_fence),
-        provider_complete=False,
-        playback=PlaybackLedger(),
-        reply_delivery=ReplyDeliveryLedger(),
+        output=SimpleNamespace(
+            provider_complete=False,
+            playback=PlaybackLedger(),
+            reply_delivery=ReplyDeliveryLedger(),
+        ),
         projection=ConversationProjection(SESSION, timeline),
     )
     host._sessions[identity.session_id] = context
@@ -106,11 +108,11 @@ def _seed_backchannel(projection: ConversationProjection) -> None:
 
 def _start_generation(context: SimpleNamespace) -> GenerationFence:
     fence = GenerationFence(SESSION, turn_id=1, generation_id=1, tool_epoch=0)
-    context.playback.start(fence)
-    assert context.playback.register_audio(
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(
         fence, sequence=0, source_start_sample=0, frame_samples=640
     )
-    assert context.playback.add_span(
+    assert context.output.playback.add_span(
         PlaybackSpan(
             fence=fence,
             text_start=0,
@@ -223,7 +225,7 @@ async def test_stale_generation_ack_never_reaches_projection() -> None:
 
     await host.on_playback_progress(SimpleNamespace(identity=context.identity), stale)
 
-    assert context.playback.stale_ack_count >= 1
+    assert context.output.playback.stale_ack_count >= 1
     assert projection.current_frame is frame_before
     assert projection.emitted_frame_count == emitted_before
     assert host.phase_transitions == []
@@ -265,13 +267,13 @@ async def test_error_marks_inactive_without_output_side_effects() -> None:
     assert projection.phase_reason is PhaseReason.BACKCHANNEL_IDLE
     # Runtime fence never matches, so the failure lifecycle must stay inert.
     assert ReplyDeliveryEvent.ERROR not in host.delivery_events
-    stale_before = context.playback.stale_ack_count
+    stale_before = context.output.playback.stale_ack_count
 
     await host.on_playback_progress(
         SimpleNamespace(identity=context.identity),
         _progress(context.identity, fence, PlaybackEventType.STARTED),
     )
-    assert context.playback.stale_ack_count == stale_before + 1
+    assert context.output.playback.stale_ack_count == stale_before + 1
     assert projection.phase is TurnPhase.IDLE
     assert projection.floor_state is FloorState.SILENCE
 
@@ -282,8 +284,8 @@ async def test_no_stream_epoch_never_synthesizes_frames() -> None:
     context.projection.reset_phase()  # clear the established epoch
     projection = context.projection
     fence = GenerationFence(SESSION, turn_id=1, generation_id=1, tool_epoch=0)
-    context.playback.start(fence)
-    assert context.playback.register_audio(
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(
         fence, sequence=0, source_start_sample=0, frame_samples=640
     )
 
@@ -310,7 +312,7 @@ async def test_terminal_ack_cannot_be_resurrected_by_reordered_started() -> None
         _progress(context.identity, fence, PlaybackEventType.ENDED),
     )
     assert projection.phase is TurnPhase.IDLE
-    stale_before = context.playback.stale_ack_count
+    stale_before = context.output.playback.stale_ack_count
     transitions_before = list(host.phase_transitions)
 
     await host.on_playback_progress(
@@ -318,7 +320,7 @@ async def test_terminal_ack_cannot_be_resurrected_by_reordered_started() -> None
         _progress(context.identity, fence, PlaybackEventType.STARTED),
     )
 
-    assert context.playback.stale_ack_count == stale_before + 1
+    assert context.output.playback.stale_ack_count == stale_before + 1
     assert projection.phase is TurnPhase.IDLE
     assert projection.floor_state is FloorState.SILENCE
     assert host.phase_transitions == transitions_before

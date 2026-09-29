@@ -87,10 +87,10 @@ class MediaSessionConnectionMixin:
         stop_started_ns = time.monotonic_ns()
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
-        previous_fence = context.playback.current_fence or context.runtime.fence
+        previous_fence = context.output.playback.current_fence or context.runtime.fence
         if not previous_fence.matches(session.fence) and context.runtime.floor.interruptible:
             await self._record_interrupted_timed_spans(context, previous_fence)
-            heard = context.playback.actual_heard_text(previous_fence)
+            heard = context.output.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
                 cause="client_stop_assistant",
                 create_user_turn=False,
@@ -109,9 +109,9 @@ class MediaSessionConnectionMixin:
         )
         if not accepted:
             raise ValueError("Voice Core rejected authoritative stop generation")
-        context.playback.start(session.fence)
-        context.provider_complete = False
-        context.output_complete_emitted = False
+        context.output.playback.start(session.fence)
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         if not previous_fence.matches(session.fence):
@@ -127,13 +127,13 @@ class MediaSessionConnectionMixin:
         context = self._sessions.get(session.identity.session_id)
         if context is None or context.closed:
             return
-        previous_fence = context.playback.current_fence or context.runtime.fence
+        previous_fence = context.output.playback.current_fence or context.runtime.fence
         cancelled = session.fence
         if previous_fence.matches(cancelled):
             return
         if context.runtime.floor.interruptible:
             await self._record_interrupted_timed_spans(context, previous_fence)
-            heard = context.playback.actual_heard_text(previous_fence)
+            heard = context.output.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
                 cause="downlink_queue_full",
                 create_user_turn=False,
@@ -151,9 +151,9 @@ class MediaSessionConnectionMixin:
             cause="downlink_queue_full",
         ):
             raise ValueError("Voice Core rejected overflow cancellation")
-        context.playback.start(cancelled)
-        context.provider_complete = False
-        context.output_complete_emitted = False
+        context.output.playback.start(cancelled)
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         await self._cancel_reply_task(context, previous_fence)
@@ -233,8 +233,8 @@ class MediaSessionConnectionMixin:
                 stream_epoch=context_stream_epoch,
             )
             context.closed = True
-            retry_task = context.output_retry_task
-            context.output_retry_task = None
+            retry_task = context.output.output_retry_task
+            context.output.output_retry_task = None
             if retry_task is not None and retry_task is not current_task:
                 retry_task.cancel()
             enrollment_task = context.speaker_enrollment_task
@@ -256,19 +256,19 @@ class MediaSessionConnectionMixin:
         if retry_task is not None and retry_task is not current_task:
             await asyncio.gather(retry_task, return_exceptions=True)
         output_fence = (
-            context.output_owner.fence
-            if context.output_owner is not None
-            else context.playback.current_fence or context.runtime.fence
+            context.output.output_owner.fence
+            if context.output.output_owner is not None
+            else context.output.playback.current_fence or context.runtime.fence
         )
         await self._cancel_reply_task(context, output_fence)
         if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
             context.turn_endpoint_task.cancel()
-        if context.turn_endpoint_timeout_handle is not None:
-            context.turn_endpoint_timeout_handle.cancel()
-            context.turn_endpoint_timeout_handle = None
-        if context.evidence_less_hold_handle is not None:
-            context.evidence_less_hold_handle.cancel()
-            context.evidence_less_hold_handle = None
+        if context.pending.turn_endpoint_timeout_handle is not None:
+            context.pending.turn_endpoint_timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+        if context.pending.evidence_less_hold_handle is not None:
+            context.pending.evidence_less_hold_handle.cancel()
+            context.pending.evidence_less_hold_handle = None
         await self._cancel_audio_pump(context)
         await context.runtime.close()
         await context.provider.close(context.identity)

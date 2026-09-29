@@ -88,7 +88,7 @@ class MediaTurnEndpointMixin:
             rms=rms,
             min_rms=min_rms,
             empty_audio_error=empty_audio,
-            pcm_gated=context.turn_start_sample is None and rms == 0,
+            pcm_gated=context.pending.turn_start_sample is None and rms == 0,
         )
         self.metrics.inc_funasr_empty_transcript(outcome)
         return outcome
@@ -206,7 +206,7 @@ class MediaTurnEndpointMixin:
             # from this watermark, but the playback boundary snapshot needs
             # the freshest uplink position the ASR chain has proven.
             context.last_asr_evidence_end_sample = result.capture_end_sample
-        floor = context.pending_turn_onset_floor
+        floor = context.pending.pending_turn_onset_floor
         if floor is not None and result.capture_start_sample < floor:
             return
         key = (
@@ -215,22 +215,24 @@ class MediaTurnEndpointMixin:
             result.capture_start_sample,
             result.capture_end_sample,
         )
-        if key in context.committed_asr_keys:
+        if key in context.pending.committed_asr_keys:
             return
-        context.committed_asr_keys[key] = None
-        while len(context.committed_asr_keys) > 128:
-            context.committed_asr_keys.popitem(last=False)
+        context.pending.committed_asr_keys[key] = None
+        while len(context.pending.committed_asr_keys) > 128:
+            context.pending.committed_asr_keys.popitem(last=False)
         self._split_pending_turn_at_unvoiced_gap(context, result)
         onset = min(
             result.capture_start_sample,
-            context.turn_start_sample
-            if context.turn_start_sample is not None
+            context.pending.turn_start_sample
+            if context.pending.turn_start_sample is not None
             else result.capture_start_sample,
         )
-        floor = context.pending_turn_onset_floor
-        context.turn_start_sample = onset if floor is None else max(floor, onset)
-        context.turn_end_sample = max(result.capture_end_sample, context.turn_end_sample or 0)
-        partial = context.pending_partial
+        floor = context.pending.pending_turn_onset_floor
+        context.pending.turn_start_sample = onset if floor is None else max(floor, onset)
+        context.pending.turn_end_sample = max(
+            result.capture_end_sample, context.pending.turn_end_sample or 0
+        )
+        partial = context.pending.pending_partial
         if partial is not None and (
             partial.sentence_id == result.sentence_id and partial.task_epoch <= result.task_epoch
         ):
@@ -242,19 +244,19 @@ class MediaTurnEndpointMixin:
                 # partial already covered the device VAD endpoint. Preserve
                 # that bounded fallback, but advance its revision baseline so
                 # a tail-timeout promotion supersedes this accepted final.
-                context.pending_partial = replace(
+                context.pending.pending_partial = replace(
                     partial,
                     revision=max(partial.revision, result.revision),
                 )
             else:
-                context.pending_partial = None
+                context.pending.pending_partial = None
         self._maybe_early_commit_clock_fact(context, result)
         self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
         self._maybe_endpoint_playback_followup(context, result)
         # A provider final is evidence, never the endpoint itself. If VAD has
         # already ended, a late final re-arms the same logical-turn commit.
-        if context.turn_endpoint_sample is not None:
+        if context.pending.turn_endpoint_sample is not None:
             self._schedule_turn_commit(context)
 
     def _maybe_endpoint_playback_followup(
@@ -284,20 +286,22 @@ class MediaTurnEndpointMixin:
             return
         if self._reply_in_flight(context):
             return
-        if context.turn_endpoint_sample is not None:
+        if context.pending.turn_endpoint_sample is not None:
             # Only an endpoint this path pinned may be extended while the
             # utterance keeps producing post-boundary finals; a VAD end or a
             # clock-fact/live-query pin already owns the tail.
             if (
-                context.playback_followup_endpoint_sample
-                == context.turn_endpoint_sample
-                and result.capture_start_sample >= context.turn_endpoint_sample
+                context.pending.playback_followup_endpoint_sample
+                == context.pending.turn_endpoint_sample
+                and result.capture_start_sample >= context.pending.turn_endpoint_sample
             ):
-                endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
-                context.turn_endpoint_sample = endpoint
-                context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
-                context.playback_followup_endpoint_sample = endpoint
-                context.restart_endpoint_bounds(_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S)
+                endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
+                context.pending.turn_endpoint_sample = endpoint
+                context.pending.turn_retire_sample = max(
+                    context.pending.turn_retire_sample or 0, endpoint
+                )
+                context.pending.playback_followup_endpoint_sample = endpoint
+                context.pending.restart_endpoint_bounds(_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S)
                 logger.info(
                     "media playback-followup endpoint advanced session=%s "
                     "boundary=%s endpoint=%s text_len=%s",
@@ -309,17 +313,17 @@ class MediaTurnEndpointMixin:
                 self._schedule_turn_commit(context)
             return
         if (
-            context.turn_start_sample is not None
-            and context.turn_start_sample < playback_end
+            context.pending.turn_start_sample is not None
+            and context.pending.turn_start_sample < playback_end
         ):
             # The pending window still reaches back into the echo window; the
             # playback-boundary split owns resetting it before this may fire.
             return
-        endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
-        context.turn_endpoint_sample = endpoint
-        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
-        context.playback_followup_endpoint_sample = endpoint
-        context.turn_endpoint_grace_deadline = (
+        endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
+        context.pending.playback_followup_endpoint_sample = endpoint
+        context.pending.turn_endpoint_grace_deadline = (
             time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
         )
         logger.info(
@@ -350,17 +354,17 @@ class MediaTurnEndpointMixin:
         if context.identity.client_type != "device":
             return
         if self._reply_in_flight(context):
-            if context.turn_endpoint_sample is None:
-                context.pending_turn_playback_overlap = True
+            if context.pending.turn_endpoint_sample is None:
+                context.pending.pending_turn_playback_overlap = True
             return
-        if not context.pending_turn_playback_overlap:
+        if not context.pending.pending_turn_playback_overlap:
             return
-        if context.turn_end_sample is None:
+        if context.pending.turn_end_sample is None:
             return
         if (
-            context.turn_endpoint_sample is not None
-            or context.live_query_forced_text
-            or context.clock_fact_forced_text
+            context.pending.turn_endpoint_sample is not None
+            or context.pending.live_query_forced_text
+            or context.pending.clock_fact_forced_text
         ):
             return
         playback_end = context.last_playback_end_sample
@@ -369,10 +373,10 @@ class MediaTurnEndpointMixin:
             and result.capture_start_sample >= playback_end
         )
         if not boundary_split:
-            if context.active_vad_start_sample is not None:
+            if context.pending.active_vad_start_sample is not None:
                 return
             if (
-                result.capture_start_sample - context.turn_end_sample
+                result.capture_start_sample - context.pending.turn_end_sample
                 <= _PLAYBACK_CANDIDATE_SPLIT_GAP_SAMPLES
             ):
                 return
@@ -382,9 +386,9 @@ class MediaTurnEndpointMixin:
             context.identity.session_id,
             result.stream_epoch,
             "playback_end" if boundary_split else "unvoiced_gap",
-            result.capture_start_sample - context.turn_end_sample,
-            context.turn_start_sample,
-            context.turn_end_sample,
+            result.capture_start_sample - context.pending.turn_end_sample,
+            context.pending.turn_start_sample,
+            context.pending.turn_end_sample,
             result.capture_start_sample,
             result.capture_end_sample,
         )
@@ -399,28 +403,28 @@ class MediaTurnEndpointMixin:
                 end_sample=result.capture_start_sample,
             )
         })
-        context.turn_start_sample = None
-        context.turn_end_sample = None
-        context.pending_partial = None
-        context.clock_fact_partial_text = None
-        context.clock_fact_partial_stable_since = None
-        context.live_query_partial_text = None
-        context.live_query_partial_stable_since = None
-        context.conversation_close_partial_text = None
-        context.conversation_close_partial_stable_since = None
-        self._cancel_conversation_close_semantic_task(context)
-        context.pending_turn_playback_overlap = False
-        context.pending_turn_onset_floor = result.capture_start_sample
+        context.pending.turn_start_sample = None
+        context.pending.turn_end_sample = None
+        context.pending.pending_partial = None
+        context.pending.clock_fact_partial_text = None
+        context.pending.clock_fact_partial_stable_since = None
+        context.pending.live_query_partial_text = None
+        context.pending.live_query_partial_stable_since = None
+        context.pending.conversation_close_partial_text = None
+        context.pending.conversation_close_partial_stable_since = None
+        context.pending.cancel_close_semantic()
+        context.pending.pending_turn_playback_overlap = False
+        context.pending.pending_turn_onset_floor = result.capture_start_sample
 
     @staticmethod
     def _reply_in_flight(context: _MediaVoiceSession) -> bool:
         """True when a reply is synthesizing, locked, or holding output."""
 
-        task = context.reply_task
+        task = context.output.reply_task
         return bool(
             context.runtime.assistant_speaking
-            or context.output_owner is not None
-            or context.reply_lock.locked()
+            or context.output.output_owner is not None
+            or context.output.reply_lock.locked()
             or (task is not None and not task.done())
         )
 
@@ -441,7 +445,7 @@ class MediaTurnEndpointMixin:
 
         return any(
             claim.state in {DelegationOutputState.PENDING, DelegationOutputState.OWNED}
-            for claim in context.delegation_output_claims.values()
+            for claim in context.output.delegation_output_claims.values()
         )
 
     @staticmethod
@@ -472,17 +476,17 @@ class MediaTurnEndpointMixin:
             return False
         if time.monotonic() - committed_at >= _DUPLICATE_COMMIT_DELIVERY_GUARD_S:
             return False
-        delivery = context.reply_delivery.get(committed_fence)
+        delivery = context.output.reply_delivery.get(committed_fence)
         if delivery is not None:
             if delivery.actual_heard or delivery.terminal:
                 return False
             return True
-        owner = context.output_owner
+        owner = context.output.output_owner
         if owner is not None and owner.fence.turn_id == committed_fence.turn_id:
             return True
         return any(
             work.fence.turn_id == committed_fence.turn_id
-            for work in context.output_work.values()
+            for work in context.output.output_work.values()
         )
 
     def _arm_live_query_forced_endpoint(
@@ -507,16 +511,16 @@ class MediaTurnEndpointMixin:
             return
         endpoint = max(
             result.capture_end_sample,
-            context.turn_end_sample or 0,
-            context.turn_endpoint_sample or 0,
+            context.pending.turn_end_sample or 0,
+            context.pending.turn_endpoint_sample or 0,
         )
-        if context.turn_start_sample is None:
-            context.turn_start_sample = result.capture_start_sample
-        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
-        context.turn_endpoint_sample = endpoint
-        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
-        context.live_query_endpoint_pinned = endpoint
-        context.turn_endpoint_grace_deadline = time.monotonic()
+        if context.pending.turn_start_sample is None:
+            context.pending.turn_start_sample = result.capture_start_sample
+        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
+        context.pending.live_query_endpoint_pinned = endpoint
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media live-query forced endpoint session=%s endpoint=%s text_len=%s",
             context.identity.session_id,
@@ -534,7 +538,7 @@ class MediaTurnEndpointMixin:
 
         if context.identity.client_type != "device":
             return
-        if context.turn_endpoint_sample is not None:
+        if context.pending.turn_endpoint_sample is not None:
             return
         text = result.text.strip()
         if not text or not is_clock_fact_query(text):
@@ -547,19 +551,19 @@ class MediaTurnEndpointMixin:
                 len(text),
             )
             return
-        if context.turn_start_sample is None:
-            context.turn_start_sample = result.capture_start_sample
+        if context.pending.turn_start_sample is None:
+            context.pending.turn_start_sample = result.capture_start_sample
         else:
-            context.turn_start_sample = min(
-                context.turn_start_sample,
+            context.pending.turn_start_sample = min(
+                context.pending.turn_start_sample,
                 result.capture_start_sample,
             )
-        endpoint = max(result.capture_end_sample, context.turn_end_sample or 0)
-        context.turn_endpoint_sample = endpoint
-        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
-        context.turn_retire_sample = endpoint
-        context.clock_fact_endpoint_pinned = endpoint
-        context.turn_endpoint_grace_deadline = time.monotonic()
+        endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
+        context.pending.turn_retire_sample = endpoint
+        context.pending.clock_fact_endpoint_pinned = endpoint
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early clock-fact endpoint session=%s endpoint=%s text_len=%s",
             context.identity.session_id,
@@ -575,12 +579,12 @@ class MediaTurnEndpointMixin:
         text_len: int,
         source: str,
     ) -> None:
-        endpoint = max(capture_end_sample, context.turn_end_sample or 0)
-        context.turn_endpoint_sample = endpoint
-        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
-        context.turn_retire_sample = endpoint
-        context.live_query_endpoint_pinned = endpoint
-        context.turn_endpoint_grace_deadline = time.monotonic()
+        endpoint = max(capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
+        context.pending.turn_retire_sample = endpoint
+        context.pending.live_query_endpoint_pinned = endpoint
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early live-query endpoint session=%s endpoint=%s text_len=%s source=%s",
             context.identity.session_id,
@@ -598,7 +602,7 @@ class MediaTurnEndpointMixin:
 
         if context.identity.client_type != "device":
             return
-        if context.turn_endpoint_sample is not None:
+        if context.pending.turn_endpoint_sample is not None:
             return
         text = result.text.strip()
         if not text or not context.runtime.live_lookup_needed(text):
@@ -622,24 +626,25 @@ class MediaTurnEndpointMixin:
         self,
         context: _MediaVoiceSession,
     ) -> None:
-        partial = context.pending_partial
+        partial = context.pending.pending_partial
         if partial is None:
-            context.live_query_partial_text = None
-            context.live_query_partial_stable_since = None
+            context.pending.live_query_partial_text = None
+            context.pending.live_query_partial_stable_since = None
             return
         text = partial.text.strip()
         if not text or not context.runtime.live_lookup_needed(text):
-            context.live_query_partial_text = None
-            context.live_query_partial_stable_since = None
+            context.pending.live_query_partial_text = None
+            context.pending.live_query_partial_stable_since = None
             return
         now = time.monotonic()
-        if context.live_query_partial_text == text:
-            if context.live_query_partial_stable_since is None:
-                context.live_query_partial_stable_since = now
+        if context.pending.live_query_partial_text == text:
+            if context.pending.live_query_partial_stable_since is None:
+                context.pending.live_query_partial_stable_since = now
             elif (
-                context.turn_endpoint_sample is None
-                and context.live_query_endpoint_pinned is None
-                and now - context.live_query_partial_stable_since >= _LIVE_LOOKUP_PARTIAL_STABLE_S
+                context.pending.turn_endpoint_sample is None
+                and context.pending.live_query_endpoint_pinned is None
+                and now - context.pending.live_query_partial_stable_since
+                >= _LIVE_LOOKUP_PARTIAL_STABLE_S
             ):
                 if self._reply_in_flight(context):
                     return
@@ -651,8 +656,8 @@ class MediaTurnEndpointMixin:
                 )
                 self._schedule_turn_commit(context)
         else:
-            context.live_query_partial_text = text
-            context.live_query_partial_stable_since = now
+            context.pending.live_query_partial_text = text
+            context.pending.live_query_partial_stable_since = now
 
     @staticmethod
     def _pin_conversation_close_endpoint(
@@ -662,12 +667,12 @@ class MediaTurnEndpointMixin:
         text_len: int,
         source: str,
     ) -> None:
-        endpoint = max(capture_end_sample, context.turn_end_sample or 0)
-        context.turn_endpoint_sample = endpoint
-        context.turn_end_sample = max(context.turn_end_sample or 0, endpoint)
-        context.turn_retire_sample = endpoint
-        context.conversation_close_endpoint_pinned = endpoint
-        context.turn_endpoint_grace_deadline = time.monotonic()
+        endpoint = max(capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
+        context.pending.turn_retire_sample = endpoint
+        context.pending.conversation_close_endpoint_pinned = endpoint
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
         logger.info(
             "media early conversation-close endpoint session=%s endpoint=%s "
             "text_len=%s source=%s",
@@ -676,16 +681,6 @@ class MediaTurnEndpointMixin:
             text_len,
             source,
         )
-
-    @staticmethod
-    def _cancel_conversation_close_semantic_task(
-        context: _MediaVoiceSession,
-    ) -> None:
-        task = context.conversation_close_semantic_task
-        if task is not None and not task.done():
-            task.cancel()
-        context.conversation_close_semantic_task = None
-        context.conversation_close_semantic_text = None
 
     def _schedule_conversation_close_semantic_evaluation(
         self,
@@ -696,14 +691,14 @@ class MediaTurnEndpointMixin:
         source: str,
     ) -> None:
         if (
-            context.conversation_close_semantic_task is not None
-            and context.conversation_close_semantic_text == text
+            context.pending.conversation_close_semantic_task is not None
+            and context.pending.conversation_close_semantic_text == text
         ):
             return
-        self._cancel_conversation_close_semantic_task(context)
+        context.pending.cancel_close_semantic()
         stream_epoch = context.stream_epoch
-        context.conversation_close_semantic_text = text
-        context.conversation_close_semantic_task = asyncio.create_task(
+        context.pending.conversation_close_semantic_text = text
+        context.pending.conversation_close_semantic_task = asyncio.create_task(
             self._evaluate_conversation_close_early_commit(
                 context,
                 text=text,
@@ -723,12 +718,12 @@ class MediaTurnEndpointMixin:
         stream_epoch: int,
         source: str,
     ) -> None:
-        pending_floor = context.pending_turn_onset_floor
+        pending_floor = context.pending.pending_turn_onset_floor
         try:
             if (
                 context.closed
                 or context.stream_epoch != stream_epoch
-                or context.turn_endpoint_sample is not None
+                or context.pending.turn_endpoint_sample is not None
             ):
                 return
             needed = await context.runtime.resolve_conversation_close_needed(text)
@@ -737,9 +732,9 @@ class MediaTurnEndpointMixin:
             if (
                 context.closed
                 or context.stream_epoch != stream_epoch
-                or context.turn_endpoint_sample is not None
-                or context.pending_turn_onset_floor != pending_floor
-                or context.conversation_close_semantic_task is not asyncio.current_task()
+                or context.pending.turn_endpoint_sample is not None
+                or context.pending.pending_turn_onset_floor != pending_floor
+                or context.pending.conversation_close_semantic_task is not asyncio.current_task()
             ):
                 logger.warning(
                     "media early conversation-close semantic skipped after resolve "
@@ -769,9 +764,9 @@ class MediaTurnEndpointMixin:
         finally:
             # A cancelled old evaluation may finish after a new one for the
             # same text was installed. Only its owning task may clear it.
-            if context.conversation_close_semantic_task is asyncio.current_task():
-                context.conversation_close_semantic_task = None
-                context.conversation_close_semantic_text = None
+            if context.pending.conversation_close_semantic_task is asyncio.current_task():
+                context.pending.conversation_close_semantic_task = None
+                context.pending.conversation_close_semantic_text = None
 
     def _maybe_early_commit_conversation_close(
         self,
@@ -782,7 +777,7 @@ class MediaTurnEndpointMixin:
 
         if context.identity.client_type != "device":
             return
-        if context.turn_endpoint_sample is not None:
+        if context.pending.turn_endpoint_sample is not None:
             return
         text = result.text.strip()
         if not text:
@@ -806,17 +801,17 @@ class MediaTurnEndpointMixin:
         self,
         context: _MediaVoiceSession,
     ) -> None:
-        partial = context.pending_partial
+        partial = context.pending.pending_partial
         if partial is None:
-            context.conversation_close_partial_text = None
-            context.conversation_close_partial_stable_since = None
-            self._cancel_conversation_close_semantic_task(context)
+            context.pending.conversation_close_partial_text = None
+            context.pending.conversation_close_partial_stable_since = None
+            context.pending.cancel_close_semantic()
             return
         text = partial.text.strip()
         if not text:
-            context.conversation_close_partial_text = None
-            context.conversation_close_partial_stable_since = None
-            self._cancel_conversation_close_semantic_task(context)
+            context.pending.conversation_close_partial_text = None
+            context.pending.conversation_close_partial_stable_since = None
+            context.pending.cancel_close_semantic()
             return
         # A deterministic farewell is a terminal device command. Commit it at
         # the first accepted partial instead of waiting for another partial
@@ -826,7 +821,7 @@ class MediaTurnEndpointMixin:
         # and playback-interruption path.
         if (
             context.identity.client_type == "device"
-            and context.turn_endpoint_sample is None
+            and context.pending.turn_endpoint_sample is None
             and context.runtime.conversation_close_needed(text)
         ):
             self._pin_conversation_close_endpoint(
@@ -838,13 +833,13 @@ class MediaTurnEndpointMixin:
             self._schedule_turn_commit(context)
             return
         now = time.monotonic()
-        if context.conversation_close_partial_text == text:
-            if context.conversation_close_partial_stable_since is None:
-                context.conversation_close_partial_stable_since = now
+        if context.pending.conversation_close_partial_text == text:
+            if context.pending.conversation_close_partial_stable_since is None:
+                context.pending.conversation_close_partial_stable_since = now
             elif (
-                context.turn_endpoint_sample is None
-                and context.conversation_close_endpoint_pinned is None
-                and now - context.conversation_close_partial_stable_since
+                context.pending.turn_endpoint_sample is None
+                and context.pending.conversation_close_endpoint_pinned is None
+                and now - context.pending.conversation_close_partial_stable_since
                 >= _CONVERSATION_CLOSE_PARTIAL_STABLE_S
             ):
                 if context.runtime.conversation_close_needed(text):
@@ -863,37 +858,39 @@ class MediaTurnEndpointMixin:
                         source="partial",
                     )
         else:
-            context.conversation_close_partial_text = text
-            context.conversation_close_partial_stable_since = now
-            self._cancel_conversation_close_semantic_task(context)
+            context.pending.conversation_close_partial_text = text
+            context.pending.conversation_close_partial_stable_since = now
+            context.pending.cancel_close_semantic()
 
     def _maybe_early_commit_stable_clock_fact_partial(
         self,
         context: _MediaVoiceSession,
     ) -> None:
-        partial = context.pending_partial
+        partial = context.pending.pending_partial
         if partial is None:
-            context.clock_fact_partial_text = None
-            context.clock_fact_partial_stable_since = None
+            context.pending.clock_fact_partial_text = None
+            context.pending.clock_fact_partial_stable_since = None
             return
         text = partial.text.strip()
         if not text or not is_clock_fact_query(text):
-            context.clock_fact_partial_text = None
-            context.clock_fact_partial_stable_since = None
+            context.pending.clock_fact_partial_text = None
+            context.pending.clock_fact_partial_stable_since = None
             return
         now = time.monotonic()
-        if context.clock_fact_partial_text == text:
-            if context.clock_fact_partial_stable_since is None:
-                context.clock_fact_partial_stable_since = now
+        if context.pending.clock_fact_partial_text == text:
+            if context.pending.clock_fact_partial_stable_since is None:
+                context.pending.clock_fact_partial_stable_since = now
             elif (
-                context.turn_endpoint_sample is None
-                and context.clock_fact_endpoint_pinned is None
-                and now - context.clock_fact_partial_stable_since
+                context.pending.turn_endpoint_sample is None
+                and context.pending.clock_fact_endpoint_pinned is None
+                and now - context.pending.clock_fact_partial_stable_since
                 >= _CLOCK_FACT_PARTIAL_STABLE_S
             ):
-                endpoint = max(partial.capture_end_sample, context.turn_end_sample or 0)
-                context.turn_endpoint_sample = endpoint
-                context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint)
+                endpoint = max(partial.capture_end_sample, context.pending.turn_end_sample or 0)
+                context.pending.turn_endpoint_sample = endpoint
+                context.pending.turn_retire_sample = max(
+                    context.pending.turn_retire_sample or 0, endpoint
+                )
                 logger.info(
                     "media early stable clock-fact partial session=%s endpoint=%s text_len=%s",
                     context.identity.session_id,
@@ -902,8 +899,8 @@ class MediaTurnEndpointMixin:
                 )
                 self._schedule_turn_commit(context)
         else:
-            context.clock_fact_partial_text = text
-            context.clock_fact_partial_stable_since = now
+            context.pending.clock_fact_partial_text = text
+            context.pending.clock_fact_partial_stable_since = now
 
     @staticmethod
     def _observe_partial_asr_result(
@@ -916,9 +913,9 @@ class MediaTurnEndpointMixin:
             return
         if result.capture_end_sample > context.last_asr_evidence_end_sample:
             context.last_asr_evidence_end_sample = result.capture_end_sample
-        previous = context.pending_partial
+        previous = context.pending.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
-            context.pending_partial = result
+            context.pending.pending_partial = result
 
     @staticmethod
     def _asr_covers_endpoint(
@@ -953,19 +950,19 @@ class MediaTurnEndpointMixin:
         endpoint_sample: int,
     ) -> None:
         now = time.monotonic()
-        if context.turn_endpoint_grace_deadline is None:
+        if context.pending.turn_endpoint_grace_deadline is None:
             grace = self._adaptive_endpoint_grace(context)
-            context.turn_endpoint_grace_deadline = now + grace
-        if context.turn_endpoint_tail_deadline is None:
-            context.turn_endpoint_tail_deadline = now + max(
+            context.pending.turn_endpoint_grace_deadline = now + grace
+        if context.pending.turn_endpoint_tail_deadline is None:
+            context.pending.turn_endpoint_tail_deadline = now + max(
                 self.turn_endpoint_absolute_timeout_s,
                 self._adaptive_endpoint_grace(context),
             )
-        handle = context.turn_endpoint_timeout_handle
+        handle = context.pending.turn_endpoint_timeout_handle
         if handle is not None and not handle.cancelled():
             return
-        delay = max(0.0, context.turn_endpoint_tail_deadline - now)
-        context.turn_endpoint_timeout_handle = asyncio.get_running_loop().call_later(
+        delay = max(0.0, context.pending.turn_endpoint_tail_deadline - now)
+        context.pending.turn_endpoint_timeout_handle = asyncio.get_running_loop().call_later(
             delay,
             self._start_endpoint_tail_expiry,
             context.identity.session_id,
@@ -985,11 +982,11 @@ class MediaTurnEndpointMixin:
             or context.closed
             or context.standby_requested
             or context.stream_epoch != stream_epoch
-            or context.turn_endpoint_sample != endpoint_sample
+            or context.pending.turn_endpoint_sample != endpoint_sample
         ):
             return
-        context.turn_endpoint_timeout_handle = None
-        deadline = context.turn_endpoint_tail_deadline
+        context.pending.turn_endpoint_timeout_handle = None
+        deadline = context.pending.turn_endpoint_tail_deadline
         if deadline is not None and time.monotonic() < deadline:
             # Timer callbacks can run slightly early. Keep the same deadline
             # rather than entering an unbounded wait on the retry task.
@@ -1006,68 +1003,17 @@ class MediaTurnEndpointMixin:
         stream_epoch: int,
         endpoint_sample: int,
     ) -> bool:
-        task = context.turn_commit_retry_task
+        task = context.pending.turn_commit_retry_task
         return bool(
             task is not None
             and not task.done()
-            and context.turn_commit_retry_stream_epoch == stream_epoch
-            and context.turn_commit_retry_endpoint_sample == endpoint_sample
+            and context.pending.turn_commit_retry_stream_epoch == stream_epoch
+            and context.pending.turn_commit_retry_endpoint_sample == endpoint_sample
         )
 
     @staticmethod
-    def _clear_turn_commit_retry_state(context: _MediaVoiceSession) -> None:
-        task = context.turn_commit_retry_task
-        current_task = asyncio.current_task()
-        if task is not None and task is not current_task and not task.done():
-            task.cancel()
-        context.turn_commit_retry_task = None
-        context.turn_commit_retry_attempt = 0
-        context.turn_commit_retry_stream_epoch = None
-        context.turn_commit_retry_endpoint_sample = None
-
-    @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
-        context.admitted_input_stream_epoch = None
-        context.active_vad_stream_epoch = None
-        context.active_vad_start_sample = None
-        max_speech_task = context.max_user_speech_task
-        context.max_user_speech_task = None
-        context.max_user_speech_deadline = None
-        if (
-            max_speech_task is not None
-            and max_speech_task is not asyncio.current_task()
-            and not max_speech_task.done()
-        ):
-            max_speech_task.cancel()
-        if context.turn_endpoint_timeout_handle is not None:
-            context.turn_endpoint_timeout_handle.cancel()
-            context.turn_endpoint_timeout_handle = None
-        MediaTurnEndpointMixin._clear_turn_commit_retry_state(context)
-        context.turn_start_sample = None
-        context.turn_input_fence = None
-        context.turn_end_sample = None
-        context.turn_endpoint_sample = None
-        context.turn_retire_sample = None
-        context.turn_endpoint_grace_deadline = None
-        context.turn_endpoint_tail_deadline = None
-        context.pending_turn_playback_overlap = False
-        context.pending_turn_onset_floor = None
-        context.playback_followup_endpoint_sample = None
-        context.committed_asr_keys.clear()
-        context.pending_partial = None
-        context.clock_fact_partial_text = None
-        context.clock_fact_partial_stable_since = None
-        context.clock_fact_endpoint_pinned = None
-        context.conversation_close_partial_text = None
-        context.conversation_close_partial_stable_since = None
-        context.conversation_close_endpoint_pinned = None
-        MediaTurnEndpointMixin._cancel_conversation_close_semantic_task(context)
-        context.clock_fact_forced_text = None
-        context.live_query_forced_text = None
-        context.live_query_partial_text = None
-        context.live_query_partial_stable_since = None
-        context.live_query_endpoint_pinned = None
-        context.live_query_forced_authoritative = False
+        context.pending.reset()
         context.missed_hearing_nudge_count = 0
         context.last_missed_hearing_nudge_at = None
 
@@ -1080,8 +1026,8 @@ class MediaTurnEndpointMixin:
     ) -> bool:
         """Consume one discarded turn through its transport hangover boundary."""
 
-        start_sample = context.turn_start_sample
-        retire_sample = context.turn_retire_sample
+        start_sample = context.pending.turn_start_sample
+        retire_sample = context.pending.turn_retire_sample
         if (
             start_sample is None
             or retire_sample is None
@@ -1109,12 +1055,12 @@ class MediaTurnEndpointMixin:
             context is None
             or context.closed
             or context.stream_epoch != stream_epoch
-            or context.turn_endpoint_sample != endpoint_sample
+            or context.pending.turn_endpoint_sample != endpoint_sample
         ):
             return
-        retry_task = context.turn_commit_retry_task
+        retry_task = context.pending.turn_commit_retry_task
         commit_task = context.turn_commit_task
-        deadline = context.turn_endpoint_tail_deadline
+        deadline = context.pending.turn_endpoint_tail_deadline
         if (
             deadline is not None
             and time.monotonic() >= deadline
@@ -1144,10 +1090,10 @@ class MediaTurnEndpointMixin:
                 context is None
                 or context.closed
                 or context.stream_epoch != stream_epoch
-                or context.turn_endpoint_sample != endpoint_sample
+                or context.pending.turn_endpoint_sample != endpoint_sample
             ):
                 return
-        partial = context.pending_partial
+        partial = context.pending.pending_partial
         if (
             partial is not None
             and partial.text.strip()
@@ -1170,15 +1116,15 @@ class MediaTurnEndpointMixin:
             )
             decision = await self._accept_asr_result_decision(session_id, fallback)
             if decision.accepted is not None:
-                context.turn_end_sample = max(
+                context.pending.turn_end_sample = max(
                     decision.accepted.capture_end_sample,
-                    context.turn_end_sample or 0,
+                    context.pending.turn_end_sample or 0,
                 )
                 await self._commit_pending_turn(
                     context,
                     provider_final_missing=True,
                 )
-                if context.turn_endpoint_sample != endpoint_sample:
+                if context.pending.turn_endpoint_sample != endpoint_sample:
                     return
 
         discarded: ProjectionPatch | None = None
@@ -1189,10 +1135,10 @@ class MediaTurnEndpointMixin:
                 current is not context
                 or context.closed
                 or context.stream_epoch != stream_epoch
-                or context.turn_endpoint_sample != endpoint_sample
+                or context.pending.turn_endpoint_sample != endpoint_sample
             ):
                 return
-            partial = context.pending_partial
+            partial = context.pending.pending_partial
             discarded, resume_owned_output = await self._retire_pending_turn_locked(
                 context,
                 stream_epoch=stream_epoch,
@@ -1217,15 +1163,15 @@ class MediaTurnEndpointMixin:
 
     @staticmethod
     def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool:
-        partial = context.pending_partial
+        partial = context.pending.pending_partial
         provisional = context.projection.provisional
         return any(
             text and text.strip()
             for text in (
                 partial.text if partial is not None else None,
                 provisional.text if provisional is not None else None,
-                context.clock_fact_forced_text,
-                context.live_query_forced_text,
+                context.pending.clock_fact_forced_text,
+                context.pending.live_query_forced_text,
             )
         )
 
@@ -1243,7 +1189,7 @@ class MediaTurnEndpointMixin:
         patch and whether queued same-turn output was resumed.
         """
 
-        input_fence = context.turn_input_fence
+        input_fence = context.pending.turn_input_fence
         empty_input = not self._pending_turn_has_text_evidence(context)
         if not await self._retire_pending_turn_input_range(
             context,
@@ -1270,10 +1216,10 @@ class MediaTurnEndpointMixin:
             self._clear_evidence_less_floor_hold(context)
             context.runtime.open_assistant_floor(cause=floor_cause)
             resume_owned_output = owned_delegation_holds_turn(
-                context.delegation_output_claims, input_fence
+                context.output.delegation_output_claims, input_fence
             ) or any(
                 self._output_work_is_active(context, work)
-                for work in tuple(context.output_work.values())
+                for work in tuple(context.output.output_work.values())
             )
             self._schedule_output_retry(context)
             logger.info(
@@ -1286,11 +1232,11 @@ class MediaTurnEndpointMixin:
 
     @staticmethod
     def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None:
-        handle = context.evidence_less_hold_handle
+        handle = context.pending.evidence_less_hold_handle
         if handle is not None:
             handle.cancel()
-        context.evidence_less_hold_handle = None
-        context.evidence_less_hold_since = None
+        context.pending.evidence_less_hold_handle = None
+        context.pending.evidence_less_hold_since = None
 
     def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None:
         """Start, or extend on vad.start, the cap on a floor-blocked wait.
@@ -1303,20 +1249,20 @@ class MediaTurnEndpointMixin:
         if context.closed:
             return
         now = time.monotonic()
-        since = context.evidence_less_hold_since
+        since = context.pending.evidence_less_hold_since
         if since is None:
             if context.runtime.output_floor_allows_assistant:
                 return
             since = now
-            context.evidence_less_hold_since = since
+            context.pending.evidence_less_hold_since = since
         deadline = min(
             since + _EVIDENCE_LESS_HOLD_MAX_S,
             max(since + _EVIDENCE_LESS_HOLD_BASE_S, now + _EVIDENCE_LESS_HOLD_VAD_EXTENSION_S),
         )
-        handle = context.evidence_less_hold_handle
+        handle = context.pending.evidence_less_hold_handle
         if handle is not None:
             handle.cancel()
-        context.evidence_less_hold_handle = asyncio.get_running_loop().call_later(
+        context.pending.evidence_less_hold_handle = asyncio.get_running_loop().call_later(
             max(0.0, deadline - now),
             self._start_evidence_less_hold_expiry,
             context.identity.session_id,
@@ -1327,7 +1273,7 @@ class MediaTurnEndpointMixin:
         context = self._sessions.get(session_id)
         if context is None or context.closed or context.stream_epoch != stream_epoch:
             return
-        context.evidence_less_hold_handle = None
+        context.pending.evidence_less_hold_handle = None
         asyncio.create_task(
             self._expire_evidence_less_floor_hold(session_id, stream_epoch),
             name=f"media-evidence-less-hold-{session_id}",
@@ -1338,11 +1284,11 @@ class MediaTurnEndpointMixin:
             not context.closed
             and not context.standby_requested
             and not context.runtime.output_floor_allows_assistant
-            and context.turn_start_sample is not None
+            and context.pending.turn_start_sample is not None
             and not self._pending_turn_has_text_evidence(context)
             and any(
                 self._output_work_is_active(context, work)
-                for work in tuple(context.output_work.values())
+                for work in tuple(context.output.output_work.values())
             )
         )
 
@@ -1354,10 +1300,10 @@ class MediaTurnEndpointMixin:
         context = self._sessions.get(session_id)
         if context is None or context.stream_epoch != stream_epoch:
             return
-        if context.evidence_less_hold_handle is not None:
+        if context.pending.evidence_less_hold_handle is not None:
             # A vad.start re-armed the cap while this task was queued.
             return
-        since = context.evidence_less_hold_since
+        since = context.pending.evidence_less_hold_since
         if since is None or not self._evidence_less_hold_applies(context):
             self._clear_evidence_less_floor_hold(context)
             return
@@ -1368,13 +1314,13 @@ class MediaTurnEndpointMixin:
             if (
                 self._sessions.get(session_id) is not context
                 or context.stream_epoch != stream_epoch
-                or context.evidence_less_hold_handle is not None
+                or context.pending.evidence_less_hold_handle is not None
                 or not self._evidence_less_hold_applies(context)
             ):
-                if context.evidence_less_hold_handle is None:
+                if context.pending.evidence_less_hold_handle is None:
                     self._clear_evidence_less_floor_hold(context)
                 return
-            start_sample = context.turn_start_sample
+            start_sample = context.pending.turn_start_sample
             if start_sample is None:
                 return
             endpoint_task = context.turn_endpoint_task
@@ -1389,13 +1335,17 @@ class MediaTurnEndpointMixin:
             # is rejected rather than re-opening the floor.
             endpoint_sample = max(
                 start_sample + 1,
-                context.turn_end_sample or 0,
-                context.turn_endpoint_sample or 0,
+                context.pending.turn_end_sample or 0,
+                context.pending.turn_endpoint_sample or 0,
                 context.asr.last_sent_sample,
             )
-            context.turn_end_sample = max(context.turn_end_sample or 0, endpoint_sample)
-            context.turn_endpoint_sample = endpoint_sample
-            context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint_sample)
+            context.pending.turn_end_sample = max(
+                context.pending.turn_end_sample or 0, endpoint_sample
+            )
+            context.pending.turn_endpoint_sample = endpoint_sample
+            context.pending.turn_retire_sample = max(
+                context.pending.turn_retire_sample or 0, endpoint_sample
+            )
             discarded, resume_owned_output = await self._retire_pending_turn_locked(
                 context,
                 stream_epoch=stream_epoch,
@@ -1421,7 +1371,7 @@ class MediaTurnEndpointMixin:
         task = context.turn_endpoint_task
         if task is not None and not task.done():
             task.cancel()
-        endpoint_sample = context.turn_endpoint_sample
+        endpoint_sample = context.pending.turn_endpoint_sample
         if endpoint_sample is None:
             return
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
@@ -1431,7 +1381,7 @@ class MediaTurnEndpointMixin:
             endpoint_sample,
         ):
             return
-        grace_deadline = context.turn_endpoint_grace_deadline or time.monotonic()
+        grace_deadline = context.pending.turn_endpoint_grace_deadline or time.monotonic()
         context.turn_endpoint_task = asyncio.create_task(
             self._commit_pending_turn_after_grace(
                 context.identity.session_id,
@@ -1458,24 +1408,25 @@ class MediaTurnEndpointMixin:
                 and not context.closed
                 and not context.standby_requested
                 and context.stream_epoch == stream_epoch
-                and context.turn_endpoint_sample == endpoint_sample
+                and context.pending.turn_endpoint_sample == endpoint_sample
             )
             if not current_endpoint or context is None:
                 return
             pinned_clock_fact = (
-                context.clock_fact_endpoint_pinned is not None
-                and context.clock_fact_endpoint_pinned == endpoint_sample
+                context.pending.clock_fact_endpoint_pinned is not None
+                and context.pending.clock_fact_endpoint_pinned == endpoint_sample
             )
             pinned_conversation_close = (
-                context.conversation_close_endpoint_pinned is not None
-                and context.conversation_close_endpoint_pinned == endpoint_sample
+                context.pending.conversation_close_endpoint_pinned is not None
+                and context.pending.conversation_close_endpoint_pinned == endpoint_sample
             )
             pinned_live_query = (
-                context.live_query_endpoint_pinned is not None
-                and context.live_query_endpoint_pinned == endpoint_sample
+                context.pending.live_query_endpoint_pinned is not None
+                and context.pending.live_query_endpoint_pinned == endpoint_sample
             )
             forced_live_query = bool(
-                context.live_query_forced_authoritative and context.live_query_forced_text
+                context.pending.live_query_forced_authoritative
+                and context.pending.live_query_forced_text
             )
             if (
                 not pinned_clock_fact
@@ -1484,7 +1435,7 @@ class MediaTurnEndpointMixin:
                 and not forced_live_query
                 and not self._asr_covers_endpoint(
                     context,
-                    context.turn_end_sample,
+                    context.pending.turn_end_sample,
                     endpoint_sample,
                 )
                 # A provider final is evidence, not an endpoint.  If ASR has
@@ -1493,7 +1444,7 @@ class MediaTurnEndpointMixin:
                 # the late final will re-arm this same commit in
                 # ``_observe_final_asr_result``.
             ):
-                if context.live_query_forced_text or context.clock_fact_forced_text:
+                if context.pending.live_query_forced_text or context.pending.clock_fact_forced_text:
                     logger.warning(
                         "media turn commit deferred with forced text "
                         "session=%s stream_epoch=%s endpoint=%s turn_end=%s "
@@ -1501,10 +1452,10 @@ class MediaTurnEndpointMixin:
                         session_id,
                         stream_epoch,
                         endpoint_sample,
-                        context.turn_end_sample,
-                        bool(context.live_query_forced_text),
-                        bool(context.clock_fact_forced_text),
-                        context.live_query_forced_authoritative,
+                        context.pending.turn_end_sample,
+                        bool(context.pending.live_query_forced_text),
+                        bool(context.pending.clock_fact_forced_text),
+                        context.pending.live_query_forced_authoritative,
                     )
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)
@@ -1516,7 +1467,7 @@ class MediaTurnEndpointMixin:
             # that already had timeline text (2026-09-03 epoch 1366).
             await asyncio.shield(self._commit_pending_turn(context))
             if (
-                context.turn_endpoint_sample == endpoint_sample
+                context.pending.turn_endpoint_sample == endpoint_sample
                 and context.runtime.assistant_speaking
             ):
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
@@ -1538,10 +1489,10 @@ class MediaTurnEndpointMixin:
 
         if context.closed or context.standby_requested:
             return "session_closed"
-        start_sample = context.turn_start_sample
-        end_sample = context.turn_end_sample
-        endpoint_sample = context.turn_endpoint_sample
-        retire_sample = context.turn_retire_sample
+        start_sample = context.pending.turn_start_sample
+        end_sample = context.pending.turn_end_sample
+        endpoint_sample = context.pending.turn_endpoint_sample
+        retire_sample = context.pending.turn_retire_sample
         if (
             start_sample is None
             or end_sample is None
@@ -1555,7 +1506,7 @@ class MediaTurnEndpointMixin:
         # Direct/fallback commits share the same absolute deadline as the
         # scheduled endpoint. Rearming never grants a new retry interval.
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
-        previous_fence = context.playback.current_fence or context.runtime.fence
+        previous_fence = context.output.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
             stream_epoch=context.stream_epoch,
@@ -1588,13 +1539,13 @@ class MediaTurnEndpointMixin:
                     reason,
                 )
             return reason
-        owner = context.output_owner
+        owner = context.output.output_owner
         if (
             owner is not None
             and not context.runtime.barge_in_enabled
             and owner.fence.turn_id == fence.turn_id
         ):
-            delivery = context.reply_delivery.get(owner.fence)
+            delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:
                 logger.info(
                     "skip same-turn cancel of heard playback session=%s "
@@ -1674,11 +1625,11 @@ class MediaTurnEndpointMixin:
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
         if self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample):
             return
-        self._clear_turn_commit_retry_state(context)
-        context.turn_commit_retry_attempt = 0
-        context.turn_commit_retry_stream_epoch = stream_epoch
-        context.turn_commit_retry_endpoint_sample = endpoint_sample
-        context.turn_commit_retry_task = asyncio.create_task(
+        context.pending.clear_commit_retry()
+        context.pending.turn_commit_retry_attempt = 0
+        context.pending.turn_commit_retry_stream_epoch = stream_epoch
+        context.pending.turn_commit_retry_endpoint_sample = endpoint_sample
+        context.pending.turn_commit_retry_task = asyncio.create_task(
             self._run_turn_prepare_retries(
                 context.identity.session_id,
                 stream_epoch,
@@ -1711,7 +1662,7 @@ class MediaTurnEndpointMixin:
                 if (
                     context is None
                     or context.closed
-                    or context.turn_commit_retry_task is not current_task
+                    or context.pending.turn_commit_retry_task is not current_task
                     or not self._turn_commit_retry_matches(
                         context,
                         stream_epoch,
@@ -1720,7 +1671,7 @@ class MediaTurnEndpointMixin:
                     or context.projection.provisional is None
                 ):
                     return
-                context.turn_commit_retry_attempt = attempt
+                context.pending.turn_commit_retry_attempt = attempt
                 self.metrics.inc_media_metric(
                     "voice_turn_prepare_retry_total",
                     labels={"status": "attempt"},
@@ -1748,8 +1699,8 @@ class MediaTurnEndpointMixin:
             return
         finally:
             context = self._sessions.get(session_id)
-            if context is not None and context.turn_commit_retry_task is current_task:
-                self._clear_turn_commit_retry_state(context)
+            if context is not None and context.pending.turn_commit_retry_task is current_task:
+                context.pending.clear_commit_retry()
 
     async def _discard_exhausted_turn_prepare_retry(
         self,
@@ -1767,7 +1718,7 @@ class MediaTurnEndpointMixin:
                 current is not context
                 or context.closed
                 or context.stream_epoch != stream_epoch
-                or context.turn_endpoint_sample != endpoint_sample
+                or context.pending.turn_endpoint_sample != endpoint_sample
                 or not self._turn_commit_retry_matches(
                     context,
                     stream_epoch,
@@ -1805,9 +1756,9 @@ class MediaTurnEndpointMixin:
         self,
         context: _MediaVoiceSession,
     ) -> None:
-        retry_task = context.turn_commit_retry_task
+        retry_task = context.pending.turn_commit_retry_task
         stream_epoch = context.stream_epoch
-        endpoint_sample = context.turn_commit_retry_endpoint_sample
+        endpoint_sample = context.pending.turn_commit_retry_endpoint_sample
         if (
             retry_task is None
             or endpoint_sample is None
@@ -1826,7 +1777,7 @@ class MediaTurnEndpointMixin:
                 endpoint_sample,
             ):
                 return
-            retry_task = context.turn_commit_retry_task
+            retry_task = context.pending.turn_commit_retry_task
             if not await self._retire_pending_turn_input_range(
                 context,
                 stream_epoch=stream_epoch,

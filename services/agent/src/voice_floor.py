@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Final, Literal
 
-from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 
 
@@ -101,11 +100,7 @@ class VoiceFloorState:
         "_fresh_user_speech",
         "_last_playback_completed_ns",
         "_pending_assistant_text",
-        "_pending_assistant_text_epoch",
         "_phase",
-        "_playback_epoch",
-        "_playback_fence",
-        "_playback_started_ns",
         "_played_assistant_text",
     )
 
@@ -114,12 +109,8 @@ class VoiceFloorState:
         self._assistant_speaking = False
         self._fresh_user_speech = False
         self._pending_assistant_text = ""
-        self._pending_assistant_text_epoch = 0
         self._played_assistant_text = ""
         self._capture_blocked = False
-        self._playback_fence: GenerationFence | None = None
-        self._playback_epoch = 0
-        self._playback_started_ns: int | None = None
         self._last_playback_completed_ns: int | None = None
 
     @property
@@ -139,28 +130,12 @@ class VoiceFloorState:
         return self._pending_assistant_text
 
     @property
-    def pending_assistant_text_epoch(self) -> int:
-        return self._pending_assistant_text_epoch
-
-    @property
     def played_assistant_text(self) -> str:
         return self._played_assistant_text
 
     @property
     def capture_blocked(self) -> bool:
         return self._capture_blocked
-
-    @property
-    def playback_fence(self) -> GenerationFence | None:
-        return self._playback_fence
-
-    @property
-    def playback_epoch(self) -> int:
-        return self._playback_epoch
-
-    @property
-    def playback_started_ns(self) -> int | None:
-        return self._playback_started_ns
 
     @property
     def last_playback_completed_ns(self) -> int | None:
@@ -187,12 +162,8 @@ class VoiceFloorState:
         assistant_speaking: bool | _Kept = KEEP,
         fresh_user_speech: bool | _Kept = KEEP,
         pending_assistant_text: str | _Kept = KEEP,
-        pending_assistant_text_epoch: int | _Kept = KEEP,
         played_assistant_text: str | _Kept = KEEP,
         capture_blocked: bool | _Kept = KEEP,
-        playback_fence: GenerationFence | None | _Kept = KEEP,
-        playback_epoch: int | _Kept = KEEP,
-        playback_started_ns: int | None | _Kept = KEEP,
         last_playback_completed_ns: int | None | _Kept = KEEP,
     ) -> None:
         """The only writer of the floor scalars; ``KEEP`` leaves a field as is."""
@@ -203,18 +174,10 @@ class VoiceFloorState:
             self._fresh_user_speech = fresh_user_speech
         if pending_assistant_text is not KEEP:
             self._pending_assistant_text = pending_assistant_text
-        if pending_assistant_text_epoch is not KEEP:
-            self._pending_assistant_text_epoch = pending_assistant_text_epoch
         if played_assistant_text is not KEEP:
             self._played_assistant_text = played_assistant_text
         if capture_blocked is not KEEP:
             self._capture_blocked = capture_blocked
-        if playback_fence is not KEEP:
-            self._playback_fence = playback_fence
-        if playback_epoch is not KEEP:
-            self._playback_epoch = playback_epoch
-        if playback_started_ns is not KEEP:
-            self._playback_started_ns = playback_started_ns
         if last_playback_completed_ns is not KEEP:
             self._last_playback_completed_ns = last_playback_completed_ns
 

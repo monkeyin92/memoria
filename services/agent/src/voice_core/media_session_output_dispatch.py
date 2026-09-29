@@ -188,9 +188,9 @@ class MediaOutputDispatchMixin:
 
         self._record_reply_delivery_dispatch(context, result)
         if context is not None:
-            context.output_results.append(result)
-            if len(context.output_results) > 32:
-                del context.output_results[: len(context.output_results) - 32]
+            context.output.output_results.append(result)
+            if len(context.output.output_results) > 32:
+                del context.output.output_results[: len(context.output.output_results) - 32]
         self.metrics.inc_media_metric(
             "voice_output_dispatch_total",
             labels={
@@ -225,7 +225,7 @@ class MediaOutputDispatchMixin:
             OutputDispatchStatus.STARTED,
             OutputDispatchStatus.QUEUED,
         }:
-            context.reply_delivery.ensure(result.fence)
+            context.output.reply_delivery.ensure(result.fence)
             return
 
         event: ReplyDeliveryEvent | None
@@ -245,7 +245,7 @@ class MediaOutputDispatchMixin:
             event = _reply_delivery_terminal_for_abort(result.reason)
 
         if event is None:
-            context.reply_delivery.ensure(result.fence)
+            context.output.reply_delivery.ensure(result.fence)
             return
         self._record_reply_delivery_event(context, result.fence, event, result.reason)
 
@@ -256,7 +256,7 @@ class MediaOutputDispatchMixin:
         event: ReplyDeliveryEvent,
         reason: str = "",
     ) -> None:
-        snapshot, changed = context.reply_delivery.record(fence, event, reason=reason)
+        snapshot, changed = context.output.reply_delivery.record(fence, event, reason=reason)
         if not changed:
             return
         wake_fence = context.device_wake_ack_fence
@@ -372,7 +372,7 @@ class MediaOutputDispatchMixin:
                 OutputDispatchStatus.SKIPPED,
                 "stale_fence",
             )
-        claim = context.delegation_output_claims.get(fence)
+        claim = context.output.delegation_output_claims.get(fence)
         if claim is None and context.runtime.live_lookup_needed(user_text):
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.delegation_initial_decision_timeout_s
@@ -388,7 +388,7 @@ class MediaOutputDispatchMixin:
                         OutputDispatchStatus.SKIPPED,
                         "stale_fence",
                     )
-                claim = context.delegation_output_claims.get(fence)
+                claim = context.output.delegation_output_claims.get(fence)
         if claim is not None:
             claim.observe_normal_reply()
             if claim.state is DelegationOutputState.PENDING:
@@ -478,11 +478,11 @@ class MediaOutputDispatchMixin:
                 OutputDispatchStatus.SKIPPED,
                 "output_intent_inactive",
             )
-        context.output_work[work.intent_id] = work
+        context.output.output_work[work.intent_id] = work
         if (
             not context.runtime.output_floor_allows_assistant
-            or context.output_owner is not None
-            or context.reply_lock.locked()
+            or context.output.output_owner is not None
+            or context.output.reply_lock.locked()
             or context.runtime.orchestrator.state
             in {ConversationState.LISTENING, ConversationState.TOOL_WAITING}
         ):
@@ -492,7 +492,7 @@ class MediaOutputDispatchMixin:
                     OutputDispatchStatus.SKIPPED,
                     "output_enqueue_rejected",
                 )
-            dispatch = context.output_dispatch_task
+            dispatch = context.output.output_dispatch_task
             if dispatch is not None and not dispatch.done():
                 return OutputDispatchResult(
                     fence,
@@ -526,7 +526,7 @@ class MediaOutputDispatchMixin:
         self._prune_output_work(context)
         coordinator = context.runtime.orchestrator.delegation
         if int(work.intent.kind) not in _STREAMCORE_EXECUTABLE_OUTPUT_KINDS:
-            context.output_work.pop(work.intent_id, None)
+            context.output.output_work.pop(work.intent_id, None)
             coordinator.complete_output_intent(
                 work.intent,
                 current_fence=context.runtime.fence,
@@ -542,7 +542,7 @@ class MediaOutputDispatchMixin:
             or not self._output_work_is_active(context, work)
         ):
             return False
-        context.output_work[work.intent_id] = work
+        context.output.output_work[work.intent_id] = work
         if not context.runtime.output_floor_allows_assistant:
             logger.info(
                 "media output deferred session=%s fence=%s kind=%s reason=floor_blocked",
@@ -553,7 +553,7 @@ class MediaOutputDispatchMixin:
             self._arm_evidence_less_floor_hold(context)
             return True
         self._clear_evidence_less_floor_hold(context)
-        owner = context.output_owner
+        owner = context.output.output_owner
         if owner is not None:
             if (
                 str(owner.intent.intent_id) != work.intent_id
@@ -566,9 +566,9 @@ class MediaOutputDispatchMixin:
     def _prune_output_work(self, context: _MediaVoiceSession) -> None:
         """Keep bound sources as bounded and fresh as the authoritative queue."""
 
-        for intent_id, work in tuple(context.output_work.items()):
+        for intent_id, work in tuple(context.output.output_work.items()):
             if not self._output_work_is_active(context, work):
-                context.output_work.pop(intent_id, None)
+                context.output.output_work.pop(intent_id, None)
                 logger.info(
                     "media output retired session=%s fence=%s reason=intent_inactive",
                     context.identity.session_id, work.fence,
@@ -578,10 +578,10 @@ class MediaOutputDispatchMixin:
         """Start the admitted winner, or discard an unbound candidate safely."""
 
         self._prune_output_work(context)
-        if context.closed or context.standby_requested or context.output_owner is not None:
+        if context.closed or context.standby_requested or context.output.output_owner is not None:
             return False
         current = asyncio.current_task()
-        for pending in (context.output_dispatch_task, context.output_retry_task):
+        for pending in (context.output.output_dispatch_task, context.output.output_retry_task):
             if pending is not None and pending is not current and not pending.done():
                 return True
         coordinator = context.runtime.orchestrator.delegation
@@ -596,7 +596,7 @@ class MediaOutputDispatchMixin:
             )
             if candidate is None:
                 return False
-            work = context.output_work.get(str(candidate.intent_id))
+            work = context.output.output_work.get(str(candidate.intent_id))
             if work is None:
                 coordinator.complete_output_intent(
                     candidate,
@@ -622,21 +622,21 @@ class MediaOutputDispatchMixin:
                     floor_allows_output=context.runtime.output_floor_allows_assistant,
                     reason="generation_start_rejected",
                 )
-                context.output_work.pop(work.intent_id, None)
+                context.output.output_work.pop(work.intent_id, None)
                 continue
             task = asyncio.create_task(
                 self._run_output_work(context, work),
                 name=f"media-output-{session_id}-{work.intent_id}",
             )
-            context.output_dispatch_task = task
+            context.output.output_dispatch_task = task
             dispatch_fence = work.fence
 
             def clear_dispatch(
                 done: asyncio.Task[OutputDispatchResult],
                 dispatch_fence: GenerationFence = dispatch_fence,
             ) -> None:
-                if context.output_dispatch_task is done:
-                    context.output_dispatch_task = None
+                if context.output.output_dispatch_task is done:
+                    context.output.output_dispatch_task = None
                 self._schedule_output_retry(context)
                 if done.cancelled():
                     self._record_output_dispatch_result(
@@ -679,14 +679,14 @@ class MediaOutputDispatchMixin:
             or context.standby_requested
             or not context.runtime.output_floor_allows_assistant
             or self._sessions.get(context.identity.session_id) is not context
-            or context.output_owner is not None
+            or context.output.output_owner is not None
             or any(
                 task is not None and not task.done()
-                for task in (context.output_dispatch_task, context.output_retry_task)
+                for task in (context.output.output_dispatch_task, context.output.output_retry_task)
             )
             or not any(
                 self._output_work_is_active(context, work)
-                for work in tuple(context.output_work.values())
+                for work in tuple(context.output.output_work.values())
             )
         ):
             return
@@ -696,11 +696,11 @@ class MediaOutputDispatchMixin:
             self._start_selected_output(context),
             name=f"media-output-retry-{context.identity.session_id}",
         )
-        context.output_retry_task = task
+        context.output.output_retry_task = task
 
         def clear_retry(done: asyncio.Task[bool]) -> None:
-            if context.output_retry_task is done:
-                context.output_retry_task = None
+            if context.output.output_retry_task is done:
+                context.output.output_retry_task = None
             if done.cancelled():
                 return
             try:
@@ -718,9 +718,9 @@ class MediaOutputDispatchMixin:
     ) -> tuple[_OutputWork, ...]:
         """Snapshot only live, unheard peers before an internal fence advance."""
 
-        owner = context.output_owner
+        owner = context.output.output_owner
         return tuple(
-            work for work in tuple(context.output_work.values())
+            work for work in tuple(context.output.output_work.values())
             if work.intent_id != selected.intent_id
             and (owner is None or work.intent_id != str(owner.intent.intent_id))
             and work.fence.matches(selected.fence)
@@ -753,7 +753,7 @@ class MediaOutputDispatchMixin:
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
             )
             if self._output_work_is_active(context, rebound):
-                context.output_work[rebound.intent_id] = rebound
+                context.output.output_work[rebound.intent_id] = rebound
                 logger.info(
                     "media output carried session=%s intent=%s next_intent=%s fence=%s",
                     next_fence.session_id, work.intent_id, rebound.intent_id, next_fence,
@@ -788,7 +788,7 @@ class MediaOutputDispatchMixin:
         if rebound is None:
             return None
         coordinator.reset_output_intent_state(next_fence.session_id)
-        context.output_work.clear()
+        context.output.output_work.clear()
         coordinator.admit_output_intent(
             rebound.intent,
             current_fence=next_fence,
@@ -797,14 +797,14 @@ class MediaOutputDispatchMixin:
         )
         if not self._output_work_is_current(context, rebound):
             return None
-        context.output_work[rebound.intent_id] = rebound
+        context.output.output_work[rebound.intent_id] = rebound
         self._carry_output_followups(context, pending, next_fence)
-        context.playback.start(next_fence)
-        context.output_sequence = 0
-        context.output_text_offset = 0
-        context.assistant_text = ""
-        context.provider_complete = False
-        context.output_complete_emitted = False
+        context.output.playback.start(next_fence)
+        context.output.output_sequence = 0
+        context.output.output_text_offset = 0
+        context.output.assistant_text = ""
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, next_fence)
@@ -823,7 +823,7 @@ class MediaOutputDispatchMixin:
                 floor_allows_output=context.runtime.output_floor_allows_assistant,
                 reason="generation_start_rejected",
             )
-            context.output_work.pop(rebound.intent_id, None)
+            context.output.output_work.pop(rebound.intent_id, None)
             return None
         return rebound
 
@@ -870,12 +870,12 @@ class MediaOutputDispatchMixin:
 
         if context.identity.client_type != "device":
             return True
-        delivery = context.reply_delivery.get(fence)
+        delivery = context.output.reply_delivery.get(fence)
         if delivery is not None and delivery.first_frame_sent:
             return True
-        if context.playback.rendered_sample_end(fence) > 0:
+        if context.output.playback.rendered_sample_end(fence) > 0:
             return True
-        return bool(context.playback.actual_heard_text(fence))
+        return bool(context.output.playback.actual_heard_text(fence))
 
     async def _emit_cancel_generation(
         self,
@@ -921,7 +921,7 @@ class MediaOutputDispatchMixin:
     ) -> bool:
         """Flush a lower-priority owner before starting the selected source."""
 
-        owner = context.output_owner
+        owner = context.output.output_owner
         if owner is None or not context.runtime.fence.matches(owner.fence):
             return False
         owner_started = self._owner_has_started_playback(context, owner)
@@ -945,7 +945,7 @@ class MediaOutputDispatchMixin:
         old_fence = owner.fence
         pending = self._queued_output_followups(context, work)
         flush_required = self._device_playback_flush_required(context, old_fence)
-        heard = context.playback.actual_heard_text(old_fence)
+        heard = context.output.playback.actual_heard_text(old_fence)
         await self._cancel_reply_task(context, old_fence, reason="preempted")
         if not context.runtime.fence.matches(old_fence) or not self._output_work_is_current(context, work):
             return False
@@ -959,7 +959,7 @@ class MediaOutputDispatchMixin:
             interrupted_from=old_fence,
             synchronized_transcript=heard,
         )
-        context.playback.discard(old_fence)
+        context.output.playback.discard(old_fence)
         if not await self._emit_cancel_generation(
             context,
             cancelled,
@@ -987,7 +987,7 @@ class MediaOutputDispatchMixin:
         if staged is None:
             return False
         coordinator.reset_output_intent_state(cancelled.session_id)
-        context.output_work.clear()
+        context.output.output_work.clear()
         coordinator.admit_output_intent(
             staged.intent,
             current_fence=cancelled,
@@ -996,7 +996,7 @@ class MediaOutputDispatchMixin:
         )
         if not self._output_work_is_current(context, staged):
             return False
-        context.output_work[staged.intent_id] = staged
+        context.output.output_work[staged.intent_id] = staged
         self._carry_output_followups(context, pending, cancelled)
         rebound = await self._promote_auxiliary_output(context, staged)
         if rebound is None:
@@ -1009,7 +1009,7 @@ class MediaOutputDispatchMixin:
         work: _OutputWork,
     ) -> OutputDispatchResult:
         fence = work.fence
-        async with context.reply_lock:
+        async with context.output.reply_lock:
             if context.closed:
                 return OutputDispatchResult(
                     fence,
@@ -1035,11 +1035,11 @@ class MediaOutputDispatchMixin:
                     OutputDispatchStatus.SKIPPED,
                     "output_owner_unavailable",
                 )
-            context.output_complete_emitted = False
+            context.output.output_complete_emitted = False
             task = asyncio.current_task()
             if task is not None:
-                context.reply_task = task
-            chunks = self._output_chunks(context, work, context.playback.renderable_sample_end(fence))
+                context.output.reply_task = task
+            chunks = self._output_chunks(context, work, context.output.playback.renderable_sample_end(fence))
             try:
                 deadline = asyncio.timeout(self.output_generation_timeout_s)
                 try:
@@ -1069,10 +1069,10 @@ class MediaOutputDispatchMixin:
                         "output_timeout",
                     )
             finally:
-                if context.reply_task is task:
-                    context.reply_task = None
-                if context.output_dispatch_task is task:
-                    context.output_dispatch_task = None
+                if context.output.reply_task is task:
+                    context.output.reply_task = None
+                if context.output.output_dispatch_task is task:
+                    context.output.output_dispatch_task = None
 
     async def _abort_output_timeout(
         self,
@@ -1112,15 +1112,15 @@ class MediaOutputDispatchMixin:
             fence,
             reason="output_timeout",
         )
-        context.playback.discard(fence)
-        context.assistant_text = ""
-        context.output_sequence = 0
-        context.output_text_offset = 0
-        context.provider_complete = False
-        context.output_complete_emitted = False
-        for intent_id, pending in tuple(context.output_work.items()):
+        context.output.playback.discard(fence)
+        context.output.assistant_text = ""
+        context.output.output_sequence = 0
+        context.output.output_text_offset = 0
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
+        for intent_id, pending in tuple(context.output.output_work.items()):
             if pending.fence.matches(fence):
-                context.output_work.pop(intent_id, None)
+                context.output.output_work.pop(intent_id, None)
         context.runtime.orchestrator.delegation.reset_output_intent_state(
             fence.session_id
         )

@@ -112,7 +112,7 @@ fail_under = 85
 show_missing = true
 
 [tool.memoria.module-budgets]
-"services/agent/src/duplex_runtime.py" = 3003
+"services/agent/src/duplex_runtime.py" = 2868
 "services/agent/src/agent.py" = 2097
 "services/agent/src/orchestration/conversation_projection.py" = 1067
 "services/control_api/app/routes/archive.py" = 3072
@@ -130,7 +130,7 @@ show_missing = true
 "services/memory_scope/shared_actions.py" = 2007
 "services/agent/src/voice_core/grpc_bridge.py" = 1563
 "services/control_api/app/config.py" = 1000
-"services/agent/src/voice_core/media_session_turns.py" = 1858
+"services/agent/src/voice_core/media_session_turns.py" = 1809
 "services/device_fleet/bootstrap_store.py" = 1828
 "services/memory_scope/service.py" = 1813
 "services/control_api/app/routes/session.py" = 1365

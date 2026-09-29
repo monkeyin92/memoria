@@ -325,7 +325,7 @@ class MediaSessionLifecycleMixin:
             # its absolute speech watchdog fire against the replacement
             # transport while the old provider task is being rotated.
             self._cancel_max_user_speech_watchdog(current)
-            current.admitted_input_stream_epoch = None
+            current.pending.admitted_input_stream_epoch = None
             await self._cancel_audio_pump(current)
             async with current.ingress.finalize_lock:
                 async with current.turn_commit_lock:
@@ -480,16 +480,17 @@ class MediaSessionLifecycleMixin:
                         fence
                     ):
                         return None
-                    existing = current.delegation_output_claims.get(fence)
+                    existing = current.output.delegation_output_claims.get(fence)
                     if existing is not None:
                         return None
-                    for old_fence, old_claim in tuple(current.delegation_output_claims.items()):
+                    claims = current.output.delegation_output_claims
+                    for old_fence, old_claim in tuple(claims.items()):
                         if old_fence.matches(fence):
                             continue
                         old_claim.release()
-                        current.delegation_output_claims.pop(old_fence, None)
+                        current.output.delegation_output_claims.pop(old_fence, None)
                     claim = DelegationOutputClaim(fence)
-                    current.delegation_output_claims[fence] = claim
+                    current.output.delegation_output_claims[fence] = claim
                     return self._run_media_delegation(
                         current,
                         text=text,
@@ -510,8 +511,10 @@ class MediaSessionLifecycleMixin:
 
                 if current.closed:
                     return
-                owner = current.output_owner
-                old_fence = owner.fence if owner is not None else current.playback.current_fence
+                owner = current.output.output_owner
+                old_fence = (
+                    owner.fence if owner is not None else current.output.playback.current_fence
+                )
                 if old_fence is None:
                     return
 
@@ -538,8 +541,8 @@ class MediaSessionLifecycleMixin:
                     interrupted_from=runtime_fence,
                     synchronized_transcript="",
                 )
-                current.playback.discard(old_fence)
-                current.output_work.clear()
+                current.output.playback.discard(old_fence)
+                current.output.output_work.clear()
                 if not await self._emit_cancel_generation(
                     current,
                     cancelled,

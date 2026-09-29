@@ -88,30 +88,30 @@ def _same_turn_fence(left: GenerationFence, right: GenerationFence) -> bool:
 
 
 def _live_lookup_filler_was_heard(context: _MediaVoiceSession, fence: GenerationFence) -> bool:
-    owner = context.output_owner
+    owner = context.output.output_owner
     if owner is not None and int(getattr(owner.intent, "kind", 0)) == int(
         media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
     ):
-        delivery = context.reply_delivery.get(owner.fence)
+        delivery = context.output.reply_delivery.get(owner.fence)
         if delivery is not None and delivery.first_frame_sent:
             return True
-        if context.playback.rendered_sample_end(owner.fence) > 0:
+        if context.output.playback.rendered_sample_end(owner.fence) > 0:
             return True
-        if context.playback.actual_heard_text(owner.fence):
+        if context.output.playback.actual_heard_text(owner.fence):
             return True
-    if LIVE_LOOKUP_FILLER in context.playback.actual_heard_text(fence):
+    if LIVE_LOOKUP_FILLER in context.output.playback.actual_heard_text(fence):
         return True
-    for snapshot in context.reply_delivery.snapshots():
+    for snapshot in context.output.reply_delivery.snapshots():
         if not _same_turn_fence(snapshot.key.fence, fence):
             continue
         if snapshot.first_frame_sent or snapshot.actual_heard:
             return True
-    for result in context.output_results:
+    for result in context.output.output_results:
         if not _same_turn_fence(result.fence, fence):
             continue
         if result.emitted_audio:
             return True
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     return bool(delivery is not None and (delivery.first_frame_sent or delivery.actual_heard))
 
 
@@ -215,10 +215,10 @@ class MediaSessionProjectionMixin:
             if context.closed or context.standby_requested:
                 context.device_wake_ack_pending = False
                 return
-            if context.runtime.fence.turn_id != 0 or context.turn_start_sample is not None:
+            if context.runtime.fence.turn_id != 0 or context.pending.turn_start_sample is not None:
                 context.device_wake_ack_pending = False
                 return
-            if context.output_owner is not None:
+            if context.output.output_owner is not None:
                 context.device_wake_ack_pending = False
                 return
             runtime = context.runtime
@@ -231,7 +231,7 @@ class MediaSessionProjectionMixin:
             if (
                 context.closed
                 or context.runtime.fence.turn_id != 0
-                or context.turn_start_sample is not None
+                or context.pending.turn_start_sample is not None
             ):
                 context.device_wake_ack_pending = False
                 return
@@ -280,9 +280,9 @@ class MediaSessionProjectionMixin:
         )
 
     def _media_output_is_busy(self, context: _MediaVoiceSession) -> bool:
-        task = context.output_dispatch_task
+        task = context.output.output_dispatch_task
         return (
-            context.output_owner is not None
+            context.output.output_owner is not None
             or context.runtime.assistant_speaking
             or (task is not None and not task.done())
         )
@@ -502,7 +502,7 @@ class MediaSessionProjectionMixin:
         effective_endpoint = (
             endpoint_sample
             if endpoint_sample is not None
-            else (context.turn_endpoint_sample or 0)
+            else (context.pending.turn_endpoint_sample or 0)
         )
         if effective_endpoint <= 0:
             return
@@ -547,7 +547,7 @@ class MediaSessionProjectionMixin:
         if context.runtime.assistant_speaking:
             context.pending_missed_hearing_nudge = True
             return
-        if (context.turn_endpoint_sample or 0) <= 0:
+        if (context.pending.turn_endpoint_sample or 0) <= 0:
             return
         if not self._owner_speech_is_established(context):
             return
@@ -595,7 +595,7 @@ class MediaSessionProjectionMixin:
         if not callable(getattr(context.provider, "generate_output", None)):
             return False
         if require_idle_input and (
-            context.turn_start_sample is not None or context.output_owner is not None
+            context.pending.turn_start_sample is not None or context.output.output_owner is not None
         ):
             return False
         runtime = context.runtime
@@ -657,7 +657,7 @@ class MediaSessionProjectionMixin:
         if (
             current_fence.matches(claim.fence)
             or same_turn_generation_allows(current_fence, claim.fence)
-        ) and not owned_delegation_holds_turn(context.delegation_output_claims, claim.fence):
+        ) and not owned_delegation_holds_turn(context.output.delegation_output_claims, claim.fence):
             await context.runtime.finish_owned_delegation_wait(cause=reason)
         if (
             not claim.normal_reply_observed
@@ -1051,7 +1051,7 @@ class MediaSessionProjectionMixin:
             turn_id_hint=context.runtime.fence.turn_id + 1,
             speaker_evidence=self._projection_speaker_evidence(context),
             playback_active=context.runtime.assistant_speaking,
-            fence=context.playback.current_fence or context.runtime.fence,
+            fence=context.output.playback.current_fence or context.runtime.fence,
             aec_verified=aec_verified or None,
             discontinuity=context.ingress.discontinuity_pending or loss_concealed,
         )
@@ -1117,7 +1117,7 @@ class MediaSessionProjectionMixin:
             current is TurnPhase.SEMANTIC_SPEAKING
             and assistant_overlap
         ):
-            candidate = context.playback.current_fence or (
+            candidate = context.output.playback.current_fence or (
                 frame.captured_fence if frame is not None else None
             )
             if (

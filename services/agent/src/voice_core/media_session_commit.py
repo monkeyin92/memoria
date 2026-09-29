@@ -78,7 +78,7 @@ def _preferred_clock_fact_text(
     start_sample: int,
     end_sample: int,
 ) -> str | None:
-    forced = context.clock_fact_forced_text
+    forced = context.pending.clock_fact_forced_text
     if forced and is_clock_fact_query(forced):
         return forced
     candidates = [
@@ -96,7 +96,7 @@ def _preferred_clock_fact_text(
 
 
 def _preferred_live_query_text(context: _MediaVoiceSession) -> str | None:
-    forced = context.live_query_forced_text
+    forced = context.pending.live_query_forced_text
     if forced and context.runtime.live_lookup_needed(forced):
         return forced
     return None
@@ -127,7 +127,7 @@ def _resolve_media_turn_text(
         # An authoritative forced text means the in-range timeline text comes
         # from a blocking interval (e.g. playback echo that overlapped the
         # user final), so length comparison against it is meaningless.
-        if context.live_query_forced_authoritative:
+        if context.pending.live_query_forced_authoritative:
             return preferred_live
         if not text or len(preferred_live.strip()) > len(text.strip()):
             return preferred_live
@@ -334,7 +334,7 @@ class MediaSessionCommitMixin:
         if not context.runtime.ingest_media_speech_segment(segment):
             raise RuntimeError("ASR runtime timeline changed during atomic acceptance")
         if accepted.is_final:
-            context.admitted_input_stream_epoch = accepted.stream_epoch
+            context.pending.admitted_input_stream_epoch = accepted.stream_epoch
             # Recognized speech is admitted owner activity and can arrive
             # before its own VAD; it must be able to invalidate a silence close
             # that already snapshotted a spent budget.
@@ -366,7 +366,7 @@ class MediaSessionCommitMixin:
 
     @staticmethod
     def _asr_precedes_pending_turn(context: _MediaVoiceSession, result: ASRResult) -> bool:
-        floor = context.pending_turn_onset_floor
+        floor = context.pending.pending_turn_onset_floor
         return floor is not None and result.capture_start_sample < floor
 
     async def _recover_rejected_semantic_final(
@@ -422,7 +422,7 @@ class MediaSessionCommitMixin:
             or self._asr_precedes_pending_turn(context, result)
         ):
             return
-        context.admitted_input_stream_epoch = result.stream_epoch
+        context.pending.admitted_input_stream_epoch = result.stream_epoch
         segment = asr_result_to_segment(result, session_id=session_id)
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
@@ -442,7 +442,7 @@ class MediaSessionCommitMixin:
                     context_version=context_version,
                 )
         else:
-            context.clock_fact_forced_text = result.text.strip()
+            context.pending.clock_fact_forced_text = result.text.strip()
         if (
             not self._stream_epoch_is_current(context, result.stream_epoch)
             or self._asr_precedes_pending_turn(context, result)
@@ -563,7 +563,7 @@ class MediaSessionCommitMixin:
             result,
             capture_start_sample=adjusted_start,
         )
-        context.admitted_input_stream_epoch = adjusted.stream_epoch
+        context.pending.admitted_input_stream_epoch = adjusted.stream_epoch
         segment = asr_result_to_segment(adjusted, session_id=session_id)
         if context.runtime.speech_timeline.can_add(segment):
             if context.runtime.ingest_media_speech_segment(segment):
@@ -613,19 +613,19 @@ class MediaSessionCommitMixin:
         if close_needed:
             self._observe_final_asr_result(context, adjusted)
             self._maybe_early_commit_conversation_close(context, adjusted)
-            if context.turn_endpoint_sample is not None:
+            if context.pending.turn_endpoint_sample is not None:
                 self._schedule_turn_commit(context)
             return
-        context.live_query_forced_text = text
+        context.pending.live_query_forced_text = text
         if reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
             # The blocking interval's text (e.g. playback echo) stays on the
             # in-range timeline, so the recovered text must win commit-time
             # resolution unconditionally rather than by length.
-            context.live_query_forced_authoritative = True
+            context.pending.live_query_forced_authoritative = True
         # Forced text is already the authoritative commit text. Always observe
         # turn bounds; re-arm/commit only when no reply is already in flight.
         self._observe_final_asr_result(context, adjusted)
-        if context.live_query_forced_authoritative:
+        if context.pending.live_query_forced_authoritative:
             if self._reply_in_flight(context):
                 logger.warning(
                     "media live-query recovery arm skipped: reply in flight "
@@ -735,7 +735,7 @@ class MediaSessionCommitMixin:
                     "session_closed" if context.standby_requested or context.closed
                     else "stale_stream_epoch"
                 )
-            context.admitted_input_stream_epoch = stream_epoch
+            context.pending.admitted_input_stream_epoch = stream_epoch
             before_commit_fence = context.runtime.fence
             task = asyncio.create_task(
                 self._commit_user_turn_locked(
@@ -789,7 +789,7 @@ class MediaSessionCommitMixin:
 
         if context.closed or context.standby_requested:
             reason = "session_closed"
-        delivery = context.reply_delivery.get(fence)
+        delivery = context.output.reply_delivery.get(fence)
         if delivery is None or not delivery.terminal:
             # Record synchronously before yielding to runtime cleanup; close
             # may race any provider/projection await after a turn was minted.
@@ -1027,7 +1027,9 @@ class MediaSessionCommitMixin:
                         evidence_segment,
                         active_generation_id=max(
                             1,
-                            (context.playback.current_fence or context.runtime.fence).generation_id,
+                            (
+                                context.output.playback.current_fence or context.runtime.fence
+                            ).generation_id,
                         ),
                         duration_ms=elapsed_ms,
                         speaker_class=context.runtime.current_speaker_class,
@@ -1285,15 +1287,15 @@ class MediaSessionCommitMixin:
             fence=fence,
             turn_revision=committed.revision,
         )
-        context.playback.start(fence)
-        context.output_sequence = 0
-        context.output_text_offset = 0
-        context.assistant_text = ""
-        context.provider_complete = False
-        context.output_complete_emitted = False
+        context.output.playback.start(fence)
+        context.output.output_sequence = 0
+        context.output.output_text_offset = 0
+        context.output.assistant_text = ""
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
         context.turn_started_ns = time.monotonic_ns()
-        context.tts_started_ns = None
-        context.first_audio_observed = False
+        context.output.tts_started_ns = None
+        context.output.first_audio_observed = False
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)

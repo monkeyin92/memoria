@@ -150,7 +150,7 @@ async def _drive_partial_failure(
     identity = SessionIdentity(session_id)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     started = asyncio.get_running_loop().time()
     outcome: object
     try:
@@ -191,11 +191,11 @@ def _assert_terminal_after_partial_audio(
     ]
 
     # The delivery ledger must record a failure terminal, never playback.
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.ERROR
     assert delivery.first_frame_sent is True
-    assert context.provider_complete is False
+    assert context.output.provider_complete is False
 
     # The authority returns the floor; the device leaves speaking on the cancel
     # effect above rather than on a fresh assistant_state projection.
@@ -264,7 +264,7 @@ async def test_late_results_cannot_resurrect_a_failed_partial_generation() -> No
     try:
         session = bridge.bridge.open(context.identity)
         authority_fence = context.runtime.fence
-        delivery = context.reply_delivery.get(fence)
+        delivery = context.output.reply_delivery.get(fence)
         assert delivery is not None
         terminal_before = delivery.terminal_event
         cancels_before = len(bridge.effects)
@@ -289,8 +289,8 @@ async def test_late_results_cannot_resurrect_a_failed_partial_generation() -> No
         )
 
         assert context.runtime.fence == authority_fence
-        assert context.reply_delivery.get(fence) is not None
-        assert context.reply_delivery.get(fence).terminal_event is terminal_before
+        assert context.output.reply_delivery.get(fence) is not None
+        assert context.output.reply_delivery.get(fence).terminal_event is terminal_before
         assert len(bridge.effects) == cancels_before
         assert len(bridge.generations) == generations_before
         assert context.runtime.interaction_phase.value == "listening"
