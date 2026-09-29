@@ -2,7 +2,7 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-29 17:05–17:10（CST）整栈发布 `20260929-stop-playback-v1`（tag → `bc1aee1`，main 上 #129 合并提交）：#128 抽取提示词 v3 + #129 播放中语音停止词。每一步单独确认 PASS。**当前 bridge 临时叠加 PCM tap override**（`/opt/memoria/component-releases/asr-ab-tap-20260929/tap.override.yml`，录 ASR A/B 用，录完即恢复）。
+- **最近生产收据**：2026-09-29 17:05–17:10（CST）整栈发布 `20260929-stop-playback-v1`（tag → `bc1aee1`，main 上 #129 合并提交）：#128 抽取提示词 v3 + #129 播放中语音停止词。每一步单独确认 PASS。17:43–17:52 为录 ASR A/B 音频临时给 bridge 叠加 PCM tap override（写 `/data`），录完已按原 compose 重建、服务器副本已删。注意：生产 `/etc/memoria-agent.env` 本来就开着 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频会留在容器内存直到重启。
 - **上一次整栈收据**：2026-09-29 15:35–15:48（CST）`20260929-stop-word-v1`（`0c36a11`），它是本次的回滚目标。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
