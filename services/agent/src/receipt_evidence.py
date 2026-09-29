@@ -10,9 +10,12 @@ values come from the Policy V2 authority (``services.policy.context``
 ``PURPOSE_VALUES``) through the explicit capability->purpose contract below.
 
 Production wiring: until the Control receipt authority is wired, the
-``DefaultDenyReceiptVerifier`` is installed and every sensitive persistence
-decision stays closed.  This is an accepted fail-closed core: persistence is
-NOT end-to-end functional yet (audit 5).
+``DefaultDenyReceiptVerifier`` is installed.  Raw audio retention, training
+contribution and a minor's memory capture therefore stay closed (audit 5).
+An adult's conversation evidence does not wait for this verifier.
+``memory_capture`` is an action-time capability that no signed profile lists,
+so the gate persists that evidence under the profile's own
+``memory_recall_private`` grant (see ``decide_persistence``).
 """
 
 from __future__ import annotations

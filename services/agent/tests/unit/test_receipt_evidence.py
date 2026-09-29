@@ -353,7 +353,7 @@ def test_chat_receipt_never_authorizes_memory_or_raw() -> None:
     )
 
     runtime = DuplexRuntime.create(session_id="ses-receipt-audit", device_id="dev_01J_test")
-    bind_owner_policy(runtime)
+    bind_owner_policy(runtime, memory_recall_grant=False)
     runtime.orchestrator.runtime_profiles.receipt_verifier = FakeReceiptVerifier(
         capabilities=("chat",)
     )
@@ -385,7 +385,7 @@ def test_wrong_device_or_epoch_receipt_is_rejected() -> None:
     )
 
     runtime = DuplexRuntime.create(session_id="ses-receipt-tamper", device_id="dev_01J_test")
-    bind_owner_policy(runtime)
+    bind_owner_policy(runtime, memory_recall_grant=False)
     for tamper in (
         {"device_id": "dev_other"},
         {"session_epoch": 99},
@@ -411,7 +411,7 @@ def test_receipt_not_listed_in_signed_profile_is_rejected() -> None:
     )
 
     runtime = DuplexRuntime.create(session_id="ses-receipt-list", device_id="dev_01J_test")
-    bind_owner_policy(runtime)
+    bind_owner_policy(runtime, memory_recall_grant=False)
     runtime.orchestrator.runtime_profiles.receipt_verifier = FakeReceiptVerifier(
         ("memory_capture",),
         receipt_id_override="not-in-profile",
@@ -430,7 +430,7 @@ def test_expired_receipt_is_rejected() -> None:
     )
 
     runtime = DuplexRuntime.create(session_id="ses-receipt-expiry", device_id="dev_01J_test")
-    bind_owner_policy(runtime)
+    bind_owner_policy(runtime, memory_recall_grant=False)
     runtime.orchestrator.runtime_profiles.receipt_verifier = FakeReceiptVerifier(
         ("memory_capture",),
         expires_at=datetime(2020, 1, 1, tzinfo=UTC),
