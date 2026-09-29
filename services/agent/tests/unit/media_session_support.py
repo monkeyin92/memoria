@@ -147,6 +147,17 @@ class _CapturingMediaBridge(MediaBridgeGrpcServer):
         return True
 
 
+def open_bridge_connection(
+    bridge: MediaBridgeGrpcServer,
+    identity: SessionIdentity,
+    *,
+    traceparent: str = "",
+) -> Any:
+    """Open one transport connection exactly as the gRPC hello handler does."""
+
+    return bridge._open_connection(identity, traceparent=traceparent)
+
+
 async def _seed_pending_media_turn(
     registry: MediaVoiceCoreRegistry,
     identity: SessionIdentity,
@@ -155,7 +166,7 @@ async def _seed_pending_media_turn(
     endpoint_sample: int = 600,
     retire_sample: int = 640,
 ) -> Any:
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     assert await registry.accept_asr_result(
         identity.session_id,
         ASRResult(
@@ -355,7 +366,7 @@ async def _finish_output_owner_playback(
     bridge: _CapturingGenerationBridge,
     session: Any,
 ) -> None:
-    context = registry._sessions[identity.session_id]  # noqa: SLF001
+    context = registry.session_state(identity.session_id)
     owner = context.output_owner
     assert owner is not None
     ack_frame = bridge.frames[-1]
@@ -388,7 +399,7 @@ async def _finish_device_wake_ack_if_any(
     except TimeoutError:
         return
     await asyncio.wait_for(provider.ack_completed.wait(), timeout=1)
-    context = registry._sessions[identity.session_id]  # noqa: SLF001
+    context = registry.session_state(identity.session_id)
     for _ in range(40):
         if context.output_owner is not None or bridge.frames:
             break
@@ -421,7 +432,7 @@ async def _ack_owned_filler_then_wait(
     bridge: _CapturingGenerationBridge,
 ) -> tuple[Any, GenerationFence]:
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
     committed = await context.runtime.on_turn_committed("今天南京天气怎么样")
     await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
@@ -809,7 +820,7 @@ async def _open_device_overlap_session(
     registry.install()
     identity = _device_identity(session_id)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     bind_owner_policy(context.runtime)
     _bind_verified_owner_classifier(context.runtime)
     # Drain the session-start profile rotation before any turn: otherwise the
@@ -967,7 +978,7 @@ async def device_media_session() -> AsyncIterator[Any]:
             task = context.turn_endpoint_task
             if task is not None and not task.done():
                 task.cancel()
-            await window.registry._finalize_session(window.identity.session_id)
+            await window.registry.finalize_session(window.identity.session_id)
         await asyncio.sleep(0)
 
 
@@ -1073,7 +1084,7 @@ async def _start_speaking_reply(
 ) -> tuple[object, GenerationFence]:
     """Drive one VAD+ASR turn and a provider reply, returning its context."""
 
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     async def vad(segment_id: str, sample: int, *, final: bool) -> None:
         await registry.on_speech_segment(

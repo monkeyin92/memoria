@@ -87,7 +87,7 @@ class MediaSessionInputMixin:
         _audio_ingress: MediaAudioIngress
         _sessions: dict[str, _MediaVoiceSession]
 
-        async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
+        async def open_session(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _apply_projection_segment(
             self, context: _MediaVoiceSession, segment: SpeechSegment
@@ -312,14 +312,14 @@ class MediaSessionInputMixin:
         frame: AudioFrame,
     ) -> None:
         # The transport can finish a CLOSED projection before an in-flight
-        # callback unwinds.  Reject at this seam before _get_or_create so a
+        # callback unwinds.  Reject at this seam before open_session so a
         # late frame cannot resurrect a registry/runtime context.
         if not session.accepts_input():
             return
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
             return
-        context = await self._get_or_create(session.identity)
+        context = await self.open_session(session.identity)
         if (
             context.closed
             or context.standby_requested
@@ -339,7 +339,7 @@ class MediaSessionInputMixin:
         current = self._sessions.get(session.identity.session_id)
         if current is not None and (current.closed or current.standby_requested):
             return
-        context = await self._get_or_create(session.identity)
+        context = await self.open_session(session.identity)
         if (
             context.closed
             or context.standby_requested

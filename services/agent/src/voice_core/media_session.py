@@ -128,6 +128,11 @@ class MediaVoiceCoreRegistry(
             else None
         )
 
+    def session_state(self, session_id: str) -> _MediaVoiceSession | None:
+        """Return the registry-owned session state, including closing ones."""
+
+        return self._sessions.get(session_id)
+
 
 __all__ = [
     "MediaTextSpan",

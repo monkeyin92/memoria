@@ -129,7 +129,7 @@ async def test_prepare_retry_exhaustion_discards_once_at_transport_retire_sample
             stream_epoch=identity.stream_epoch,
         ),
     )
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
         metrics=metrics,
     )
     identity = SessionIdentity("conversation-yield-terminal")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     candidate = GenerationFence(identity.session_id, 1, 1, 0)
     unrelated = GenerationFence(identity.session_id, 2, 1, 0)
     context.conversation_yield_candidate_fence = candidate
@@ -172,7 +172,7 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
 
     assert context.conversation_yield_candidate_fence is None
     assert metrics.get("voice_conversation_yield_proxy_total", {"status": "confirmed"}) == 1
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -187,7 +187,7 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
     identity = _device_identity("device-nudge-cooldown")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -205,7 +205,7 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
         registry._nudge_missed_hearing(context)
         assert context.missed_hearing_nudge_count == 1
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -233,7 +233,7 @@ async def test_media_assistant_state_emits_typed_floor_effect() -> None:
     bridge.emit_floor_effect = emit_floor_effect  # type: ignore[attr-defined,method-assign]
     identity = SessionIdentity("typed-floor-session", stream_epoch=1)
     bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     task = context.runtime.publish_assistant_state("user_speaking")
     assert task is not None
@@ -319,7 +319,7 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
         runtime_profile_version=1,
     )
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     fence = GenerationFence(identity.session_id, 1, 1, 0, session_epoch=7)
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")

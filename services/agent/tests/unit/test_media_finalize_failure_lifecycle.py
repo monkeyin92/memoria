@@ -10,7 +10,10 @@ from services.agent.src.orchestration.conversation_projection import ProjectionP
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_state import MediaVoiceSessionState
 from services.agent.src.voice_core.speech_timeline import ASRResult
-from services.agent.tests.unit.media_session_support import _verified_owner_decision
+from services.agent.tests.unit.media_session_support import (
+    _verified_owner_decision,
+    open_bridge_connection,
+)
 from services.agent.tests.unit.test_media_standby_races import (
     _device_registry,
     _expire_owner_timer,
@@ -30,7 +33,7 @@ async def test_finalize_fault_resumes_only_the_remaining_silence_budget(
         "finalize-fault-resumes-budget"
     )
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
 
     async def fail(_identity: SessionIdentity) -> tuple[ASRResult, ...]:
         raise RuntimeError("injected ASR finalization fault")
@@ -72,7 +75,7 @@ async def test_finalize_fault_resumes_only_the_remaining_silence_budget(
         assert context.closed
         assert context.standby_reason == "owner_silence_timeout"
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -83,7 +86,7 @@ async def test_finalize_fault_publication_cannot_clear_a_new_vad(
         "finalize-fault-publication"
     )
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     entered, release = asyncio.Event(), asyncio.Event()
     original = registry._emit_projection_patch
 
@@ -124,7 +127,7 @@ async def test_finalize_fault_publication_cannot_clear_a_new_vad(
         release.set()
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -136,7 +139,7 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
         "late-finalize-fault"
     )
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def fail(_identity: SessionIdentity) -> tuple[ASRResult, ...]:
@@ -157,7 +160,7 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
             await _expire_speech_watchdog(registry, context)
         elif superseded_by == "reconnect":
             new_identity = replace(identity, stream_epoch=identity.stream_epoch + 1)
-            session = registry.bridge._open_connection(new_identity).session
+            session = open_bridge_connection(registry.bridge, new_identity).session
             # The bridge claims the new epoch before registry reuse waits for
             # the provider's finalize lock. Release that old callback first.
         else:
@@ -175,7 +178,7 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
         assert _user_turns(runtime) == []
         if superseded_by == "terminal":
             assert context.closed
-            assert identity.session_id not in registry._sessions
+            assert registry.session_state(identity.session_id) is None
             assert not context.ingress.provider_failed
         else:
             if superseded_by == "reconnect":
@@ -193,7 +196,7 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
         release.set()
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -205,7 +208,7 @@ async def test_finalize_recovery_frame_keeps_a_live_input_or_silence_watch(
         "finalize-recovery-next-frame"
     )
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     entered, release = asyncio.Event(), asyncio.Event()
     recoveries: list[int] = []
     original = registry._emit_projection_patch
@@ -277,4 +280,4 @@ async def test_finalize_recovery_frame_keeps_a_live_input_or_silence_watch(
     finally:
         release.set()
         await asyncio.wait_for(registry._audio_ingress._wait_until_idle(context), 1)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)

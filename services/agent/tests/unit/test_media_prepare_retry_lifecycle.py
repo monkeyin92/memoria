@@ -33,6 +33,7 @@ from services.agent.tests.unit.media_session_support import (
     _owner_silence_identity,
     _seed_pending_media_turn,
     _verified_owner_decision,
+    open_bridge_connection,
 )
 
 _TEXT = "请给我讲一个森林里的故事"
@@ -153,8 +154,8 @@ async def _scenario(
         owner_silence_timeout_s=100, max_user_speech_duration_s=60,
         turn_endpoint_grace_s=0, turn_endpoint_absolute_timeout_s=60,
     )
-    session = bridge._open_connection(identity).session
-    context = await registry._get_or_create(identity)
+    session = open_bridge_connection(bridge, identity).session
+    context = await registry.open_session(identity)
     case = _Scenario(registry, identity, context, provider, bridge, session)
     try:
         # A previously spent budget, not a new budget minted by this failure.
@@ -203,7 +204,7 @@ async def _scenario(
             if task is not None:
                 case.track(task)
         try:
-            await asyncio.wait_for(registry._finalize_session(identity.session_id), 1)
+            await asyncio.wait_for(registry.finalize_session(identity.session_id), 1)
             for task in case.tasks:
                 if not task.done():
                     task.cancel()
@@ -522,7 +523,7 @@ async def test_reconnect_fences_old_retry_result_before_new_input(
             _verify_owner(case)
         assert 0 <= case.context.owner_silence_remaining_s <= _BUDGET
         replacement = replace(case.identity, stream_epoch=case.identity.stream_epoch + 1)
-        new_session = case.bridge._open_connection(replacement).session
+        new_session = open_bridge_connection(case.bridge, replacement).session
         reconnecting = case.track(asyncio.create_task(case.registry.on_session_connected(new_session)))
         await asyncio.wait_for(steps[1].cancelled.wait(), 1)
         assert not reconnecting.done(), "the old prepare still owns turn_commit_lock"
@@ -564,12 +565,12 @@ async def test_terminal_while_reconnect_waits_cannot_install_the_new_epoch(
         prepare = case.context.turn_commit_task
         assert prepare is not None
         identity = replace(case.identity, stream_epoch=case.identity.stream_epoch + 1)
-        session = case.bridge._open_connection(identity).session
+        session = open_bridge_connection(case.bridge, identity).session
         reconnecting = case.track(asyncio.create_task(case.registry.on_session_connected(session)))
         await asyncio.wait_for(steps[1].cancelled.wait(), 1)
         assert not reconnecting.done()
         assert prepare.cancelling() == 1
-        closing = case.track(asyncio.create_task(case.registry._finalize_session(identity.session_id)))
+        closing = case.track(asyncio.create_task(case.registry.finalize_session(identity.session_id)))
         await asyncio.sleep(0)
         assert case.context.standby_requested
         assert not case.context.closed
@@ -671,7 +672,7 @@ async def test_old_tail_callback_cannot_detach_the_replacement_live_timer(
         identity, session = case.identity, case.session
         if replacement_kind == "reconnect":
             identity = replace(identity, stream_epoch=identity.stream_epoch + 1)
-            session = case.bridge._open_connection(identity).session
+            session = open_bridge_connection(case.bridge, identity).session
             replacement = case.track(asyncio.create_task(case.registry.on_session_connected(session)))
             start, endpoint, retire = 0, _ENDPOINT, _RETIRE
         else:
@@ -776,7 +777,7 @@ async def test_due_tail_rechecks_its_owner_after_waiting_for_standby_lock(
                 assert case.context.active_vad_start_sample == 960
             else:
                 identity = replace(case.identity, stream_epoch=case.identity.stream_epoch + 1)
-                session = case.bridge._open_connection(identity).session
+                session = open_bridge_connection(case.bridge, identity).session
                 assert case.context.stream_epoch == case.identity.stream_epoch
                 assert not steps[1].release.is_set()
         finally:
@@ -824,7 +825,7 @@ async def test_reconnect_retires_hung_old_prepare_without_stale_tail_close(
             assert not expiring.done()
             case.clock_patch.undo()
             identity = replace(case.identity, stream_epoch=case.identity.stream_epoch + 1)
-            session = case.bridge._open_connection(identity).session
+            session = open_bridge_connection(case.bridge, identity).session
             reconnecting = case.track(asyncio.create_task(case.registry.on_session_connected(session)))
             await asyncio.sleep(0)
         finally:

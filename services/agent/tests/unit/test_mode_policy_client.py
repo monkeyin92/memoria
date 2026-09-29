@@ -7,6 +7,7 @@ import pytest
 from services.agent.src.mode_policy_client import (
     ModePolicyClient,
     ModePolicyClientConfig,
+    parse_mode_policy,
 )
 
 
@@ -259,20 +260,20 @@ async def test_fetch_freezes_companion_policy_from_the_authoritative_session_res
 
 
 def test_owner_salutation_is_only_available_from_a_valid_companion_policy() -> None:
-    companion = ModePolicyClient._parse(_payload(owner_display_name="主人"))
+    companion = parse_mode_policy(_payload(owner_display_name="主人"))
 
     assert companion.available is True
     assert companion.owner_salutation == "主人"
-    assert not ModePolicyClient._parse(_payload(owner_display_name=True)).available
+    assert not parse_mode_policy(_payload(owner_display_name=True)).available
 
 
 def test_tutor_focus_is_frozen_and_invalid_or_cross_mode_focus_fails_closed() -> None:
-    tutor = ModePolicyClient._parse(_payload(session_focus="tutor_english"))
+    tutor = parse_mode_policy(_payload(session_focus="tutor_english"))
 
     assert tutor.available is True
     assert tutor.session_focus == "tutor_english"
-    assert not ModePolicyClient._parse(_payload(session_focus="unknown")).available
-    assert not ModePolicyClient._parse(
+    assert not parse_mode_policy(_payload(session_focus="unknown")).available
+    assert not parse_mode_policy(
         _payload(interaction_mode="archive", session_focus="tutor_homework")
     ).available
 
@@ -292,7 +293,7 @@ def test_tutor_focus_is_frozen_and_invalid_or_cross_mode_focus_fails_closed() ->
 def test_companion_style_catalog_parity_reaches_the_agent_prompt(
     companion_id: str, question_frequency: str, interview_depth: str
 ) -> None:
-    policy = ModePolicyClient._parse(_payload(companion_style_id=companion_id))
+    policy = parse_mode_policy(_payload(companion_style_id=companion_id))
 
     assert policy.available is True
     assert policy.companion_style is not None
@@ -301,7 +302,7 @@ def test_companion_style_catalog_parity_reaches_the_agent_prompt(
 
 
 def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilities() -> None:
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _payload(
             interaction_mode="self_preview",
             mode_policy_version="s8-v1",
@@ -372,7 +373,7 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
         },
     )
 
-    policy = ModePolicyClient._parse(payload)
+    policy = parse_mode_policy(payload)
 
     assert policy.available is True
     assert dict(policy.references) == {
@@ -405,9 +406,9 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
         "fallback_voice_model": "seed-tts-2.0",
         "fallback_voice_resource_id": "seed-tts-2.0",
     }
-    assert not ModePolicyClient._parse({**payload, "voice_profile_version": None}).available
-    assert not ModePolicyClient._parse({**payload, "voice_resource_id": "seed-tts-2.0"}).available
-    assert not ModePolicyClient._parse(
+    assert not parse_mode_policy({**payload, "voice_profile_version": None}).available
+    assert not parse_mode_policy({**payload, "voice_resource_id": "seed-tts-2.0"}).available
+    assert not parse_mode_policy(
         {**payload, "voice_provider_expires_at": "2026-08-01T08:00:00+08:00"}
     ).available
 
@@ -416,7 +417,7 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
 def test_personal_voice_version_rejects_non_positive_or_non_integer_values(
     invalid_version: object,
 ) -> None:
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _payload(
             interaction_mode="self_preview",
             mode_policy_version="s8-v1",
@@ -503,11 +504,11 @@ def test_self_preview_voice_contract_rejects_partial_or_forged_fields(
     )
     payload[field] = value
 
-    assert not ModePolicyClient._parse(payload).available
+    assert not parse_mode_policy(payload).available
 
 
 def test_self_preview_accepts_all_null_personal_voice_with_complete_fallback() -> None:
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _payload(
             interaction_mode="self_preview",
             mode_policy_version="s8-v1",
@@ -586,7 +587,7 @@ def _legacy_payload(*, voice_allowed: bool = False) -> dict[str, object]:
 
 
 def test_legacy_policy_binds_grantee_actor_without_resource_owner_privileges() -> None:
-    policy = ModePolicyClient._parse(_legacy_payload())
+    policy = parse_mode_policy(_legacy_payload())
 
     assert policy.available
     assert policy.allows_conversation("owner")
@@ -601,7 +602,7 @@ def test_legacy_policy_binds_grantee_actor_without_resource_owner_privileges() -
 
 
 def test_legacy_personal_voice_capability_requires_exact_allowed_snapshot() -> None:
-    policy = ModePolicyClient._parse(_legacy_payload(voice_allowed=True))
+    policy = parse_mode_policy(_legacy_payload(voice_allowed=True))
 
     assert policy.available
     assert policy.allows_voice_profile()
@@ -625,19 +626,19 @@ def test_legacy_policy_rejects_forged_authority_and_voice(
     field: str,
     value: object,
 ) -> None:
-    assert not ModePolicyClient._parse({**_legacy_payload(), field: value}).available
+    assert not parse_mode_policy({**_legacy_payload(), field: value}).available
 
 
 def test_policy_rejects_missing_frozen_fallback_field_even_in_companion_mode() -> None:
     payload = _payload()
     payload.pop("fallback_voice_profile_id")
 
-    assert not ModePolicyClient._parse(payload).available
+    assert not parse_mode_policy(payload).available
 
 
 def test_companion_policy_accepts_a_complete_personal_clone_contract() -> None:
     speaker = "a" * 64
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _payload(
             voice_profile_id="voice-profile-personal",
             voice_profile_version=2,
@@ -660,7 +661,7 @@ def test_companion_policy_accepts_a_complete_personal_clone_contract() -> None:
 
 
 def test_companion_policy_rejects_a_partial_personal_clone_contract() -> None:
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _payload(
             voice_profile_id="voice-profile-personal",
             voice_profile_version=2,
@@ -768,7 +769,7 @@ def _signed_custom_payload(**overrides: object) -> dict[str, object]:
 def test_signed_custom_persona_uses_the_internal_envelope() -> None:
     from services.agent.tests.unit.runtime_profile_test_helpers import TEST_VERIFY_KEY
 
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         _signed_custom_payload(custom_persona=_custom_envelope()),
         TEST_VERIFY_KEY,
     )
@@ -786,11 +787,11 @@ def test_signed_custom_persona_uses_the_internal_envelope() -> None:
 def test_signed_custom_persona_without_a_matching_envelope_fails_closed() -> None:
     from services.agent.tests.unit.runtime_profile_test_helpers import TEST_VERIFY_KEY
 
-    missing = ModePolicyClient._parse(_signed_custom_payload(), TEST_VERIFY_KEY)
+    missing = parse_mode_policy(_signed_custom_payload(), TEST_VERIFY_KEY)
     assert missing.available is False
     assert missing.unavailable_reason == "companion_style_invalid"
 
-    mismatched = ModePolicyClient._parse(
+    mismatched = parse_mode_policy(
         _signed_custom_payload(custom_persona=_custom_envelope() | {"persona_id": "cu_" + "b" * 26}),
         TEST_VERIFY_KEY,
     )
@@ -801,7 +802,7 @@ def test_signed_custom_persona_without_a_matching_envelope_fails_closed() -> Non
 def test_unknown_internal_envelope_key_does_not_trip_the_legacy_parser() -> None:
     """mode_policy_client tolerates the new key: the legacy branch is a SUBSET check."""
 
-    policy = ModePolicyClient._parse(_payload(custom_persona=_custom_envelope()))
+    policy = parse_mode_policy(_payload(custom_persona=_custom_envelope()))
 
     assert policy.available is True
     assert policy.mode == "companion"
@@ -827,7 +828,7 @@ def test_unknown_safe_session_may_tutor_only_with_a_signed_tutor_capability(
         for key, value in _payload().items()
         if key not in {"companion_style_id", "companion_style_version"}
     }
-    policy = ModePolicyClient._parse(
+    policy = parse_mode_policy(
         {
             **envelope,
             "interaction_mode": "unknown_safe",

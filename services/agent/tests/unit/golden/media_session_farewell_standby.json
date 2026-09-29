@@ -1,0 +1,484 @@
+{
+  "core_to_media": [
+    {
+      "accepted": {
+        "interaction_authority": "INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE",
+        "state": "CONVERSATION_STATE_LISTENING"
+      }
+    },
+    {
+      "floor_effect": {
+        "effect_id": "golden-farewell:1:floor:1:0",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "1",
+        "floor_state": "FLOOR_STATE_SILENCE",
+        "source_event_id": "media_session_ready"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:1",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 1,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 1,
+            "provisional_id": "golden-farewell:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": ""
+          },
+          "protocol": "media-v1",
+          "sequence": 1,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.started",
+          "v": 1
+        },
+        "sequence": "1",
+        "type": "turn.provisional.started"
+      }
+    },
+    {
+      "floor_effect": {
+        "effect_id": "golden-farewell:1:floor:2:2",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "2",
+        "floor_state": "FLOOR_STATE_USER_HOLDS_FLOOR",
+        "sequence": "2",
+        "source_event_id": "assistant_state:user_speaking"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:3",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "vad_start",
+              "from": "connecting",
+              "to": "user_speaking"
+            },
+            "device_id": null,
+            "event_sequence": 1,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 3,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "3",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:4",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 2,
+            "generation_id": 0,
+            "phase": "user_speaking",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "state": "user_speaking",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 4,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "4",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:5",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 3,
+            "generation_id": 0,
+            "name": "interaction_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 5,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "5",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:6",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 4,
+            "generation_id": 0,
+            "name": "interaction_fast_model_warmup",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 6,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "6",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "transcript": {
+        "capture_end_sample": "8000",
+        "confidence": 0.99,
+        "final": true,
+        "revision": "1",
+        "sequence": "7",
+        "text": "好的，再见"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:8",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 2,
+            "provisional_id": "golden-farewell:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "好的，再见"
+          },
+          "protocol": "media-v1",
+          "sequence": 8,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "8",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:9",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 5,
+            "generation_id": 0,
+            "name": "last_user_audio",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 9,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "9",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:10",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 3,
+            "provisional_id": "golden-farewell:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "authority_unconfigured",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "好的，再见"
+          },
+          "protocol": "media-v1",
+          "sequence": 10,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "10",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:11",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "floor_state": "silence",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 4,
+            "provisional_id": "golden-farewell:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "conversation_end_explicit",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "authority_unconfigured",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "好的，再见"
+          },
+          "protocol": "media-v1",
+          "sequence": 11,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.discarded",
+          "v": 1
+        },
+        "sequence": "11",
+        "type": "turn.provisional.discarded"
+      }
+    },
+    {
+      "state": {
+        "reason": "conversation_end_explicit",
+        "sequence": "12",
+        "state": "CONVERSATION_STATE_CLOSED"
+      }
+    },
+    {
+      "client": {
+        "json": {
+          "context_version": 0,
+          "event_id": "golden-farewell:1:13",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "intent": "end_session",
+              "reason": "conversation_end_explicit",
+              "text_len": 5
+            },
+            "device_id": null,
+            "event_sequence": 6,
+            "generation_id": 0,
+            "name": "conversation_end_turn_suppressed",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-farewell",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 13,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-farewell",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "13",
+        "type": "audio_trace"
+      }
+    }
+  ],
+  "interaction_phases": [
+    {
+      "cause": "vad_start",
+      "from": "connecting",
+      "to": "user_speaking"
+    }
+  ],
+  "reply_delivery": [],
+  "state_history": [
+    {
+      "cause": "",
+      "event": "session_end",
+      "from": "connecting",
+      "generation_id": 0,
+      "to": "closed",
+      "tool_epoch": 0,
+      "turn_id": 0
+    }
+  ]
+}

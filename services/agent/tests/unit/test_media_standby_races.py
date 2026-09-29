@@ -34,6 +34,7 @@ from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _owner_silence_identity,
     _verified_owner_decision,
+    open_bridge_connection,
 )
 
 
@@ -74,7 +75,7 @@ async def test_admitted_final_is_protected_before_projection_finishes(monkeypatc
         bridge=MediaBridgeGrpcServer(), provider_factory=lambda _: FakeMediaProvider(),
         owner_silence_timeout_s=100,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     entered, release = asyncio.Event(), asyncio.Event()
     original = registry._apply_projection_segment
 
@@ -101,7 +102,7 @@ async def test_admitted_final_is_protected_before_projection_finishes(monkeypatc
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 async def _blocked_commit() -> tuple[Any, ...]:
@@ -127,7 +128,7 @@ async def _blocked_commit() -> tuple[Any, ...]:
         session_factory=lambda _: MediaSessionResources(runtime, provider),
         owner_silence_timeout_s=100,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     segment = asr_result_to_segment(_final(identity), session_id=identity.session_id)
     assert runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
@@ -155,7 +156,7 @@ async def test_inflight_prepare_gets_one_bounded_grace_then_finishes() -> None:
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
 # ------------------------------------------------------------------ regressions
 # The cases below pin the boundaries a terminal close can cross: the tracked
@@ -194,7 +195,7 @@ async def _device_registry(session_id: str) -> tuple[Any, ...]:
         session_factory=lambda _: MediaSessionResources(runtime, provider),
         owner_silence_timeout_s=100,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     return registry, context, provider, runtime, identity
 
 
@@ -207,7 +208,7 @@ async def _ingest_accepted_final(
 ) -> Any:
     """Put one accepted final on the timeline, as the ingest seam does."""
 
-    context = registry._sessions[identity.session_id]
+    context = registry.session_state(identity.session_id)
     segment = asr_result_to_segment(_final_at(identity, text), session_id=identity.session_id)
     assert runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
@@ -248,7 +249,7 @@ async def test_accepted_vad_retracts_processing_grace_without_refreshing_budget(
 ) -> None:
     registry, context, _, _, identity = await _device_registry("vad-retracts-grace")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         if asr_opened_turn:
             assert await registry.accept_asr_result(identity.session_id, _final(identity))
@@ -276,14 +277,14 @@ async def test_accepted_vad_retracts_processing_grace_without_refreshing_budget(
         if grace_task is not None:
             await asyncio.wait_for(grace_task, 1)
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
 async def test_accepted_vad_is_protected_before_projection_await(monkeypatch: Any) -> None:
     registry, context, _, _, identity = await _device_registry("vad-before-projection")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     context.admitted_input_stream_epoch = identity.stream_epoch
     await _expire_owner_timer(registry, context)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -308,7 +309,7 @@ async def test_accepted_vad_is_protected_before_projection_await(monkeypatch: An
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -319,7 +320,7 @@ async def test_accepted_vad_only_invalidates_parked_close_with_a_live_watchdog(
 ) -> None:
     registry, context, _, _, identity = await _device_registry("vad-close-lock-race")
     registry.max_user_speech_duration_s = watchdog_duration
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     if with_grace:
         context.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
@@ -356,13 +357,13 @@ async def test_accepted_vad_only_invalidates_parked_close_with_a_live_watchdog(
     finally:
         if timeout is not None:
             await asyncio.gather(timeout, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
 async def test_disabled_watchdog_keeps_processing_grace_bounded() -> None:
     registry, context, _, _, identity = await _device_registry("vad-watchdog-disabled")
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         context.admitted_input_stream_epoch = identity.stream_epoch
         await _expire_owner_timer(registry, context)
@@ -374,7 +375,7 @@ async def test_disabled_watchdog_keeps_processing_grace_bounded() -> None:
         assert context.standby_reason == "owner_silence_timeout"
         assert context.closed
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -385,7 +386,7 @@ async def test_disabled_watchdog_keeps_processing_grace_bounded() -> None:
 async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: str) -> None:
     registry, context, _, runtime, identity = await _device_registry(f"vad-reject-{rejection}")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     context.admitted_input_stream_epoch = identity.stream_epoch
     await _expire_owner_timer(registry, context)
     deadline = context.owner_silence_grace_deadline
@@ -425,7 +426,7 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
             await _expire_owner_timer(registry, context)
             assert context.closed
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -433,7 +434,7 @@ async def test_rejected_vad_cannot_retract_grace(monkeypatch: Any, rejection: st
 async def test_active_vad_cannot_veto_authoritative_close(terminal_reason: str) -> None:
     registry, context, _, _, identity = await _device_registry(f"vad-close-{terminal_reason}")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         await registry.on_speech_segment(session, _vad(identity))
         if terminal_reason == "watchdog":
@@ -446,7 +447,7 @@ async def test_active_vad_cannot_veto_authoritative_close(terminal_reason: str) 
         assert context.active_vad_stream_epoch is None
         assert context.active_vad_start_sample is None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -457,7 +458,7 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
 ) -> None:
     registry, context, provider, runtime, identity = await _device_registry("vad-end-handoff")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def finalize(_identity: SessionIdentity) -> tuple[ASRResult, ...]:
@@ -499,7 +500,7 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
         assert context.max_user_speech_task is None
         if expires:
             # A late provider return cannot resurrect the expired utterance.
-            assert identity.session_id not in registry._sessions
+            assert registry.session_state(identity.session_id) is None
             assert context.turn_endpoint_sample is None
             assert context.turn_endpoint_task is None
             assert _user_turns(runtime) == []
@@ -511,7 +512,7 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
         release.set()
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -519,7 +520,7 @@ async def test_vad_finalization_keeps_absolute_watchdog_until_endpoint_handoff(
 async def test_pinned_vad_end_keeps_the_existing_watchdog(pin: str) -> None:
     registry, context, _, _, identity = await _device_registry(f"vad-end-pin-{pin}")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         await registry.on_speech_segment(session, _vad(identity))
         watchdog = context.max_user_speech_task
@@ -536,7 +537,7 @@ async def test_pinned_vad_end_keeps_the_existing_watchdog(pin: str) -> None:
         await _expire_speech_watchdog(registry, context)
         assert context.closed
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -544,7 +545,7 @@ async def test_pinned_vad_end_keeps_the_existing_watchdog(pin: str) -> None:
 async def test_older_vad_end_cannot_stop_newer_speech(monkeypatch: Any, wait_stage: str) -> None:
     registry, context, _, _, identity = await _device_registry("vad-end-late")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     entered, release = asyncio.Event(), asyncio.Event()
     original = registry._apply_projection_segment
 
@@ -581,7 +582,7 @@ async def test_older_vad_end_cannot_stop_newer_speech(monkeypatch: Any, wait_sta
         release.set()
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -589,7 +590,7 @@ async def test_older_vad_end_cannot_stop_newer_speech(monkeypatch: Any, wait_sta
 async def test_turn_cleanup_releases_active_vad_without_resetting_revision(cleanup: str) -> None:
     registry, context, _, _, identity = await _device_registry(f"vad-cleanup-{cleanup}")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         await registry.on_speech_segment(session, _vad(identity))
         revision = context.owner_silence_activity_revision
@@ -609,14 +610,14 @@ async def test_turn_cleanup_releases_active_vad_without_resetting_revision(clean
         registry._sync_owner_silence_phase(context, "listening")
         assert context.owner_silence_task is not None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
 async def test_vad_without_grace_preserves_the_unspent_silence_budget() -> None:
     registry, context, _, _, identity = await _device_registry("vad-unspent-budget")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         registry._cancel_owner_silence_timer(context, preserve_remaining=False)
         context.owner_silence_remaining_s = 7.5
@@ -637,7 +638,7 @@ async def test_vad_without_grace_preserves_the_unspent_silence_budget() -> None:
         registry._finish_owner_silence_turn(context, accepted=True)
         assert context.owner_silence_remaining_s == registry.owner_silence_timeout_s
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -719,7 +720,7 @@ async def test_close_while_reply_scheduling_is_blocked_never_starts_the_reply(
         await asyncio.gather(commit, return_exceptions=True)
         if standby is not None:
             await asyncio.gather(standby, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
     assert dispatched == [], "a reply was scheduled after the terminal close"
     assert replies == [], "provider generation started after the terminal close"
@@ -771,7 +772,7 @@ async def test_close_during_generation_start_records_a_terminal_minted_fence(
     finally:
         release_generation.set()
         await asyncio.gather(commit, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
     assert outcome == "session_closed"
     assert _user_turns(runtime) == ["请给我讲一个故事"]
@@ -793,21 +794,21 @@ async def test_close_during_generation_start_records_a_terminal_minted_fence(
 
 @pytest.mark.asyncio
 async def test_generic_finalize_closes_the_gate_while_prepare_is_pending() -> None:
-    """_finalize_session must not wait behind a pending provider prepare."""
+    """finalize_session must not wait behind a pending provider prepare."""
 
     registry, context, task, release, cancelled = await _blocked_commit()
     finalized = False
     outcome: Any = None
     try:
         try:
-            await asyncio.wait_for(registry._finalize_session(context.identity.session_id), 1)
+            await asyncio.wait_for(registry.finalize_session(context.identity.session_id), 1)
             finalized = True
         except TimeoutError:
             finalized = False
         release.set()
         outcome = (await asyncio.gather(task, return_exceptions=True))[0]
         assert finalized, (
-            "_finalize_session waited for the pending provider prepare instead of "
+            "finalize_session waited for the pending provider prepare instead of "
             "cancelling it; the close gate has to be set synchronously"
         )
         assert cancelled.is_set(), "the pending provider prepare was never cancelled"
@@ -817,7 +818,7 @@ async def test_generic_finalize_closes_the_gate_while_prepare_is_pending() -> No
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -863,7 +864,7 @@ async def test_reply_cancellation_drain_is_bounded_when_old_task_absorbs_cancel(
         await asyncio.wait_for(cleaned.wait(), 1)
         await asyncio.gather(old_reply, return_exceptions=True)
         context.reply_task = None
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -906,7 +907,7 @@ async def test_stale_epoch_final_is_refused_before_admission_and_recovery(
         identity.session_id, _final_at(identity, "请给我讲一个故事")
     )
     assert context.admitted_input_stream_epoch == context.stream_epoch
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -938,7 +939,7 @@ async def test_repeated_final_and_phase_churn_cannot_extend_the_single_grace() -
     await _expire_owner_timer(registry, context)
     assert context.standby_requested
     assert context.standby_reason == "owner_silence_timeout"
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -977,7 +978,7 @@ async def test_grace_expiry_closes_while_projection_is_pending(monkeypatch: Any)
     finally:
         release_projection.set()
         await asyncio.gather(accepted, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
     assert _user_turns(runtime) == [], "a late projection committed a closed conversation"
 
@@ -1002,7 +1003,7 @@ async def test_explicit_conversation_end_stands_by_without_lockup() -> None:
     assert context.standby_requested
     assert context.standby_reason == "conversation_end_explicit"
     assert context.closed
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1043,7 +1044,7 @@ async def test_post_playback_budget_after_a_spent_grace_is_refilled_for_an_accep
     registry._sync_owner_silence_phase(context, "listening")
     assert context.owner_silence_task is not None
     assert not context.standby_requested
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 
@@ -1066,7 +1067,7 @@ async def test_close_cancels_prepare_before_any_new_turn(reason: str) -> None:
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1083,7 +1084,7 @@ async def test_grace_expiry_cancels_prepare_without_waiting_for_provider() -> No
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
-        await registry._finalize_session(context.identity.session_id)
+        await registry.finalize_session(context.identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1130,8 +1131,8 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
         session_factory=lambda _: MediaSessionResources(runtime, provider),
         owner_silence_timeout_s=100,
     )
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
-    context = await registry._get_or_create(identity)
+    connection = open_bridge_connection(bridge, identity)
+    context = await registry.open_session(identity)
 
     accepted: list[int] = []
     real_emit = bridge.emit_pcm_when_connected
@@ -1201,7 +1202,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
         assert pulled == [0]
         assert not context.closed
         assert not context.standby_requested
-        finalize = asyncio.create_task(registry._finalize_session(identity.session_id))
+        finalize = asyncio.create_task(registry.finalize_session(identity.session_id))
         await asyncio.wait_for(close_reached_cancel.wait(), 1)
         # The terminal state is already installed while the stream is still
         # inside the emit its transport accepted.
@@ -1217,7 +1218,7 @@ async def test_finalize_that_lands_inside_an_inflight_pcm_emit_aborts_the_stream
         await asyncio.gather(reply, return_exceptions=True)
         if finalize is not None:
             await asyncio.gather(finalize, return_exceptions=True)
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
     assert result.status is OutputDispatchStatus.ABORTED
     assert result.reason == "session_closed"
@@ -1251,7 +1252,7 @@ async def test_active_vad_with_armed_watchdog_supersedes_owner_silence_grace() -
         owner_silence_timeout_s=10,
         max_user_speech_duration_s=60,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     try:
         # Simulate silence budget dropping to 0 and grace starting
         context.owner_silence_grace_used = True
@@ -1269,7 +1270,7 @@ async def test_active_vad_with_armed_watchdog_supersedes_owner_silence_grace() -
         assert not context.standby_requested
         assert context.owner_silence_grace_deadline is None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1285,7 +1286,7 @@ async def test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace() ->
 
     registry, context, _, _, identity = await _device_registry("spent-budget-semantics")
     registry.max_user_speech_duration_s = 60
-    session = registry.bridge._open_connection(identity).session
+    session = open_bridge_connection(registry.bridge, identity).session
     try:
         # A recognized result is pending, so the spent budget moves to grace.
         context.admitted_input_stream_epoch = identity.stream_epoch
@@ -1304,7 +1305,7 @@ async def test_spent_budget_stays_spent_after_a_late_vad_retracts_the_grace() ->
         assert context.owner_silence_remaining_s == 0.0
         assert context.owner_silence_remaining_s is not None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1343,7 +1344,7 @@ async def test_accepted_final_can_veto_a_parked_grace_close(monkeypatch: Any) ->
         assert not context.standby_requested
         assert not context.closed
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1380,7 +1381,7 @@ async def test_accepted_final_cannot_hold_an_unbounded_session_open(
         assert context.standby_requested
         assert context.standby_reason == "owner_silence_timeout"
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -1412,4 +1413,4 @@ async def test_ending_a_measured_budget_records_it_as_spent_not_unmeasured() -> 
             context.owner_silence_deadline - asyncio.get_running_loop().time()
         ) < 0.5
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)

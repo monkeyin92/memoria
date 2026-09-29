@@ -31,7 +31,7 @@ class MediaSessionStandbyMixin:
         max_user_speech_duration_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
-        async def _finalize_session(self, session_id: str) -> None: ...
+        async def finalize_session(self, session_id: str) -> None: ...
 
         def _stream_epoch_is_current(
             self, context: _MediaVoiceSession, stream_epoch: int
@@ -466,7 +466,7 @@ class MediaSessionStandbyMixin:
         # The typed CLOSED event is already queued. Resource teardown can now
         # revoke reply tasks and the bridge session without losing the event
         # held by the transport's independent priority queue.
-        await self._finalize_session(context.identity.session_id)
+        await self.finalize_session(context.identity.session_id)
         return emitted
 
 

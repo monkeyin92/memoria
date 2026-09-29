@@ -1,0 +1,2249 @@
+{
+  "core_to_media": [
+    {
+      "accepted": {
+        "interaction_authority": "INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE",
+        "state": "CONVERSATION_STATE_LISTENING"
+      }
+    },
+    {
+      "floor_effect": {
+        "context_version": "2",
+        "effect_id": "golden-barge-in:1:floor:2:0",
+        "expires_at_ms": "<time>",
+        "floor_epoch": "2",
+        "floor_state": "FLOOR_STATE_USER_HOLDS_FLOOR",
+        "source_event_id": "assistant_state:user_speaking"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:1",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "vad_start",
+              "from": "connecting",
+              "to": "user_speaking"
+            },
+            "device_id": null,
+            "event_sequence": 1,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 1,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "1",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:2",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 2,
+            "generation_id": 0,
+            "phase": "user_speaking",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "user_speaking",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 2,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "2",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "1",
+        "json": {
+          "context_version": 1,
+          "event_id": "golden-barge-in:1:3",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 1,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 1,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": ""
+          },
+          "protocol": "media-v1",
+          "sequence": 3,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.started",
+          "v": 1
+        },
+        "sequence": "3",
+        "type": "turn.provisional.started"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:4",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 3,
+            "generation_id": 0,
+            "name": "interaction_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 4,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "4",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:5",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 4,
+            "generation_id": 0,
+            "name": "interaction_fast_model_warmup",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 5,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "5",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "transcript": {
+        "capture_end_sample": "8000",
+        "confidence": 0.99,
+        "context_version": "2",
+        "final": true,
+        "revision": "1",
+        "sequence": "6",
+        "text": "你好"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:7",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 2,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 7,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "7",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:8",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 0,
+            "floor_state": "uncertain",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 3,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 8,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "8",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:9",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 4,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 9,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "9",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:10",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 5,
+            "generation_id": 0,
+            "name": "last_user_audio",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 10,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "10",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_START",
+        "context_version": "3",
+        "generation_id": "1",
+        "reason": "user_turn_committed",
+        "sequence": "11",
+        "session_epoch": "1",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:12",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 8000,
+            "capture_start_sample": 0,
+            "context_version": 3,
+            "final": true,
+            "history_eligible": true,
+            "persist_as_turn": true,
+            "projection_revision": 6,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": true,
+              "reason_code": "owner_match",
+              "speaker_class": "owner"
+            },
+            "stream_epoch": 1,
+            "text": "你好",
+            "turn_revision": 6
+          },
+          "protocol": "media-v1",
+          "sequence": 12,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.committed",
+          "v": 1
+        },
+        "sequence": "12",
+        "turn_id": "1",
+        "type": "turn.committed"
+      }
+    },
+    {
+      "client": {
+        "context_version": "2",
+        "json": {
+          "context_version": 2,
+          "event_id": "golden-barge-in:1:13",
+          "generation_id": 0,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 0,
+            "floor_state": "user_holds_floor",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 5,
+            "provisional_id": "golden-barge-in:1:1:1",
+            "provisional_turn_id": 1,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": true,
+              "reason_code": "owner_match",
+              "speaker_class": "owner"
+            },
+            "stream_epoch": 1,
+            "text": "你好"
+          },
+          "protocol": "media-v1",
+          "sequence": 13,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "13",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:14",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 6,
+            "evidence": [
+              "fallback:neutral"
+            ],
+            "expires_after_ms": 30000,
+            "generation_id": 1,
+            "label": "neutral",
+            "persist": false,
+            "provider_confidence": null,
+            "provider_label": "neutral",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 14,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "emotion_observation",
+          "v": 1
+        },
+        "sequence": "14",
+        "turn_id": "1",
+        "type": "emotion_observation"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:15",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "turn_committed",
+              "from": "user_speaking",
+              "to": "thinking_silent"
+            },
+            "device_id": null,
+            "event_sequence": 7,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 15,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "15",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:16",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 8,
+            "generation_id": 1,
+            "phase": "thinking_silent",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "thinking_silent",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 16,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "16",
+        "turn_id": "1",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:17",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 9,
+            "generation_id": 0,
+            "name": "turn_committed",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 17,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "17",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:18",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 10,
+            "generation_id": 0,
+            "name": "interaction_context_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 18,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "18",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:19",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 11,
+            "final": true,
+            "generation_id": 1,
+            "history_eligible": true,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "speaker": "user",
+            "subject_revision": 1,
+            "text": "你好",
+            "tool_epoch": 0,
+            "turn_id": 1,
+            "turn_revision": 6
+          },
+          "protocol": "media-v1",
+          "sequence": 19,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "19",
+        "turn_id": "1",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_COMPLETE",
+        "context_version": "3",
+        "generation_id": "1",
+        "reason": "provider_reply_complete",
+        "sequence": "20",
+        "session_epoch": "1",
+        "turn_id": "1"
+      }
+    },
+    {
+      "audio": {
+        "context_version": "3",
+        "final_frame": true,
+        "first_frame": true,
+        "frame_samples": 160,
+        "generation_id": "1",
+        "pcm_s16le": "AgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwA=",
+        "session_epoch": "1",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:21",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "assistant_speaking",
+              "from": "thinking_silent",
+              "to": "speaking"
+            },
+            "device_id": null,
+            "event_sequence": 13,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 21,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "21",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:22",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 14,
+            "generation_id": 1,
+            "phase": "speaking",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "speaking",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 22,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "22",
+        "turn_id": "1",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:23",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 15,
+            "expression": "neutral",
+            "generation_id": 1,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 23,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "assistant_expression",
+          "v": 1
+        },
+        "sequence": "23",
+        "turn_id": "1",
+        "type": "assistant_expression"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:24",
+          "generation_id": 1,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 16,
+            "final": false,
+            "generation_id": 1,
+            "history_eligible": false,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "speaker": "assistant",
+            "subject_revision": 1,
+            "text": "你好。",
+            "text_delivered": true,
+            "tool_epoch": 0,
+            "turn_id": 1,
+            "turn_revision": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 24,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "24",
+        "turn_id": "1",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:25",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 8001,
+            "capture_start_sample": 8000,
+            "floor_state": "overlap",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 7,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "provisional_turn_id": 2,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": ""
+          },
+          "protocol": "media-v1",
+          "sequence": 25,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.provisional.started",
+          "v": 1
+        },
+        "sequence": "25",
+        "turn_id": "1",
+        "type": "turn.provisional.started"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:26",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 18,
+            "generation_id": 0,
+            "name": "interaction_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 26,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "26",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:27",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 19,
+            "generation_id": 0,
+            "name": "interaction_fast_model_warmup",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 27,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "27",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "transcript": {
+        "capture_end_sample": "16000",
+        "capture_start_sample": "8000",
+        "confidence": 0.99,
+        "context_version": "3",
+        "final": true,
+        "generation_id": "1",
+        "revision": "1",
+        "sequence": "28",
+        "text": "给我讲个故事吧",
+        "turn_id": "1"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:29",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 16000,
+            "capture_start_sample": 8000,
+            "floor_state": "overlap",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 8,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "provisional_turn_id": 2,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "给我讲个故事吧"
+          },
+          "protocol": "media-v1",
+          "sequence": 29,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "29",
+        "turn_id": "1",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:30",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 16001,
+            "capture_start_sample": 8000,
+            "floor_state": "uncertain",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 9,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "provisional_turn_id": 2,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "给我讲个故事吧"
+          },
+          "protocol": "media-v1",
+          "sequence": 30,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "30",
+        "turn_id": "1",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:31",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 16001,
+            "capture_start_sample": 8000,
+            "floor_state": "uncertain",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 11,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "provisional_turn_id": 2,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": false,
+              "reason_code": "classification_pending",
+              "speaker_class": "uncertain"
+            },
+            "stream_epoch": 1,
+            "text": "给我讲个故事吧"
+          },
+          "protocol": "media-v1",
+          "sequence": 31,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "31",
+        "turn_id": "1",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:32",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 20,
+            "generation_id": 0,
+            "name": "last_user_audio",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 32,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "32",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_START",
+        "context_version": "3",
+        "generation_id": "2",
+        "reason": "user_turn_committed",
+        "sequence": "33",
+        "session_epoch": "1",
+        "turn_id": "2"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:34",
+          "generation_id": 2,
+          "payload": {
+            "capture_end_sample": 16000,
+            "capture_start_sample": 8000,
+            "context_version": 3,
+            "final": true,
+            "history_eligible": true,
+            "persist_as_turn": true,
+            "projection_revision": 14,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": true,
+              "reason_code": "owner_match",
+              "speaker_class": "owner"
+            },
+            "stream_epoch": 1,
+            "text": "给我讲个故事吧",
+            "turn_revision": 14
+          },
+          "protocol": "media-v1",
+          "sequence": 34,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "turn.committed",
+          "v": 1
+        },
+        "sequence": "34",
+        "turn_id": "2",
+        "type": "turn.committed"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "1",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:35",
+          "generation_id": 1,
+          "payload": {
+            "capture_end_sample": 16001,
+            "capture_start_sample": 8000,
+            "floor_state": "uncertain",
+            "history_eligible": false,
+            "persist_as_turn": false,
+            "projection_revision": 13,
+            "provisional_id": "golden-barge-in:1:2:7",
+            "provisional_turn_id": 2,
+            "reason": "",
+            "speaker": "user",
+            "speaker_evidence": {
+              "authority_verified": true,
+              "reason_code": "owner_match",
+              "speaker_class": "owner"
+            },
+            "stream_epoch": 1,
+            "text": "给我讲个故事吧"
+          },
+          "protocol": "media-v1",
+          "sequence": 35,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 1,
+          "type": "turn.provisional.patch",
+          "v": 1
+        },
+        "sequence": "35",
+        "turn_id": "1",
+        "type": "turn.provisional.patch"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:36",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 22,
+            "evidence": [
+              "fallback:neutral"
+            ],
+            "expires_after_ms": 30000,
+            "generation_id": 2,
+            "label": "neutral",
+            "persist": false,
+            "provider_confidence": null,
+            "provider_label": "neutral",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 36,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "emotion_observation",
+          "v": 1
+        },
+        "sequence": "36",
+        "turn_id": "2",
+        "type": "emotion_observation"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:37",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "turn_committed",
+              "from": "speaking",
+              "to": "thinking_silent"
+            },
+            "device_id": null,
+            "event_sequence": 23,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 37,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "37",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:38",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 24,
+            "generation_id": 2,
+            "phase": "thinking_silent",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "thinking_silent",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 38,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "38",
+        "turn_id": "2",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:39",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 25,
+            "generation_id": 0,
+            "name": "turn_committed",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 39,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "39",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:40",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "device_id": null,
+            "event_sequence": 26,
+            "generation_id": 0,
+            "name": "interaction_context_prefetch_started",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 40,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "40",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:41",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 27,
+            "final": true,
+            "generation_id": 2,
+            "history_eligible": true,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "speaker": "user",
+            "subject_revision": 1,
+            "text": "给我讲个故事吧",
+            "tool_epoch": 0,
+            "turn_id": 2,
+            "turn_revision": 14
+          },
+          "protocol": "media-v1",
+          "sequence": 41,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "41",
+        "turn_id": "2",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "generation": {
+        "action": "GENERATION_ACTION_COMPLETE",
+        "context_version": "3",
+        "generation_id": "2",
+        "reason": "provider_reply_complete",
+        "sequence": "42",
+        "session_epoch": "1",
+        "turn_id": "2"
+      }
+    },
+    {
+      "audio": {
+        "context_version": "3",
+        "final_frame": true,
+        "first_frame": true,
+        "frame_samples": 160,
+        "generation_id": "2",
+        "pcm_s16le": "AgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwACAAMAAgADAAIAAwA=",
+        "session_epoch": "1",
+        "turn_id": "2"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:43",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "assistant_speaking",
+              "from": "thinking_silent",
+              "to": "speaking"
+            },
+            "device_id": null,
+            "event_sequence": 29,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 43,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "43",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:44",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 30,
+            "generation_id": 2,
+            "phase": "speaking",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "speaking",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 44,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "44",
+        "turn_id": "2",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:45",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 31,
+            "expression": "neutral",
+            "generation_id": 2,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 45,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "assistant_expression",
+          "v": 1
+        },
+        "sequence": "45",
+        "turn_id": "2",
+        "type": "assistant_expression"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:46",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 32,
+            "final": false,
+            "generation_id": 2,
+            "history_eligible": false,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "speaker": "assistant",
+            "subject_revision": 1,
+            "text": "从前有座山。",
+            "text_delivered": true,
+            "tool_epoch": 0,
+            "turn_id": 2,
+            "turn_revision": 1
+          },
+          "protocol": "media-v1",
+          "sequence": 46,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "46",
+        "turn_id": "2",
+        "type": "transcript_delta"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:47",
+          "generation_id": 0,
+          "payload": {
+            "active_subject_id": null,
+            "actor_id": null,
+            "at": "<time>",
+            "binding_id": null,
+            "binding_version": null,
+            "detail": {
+              "cause": "media_playback_ack",
+              "from": "speaking",
+              "to": "listening"
+            },
+            "device_id": null,
+            "event_sequence": 33,
+            "generation_id": 0,
+            "name": "interaction_phase",
+            "runtime_profile_id": null,
+            "session_epoch": 0,
+            "session_id": "golden-barge-in",
+            "source": "agent",
+            "status": "ok",
+            "subject_revision": null,
+            "tool_epoch": 0,
+            "turn_id": 0
+          },
+          "protocol": "media-v1",
+          "sequence": 47,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 0,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 0,
+          "type": "audio_trace",
+          "v": 1
+        },
+        "sequence": "47",
+        "type": "audio_trace"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:48",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "at": "<time>",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 34,
+            "generation_id": 2,
+            "phase": "listening",
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "state": "listening",
+            "subject_revision": 1,
+            "tool_epoch": 0,
+            "turn_id": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 48,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "assistant_state",
+          "v": 1
+        },
+        "sequence": "48",
+        "turn_id": "2",
+        "type": "assistant_state"
+      }
+    },
+    {
+      "client": {
+        "context_version": "3",
+        "generation_id": "2",
+        "json": {
+          "context_version": 3,
+          "event_id": "golden-barge-in:1:49",
+          "generation_id": 2,
+          "payload": {
+            "active_subject_id": "person_owner",
+            "actor_id": "actor_01J_test",
+            "binding_id": "bind_01J_test",
+            "binding_version": 1,
+            "device_id": "dev_01J_test",
+            "event_sequence": 35,
+            "final": true,
+            "generation_id": 2,
+            "heard": true,
+            "history_eligible": true,
+            "runtime_profile_id": "rp_owner_golden-barge-in",
+            "session_epoch": 1,
+            "session_id": "golden-barge-in",
+            "speaker": "assistant",
+            "subject_revision": 1,
+            "text": "从前有座山。",
+            "text_delivered": true,
+            "tool_epoch": 0,
+            "turn_id": 2,
+            "turn_revision": 2
+          },
+          "protocol": "media-v1",
+          "sequence": 49,
+          "server_monotonic_ms": "<time>",
+          "session_epoch": 1,
+          "session_id": "golden-barge-in",
+          "stream_epoch": 1,
+          "task_epoch": 0,
+          "tool_epoch": 0,
+          "turn_id": 2,
+          "type": "transcript_delta",
+          "v": 1
+        },
+        "sequence": "49",
+        "turn_id": "2",
+        "type": "transcript_delta"
+      }
+    }
+  ],
+  "interaction_phases": [
+    {
+      "cause": "vad_start",
+      "from": "connecting",
+      "to": "user_speaking"
+    },
+    {
+      "cause": "turn_committed",
+      "from": "user_speaking",
+      "to": "thinking_silent"
+    },
+    {
+      "cause": "assistant_speaking",
+      "from": "thinking_silent",
+      "to": "speaking"
+    },
+    {
+      "cause": "turn_committed",
+      "from": "speaking",
+      "to": "thinking_silent"
+    },
+    {
+      "cause": "assistant_speaking",
+      "from": "thinking_silent",
+      "to": "speaking"
+    },
+    {
+      "cause": "media_playback_ack",
+      "from": "speaking",
+      "to": "listening"
+    }
+  ],
+  "reply_delivery": [
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-barge-in/epoch-1/turn-1/generation-1/tool-0",
+      "event_id": "d19ba32dd5da798168c974c18fe05256c9bb1b8685c1cb406c2c412b8561a034",
+      "event_type": "first_frame_sent",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": false,
+      "reason": "downlink_frame_accepted",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-barge-in/epoch-1/turn-1/generation-1/tool-0",
+      "event_id": "801995fa7cf7e44c77b13d6ecc6dc0c5eab6fa86704f84840df47d0ecec9885a",
+      "event_type": "provider_completed",
+      "first_frame_sent": true,
+      "generation_id": 1,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": true,
+      "reason": "provider_stream_complete",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-barge-in/epoch-1/turn-2/generation-2/tool-0",
+      "event_id": "3bb87906f75172be6df45c5c7850a6717ad3b61129d23c1ac166a31c25c824f4",
+      "event_type": "first_frame_sent",
+      "first_frame_sent": true,
+      "generation_id": 2,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": false,
+      "reason": "downlink_frame_accepted",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 2
+    },
+    {
+      "actual_heard": false,
+      "delivery_id": "golden-barge-in/epoch-1/turn-2/generation-2/tool-0",
+      "event_id": "20f3366abb450d2dc0576edc37cd2d5ef70fd46f487bcf239b5f7cbb2b87dfbd",
+      "event_type": "provider_completed",
+      "first_frame_sent": true,
+      "generation_id": 2,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": true,
+      "reason": "provider_stream_complete",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 2
+    },
+    {
+      "actual_heard": true,
+      "delivery_id": "golden-barge-in/epoch-1/turn-2/generation-2/tool-0",
+      "event_id": "63305efb908371f5aef0ab0a50655123dfc5d7439fcc903dd7596a5b85743c26",
+      "event_type": "actual_heard",
+      "first_frame_sent": true,
+      "generation_id": 2,
+      "occurred_at": "<time>",
+      "playback_ended": false,
+      "provider_completed": true,
+      "reason": "exact_playback_ack",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": null,
+      "terminal_reason": null,
+      "tool_epoch": 0,
+      "turn_id": 2
+    },
+    {
+      "actual_heard": true,
+      "delivery_id": "golden-barge-in/epoch-1/turn-2/generation-2/tool-0",
+      "event_id": "7b57666277e9900cb617251f4e3b834140ecc231018af0272c43d0cd9d07a40d",
+      "event_type": "playback_ended",
+      "first_frame_sent": true,
+      "generation_id": 2,
+      "occurred_at": "<time>",
+      "playback_ended": true,
+      "provider_completed": true,
+      "reason": "playback_completed",
+      "schema_version": "reply-delivery-v1",
+      "session_epoch": 1,
+      "session_id": "golden-barge-in",
+      "terminal_event": "playback_ended",
+      "terminal_reason": "playback_completed",
+      "tool_epoch": 0,
+      "turn_id": 2
+    }
+  ],
+  "state_history": [
+    {
+      "cause": "",
+      "event": "prewarm_ok",
+      "from": "connecting",
+      "generation_id": 0,
+      "to": "listening",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "vad_start",
+      "from": "listening",
+      "generation_id": 0,
+      "to": "user_speaking",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "vad_pause_incomplete",
+      "from": "user_speaking",
+      "generation_id": 0,
+      "to": "eot_pending",
+      "tool_epoch": 0,
+      "turn_id": 0
+    },
+    {
+      "cause": "",
+      "event": "turn_end",
+      "from": "eot_pending",
+      "generation_id": 1,
+      "to": "thinking",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "first_phrase_ready",
+      "from": "thinking",
+      "generation_id": 1,
+      "to": "speaking",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "user_voice_while_speaking",
+      "from": "speaking",
+      "generation_id": 1,
+      "to": "interruption_pending",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "commit_turn_from_interruption_pending",
+      "event": "real_interrupt",
+      "from": "interruption_pending",
+      "generation_id": 1,
+      "to": "user_speaking",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "vad_pause_incomplete",
+      "from": "user_speaking",
+      "generation_id": 1,
+      "to": "eot_pending",
+      "tool_epoch": 0,
+      "turn_id": 1
+    },
+    {
+      "cause": "",
+      "event": "turn_end",
+      "from": "eot_pending",
+      "generation_id": 2,
+      "to": "thinking",
+      "tool_epoch": 0,
+      "turn_id": 2
+    },
+    {
+      "cause": "",
+      "event": "first_phrase_ready",
+      "from": "thinking",
+      "generation_id": 2,
+      "to": "speaking",
+      "tool_epoch": 0,
+      "turn_id": 2
+    },
+    {
+      "cause": "",
+      "event": "playback_done",
+      "from": "speaking",
+      "generation_id": 2,
+      "to": "listening",
+      "tool_epoch": 0,
+      "turn_id": 2
+    }
+  ]
+}

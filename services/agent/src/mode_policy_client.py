@@ -965,3 +965,9 @@ def _style_for(style_id: object, style_version: object) -> CompanionStyle | None
     if definition is None:
         return None
     return _style_from_definition(definition)
+
+
+def parse_mode_policy(payload: Any, runtime_profile_verify_key: str | None = None) -> ModePolicy:
+    """Validate one control-API mode-policy payload exactly as ``fetch`` does."""
+
+    return ModePolicyClient._parse(payload, runtime_profile_verify_key)

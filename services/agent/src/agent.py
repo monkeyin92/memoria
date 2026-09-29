@@ -136,6 +136,219 @@ def _chunk_text(chunk: Any) -> str:
     return ""
 
 
+def _plan_is_local_safe(plan: ResponsePlan) -> bool:
+    return plan.provenance.planner_policy_version == "local-safe-fallback-v1"
+
+
+def plan_matches_mode_policy(
+    plan: ResponsePlan,
+    policy: ModePolicy,
+    *,
+    tts_model: str,
+) -> bool:
+    """Allow a plan only when it is bound to this fence's frozen policy."""
+
+    provenance = plan.provenance
+    references = dict(policy.references)
+    if (
+        policy.mode is None
+        or provenance.interaction_mode != policy.mode
+        or provenance.mode_policy_version != policy.policy_version
+    ):
+        return False
+    if _plan_is_local_safe(plan):
+        if output_policy.anonymous_public_plan_allowed(plan, policy, tts_model=tts_model):
+            return True
+        unknown_safe_direct = (
+            policy.mode == "unknown_safe"
+            and plan.direct_text is not None
+            and (is_safe_realtime_reply(plan.direct_text) or plan.direct_text in BRIDGE_PHRASES)
+            and plan.instructions == output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
+            and not plan.grounded_items
+            and not provenance.source_refs
+            and plan.disclosures == provenance.disclosures == ("privacy_refusal", "unknown")
+            and provenance.planner_policy_version == "local-safe-fallback-v1"
+            and _fallback_voice_target_matches(plan.voice_target, policy, tts_model)
+        )
+        if unknown_safe_direct:
+            return True
+        companion = companion_definition(policy.companion_style_id)
+        allowed_companion_direct_text = {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY}
+        if companion is not None:
+            allowed_companion_direct_text.add(
+                f"我是{companion.display_name}，{companion.style_description}。"
+            )
+        if is_safe_realtime_reply(plan.direct_text):
+            allowed_companion_direct_text.add(plan.direct_text)
+        companion_safe = (
+            policy.mode == "companion"
+            and companion is not None
+            and plan.direct_text in allowed_companion_direct_text
+            and not plan.grounded_items
+            and not provenance.source_refs
+            and plan.disclosures == ("privacy_refusal", "unknown")
+            and provenance.disclosures == plan.disclosures
+        )
+        refusal_safe = (
+            policy.mode in {"self_preview", "legacy"}
+            and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+            and (plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
+            and not plan.grounded_items
+            and not plan.provenance.source_refs
+            and plan.disclosures
+            == (
+                ("digital_identity", "privacy_refusal", "unknown")
+                if policy.mode == "legacy"
+                else ("privacy_refusal", "unknown")
+            )
+            and plan.provenance.disclosures == plan.disclosures
+        )
+        relationship_version = provenance.relationship_profile_version
+        relationship_safe = provenance.relationship_profile_id == references.get(
+            "relationship_profile_id"
+        ) and (
+            str(relationship_version) if relationship_version is not None else None
+        ) == references.get("relationship_profile_version")
+        frozen_snapshot_safe = (
+            policy.mode == "companion"
+            and provenance.digital_self_version_id is None
+            and provenance.manifest_sha256 is None
+            and provenance.relationship_profile_id is None
+            and provenance.relationship_profile_version is None
+            and _legacy_provenance_absent(provenance)
+        ) or (
+            policy.mode in {"self_preview", "legacy"}
+            and provenance.digital_self_version_id == references.get("digital_self_version_id")
+            and provenance.manifest_sha256 == references.get("manifest_sha256")
+            and relationship_safe
+            and (
+                _legacy_provenance_absent(provenance)
+                if policy.mode == "self_preview"
+                else _legacy_provenance_matches(provenance, references)
+            )
+        )
+        return (
+            (companion_safe or refusal_safe)
+            and frozen_snapshot_safe
+            and _fallback_voice_target_matches(plan.voice_target, policy, tts_model)
+        )
+    if provenance.planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
+        return False
+    if policy.mode == "companion":
+        companion = companion_definition(policy.companion_style_id)
+        return (
+            companion is not None
+            and plan.voice_target.kind == "companion"
+            and plan.voice_target.profile_id == companion.designed_voice_profile
+            and plan.voice_target.model == DESIGNED_VOICE_MODEL
+            and provenance.digital_self_version_id is None
+            and provenance.manifest_sha256 is None
+            and _persona_snapshot_matches(provenance)
+            and provenance.relationship_profile_id is None
+            and provenance.relationship_profile_version is None
+            and _legacy_provenance_absent(provenance)
+        )
+    if policy.mode not in {"self_preview", "legacy"}:
+        return False
+    if (
+        provenance.digital_self_version_id is None
+        or provenance.manifest_sha256 is None
+        or references.get("digital_self_version_id") != provenance.digital_self_version_id
+        or references.get("manifest_sha256") != provenance.manifest_sha256
+    ):
+        return False
+    if policy.mode == "self_preview" and not _legacy_provenance_absent(provenance):
+        return False
+    if provenance.relationship_profile_id is None:
+        if provenance.relationship_profile_version is not None:
+            return False
+    elif (
+        provenance.relationship_profile_version is None
+        or references.get("relationship_profile_id") != provenance.relationship_profile_id
+        or references.get("relationship_profile_version")
+        != str(provenance.relationship_profile_version)
+    ):
+        return False
+    if policy.mode == "legacy":
+        if (
+            "digital_identity" not in plan.disclosures
+            or "digital_identity" not in provenance.disclosures
+            or provenance.speaker_class != "owner"
+            or not _legacy_provenance_matches(provenance, references)
+        ):
+            return False
+    if plan.voice_target.kind == "fallback":
+        return _fallback_voice_target_matches(plan.voice_target, policy, tts_model)
+    return (
+        plan.voice_target.kind == "approved_personal"
+        and plan.voice_target.profile_id is not None
+        and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
+        and references.get("voice_profile_id") == plan.voice_target.profile_id
+        and references.get("voice_model") == plan.voice_target.model
+    )
+
+
+def _legacy_provenance_absent(provenance: ResponseProvenance) -> bool:
+    return all(value is None for value in (provenance.actor_account_id, provenance.resource_owner_account_id, provenance.legacy_actor_role, provenance.legacy_grantee_account_id, provenance.legacy_grant_id, provenance.legacy_grant_snapshot_sha256, provenance.legacy_scope_sha256, provenance.legacy_shell_id, provenance.legacy_voice_allowed, provenance.legacy_expires_at))
+
+
+def _legacy_provenance_matches(
+    provenance: ResponseProvenance,
+    references: dict[str, str | bool | None],
+) -> bool:
+    return (
+        provenance.actor_account_id == references.get("actor_account_id")
+        and provenance.resource_owner_account_id == references.get("resource_owner_account_id")
+        and provenance.legacy_actor_role == references.get("legacy_actor_role")
+        and provenance.legacy_grantee_account_id == references.get("legacy_grantee_account_id")
+        and provenance.legacy_grant_id == references.get("legacy_grant_id")
+        and provenance.legacy_grant_snapshot_sha256 == references.get("legacy_grant_snapshot_sha256")
+        and provenance.legacy_scope_sha256 == references.get("legacy_scope_sha256")
+        and provenance.legacy_shell_id == references.get("legacy_shell_id")
+        and provenance.legacy_voice_allowed == references.get("legacy_voice_allowed")
+        and provenance.legacy_expires_at == references.get("legacy_expires_at")
+    )
+
+
+def _fallback_voice_target_matches(
+    voice_target: ResponseVoiceTarget,
+    policy: ModePolicy,
+    tts_model: str,
+) -> bool:
+    references = dict(policy.references)
+    if policy.mode in {"self_preview", "legacy"}:
+        return (
+            voice_target.kind == "fallback"
+            and voice_target.profile_id == references.get("fallback_voice_profile_id")
+            and voice_target.model == references.get("fallback_voice_model")
+        )
+    return (
+        voice_target.kind == "fallback"
+        and voice_target.profile_id is None
+        and voice_target.model == tts_model
+    )
+
+
+def _persona_snapshot_matches(provenance: ResponseProvenance) -> bool:
+    absent = provenance.persona_version_id is None and provenance.persona_version_number is None
+    present = (
+        provenance.persona_version_id is not None
+        and provenance.persona_version_number is not None
+    )
+    if not absent and not present:
+        return False
+    if absent:
+        return not provenance.persona_style_only
+    if not provenance.persona_style_only:
+        return provenance.speaker_class == "owner"
+    return (
+        provenance.speaker_class == "uncertain"
+        and provenance.speaker_reason_code == "shadow_owner_candidate"
+        and provenance.persona_version_id is not None
+        and not provenance.source_refs
+    )
+
+
 class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     """Agent that gates LLM/TTS through GenerationFence and tracks active tasks."""
 
@@ -421,220 +634,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
     @staticmethod
     def _is_local_safe_plan(plan: ResponsePlan) -> bool:
-        return plan.provenance.planner_policy_version == "local-safe-fallback-v1"
-
-    def _plan_matches_mode_policy(
-        self,
-        plan: ResponsePlan,
-        policy: ModePolicy,
-    ) -> bool:
-        """Allow a plan only when it is bound to this fence's frozen policy."""
-
-        provenance = plan.provenance
-        references = dict(policy.references)
-        if (
-            policy.mode is None
-            or provenance.interaction_mode != policy.mode
-            or provenance.mode_policy_version != policy.policy_version
-        ):
-            return False
-        if self._is_local_safe_plan(plan):
-            if output_policy.anonymous_public_plan_allowed(plan, policy, tts_model=self._tts_model):
-                return True
-            unknown_safe_direct = (
-                policy.mode == "unknown_safe"
-                and plan.direct_text is not None
-                and (
-                    is_safe_realtime_reply(plan.direct_text)
-                    or plan.direct_text in BRIDGE_PHRASES
-                )
-                and plan.instructions == output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
-                and not plan.grounded_items
-                and not provenance.source_refs
-                and plan.disclosures == provenance.disclosures == ("privacy_refusal", "unknown")
-                and provenance.planner_policy_version == "local-safe-fallback-v1"
-                and self._fallback_voice_target_matches(plan.voice_target, policy)
-            )
-            if unknown_safe_direct:
-                return True
-            companion = companion_definition(policy.companion_style_id)
-            allowed_companion_direct_text = {
-                None,
-                SAFE_UNKNOWN_REPLY,
-                CRISIS_SUPPORT_REPLY,
-            }
-            if companion is not None:
-                allowed_companion_direct_text.add(
-                    f"我是{companion.display_name}，{companion.style_description}。"
-                )
-            if is_safe_realtime_reply(plan.direct_text):
-                allowed_companion_direct_text.add(plan.direct_text)
-            companion_safe = (
-                policy.mode == "companion"
-                and companion is not None
-                and plan.direct_text in allowed_companion_direct_text
-                and not plan.grounded_items
-                and not provenance.source_refs
-                and plan.disclosures == ("privacy_refusal", "unknown")
-                and provenance.disclosures == plan.disclosures
-            )
-            refusal_safe = (
-                policy.mode in {"self_preview", "legacy"}
-                and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-                and (plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
-                and not plan.grounded_items
-                and not plan.provenance.source_refs
-                and plan.disclosures
-                == (
-                    ("digital_identity", "privacy_refusal", "unknown")
-                    if policy.mode == "legacy"
-                    else ("privacy_refusal", "unknown")
-                )
-                and plan.provenance.disclosures == plan.disclosures
-            )
-            relationship_version = provenance.relationship_profile_version
-            relationship_safe = provenance.relationship_profile_id == references.get(
-                "relationship_profile_id"
-            ) and (
-                str(relationship_version) if relationship_version is not None else None
-            ) == references.get("relationship_profile_version")
-            frozen_snapshot_safe = (
-                policy.mode == "companion"
-                and provenance.digital_self_version_id is None
-                and provenance.manifest_sha256 is None
-                and provenance.relationship_profile_id is None
-                and provenance.relationship_profile_version is None
-                and self._legacy_provenance_absent(provenance)
-            ) or (
-                policy.mode in {"self_preview", "legacy"}
-                and provenance.digital_self_version_id == references.get("digital_self_version_id")
-                and provenance.manifest_sha256 == references.get("manifest_sha256")
-                and relationship_safe
-                and (
-                    self._legacy_provenance_absent(provenance)
-                    if policy.mode == "self_preview"
-                    else self._legacy_provenance_matches(provenance, references)
-                )
-            )
-            return (
-                (companion_safe or refusal_safe)
-                and frozen_snapshot_safe
-                and self._fallback_voice_target_matches(plan.voice_target, policy)
-            )
-        if provenance.planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
-            return False
-        if policy.mode == "companion":
-            companion = companion_definition(policy.companion_style_id)
-            return (
-                companion is not None
-                and plan.voice_target.kind == "companion"
-                and plan.voice_target.profile_id == companion.designed_voice_profile
-                and plan.voice_target.model == DESIGNED_VOICE_MODEL
-                and provenance.digital_self_version_id is None
-                and provenance.manifest_sha256 is None
-                and self._persona_snapshot_matches(provenance)
-                and provenance.relationship_profile_id is None
-                and provenance.relationship_profile_version is None
-                and self._legacy_provenance_absent(provenance)
-            )
-        if policy.mode not in {"self_preview", "legacy"}:
-            return False
-        if (
-            provenance.digital_self_version_id is None
-            or provenance.manifest_sha256 is None
-            or references.get("digital_self_version_id") != provenance.digital_self_version_id
-            or references.get("manifest_sha256") != provenance.manifest_sha256
-        ):
-            return False
-        if policy.mode == "self_preview" and not self._legacy_provenance_absent(provenance):
-            return False
-        if provenance.relationship_profile_id is None:
-            if provenance.relationship_profile_version is not None:
-                return False
-        elif (
-            provenance.relationship_profile_version is None
-            or references.get("relationship_profile_id") != provenance.relationship_profile_id
-            or references.get("relationship_profile_version")
-            != str(provenance.relationship_profile_version)
-        ):
-            return False
-        if policy.mode == "legacy":
-            if (
-                "digital_identity" not in plan.disclosures
-                or "digital_identity" not in provenance.disclosures
-                or provenance.speaker_class != "owner"
-                or not self._legacy_provenance_matches(provenance, references)
-            ):
-                return False
-        if plan.voice_target.kind == "fallback":
-            return self._fallback_voice_target_matches(plan.voice_target, policy)
-        return (
-            plan.voice_target.kind == "approved_personal"
-            and plan.voice_target.profile_id is not None
-            and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
-            and references.get("voice_profile_id") == plan.voice_target.profile_id
-            and references.get("voice_model") == plan.voice_target.model
-        )
-
-    @staticmethod
-    def _legacy_provenance_absent(provenance: ResponseProvenance) -> bool:
-        return all(value is None for value in (provenance.actor_account_id, provenance.resource_owner_account_id, provenance.legacy_actor_role, provenance.legacy_grantee_account_id, provenance.legacy_grant_id, provenance.legacy_grant_snapshot_sha256, provenance.legacy_scope_sha256, provenance.legacy_shell_id, provenance.legacy_voice_allowed, provenance.legacy_expires_at))
-
-    @staticmethod
-    def _legacy_provenance_matches(
-        provenance: ResponseProvenance,
-        references: dict[str, str | bool | None],
-    ) -> bool:
-        return (
-            provenance.actor_account_id == references.get("actor_account_id")
-            and provenance.resource_owner_account_id == references.get("resource_owner_account_id")
-            and provenance.legacy_actor_role == references.get("legacy_actor_role")
-            and provenance.legacy_grantee_account_id == references.get("legacy_grantee_account_id")
-            and provenance.legacy_grant_id == references.get("legacy_grant_id")
-            and provenance.legacy_grant_snapshot_sha256 == references.get("legacy_grant_snapshot_sha256")
-            and provenance.legacy_scope_sha256 == references.get("legacy_scope_sha256")
-            and provenance.legacy_shell_id == references.get("legacy_shell_id")
-            and provenance.legacy_voice_allowed == references.get("legacy_voice_allowed")
-            and provenance.legacy_expires_at == references.get("legacy_expires_at")
-        )
-
-    def _fallback_voice_target_matches(
-        self,
-        voice_target: ResponseVoiceTarget,
-        policy: ModePolicy,
-    ) -> bool:
-        references = dict(policy.references)
-        if policy.mode in {"self_preview", "legacy"}:
-            return (
-                voice_target.kind == "fallback"
-                and voice_target.profile_id == references.get("fallback_voice_profile_id")
-                and voice_target.model == references.get("fallback_voice_model")
-            )
-        return (
-            voice_target.kind == "fallback"
-            and voice_target.profile_id is None
-            and voice_target.model == self._tts_model
-        )
-
-    @staticmethod
-    def _persona_snapshot_matches(provenance: ResponseProvenance) -> bool:
-        absent = provenance.persona_version_id is None and provenance.persona_version_number is None
-        present = (
-            provenance.persona_version_id is not None
-            and provenance.persona_version_number is not None
-        )
-        if not absent and not present:
-            return False
-        if absent:
-            return not provenance.persona_style_only
-        if not provenance.persona_style_only:
-            return provenance.speaker_class == "owner"
-        return (
-            provenance.speaker_class == "uncertain"
-            and provenance.speaker_reason_code == "shadow_owner_candidate"
-            and provenance.persona_version_id is not None
-            and not provenance.source_refs
-        )
+        return _plan_is_local_safe(plan)
 
     def _local_safe_plan(
         self,
@@ -1177,7 +1177,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if (
             plan is not None
             and self._runtime.mode_policy_enforced
-            and not self._plan_matches_mode_policy(plan, policy)
+            and not plan_matches_mode_policy(plan, policy, tts_model=self._tts_model)
         ):
             logger.warning(
                 "response plan dropped for policy mismatch session_id=%s turn_id=%s",
@@ -1659,8 +1659,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             self._response_plan_by_fence.pop(fence, None)
             self._response_plan_profile_by_fence.pop(fence, None)
             return
-        if self._runtime.mode_policy_enforced and not self._plan_matches_mode_policy(
-            response_plan, policy
+        if self._runtime.mode_policy_enforced and not plan_matches_mode_policy(
+            response_plan, policy, tts_model=self._tts_model
         ):
             logger.error(
                 "llm request blocked by response plan policy mismatch session_id=%s "

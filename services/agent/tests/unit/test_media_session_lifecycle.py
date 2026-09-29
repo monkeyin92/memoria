@@ -46,6 +46,7 @@ from services.agent.tests.unit.media_session_support import (
     _queued_event,
     _seed_pending_media_turn,
     _verified_owner_decision,
+    open_bridge_connection,
 )
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -112,7 +113,7 @@ async def test_device_close_phrase_works_without_formal_owner_authority() -> Non
     )
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -167,7 +168,7 @@ async def test_guest_close_phrase_is_rejected_before_device_standby() -> None:
     )
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
-    connection = bridge._open_connection(identity)  # noqa: SLF001 - transport seam under test
+    connection = open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -202,7 +203,7 @@ async def test_guest_close_phrase_is_rejected_before_device_standby() -> None:
     )
     assert registry.context(identity.session_id) is context.runtime
     assert provider.closed is False
-    await registry._finalize_session(identity.session_id)
+    await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -238,7 +239,7 @@ async def test_media_registry_closes_unpublished_factory_resources_on_wiring_fai
     )
 
     with pytest.raises(RuntimeError, match="prewarm wiring failed"):
-        await registry._get_or_create(identity)
+        await registry.open_session(identity)
 
     assert runtime_closed.is_set()
     assert provider.closed is True
@@ -270,10 +271,10 @@ async def test_different_new_sessions_build_in_parallel_with_per_session_singlef
         return resource
 
     registry = MediaVoiceCoreRegistry(bridge=bridge, session_factory=build_session)
-    first = asyncio.create_task(registry._get_or_create(SessionIdentity("first-new-session")))
+    first = asyncio.create_task(registry.open_session(SessionIdentity("first-new-session")))
     await asyncio.wait_for(first_started.wait(), timeout=1)
-    duplicate = asyncio.create_task(registry._get_or_create(SessionIdentity("first-new-session")))
-    second = asyncio.create_task(registry._get_or_create(SessionIdentity("second-new-session")))
+    duplicate = asyncio.create_task(registry.open_session(SessionIdentity("first-new-session")))
+    second = asyncio.create_task(registry.open_session(SessionIdentity("second-new-session")))
 
     await asyncio.wait_for(second_started.wait(), timeout=0.1)
     release_first.set()
@@ -304,7 +305,7 @@ async def test_reconnect_provider_reset_failure_keeps_old_epoch_authoritative() 
         provider_factory=lambda _identity: provider,
     )
     identity = SessionIdentity("failed-provider-epoch-reset", stream_epoch=1)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     before_asr = (
         context.asr.stream_epoch,
         context.asr.task_epoch,
@@ -347,7 +348,7 @@ async def test_reconnect_aligns_provider_task_epoch_floor_after_transport_epoch_
         bridge=MediaBridgeGrpcServer(),
         provider_factory=lambda _identity: provider,
     )
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     await registry._reuse_session(context, replacement)
 
@@ -383,7 +384,7 @@ async def test_connected_reconnect_provider_reset_failure_retires_both_epochs() 
     )
     registry.install()
     bridge_session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     assert bridge_session.reconnect(replacement)
     callback = bridge.on_session_connected
     assert callback is not None
@@ -392,7 +393,7 @@ async def test_connected_reconnect_provider_reset_failure_retires_both_epochs() 
         await callback(bridge_session)
 
     assert registry.context(identity.session_id) is None
-    assert identity.session_id not in registry._sessions  # noqa: SLF001
+    assert registry.session_state(identity.session_id) is None
     assert context.closed is True
     assert runtime_closed.is_set()
     assert provider.closed is True
@@ -415,7 +416,7 @@ async def test_device_conversation_close_rule_hit_skips_semantic_resolver() -> N
     identity = _device_identity("device-rule-conversation-close")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
 
         async def resolver(_: str) -> bool:
             raise AssertionError("rule hit should not call semantic resolver")
@@ -451,7 +452,7 @@ async def test_device_conversation_close_rule_hit_skips_semantic_resolver() -> N
         assert context.turn_endpoint_sample == 16_000
         assert context.conversation_close_semantic_task is None
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -472,7 +473,7 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
     identity = _device_identity("device-close-overlap")
     session = bridge.bridge.open(identity)
     try:
-        context = await registry._get_or_create(identity)
+        context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
@@ -517,7 +518,7 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
         assert context.conversation_close_endpoint_pinned == 336_960
         assert context.turn_endpoint_sample == 336_960
     finally:
-        await registry._finalize_session(identity.session_id)
+        await registry.finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -572,7 +573,7 @@ async def test_late_provider_boundary_is_logged_and_rejected_after_stream_epoch_
     )
     identity = SessionIdentity("late-vad-boundary", stream_epoch=1)
     session = bridge.bridge.open(identity)
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
     await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
 
     finalize = asyncio.create_task(
@@ -650,7 +651,7 @@ async def test_registry_rolls_back_supervisor_when_runtime_timeline_rejects() ->
     )
     registry.install()
     identity = SessionIdentity("registry-transaction")
-    context = await registry._get_or_create(identity)
+    context = await registry.open_session(identity)
 
     runtime_newer = ASRResult(2, "same-sentence", 1, 0, 320, "新结果", True)
     assert context.runtime.ingest_media_speech_segment(
@@ -752,7 +753,7 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
         AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
     )
 
-    context = registry._sessions[identity.session_id]
+    context = registry.session_state(identity.session_id)
     assert context.asr.latest_authoritative_task_epoch == 2
     assert bridge.transcripts == []
     assert context.runtime.speech_timeline.pending == ()
