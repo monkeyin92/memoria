@@ -21,6 +21,7 @@
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
 #include "memoria_firmware_update.h"
+#include "memoria_stop_keyword.h"
 #include "memoria_wake_word.h"
 #include "sodium.h"
 #include "web_socket.h"
@@ -1002,6 +1003,19 @@ bool MemoriaProtocol::VoiceBargeInAllowed() const {
     return voice_barge_in_allowed_;
 }
 
+bool MemoriaProtocol::KeywordBargeInAllowed() const {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    return protocol_version_ == kProtocolVersionV2 && stream_epoch_ != 0 &&
+           keyword_barge_in_allowed_;
+}
+
+bool MemoriaProtocol::LocalStopKeywordArmed() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    // Edge ignores keyword.detected without the signed keyword source, and a
+    // stop outside real playback would flush nothing but still report one.
+    return KeywordBargeInAllowed() && HasActivePlaybackGeneration();
+}
+
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     if (!IsAudioChannelOpened() || packet == nullptr || packet->payload.empty() ||
         packet->sample_rate != static_cast<int>(kUplinkSampleRate) ||
@@ -1304,6 +1318,8 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
     std::string wake_word_pinyin;
     std::string wake_word_display;
     bool voice_barge_in_allowed = false;
+    bool keyword_barge_in_allowed = false;
+    bool barge_in_none = false;
     if (settings == nullptr || !cJSON_IsObject(settings) ||
         !GetUint32(settings, "settings_version", &settings_version) ||
         !GetUint32(settings, "volume_limit", &volume_limit) || volume_limit > 100 ||
@@ -1340,6 +1356,16 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         if (entry == "voice") {
             voice_barge_in_allowed = true;
         }
+        if (entry == "keyword") {
+            keyword_barge_in_allowed = true;
+        }
+        if (entry == "none") {
+            barge_in_none = true;
+        }
+    }
+    // "none" disables every source, matching Edge's bargeInSourceAllowed.
+    if (barge_in_none) {
+        keyword_barge_in_allowed = false;
     }
     const cJSON* wake_word_item =
         cJSON_GetObjectItemCaseSensitive(settings, "wake_word_id");
@@ -1408,7 +1434,10 @@ bool MemoriaProtocol::HandleSessionAccepted(const cJSON* root) {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         audio_mode_ = audio_mode;
         voice_barge_in_allowed_ = voice_barge_in_allowed;
+        keyword_barge_in_allowed_ = keyword_barge_in_allowed;
     }
+    ESP_LOGI(kTag, "barge-in sources: voice=%d keyword=%d",
+             voice_barge_in_allowed ? 1 : 0, keyword_barge_in_allowed ? 1 : 0);
     runtime_profile_pending_ = false;
     if (on_local_flush_requested_ != nullptr) {
         on_local_flush_requested_(playback_active_ ? fence_.generation_id : 0);
@@ -1802,6 +1831,72 @@ void MemoriaProtocol::SendButtonStop(const GenerationFence& fence, uint64_t loca
     QueueTransportText(RenderJson(root.value));
 }
 
+void MemoriaProtocol::SendKeywordStop(const GenerationFence& fence,
+                                      const LocalStopKeywordHit& hit) {
+    if (protocol_version_ != kProtocolVersionV2 || !fence.valid()) {
+        return;
+    }
+    // Only table ids are sent: they are the wire identifiers Edge validates.
+    const LocalStopPhrase* phrase = FindLocalStopPhrase(hit.keyword_id.c_str());
+    if (phrase == nullptr) {
+        ESP_LOGW(kTag, "Local stop keyword %s is not in the phrase table", hit.keyword_id.c_str());
+        return;
+    }
+    // MultiNet reports the hit at the end of the phrase. The uplink sample
+    // clock is the capture clock Edge and Voice Core anchor evidence on; the
+    // phrase is estimated to span its nominal duration before that point.
+    const uint64_t duration_samples =
+        static_cast<uint64_t>(phrase->nominal_duration_ms) * kUplinkSampleRate / 1000;
+    const uint64_t detected_sample =
+        uplink_sample_start_ > duration_samples ? uplink_sample_start_ - duration_samples : 0;
+    const float confidence = LocalStopReportedConfidence(hit.score);
+    const float near_end_rms =
+        std::isfinite(hit.near_end_rms) && hit.near_end_rms > 0.0f ? hit.near_end_rms : 0.0f;
+    ++control_sequence_;
+    ScopedJson root{cJSON_CreateObject()};
+    if (root.value == nullptr) {
+        return;
+    }
+    // The field set must stay exactly Edge's deviceKeywordEvent: Edge decodes
+    // with DisallowUnknownFields and closes the socket on a mismatch.
+    cJSON_AddStringToObject(root.value, "type", "keyword.detected");
+    cJSON_AddNumberToObject(root.value, "version", 2);
+    cJSON_AddNumberToObject(root.value, "stream_epoch", stream_epoch_);
+    cJSON_AddNumberToObject(root.value, "control_sequence", control_sequence_);
+    cJSON_AddNumberToObject(root.value, "device_monotonic_ms", DeviceMonotonicMs());
+    cJSON_AddStringToObject(root.value, "keyword_id", phrase->id);
+    cJSON_AddNumberToObject(root.value, "confidence", static_cast<double>(confidence));
+    cJSON_AddBoolToObject(root.value, "hard_stop", true);
+    cJSON* evidence = cJSON_CreateObject();
+    cJSON_AddNumberToObject(evidence, "detected_sample", static_cast<double>(detected_sample));
+    cJSON_AddStringToObject(evidence, "source", "local_kws");
+    cJSON_AddNumberToObject(evidence, "duration_ms", phrase->nominal_duration_ms);
+    cJSON_AddStringToObject(evidence, "aec_mode", "fd_low_cost");
+    cJSON_AddBoolToObject(evidence, "aec_verified", false);
+    // The AFE VAD is binary; its state is mapped onto the unit interval.
+    cJSON_AddNumberToObject(evidence, "vad_probability", hit.voice_detected ? 1.0 : 0.0);
+    cJSON_AddNumberToObject(evidence, "near_end_rms", static_cast<double>(near_end_rms));
+    // No far-end level is metered on this board.
+    cJSON_AddNumberToObject(evidence, "far_end_rms", 0);
+    // One bound owner per device, but no voiceprint: the talker is unknown.
+    cJSON_AddStringToObject(evidence, "speaker_class", "unknown");
+    cJSON_AddItemToObject(root.value, "evidence", evidence);
+    cJSON* expected_fence = cJSON_CreateObject();
+    cJSON_AddNumberToObject(expected_fence, "turn_id", fence.turn_id);
+    cJSON_AddNumberToObject(expected_fence, "generation_id", fence.generation_id);
+    cJSON_AddNumberToObject(expected_fence, "tool_epoch", fence.tool_epoch);
+    cJSON_AddNumberToObject(expected_fence, "session_epoch", fence.session_epoch);
+    cJSON_AddItemToObject(root.value, "expected_fence", expected_fence);
+    if (QueueTransportText(RenderJson(root.value))) {
+        ESP_LOGI(kTag,
+                 "Local stop keyword reported: id=%s score=%.3f confidence=%.2f generation=%u "
+                 "detected_sample=%llu",
+                 phrase->id, static_cast<double>(hit.score), static_cast<double>(confidence),
+                 static_cast<unsigned int>(fence.generation_id),
+                 static_cast<unsigned long long>(detected_sample));
+    }
+}
+
 void MemoriaProtocol::SendPlaybackReceipt(const char* type,
                                           const GenerationFence& fence,
                                           uint32_t received_sequence,
@@ -2127,7 +2222,9 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
     cJSON_AddStringToObject(capabilities, "aec_reference", "software_post_gain_pre_i2s");
     cJSON_AddBoolToObject(capabilities, "aec_reference_verified", false);
     cJSON_AddBoolToObject(capabilities, "local_vad", true);
-    cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false);
+    // MultiNet stop phrases (memoria_stop_keyword.h) run on the AEC/NS output
+    // during playback and report keyword.detected with hard_stop=true.
+    cJSON_AddBoolToObject(capabilities, "local_stop_keyword", true);
     cJSON_AddBoolToObject(capabilities, "physical_stop_button", true);
     cJSON_AddStringToObject(capabilities, "playback_watermark", "exact");
     cJSON_AddBoolToObject(capabilities, "local_duck", false);
@@ -2404,6 +2501,21 @@ void MemoriaProtocol::SendMcpMessage(const std::string& message) {
 }
 
 void MemoriaProtocol::NotifyLocalFlush() {
+    LocalHardStop(nullptr);
+}
+
+bool MemoriaProtocol::NotifyLocalKeywordStop(const LocalStopKeywordHit& hit) {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    // The hit crossed from the audio task to the main task; the generation
+    // may have ended or been cancelled meanwhile. Never flush or report then.
+    if (!LocalStopKeywordArmed()) {
+        return false;
+    }
+    LocalHardStop(&hit);
+    return true;
+}
+
+void MemoriaProtocol::LocalHardStop(const LocalStopKeywordHit* keyword) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     if (protocol_version_ == kProtocolVersionV2) {
         // Capture the fence and the delivered watermark before clearing, so
@@ -2439,7 +2551,13 @@ void MemoriaProtocol::NotifyLocalFlush() {
             // and FinalizePlaybackEnded clear this flag for the next
             // generation, so the marker never leaks forward.
             playback_terminal_receipted_ = true;
-            SendButtonStop(fence, local_flush_sample_end);
+            if (keyword != nullptr) {
+                // Stop keyword: the same local flush, reported as a hard-stop
+                // keyword so the server cancels with keyword_interrupt.
+                SendKeywordStop(fence, *keyword);
+            } else {
+                SendButtonStop(fence, local_flush_sample_end);
+            }
         }
     } else {
         if (stream_epoch_ != 0) {
@@ -2730,6 +2848,7 @@ void MemoriaProtocol::ResetSessionState() {
     settings_version_ = 0;
     audio_mode_.clear();
     voice_barge_in_allowed_ = false;
+    keyword_barge_in_allowed_ = false;
     runtime_profile_pending_ = false;
     runtime_profile_pending_version_ = 0;
     runtime_profile_apply_mode_ = ProfileApplyMode::kNextSession;

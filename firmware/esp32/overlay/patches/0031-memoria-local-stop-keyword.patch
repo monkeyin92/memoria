@@ -1,0 +1,424 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -101,6 +101,13 @@
+     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
+         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
+     };
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    callbacks.on_stop_keyword_detected = [this](const std::string& phrase_id, float score) {
++        // Runs on the AFE task; the stop itself belongs to the main task,
++        // like the BOOT button's AbortSpeaking.
++        Schedule([this, phrase_id, score]() { HandleLocalStopKeyword(phrase_id, score); });
++    };
++#endif
+     callbacks.on_vad_change = [this](bool speaking) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+         Schedule([this, speaking, callback_state = GetDeviceState()]() {
+@@ -1395,6 +1402,14 @@
+     // Any state change invalidates a pending deferred listening start;
+     // the Listening case below re-arms it when needed.
+     pending_listening_start_ = false;
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    // The local stop keyword is armed only while Speaking. Leave stop-only
++    // mode before the new state configures the detector for itself (idle
++    // re-enables plain wake detection below).
++    if (new_state != kDeviceStateSpeaking && audio_service_.IsStopKeywordDetectionEnabled()) {
++        audio_service_.EnableWakeWordDetection(false);
++    }
++#endif
+ 
+     auto& board = Board::GetInstance();
+     auto display = board.GetDisplay();
+@@ -1448,14 +1463,14 @@
+             if (listening_mode_ != kListeningModeRealtime) {
+                 audio_service_.EnableVoiceProcessing(false);
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-                audio_service_.EnableWakeWordDetection(false);
++                ConfigureStopKeywordForSpeaking();
+ #else
+                 // Only AFE wake word can be detected in speaking mode
+                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+ #endif
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+             } else {
+-                audio_service_.EnableWakeWordDetection(false);
++                ConfigureStopKeywordForSpeaking();
+ #endif
+             }
+             audio_service_.ResetDecoder();
+@@ -1503,9 +1518,50 @@
+     if (play_popup_on_listening_) {
+         play_popup_on_listening_ = false;
+         audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
++    }
++}
++
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++void Application::ConfigureStopKeywordForSpeaking() {
++    // Wake words stay ignored during playback. With the signed "keyword"
++    // barge-in source the MultiNet detector keeps running in stop-only mode
++    // on the AEC/NS output so the owner can stop playback by voice; each hit
++    // re-checks that a generation is really playing (LocalStopKeywordArmed).
++    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++    if (memoria_protocol != nullptr && memoria_protocol->KeywordBargeInAllowed() &&
++        audio_service_.EnableStopKeywordDetection()) {
++        ESP_LOGI(TAG, "Local stop keyword armed for playback");
++        return;
+     }
++    audio_service_.EnableWakeWordDetection(false);
+ }
+ 
++void Application::HandleLocalStopKeyword(const std::string& phrase_id, float score) {
++    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++    const DeviceState state = GetDeviceState();
++    if (state != kDeviceStateSpeaking || memoria_protocol == nullptr) {
++        ESP_LOGI(TAG, "Local stop keyword %s ignored outside playback (state: %d)",
++                 phrase_id.c_str(), static_cast<int>(state));
++        return;
++    }
++    memoria::MemoriaProtocol::LocalStopKeywordHit hit;
++    hit.keyword_id = phrase_id;
++    hit.score = score;
++    hit.near_end_rms = audio_service_.LastUplinkRms();
++    hit.voice_detected = audio_service_.IsVoiceDetected();
++    // The same L0 hard stop as BOOT (AbortSpeaking): close the protocol gate,
++    // flush the audio pipeline, then report keyword.detected with the fence.
++    if (!memoria_protocol->NotifyLocalKeywordStop(hit)) {
++        ESP_LOGI(TAG, "Local stop keyword %s ignored: no playing generation it may stop",
++                 phrase_id.c_str());
++        return;
++    }
++    ESP_LOGI(TAG, "Local stop keyword %s (prob=%.3f) stopped playback", phrase_id.c_str(),
++             static_cast<double>(score));
++    aborted_ = true;
++}
++#endif
++
+ void Application::ConfigureWakeWordForListening() {
+ #ifdef CONFIG_WAKE_WORD_DETECTION_IN_LISTENING
+     // Enable wake word detection in listening mode (configured via Kconfig)
+diff --git a/main/application.h b/main/application.h
+--- a/main/application.h
++++ b/main/application.h
+@@ -190,6 +190,9 @@
+     void HandleMediaTransportClosedEvent();
+     void ContinueMediaRecovery();
+     void CancelMediaRecovery(bool terminal_close);
++    // Local stop keyword: armed for playback, handled on the main task.
++    void ConfigureStopKeywordForSpeaking();
++    void HandleLocalStopKeyword(const std::string& phrase_id, float score);
+ #endif
+     void BeginWakeWordInvoke(const std::string& wake_word);
+     void ContinueWakeWordInvoke(const std::string& wake_word);
+diff --git a/main/audio/audio_engine.h b/main/audio/audio_engine.h
+--- a/main/audio/audio_engine.h
++++ b/main/audio/audio_engine.h
+@@ -35,6 +35,17 @@
+     virtual void EncodeWakeWordData() = 0;
+     virtual bool GetWakeWordOpus(std::vector<uint8_t>& opus) = 0;
+     virtual const std::string& GetLastDetectedWakeWord() const = 0;
++
++    // Memoria local stop keywords. Enabling runs the MultiNet detector in
++    // stop-only mode: wake commands are ignored and only stop commands fire
++    // OnStopKeywordDetected. EnableWakeWordDetection always leaves that mode.
++    // Engines without a MultiNet detector cannot provide it.
++    virtual bool EnableStopKeywordDetection() { return false; }
++    virtual bool IsStopKeywordDetectionEnabled() const { return false; }
++    virtual void OnStopKeywordDetected(
++        std::function<void(const std::string& phrase_id, float score)> callback) {
++        (void)callback;
++    }
+ };
+ 
+ #endif
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -146,6 +146,12 @@
+         xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+         if (callbacks_.on_wake_word_detected) {
+             callbacks_.on_wake_word_detected(wake_word);
++        }
++    });
++    audio_engine_->OnStopKeywordDetected([this](const std::string& phrase_id, float score) {
++        // Unlike a wake word, a stop hit leaves the detector running.
++        if (callbacks_.on_stop_keyword_detected) {
++            callbacks_.on_stop_keyword_detected(phrase_id, score);
+         }
+     });
+ 
+@@ -862,10 +868,30 @@
+         if (audio_engine_initialized_) {
+             audio_engine_->EnableWakeWordDetection(false);
+         }
++        xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
++    }
++}
++
++bool AudioService::EnableStopKeywordDetection() {
++    if (!InitializeAudioEngine() || !audio_engine_->HasWakeWord()) {
++        xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
++        return false;
++    }
++    // Unlike EnableWakeWordDetection, keep the input resampler state: in
++    // realtime playback the same capture stream is still being uplinked.
++    if (!audio_engine_->EnableStopKeywordDetection()) {
++        audio_engine_->EnableWakeWordDetection(false);
+         xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
++        return false;
+     }
++    xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
++    return true;
+ }
+ 
++bool AudioService::IsStopKeywordDetectionEnabled() const {
++    return audio_engine_initialized_ && audio_engine_->IsStopKeywordDetectionEnabled();
++}
++
+ void AudioService::EnableVoiceProcessing(bool enable) {
+     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
+ 
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -87,6 +87,8 @@
+ struct AudioServiceCallbacks {
+     std::function<void(void)> on_send_queue_available;
+     std::function<void(const std::string&)> on_wake_word_detected;
++    // Memoria local stop keyword accepted by the stop gate (audio task).
++    std::function<void(const std::string& phrase_id, float score)> on_stop_keyword_detected;
+     std::function<void(bool)> on_vad_change;
+     std::function<void(void)> on_audio_testing_queue_full;
+     // Fired when the decode/playback queues and their in-flight work are drained.
+@@ -145,6 +147,10 @@
+     bool IsAfeWakeWord();
+ 
+     void EnableWakeWordDetection(bool enable);
++    // Runs the wake-word detector in stop-only mode for device playback.
++    // EnableWakeWordDetection(true/false) leaves stop-only mode again.
++    bool EnableStopKeywordDetection();
++    bool IsStopKeywordDetectionEnabled() const;
+     void EnableVoiceProcessing(bool enable);
+     void EnableAudioTesting(bool enable);
+     void EnableDeviceAec(bool enable);
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -95,6 +95,13 @@
+                 wake_word_detected_callback_(wake_word);
+             }
+         });
++        custom_wake_word_->OnStopKeywordDetected([this](const std::string& phrase_id, float score) {
++            // Stop-only detection keeps running: the stop gate debounces and
++            // Application disarms it when playback ends.
++            if (stop_keyword_detected_callback_) {
++                stop_keyword_detected_callback_(phrase_id, score);
++            }
++        });
+         if (!custom_wake_word_->Initialize(codec_, models_)) {
+             ESP_LOGE(TAG, "Failed to initialize MultiNet wake-word detector");
+             custom_wake_word_.reset();
+@@ -246,6 +253,7 @@
+     // (see ApplyAfeControls), driven by the kWakeWordEnabled bit.
+     if (enable) {
+         if (wake_detector_ == WakeDetector::kMultiNet) {
++            custom_wake_word_->SetStopOnly(false);
+             custom_wake_word_->Start();
+         }
+         xEventGroupSetBits(event_group_, kWakeWordEnabled);
+@@ -253,11 +261,35 @@
+         xEventGroupClearBits(event_group_, kWakeWordEnabled);
+         if (wake_detector_ == WakeDetector::kMultiNet) {
+             custom_wake_word_->Stop();
++            custom_wake_word_->SetStopOnly(false);
+         }
++    }
++    UpdateActiveState();
++}
++
++bool AfeAudioEngine::EnableStopKeywordDetection() {
++    // Stop keywords are MultiNet commands; WakeNet has no command graph. The
++    // detector shares the AFE (AEC/NS) output that also feeds the uplink.
++    if (wake_detector_ != WakeDetector::kMultiNet || custom_wake_word_ == nullptr) {
++        return false;
+     }
++    custom_wake_word_->SetStopOnly(true);
++    custom_wake_word_->Start();
++    xEventGroupSetBits(event_group_, kWakeWordEnabled);
+     UpdateActiveState();
++    return true;
+ }
+ 
++bool AfeAudioEngine::IsStopKeywordDetectionEnabled() const {
++    return wake_detector_ == WakeDetector::kMultiNet && custom_wake_word_ != nullptr &&
++        IsWakeWordDetectionEnabled() && custom_wake_word_->IsStopOnly();
++}
++
++void AfeAudioEngine::OnStopKeywordDetected(
++    std::function<void(const std::string& phrase_id, float score)> callback) {
++    stop_keyword_detected_callback_ = std::move(callback);
++}
++
+ void AfeAudioEngine::EnableVoiceProcessing(bool enable) {
+     if (enable) {
+         xEventGroupSetBits(event_group_, kVoiceProcessingEnabled);
+diff --git a/main/audio/engines/afe_audio_engine.h b/main/audio/engines/afe_audio_engine.h
+--- a/main/audio/engines/afe_audio_engine.h
++++ b/main/audio/engines/afe_audio_engine.h
+@@ -46,6 +46,11 @@
+     bool GetWakeWordOpus(std::vector<uint8_t>& opus) override;
+     const std::string& GetLastDetectedWakeWord() const override { return last_detected_wake_word_; }
+ 
++    bool EnableStopKeywordDetection() override;
++    bool IsStopKeywordDetectionEnabled() const override;
++    void OnStopKeywordDetected(
++        std::function<void(const std::string& phrase_id, float score)> callback) override;
++
+ private:
+     enum class WakeDetector {
+         kNone,
+@@ -86,6 +91,7 @@
+     std::mutex input_buffer_mutex_;
+ 
+     std::function<void(const std::string&)> wake_word_detected_callback_;
++    std::function<void(const std::string&, float)> stop_keyword_detected_callback_;
+     std::function<void(std::vector<int16_t>&&)> output_callback_;
+     std::function<void(bool)> vad_state_change_callback_;
+ 
+diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/custom_wake_word.cc
+--- a/main/audio/wake_words/custom_wake_word.cc
++++ b/main/audio/wake_words/custom_wake_word.cc
+@@ -5,6 +5,7 @@
+ #include "memoria/memoria_wake_word.h"
+ 
+ #include <esp_log.h>
++#include <esp_timer.h>
+ #include <esp_mn_iface.h>
+ #include <esp_mn_models.h>
+ #include <esp_mn_speech_commands.h>
+@@ -110,6 +111,13 @@
+         ESP_LOGI(TAG, "Using Memoria wake word command=%s display=%s",
+                  active_command.c_str(), active_display.c_str());
+     }
++    // Local stop keywords share the wake word's MultiNet graph. They only act
++    // in stop-only mode (device playback); see HandleStopCommand.
++    for (const auto& phrase : memoria::kLocalStopPhrases) {
++        commands_.push_back({phrase.command, phrase.id, memoria::kLocalStopAction});
++        ESP_LOGI(TAG, "Local stop keyword id=%s command=%s min_score=%.2f",
++                 phrase.id, phrase.command, static_cast<double>(phrase.min_score));
++    }
+ #endif
+ 
+     if (models_ == nullptr || models_->num == -1) {
+@@ -137,7 +145,13 @@
+     for (int i = 0; i < commands_.size(); i++) {
+         esp_mn_commands_add(i + 1, commands_[i].command.c_str());
+     }
+-    esp_mn_commands_update();
++    esp_mn_error_t* command_errors = esp_mn_commands_update();
++    if (command_errors != nullptr) {
++        for (int i = 0; i < command_errors->num; i++) {
++            ESP_LOGE(TAG, "MultiNet rejected command: %s",
++                     command_errors->phrases[i]->string);
++        }
++    }
+     
+     multinet_->print_active_speech_commands(multinet_model_data_);
+ #if CONFIG_SEND_WAKE_WORD_DATA
+@@ -152,6 +166,25 @@
+     wake_word_detected_callback_ = callback;
+ }
+ 
++void CustomWakeWord::OnStopKeywordDetected(
++    std::function<void(const std::string& phrase_id, float score)> callback) {
++    stop_keyword_detected_callback_ = callback;
++}
++
++void CustomWakeWord::HandleStopCommand(const Command& command, float score) {
++    const int64_t now_ms = esp_timer_get_time() / 1000;
++    const memoria::LocalStopVerdict verdict =
++        stop_gate_.Evaluate(command.text.c_str(), score, stop_only_.load(), now_ms);
++    const memoria::LocalStopPhrase* phrase = memoria::FindLocalStopPhrase(command.text.c_str());
++    ESP_LOGI(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",
++             memoria::LocalStopVerdictName(verdict), command.text.c_str(),
++             static_cast<double>(score),
++             static_cast<double>(phrase != nullptr ? phrase->min_score : 0.0f));
++    if (verdict == memoria::LocalStopVerdict::kAccept && stop_keyword_detected_callback_) {
++        stop_keyword_detected_callback_(command.text, score);
++    }
++}
++
+ void CustomWakeWord::Start() {
+     running_ = true;
+ }
+@@ -202,9 +235,25 @@
+         if (mn_state == ESP_MN_STATE_DETECTED) {
+             esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
+             for (int i = 0; i < mn_result->num && running_; i++) {
+-                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
++                const int command_index = mn_result->command_id[i] - 1;
++                if (command_index < 0 || command_index >= static_cast<int>(commands_.size())) {
++                    ESP_LOGW(TAG, "MultiNet returned unknown command_id=%d", mn_result->command_id[i]);
++                    continue;
++                }
++                auto& command = commands_[command_index];
++                if (command.action == memoria::kLocalStopAction) {
++                    HandleStopCommand(command, mn_result->prob[i]);
++                    continue;
++                }
++                if (command.action == "wake" && stop_only_.load()) {
++                    // Playback: a wake word is neither a stop nor a new
++                    // conversation, and must not end stop-keyword detection.
++                    ESP_LOGI(TAG, "Wake word ignored in stop-only mode: string=%s, prob=%f",
++                             mn_result->string, mn_result->prob[i]);
++                    continue;
++                }
++                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",
+                         mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
+-                auto& command = commands_[mn_result->command_id[i] - 1];
+                 if (command.action == "wake") {
+                     last_detected_wake_word_ = command.text;
+                     running_ = false;
+diff --git a/main/audio/wake_words/custom_wake_word.h b/main/audio/wake_words/custom_wake_word.h
+--- a/main/audio/wake_words/custom_wake_word.h
++++ b/main/audio/wake_words/custom_wake_word.h
+@@ -17,6 +17,7 @@
+ #include <atomic>
+ 
+ #include "audio_codec.h"
++#include "memoria/memoria_stop_keyword.h"
+ #include "wake_word.h"
+ #include "wake_word_audio_cache.h"
+ 
+@@ -35,6 +36,12 @@
+     void EncodeWakeWordData();
+     bool GetWakeWordOpus(std::vector<uint8_t>& opus);
+     const std::string& GetLastDetectedWakeWord() const { return last_detected_wake_word_; }
++    // Stop-only mode (Memoria playback): wake commands are ignored and do not
++    // stop detection; "stop" commands pass the local stop gate and fire the
++    // stop callback. Outside it stop commands are logged and dropped.
++    void SetStopOnly(bool stop_only) { stop_only_.store(stop_only); }
++    bool IsStopOnly() const { return stop_only_.load(); }
++    void OnStopKeywordDetected(std::function<void(const std::string& phrase_id, float score)> callback);
+ 
+ private:
+     struct Command {
+@@ -55,6 +62,9 @@
+     std::deque<Command> commands_;
+  
+     std::function<void(const std::string& wake_word)> wake_word_detected_callback_;
++    std::function<void(const std::string& phrase_id, float score)> stop_keyword_detected_callback_;
++    std::atomic<bool> stop_only_ = false;
++    memoria::LocalStopKeywordGate stop_gate_;
+     AudioCodec* codec_ = nullptr;
+     std::string last_detected_wake_word_;
+     std::atomic<bool> running_ = false;
+@@ -70,6 +80,7 @@
+     std::condition_variable wake_word_cv_;
+ 
+     void FeedSamples(const int16_t* data, size_t samples, bool mono);
++    void HandleStopCommand(const Command& command, float score);
+     void ParseWakenetModelConfig();
+ };
+ 
