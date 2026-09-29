@@ -272,6 +272,78 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
+    @staticmethod
+    def _scope_pending_turn_to(context: _MediaVoiceSession, result: ASRResult) -> None:
+        """Make a playback command's own interval the whole pending turn.
+
+        Earlier playback-window candidates (echo, or held speech without owner
+        authority) would merge into the command, route as chat and stay held.
+        The fence mirrors the playback-boundary split in
+        ``MediaTurnEndpointMixin``; by interval, since a command from a later
+        provider task may reuse the sentence id of a candidate it retires.
+        """
+
+        start = result.capture_start_sample
+        context.runtime.speech_timeline.evict_before(
+            stream_epoch=result.stream_epoch, sample=start
+        )
+        pending = context.pending
+        pending.clock_fact_partial_text = None
+        pending.clock_fact_partial_stable_since = None
+        pending.live_query_partial_text = None
+        pending.live_query_partial_stable_since = None
+        pending.conversation_close_partial_text = None
+        pending.conversation_close_partial_stable_since = None
+        pending.cancel_close_semantic()
+        pending.pending_turn_playback_overlap = False
+        pending.pending_turn_onset_floor = start
+        pending.pending_partial = None if result.is_final else result
+        pending.turn_start_sample = start
+        pending.turn_end_sample = result.capture_end_sample
+
+    def _pin_conversation_close_endpoint(
+        self,
+        context: _MediaVoiceSession,
+        capture_end_sample: int,
+        *,
+        text: str,
+        source: str,
+        result: ASRResult | None = None,
+    ) -> None:
+        """Pin a farewell's endpoint without waiting for a device VAD end.
+
+        While a device reply is audible a lexical farewell commits only its own
+        ``result`` interval, as a spoken stop does: after any held candidate a
+        story-time 「再见」 merged into 「小猫咪去哪儿了 再见」, routed as chat
+        and was held for missing owner authority, so the story played on.
+        """
+
+        if self._playback_holds_early_endpoint(
+            context, text, kind=f"conversation-close {source}",
+            echo_only=not source.startswith("semantic"),
+        ):
+            return
+        if (
+            result is not None
+            and context.identity.client_type == "device"
+            and context.runtime.assistant_speaking
+        ):
+            self._scope_pending_turn_to(context, result)
+        endpoint = max(capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
+        context.pending.turn_retire_sample = endpoint
+        context.pending.conversation_close_endpoint_pinned = endpoint
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media early conversation-close endpoint session=%s endpoint=%s "
+            "text_len=%s source=%s",
+            context.identity.session_id,
+            endpoint,
+            len(text),
+            source,
+        )
+
     def _maybe_pin_playback_stop(
         self,
         context: _MediaVoiceSession,
@@ -281,10 +353,9 @@ class MediaPlaybackStopMixin:
     ) -> None:
         """Endpoint a device stop phrase heard while a reply holds the floor.
 
-        Only the stop phrase's own interval is committed: earlier playback-
-        window candidates (echo, or held speech without owner authority) would
-        otherwise merge into 「……停」, route as chat and stay held.  The
-        fence mirrors the playback-boundary split in ``MediaTurnEndpointMixin``.
+        Only the stop phrase's own interval is committed
+        (``_scope_pending_turn_to``): earlier playback-window candidates would
+        otherwise merge into 「……停」, route as chat and stay held.
         """
 
         if (
@@ -310,26 +381,10 @@ class MediaPlaybackStopMixin:
                 source,
             )
             return
-        start = result.capture_start_sample
-        # By interval: a stop final from a later provider task may reuse the
-        # sentence id of a candidate it retires.
-        context.runtime.speech_timeline.evict_before(
-            stream_epoch=result.stream_epoch, sample=start
-        )
+        self._scope_pending_turn_to(context, result)
         pending = context.pending
-        pending.clock_fact_partial_text = None
-        pending.clock_fact_partial_stable_since = None
-        pending.live_query_partial_text = None
-        pending.live_query_partial_stable_since = None
-        pending.conversation_close_partial_text = None
-        pending.conversation_close_partial_stable_since = None
-        pending.cancel_close_semantic()
-        pending.pending_turn_playback_overlap = False
-        pending.pending_turn_onset_floor = start
-        pending.pending_partial = None if result.is_final else result
+        start = result.capture_start_sample
         endpoint = result.capture_end_sample
-        pending.turn_start_sample = start
-        pending.turn_end_sample = endpoint
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
         pending.turn_endpoint_grace_deadline = time.monotonic()

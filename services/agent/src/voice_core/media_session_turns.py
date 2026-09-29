@@ -202,6 +202,11 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _pin_conversation_close_endpoint(
+            self, context: _MediaVoiceSession, capture_end_sample: int, *, text: str,
+            source: str, result: ASRResult | None = None,
+        ) -> None: ...
+
     def _observe_final_asr_result(
         self,
         context: _MediaVoiceSession,
@@ -589,34 +594,6 @@ class MediaTurnEndpointMixin:
             context.pending.live_query_partial_text = text
             context.pending.live_query_partial_stable_since = now
 
-    def _pin_conversation_close_endpoint(
-        self,
-        context: _MediaVoiceSession,
-        capture_end_sample: int,
-        *,
-        text: str,
-        source: str,
-    ) -> None:
-        if self._playback_holds_early_endpoint(
-            context, text, kind=f"conversation-close {source}",
-            echo_only=not source.startswith("semantic"),
-        ):
-            return
-        endpoint = max(capture_end_sample, context.pending.turn_end_sample or 0)
-        context.pending.turn_endpoint_sample = endpoint
-        context.pending.turn_end_sample = max(context.pending.turn_end_sample or 0, endpoint)
-        context.pending.turn_retire_sample = endpoint
-        context.pending.conversation_close_endpoint_pinned = endpoint
-        context.pending.turn_endpoint_grace_deadline = time.monotonic()
-        logger.info(
-            "media early conversation-close endpoint session=%s endpoint=%s "
-            "text_len=%s source=%s",
-            context.identity.session_id,
-            endpoint,
-            len(text),
-            source,
-        )
-
     def _schedule_conversation_close_semantic_evaluation(
         self,
         context: _MediaVoiceSession,
@@ -723,6 +700,7 @@ class MediaTurnEndpointMixin:
                 result.capture_end_sample,
                 text=text,
                 source="final",
+                result=result,
             )
             return
         self._schedule_conversation_close_semantic_evaluation(
@@ -764,6 +742,7 @@ class MediaTurnEndpointMixin:
                 partial.capture_end_sample,
                 text=text,
                 source="partial_immediate",
+                result=partial,
             )
             self._schedule_turn_commit(context)
             return
@@ -783,6 +762,7 @@ class MediaTurnEndpointMixin:
                         partial.capture_end_sample,
                         text=text,
                         source="partial",
+                        result=partial,
                     )
                     self._schedule_turn_commit(context)
                 else:

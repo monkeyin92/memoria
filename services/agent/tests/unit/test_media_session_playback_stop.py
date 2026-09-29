@@ -504,6 +504,44 @@ async def test_device_farewell_during_story_still_ends_the_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_farewell_after_a_held_candidate_still_ends_the_session() -> None:
+    """A farewell during playback commits on its own interval, like a stop.
+
+    Any playback-window candidate held before it (echo, or speech without
+    owner authority) merged into 「小猫咪去哪儿了 再见」, routed as chat and was
+    held for missing owner authority: the story played on.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        context = harness.context
+        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(15, final_text="再见")
+        await harness.wait_for(harness.closed)
+        assert context.standby_requested
+        assert context.standby_reason == "conversation_end_explicit"
+        assert harness.cancel_effects() == []
+        assert harness.story.reply_calls == 1
+
+    await _run_story(_device_identity("farewell-after-candidate"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_farewell_partial_after_a_held_candidate_still_ends_the_session() -> None:
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        context = harness.context
+        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        harness.story.partials[harness._audio_sequence + 9] = ("再见", harness.sample)
+        await harness.audio_frames(10)
+        await harness.wait_for(harness.closed)
+        assert context.standby_reason == "conversation_end_explicit"
+        assert harness.story.reply_calls == 1
+
+    await _run_story(_device_identity("farewell-partial-after-candidate"), script)
+
+
+@pytest.mark.asyncio
 async def test_h5_vad_endpointed_stop_word_stops_the_reply() -> None:
     """The commit path itself used to report listening while the reply played on."""
 
