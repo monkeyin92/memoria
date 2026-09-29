@@ -1,0 +1,2894 @@
+{
+  "segments_total": 43,
+  "matched": 11,
+  "retake": 2,
+  "unmatched": 30,
+  "references": 30,
+  "references_not_found": 19,
+  "overall": [
+    {
+      "engine": "funasr",
+      "matched": 11,
+      "cer": 0.1625,
+      "cer_raw": 0.2625,
+      "exact_rate": 0.636,
+      "empty_rate": 0.0,
+      "final_latency_p50_s": -0.172,
+      "final_latency_p90_s": 0.292,
+      "first_partial_p50_s": 2.731,
+      "errors": 4,
+      "timeouts": 0
+    },
+    {
+      "engine": "qwen-audio",
+      "matched": 11,
+      "cer": 0.125,
+      "cer_raw": 0.225,
+      "exact_rate": 0.727,
+      "empty_rate": 0.0,
+      "final_latency_p50_s": -0.153,
+      "final_latency_p90_s": 0.27,
+      "first_partial_p50_s": 2.438,
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "engine": "qwen-realtime",
+      "matched": 11,
+      "cer": 0.1125,
+      "cer_raw": 0.1125,
+      "exact_rate": 0.727,
+      "empty_rate": 0.0,
+      "final_latency_p50_s": 0.204,
+      "final_latency_p90_s": 0.268,
+      "first_partial_p50_s": 0.49,
+      "errors": 0,
+      "timeouts": 0
+    },
+    {
+      "engine": "doubao",
+      "matched": 11,
+      "cer": 0.125,
+      "cer_raw": 0.225,
+      "exact_rate": 0.727,
+      "empty_rate": 0.091,
+      "final_latency_p50_s": 0.088,
+      "final_latency_p90_s": 0.177,
+      "first_partial_p50_s": 3.401,
+      "errors": 0,
+      "timeouts": 0
+    }
+  ],
+  "per_category": {
+    "daily": [
+      {
+        "engine": "funasr",
+        "matched": 5,
+        "cer": 0.0444,
+        "cer_raw": 0.0667,
+        "exact_rate": 0.8,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.167,
+        "final_latency_p90_s": 0.26,
+        "first_partial_p50_s": 2.378,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-audio",
+        "matched": 5,
+        "cer": 0.0444,
+        "cer_raw": 0.0667,
+        "exact_rate": 0.8,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.206,
+        "final_latency_p90_s": 0.268,
+        "first_partial_p50_s": 2.192,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-realtime",
+        "matched": 5,
+        "cer": 0.0444,
+        "cer_raw": 0.0444,
+        "exact_rate": 0.8,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.21,
+        "final_latency_p90_s": 0.249,
+        "first_partial_p50_s": 0.506,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "doubao",
+        "matched": 5,
+        "cer": 0.0444,
+        "cer_raw": 0.0667,
+        "exact_rate": 0.8,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.086,
+        "final_latency_p90_s": 0.171,
+        "first_partial_p50_s": 3.171,
+        "errors": 0,
+        "timeouts": 0
+      }
+    ],
+    "numbers_names": [
+      {
+        "engine": "funasr",
+        "matched": 2,
+        "cer": 0.1667,
+        "cer_raw": 0.4583,
+        "exact_rate": 0.5,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.098,
+        "final_latency_p90_s": 0.314,
+        "first_partial_p50_s": 2.691,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-audio",
+        "matched": 2,
+        "cer": 0.1667,
+        "cer_raw": 0.4583,
+        "exact_rate": 0.5,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.062,
+        "final_latency_p90_s": 0.234,
+        "first_partial_p50_s": 2.719,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-realtime",
+        "matched": 2,
+        "cer": 0.1667,
+        "cer_raw": 0.1667,
+        "exact_rate": 0.5,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.236,
+        "final_latency_p90_s": 0.274,
+        "first_partial_p50_s": 0.455,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "doubao",
+        "matched": 2,
+        "cer": 0.1667,
+        "cer_raw": 0.4583,
+        "exact_rate": 0.5,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.141,
+        "final_latency_p90_s": 0.182,
+        "first_partial_p50_s": 3.059,
+        "errors": 0,
+        "timeouts": 0
+      }
+    ],
+    "stop": [
+      {
+        "engine": "funasr",
+        "matched": 4,
+        "cer": 0.6364,
+        "cer_raw": 0.6364,
+        "exact_rate": 0.5,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": -0.194,
+        "final_latency_p90_s": 0.089,
+        "first_partial_p50_s": 4.225,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-audio",
+        "matched": 4,
+        "cer": 0.3636,
+        "cer_raw": 0.3636,
+        "exact_rate": 0.75,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": -0.299,
+        "final_latency_p90_s": 0.076,
+        "first_partial_p50_s": 4.078,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "qwen-realtime",
+        "matched": 4,
+        "cer": 0.2727,
+        "cer_raw": 0.2727,
+        "exact_rate": 0.75,
+        "empty_rate": 0.0,
+        "final_latency_p50_s": 0.202,
+        "final_latency_p90_s": 0.222,
+        "first_partial_p50_s": 0.487,
+        "errors": 0,
+        "timeouts": 0
+      },
+      {
+        "engine": "doubao",
+        "matched": 4,
+        "cer": 0.3636,
+        "cer_raw": 0.3636,
+        "exact_rate": 0.75,
+        "empty_rate": 0.25,
+        "final_latency_p50_s": 0.087,
+        "final_latency_p90_s": 0.096,
+        "first_partial_p50_s": 6.238,
+        "errors": 0,
+        "timeouts": 0
+      }
+    ]
+  },
+  "sentences": [
+    {
+      "line": 1,
+      "category": "stop",
+      "segments": [
+        4
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.498,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.366,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.204,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.079,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 2,
+      "category": "stop",
+      "segments": []
+    },
+    {
+      "line": 3,
+      "category": "stop",
+      "segments": [
+        7
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.176,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.423,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.199,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.098,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 4,
+      "category": "stop",
+      "segments": [
+        9
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 1.333,
+          "exact": false,
+          "final_latency_s": -0.212,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.233,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.229,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.087,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 5,
+      "category": "stop",
+      "segments": [
+        12
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.75,
+          "exact": false,
+          "final_latency_s": 0.203,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 1.0,
+          "exact": false,
+          "final_latency_s": 0.209,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.75,
+          "exact": false,
+          "final_latency_s": 0.124,
+          "error": null
+        },
+        "doubao": {
+          "cer": 1.0,
+          "exact": false,
+          "final_latency_s": 0.169,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 6,
+      "category": "daily",
+      "segments": [
+        13
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.167,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.264,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.21,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.086,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 7,
+      "category": "daily",
+      "segments": [
+        30
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.292,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.206,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.221,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.175,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 8,
+      "category": "daily",
+      "segments": [
+        31
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.143,
+          "exact": false,
+          "final_latency_s": -0.526,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.143,
+          "exact": false,
+          "final_latency_s": -0.403,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.143,
+          "exact": false,
+          "final_latency_s": 0.189,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.143,
+          "exact": false,
+          "final_latency_s": 0.076,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 9,
+      "category": "daily",
+      "segments": []
+    },
+    {
+      "line": 10,
+      "category": "daily",
+      "segments": [
+        35
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.213,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.27,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.268,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.165,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 11,
+      "category": "daily",
+      "segments": [
+        36
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.972,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": -0.885,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.192,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.076,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 12,
+      "category": "numbers_names",
+      "segments": [
+        38
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.364,
+          "exact": false,
+          "final_latency_s": -0.172,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.364,
+          "exact": false,
+          "final_latency_s": -0.153,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.364,
+          "exact": false,
+          "final_latency_s": 0.283,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.364,
+          "exact": false,
+          "final_latency_s": 0.089,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 13,
+      "category": "numbers_names",
+      "segments": [
+        39
+      ],
+      "engines": {
+        "funasr": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.368,
+          "error": null
+        },
+        "qwen-audio": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.277,
+          "error": null
+        },
+        "qwen-realtime": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.189,
+          "error": null
+        },
+        "doubao": {
+          "cer": 0.0,
+          "exact": true,
+          "final_latency_s": 0.192,
+          "error": null
+        }
+      }
+    },
+    {
+      "line": 14,
+      "category": "numbers_names",
+      "segments": []
+    },
+    {
+      "line": 15,
+      "category": "numbers_names",
+      "segments": []
+    },
+    {
+      "line": 16,
+      "category": "numbers_names",
+      "segments": []
+    },
+    {
+      "line": 17,
+      "category": "long",
+      "segments": []
+    },
+    {
+      "line": 18,
+      "category": "long",
+      "segments": []
+    },
+    {
+      "line": 19,
+      "category": "long",
+      "segments": []
+    },
+    {
+      "line": 20,
+      "category": "long",
+      "segments": []
+    },
+    {
+      "line": 21,
+      "category": "quiet",
+      "segments": []
+    },
+    {
+      "line": 22,
+      "category": "quiet",
+      "segments": []
+    },
+    {
+      "line": 23,
+      "category": "quiet",
+      "segments": []
+    },
+    {
+      "line": 24,
+      "category": "quiet",
+      "segments": []
+    },
+    {
+      "line": 25,
+      "category": "far",
+      "segments": []
+    },
+    {
+      "line": 26,
+      "category": "far",
+      "segments": []
+    },
+    {
+      "line": 27,
+      "category": "far",
+      "segments": []
+    },
+    {
+      "line": 28,
+      "category": "noisy",
+      "segments": []
+    },
+    {
+      "line": 29,
+      "category": "noisy",
+      "segments": []
+    },
+    {
+      "line": 30,
+      "category": "noisy",
+      "segments": []
+    }
+  ],
+  "false_trigger_text": {
+    "funasr": {
+      "segments_with_text": 4,
+      "chars": 51
+    },
+    "qwen-audio": {
+      "segments_with_text": 3,
+      "chars": 43
+    },
+    "qwen-realtime": {
+      "segments_with_text": 31,
+      "chars": 74
+    },
+    "doubao": {
+      "segments_with_text": 3,
+      "chars": 43
+    }
+  },
+  "segments": [
+    {
+      "index": 0,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 0.0,
+      "end_s": 0.69,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": 0.063,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": 0.089,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.498,
+          "final_latency_s": 0.206,
+          "finish_latency_s": 0.206,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.145,
+          "finish_latency_s": 0.145,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180012BEB1A98097F4588CCAC5"
+        }
+      }
+    },
+    {
+      "index": 1,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 2.55,
+      "end_s": 4.59,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": null,
+          "error": "InvalidProxyStatus: proxy rejected connection: HTTP 503",
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.11,
+          "finish_latency_s": 0.11,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.462,
+          "final_latency_s": 0.236,
+          "finish_latency_s": 0.236,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.081,
+          "finish_latency_s": 0.081,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180014446D6917802C7C56E2F6"
+        }
+      }
+    },
+    {
+      "index": 2,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 5.1,
+      "end_s": 23.94,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.171,
+      "engines": {
+        "funasr": {
+          "text_chars": 22,
+          "first_partial_s": 3.545,
+          "final_latency_s": -0.577,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 21,
+          "first_partial_s": 3.613,
+          "final_latency_s": -0.604,
+          "finish_latency_s": 0.081,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 22,
+          "first_partial_s": 0.45,
+          "final_latency_s": 0.297,
+          "finish_latency_s": 0.297,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 22,
+          "first_partial_s": 3.379,
+          "final_latency_s": 0.066,
+          "finish_latency_s": 0.066,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180018F3ABAA64A8B37E48481D"
+        }
+      }
+    },
+    {
+      "index": 3,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 25.44,
+      "end_s": 29.58,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -1.687,
+          "finish_latency_s": 0.077,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -1.667,
+          "finish_latency_s": 0.069,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.539,
+          "final_latency_s": 0.189,
+          "finish_latency_s": 0.189,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.081,
+          "finish_latency_s": 0.081,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180038E0E072DB7B49D956A013"
+        }
+      }
+    },
+    {
+      "index": 4,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 34.14,
+      "end_s": 41.4,
+      "kind": "matched",
+      "reference_line": 1,
+      "best_reference_line": 1,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 1,
+          "first_partial_s": 5.719,
+          "final_latency_s": -0.498,
+          "finish_latency_s": 0.085,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 1,
+          "first_partial_s": 5.718,
+          "final_latency_s": -0.366,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.532,
+          "final_latency_s": 0.204,
+          "finish_latency_s": 0.204,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 1,
+          "first_partial_s": 6.238,
+          "final_latency_s": 0.079,
+          "finish_latency_s": 0.079,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180044D8C9980110595C61F071"
+        }
+      }
+    },
+    {
+      "index": 5,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 43.65,
+      "end_s": 45.45,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.429,
+          "finish_latency_s": 0.131,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.549,
+          "finish_latency_s": 0.059,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.528,
+          "final_latency_s": 0.162,
+          "finish_latency_s": 0.162,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.144,
+          "finish_latency_s": 0.144,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180052F2E81797E218BE6694E6"
+        }
+      }
+    },
+    {
+      "index": 6,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 46.23,
+      "end_s": 47.34,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.11,
+          "finish_latency_s": 0.071,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.099,
+          "finish_latency_s": 0.067,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.555,
+          "final_latency_s": 0.156,
+          "finish_latency_s": 0.156,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.071,
+          "finish_latency_s": 0.071,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180055E9D89DA29FBF7BB474A0"
+        }
+      }
+    },
+    {
+      "index": 7,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 47.97,
+      "end_s": 51.81,
+      "kind": "matched",
+      "reference_line": 3,
+      "best_reference_line": 3,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 3,
+          "first_partial_s": 2.731,
+          "final_latency_s": -0.176,
+          "finish_latency_s": 0.066,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 3,
+          "first_partial_s": 2.438,
+          "final_latency_s": -0.423,
+          "finish_latency_s": 0.063,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 3,
+          "first_partial_s": 0.493,
+          "final_latency_s": 0.199,
+          "finish_latency_s": 0.199,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 3,
+          "first_partial_s": 2.391,
+          "final_latency_s": 0.098,
+          "finish_latency_s": 0.098,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "2026092918005723FBD6BA17B3D7602BEA"
+        }
+      }
+    },
+    {
+      "index": 8,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 52.17,
+      "end_s": 53.61,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.267,
+          "finish_latency_s": 0.064,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.268,
+          "finish_latency_s": 0.061,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.53,
+          "final_latency_s": 0.248,
+          "finish_latency_s": 0.248,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.062,
+          "finish_latency_s": 0.062,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180102414F4B979F05529378C3"
+        }
+      }
+    },
+    {
+      "index": 9,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 54.12,
+      "end_s": 63.69,
+      "kind": "matched",
+      "reference_line": 4,
+      "best_reference_line": 4,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 6,
+          "first_partial_s": 8.226,
+          "final_latency_s": -0.212,
+          "finish_latency_s": 0.14,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 3,
+          "first_partial_s": 8.094,
+          "final_latency_s": -0.233,
+          "finish_latency_s": 0.096,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 3,
+          "first_partial_s": 0.481,
+          "final_latency_s": 0.229,
+          "finish_latency_s": 0.229,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 3,
+          "first_partial_s": 8.552,
+          "final_latency_s": 0.087,
+          "finish_latency_s": 0.087,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291801041FDEEAF8980E685E2940"
+        }
+      }
+    },
+    {
+      "index": 10,
+      "source": "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "start_s": 64.02,
+      "end_s": 67.2,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -2.192,
+          "finish_latency_s": 0.069,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -2.195,
+          "finish_latency_s": 0.067,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.456,
+          "final_latency_s": 0.293,
+          "finish_latency_s": 0.293,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.068,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180115014C3BF18543988AFFE7"
+        }
+      }
+    },
+    {
+      "index": 11,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2036.wav",
+      "start_s": 3.78,
+      "end_s": 12.24,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.178,
+      "engines": {
+        "funasr": {
+          "text_chars": 21,
+          "first_partial_s": 4.275,
+          "final_latency_s": -0.03,
+          "finish_latency_s": 0.038,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 21,
+          "first_partial_s": 4.19,
+          "final_latency_s": 0.167,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 21,
+          "first_partial_s": 0.464,
+          "final_latency_s": 0.19,
+          "finish_latency_s": 0.19,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 20,
+          "first_partial_s": 3.75,
+          "final_latency_s": 0.079,
+          "finish_latency_s": 0.079,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291801191F29169D09CE8A89677D"
+        }
+      }
+    },
+    {
+      "index": 12,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2036.wav",
+      "start_s": 15.36,
+      "end_s": 16.29,
+      "kind": "matched",
+      "reference_line": 5,
+      "best_reference_line": 5,
+      "best_similarity": 0.4,
+      "engines": {
+        "funasr": {
+          "text_chars": 1,
+          "first_partial_s": 0.788,
+          "final_latency_s": 0.203,
+          "finish_latency_s": 0.204,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 1,
+          "first_partial_s": 0.655,
+          "final_latency_s": 0.209,
+          "finish_latency_s": 0.21,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.444,
+          "final_latency_s": 0.124,
+          "finish_latency_s": 0.124,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.169,
+          "finish_latency_s": 0.169,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180129D774D509092B435066FE"
+        }
+      }
+    },
+    {
+      "index": 13,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2036.wav",
+      "start_s": 17.43,
+      "end_s": 20.1,
+      "kind": "matched",
+      "reference_line": 6,
+      "best_reference_line": 6,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 7,
+          "first_partial_s": 1.615,
+          "final_latency_s": 0.167,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 7,
+          "first_partial_s": 1.623,
+          "final_latency_s": 0.264,
+          "finish_latency_s": 0.264,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 7,
+          "first_partial_s": 0.49,
+          "final_latency_s": 0.21,
+          "finish_latency_s": 0.21,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 7,
+          "first_partial_s": 2.238,
+          "final_latency_s": 0.086,
+          "finish_latency_s": 0.086,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180131AF7A47A01F30165CD458"
+        }
+      }
+    },
+    {
+      "index": 14,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2036.wav",
+      "start_s": 22.05,
+      "end_s": 31.86,
+      "kind": "retake",
+      "reference_line": null,
+      "best_reference_line": 1,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 3,
+          "first_partial_s": 1.627,
+          "final_latency_s": 0.211,
+          "finish_latency_s": 0.211,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 1,
+          "first_partial_s": 9.133,
+          "final_latency_s": 0.204,
+          "finish_latency_s": 0.204,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.45,
+          "final_latency_s": 0.21,
+          "finish_latency_s": 0.21,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 1,
+          "first_partial_s": 9.628,
+          "final_latency_s": 0.073,
+          "finish_latency_s": 0.073,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291801346D8B06987B416D8CEB66"
+        }
+      }
+    },
+    {
+      "index": 15,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 0.0,
+      "end_s": 2.91,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.094,
+          "finish_latency_s": 0.094,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.109,
+          "finish_latency_s": 0.11,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.447,
+          "final_latency_s": 0.194,
+          "finish_latency_s": 0.196,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.076,
+          "finish_latency_s": 0.076,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180146700D2E6B4EC3FE55BFCC"
+        }
+      }
+    },
+    {
+      "index": 16,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 3.18,
+      "end_s": 6.39,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.226,
+          "finish_latency_s": 0.226,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.137,
+          "finish_latency_s": 0.137,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.534,
+          "final_latency_s": 0.167,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.082,
+          "finish_latency_s": 0.082,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180150752B5589A87679588656"
+        }
+      }
+    },
+    {
+      "index": 17,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 6.6,
+      "end_s": 7.89,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.185,
+          "finish_latency_s": 0.185,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.127,
+          "finish_latency_s": 0.127,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.444,
+          "final_latency_s": 0.17,
+          "finish_latency_s": 0.17,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.074,
+          "finish_latency_s": 0.074,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "2026092918015412C28A6D06B7D4606FE9"
+        }
+      }
+    },
+    {
+      "index": 18,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 8.55,
+      "end_s": 10.23,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.091,
+          "finish_latency_s": 0.091,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.166,
+          "finish_latency_s": 0.166,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.449,
+          "final_latency_s": 0.231,
+          "finish_latency_s": 0.231,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.061,
+          "finish_latency_s": 0.061,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180156BEA9C04123DC7957ED61"
+        }
+      }
+    },
+    {
+      "index": 19,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 10.47,
+      "end_s": 18.18,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": null,
+          "error": "InvalidProxyStatus: proxy rejected connection: HTTP 503",
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -3.366,
+          "finish_latency_s": 0.042,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 0,
+          "first_partial_s": 0.482,
+          "final_latency_s": 0.184,
+          "finish_latency_s": 0.184,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.167,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180200BC2AC52C76D8B2AF6D11"
+        }
+      }
+    },
+    {
+      "index": 20,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 18.36,
+      "end_s": 20.46,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.304,
+          "finish_latency_s": 0.304,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.085,
+          "finish_latency_s": 0.085,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.46,
+          "final_latency_s": 0.259,
+          "finish_latency_s": 0.259,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.086,
+          "finish_latency_s": 0.086,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180208B302481983EA2C57A0DD"
+        }
+      }
+    },
+    {
+      "index": 21,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 20.91,
+      "end_s": 23.76,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.14,
+          "finish_latency_s": 0.14,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.188,
+          "finish_latency_s": 0.188,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.561,
+          "final_latency_s": 0.464,
+          "finish_latency_s": 0.464,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.052,
+          "finish_latency_s": 0.052,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180211E317703F0B7443BBF089"
+        }
+      }
+    },
+    {
+      "index": 22,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 25.32,
+      "end_s": 27.27,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.171,
+          "finish_latency_s": 0.171,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.201,
+          "finish_latency_s": 0.201,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.53,
+          "final_latency_s": 0.167,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.079,
+          "finish_latency_s": 0.079,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180215FB044CF917BC465DB3D0"
+        }
+      }
+    },
+    {
+      "index": 23,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 27.45,
+      "end_s": 28.59,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.111,
+          "finish_latency_s": 0.117,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.083,
+          "finish_latency_s": 0.083,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.474,
+          "final_latency_s": 0.213,
+          "finish_latency_s": 0.213,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.085,
+          "finish_latency_s": 0.085,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180218760466FD5F2F61904B4C"
+        }
+      }
+    },
+    {
+      "index": 24,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 30.96,
+      "end_s": 32.55,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.416,
+          "finish_latency_s": 0.041,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.404,
+          "finish_latency_s": 0.126,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.451,
+          "final_latency_s": 0.168,
+          "finish_latency_s": 0.168,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.086,
+          "finish_latency_s": 0.086,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291802216138B5B64BEF075C4752"
+        }
+      }
+    },
+    {
+      "index": 25,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 32.79,
+      "end_s": 33.78,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.147,
+          "finish_latency_s": 0.147,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.142,
+          "finish_latency_s": 0.149,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.444,
+          "final_latency_s": 0.202,
+          "finish_latency_s": 0.202,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.138,
+          "finish_latency_s": 0.138,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "2026092918022372D0A93F1D46F86A2F77"
+        }
+      }
+    },
+    {
+      "index": 26,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 35.76,
+      "end_s": 39.54,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": 2.264,
+          "final_latency_s": -0.496,
+          "finish_latency_s": 0.067,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.492,
+          "finish_latency_s": 0.073,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.819,
+          "final_latency_s": 0.207,
+          "finish_latency_s": 0.207,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.068,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291802252B688741420F700BF34F"
+        }
+      }
+    },
+    {
+      "index": 27,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 40.71,
+      "end_s": 42.24,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.418,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": 0.442,
+          "final_latency_s": -0.409,
+          "finish_latency_s": 0.078,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.467,
+          "final_latency_s": 0.168,
+          "finish_latency_s": 0.168,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.069,
+          "finish_latency_s": 0.069,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180230C59BA3ADA44D008CE629"
+        }
+      }
+    },
+    {
+      "index": 28,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 44.49,
+      "end_s": 45.84,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.177,
+          "finish_latency_s": 0.072,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.217,
+          "finish_latency_s": 0.061,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.467,
+          "final_latency_s": 0.188,
+          "finish_latency_s": 0.188,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.072,
+          "finish_latency_s": 0.072,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291802322EEC39076D75D65B5FDA"
+        }
+      }
+    },
+    {
+      "index": 29,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 49.41,
+      "end_s": 63.42,
+      "kind": "retake",
+      "reference_line": null,
+      "best_reference_line": 5,
+      "best_similarity": 0.4,
+      "engines": {
+        "funasr": {
+          "text_chars": 5,
+          "first_partial_s": 1.318,
+          "final_latency_s": -0.187,
+          "finish_latency_s": 0.146,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.133,
+          "finish_latency_s": 0.073,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.456,
+          "final_latency_s": 0.239,
+          "finish_latency_s": 0.239,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.284,
+          "finish_latency_s": 0.284,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291802342F7981304075279D15FF"
+        }
+      }
+    },
+    {
+      "index": 30,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 65.1,
+      "end_s": 70.2,
+      "kind": "matched",
+      "reference_line": 7,
+      "best_reference_line": 7,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 10,
+          "first_partial_s": 2.378,
+          "final_latency_s": 0.292,
+          "finish_latency_s": 0.292,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 10,
+          "first_partial_s": 2.192,
+          "final_latency_s": 0.206,
+          "finish_latency_s": 0.207,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 10,
+          "first_partial_s": 0.506,
+          "final_latency_s": 0.221,
+          "finish_latency_s": 0.221,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 10,
+          "first_partial_s": 3.171,
+          "final_latency_s": 0.175,
+          "finish_latency_s": 0.175,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180250E2A4AC21AF8CAB601576"
+        }
+      }
+    },
+    {
+      "index": 31,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 74.37,
+      "end_s": 83.37,
+      "kind": "matched",
+      "reference_line": 8,
+      "best_reference_line": 8,
+      "best_similarity": 0.923,
+      "engines": {
+        "funasr": {
+          "text_chars": 12,
+          "first_partial_s": 3.628,
+          "final_latency_s": -0.526,
+          "finish_latency_s": 0.067,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 12,
+          "first_partial_s": 3.685,
+          "final_latency_s": -0.403,
+          "finish_latency_s": 0.05,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 12,
+          "first_partial_s": 0.523,
+          "final_latency_s": 0.189,
+          "finish_latency_s": 0.189,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 12,
+          "first_partial_s": 3.63,
+          "final_latency_s": 0.076,
+          "finish_latency_s": 0.076,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180256FCF1873A2FA89D719676"
+        }
+      }
+    },
+    {
+      "index": 32,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 84.63,
+      "end_s": 85.59,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": null,
+          "error": "InvalidProxyStatus: proxy rejected connection: HTTP 503",
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.164,
+          "finish_latency_s": 0.164,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.458,
+          "final_latency_s": 0.173,
+          "finish_latency_s": 0.173,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.074,
+          "finish_latency_s": 0.074,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180306136DA3F899AFB091C457"
+        }
+      }
+    },
+    {
+      "index": 33,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 87.99,
+      "end_s": 91.98,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -1.18,
+          "finish_latency_s": 0.073,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -1.104,
+          "finish_latency_s": 0.069,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.458,
+          "final_latency_s": 0.216,
+          "finish_latency_s": 0.216,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.066,
+          "finish_latency_s": 0.066,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291803101302FB2E0122B80A465C"
+        }
+      }
+    },
+    {
+      "index": 34,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 92.64,
+      "end_s": 93.54,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.138,
+          "finish_latency_s": 0.138,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": 0.586,
+          "final_latency_s": 0.084,
+          "finish_latency_s": 0.084,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.446,
+          "final_latency_s": 0.214,
+          "finish_latency_s": 0.214,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.149,
+          "finish_latency_s": 0.149,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "202609291803159D2E9EFDDED0AF542D94"
+        }
+      }
+    },
+    {
+      "index": 35,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 93.87,
+      "end_s": 96.15,
+      "kind": "matched",
+      "reference_line": 10,
+      "best_reference_line": 10,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 5,
+          "first_partial_s": 1.619,
+          "final_latency_s": 0.213,
+          "finish_latency_s": 0.213,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 5,
+          "first_partial_s": 1.677,
+          "final_latency_s": 0.27,
+          "finish_latency_s": 0.27,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 5,
+          "first_partial_s": 0.464,
+          "final_latency_s": 0.268,
+          "finish_latency_s": 0.268,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 5,
+          "first_partial_s": 1.249,
+          "final_latency_s": 0.165,
+          "finish_latency_s": 0.165,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180316FC7537206F777C746800"
+        }
+      }
+    },
+    {
+      "index": 36,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 97.89,
+      "end_s": 107.73,
+      "kind": "matched",
+      "reference_line": 11,
+      "best_reference_line": 11,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 9,
+          "first_partial_s": 3.226,
+          "final_latency_s": -0.972,
+          "finish_latency_s": 0.058,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 9,
+          "first_partial_s": 6.474,
+          "final_latency_s": -0.885,
+          "finish_latency_s": 0.071,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 9,
+          "first_partial_s": 0.522,
+          "final_latency_s": 0.192,
+          "finish_latency_s": 0.194,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 9,
+          "first_partial_s": 6.65,
+          "final_latency_s": 0.076,
+          "finish_latency_s": 0.076,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180319D978D8E8C3A8F6B4DF2A"
+        }
+      }
+    },
+    {
+      "index": 37,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 108.48,
+      "end_s": 111.12,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": 1.781,
+          "final_latency_s": -0.234,
+          "finish_latency_s": 0.106,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.204,
+          "finish_latency_s": 0.065,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.452,
+          "final_latency_s": 0.191,
+          "finish_latency_s": 0.191,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.06,
+          "finish_latency_s": 0.06,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180330C89E3248F13ECF038165"
+        }
+      }
+    },
+    {
+      "index": 38,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 112.32,
+      "end_s": 118.47,
+      "kind": "matched",
+      "reference_line": 12,
+      "best_reference_line": 12,
+      "best_similarity": 0.636,
+      "engines": {
+        "funasr": {
+          "text_chars": 11,
+          "first_partial_s": 0.469,
+          "final_latency_s": -0.172,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 11,
+          "first_partial_s": 0.612,
+          "final_latency_s": -0.153,
+          "finish_latency_s": 0.068,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 11,
+          "first_partial_s": 0.453,
+          "final_latency_s": 0.283,
+          "finish_latency_s": 0.283,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 11,
+          "first_partial_s": 1.04,
+          "final_latency_s": 0.089,
+          "finish_latency_s": 0.089,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180334A3419F0C7AC40E433839"
+        }
+      }
+    },
+    {
+      "index": 39,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 118.74,
+      "end_s": 126.45,
+      "kind": "matched",
+      "reference_line": 13,
+      "best_reference_line": 13,
+      "best_similarity": 1.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 14,
+          "first_partial_s": 4.913,
+          "final_latency_s": 0.368,
+          "finish_latency_s": 0.368,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 14,
+          "first_partial_s": 4.826,
+          "final_latency_s": 0.277,
+          "finish_latency_s": 0.278,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 13,
+          "first_partial_s": 0.457,
+          "final_latency_s": 0.189,
+          "finish_latency_s": 0.189,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 14,
+          "first_partial_s": 5.079,
+          "final_latency_s": 0.192,
+          "finish_latency_s": 0.192,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180341EF1E16E86191986E5495"
+        }
+      }
+    },
+    {
+      "index": 40,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 127.8,
+      "end_s": 133.47,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": null,
+          "finish_latency_s": null,
+          "error": "InvalidProxyStatus: proxy rejected connection: HTTP 503",
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.166,
+          "finish_latency_s": 0.166,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.536,
+          "final_latency_s": 0.284,
+          "finish_latency_s": 0.284,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.235,
+          "finish_latency_s": 0.235,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180350EACCC6F95BFFC75E9429"
+        }
+      }
+    },
+    {
+      "index": 41,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 133.65,
+      "end_s": 137.85,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.29,
+          "finish_latency_s": 0.067,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": -0.311,
+          "finish_latency_s": 0.126,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 3,
+          "first_partial_s": 0.45,
+          "final_latency_s": 0.31,
+          "finish_latency_s": 0.31,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.058,
+          "finish_latency_s": 0.058,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "20260929180357699154EAEF9536551C6B"
+        }
+      }
+    },
+    {
+      "index": 42,
+      "source": "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav",
+      "start_s": 139.56,
+      "end_s": 142.62,
+      "kind": "unmatched",
+      "reference_line": null,
+      "best_reference_line": null,
+      "best_similarity": 0.0,
+      "engines": {
+        "funasr": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.149,
+          "finish_latency_s": 0.149,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-audio": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.215,
+          "finish_latency_s": 0.221,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "qwen-realtime": {
+          "text_chars": 1,
+          "first_partial_s": 0.455,
+          "final_latency_s": 0.166,
+          "finish_latency_s": 0.167,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false
+        },
+        "doubao": {
+          "text_chars": 0,
+          "first_partial_s": null,
+          "final_latency_s": 0.176,
+          "finish_latency_s": 0.176,
+          "error": null,
+          "timed_out": false,
+          "provider_empty": false,
+          "log_id": "2026092918040230E43F5D7C845AA94248"
+        }
+      }
+    }
+  ],
+  "config": {
+    "recordings": [
+      "media-uplink-f06e9270-bb0b-4923-81cc-a688cc166f66-epoch2035.wav",
+      "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2036.wav",
+      "media-uplink-6807b274-a586-45f7-a4fd-cf32752a0d28-epoch2037.wav"
+    ],
+    "reference": "asr-ab-reading-script-20260929.txt",
+    "pace": 1.0,
+    "concurrency": 4,
+    "align": "ordered",
+    "segmenter": {
+      "pad_ms": 300,
+      "merge_gap_ms": 800,
+      "min_rms": 150.0,
+      "max_audio_s": 30.0
+    },
+    "engines": {
+      "funasr": {
+        "protocol": "dashscope-task",
+        "model": "fun-asr-realtime",
+        "url": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+        "chunk_ms": 100,
+        "header_names": [
+          "Authorization"
+        ],
+        "options": {
+          "language_hints": [
+            "zh"
+          ],
+          "max_sentence_silence": 550
+        }
+      },
+      "qwen-audio": {
+        "protocol": "dashscope-task",
+        "model": "qwen-audio-3.1-asr-flash-streaming",
+        "url": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+        "chunk_ms": 100,
+        "header_names": [
+          "Authorization"
+        ],
+        "options": {
+          "language_hints": [
+            "zh"
+          ],
+          "max_sentence_silence": 550
+        }
+      },
+      "qwen-realtime": {
+        "protocol": "dashscope-realtime",
+        "model": "qwen3-asr-flash-realtime",
+        "url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-asr-flash-realtime",
+        "chunk_ms": 100,
+        "header_names": [
+          "Authorization",
+          "OpenAI-Beta"
+        ],
+        "options": {
+          "language": "zh"
+        }
+      },
+      "doubao": {
+        "protocol": "doubao-sauc",
+        "model": "bigmodel (volc.bigasr.sauc.duration)",
+        "url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+        "chunk_ms": 200,
+        "header_names": [
+          "X-Api-Access-Key",
+          "X-Api-App-Key",
+          "X-Api-Connect-Id",
+          "X-Api-Resource-Id"
+        ],
+        "options": {
+          "enable_nonstream": false,
+          "resource_id": "volc.bigasr.sauc.duration"
+        }
+      }
+    },
+    "skipped": [],
+    "show_text": false,
+    "wall_s": 234.0
+  }
+}
