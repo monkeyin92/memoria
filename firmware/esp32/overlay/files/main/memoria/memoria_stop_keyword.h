@@ -14,13 +14,20 @@ namespace memoria {
 // is logged and dropped. Host-compilable on purpose (no ESP-IDF includes) so
 // the thresholds and debounce can be tested without hardware.
 //
-// Tuning: every hit is logged on serial as
+// Detection is split in two so weak hits stay visible for tuning. MultiNet
+// itself reports every command at or above kMultiNetDetectThreshold; the code
+// then applies each command's own acceptance: kWakeWordMinScore for the wake
+// word (build 10's model-wide 0.20, unchanged) and min_score per stop row.
+//
+// Tuning: in stop-only mode every stop hit >= kMultiNetDetectThreshold is
+// logged on serial as
 //   "Local stop keyword <verdict>: id=<id> prob=<score> min=<min_score>"
-// Raise a phrase's min_score when echo or room speech crosses it, lower it
-// when a clearly spoken stop reads "below_threshold", and delete a row to drop
-// the phrase. MultiNet reports prob in [0, 1]; the wake word 「茉莉」 fires at
-// the global detection threshold 0.20 and field hits land around 0.21-0.27, so
-// every stop row starts stricter than that.
+// and every detection window's candidates as "MultiNet stop-mode ...". Set a
+// row's min_score just under the scores clearly spoken stops reach, above the
+// scores reply echo reaches, or delete the row to drop the phrase. First device
+// run (build 11, TTS at 0.5-1 m): 「停停」 hit as ting at 0.447, 「别说了」 at
+// 0.243, four stops stayed under the old 0.20 floor; two long stories without
+// a stop word produced no stop hit.
 struct LocalStopPhrase {
     const char* id;       // keyword_id on the wire (device-media-v2 identifier)
     const char* command;  // MultiNet6 pinyin command
@@ -30,14 +37,26 @@ struct LocalStopPhrase {
 };
 
 inline constexpr LocalStopPhrase kLocalStopPhrases[] = {
-    {"ting_yi_xia", "ting yi xia", "停一下", 0.25f, 700},
-    {"bie_shuo_le", "bie shuo le", "别说了", 0.25f, 700},
-    {"ting_ting", "ting ting", "停停", 0.25f, 500},
+    {"ting_yi_xia", "ting yi xia", "停一下", 0.20f, 700},
+    {"bie_shuo_le", "bie shuo le", "别说了", 0.20f, 700},
+    {"ting_ting", "ting ting", "停停", 0.20f, 500},
     // A single syllable false-triggers far more easily; keep it strictest.
-    {"ting", "ting", "停", 0.35f, 350},
+    {"ting", "ting", "停", 0.30f, 350},
 };
 inline constexpr std::size_t kLocalStopPhraseCount =
     sizeof(kLocalStopPhrases) / sizeof(kLocalStopPhrases[0]);
+
+// MultiNet's model-wide detection threshold on this board. It must match
+// CONFIG_CUSTOM_WAKE_WORD_THRESHOLD (percent) in the board config.json, which
+// feeds the assets index.json; CustomWakeWord applies this value on Memoria.
+inline constexpr float kMultiNetDetectThreshold = 0.10f;
+
+// The wake word keeps build 10's acceptance: the old model-wide 0.20.
+inline constexpr float kWakeWordMinScore = 0.20f;
+
+inline bool WakeWordAccepted(float score) {
+    return score >= kWakeWordMinScore;  // NaN is rejected
+}
 
 // MultiNet command action for the rows above (the wake word uses "wake").
 inline constexpr char kLocalStopAction[] = "stop";

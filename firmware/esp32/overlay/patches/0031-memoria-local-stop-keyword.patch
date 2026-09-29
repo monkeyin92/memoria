@@ -289,7 +289,7 @@ diff --git a/main/audio/engines/afe_audio_engine.h b/main/audio/engines/afe_audi
 diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/custom_wake_word.cc
 --- a/main/audio/wake_words/custom_wake_word.cc
 +++ b/main/audio/wake_words/custom_wake_word.cc
-@@ -5,6 +5,7 @@
+@@ -5,11 +5,14 @@
  #include "memoria/memoria_wake_word.h"
  
  #include <esp_log.h>
@@ -297,7 +297,14 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
  #include <esp_mn_iface.h>
  #include <esp_mn_models.h>
  #include <esp_mn_speech_commands.h>
-@@ -110,6 +111,13 @@
+ #include <cJSON.h>
+ 
++#include <cstdio>
++
+ #define TAG "CustomWakeWord"
+ 
+ CustomWakeWord::CustomWakeWord()
+@@ -110,6 +113,19 @@
          ESP_LOGI(TAG, "Using Memoria wake word command=%s display=%s",
                   active_command.c_str(), active_display.c_str());
      }
@@ -308,10 +315,16 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +        ESP_LOGI(TAG, "Local stop keyword id=%s command=%s min_score=%.2f",
 +                 phrase.id, phrase.command, static_cast<double>(phrase.min_score));
 +    }
++    // MultiNet reports every command down to kMultiNetDetectThreshold so weak
++    // stop hits stay visible; FeedSamples applies each command's acceptance
++    // (the wake word keeps its 0.20).
++    threshold_ = memoria::kMultiNetDetectThreshold;
++    ESP_LOGI(TAG, "MultiNet detection threshold=%.2f, wake word accepted at %.2f",
++             static_cast<double>(threshold_), static_cast<double>(memoria::kWakeWordMinScore));
  #endif
  
      if (models_ == nullptr || models_->num == -1) {
-@@ -137,7 +145,13 @@
+@@ -137,7 +153,13 @@
      for (int i = 0; i < commands_.size(); i++) {
          esp_mn_commands_add(i + 1, commands_[i].command.c_str());
      }
@@ -326,7 +339,7 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
      
      multinet_->print_active_speech_commands(multinet_model_data_);
  #if CONFIG_SEND_WAKE_WORD_DATA
-@@ -152,6 +166,25 @@
+@@ -152,6 +174,63 @@
      wake_word_detected_callback_ = callback;
  }
  
@@ -340,21 +353,63 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +    const memoria::LocalStopVerdict verdict =
 +        stop_gate_.Evaluate(command.text.c_str(), score, stop_only_.load(), now_ms);
 +    const memoria::LocalStopPhrase* phrase = memoria::FindLocalStopPhrase(command.text.c_str());
-+    ESP_LOGI(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",
-+             memoria::LocalStopVerdictName(verdict), command.text.c_str(),
-+             static_cast<double>(score),
-+             static_cast<double>(phrase != nullptr ? phrase->min_score : 0.0f));
++    const double min_score = phrase != nullptr ? phrase->min_score : 0.0;
++    if (verdict == memoria::LocalStopVerdict::kNotArmed) {
++        // Idle/listening: weak stop-like hits are common and act on nothing.
++        ESP_LOGD(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",
++                 memoria::LocalStopVerdictName(verdict), command.text.c_str(),
++                 static_cast<double>(score), min_score);
++    } else {
++        ESP_LOGI(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",
++                 memoria::LocalStopVerdictName(verdict), command.text.c_str(),
++                 static_cast<double>(score), min_score);
++    }
 +    if (verdict == memoria::LocalStopVerdict::kAccept && stop_keyword_detected_callback_) {
 +        stop_keyword_detected_callback_(command.text, score);
 +    }
 +}
 +
++void CustomWakeWord::LogStopModeCandidates(const char* window, const esp_mn_results_t* result) {
++    if (result == nullptr) {
++        return;
++    }
++    if (result->num <= 0) {
++        if (result->raw_string[0] != '\0') {
++            ESP_LOGI(TAG, "MultiNet stop-mode %s: no command, raw=%s", window, result->raw_string);
++        }
++        return;
++    }
++    // Candidates arrive best first; one line keeps the serial log readable.
++    char line[192] = {};
++    int used = 0;
++    for (int i = 0; i < result->num && i < ESP_MN_RESULT_MAX_NUM; i++) {
++        const int index = result->command_id[i] - 1;
++        const char* name = "?";
++        if (index >= 0 && index < static_cast<int>(commands_.size())) {
++            name = commands_[index].action == memoria::kLocalStopAction
++                ? commands_[index].text.c_str()
++                : commands_[index].command.c_str();
++        }
++        const int written = snprintf(line + used, sizeof(line) - used, "%s%s=%.3f",
++                                     i == 0 ? "" : " ", name, static_cast<double>(result->prob[i]));
++        if (written < 0 || written >= static_cast<int>(sizeof(line)) - used) {
++            break;
++        }
++        used += written;
++    }
++    ESP_LOGI(TAG, "MultiNet stop-mode %s: top %s raw=%s", window, line, result->raw_string);
++}
++
  void CustomWakeWord::Start() {
      running_ = true;
  }
-@@ -202,9 +235,25 @@
+@@ -201,10 +280,37 @@
+         
          if (mn_state == ESP_MN_STATE_DETECTED) {
              esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
++            if (stop_only_.load()) {
++                LogStopModeCandidates("detected", mn_result);
++            }
              for (int i = 0; i < mn_result->num && running_; i++) {
 -                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
 +                const int command_index = mn_result->command_id[i] - 1;
@@ -374,12 +429,32 @@ diff --git a/main/audio/wake_words/custom_wake_word.cc b/main/audio/wake_words/c
 +                             mn_result->string, mn_result->prob[i]);
 +                    continue;
 +                }
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {
++                    // Below build 10's model-wide 0.20: never a wake-up.
++                    ESP_LOGD(TAG, "Wake word below threshold: string=%s, prob=%f",
++                             mn_result->string, mn_result->prob[i]);
++                    continue;
++                }
++#endif
 +                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",
                          mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
 -                auto& command = commands_[mn_result->command_id[i] - 1];
                  if (command.action == "wake") {
                      last_detected_wake_word_ = command.text;
                      running_ = false;
+@@ -218,6 +324,11 @@
+             multinet_->clean(multinet_model_data_);
+         } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
+             ESP_LOGD(TAG, "Command word detection timeout, cleaning state");
++            if (stop_only_.load()) {
++                // A missed stop shows up here: what the window decoded
++                // without any command reaching the detection threshold.
++                LogStopModeCandidates("timeout", multinet_->get_results(multinet_model_data_));
++            }
+             multinet_->clean(multinet_model_data_);
+         }
+         
 diff --git a/main/audio/wake_words/custom_wake_word.h b/main/audio/wake_words/custom_wake_word.h
 --- a/main/audio/wake_words/custom_wake_word.h
 +++ b/main/audio/wake_words/custom_wake_word.h
@@ -414,11 +489,12 @@ diff --git a/main/audio/wake_words/custom_wake_word.h b/main/audio/wake_words/cu
      AudioCodec* codec_ = nullptr;
      std::string last_detected_wake_word_;
      std::atomic<bool> running_ = false;
-@@ -70,6 +80,7 @@
+@@ -70,6 +80,8 @@
      std::condition_variable wake_word_cv_;
  
      void FeedSamples(const int16_t* data, size_t samples, bool mono);
 +    void HandleStopCommand(const Command& command, float score);
++    void LogStopModeCandidates(const char* window, const esp_mn_results_t* result);
      void ParseWakenetModelConfig();
  };
  

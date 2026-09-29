@@ -122,6 +122,7 @@ required = {
     "CONFIG_OTA_URL=\"\"",
     'CONFIG_CUSTOM_WAKE_WORD="mo li"',
     'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="茉莉"',
+    "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10",
     "CONFIG_SEND_WAKE_WORD_DATA=n",
     "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
     "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
@@ -422,6 +423,9 @@ sdkconfig="$MEMORIA_UPSTREAM_DIR/sdkconfig"
 metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
 flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
 [[ -s "$sdkconfig" ]] || die "final sdkconfig is missing"
+# memoria_stop_keyword.h kMultiNetDetectThreshold (0.10) mirrors this value.
+rg -q '^CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10$' "$sdkconfig" || \
+    die "final sdkconfig must lower the MultiNet detection threshold to 10%"
 # Kconfig can silently discard sdkconfig_append entries when dependencies fail.
 for option in BOARD_TYPE_MEMORIA_ESP_VOCAT USE_AUDIO_PROCESSOR USE_DEVICE_AEC; do
     rg -q "^CONFIG_${option}=y$" "$sdkconfig" || \

@@ -14,6 +14,7 @@
                 "CONFIG_USE_CUSTOM_WAKE_WORD=y",
                 "CONFIG_CUSTOM_WAKE_WORD=\"mo li\"",
                 "CONFIG_CUSTOM_WAKE_WORD_DISPLAY=\"茉莉\"",
+                "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10",
                 "CONFIG_SEND_WAKE_WORD_DATA=n",
                 "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
                 "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",

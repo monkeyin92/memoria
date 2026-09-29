@@ -78,6 +78,13 @@ int main() {
             printf("debounce %lld\n", static_cast<long long>(memoria::kLocalStopDebounceMs));
             printf("floor %.4f\n",
                    static_cast<double>(memoria::kLocalStopHardStopConfidenceFloor));
+            printf("detect %.4f\n", static_cast<double>(memoria::kMultiNetDetectThreshold));
+            printf("wake %.4f\n", static_cast<double>(memoria::kWakeWordMinScore));
+        } else if (strcmp(command, "wake") == 0) {
+            if (sscanf(line, "%*s %31s", score_text) != 1) {
+                return 2;
+            }
+            printf("%s\n", memoria::WakeWordAccepted(strtof(score_text, nullptr)) ? "wake" : "reject");
         } else {
             return 2;
         }
@@ -123,15 +130,13 @@ def _run(tool: pathlib.Path, *lines: str) -> list[str]:
     return completed.stdout.splitlines()
 
 
-def _table(tool: pathlib.Path) -> tuple[dict[str, dict[str, object]], int, float]:
+def _table(tool: pathlib.Path) -> tuple[dict[str, dict[str, object]], dict[str, float]]:
     phrases: dict[str, dict[str, object]] = {}
-    debounce = 0
-    floor = 0.0
+    constants: dict[str, float] = {}
     for line in _run(tool, "table"):
-        if line.startswith("debounce "):
-            debounce = int(line.split()[1])
-        elif line.startswith("floor "):
-            floor = float(line.split()[1])
+        name, _, value = line.partition(" ")
+        if name in {"debounce", "floor", "detect", "wake"}:
+            constants[name] = float(value)
         else:
             phrase_id, command, display, min_score, duration = line.split("|")
             phrases[phrase_id] = {
@@ -140,7 +145,7 @@ def _table(tool: pathlib.Path) -> tuple[dict[str, dict[str, object]], int, float
                 "min_score": float(min_score),
                 "duration_ms": int(duration),
             }
-    return phrases, debounce, floor
+    return phrases, constants
 
 
 def test_header_stays_free_of_esp_dependencies() -> None:
@@ -149,8 +154,8 @@ def test_header_stays_free_of_esp_dependencies() -> None:
         assert forbidden not in source
 
 
-def test_phrase_table_is_tunable_and_stricter_than_the_wake_word(gate_tool: pathlib.Path) -> None:
-    phrases, debounce, floor = _table(gate_tool)
+def test_phrase_table_is_tunable_above_the_detection_floor(gate_tool: pathlib.Path) -> None:
+    phrases, constants = _table(gate_tool)
     assert {"ting_yi_xia", "bie_shuo_le", "ting_ting", "ting"} <= set(phrases)
     assert phrases["ting_yi_xia"]["command"] == "ting yi xia"
     assert phrases["bie_shuo_le"]["command"] == "bie shuo le"
@@ -159,20 +164,62 @@ def test_phrase_table_is_tunable_and_stricter_than_the_wake_word(gate_tool: path
     identifier = re.compile(CONTRACT["$defs"]["identifier"]["pattern"])
     commands = [str(phrase["command"]) for phrase in phrases.values()]
     assert len(set(commands)) == len(commands)
-    # The MultiNet wake word fires at the global 0.20 detection threshold
-    # (CONFIG_CUSTOM_WAKE_WORD_THRESHOLD); every stop row must be stricter.
+    # MultiNet reports everything from the 0.10 detection floor so weak hits
+    # reach the log; acceptance is per command, never below that floor.
+    assert constants["detect"] == pytest.approx(0.10)
     for phrase_id, phrase in phrases.items():
         assert identifier.fullmatch(phrase_id), phrase_id
         assert re.fullmatch(r"[a-z]+( [a-z]+)*", str(phrase["command"]))
-        assert 0.20 < float(phrase["min_score"]) < 1.0
+        assert constants["detect"] < float(phrase["min_score"]) < 1.0
         assert 0 < int(phrase["duration_ms"]) <= 60_000
+    # Build 12 thresholds from the first device run (see the header comment).
+    assert float(phrases["ting_yi_xia"]["min_score"]) == pytest.approx(0.20)
+    assert float(phrases["bie_shuo_le"]["min_score"]) == pytest.approx(0.20)
+    assert float(phrases["ting_ting"]["min_score"]) == pytest.approx(0.20)
+    assert float(phrases["ting"]["min_score"]) == pytest.approx(0.30)
     # A single syllable false-triggers most easily: it is the strictest row.
     assert float(phrases["ting"]["min_score"]) == max(
         float(phrase["min_score"]) for phrase in phrases.values()
     )
-    assert debounce >= 1000
+    assert constants["debounce"] >= 1000
     # Edge/Core KWSHardStopMinConfidence.
-    assert floor == pytest.approx(0.8)
+    assert constants["floor"] == pytest.approx(0.8)
+
+
+def test_wake_word_keeps_build_10_acceptance(gate_tool: pathlib.Path) -> None:
+    phrases, constants = _table(gate_tool)
+    # Build 10 detected the wake word at the model-wide 0.20; the lowered
+    # MultiNet floor must not make 「茉莉」 any more sensitive.
+    assert constants["wake"] == pytest.approx(0.20)
+    assert _run(gate_tool, "wake 0.199", "wake 0.10", "wake 0.20", "wake 0.27", "wake nan") == [
+        "reject",
+        "reject",
+        "wake",
+        "wake",
+        "reject",
+    ]
+
+
+def test_detection_floor_matches_the_board_sdkconfig(gate_tool: pathlib.Path) -> None:
+    _, constants = _table(gate_tool)
+    board = json.loads(
+        (
+            FIRMWARE_ROOT
+            / "overlay"
+            / "files"
+            / "main"
+            / "boards"
+            / "memoria"
+            / "esp-vocat"
+            / "config.json"
+        ).read_text(encoding="utf-8")
+    )
+    sdkconfig = board["builds"][0]["sdkconfig_append"]
+    thresholds = [
+        item for item in sdkconfig if item.startswith("CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=")
+    ]
+    assert thresholds == ["CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=10"]
+    assert int(thresholds[0].split("=")[1]) / 100 == pytest.approx(constants["detect"])
 
 
 def test_gate_requires_stop_only_mode_and_the_phrase_threshold(gate_tool: pathlib.Path) -> None:
@@ -180,9 +227,9 @@ def test_gate_requires_stop_only_mode_and_the_phrase_threshold(gate_tool: pathli
         gate_tool,
         "eval ting_yi_xia 0.90 0 1000",
         "eval not_a_phrase 0.90 1 1000",
-        "eval ting_yi_xia 0.24 1 1000",
-        "eval ting 0.30 1 1000",
-        "eval ting_yi_xia 0.25 1 1000",
+        "eval ting_yi_xia 0.19 1 1000",
+        "eval ting 0.29 1 1000",
+        "eval ting_yi_xia 0.20 1 1000",
     ) == ["not_armed", "unknown_phrase", "below_threshold", "below_threshold", "accepted"]
 
 
@@ -353,7 +400,23 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     assert "for (const auto& phrase : memoria::kLocalStopPhrases)" in wake
     assert "commands_.push_back({phrase.command, phrase.id, memoria::kLocalStopAction});" in wake
     assert "stop_gate_.Evaluate(command.text.c_str(), score, stop_only_.load(), now_ms)" in wake
-    assert 'ESP_LOGI(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",' in wake
+    # Stop-only mode logs every stop hit that reaches the 0.10 floor at INFO;
+    # idle/listening hits act on nothing and stay at DEBUG.
+    handler = wake[wake.index("void CustomWakeWord::HandleStopCommand") :]
+    handler = handler[: handler.index("stop_keyword_detected_callback_(command.text, score);")]
+    not_armed = handler[handler.index("if (verdict == memoria::LocalStopVerdict::kNotArmed) {") :]
+    assert (
+        not_armed.index("ESP_LOGD(")
+        < not_armed.index("} else {")
+        < not_armed.index('ESP_LOGI(TAG, "Local stop keyword %s: id=%s prob=%.3f min=%.2f",')
+    )
+    # Misses are visible: detection windows and timeouts log their candidates
+    # while stop-only mode is armed.
+    assert 'LogStopModeCandidates("detected", mn_result);' in wake
+    assert 'LogStopModeCandidates("timeout", multinet_->get_results(multinet_model_data_));' in wake
+    assert wake.count("if (stop_only_.load()) {") == 2
+    # The MultiNet floor comes from the header, not a second hand-kept value.
+    assert "threshold_ = memoria::kMultiNetDetectThreshold;" in wake
     assert "MultiNet rejected command" in wake
     # In stop-only mode a wake hit neither starts a conversation nor ends
     # detection: it is skipped before the existing running_ = false branch.
@@ -361,6 +424,16 @@ def test_multinet_registers_stop_phrases_and_ignores_wake_in_stop_only_mode() ->
     stop_only_wake = stop_only_wake[: stop_only_wake.index("continue;")]
     assert "running_ = false" not in stop_only_wake
     assert "wake_word_detected_callback_" not in stop_only_wake
+    # A wake hit under build 10's 0.20 is skipped (DEBUG only) before the
+    # unchanged detection log and wake-up.
+    wake_gate = wake.index(
+        'if (command.action == "wake" && !memoria::WakeWordAccepted(mn_result->prob[i])) {'
+    )
+    gate_body = wake[wake_gate : wake.index("continue;", wake_gate)]
+    assert 'ESP_LOGD(TAG, "Wake word below threshold' in gate_body
+    assert wake_gate < wake.index(
+        'ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",'
+    )
     header = _added_lines(PATCH_0031, "main/audio/wake_words/custom_wake_word.h")
     assert '#include "memoria/memoria_stop_keyword.h"' in header
     assert "std::atomic<bool> stop_only_ = false;" in header
@@ -408,4 +481,4 @@ def test_application_arms_stop_keyword_only_for_playback_with_keyword_barge_in()
 def test_stop_keyword_firmware_is_a_new_release_build() -> None:
     match = re.search(r"^#define MEMORIA_FIRMWARE_BUILD (\d+)$", RELEASE_HEADER, re.MULTILINE)
     assert match is not None
-    assert int(match.group(1)) >= 11
+    assert int(match.group(1)) >= 12
