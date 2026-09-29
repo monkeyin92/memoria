@@ -13,10 +13,9 @@ Two defects surfaced during the 20260925-full-stack-v1 release:
 into the full stack, so all six targets run from the plain PREV compose file
 and freeze and rollback carry no component chain.
 
-The LiveKit retirement release ships only speaker-model, control-api and the
-Voice Core media bridge. PREV still runs the LiveKit worker and both Python
-media gateways, so freeze and rollback keep all six PREV targets while cutover
-stops (never removes) the three retired containers after the bridge is healthy.
+Since 20260929-livekit-retire-v1 (the LiveKit chain was stopped, then removed
+from the host) a release ships speaker-model, control-api and the Voice Core
+media bridge, and PREV is those same three roles.
 """
 
 from __future__ import annotations
@@ -166,11 +165,13 @@ def test_live_chain_constants_have_no_stale_release_trees() -> None:
         "20260927-child-binding-v1",
         "20260928-child-binding-v2",
         "20260928-session-trust-v1",
+        "20260928-review-batches-v1",
+        "RETIRED_TARGETS", "retire_prev_media_chain",
         "/tmp/media-runtime",
     ):
         assert stale not in script, stale
-    assert "PREV_TAG=20260928-review-batches-v1" in script
-    assert "PREV_COMMIT=6180893209fd24c4244a986b60659389ccedcecc" in script
+    assert "PREV_TAG=20260929-livekit-retire-v1" in script
+    assert "PREV_COMMIT=57d9075d780ad1c73e7270a30f987fdf980c3aa1" in script
 
 
 def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
@@ -180,13 +181,14 @@ def test_freeze_checks_every_target_chain_and_the_current_link() -> None:
     assert 'readlink -f /opt/memoria/current)" == "$PREV"' in freeze
 
 
-def test_targets_and_rollback_services_are_the_same_six_roles() -> None:
+def test_targets_and_rollback_services_are_the_same_three_roles() -> None:
     script = _script()
     targets = re.search(r"^TARGETS=\(([^)]*)\)", script, re.M)
     services = re.search(r"^PREV_STACK_SERVICES=\(([^)]*)\)", script, re.M)
     assert targets and services
     containers = {f"memoria-{name}-1" for name in services.group(1).split()}
     assert containers == set(targets.group(1).split())
+    assert services.group(1).split() == ["speaker-model", "control-api", "voice-core-media-bridge"]
     # media-edge is released on its own and never recreated by this script.
     assert "media-edge" not in _code().replace("memoria-media-edge-1", "")
 
@@ -204,33 +206,13 @@ def test_release_ships_only_the_bridge_media_chain() -> None:
         assert retired not in cutover.replace('{"agent", "miniprogram-gateway", "device-media-gateway"}', "")
     assert "force-recreate voice-core-media-bridge" in cutover
     assert 'retired services still defined' in cutover
-    # Retire the PREV worker and gateways only once the bridge is healthy.
-    assert cutover.index("wait_healthy memoria-voice-core-media-bridge-1") < cutover.index(
-        "retire_prev_media_chain"
-    )
 
 
-def test_retired_targets_are_prev_targets_outside_the_new_stack() -> None:
-    retired = _array("RETIRED_TARGETS")
-    assert set(retired) == {
-        "memoria-agent-1",
-        "memoria-miniprogram-gateway-1",
-        "memoria-device-media-gateway-1",
-    }
-    assert set(retired) < set(_array("TARGETS"))
-    retire = _function("retire_prev_media_chain")
-    assert 'for c in "${RETIRED_TARGETS[@]}"' in retire
-    # Stopped, never removed: rollback recreates them and retention keeps their images.
-    assert "docker stop" in retire
-    assert "docker rm" not in retire
-    assert "--remove-orphans" not in _code()
-
-
-def test_rollback_recreates_the_retired_prev_services() -> None:
+def test_rollback_recreates_the_prev_services() -> None:
     rollback = _function("step_rollback")
     services = _array("PREV_STACK_SERVICES")
     for retired in ("agent", "miniprogram-gateway", "device-media-gateway"):
-        assert retired in services
+        assert retired not in services
     assert '-f "$PREV/docker-compose.production.yml" --profile media-runtime' in rollback
     assert "--force-recreate" in rollback
 
