@@ -3,7 +3,7 @@
 ## 当前生产快照
 
 - **最近生产收据**：2026-09-29 12:04–12:18（CST）整栈发布 `20260929-livekit-retire-v1`（tag → `57d9075`，main 上 PR #122 的合并提交 `bf00070` 与之同树）。发布 control-api、bridge（`memoria-agent` 镜像）与 speaker-model 三个角色，`release-ops.sh` 全链 PASS；旧媒体链三个容器（LiveKit worker `memoria-agent-1`、两个 Python 网关）在 bridge 健康后停止（未删除）。media-edge 无改动，未发布。
-- **上一次整栈收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（`6180893`），它是本次的回滚目标；回滚按其 compose 重建全部六个容器（含已停的三个）。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
+- **上一次整栈收据**：2026-09-28 23:24–23:33（CST）整栈发布 `20260928-review-batches-v1`（`6180893`），它是本次的回滚目标；主机旧件清理后不再能整体回滚到它，改为按组件回滚（见下）。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
@@ -11,11 +11,10 @@
 | Bridge | `memoria-agent:20260929-livekit-retire-v1` | `sha256:3a3743bf…` | 同上 | healthy | 0 | `2026-09-29T04:16:13Z` | 同上 | `memoria-agent:rollback-20260929-livekit-retire-v1-pre` |
 | Speaker Model | `memoria-speaker-model:20260929-livekit-retire-v1` | `sha256:1c8d0970…` | 同上 | healthy | 0 | `2026-09-29T04:15:51Z` | 同上 | `memoria-speaker-model:rollback-20260929-livekit-retire-v1-pre` |
 | Media Edge | `memoria-media-edge:20260928-review-batches-v1` | `sha256:f25ee796…` | `6180893` | healthy | 0 | `2026-09-28T15:29:54Z` | `/opt/memoria/component-releases/20260928-review-batches-v1-media-edge/` | `memoria-media-edge:20260928-writer-teardown-v1` |
-| 已停止（退役） | `memoria-agent-1`、`memoria-miniprogram-gateway-1`、`memoria-device-media-gateway-1`（`20260928-review-batches-v1` 镜像） | — | `6180893` | exited | — | 停于 `12:16:19–12:16:30` CST | 同上 | 仅供回滚；PREV 不再作回滚目标后按运维手册「LiveKit 媒体链退役」清理 |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260929-livekit-retire-v1` / `57d9075`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260929-livekit-retire-v1`。上一栈 `20260928-review-batches-v1` / `6180893` 为回滚目标。LiveKit server 容器 `memoria-livekit-livekit-1`（独立 compose）仍在运行，nginx 旧 livekit/网关片段与两份网关 env 仍在主机，待回滚窗口关闭后一并清理（需确认）。
+- **发布身份**：`20260929-livekit-retire-v1` / `57d9075`（control-api env、compose 插值、readiness 一致）；`/opt/memoria/current` → `releases/20260929-livekit-retire-v1`。上一栈 `20260928-review-batches-v1` / `6180893` 为回滚目标。主机旧件已清理（2026-09-29 12:25–12:35 CST，用户确认验收后授权）：LiveKit server compose 项目已移除（配置目录改名 `/opt/livekit.retired-20260929`）；nginx 8443 改为直通 9443，删 `memoria-livekit.conf`、`memoria-miniprogram-media.conf`、`memoria-device-media.conf` 及其 include（备份 `/etc/nginx/backup-20260929-livekit-retire/`，改前后 10 个地址状态码只有旧网关路由 502→404）；三个已停容器移除；两份网关 env 移入 `/opt/memoria/releases/20260929-livekit-retire-v1/.cutover/retired-env/`（root 0700）；网关与 LiveKit 镜像 24 个 tag 删除。因此 `release-ops.sh rollback` 不再能整体回到 `20260928-review-batches-v1`；需要时按组件把 control-api/bridge/speaker-model 退回各自的 `rollback-20260929-livekit-retire-v1-pre` 镜像。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
@@ -34,7 +33,8 @@
   - ASR 空结果丢段（本次 3 段、基线 4 段）。
   - SenseVoice 补救识别把整个待定缓冲（最长 30 s）送去解码，2 核上约 3 s，超过 2.5 s 超时（`httpx.ReadTimeout`）；应只送 ASR 为空的那一段，已记 TODOLIST，随第 5 批真机验收处理。
   - 播放中说普通内容不打断、也不回应（无已验证 AEC 时的有意策略，`interruption/policy.py` 第 8 步）；明确的停止词与「再见」立即生效。
-- **仍待**：清理主机上的 LiveKit server 容器、旧 nginx 片段与网关 env（回滚窗口关闭后、需确认）；`ReplyPipeline` 抽取（去掉 bridge 对 `livekit.agents` 的依赖）与第 5 批语音主链重构，需真机窗口。
+- **主机清理**：验收后经用户确认完成，见上方「发布身份」。
+- **仍待**：`ReplyPipeline` 抽取（去掉 bridge 对 `livekit.agents` 的依赖）与第 5 批语音主链重构，需真机窗口。
 
 ## 2026-09-28 整栈发布 20260928-review-batches-v1（双视角评审整改）
 

@@ -153,10 +153,10 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 监护小结（2026-09-26 已上线；用户决定随长期记忆一起授予）：家长给孩子绑定并勾选长期记忆时，同时授予 `guardian_summary_view`（`GUARDIAN_MEMORY_CAPABILITIES`），家长页长期记忆开关同步授予/撤销；真实 PG 下家长 app 的签名 profile 因此出现该能力，孩子私人记忆仍不给。周小结接口新增无账号孩子分支：以孩子的长期记忆同意放行，只聚合家长账号下标注为该孩子的记录（不含原文），小程序在没有监护链接时自动加载绑定孩子的小结。老人（子女代同意）不授予监护小结。存量绑定需重新绑定或在家长页重开长期记忆开关后才会获得授予。
 - 完成条件：设备上孩子/老人/本人三种绑定各一次：隔天仍记得前一天说过的事；播放期回声不自答、刚播完的回声"再见"不结束会话、真人"再见"能结束；家长端看不到孩子原文；撤销后不再记忆。
 
-### [ ] P1-12 旧媒体链去留（发布工具部分已完成）
+### [x] P1-12 旧媒体链去留（2026-09-29 下线并清理完成）
 
 - 已完成：整栈发布脚本入库为 `scripts/release_ops.sh`（回归 `scripts/tests/test_release_ops_script.py`），已用于两次全链发布，`20260926-edge-flush-v1` 首次使用仓库版并通过新链冻结校验；常量已指向当前线上链，下次整栈前只读复核后安装。media-edge 已脱离易失的 `/tmp/media-runtime.override.yml`，两次单独切换收据见 HANDOFF。persona 与 session-context 死链路已删，生产要求的能力 token 由十个降为八个（2026-09-28 删除 `/v1/evolution` 后再降为七个，`MEMORIA_EVOLUTION_VALIDATOR_TOKEN` 退役），`split_production_env.py` 接受但不分发已退役变量。
-- 已决定（2026-09-29，用户）：下线。当天只读复核：LiveKit、LiveKit worker（`agent` 容器）、Python 设备媒体网关（8793）、小程序网关过去 72 小时零业务流量，唯一设备的 350 个媒体会话全是 `direct_voice_core`；今后没有手机/浏览器实时语音计划。代码已删（worker 入口与仅其可达的运行时代码、两个网关包、control-api 的 LiveKit 会话/token/房间关闭/回退与设备放量白名单、LiveKit 部署件与 nginx 片段、发布脚本角色、约 56 个环境键）；readiness 改由 voice-core bridge 上报心跳（不再有 `livekit_ready`），设备配网与绑定授权改用 `DEVICE_DIRECT_MEDIA_WSS_URL`。`release_ops.sh` cutover 只 `docker stop` 旧三个容器不删除，回滚仍按上一版本 compose 重建。已上线（2026-09-29 整栈 `20260929-livekit-retire-v1`，真机对话验收通过，收据见 HANDOFF）：旧三个容器已停止未删除。待完成：PREV 退出回滚目标后，停掉 LiveKit server 容器、删主机上的旧 nginx 片段与两份网关 env（见 `docs/runbooks/release-rollback.md`，需确认）。bridge 仍依赖 `livekit.agents` 类库（Agent 基类、TTS 流、ChatContext），去掉它属 `ReplyPipeline` 抽取。
+- 已决定（2026-09-29，用户）：下线。当天只读复核：LiveKit、LiveKit worker（`agent` 容器）、Python 设备媒体网关（8793）、小程序网关过去 72 小时零业务流量，唯一设备的 350 个媒体会话全是 `direct_voice_core`；今后没有手机/浏览器实时语音计划。代码已删（worker 入口与仅其可达的运行时代码、两个网关包、control-api 的 LiveKit 会话/token/房间关闭/回退与设备放量白名单、LiveKit 部署件与 nginx 片段、发布脚本角色、约 56 个环境键）；readiness 改由 voice-core bridge 上报心跳（不再有 `livekit_ready`），设备配网与绑定授权改用 `DEVICE_DIRECT_MEDIA_WSS_URL`。`release_ops.sh` cutover 只 `docker stop` 旧三个容器不删除，回滚仍按上一版本 compose 重建。已上线（2026-09-29 整栈 `20260929-livekit-retire-v1`，真机对话验收通过，收据见 HANDOFF）：旧三个容器已停止未删除。主机旧件已于验收后清理（LiveKit server、旧 nginx 片段与 include、三个旧容器、网关 env 与镜像，收据见 HANDOFF）；此后回滚按组件进行。bridge 仍依赖 `livekit.agents` 类库（Agent 基类、TTS 流、ChatContext），去掉它属 `ReplyPipeline` 抽取。
 - 完成条件：旧媒体链有明确决定并按决定执行。
 
 ## P2：质量增强与后续能力
