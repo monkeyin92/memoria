@@ -28,6 +28,7 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.media_session import MediaReplyChunk
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
+    _accept_media_asr_decision,
     _accept_media_asr_final,
     _feed_playback_window_finals,
     _user_turn_texts,
@@ -367,6 +368,127 @@ async def test_device_ordinary_speech_during_story_stays_held() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_misheard_stop_read_as_farewell_cannot_block_the_next_stop() -> None:
+    """Simulated trials 2026-09-29: the owner's 「停」 heard as 「行」 mid-story.
+
+    Not a lexical stop, the final went to the semantic close classifier, which
+    read it as a farewell and pinned ``media early conversation-close endpoint
+    source=semantic_final``.  During playback that turn can only be held, but
+    its endpoint stood while the commit resolved the merged playback-window
+    text: the owner's clear 「停」 found it in place, was refused, and was
+    cleared with the held turn, so the story played on to its end.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        merged_verdict = asyncio.Event()
+
+        async def close_verdict(text: str) -> bool:
+            if "小猫咪" in text and "行" in text:
+                await merged_verdict.wait()  # classifier latency on merged text
+            return "行" in text
+
+        harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
+        try:
+            await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+            await harness.audio_frames(15, final_text="行。")
+            assert harness.context.pending.turn_endpoint_sample is None
+            await harness.audio_frames(15, final_text="停")
+        finally:
+            merged_verdict.set()
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+
+    await _run_story(_device_identity("misheard-stop-as-farewell"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_story_saying_goodbye_does_not_end_itself() -> None:
+    """The reply's own 「再见！」 on the open microphone is echo, not a farewell."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="再见！")
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+        assert not harness.closed()
+        # Nothing is pinned, so the owner's real stop still ends the story.
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+
+    await _run_story(
+        _device_identity("farewell-echo"),
+        script,
+        opening="小熊挥挥手，对月亮说：再见！",
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_clock_question_during_story_cannot_pin_over_the_stop(
+    device_media_session: Any,
+) -> None:
+    """A stable clock-fact partial during playback is held like its final.
+
+    Its pinned endpoint would refuse the owner's 「停一下」 while the held
+    commit ran, exactly like the misread farewell above.
+    """
+
+    window = await device_media_session("clock-partial-during-playback")
+    for revision in (1, 2):
+        await _accept_media_asr_decision(
+            window.registry,
+            window.identity,
+            sentence_id="clock-partial",
+            start_sample=16_000,
+            end_sample=24_000 + revision,
+            text="现在几点了",
+            revision=revision,
+            is_final=False,
+        )
+        if revision == 1:
+            await asyncio.sleep(0.65)
+    assert window.context.pending.turn_endpoint_sample is None
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="owner-stop",
+        start_sample=40_000,
+        end_sample=46_400,
+        text="停一下",
+    )
+    assert window.context.pending.turn_endpoint_sample == 46_400
+
+
+@pytest.mark.asyncio
+async def test_device_question_begun_before_playback_end_is_answered_without_vad() -> None:
+    """Field 2026-09-29 session 6b38ba46, over the public stream.
+
+    The owner starts the next question 0.5 s before the reply's playback ack
+    and talks on for 3.5 s.  The device sent no VAD edge (suppressed during
+    playback), so only the final itself can endpoint the question.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.audio_frames(50)  # the reply plays, echo on the uplink
+        owner_start = harness.sample
+        await harness.audio_frames(25)
+        await harness.playback_ended()
+        boundary = harness.context.last_playback_end_sample
+        assert boundary is not None and owner_start < boundary
+        question = "那我明天出门要带伞吗"
+        harness.story.finals[harness._audio_sequence + 174] = (question, owner_start)
+        await harness.audio_frames(175)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2, timeout=4.0)
+        assert _user_turn_texts(harness.context) == ["你好", question]
+
+    await _run_story(_device_identity("question-before-playback-end"), script, story_call=0)
+
+
+@pytest.mark.asyncio
 async def test_device_farewell_during_story_still_ends_the_session() -> None:
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
@@ -483,3 +605,156 @@ async def test_device_utterance_after_stop_and_reconnect_is_one_answered_turn() 
         assert not harness.closed()
 
     await _run_story(_device_identity("stop-then-reconnect"), script, story_call=2)
+
+
+class _TaskScriptProvider(_LongStoryProvider):
+    """Adapter-shaped results: provider task epochs advance, sentence ids restart.
+
+    FunASR numbers sentences from 1 in every task, so after a VAD-end task
+    rotation the next task's first result carries sentence id 1 again.
+    """
+
+    def __init__(self, *, story_call: int = 1) -> None:
+        super().__init__(story_call=story_call)
+        self.by_end: dict[tuple[int, int], ASRResult] = {}
+
+    async def ingest_audio(
+        self,
+        identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> Sequence[ASRResult]:
+        scripted = self.by_end.pop(
+            (frame.identity.stream_epoch, frame.capture_end_sample), None
+        )
+        if scripted is None:
+            return await super().ingest_audio(identity, frame)
+        self.audio_calls.append(frame.sequence)
+        return (scripted,)
+
+
+async def _frames_to(harness: _StoryHarness, end_sample: int) -> None:
+    await harness.audio_frames((end_sample - harness.sample) // 320)
+
+
+@pytest.mark.asyncio
+async def test_device_request_after_reconnect_survives_the_next_task_reusing_its_id() -> None:
+    """Field 2026-09-29 session 9c8bee20: a recognized request retired as empty.
+
+    After a spoken stop the device came back on stream epoch 2051.  The
+    request's final (FunASR sentence 1, samples 80960-109760) arrived before
+    the device VAD end (voiced end 108800).  That VAD end rotated FunASR, and
+    the new task's first result, sentence 1 again, erased the pending final
+    from the timeline; the endpoint commit found no text and the ASR tail
+    timeout discarded the turn as empty.
+    """
+
+    request = "讲一个短一点的故事。"
+    provider = _TaskScriptProvider(story_call=2)
+    harness = _StoryHarness(_device_identity("next-task-sentence-id"), provider)
+    await harness.start()
+    try:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.playback_ended()
+        await harness.utterance("给我讲个故事", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 2)
+        story = harness.runtime.fence
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        assert story in harness.story.cancelled
+
+        await harness.reconnect()
+        epoch = harness.identity.stream_epoch
+        # The production endpoint grace, so the next task can answer inside it.
+        harness.registry.turn_endpoint_grace_s = 0.9
+        await _frames_to(harness, 81_280)
+        await harness.vad_start(81_280)
+        provider.by_end[(epoch, 120_960)] = ASRResult(
+            task_epoch=2,
+            sentence_id="1",
+            revision=2,
+            capture_start_sample=80_960,
+            capture_end_sample=109_760,
+            text=request,
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await _frames_to(harness, 123_200)
+        # The final is already in; the device VAD end comes after it.
+        await harness.send(
+            media_pb2.MediaToCore(
+                vad=media_pb2.VadEvent(
+                    identity=harness.wire_identity,
+                    type=media_pb2.VAD_EVENT_SPEECH_END,
+                    sample_position=123_200,
+                    probability=0.99,
+                    rms=0.05,
+                    voiced_end_sample=108_800,
+                )
+            )
+        )
+        provider.by_end[(epoch, 126_400)] = ASRResult(
+            task_epoch=3,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=124_800,
+            capture_end_sample=126_400,
+            text="",
+            is_final=False,
+            stream_epoch=epoch,
+        )
+        await _frames_to(harness, 126_400)
+
+        await harness.wait_for(lambda: len(_user_turn_texts(harness.context)) == 3, timeout=4.0)
+        assert _user_turn_texts(harness.context)[2] == request
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_device_stop_reusing_a_held_candidates_sentence_id_still_stops() -> None:
+    """A stop from a later provider task may reuse a held candidate's id.
+
+    The stop's own interval is committed by evicting the candidates before
+    it; by id, that eviction would take the stop final with them.
+    """
+
+    provider = _TaskScriptProvider()
+    harness = _StoryHarness(_device_identity("stop-reuses-sentence-id"), provider)
+    await harness.start()
+    try:
+        story = await harness.start_story()
+        epoch = harness.identity.stream_epoch
+        candidate_start = harness.sample
+        provider.by_end[(epoch, candidate_start + 20 * 320)] = ASRResult(
+            task_epoch=2,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=candidate_start,
+            capture_end_sample=candidate_start + 20 * 320,
+            text="小猫咪去哪儿了",
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await harness.audio_frames(20)
+        stop_start = harness.sample
+        provider.by_end[(epoch, stop_start + 15 * 320)] = ASRResult(
+            task_epoch=3,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=stop_start,
+            capture_end_sample=stop_start + 15 * 320,
+            text="停",
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await harness.audio_frames(15)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+    finally:
+        provider.release.set()
+        await harness.close()

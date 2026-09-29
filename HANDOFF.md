@@ -2,22 +2,30 @@
 
 ## 当前生产快照
 
-- **最近生产收据**：2026-09-29 17:05–17:10（CST）整栈发布 `20260929-stop-playback-v1`（tag → `bc1aee1`，main 上 #129 合并提交）：#128 抽取提示词 v3 + #129 播放中语音停止词。每一步单独确认 PASS。17:43–17:52 为录 ASR A/B 音频临时给 bridge 叠加 PCM tap override（写 `/data`），录完已按原 compose 重建、服务器副本已删。注意：生产 `/etc/memoria-agent.env` 本来就开着 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频会留在容器内存直到重启。
-- **上一次整栈收据**：2026-09-29 15:35–15:48（CST）`20260929-stop-word-v1`（`0c36a11`），它是本次的回滚目标。media-edge 的回滚目标仍是 `20260928-writer-teardown-v1`。
+- **最近生产收据**：2026-09-29 18:27–18:38（CST）整栈发布 `20260929-stop-reconnect-v1`（tag → `6bbf5e8`，#132 分支头，含 #130），media-edge 同 tag 单独切换（18:38:23）。每一步单独确认 PASS。生产 `/etc/memoria-agent.env` 常开 `MEDIA_PCM_TAP_DIR=/tmp/media-pcm-tap`（容器 tmpfs，每会话 4 MB），原始上行音频留在容器内存直到重启。
+- **上一次整栈收据**：2026-09-29 17:05–17:10 `20260929-stop-playback-v1`（`bc1aee1`），它是三角色的回滚目标；media-edge 回滚目标为 `20260928-review-batches-v1`。
 
 | component | actual image/tag | OCI digest | revision | health | restarts | startup time | receipt | rollback target |
 |---|---|---|---|---|---:|---|---|---|
-| Control API | `memoria-control-api:20260929-stop-playback-v1` | `sha256:ee5b9a07…`（服务器 image id） | `bc1aee1c6ef2ce1fa98aa60acead44897aa518d3` | healthy | 0 | `2026-09-29T09:08Z` | `/opt/memoria/releases/20260929-stop-playback-v1/.cutover/` | `memoria-control-api:rollback-20260929-stop-playback-v1-pre`（= `20260929-stop-word-v1`） |
-| Bridge | `memoria-agent:20260929-stop-playback-v1` | `sha256:60c0dd5d…` | 同上 | healthy | 0 | 重建于 tap 开启时 | 同上 | `memoria-agent:rollback-20260929-stop-playback-v1-pre` |
-| Speaker Model | `memoria-speaker-model:20260929-stop-playback-v1` | `sha256:115419cb…` | 同上 | healthy | 0 | `2026-09-29T09:08Z` | 同上 | `memoria-speaker-model:rollback-20260929-stop-playback-v1-pre` |
-| Media Edge | `memoria-media-edge:20260928-review-batches-v1` | `sha256:f25ee796…` | `6180893` | healthy | 0 | `2026-09-28T15:29:54Z` | `/opt/memoria/component-releases/20260928-review-batches-v1-media-edge/` | `memoria-media-edge:20260928-writer-teardown-v1` |
+| Control API | `memoria-control-api:20260929-stop-reconnect-v1` | `sha256:0a9d7bff…`（服务器 image id） | `6bbf5e827132eae560de1ef05b0d39744743ecc2` | healthy | 0 | `2026-09-29T10:36:24Z` | `/opt/memoria/releases/20260929-stop-reconnect-v1/.cutover/` | `memoria-control-api:rollback-20260929-stop-reconnect-v1-pre`（= `20260929-stop-playback-v1`） |
+| Bridge | `memoria-agent:20260929-stop-reconnect-v1` | `sha256:cebc8c1a…` | 同上 | healthy | 0 | `2026-09-29T10:36:38Z` | 同上 | `memoria-agent:rollback-20260929-stop-reconnect-v1-pre` |
+| Speaker Model | `memoria-speaker-model:20260929-stop-reconnect-v1` | `sha256:b05f2aa8…` | 同上 | healthy | 0 | `2026-09-29T10:36:16Z` | 同上 | `memoria-speaker-model:rollback-20260929-stop-reconnect-v1-pre` |
+| Media Edge | `memoria-media-edge:20260929-stop-reconnect-v1` | `sha256:618b5873…` | 同上 | healthy | 0 | `2026-09-29T10:38:23Z` | `/opt/memoria/component-releases/20260929-stop-reconnect-v1-media-edge/` | `memoria-media-edge:20260928-review-batches-v1`（`media-edge-rollback.override.yml`） |
 
 - **候选可见性状态**：已随整栈发布上线（契约提交在 main 上为 `0059368`，早期记录中的 `f7c4c2a` 是合并前哈希）。普通 search/context 只返回 confirmed 且无 active 冲突，`include_candidates=true` 仅供审核与评测。真实 PG 上的 candidate 行为与线上带鉴权读口尚无单独收据。
 - **评测基线边界**：四份 2026-09-23 评测收据统一为 `receipt_scope=parent_baseline`、`source_commit=3ccba9c69a77d3bc97f3a48e5f702ab0a4da7948`；它们产生于候选可见性提交之前，只证明上线前基线，不证明当前线上版本的召回质量。
-- **发布身份**：`20260929-stop-playback-v1` / `bc1aee1`；`/opt/memoria/current` → `releases/20260929-stop-playback-v1`。上一栈 `20260929-stop-word-v1` / `0c36a11` 为回滚目标（三角色）。
+- **发布身份**：`20260929-stop-reconnect-v1` / `6bbf5e8`；`/opt/memoria/current` → `releases/20260929-stop-reconnect-v1`。上一栈 `20260929-stop-playback-v1` / `bc1aee1` 为回滚目标（三角色）。
 - **未关闭缺陷**：P0-03 仍开放（缺陷 A 核心续问边界与工具查询最终回答已在 09-24、09-25 真机走通；TLS/WSS 自动重连保留观察项）；缺陷 B 的输入电平摆动/近讲削波仍需固件 AGC/AEC；F2 禁止源 barge 尚未取得设备旁的真实复现证据。
 - **下一步必须动作**：当日遗留已汇总到 [TODOLIST「2026-09-28 收尾待办」](TODOLIST.md)：伙伴页选一次绵绵、嘈杂环境验证 #83；需决定是否发布固件 OTA；待查回复规划 `no_verified_runtime_profile` 兜底；12-17 前换证书。之后按验收清单验 P0-04 产品决定、P1-11 三种绑定与隔天记忆、P1-03 孩子人格、P2-04 与 P0-03 剩余矩阵；`direct_real_device_verified=false`、`full_duplex_verified=false`、`student_safety_loop_verified=false` 保持不变。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks/release-rollback.md)、[空间治理运维基线](docs/runbooks/operations-space-governance.md)、[删除域与 seal 契约](docs/compliance/delete-domains.md)、[2026-09-20 及更早历史归档](docs/HANDOFF-archive-before-0920.md)、[2026-09-16 至 2026-09-23 历史归档](docs/HANDOFF-archive-0916-0923.md)。
+
+## 2026-09-29 整栈发布 20260929-stop-reconnect-v1（#130）+ media-edge 同 tag
+
+- **发布过程**：本机构建四个 linux/amd64 镜像（Edge 二进制含新日志串核对），seeded 上传双端校验 PASS，media-edge 镜像单独 scp、sha256 核对后导入。`verify-load`、`freeze`、`env`（provider smoke PASS）、`schema` 在 #132 CI 全绿前完成，全绿后 `cutover`（18:36:44）、`finish`（18:38:11）PASS。media-edge 按组件覆盖文件切换：新旧渲染配置对比基准改为当前栈发布树（`20260928-review-batches-v1` 发布树引用的网关 env 已随 LiveKit 清理删除、无法渲染），差异只有构建参数与镜像；其余容器未变，未带凭证的设备入口 401。
+- **真机（用户，18:39–18:42）**：「停」生效，但停后设备仍断线重连（这次是设备侧 close 1005），重连后前几句上行电平落在底噪（RMS 90–540，四家 ASR 全空），第三遍才识别；播报快结束时开口的问题不被提交，重说后两句合并回答，第三遍又答一次，表现为「答的是上一个问题」。
+- **重连根因（已修，待发布）**：Edge 把 `CANCEL_GENERATION` 转成 `playback.flush` 时丢了 `RealtimeEffect.session_epoch`（fence 里是 0），固件 `ParseGenerationFence` 要求正数，整条消息判违规（`Rejected invalid device media message`）并关闭 WSS。Core 发出的每次停播（语音停止、KWS、抢占）都会触发。串口复现 2/2（「别说了」模拟）。修复：`device_ws_downlink.go` 带上 `effect.GetSessionEpoch()`，回归测试解析 flush 的 fence（main 上失败）。
+- **电脑模拟测试（19:00–19:17，Mac 扬声器 Tingting 代替用户，串口 + bridge 日志）**：模拟的「停」4/4 未生效：播放期上行有明显回声，FunASR 把「停」听成别的单字（离线复核为「行」，豆包为「停」），走了语义收尾，钉住的端点既不提交也不结束会话，之后「讲一个短一点的故事」识别出来也不提交，故事播完为止。「别说了」2/3 停下（第 3 次被识别成别的 4 字、同样走了语义收尾）；停下的两次都复现了上面的重连，且重连后「讲一个短一点的故事」已被 FunASR 识别（10 字）仍被当空输入丢弃（`turn discarded after ASR tail timeout partial_present=False`），即此前「重连后第一句为何被当空输入丢弃」。Core 侧三个问题（播放尾部开口的续问不定端点；播放期语义收尾端点卡死；换 epoch 后的 final 被静默丢弃）另行修复中。
+- **ASR A/B 补录**：见 `docs/acceptance/run-20260929-asr-ab/findings.md`。轻声组四家全空，远场、噪声组四家一致，换厂商无助于空结果；电平问题在固件 AGC（缺陷 B）。
 
 ## 2026-09-29 整栈发布 20260929-stop-playback-v1（播放中语音停止 + 抽取提示词 v3）
 
@@ -26,7 +34,7 @@
   - 第二次（长故事中途说「停」）：停止生效（`media early playback-stop endpoint` → `media spoken stop interrupted reply ... flush=True` → `preempted`），会话未关；但随后两次「讲一个短一点的故事」都没反应，会话失聪直到超时关闭。
 - **失聪根因（Edge，影响所有 Core 主动停播）**：CANCEL_GENERATION → Edge 发 `playback.flush` → 固件为被冲掉的那一代补发 `playback.ended` → Edge 因该代已被替换而拒收并发 `session.error playback_receipt_rejected`、关闭设备 WSS → 固件重连，上行采样从 0 开始（`stream_epoch 2033→2034`、`vad start ... sample=0`）。KWS 停止、输出抢占、身份轮换、输出超时同样会触发；点屏停止不受影响（`button.stop` 是当代终态）。Core 另有两处重连后未复位的位置（`last_playback_end_sample`、`last_asr_evidence_end_sample`）让新 epoch 用了旧 epoch 的边界。
 - **修复（待发布，需同时发 media-edge 与 bridge）**：Edge 对已被替换那一代的 `playback.ended/error` 只记录并丢弃、不断线；Core 换 stream epoch 时复位这两个位置。Go 与 Python 各一条回归测试（main 上失败）。
-- **未查清**：重连后第一句为何被当空输入丢弃（推测 provider 事后发了空文本 final 覆盖），Edge 修复上线后停止应不再换 epoch，再观察。
+- **未查清**（09-29 18:39 后已复现，见 stop-reconnect-v1 一节）：重连后第一句被当空输入丢弃。
 
 ## 2026-09-29 整栈发布 20260929-stop-word-v1（停止词不再当告别；SenseVoice 12 s）
 

@@ -477,6 +477,9 @@ async def test_device_close_phrase_recovered_after_cross_sentence_overlap() -> N
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
+        # The echo below repeats what the device just said; the echo guard
+        # of a final that straddles the playback boundary reads that text.
+        context.output.assistant_text = "你好，我是茉莉，今天想聊点什么呀？"
         from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
         from services.agent.src.voice_core.speech_timeline import ASRResult
 

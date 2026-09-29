@@ -326,6 +326,10 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			TurnID:       effect.GetTurnId(),
 			GenerationID: effect.GetGenerationId(),
 			ToolEpoch:    effect.GetToolEpoch(),
+			// The device parses every fence with a positive session_epoch
+			// and treats a zero one as a wire violation that closes the
+			// socket, so the Core effect's epoch must reach the wire.
+			SessionEpoch: effect.GetSessionEpoch(),
 		}
 		switch effect.GetEffectKind() {
 		case mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION:

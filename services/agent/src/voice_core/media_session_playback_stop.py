@@ -7,6 +7,11 @@ cloud-ASR 「停」 finals therefore buffered forever, and a committed stop comm
 only flipped the runtime floor to listening while the reply kept streaming.
 This mixin pins the endpoint of a lexical stop heard during playback and then
 carries out the Router's INTERRUPT_COMMAND the way a keyword stop does.
+
+It also owns which other finals around the playback window may endpoint a
+turn: while the reply plays, any other early endpoint blocks this stop and
+swallows later finals, so only a farewell that is not the reply's own echo may
+pin one; after playback, a follow-up that began inside the echo window may.
 """
 
 from __future__ import annotations
@@ -37,6 +42,14 @@ _PLAYBACK_STOP_CAUSE = "media_voice_stop"
 # at most ~28 characters) and the ASR finalization lag.  A stop phrase found
 # there is treated as the reply's own voice, never as the owner's command.
 _PLAYBACK_STOP_ECHO_TAIL_CHARS = 64
+# A follow-up final that begins before the playback boundary (itself 0.8 s past
+# the reply's last uplink evidence) must run at least this far past it: the
+# reply's echo cannot, only speech that went on after the speaker stopped.
+_PLAYBACK_FOLLOWUP_STRADDLE_SAMPLES = 16_000  # 1.0 s at 16 kHz
+# A follow-up final that starts wholly after the playback boundary is user
+# speech, not echo: endpoint it with a short grace instead of waiting for a
+# VAD edge that a stuck post-playback VAD may never emit (run 20260921).
+_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S = 1.2
 
 
 def _compact(text: str) -> str:
@@ -44,7 +57,11 @@ def _compact(text: str) -> str:
 
 
 class MediaPlaybackStopMixin:
-    """Endpoint and execute a spoken stop command during assistant playback."""
+    """Endpoint and execute a spoken stop command during assistant playback.
+
+    Also decides which other finals around the playback window may endpoint
+    a device turn early.
+    """
 
     if TYPE_CHECKING:
         metrics: MetricsRegistry
@@ -84,6 +101,14 @@ class MediaPlaybackStopMixin:
         ) -> bool: ...
 
     @staticmethod
+    def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
+        """True when ``text`` repeats what the reply announced most recently."""
+
+        heard = _compact(text)
+        spoken = _compact(context.output.assistant_text)[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
+        return bool(heard) and heard in spoken
+
+    @staticmethod
     def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool:
         """True when a stop phrase repeats what the reply itself just said.
 
@@ -92,11 +117,160 @@ class MediaPlaybackStopMixin:
         its own reply through an open microphone.
         """
 
-        heard = _compact(text)
-        if not heard or not lexical_playback_control_only(text):
+        return lexical_playback_control_only(text) and (
+            MediaPlaybackStopMixin._playback_text_is_echo(context, text)
+        )
+
+    def _playback_holds_early_endpoint(
+        self,
+        context: _MediaVoiceSession,
+        text: str,
+        *,
+        kind: str,
+        echo_only: bool = False,
+    ) -> bool:
+        """True when an audible device reply keeps this candidate unendpointed.
+
+        Simulated trials 2026-09-29: a misheard 「停」 (「行」) went to the
+        semantic close classifier during a story and pinned an endpoint.  With
+        playback VAD suppressed nothing else moves a pinned endpoint, and
+        while it stood ``_maybe_pin_playback_stop`` refused the owner's clear
+        「停」; the commit then held the turn anyway (a semantic-only verdict
+        never routes END_SESSION past the playback policy, and a device-bound
+        owner is no voice authority) and cleared the stop with it.  A lexical
+        farewell still ends the session, unless it is the reply's own echo.
+        """
+
+        if context.identity.client_type != "device" or not context.runtime.assistant_speaking:
             return False
-        spoken = _compact(context.output.assistant_text)[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
-        return heard in spoken
+        echo = self._playback_text_is_echo(context, text)
+        if echo_only and not echo:
+            return False
+        logger.info(
+            "media early %s endpoint held during playback session=%s text_len=%s echo=%s",
+            kind,
+            context.identity.session_id,
+            len(text.strip()),
+            echo,
+        )
+        return True
+
+    def _playback_followup_straddles(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> bool:
+        """True for owner speech that began just before the playback boundary.
+
+        Field 2026-09-29 session 6b38ba46: the owner asked the next question
+        ~0.5 s before the reply finished.  Its final began inside the echo
+        window, so the follow-up endpoint refused it, and with playback VAD
+        suppressed no vad.start ever came: the question waited ~9 s for the
+        owner to repeat it.  A final that runs well past the boundary and is
+        not the reply's own text is speech that went on after the speaker
+        stopped; it opens the follow-up turn on its own samples.  A rescue
+        result never does: it spans its whole provider task, echo included.
+        """
+
+        boundary = context.last_playback_end_sample
+        text = result.text.strip()
+        if (
+            context.identity.client_type != "device"
+            or not text
+            or result.rescue_synthesized
+            or boundary is None
+            or result.capture_start_sample >= boundary
+            or result.capture_end_sample - boundary < _PLAYBACK_FOLLOWUP_STRADDLE_SAMPLES
+            or self._reply_in_flight(context)
+        ):
+            return False
+        duration_ms = (result.capture_end_sample - result.capture_start_sample) // 16
+        return not (
+            self._playback_text_is_echo(context, text)
+            or context.runtime.playback_guarded_reason(text, duration_ms=duration_ms)
+            == "assistant_echo"
+        )
+
+    def _maybe_endpoint_playback_followup(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Endpoint a post-playback follow-up without waiting for a VAD edge.
+
+        Run 20260921 window-a: both follow-ups were recognized in realtime,
+        but the device VAD stayed active across the playback echo, the pending
+        turn merged echo and follow-up text, and the offline paragraphs were
+        rejected for straddling the committed boundary -- so the endpoint
+        waited ~20 s for the next vad.start.  When playback is over and an
+        accepted final lies wholly after the playback boundary, it is user
+        speech, not echo: pin the endpoint with a short grace instead of
+        waiting for a VAD edge that may never arrive.  Owner speech that began
+        just before the boundary and ran well past it is endpointed the same
+        way (``_playback_followup_straddles``).
+        """
+
+        if context.identity.client_type != "device" or not result.text.strip():
+            return  # An empty final is not speech and must not pin the endpoint.
+        playback_end = context.last_playback_end_sample
+        if playback_end is None or (
+            result.capture_start_sample < playback_end
+            and not self._playback_followup_straddles(context, result)
+        ):
+            # Echo guard: a final that begins before the playback boundary may
+            # be the reply's tail; only non-echo speech well past it may pin.
+            return
+        if self._reply_in_flight(context):
+            return
+        if context.pending.turn_endpoint_sample is not None:
+            # Only an endpoint this path pinned may be extended while the
+            # utterance keeps producing post-boundary finals; a VAD end or a
+            # clock-fact/live-query pin already owns the tail.
+            if (
+                context.pending.playback_followup_endpoint_sample
+                == context.pending.turn_endpoint_sample
+                and result.capture_start_sample >= context.pending.turn_endpoint_sample
+            ):
+                endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
+                context.pending.turn_endpoint_sample = endpoint
+                context.pending.turn_retire_sample = max(
+                    context.pending.turn_retire_sample or 0, endpoint
+                )
+                context.pending.playback_followup_endpoint_sample = endpoint
+                context.pending.restart_endpoint_bounds(_PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S)
+                logger.info(
+                    "media playback-followup endpoint advanced session=%s "
+                    "boundary=%s endpoint=%s text_len=%s",
+                    context.identity.session_id,
+                    playback_end,
+                    endpoint,
+                    len(result.text.strip()),
+                )
+                self._schedule_turn_commit(context)
+            return
+        if (
+            context.pending.turn_start_sample is not None
+            and context.pending.turn_start_sample < min(playback_end, result.capture_start_sample)
+        ):
+            # The pending window still reaches back into the echo window; the
+            # playback-boundary split owns resetting it before this may fire.
+            return
+        endpoint = max(result.capture_end_sample, context.pending.turn_end_sample or 0)
+        context.pending.turn_endpoint_sample = endpoint
+        context.pending.turn_retire_sample = max(context.pending.turn_retire_sample or 0, endpoint)
+        context.pending.playback_followup_endpoint_sample = endpoint
+        context.pending.turn_endpoint_grace_deadline = (
+            time.monotonic() + _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S
+        )
+        logger.info(
+            "media playback-followup endpoint session=%s boundary=%s "
+            "endpoint=%s text_len=%s",
+            context.identity.session_id,
+            playback_end,
+            endpoint,
+            len(result.text.strip()),
+        )
+        self._schedule_turn_commit(context)
 
     def _maybe_pin_playback_stop(
         self,
@@ -137,16 +311,11 @@ class MediaPlaybackStopMixin:
             )
             return
         start = result.capture_start_sample
-        if start > 0:
-            timeline = context.runtime.speech_timeline
-            timeline.evict_segment_ids({
-                segment.segment_id
-                for segment in timeline.segments_in_range(
-                    stream_epoch=result.stream_epoch,
-                    start_sample=0,
-                    end_sample=start,
-                )
-            })
+        # By interval: a stop final from a later provider task may reuse the
+        # sentence id of a candidate it retires.
+        context.runtime.speech_timeline.evict_before(
+            stream_epoch=result.stream_epoch, sample=start
+        )
         pending = context.pending
         pending.clock_fact_partial_text = None
         pending.clock_fact_partial_stable_since = None

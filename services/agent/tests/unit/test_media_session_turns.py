@@ -2492,6 +2492,10 @@ async def test_device_conversation_close_semantic_final_commits_before_vad_end()
     session = bridge.bridge.open(identity)
     try:
         context = await registry.open_session(identity)
+        # The farewell follows the wake ack: while a reply is audible a
+        # semantic-only close is held, never early-endpointed.
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
         calls: list[str] = []
 
         async def resolver(text: str) -> bool:
@@ -3270,6 +3274,9 @@ async def test_device_clock_fact_recovered_after_overlap_without_vad() -> None:
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
+        # The echo below repeats what the device just said; the echo guard
+        # of a final that straddles the playback boundary reads that text.
+        context.output.assistant_text = "你好，我是茉莉，今天想聊点什么呀？"
         provider.started.clear()
         provider.completed.clear()
         from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
@@ -3357,6 +3364,9 @@ async def test_device_low_energy_rescue_close_rejection_does_not_request_standby
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await asyncio.wait_for(provider.completed.wait(), timeout=1)
         await _finish_output_owner_playback(registry, identity, bridge, session)
+        # The echo below repeats what the device just said; the echo guard
+        # of a final that straddles the playback boundary reads that text.
+        context.output.assistant_text = "你好，我是茉莉，今天想聊点什么呀？"
 
         from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
 
@@ -5383,6 +5393,89 @@ async def test_media_playback_followup_echo_tail_cannot_endpoint(
     assert context.pending.turn_start_sample == 215_000
     await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
     assert "多云转晴" not in window.provider.prepared[0]
+
+
+_PLAYED_WEATHER_REPLY = "明天上海晴转多云，最高气温二十六度。"
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_begun_before_playback_end_endpoints(
+    device_media_session: Any,
+) -> None:
+    """Field 2026-09-29 session 6b38ba46: a question begun as the reply ended.
+
+    The owner started the next question ~0.5 s before playback ended and
+    finished ~4 s later.  Its 11-character final began before the playback
+    boundary, so the echo guard refused to endpoint it, and the device VAD,
+    suppressed during playback, never fired: nothing happened for ~9 s until
+    the owner repeated it, and the two finals then committed as one
+    23-character turn.  Speech that is not the reply's own text and runs well
+    past the boundary owns a follow-up turn on its own samples.
+    """
+
+    window = await device_media_session("followup-straddles-boundary-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.output.assistant_text = _PLAYED_WEATHER_REPLY
+    assert context.last_playback_end_sample == 202_800
+
+    question = "那我明天出门要带伞吗"
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=190_400,
+        end_sample=254_400,
+        text=question,
+    )
+
+    assert context.pending.turn_start_sample == 190_400
+    assert context.pending.turn_endpoint_sample == 254_400
+    assert context.pending.playback_followup_endpoint_sample == 254_400
+    await _wait_until(lambda: window.provider.prepared == [question], timeout=3.0)
+    assert _user_turn_texts(context)[-1] == question
+    # The echo candidate held from the playback window is evicted, not merged.
+    assert not _resolve_media_turn_text(
+        context,
+        stream_epoch=1,
+        start_sample=160_000,
+        end_sample=190_000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_playback_followup_straddling_reply_echo_cannot_endpoint(
+    device_media_session: Any,
+) -> None:
+    """The reply's own words past the boundary stay behind the echo guard."""
+
+    window = await device_media_session("followup-straddling-echo-session")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.output.assistant_text = _PLAYED_WEATHER_REPLY
+
+    tail = await _accept_media_asr_decision(
+        registry,
+        identity,
+        sentence_id="tail-1",
+        start_sample=190_400,
+        end_sample=225_000,
+        text="最高气温二十六度",
+    )
+    assert tail.accepted is not None, tail.reason
+    assert context.pending.turn_endpoint_sample is None
+    assert window.provider.prepared == []
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="followup-1",
+        start_sample=230_000,
+        end_sample=245_000,
+        text="后天呢",
+    )
+    assert context.pending.turn_start_sample == 230_000
+    await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
 
 
 @pytest.mark.asyncio

@@ -17,11 +17,12 @@ def segment(
     final: bool = True,
     text: str = "",
     epoch: int = 1,
+    task: int = 1,
 ) -> SpeechSegment:
     return SpeechSegment(
         session_id="session",
         stream_epoch=epoch,
-        provider_task_epoch=1,
+        provider_task_epoch=task,
         segment_id=segment_id,
         revision=revision,
         kind=kind,
@@ -107,3 +108,59 @@ def test_multiple_vad_intervals_can_commit_as_one_logical_turn() -> None:
         start_sample=0,
         end_sample=960,
     ) == "我今天 去公园"
+
+
+def test_a_later_task_reusing_a_sentence_id_keeps_the_pending_final() -> None:
+    """Field 2026-09-29 session 9c8bee20: FunASR restarts sentence ids per task.
+
+    The question's final (task 6, sentence 1) waited for its endpoint when the
+    task started at the VAD-end rotation produced its own sentence 1.
+    """
+
+    timeline = SpeechTimeline()
+    question = segment(
+        "1", start=80_960, end=109_760, revision=3, text="讲一个短一点的故事", task=6
+    )
+    next_task = segment(
+        "1",
+        start=124_800,
+        end=126_400,
+        kind=SegmentKind.ASR_PARTIAL,
+        final=False,
+        task=7,
+    )
+
+    assert timeline.add(question)
+    assert timeline.add(next_task)
+
+    assert timeline.pending == (question, next_task)
+    assert timeline.projected_text(
+        stream_epoch=1, start_sample=81_280, end_sample=108_800
+    ) == "讲一个短一点的故事"
+    # The newer task's revisions still replace its own segment only.
+    revised = segment("1", start=124_800, end=128_000, revision=2, text="嗯", task=7)
+    assert timeline.add(revised)
+    assert timeline.pending == (question, revised)
+
+
+def test_a_later_task_replaying_the_same_audio_still_replaces_it() -> None:
+    timeline = SpeechTimeline()
+    assert timeline.add(segment("1", start=0, end=16_000, text="今天天气", task=1))
+    replay = segment("1", start=0, end=19_200, text="今天天气怎么样", task=2)
+
+    assert timeline.add(replay)
+    assert timeline.pending == (replay,)
+
+
+def test_evict_before_keeps_a_later_segment_that_reuses_the_id() -> None:
+    timeline = SpeechTimeline()
+    candidate = segment("1", start=0, end=16_000, text="小猫咪去哪儿了", task=1)
+    stop = segment("1", start=32_000, end=38_400, text="停", task=2)
+    assert timeline.add(candidate)
+    assert timeline.add(stop)
+
+    timeline.evict_before(stream_epoch=1, sample=32_000)
+
+    assert timeline.pending == (stop,)
+    # The stop's version history survives, so its stale revision stays out.
+    assert not timeline.add(segment("1", start=32_000, end=38_400, text="停", task=1))

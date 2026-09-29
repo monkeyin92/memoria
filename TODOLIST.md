@@ -226,7 +226,7 @@ deletion_scope: code=已提交 `d2318e4`（CI `35501188784` success：PG 全 sag
 - 自动备份与异地副本：真实家庭服务/数据、正式发布或价值量级增长前重评；WAL 仅按 P1-08 处理。
 - 家长通知发送 worker/外部渠道：仅保留 outbox/readback 验收；启用另定授权和渠道。
 - Qwen-Audio 3.1 ASR/TTS（原 P1-10，已评估结论）：ASR 两次真机对照均失败（播放期回声被提交为话轮、漏识别轻声、“稍等”开口延迟 4.1s），生产保持 fun-asr；TTS 迁移按用户 2026-09-25 决定回退、生产保持豆包，重新启用即再 revert 回退提交 `d0d7a43` 与 `2be2f50`。重试前先定位新模型 VAD/段落与回声边界，并在新候选上重做缺陷 A 设备验收。收据 `docs/acceptance/run-20260924-d1d2-deploy/findings.md`。
-- 流式 ASR 四家离线 A/B（2026-09-29，收据 `docs/acceptance/run-20260929-asr-ab/findings.md`，脚本 `scripts/evaluate_streaming_asr.py`）：43 段真机录音中有 11 句对上剧本。正常朗读四家基本打平；fun-asr 控制词出错最多，qwen3-realtime 在非人声段普遍吐「嗯。」，qwen-audio-3.1 与豆包最干净。quiet/far/noisy 三类没录到，暂不换厂商；是否补录由用户决定。
+- 流式 ASR 四家离线 A/B（2026-09-29，收据 `docs/acceptance/run-20260929-asr-ab/findings.md`，脚本 `scripts/evaluate_streaming_asr.py`）：43 段真机录音中有 11 句对上剧本。正常朗读四家基本打平；fun-asr 控制词出错最多，qwen3-realtime 在非人声段普遍吐「嗯。」，qwen-audio-3.1 与豆包最干净。第二轮补录的轻声段与重连后的低电平段四家全空，空结果是上行电平（无有效 AGC）问题，不换厂商。
 - 多成员声纹与不依赖小程序的选人（原 P2-02）：随 P1-11 一对一绑定暂停；重启前须用真实标注样本校准误识/拒识后再定门槛。
 - EOU 新模型、DuplexModel、expressive/抢跑；ESP-IDF/ESP-SR/upstream 整体升级；老人故事册/人物复刻、年轻人潮玩和最终外形均不进入当前队列。
 
