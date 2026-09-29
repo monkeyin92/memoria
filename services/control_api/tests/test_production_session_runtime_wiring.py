@@ -87,7 +87,7 @@ def _production_test_settings(tmp_path: Path) -> _ProductionSettingsProxy:
             "voice_sample_store_path": str(tmp_path / "voice-samples"),
             "archive_object_store_path": str(tmp_path / "archive-objects"),
             "archive_database_url": SecretStr(""),
-            "guardian_database_url": SecretStr(""),
+            "guardian_database_url": SecretStr("postgresql://memoria_guardian:test@db/memoria"),
             "identity_database_url": SecretStr(""),
             "speaker_database_url": SecretStr(""),
             "evolution_database_url": SecretStr("postgresql://memoria_evolution:test@db/memoria"),
@@ -110,6 +110,12 @@ def _patch_production_lifespan_dependencies(
     monkeypatch.setattr(main, "MemoryCompilerWorker", _NoopWorker)
     monkeypatch.setattr(main, "CorpusRetentionWorker", _NoopWorker)
     monkeypatch.setattr(main, "AccountDeletionWorker", _NoopWorker)
+
+    async def noop(_store: object) -> None:
+        return None
+
+    monkeypatch.setattr(main.PostgresGuardianStore, "initialize", noop)
+    monkeypatch.setattr(main.PostgresGuardianStore, "close", noop)
 
     session_initialized: list[object] = []
     session_closed: list[object] = []

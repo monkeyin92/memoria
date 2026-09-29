@@ -104,6 +104,7 @@ async def _bind(
     )
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_child_binding_grants_chat_and_ticked_memory_as_the_guardian(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -145,6 +146,7 @@ async def test_child_binding_grants_chat_and_ticked_memory_as_the_guardian(
     )
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_child_binding_with_the_emergency_contact_offer_succeeds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -269,6 +271,7 @@ async def test_elder_binding_registers_an_adult_and_grants_memory_as_a_delegate(
     ]
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_unbind_withdraws_consents_and_refuses_erasure_when_unwired(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -327,6 +330,7 @@ async def test_unbind_withdraws_consents_and_refuses_erasure_when_unwired(
     )
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_memory_toggle_moves_the_consent_authority_too(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -413,6 +417,7 @@ async def _speech(client: AsyncClient, *, session_id: str, event_id: str, subjec
     assert response.status_code == 201, response.text
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_name(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -468,6 +473,7 @@ async def test_deleting_a_childs_data_keeps_the_parents_and_unbind_redacts_the_n
         assert (child.display_name, child.status) == (REDACTED_DISPLAY_NAME, "disabled")
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_accountless_child_weekly_summary_follows_long_term_memory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

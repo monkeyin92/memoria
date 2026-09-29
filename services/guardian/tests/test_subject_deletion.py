@@ -1,4 +1,4 @@
-"""Subject-scoped deletion (``SubjectGuardianPort``) in the SQLite guardian store.
+"""Subject-scoped deletion (``SubjectGuardianPort``) in the PostgreSQL guardian store.
 
 A bound subject (a child or elder with no account) is served by a device whose
 binding owner is ``owner-o``.  Deleting the subject removes their crisis
@@ -8,17 +8,19 @@ account, and nothing of the owner's or another subject's.
 
 from __future__ import annotations
 
-import json
-import sqlite3
+import hashlib
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
+import asyncpg
 import pytest
+from services.archive.object_store import ObjectRef
 from services.governance.subject_ports import SubjectGuardianPort
-from services.guardian.domain import PersonConsentRecord
+from services.guardian.corpus import CorpusSample
+from services.guardian.domain import ConsentRecord, PersonConsentRecord
 from services.guardian.postgres_store import PostgresGuardianStore
-from services.guardian.sqlite_store import SqliteGuardianStore
 from services.tutor.domain import PracticeSession, StudyProgress
+from testing.guardian_seed import declare_binding_guardian
+from testing.postgres_harness import TestDatabase
 
 NOW = datetime(2026, 9, 25, 8, 0, tzinfo=UTC)
 OWNER = "owner-o"
@@ -27,27 +29,25 @@ OTHER_SUBJECT = "subject-t"
 OTHER_OWNER = "owner-p"
 SUBJECT_CRISIS = "7d1f9c1e-0000-4000-8000-000000000001"
 OTHER_CRISIS = "7d1f9c1e-0000-4000-8000-000000000002"
+# Practice session ids are UUIDs in PostgreSQL; the label names the events.
+SESSION_IDS = {
+    "s-session": "11111111-0000-4000-8000-000000000001",
+    "o-session": "11111111-0000-4000-8000-000000000002",
+    "t-session": "11111111-0000-4000-8000-000000000003",
+}
 
 
-def _postgres_store_is_a_subject_guardian_port(
-    store: PostgresGuardianStore,
-) -> SubjectGuardianPort:
-    # Type-checked only: the PostgreSQL contract runs in
-    # test_guardian_postgres_store.py when MEMORIA_TEST_POSTGRES_DSN is set.
-    return store
-
-
-def _session(session_id: str, *, subject_id: str, actor_id: str) -> PracticeSession:
+def _session(label: str, *, subject_id: str, actor_id: str) -> PracticeSession:
     return PracticeSession(
-        session_id=session_id,
+        session_id=SESSION_IDS[label],
         subject_id=subject_id,
         actor_id=actor_id,
-        voice_session_id=f"voice-{session_id}",
+        voice_session_id=f"voice-{label}",
         focus="tutor_english",
         task_id="english-past-story",
         status="draft",
         revision=0,
-        event_ids=(f"{session_id}:create", f"evt-{session_id}"),
+        event_ids=(f"{label}:create", f"evt-{label}"),
         practiced_seconds=0,
         created_at=NOW,
         updated_at=NOW,
@@ -68,42 +68,47 @@ def _progress(*, subject_id: str, actor_id: str, source: tuple[str, ...]) -> Stu
     )
 
 
-def _insert_evidence(path: Path, rows: tuple[tuple[str, str, str], ...]) -> None:
-    with sqlite3.connect(path) as connection:
-        for event_id, subject_id, actor_id in rows:
-            connection.execute(
-                """
-                INSERT INTO tutor_practice_evidence(
-                    event_id, assessment_id, kind, subject_id, actor_id,
-                    envelope_json, envelope_sha256, commit_sha256,
-                    outcome, skill_key, session_id, session_revision, created_at
-                ) VALUES (
-                    ?, NULL, 'tutor.practice_turn_recorded', ?, ?, '{}', ?, ?,
-                    NULL, NULL, ?, 0, ?
-                )
-                """,
-                (event_id, subject_id, actor_id, "a" * 64, "a" * 64, "s", NOW.isoformat()),
+async def _insert_evidence(
+    connection: asyncpg.Connection, rows: tuple[tuple[str, str, str], ...]
+) -> None:
+    for event_id, subject_id, actor_id in rows:
+        await connection.execute(
+            """
+            INSERT INTO tutor_practice_evidence(
+                event_id, assessment_id, kind, subject_id, actor_id,
+                envelope_json, envelope_sha256, commit_sha256,
+                outcome, skill_key, session_id, session_revision, created_at
+            ) VALUES (
+                $1, NULL, 'tutor.practice_turn_recorded', $2, $3, '{}'::jsonb, $4, $4,
+                NULL, NULL, 's', 0, $5
             )
-            connection.execute(
-                """
-                INSERT INTO tutor_commit_outbox(
-                    event_id, kind, subject_id, actor_id, archive_payload_json,
-                    status, created_at
-                ) VALUES (?, 'tutor.practice_turn_recorded', ?, ?, ?, 'delivered', ?)
-                """,
-                (
-                    f"outbox-{event_id}",
-                    subject_id,
-                    actor_id,
-                    json.dumps({"event_id": f"archived-{event_id}", "account_id": actor_id}),
-                    NOW.isoformat(),
-                ),
+            """,
+            event_id,
+            subject_id,
+            actor_id,
+            "a" * 64,
+            NOW,
+        )
+        await connection.execute(
+            """
+            INSERT INTO tutor_commit_outbox(
+                event_id, kind, subject_id, actor_id, archive_payload_json,
+                status, created_at
+            ) VALUES (
+                $1, 'tutor.practice_turn_recorded', $2, $3,
+                jsonb_build_object('event_id', $4::text, 'account_id', $3::text),
+                'delivered', $5
             )
+            """,
+            f"outbox-{event_id}",
+            subject_id,
+            actor_id,
+            f"archived-{event_id}",
+            NOW,
+        )
 
 
-async def _seed(path: Path) -> SqliteGuardianStore:
-    store = SqliteGuardianStore(path)
-    store.initialize()
+async def _seed(store: PostgresGuardianStore, database: TestDatabase) -> None:
     await store.save_practice_session(
         _session("s-session", subject_id=SUBJECT, actor_id=OWNER)
     )
@@ -123,14 +128,22 @@ async def _seed(path: Path) -> SqliteGuardianStore:
         _progress(subject_id=OTHER_SUBJECT, actor_id=OTHER_OWNER, source=("evt-t",)),
         rebuilt_at=NOW,
     )
-    _insert_evidence(
-        path,
-        (
-            ("evt-s-turn", SUBJECT, OWNER),
-            ("evt-o-turn", OWNER, OWNER),
-            ("evt-t-turn", OTHER_SUBJECT, OWNER),
-        ),
-    )
+    # Tutor evidence/outbox rows are written only by the receipt-verified
+    # ``commit_aggregate`` and Identity has no API here: seed them as the owner.
+    admin = await asyncpg.connect(database.owner_dsn())
+    try:
+        await _insert_evidence(
+            admin,
+            (
+                ("evt-s-turn", SUBJECT, OWNER),
+                ("evt-o-turn", OWNER, OWNER),
+                ("evt-t-turn", OTHER_SUBJECT, OWNER),
+            ),
+        )
+        for minor in (SUBJECT, OTHER_SUBJECT):
+            await declare_binding_guardian(admin, guardian_id=OWNER, subject_id=minor, at=NOW)
+    finally:
+        await admin.close()
     for crisis_event_id, minor in ((SUBJECT_CRISIS, SUBJECT), (OTHER_CRISIS, OTHER_SUBJECT)):
         receipt = await store.enqueue_crisis_event(
             crisis_event_id=crisis_event_id,
@@ -160,23 +173,20 @@ async def _seed(path: Path) -> SqliteGuardianStore:
         openid="owner-openid",
         now=NOW,
     )
-    return store
 
 
-def _surviving(path: Path, table: str, column: str) -> set[str]:
-    with sqlite3.connect(path) as connection:
-        return {
-            str(row[0])
-            for row in connection.execute(f"SELECT {column} FROM {table}")  # noqa: S608
-        }
+def _ids(rows: object, column: str) -> set[str]:
+    assert isinstance(rows, list)
+    return {str(row[column]) for row in rows}
 
 
 @pytest.mark.asyncio
 async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
-    tmp_path: Path,
+    guardian_postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    path = tmp_path / "subject.sqlite3"
-    store = await _seed(path)
+    store = guardian_postgres_store
+    await _seed(store, guardian_postgres_database)
     port: SubjectGuardianPort = store
 
     # The ids come back before the rows go: afterwards nothing can find them.
@@ -210,20 +220,25 @@ async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
     assert await port.subject_tutor_event_ids(account_id=OWNER, subject_id=SUBJECT) == ()
 
     # The owner's own practice and the other subject's rows stay.
-    assert _surviving(path, "tutor_practice_sessions", "session_id") == {
-        "o-session",
-        "t-session",
+    owner_export = await store.export_for_account(account_id=OWNER)
+    assert _ids(owner_export["tutor_practice_sessions"], "session_id") == {
+        SESSION_IDS["o-session"],
+        SESSION_IDS["t-session"],
     }
-    assert _surviving(path, "tutor_study_progress", "subject_id") == {OTHER_SUBJECT}
-    assert _surviving(path, "tutor_practice_evidence", "event_id") == {
+    assert _ids(owner_export["tutor_practice_evidence"], "event_id") == {
         "evt-o-turn",
         "evt-t-turn",
     }
-    assert _surviving(path, "tutor_commit_outbox", "event_id") == {
+    assert _ids(owner_export["tutor_commit_outbox"], "event_id") == {
         "outbox-evt-o-turn",
         "outbox-evt-t-turn",
     }
-    assert _surviving(path, "guardian_crisis_events", "minor_user_id") == {OTHER_SUBJECT}
+    assert await store.study_progress(subject_id=SUBJECT) is None
+    assert await store.study_progress(subject_id=OTHER_SUBJECT) is not None
+    subject_export = await store.export_for_account(account_id=SUBJECT)
+    assert subject_export["crisis_events"] == []
+    other_export = await store.export_for_account(account_id=OTHER_SUBJECT)
+    assert _ids(other_export["crisis_events"], "minor_user_id") == {OTHER_SUBJECT}
     notifications = await store.guardian_notifications(guardian_user_id=OWNER)
     assert [item.minor_user_id for item in notifications] == [OTHER_SUBJECT]
     # The consent audit and the guardian's subscribe-message ledger stay.
@@ -243,36 +258,77 @@ async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
 
 
 @pytest.mark.asyncio
-async def test_remaining_subject_rows_reports_live_corpus_samples(tmp_path: Path) -> None:
-    path = tmp_path / "corpus.sqlite3"
-    store = SqliteGuardianStore(path)
-    store.initialize()
-    # Foreign keys are off on this raw connection: the sample stands alone.
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            INSERT INTO guardian_corpus_samples(
-                sample_id, minor_user_id, consent_id, source_event_id, object_key,
-                media_type, byte_count, content_sha256, encryption_key_version,
-                object_backend, created_at, expires_at
-            ) VALUES ('sample-s', ?, 'consent-s', 'source-s', 'key-s', 'audio/wav',
-                      1, ?, 'v1', 'local', ?, ?)
-            """,
-            (SUBJECT, "b" * 64, NOW.isoformat(), (NOW + timedelta(days=1)).isoformat()),
+async def test_remaining_subject_rows_reports_live_corpus_samples(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
+    store = guardian_postgres_store
+    # The corpus fence checks consent expiry against the database clock.
+    now = datetime.now(UTC)
+    digest = hashlib.sha256(b"corpus-binding-code").hexdigest()
+    link = await store.create_link(
+        guardian_user_id=OWNER,
+        minor_user_id=SUBJECT,
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=now + timedelta(minutes=15),
+        now=now,
+    )
+    await store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id=SUBJECT,
+        binding_code_hash=digest,
+        now=now,
+    )
+    consent = await store.grant_consent(
+        ConsentRecord(
+            consent_id="c0a5e47a-0000-4000-8000-000000000003",
+            link_id=link.link_id,
+            consent_kind="corpus_recording",
+            policy_version="authorized-child-corpus-v1",
+            granted_at=now,
+            expires_at=now + timedelta(days=2),
+            evidence_event_id="corpus-consent-s",
+        ),
+        actor_user_id=OWNER,
+    )
+    sample_id = "5a3b1e00-0000-4000-8000-000000000003"
+    await store.record_corpus_sample(
+        CorpusSample(
+            sample_id=sample_id,
+            minor_user_id=SUBJECT,
+            consent_id=consent.consent_id,
+            source_event_id="source-s",
+            reference=ObjectRef(
+                account_id=SUBJECT,
+                object_key="hash/authorized-child-corpus/sample-s.fernet",
+                media_type="audio/wav",
+                byte_count=1,
+                content_sha256="b" * 64,
+                encryption_key_version="v1",
+                backend="local",
+            ),
+            created_at=now,
+            expires_at=now + timedelta(days=1),
         )
+    )
     assert await store.remaining_subject_rows(account_id=OWNER, subject_id=SUBJECT) == {
         "corpus_samples": 1
     }
     # Deletion leaves the purge to the corpus retention service.
     await store.delete_subject_rows(account_id=OWNER, subject_id=SUBJECT)
-    await store.mark_corpus_sample_deleted(sample_id="sample-s", deleted_at=NOW)
+    assert await store.remaining_subject_rows(account_id=OWNER, subject_id=SUBJECT) == {
+        "corpus_samples": 1
+    }
+    await store.mark_corpus_sample_deleted(sample_id=sample_id, deleted_at=now)
     assert await store.remaining_subject_rows(account_id=OWNER, subject_id=SUBJECT) == {}
 
 
 @pytest.mark.asyncio
-async def test_subject_scope_never_targets_the_account_itself(tmp_path: Path) -> None:
-    store = SqliteGuardianStore(tmp_path / "scope.sqlite3")
-    store.initialize()
+async def test_subject_scope_never_targets_the_account_itself(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
+    store = guardian_postgres_store
     with pytest.raises(ValueError, match="never targets the account"):
         await store.delete_subject_rows(account_id=OWNER, subject_id=OWNER)
     with pytest.raises(ValueError, match="bounded non-empty"):

@@ -3098,6 +3098,7 @@ async def test_conversation_review_projects_actual_heard_and_separates_claim_sta
     }
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_conversation_review_subject_matrix_precedes_private_reads_and_writes(
     monkeypatch: pytest.MonkeyPatch,
@@ -3406,6 +3407,7 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
     assert set(pause_style["source_event_ids"]) == set(good_event_ids)
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_registered_account_exports_only_its_portable_archive(
     monkeypatch: pytest.MonkeyPatch,
@@ -3547,6 +3549,7 @@ async def test_registered_account_exports_only_its_portable_archive(
     assert "export-growth-feedback" in serialized
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_registered_account_deletion_revokes_login_token_session_and_archive(
     monkeypatch: pytest.MonkeyPatch,
@@ -4162,6 +4165,7 @@ async def test_conversation_sessions_are_subject_scoped_newest_first_and_limited
     assert anonymous.status_code == 401
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_retention_ceiling_follows_the_speaking_subject_not_the_account(
     monkeypatch: pytest.MonkeyPatch,
@@ -4417,6 +4421,7 @@ async def test_archive_deletion_request_status_fails_closed_while_deleting(
     )
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_archive_deletion_request_status_reports_a_completed_request(
     monkeypatch: pytest.MonkeyPatch,
@@ -4541,6 +4546,7 @@ async def test_archive_deletion_request_status_ignores_another_accounts_query(
     )
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_operator_deletion_receipt_answers_after_the_owner_sessions_are_gone(
     monkeypatch: pytest.MonkeyPatch,

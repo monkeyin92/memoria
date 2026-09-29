@@ -286,10 +286,10 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: uv sync --frozen --all-extras
-      - name: Control API and governance on production-shaped PostgreSQL
+      - name: Control API, governance and companionship on production-shaped PostgreSQL
         run: >-
           uv run pytest --import-mode=importlib --no-cov
-          services/control_api/tests services/governance/tests
+          services/control_api/tests services/governance/tests services/companionship/tests
 
   media-edge:
     needs: changes

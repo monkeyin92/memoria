@@ -88,6 +88,7 @@ def _wav_base64() -> str:
     return base64.b64encode(output.getvalue()).decode("ascii")
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
     monkeypatch: pytest.MonkeyPatch,
@@ -423,6 +424,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
         assert blocked_after_revoke.status_code == 403
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_summary_requires_exact_active_link_and_weekly_consent(
     monkeypatch: pytest.MonkeyPatch,
@@ -456,6 +458,7 @@ async def test_guardian_summary_requires_exact_active_link_and_weekly_consent(
     assert response.json()["detail"] == {"code": "guardian_link_required"}
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_audio(
     monkeypatch: pytest.MonkeyPatch,
@@ -637,6 +640,7 @@ def test_unconfigured_subject_capability_fails_closed() -> None:
     assert exc_info.value.detail["code"] == "subject_capability_unconfigured"
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_accountless_child_person_consent_lifts_and_reverts_the_retention_gate(
     monkeypatch: pytest.MonkeyPatch,

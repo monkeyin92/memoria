@@ -1,3 +1,5 @@
+"""Corpus sample retention and the per-minor limit on the PostgreSQL guardian store."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,15 +17,15 @@ from services.guardian.corpus import (
     CorpusSampleLimitError,
 )
 from services.guardian.domain import ConsentRecord
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
 
 
 @pytest.mark.asyncio
 async def test_expired_corpus_sample_is_deleted_from_object_store_and_projection(
+    guardian_postgres_store: PostgresGuardianStore,
     tmp_path: Path,
 ) -> None:
-    store = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
-    store.initialize()
+    store = guardian_postgres_store
     objects = EncryptedLocalObjectStore(
         root=tmp_path / "objects",
         key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
@@ -48,7 +50,7 @@ async def test_expired_corpus_sample_is_deleted_from_object_store_and_projection
     )
     consent = await store.grant_consent(
         ConsentRecord(
-            consent_id="consent-a",
+            consent_id="c0a5e47a-0000-4000-8000-000000000001",
             link_id=link.link_id,
             consent_kind="corpus_recording",
             policy_version="authorized-child-corpus-v1",
@@ -65,7 +67,7 @@ async def test_expired_corpus_sample_is_deleted_from_object_store_and_projection
         media_type="audio/wav",
     )
     sample = CorpusSample(
-        sample_id="sample-a",
+        sample_id="5a3b1e00-0000-4000-8000-000000000001",
         minor_user_id="minor-a",
         consent_id=consent.consent_id,
         source_event_id="event-a",
@@ -111,10 +113,9 @@ def test_corpus_retention_never_exceeds_thirty_days() -> None:
 
 @pytest.mark.asyncio
 async def test_corpus_store_rechecks_consent_and_enforces_atomic_limit(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    store = SqliteGuardianStore(tmp_path / "guardian-limit.sqlite3")
-    store.initialize()
+    store = guardian_postgres_store
     now = datetime.now(UTC)
     digest = hashlib.sha256(b"limit-binding-code").hexdigest()
     link = await store.create_link(
@@ -134,7 +135,7 @@ async def test_corpus_store_rechecks_consent_and_enforces_atomic_limit(
     )
     consent = await store.grant_consent(
         ConsentRecord(
-            consent_id="consent-limit",
+            consent_id="c0a5e47a-0000-4000-8000-000000000002",
             link_id=link.link_id,
             consent_kind="corpus_recording",
             policy_version="authorized-child-corpus-v1",
@@ -147,7 +148,7 @@ async def test_corpus_store_rechecks_consent_and_enforces_atomic_limit(
 
     def sample(index: int) -> CorpusSample:
         return CorpusSample(
-            sample_id=f"sample-{index}",
+            sample_id=f"5a3b1e00-0000-4000-8000-{index:012d}",
             minor_user_id="minor-limit",
             consent_id=consent.consent_id,
             source_event_id=f"event-{index}",

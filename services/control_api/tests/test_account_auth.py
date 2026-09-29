@@ -1008,6 +1008,7 @@ async def test_wechat_avatar_upload_persists_profile_image_without_a_local_wx_pa
     assert profile.json()["avatar_url"] == uploaded.json()["avatar_url"]
 
 
+@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_wechat_account_deletion_requires_a_fresh_matching_login_code(
     monkeypatch: pytest.MonkeyPatch,

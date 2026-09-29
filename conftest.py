@@ -28,6 +28,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "real_sqlite_store: MemoryStore(path) stays on SQLite even in parity runs",
     )
+    config.addinivalue_line(
+        "markers",
+        "guardian_postgres: needs the guardian store, which is PostgreSQL-only; "
+        "runs under MEMORIA_TEST_APP_POSTGRES=1",
+    )
 
 
 _CONTROL_BACKEND = os.environ.get("MEMORIA_TEST_CONTROL_STORE", "").strip().lower()
@@ -73,14 +78,6 @@ if _CONTROL_BACKEND == "postgres":
 
     MemoryStore.__init__ = _parity_init  # type: ignore[method-assign]
 
-    def pytest_collection_modifyitems(
-        config: pytest.Config, items: list[pytest.Item]
-    ) -> None:
-        skip = pytest.mark.skip(reason="SQLite-file fixture; not a control store behavior")
-        for item in items:
-            if item.get_closest_marker("sqlite_only") is not None:
-                item.add_marker(skip)
-
     @pytest.fixture(autouse=True)
     def _close_parity_pools(request: pytest.FixtureRequest) -> Iterator[None]:
         # real_sqlite_store: the test needs a genuine SQLite store (for example
@@ -102,26 +99,85 @@ if _CONTROL_BACKEND == "postgres":
 # the real init script, every DSN connects as its production role, and eager
 # wiring builds the PostgreSQL stores (MEMORIA_EAGER_POSTGRES).
 _APP_POSTGRES = os.environ.get("MEMORIA_TEST_APP_POSTGRES", "").strip() == "1"
-_APP_POSTGRES_ROOTS = ("services/control_api/tests", "services/governance/tests")
+_APP_POSTGRES_ROOTS = (
+    "services/control_api/tests",
+    "services/governance/tests",
+    "services/companionship/tests",
+)
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    skip_sqlite = pytest.mark.skip(reason="SQLite-file fixture; not a control store behavior")
+    skip_guardian = pytest.mark.skip(
+        reason="guardian is PostgreSQL-only; run with MEMORIA_TEST_APP_POSTGRES=1"
+    )
+    for item in items:
+        if _CONTROL_BACKEND == "postgres" and item.get_closest_marker("sqlite_only") is not None:
+            item.add_marker(skip_sqlite)
+        if not _APP_POSTGRES and item.get_closest_marker("guardian_postgres") is not None:
+            item.add_marker(skip_guardian)
+
+
+# One production-shaped template per run, shared by the app harness and the
+# guardian store fixture; built on first use.
+_TEMPLATE: list[Any] = []
+
+
+def _app_template() -> Any:
+    from testing.postgres_harness import build_template
+
+    if not _TEMPLATE:
+        admin = os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip()
+        if not admin:
+            raise RuntimeError("the PostgreSQL test harness needs MEMORIA_TEST_POSTGRES_DSN")
+        _TEMPLATE.append(build_template(admin))
+    return _TEMPLATE[0]
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _TEMPLATE:
+        from testing.postgres_harness import drop_template
+
+        drop_template(_TEMPLATE.pop())
+
+
+@pytest.fixture
+def guardian_postgres_database() -> Iterator[Any]:
+    """A fresh clone of the production-shaped template (``TestDatabase``).
+
+    Guardian data is PostgreSQL-only; without MEMORIA_TEST_POSTGRES_DSN the test skips.
+    """
+
+    if not os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip():
+        pytest.skip("guardian store tests need MEMORIA_TEST_POSTGRES_DSN")
+    from testing.postgres_harness import cloned_database
+
+    with cloned_database(_app_template()) as database:
+        yield database
+
+
+@pytest.fixture
+async def guardian_postgres_store(guardian_postgres_database: Any) -> Any:
+    """A PostgresGuardianStore on ``guardian_postgres_database``, as the production roles."""
+
+    from services.guardian.postgres_store import PostgresGuardianStore
+
+    env = guardian_postgres_database.control_env()
+    store = PostgresGuardianStore(
+        env["MEMORIA_GUARDIAN_DATABASE_URL"],
+        maintenance_dsn=env["MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL"],
+        worker_dsn=env["MEMORIA_GUARDIAN_WORKER_DATABASE_URL"],
+        initialize_schema=False,
+    )
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        await store.close()
+
 
 if _APP_POSTGRES:
     import pytest_asyncio
-    from testing.postgres_harness import (
-        TestDatabase,
-        build_template,
-        cloned_database,
-        drop_template,
-    )
-
-    _TEMPLATE: list[TestDatabase] = []
-
-    def _app_template() -> TestDatabase:
-        if not _TEMPLATE:
-            admin = os.environ.get("MEMORIA_TEST_POSTGRES_DSN", "").strip()
-            if not admin:
-                raise RuntimeError("MEMORIA_TEST_APP_POSTGRES=1 needs MEMORIA_TEST_POSTGRES_DSN")
-            _TEMPLATE.append(build_template(admin))
-        return _TEMPLATE[0]
+    from testing.postgres_harness import cloned_database
 
     @pytest_asyncio.fixture(autouse=True)
     async def _app_postgres(
@@ -192,7 +248,3 @@ if _APP_POSTGRES:
                             await resources.aclose()
                         except Exception:  # noqa: BLE001 - teardown must reach the drop
                             pass
-
-    def pytest_unconfigure(config: pytest.Config) -> None:
-        if _TEMPLATE:
-            drop_template(_TEMPLATE.pop())

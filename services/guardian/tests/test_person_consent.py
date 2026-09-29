@@ -3,8 +3,7 @@
 The subject of a ``parent_for_child`` binding never confirms a guardian link,
 so the link-scoped consent table can never hold their consent.  These tests
 pin the person-scoped record, the unioned read gate and the account-governance
-counting on the SQLite adapter (the PostgreSQL contract lives in
-``test_guardian_postgres_store.py``).
+counting on the PostgreSQL adapter (``guardian_postgres_store``).
 """
 
 from __future__ import annotations
@@ -21,15 +20,9 @@ from services.guardian.domain import (
     GuardianNotFoundError,
     PersonConsentRecord,
 )
-from services.guardian.sqlite_store import SqliteGuardianStore
+from services.guardian.postgres_store import PostgresGuardianStore
 
 NOW = datetime(2026, 9, 17, 3, 0, tzinfo=UTC)
-
-
-def _store(tmp_path: Path) -> SqliteGuardianStore:
-    store = SqliteGuardianStore(tmp_path / "guardian.sqlite3")
-    store.initialize()
-    return store
 
 
 def _record(
@@ -55,9 +48,9 @@ def _record(
 
 @pytest.mark.asyncio
 async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     record = _record()
     assert await store.grant_person_consent(
         record, actor_person_id="adult-owner"
@@ -162,11 +155,11 @@ async def test_person_consent_grant_read_revoke_is_idempotent_and_scoped(
 
 @pytest.mark.asyncio
 async def test_person_consent_grant_replay_returns_the_original_record(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
     """An idempotent retry must not turn into a conflict over its new clock."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     record = _record()
     original = await store.grant_person_consent(record, actor_person_id="adult-owner")
 
@@ -192,11 +185,11 @@ async def test_person_consent_grant_replay_returns_the_original_record(
 
 @pytest.mark.asyncio
 async def test_person_consent_grant_replay_respects_the_retention_span(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
     """Only corpus consent may expire, so a changed retention span conflicts."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     record = _record(
         kind="corpus_recording",
         expires_at=NOW + timedelta(days=2),
@@ -226,11 +219,11 @@ async def test_person_consent_grant_replay_respects_the_retention_span(
 
 @pytest.mark.asyncio
 async def test_person_consent_expiry_drops_out_of_the_read_gate(
-    tmp_path: Path,
+    guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
     """Only corpus consent may expire; once it does, the gate closes again."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     expired = _record(
         consent_id="00000000-0000-0000-0000-000000000201",
         kind="corpus_recording",
@@ -258,10 +251,12 @@ async def test_person_consent_expiry_drops_out_of_the_read_gate(
 
 
 @pytest.mark.asyncio
-async def test_read_gate_unions_link_and_person_consents(tmp_path: Path) -> None:
+async def test_read_gate_unions_link_and_person_consents(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
     """One gate, two key spaces: link-scoped first, person-scoped as fallback."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     digest = hashlib.sha256(b"binding-code").hexdigest()
     link = await store.create_link(
         guardian_user_id="guardian-user",
@@ -308,10 +303,12 @@ async def test_read_gate_unions_link_and_person_consents(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_account_governance_covers_person_consents(tmp_path: Path) -> None:
+async def test_account_governance_covers_person_consents(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
     """Export/delete/remaining must count the new table for either person key."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     await store.grant_person_consent(_record(), actor_person_id="adult-owner")
     await store.grant_person_consent(
         _record(
@@ -326,12 +323,13 @@ async def test_account_governance_covers_person_consents(tmp_path: Path) -> None
     second_id = "00000000-0000-0000-0000-000000000401"
 
     owner_export = await store.export_for_account(account_id="adult-owner")
-    assert {row["consent_id"] for row in owner_export["person_consents"]} == {  # type: ignore[union-attr]
+    # Driver values (UUID); governance makes the export portable.
+    assert {str(row["consent_id"]) for row in owner_export["person_consents"]} == {  # type: ignore[union-attr]
         first_id,
         second_id,
     }
     child_export = await store.export_for_account(account_id="child-person")
-    assert [row["consent_id"] for row in child_export["person_consents"]] == [  # type: ignore[union-attr]
+    assert [str(row["consent_id"]) for row in child_export["person_consents"]] == [  # type: ignore[union-attr]
         first_id
     ]
     stranger_export = await store.export_for_account(account_id="stranger")
@@ -356,6 +354,7 @@ async def test_account_governance_covers_person_consents(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_person_consent_grant_recovers_after_evidence_write_failure(
+    guardian_postgres_store: PostgresGuardianStore,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -369,7 +368,7 @@ async def test_person_consent_grant_recovers_after_evidence_write_failure(
     from services.archive.life_archive import LifeArchive
     from services.guardian.consent import GuardianConsentService
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     original_record = archive.record
     attempts = {"count": 0}
@@ -449,10 +448,12 @@ async def test_person_consent_grant_recovers_after_evidence_write_failure(
 
 
 @pytest.mark.asyncio
-async def test_link_consent_grant_requires_the_links_guardian(tmp_path: Path) -> None:
+async def test_link_consent_grant_requires_the_links_guardian(
+    guardian_postgres_store: PostgresGuardianStore,
+) -> None:
     """The SQLite store refuses the same grants the PostgreSQL store refuses."""
 
-    store = _store(tmp_path)
+    store = guardian_postgres_store
     digest = hashlib.sha256(b"binding-code").hexdigest()
     link = await store.create_link(
         guardian_user_id="guardian-user",
