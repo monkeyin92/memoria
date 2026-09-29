@@ -88,9 +88,7 @@ class MediaSessionConnectionMixin:
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.playback.current_fence or context.runtime.fence
-        if not previous_fence.matches(
-            session.fence
-        ) and context.runtime.orchestrator.state.name in ("SPEAKING", "INTERRUPTION_PENDING"):
+        if not previous_fence.matches(session.fence) and context.runtime.floor.interruptible:
             await self._record_interrupted_timed_spans(context, previous_fence)
             heard = context.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
@@ -133,7 +131,7 @@ class MediaSessionConnectionMixin:
         cancelled = session.fence
         if previous_fence.matches(cancelled):
             return
-        if context.runtime.orchestrator.state.name in ("SPEAKING", "INTERRUPTION_PENDING"):
+        if context.runtime.floor.interruptible:
             await self._record_interrupted_timed_spans(context, previous_fence)
             heard = context.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(

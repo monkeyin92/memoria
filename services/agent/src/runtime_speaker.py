@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
 
     from services.agent.src.mode_policy_client import ModePolicy
+    from services.agent.src.voice_floor import VoiceFloorState
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +87,7 @@ class DuplexSpeakerMixin:
         input_guard: PlaybackInputGuard
         orchestrator: Orchestrator
         speaker_verifier: SpeakerVerifier
-        _was_speaking: bool
-        _fresh_user_speech: bool
+        _voice_floor: VoiceFloorState
         _speaker_class: str
         _speaker_decision: SpeakerDecision | None
         _speaker_classifier: Callable[[bytes, int], Awaitable[SpeakerDecision]] | None
@@ -97,19 +97,15 @@ class DuplexSpeakerMixin:
         _speaker_pcm: bytearray
         _speaker_collecting: bool
         _speaker_classification_task: asyncio.Task[Any] | None
-        _last_playback_completed_ns: int | None
         _speaker_pcm_gate_epoch: int | None
         _speaker_pcm_skip_bytes: int
         _speaker_post_playback_untrusted: bool
-        _playback_epoch: int
-        _playback_fence: GenerationFence | None
         _pending_keyword_interrupt_binding: KeywordSpotterBinding | None
         _reject_non_owner_voice: bool
         _target_speaker_focus_enabled: bool
         _target_focus_epoch: int | None
         _target_focus_pending_epoch: int | None
         _device_conversation_controls_enabled: bool
-        _played_assistant_text: str
         _sticky_interrupt_epoch: int | None
         _sticky_interrupt_route: UtteranceRoute | None
         _sticky_interrupt_text: str
@@ -217,11 +213,11 @@ class DuplexSpeakerMixin:
                 if len(self._speaker_pcm) > 4 * 1024 * 1024:
                     del self._speaker_pcm[: len(self._speaker_pcm) - 4 * 1024 * 1024]
         # Never enroll assistant TTS that leaks into the mic during playback.
-        # After begin_speaker_enrollment we force _was_speaking=False so user
+        # After begin_speaker_enrollment we clear the playback latch so user
         # enroll speech is always collected.
         if (
             self.speaker_verifier.state is SpeakerGateState.PENDING
-            and self._was_speaking
+            and self._voice_floor.assistant_speaking
             and not getattr(self, "_enroll_collecting", False)
         ):
             return
@@ -310,7 +306,7 @@ class DuplexSpeakerMixin:
         return decision
 
     def _in_post_playback_speaker_window(self, now_ns: int | None) -> bool:
-        completed_ns = self._last_playback_completed_ns
+        completed_ns = self._voice_floor.last_playback_completed_ns
         if completed_ns is None:
             return False
         now = now_ns if now_ns is not None else time.monotonic_ns()
@@ -334,14 +330,14 @@ class DuplexSpeakerMixin:
     ) -> bool:
         if not self._device_conversation_controls_enabled:
             return False
-        completed_ns = self._last_playback_completed_ns
+        completed_ns = self._voice_floor.last_playback_completed_ns
         if completed_ns is None:
             return False
         elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
         if not 0 <= elapsed_ms <= POST_PLAYBACK_CLOSE_ECHO_GUARD_MS:
             return False
         phrase = normalize_short(text)
-        return bool(phrase) and phrase in normalize_short(self._played_assistant_text)
+        return bool(phrase) and phrase in normalize_short(self._voice_floor.played_assistant_text)
 
     def _uncertain_speaker_decision(self, reason: str) -> SpeakerDecision:
         return SpeakerDecision(
@@ -472,9 +468,9 @@ class DuplexSpeakerMixin:
         return result
 
     def begin_speaker_enrollment(self) -> None:
-        # Fixed session.say may leave _was_speaking stuck True (playback_finished
+        # Fixed session.say may leave the playback latch stuck True (playback_finished
         # non-interrupt path used to not clear it). Clear so enroll PCM is fed.
-        self._was_speaking = False
+        self._voice_floor.update(assistant_speaking=False)
         self._enroll_collecting = True
         self._enroll_fence = self.fence
         self._enroll_started_mono = time.monotonic()
@@ -498,7 +494,7 @@ class DuplexSpeakerMixin:
                 target_samples=target_samples,
                 sample_rate=self._speaker_sample_rate,
             )
-        self._was_speaking = False
+        self._voice_floor.update(assistant_speaking=False)
         self._formal_enrollment.begin()
         self.publish_assistant_state("speaker_enroll")
         self.mark_audio_event(

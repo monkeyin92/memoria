@@ -68,6 +68,7 @@ from services.agent.tests.unit.media_session_support import (
     _wait_until,
     open_bridge_connection,
 )
+from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import SpeakerDecision
 
 
@@ -654,7 +655,7 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
         )
         context.output_owner = lease  # type: ignore[assignment]
         lease_holder.append(lease)
-        context.runtime._fresh_user_speech = True  # noqa: SLF001 - simulate floor flip
+        set_floor(context.runtime, fresh_user_speech=True)  # simulate floor flip
         selected = False
         ready.set()
         return await registry._wait_for_unheard_output_floor(
@@ -672,7 +673,7 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
     selected = True
     assert await asyncio.wait_for(wait_task, timeout=1)
     assert context.output_owner is lease_holder[0]
-    context.runtime._fresh_user_speech = False  # noqa: SLF001
+    set_floor(context.runtime, fresh_user_speech=False)
     registry._release_output_owner(context, fence, reason="test_complete")
     await registry.finalize_session(identity.session_id)
 
@@ -1377,8 +1378,8 @@ async def test_owner_is_rechecked_after_speaking_transition_before_output() -> N
     assert provider.cancelled == [fence]
     assert context.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.THINKING
-    assert context.runtime._pending_assistant_text == ""
-    assert context.runtime._was_speaking is False
+    assert context.runtime._voice_floor.pending_assistant_text == ""
+    assert context.runtime.assistant_speaking is False
     assert context.runtime._assistant_expression_fence is None
     coordinator.complete_output_intent(
         acknowledgement,
@@ -1504,7 +1505,7 @@ async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
         await _wait_until(
             lambda: (
                 context.output_owner is None
-                and context.runtime._was_speaking is False
+                and context.runtime.assistant_speaking is False
                 and context.runtime.orchestrator.state is ConversationState.LISTENING
                 and bool(provider.texts)
             )
@@ -1690,7 +1691,7 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
             bridge,
         )
         claim = context.delegation_output_claims[fence]
-        context.runtime._fresh_user_speech = True
+        set_floor(context.runtime, fresh_user_speech=True)
         context.runtime.set_interaction_phase(
             InteractionPhase.USER_SPEAKING,
             cause="test_fresh_user_speech",
@@ -1702,7 +1703,7 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
         await asyncio.sleep(0)
 
         assert not provider.deep_started.is_set()
-        assert context.runtime._fresh_user_speech is True
+        assert context.runtime._voice_floor.fresh_user_speech is True
         assert any(
             work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
             for work in context.output_work.values()

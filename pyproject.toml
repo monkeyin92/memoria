@@ -112,7 +112,7 @@ fail_under = 85
 show_missing = true
 
 [tool.memoria.module-budgets]
-"services/agent/src/duplex_runtime.py" = 3067
+"services/agent/src/duplex_runtime.py" = 3003
 "services/agent/src/agent.py" = 2097
 "services/agent/src/orchestration/conversation_projection.py" = 1067
 "services/control_api/app/routes/archive.py" = 3072

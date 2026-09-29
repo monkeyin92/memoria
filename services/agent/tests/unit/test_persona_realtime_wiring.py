@@ -19,6 +19,7 @@ from services.agent.src.voice_profile_client import VoiceRuntimeProfile
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import (
     commit_media_turn,
+    set_floor,
 )
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -408,7 +409,7 @@ async def test_uncertain_cannot_resume_an_owner_interrupted_reply(
     await runtime.await_speaker_classification()
     await runtime.on_turn_committed("介绍一下我的私人家庭安排")
     await runtime.on_assistant_speaking("你的私人家庭安排是周末回老家。")
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.input_guard.candidate_text = "等一下"
     await runtime.on_real_interrupt(
         cause="target_speaker_confirmed",
@@ -472,7 +473,7 @@ async def test_same_shadow_speaker_fallback_does_not_reuse_heard_history(
     await runtime.await_speaker_classification()
     await runtime.on_turn_committed("介绍一下南京")
     await runtime.on_assistant_speaking("南京是江苏省省会，也是中国四大古都之一。")
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.input_guard.candidate_text = "等一下"
     await runtime.on_real_interrupt(
         cause="target_speaker_confirmed",

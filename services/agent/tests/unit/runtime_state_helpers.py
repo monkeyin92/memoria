@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from livekit.agents import StopResponse
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
@@ -31,9 +33,22 @@ def bind_owner_speaker(runtime: DuplexRuntime) -> SpeakerDecision:
 def set_pending_assistant_text(runtime: DuplexRuntime, text: str) -> None:
     """Stage assistant text as if a reply were being synthesized."""
 
-    runtime._pending_assistant_text = text
-    runtime._pending_assistant_text_epoch += 1
+    floor = runtime._voice_floor
+    floor.update(
+        pending_assistant_text=text,
+        pending_assistant_text_epoch=floor.pending_assistant_text_epoch + 1,
+    )
     runtime.orchestrator.heard_tracker.set_full_text(text)
+
+
+def set_floor(runtime: DuplexRuntime, **changes: Any) -> None:
+    """Write runtime floor scalars through the ``VoiceFloorState`` mutation API.
+
+    Keyword names are those of ``VoiceFloorState.update`` (e.g.
+    ``assistant_speaking=True`` for the playback latch).
+    """
+
+    runtime._voice_floor.update(**changes)
 
 
 def speaker_permissions(runtime: DuplexRuntime) -> SpeakerPermissions:

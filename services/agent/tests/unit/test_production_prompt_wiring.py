@@ -44,6 +44,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
 )
 from services.agent.tests.unit.runtime_state_helpers import (
     bind_owner_speaker,
+    set_floor,
 )
 from services.common.companions import designed_voice_speaker_sha256
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -299,8 +300,8 @@ async def test_epoch_keyed_permission_caches_never_hit_old_subject(
     await _commit()
     old_fence = runtime.fence
     assert runtime.mode_policy_for_fence(old_fence).available
-    assert runtime._history_eligible(old_fence) is True
-    assert runtime._owner_projection_eligible(old_fence) is True
+    assert runtime._generation_records.history_eligible(old_fence) is True
+    assert runtime._generation_records.owner_projection_eligible(old_fence) is True
     assert runtime.bind_response_provenance(old_fence, {"planner": "p1"})
     assert runtime.bind_generation_voice(
         old_fence,
@@ -320,8 +321,8 @@ async def test_epoch_keyed_permission_caches_never_hit_old_subject(
     assert new_fence.turn_id == old_fence.turn_id
     assert new_fence.generation_id == old_fence.generation_id
     assert not runtime.mode_policy_for_fence(new_fence).available
-    assert runtime._history_eligible(new_fence) is False
-    assert runtime._owner_projection_eligible(new_fence) is False
+    assert runtime._generation_records.history_eligible(new_fence) is False
+    assert runtime._generation_records.owner_projection_eligible(new_fence) is False
     assert runtime.response_provenance_for(new_fence) is None
     assert runtime.generation_voice_for(new_fence) is None
     assert runtime.input_modality_for_fence(new_fence) == "audio"
@@ -767,21 +768,13 @@ async def test_authority_loss_clears_old_subject_context_and_recovers_on_new_epo
     assert runtime.mode_policy.owner_projection_eligible("owner") is False
     # Physical cache clearing: no old-epoch fence maps, no old speaker
     # evidence (the degraded turn may bind fresh epoch-2 entries).
-    assert not any(fence.session_epoch == old_epoch for fence in runtime._speech_plans_by_fence)
-    assert not any(
-        fence.session_epoch == old_epoch for fence in runtime._response_provenance_by_fence
-    )
-    assert not any(fence.session_epoch == old_epoch for fence in runtime._voice_snapshot_by_fence)
-    assert not any(fence.session_epoch == old_epoch for fence in runtime._history_eligible_by_fence)
-    assert not any(
-        fence.session_epoch == old_epoch for fence in runtime._owner_projection_eligible_by_fence
-    )
-    assert not any(fence.session_epoch == old_epoch for fence in runtime._input_modality_by_fence)
+    for kind, fences in runtime._generation_records.retained_fences().items():
+        assert not any(fence.session_epoch == old_epoch for fence in fences), kind
     assert not runtime._speaker_pcm
     assert runtime._speaker_decision is None
     assert runtime._speaker_class == "uncertain"
-    assert runtime._pending_assistant_text == ""
-    assert runtime._played_assistant_text == ""
+    assert runtime._voice_floor.pending_assistant_text == ""
+    assert runtime._voice_floor.played_assistant_text == ""
 
     # Recovery needs a profile at not less than the degraded epoch.
     async def _recover() -> object:
@@ -815,17 +808,18 @@ async def test_subject_switch_via_seam_clears_every_old_subject_cache(
     old_fence = runtime.fence
     assert old_fence.session_epoch == 1
     # Seed distinctive old-subject state across every by-fence map.
-    runtime._speech_plans_by_fence[old_fence] = runtime.speech_plan
-    runtime._response_provenance_by_fence[old_fence] = {"digital_self_version_id": "a"}
-    runtime._voice_snapshot_by_fence[old_fence] = object()  # type: ignore[assignment]
-    runtime._history_eligible_by_fence[old_fence] = True
-    runtime._owner_projection_eligible_by_fence[old_fence] = True
-    runtime._input_modality_by_fence[old_fence] = "audio"
+    records = runtime._generation_records
+    records.bind_speech_plan(old_fence, runtime.speech_plan)
+    records.bind_tts_references(old_fence, ("A 的参考上下文",))
+    records.bind_response_provenance(old_fence, {"digital_self_version_id": "a"})
+    records.bind_voice_snapshot(old_fence, object())  # type: ignore[arg-type]
+    records.bind_history_eligible(old_fence, True)
+    records.bind_owner_projection_eligible(old_fence, True)
+    records.bind_input_modality(old_fence, "audio")
     runtime._speaker_pcm.extend(b"\x01\x00" * 8)
     runtime._speaker_decision = _speaker_decision()
     runtime._speaker_class = "owner"
-    runtime._pending_assistant_text = "A 的半截回复"
-    runtime._played_assistant_text = "A 已播放"
+    set_floor(runtime, pending_assistant_text="A 的半截回复", played_assistant_text="A 已播放")
     runtime._emotion_segments_by_turn[1] = [("sad", "A 的情绪")]
 
     switched = _profile(epoch=2, subject="person_parent", mode="adult_companion")
@@ -833,24 +827,19 @@ async def test_subject_switch_via_seam_clears_every_old_subject_cache(
     assert applied is not None
     assert runtime.fence.session_epoch == 2
 
-    # Every old-subject physical cache is gone; no old-epoch fence keys.
-    for container in (
-        runtime._speech_plans_by_fence,
-        runtime._response_provenance_by_fence,
-        runtime._voice_snapshot_by_fence,
-        runtime._history_eligible_by_fence,
-        runtime._owner_projection_eligible_by_fence,
-        runtime._input_modality_by_fence,
-    ):
-        assert not any(fence.session_epoch == 1 for fence in container), (
-            f"old-epoch entry survived in {type(container).__name__}"
+    # Every old-subject physical cache is gone; no old-epoch fence keys
+    # (interaction policies included: this rotation installs a policy).
+    for kind, fences in records.retained_fences().items():
+        assert not any(fence.session_epoch == 1 for fence in fences), (
+            f"old-epoch entry survived in {kind}"
         )
+    assert records.tts_references_for(old_fence) == ()
     assert not runtime._emotion_segments_by_turn
     assert not runtime._speaker_pcm
     assert runtime._speaker_decision is None
     assert runtime._speaker_class == "uncertain"
-    assert runtime._pending_assistant_text == ""
-    assert runtime._played_assistant_text == ""
+    assert runtime._voice_floor.pending_assistant_text == ""
+    assert runtime._voice_floor.played_assistant_text == ""
     # The old fence rejects every sink; the new subject is usable.
     assert runtime.gate_llm_token(old_fence, "late") is None
     assert runtime.gate_tts_audio(old_fence, b"late") is None
@@ -879,6 +868,51 @@ async def test_subject_switch_via_seam_clears_every_old_subject_cache(
     # decision was physically cleared, so no stale eligibility survives.
     assert runtime._speaker_decision is None
     assert runtime._current_history_eligible() is False
+
+
+class _ReferenceRecordingTTS:
+    """Minimal TTS that accepts a speech plan with its reference context."""
+
+    def __init__(self) -> None:
+        self.reference_contexts: list[tuple[str, ...]] = []
+
+    def bind_fence(self, _fence: object) -> None:
+        return None
+
+    def apply_speech_plan(self, **kwargs: object) -> None:
+        self.reference_contexts.append(kwargs["reference_contexts"])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rotation", ["subject_switch", "degrade"])
+async def test_identity_rotation_drops_the_previous_subject_tts_references(
+    monkeypatch: pytest.MonkeyPatch,
+    rotation: str,
+) -> None:
+    """Batch 5 intended change: the TTS reference context holds the previous
+    subject's text. It was unreachable after a rotation (lookup is by exact
+    fence incl. session epoch) but stayed in memory; it is now dropped."""
+
+    runtime = _runtime(monkeypatch)
+    runtime.set_mode_policy(_policy(_profile(epoch=1)))
+    tts = _ReferenceRecordingTTS()
+    runtime.tts = tts
+    await runtime.on_turn_committed("A 的私人安排。", input_modality="text")
+    old_fence = runtime.fence
+    records = runtime._generation_records
+    references = records.tts_references_for(old_fence)
+    assert any("A 的私人安排" in line for line in references)
+    assert tts.reference_contexts[-1] == references
+
+    if rotation == "subject_switch":
+        switched = _profile(epoch=2, subject="person_parent", mode="adult_companion")
+        assert runtime.apply_runtime_profile(switched) is not None
+    else:
+        runtime.degrade_runtime_profile()
+    assert runtime.fence.session_epoch == 2
+
+    assert records.retained_fences()["tts_references"] == ()
+    assert records.tts_references_for(old_fence) == ()
 
 
 @pytest.mark.asyncio

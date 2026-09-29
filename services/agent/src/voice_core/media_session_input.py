@@ -649,11 +649,9 @@ class MediaSessionInputMixin:
                     else session.generation.cancel(previous_fence)
                 )
                 if cancelled is not None:
-                    if not previous_fence.matches(
-                        cancelled
-                    ) and context.runtime.orchestrator.state.name in (
-                        "SPEAKING",
-                        "INTERRUPTION_PENDING",
+                    if (
+                        not previous_fence.matches(cancelled)
+                        and context.runtime.floor.interruptible
                     ):
                         await self._record_interrupted_timed_spans(context, previous_fence)
                         heard = context.playback.actual_heard_text(previous_fence)
