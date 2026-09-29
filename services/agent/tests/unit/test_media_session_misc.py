@@ -85,7 +85,7 @@ async def test_prepare_retry_exhaustion_discards_once_at_transport_retire_sample
     )
 
     assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
-    retry_task = context.turn_commit_retry_task
+    retry_task = context.pending.turn_commit_retry_task
     assert retry_task is not None
     await asyncio.wait_for(retry_task, timeout=1)
 
@@ -107,10 +107,10 @@ async def test_prepare_retry_exhaustion_discards_once_at_transport_retire_sample
     assert context.projection.provisional is None
     assert context.runtime.speech_timeline.committed_sample == 640
     assert context.asr.last_committed_sample == 640
-    assert context.turn_commit_retry_task is None
-    assert context.turn_commit_retry_attempt == 0
-    assert context.turn_commit_retry_stream_epoch is None
-    assert context.turn_commit_retry_endpoint_sample is None
+    assert context.pending.turn_commit_retry_task is None
+    assert context.pending.turn_commit_retry_attempt == 0
+    assert context.pending.turn_commit_retry_stream_epoch is None
+    assert context.pending.turn_commit_retry_endpoint_sample is None
     assert [turn for turn in runtime.orchestrator.context.turns if turn.role == "user"] == []
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "scheduled"}) == 1
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 2
@@ -195,7 +195,7 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
         provider.completed.clear()
         provider.texts.clear()
 
-        context.turn_endpoint_sample = 16_000
+        context.pending.turn_endpoint_sample = 16_000
         decision = _verified_owner_decision()
         context.runtime._speaker_decision = decision
         context.runtime._speaker_class = decision.classification
@@ -272,11 +272,11 @@ async def test_device_accept_await_crossing_the_boundary_rejects_the_result(
 
     async def crossing_apply(ctx: Any, segment: Any) -> None:
         # Stands in for the boundary advancing while this await is in flight.
-        context.pending_turn_onset_floor = 484_480
+        context.pending.pending_turn_onset_floor = 484_480
         return await original_apply(ctx, segment)
 
     async def crossing_emit(*args: object, **kwargs: object) -> bool:
-        context.pending_turn_onset_floor = 484_480
+        context.pending.pending_turn_onset_floor = 484_480
         return await original_emit(*args, **kwargs)
 
     if seam == "projection":
@@ -294,8 +294,8 @@ async def test_device_accept_await_crossing_the_boundary_rejects_the_result(
     )
     assert crossing.accepted is None
     assert crossing.reason is ASRDecisionReason.INTERVAL_CONFLICT
-    assert context.turn_start_sample is None
-    assert context.turn_end_sample is None
+    assert context.pending.turn_start_sample is None
+    assert context.pending.turn_end_sample is None
 
 
 @pytest.mark.asyncio
@@ -324,9 +324,9 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")
     context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
-    context.playback.start(fence)
-    assert context.playback.register_audio(fence, 0, 0, 320)
-    assert context.playback.add_span(
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(fence, 0, 0, 320)
+    assert context.output.playback.add_span(
         PlaybackSpan(
             fence=fence,
             text_start=0,
@@ -337,7 +337,7 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
             sequence=0,
         )
     )
-    context.provider_complete = True
+    context.output.provider_complete = True
 
     await registry.on_playback_progress(
         session,
@@ -356,7 +356,7 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
     )
 
     assert context.runtime.orchestrator.state is ConversationState.SPEAKING
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.actual_heard is True
     assert delivery.terminal_event is None
@@ -378,6 +378,6 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
     )
 
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED

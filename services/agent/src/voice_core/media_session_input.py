@@ -62,13 +62,13 @@ def _is_spurious_connect_vad(segment: SpeechSegment, context: _MediaVoiceSession
     pending_connect = context.device_wake_ack_pending and segment.capture_start_sample == 0
     if not segment.final:
         return empty or pending_connect
-    if context.turn_start_sample is not None:
+    if context.pending.turn_start_sample is not None:
         return False
     return empty or pending_connect
 
 
 def _vad_precedes_pending_turn(segment: SpeechSegment, context: _MediaVoiceSession) -> bool:
-    floor = context.pending_turn_onset_floor
+    floor = context.pending.pending_turn_onset_floor
     if segment.kind is not SegmentKind.VAD or floor is None:
         return False
     sample = segment.capture_start_sample
@@ -160,9 +160,9 @@ class MediaSessionInputMixin:
         if _vad_precedes_pending_turn(segment, context):
             return False
         for kind, endpoint in (
-            ("clock-fact", context.clock_fact_endpoint_pinned),
-            ("conversation-close", context.conversation_close_endpoint_pinned),
-            ("live-query", context.live_query_endpoint_pinned),
+            ("clock-fact", context.pending.clock_fact_endpoint_pinned),
+            ("conversation-close", context.pending.conversation_close_endpoint_pinned),
+            ("live-query", context.pending.live_query_endpoint_pinned),
         ):
             if endpoint is not None:
                 logger.info(
@@ -171,48 +171,51 @@ class MediaSessionInputMixin:
                     kind, context.identity.session_id, endpoint, segment.capture_start_sample,
                 )
                 return False
-        if context.live_query_forced_authoritative and context.live_query_forced_text:
+        if (
+            context.pending.live_query_forced_authoritative
+            and context.pending.live_query_forced_text
+        ):
             logger.info(
                 "media vad_start ignored after live-query forced recovery "
                 "session=%s endpoint=%s vad_start=%s text_len=%s",
-                context.identity.session_id, context.turn_endpoint_sample,
-                segment.capture_start_sample, len(context.live_query_forced_text),
+                context.identity.session_id, context.pending.turn_endpoint_sample,
+                segment.capture_start_sample, len(context.pending.live_query_forced_text),
             )
             return False
-        pending_endpoint = context.turn_endpoint_sample
+        pending_endpoint = context.pending.turn_endpoint_sample
         if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
             pause_s = (segment.capture_start_sample - pending_endpoint) / 16_000
             previous_pause = context.observed_within_turn_pause_s
             context.observed_within_turn_pause_s = (
                 pause_s if previous_pause is None else previous_pause * 0.7 + pause_s * 0.3
             )
-        if context.turn_start_sample is None:
+        if context.pending.turn_start_sample is None:
             # One accepted start opens the speaker fence. Resumed VAD keeps
             # that fence, including turns whose range was first created by ASR.
             voice_decision = context.runtime.on_user_voice_started()
             if voice_decision is PlaybackInputDecision.IGNORE:
                 return False
-            context.turn_input_fence = context.runtime.fence
+            context.pending.turn_input_fence = context.runtime.fence
         if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
             self._arm_reopen_evidence_window(context, pending_endpoint)
         task = context.turn_endpoint_task
         if task is not None and not task.done():
             task.cancel()
-        if context.turn_endpoint_timeout_handle is not None:
-            context.turn_endpoint_timeout_handle.cancel()
-            context.turn_endpoint_timeout_handle = None
-        context.turn_endpoint_sample = None
-        context.turn_retire_sample = None
-        context.turn_endpoint_grace_deadline = None
-        context.turn_endpoint_tail_deadline = None
-        if context.evidence_less_hold_since is not None:
+        if context.pending.turn_endpoint_timeout_handle is not None:
+            context.pending.turn_endpoint_timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+        context.pending.turn_endpoint_sample = None
+        context.pending.turn_retire_sample = None
+        context.pending.turn_endpoint_grace_deadline = None
+        context.pending.turn_endpoint_tail_deadline = None
+        if context.pending.evidence_less_hold_since is not None:
             # Resumed VAD resets the tail timeout above, but may only nudge,
             # never lift, the cap on output waiting behind an empty turn.
             self._arm_evidence_less_floor_hold(context)
-        context.turn_start_sample = min(
+        context.pending.turn_start_sample = min(
             segment.capture_start_sample,
-            context.turn_start_sample
-            if context.turn_start_sample is not None
+            context.pending.turn_start_sample
+            if context.pending.turn_start_sample is not None
             else segment.capture_start_sample,
         )
         self._admit_owner_silence_vad(context, segment.capture_start_sample)
@@ -221,7 +224,8 @@ class MediaSessionInputMixin:
             "silence_remaining_s=%s grace_active=%s watchdog_armed=%s vad_revision=%s",
             context.identity.session_id, context.stream_epoch, segment.capture_start_sample,
             context.owner_silence_remaining_s, context.owner_silence_grace_deadline is not None,
-            context.max_user_speech_task is not None, context.owner_silence_activity_revision,
+            context.pending.max_user_speech_task is not None,
+            context.owner_silence_activity_revision,
         )
         return True
 
@@ -237,19 +241,21 @@ class MediaSessionInputMixin:
         own when it closes, the turn commits at the text-covered endpoint.
         """
 
-        if context.reopen_evidence_handle is not None:
+        if context.pending.reopen_evidence_handle is not None:
             return
         if (
             context.identity.client_type != "device"
             or not self._pending_turn_has_text_evidence(context)
-            or not self._asr_covers_endpoint(context, context.turn_end_sample, endpoint_sample)
+            or not self._asr_covers_endpoint(
+                context, context.pending.turn_end_sample, endpoint_sample
+            )
             or self._reply_in_flight(context)
         ):
             return
-        context.reopen_evidence_endpoint = endpoint_sample
-        context.reopen_evidence_turn_end = context.turn_end_sample
-        context.reopen_evidence_turn_start = context.turn_start_sample
-        context.reopen_evidence_handle = asyncio.get_running_loop().call_later(
+        context.pending.reopen_evidence_endpoint = endpoint_sample
+        context.pending.reopen_evidence_turn_end = context.pending.turn_end_sample
+        context.pending.reopen_evidence_turn_start = context.pending.turn_start_sample
+        context.pending.reopen_evidence_handle = asyncio.get_running_loop().call_later(
             _REOPEN_EVIDENCE_WINDOW_S,
             self._expire_reopen_evidence_window,
             context.identity.session_id,
@@ -261,16 +267,16 @@ class MediaSessionInputMixin:
         self, session_id: str, stream_epoch: int, endpoint_sample: int
     ) -> None:
         context = self._sessions.get(session_id)
-        if context is None or context.reopen_evidence_endpoint != endpoint_sample:
+        if context is None or context.pending.reopen_evidence_endpoint != endpoint_sample:
             return
-        turn_end_at_reopen = context.reopen_evidence_turn_end
-        turn_start_at_reopen = context.reopen_evidence_turn_start
-        context.reopen_evidence_handle = None
-        context.reopen_evidence_endpoint = None
-        context.reopen_evidence_turn_end = None
-        context.reopen_evidence_turn_start = None
-        partial = context.pending_partial
-        new_text = (context.turn_end_sample or 0) > (turn_end_at_reopen or 0) or (
+        turn_end_at_reopen = context.pending.reopen_evidence_turn_end
+        turn_start_at_reopen = context.pending.reopen_evidence_turn_start
+        context.pending.reopen_evidence_handle = None
+        context.pending.reopen_evidence_endpoint = None
+        context.pending.reopen_evidence_turn_end = None
+        context.pending.reopen_evidence_turn_start = None
+        partial = context.pending.pending_partial
+        new_text = (context.pending.turn_end_sample or 0) > (turn_end_at_reopen or 0) or (
             partial is not None
             and partial.text.strip()
             and partial.capture_end_sample > endpoint_sample
@@ -281,21 +287,23 @@ class MediaSessionInputMixin:
             or context.stream_epoch != stream_epoch
             # The same logical turn: a turn that committed meanwhile and a
             # newer one must never be committed at this older endpoint.
-            or context.turn_start_sample is None
-            or context.turn_start_sample != turn_start_at_reopen
+            or context.pending.turn_start_sample is None
+            or context.pending.turn_start_sample != turn_start_at_reopen
             or new_text
             or self._reply_in_flight(context)
         ):
             return
         # Back to the text-covered endpoint: a VAD end inside the noise would
         # never be covered by ASR, so committing there would stall again.
-        if context.turn_endpoint_timeout_handle is not None:
-            context.turn_endpoint_timeout_handle.cancel()
-            context.turn_endpoint_timeout_handle = None
-        context.turn_endpoint_sample = endpoint_sample
-        context.turn_retire_sample = max(context.turn_retire_sample or 0, endpoint_sample)
-        context.turn_endpoint_grace_deadline = time.monotonic()
-        context.turn_endpoint_tail_deadline = None
+        if context.pending.turn_endpoint_timeout_handle is not None:
+            context.pending.turn_endpoint_timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+        context.pending.turn_endpoint_sample = endpoint_sample
+        context.pending.turn_retire_sample = max(
+            context.pending.turn_retire_sample or 0, endpoint_sample
+        )
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
+        context.pending.turn_endpoint_tail_deadline = None
         self._cancel_max_user_speech_watchdog(context)
         logger.info(
             "media reopened turn committing without new text session=%s "
@@ -362,7 +370,8 @@ class MediaSessionInputMixin:
                 "media vad ignored before pending turn boundary session=%s "
                 "stream_epoch=%s sample=%s floor=%s final=%s",
                 context.identity.session_id, segment.stream_epoch,
-                segment.capture_start_sample, context.pending_turn_onset_floor, segment.final,
+                segment.capture_start_sample, context.pending.pending_turn_onset_floor,
+                segment.final,
             )
             return
         if not context.runtime.ingest_media_speech_segment(segment):
@@ -401,13 +410,15 @@ class MediaSessionInputMixin:
                 # utterance's decision until ``on_user_voice_started`` resets
                 # it below. Never project that stale authority onto this
                 # candidate.
-                turn_open = context.turn_start_sample is not None
+                turn_open = context.pending.turn_start_sample is not None
                 interruption = self.interruption_policy.evaluate(
                     evidence_from_speech_segment(
                         segment,
                         active_generation_id=max(
                             1,
-                            (context.playback.current_fence or context.runtime.fence).generation_id,
+                            (
+                                context.output.playback.current_fence or context.runtime.fence
+                            ).generation_id,
                         ),
                         aec_mode=("verified" if aec_verified else "unverified"),
                         aec_verified=aec_verified,
@@ -452,9 +463,9 @@ class MediaSessionInputMixin:
                 return
             if segment.final:
                 if (
-                    context.active_vad_stream_epoch == segment.stream_epoch
-                    and context.active_vad_start_sample is not None
-                    and segment.capture_start_sample < context.active_vad_start_sample
+                    context.pending.active_vad_stream_epoch == segment.stream_epoch
+                    and context.pending.active_vad_start_sample is not None
+                    and segment.capture_start_sample < context.pending.active_vad_start_sample
                 ):
                     # An older endpoint must not stop the watchdog for speech
                     # admitted while this event was awaiting projection.
@@ -493,7 +504,7 @@ class MediaSessionInputMixin:
                 # has not taken ownership yet. A hung provider must stay bounded.
                 if not await self._audio_ingress.finalize_speech_segment(
                     context,
-                    vad_start_sample=context.turn_start_sample,
+                    vad_start_sample=context.pending.turn_start_sample,
                     vad_event_sample=segment.capture_start_sample,
                     voiced_end_sample=segment.voiced_end_sample,
                     finalize_reason="vad_end",
@@ -507,8 +518,8 @@ class MediaSessionInputMixin:
                     or self._sessions.get(session.identity.session_id) is not context
                     or _vad_precedes_pending_turn(segment, context)
                     or (
-                        context.active_vad_start_sample is not None
-                        and segment.capture_start_sample < context.active_vad_start_sample
+                        context.pending.active_vad_start_sample is not None
+                        and segment.capture_start_sample < context.pending.active_vad_start_sample
                     )
                 ):
                     # Provider finalization is another yield point: a newer
@@ -520,80 +531,80 @@ class MediaSessionInputMixin:
                     if segment.voiced_end_sample is not None
                     else segment.capture_start_sample
                 )
-                if context.clock_fact_endpoint_pinned is not None:
+                if context.pending.clock_fact_endpoint_pinned is not None:
                     logger.info(
                         "media vad_end ignored after clock-fact pin session=%s "
                         "pinned_endpoint=%s voiced_end=%s",
                         context.identity.session_id,
-                        context.clock_fact_endpoint_pinned,
+                        context.pending.clock_fact_endpoint_pinned,
                         voiced_end_sample,
                     )
                     return
-                if context.conversation_close_endpoint_pinned is not None:
+                if context.pending.conversation_close_endpoint_pinned is not None:
                     logger.info(
                         "media vad_end ignored after conversation-close pin session=%s "
                         "pinned_endpoint=%s voiced_end=%s",
                         context.identity.session_id,
-                        context.conversation_close_endpoint_pinned,
+                        context.pending.conversation_close_endpoint_pinned,
                         voiced_end_sample,
                     )
                     return
-                if context.live_query_endpoint_pinned is not None:
+                if context.pending.live_query_endpoint_pinned is not None:
                     logger.info(
                         "media vad_end ignored after live-query pin session=%s "
                         "pinned_endpoint=%s voiced_end=%s",
                         context.identity.session_id,
-                        context.live_query_endpoint_pinned,
+                        context.pending.live_query_endpoint_pinned,
                         voiced_end_sample,
                     )
                     return
                 if (
-                    context.live_query_forced_authoritative
-                    and context.live_query_forced_text
+                    context.pending.live_query_forced_authoritative
+                    and context.pending.live_query_forced_text
                 ):
                     logger.info(
                         "media vad_end ignored after live-query forced recovery "
                         "session=%s endpoint=%s voiced_end=%s text_len=%s",
                         context.identity.session_id,
-                        context.turn_endpoint_sample,
+                        context.pending.turn_endpoint_sample,
                         voiced_end_sample,
-                        len(context.live_query_forced_text),
+                        len(context.pending.live_query_forced_text),
                     )
                     return
                 # This synchronous handoff follows the post-await fences and
                 # pin checks. Only the current endpoint may release the speech
                 # watchdog; _schedule_turn_commit below arms the existing tail.
                 self._cancel_max_user_speech_watchdog(context)
-                previous_endpoint = context.turn_endpoint_sample
+                previous_endpoint = context.pending.turn_endpoint_sample
                 # Late/replayed VAD finals may arrive out of callback order.
                 # Never move a pending endpoint backwards, or an older tail
                 # event could truncate the logical turn before ASR coverage.
-                context.turn_endpoint_sample = max(
-                    context.turn_endpoint_sample or 0,
+                context.pending.turn_endpoint_sample = max(
+                    context.pending.turn_endpoint_sample or 0,
                     voiced_end_sample,
                 )
-                if context.turn_endpoint_sample != previous_endpoint:
-                    if context.turn_endpoint_timeout_handle is not None:
-                        context.turn_endpoint_timeout_handle.cancel()
-                        context.turn_endpoint_timeout_handle = None
-                    context.turn_endpoint_grace_deadline = None
-                    context.turn_endpoint_tail_deadline = None
-                context.turn_retire_sample = max(
-                    context.turn_retire_sample or 0,
+                if context.pending.turn_endpoint_sample != previous_endpoint:
+                    if context.pending.turn_endpoint_timeout_handle is not None:
+                        context.pending.turn_endpoint_timeout_handle.cancel()
+                        context.pending.turn_endpoint_timeout_handle = None
+                    context.pending.turn_endpoint_grace_deadline = None
+                    context.pending.turn_endpoint_tail_deadline = None
+                context.pending.turn_retire_sample = max(
+                    context.pending.turn_retire_sample or 0,
                     segment.capture_start_sample,
                 )
-                if context.turn_start_sample is None:
-                    context.turn_start_sample = min(
+                if context.pending.turn_start_sample is None:
+                    context.pending.turn_start_sample = min(
                         segment.capture_start_sample,
-                        context.turn_end_sample
-                        if context.turn_end_sample is not None
+                        context.pending.turn_end_sample
+                        if context.pending.turn_end_sample is not None
                         else segment.capture_start_sample,
                     )
                 self._schedule_turn_commit(context)
             else:
                 if (
                     not vad_start_admitted
-                    or context.active_vad_stream_epoch != segment.stream_epoch
+                    or context.pending.active_vad_stream_epoch != segment.stream_epoch
                 ):
                     return
                 interaction = context.runtime.decide_interaction(
@@ -627,7 +638,7 @@ class MediaSessionInputMixin:
                 evidence_from_speech_segment(
                     segment,
                     active_generation_id=(
-                        context.playback.current_fence or context.runtime.fence
+                        context.output.playback.current_fence or context.runtime.fence
                     ).generation_id,
                     device_monotonic_ms=detected_monotonic_ms or None,
                 ),
@@ -642,7 +653,7 @@ class MediaSessionInputMixin:
                 # until distributed tracing is available.
                 _ = detected_monotonic_ms
                 stop_started_ns = time.monotonic_ns()
-                previous_fence = context.playback.current_fence or context.runtime.fence
+                previous_fence = context.output.playback.current_fence or context.runtime.fence
                 cancelled = (
                     session.fence
                     if not session.fence.matches(previous_fence)
@@ -654,7 +665,7 @@ class MediaSessionInputMixin:
                         and context.runtime.floor.interruptible
                     ):
                         await self._record_interrupted_timed_spans(context, previous_fence)
-                        heard = context.playback.actual_heard_text(previous_fence)
+                        heard = context.output.playback.actual_heard_text(previous_fence)
                         interrupted_fence = await context.runtime.on_real_interrupt(
                             cause="media_keyword_interrupt",
                             create_user_turn=False,
@@ -674,9 +685,9 @@ class MediaSessionInputMixin:
                         cause="media_keyword_interrupt",
                     )
                     if accepted:
-                        context.playback.start(cancelled)
-                        context.provider_complete = False
-                        context.output_complete_emitted = False
+                        context.output.playback.start(cancelled)
+                        context.output.provider_complete = False
+                        context.output.output_complete_emitted = False
                         if should_pause_asr_for_playback(context.identity):
                             await context.provider.pause_asr_for_playback(context.identity)
                         await self._cancel_reply_task(context, previous_fence)

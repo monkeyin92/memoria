@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +13,7 @@ from services.agent.src.orchestration.conversation_projection import Conversatio
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
 from services.agent.src.voice_core.media_audio_ingress import MediaAudioIngressState
 from services.agent.src.voice_core.media_protocol import SessionIdentity
+from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputClaim,
     MediaVoiceProvider,
@@ -23,7 +23,31 @@ from services.agent.src.voice_core.media_session_types import (
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryLedger
-from services.agent.src.voice_core.speech_timeline import ASRResult
+
+
+@dataclass(slots=True)
+class OutputState:
+    """The session's reply output: owner lease, dispatch work and playback."""
+
+    playback: PlaybackLedger = field(default_factory=PlaybackLedger)
+    reply_delivery: ReplyDeliveryLedger = field(default_factory=ReplyDeliveryLedger)
+    output_sequence: int = 0
+    output_text_offset: int = 0
+    assistant_text: str = ""
+    tts_started_ns: int | None = None
+    first_audio_observed: bool = False
+    provider_complete: bool = False
+    output_complete_emitted: bool = False
+    reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    reply_task: asyncio.Task[Any] | None = None
+    output_owner: OutputOwnerLease | None = None
+    output_work: dict[str, OutputWork] = field(default_factory=dict)
+    output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
+    output_retry_task: asyncio.Task[bool] | None = None
+    output_results: list[OutputDispatchResult] = field(default_factory=list)
+    delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)
@@ -36,59 +60,16 @@ class MediaVoiceSessionState:
     asr: ASRStreamSupervisor
     projection: ConversationProjection
     ingress: MediaAudioIngressState
-    playback: PlaybackLedger = field(default_factory=PlaybackLedger)
-    reply_delivery: ReplyDeliveryLedger = field(default_factory=ReplyDeliveryLedger)
-    output_sequence: int = 0
-    output_text_offset: int = 0
-    assistant_text: str = ""
+    output: OutputState = field(default_factory=OutputState)
+    pending: PendingTurn = field(default_factory=PendingTurn)
     stream_epoch: int = 0
     floor_epoch: int = 0
     turn_started_ns: int | None = None
-    tts_started_ns: int | None = None
-    first_audio_observed: bool = False
-    provider_complete: bool = False
-    output_complete_emitted: bool = False
-    reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     turn_commit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The terminal close owns cancellation even when endpoint re-arming shields
     # the caller. Only one preparation may run under turn_commit_lock.
     turn_commit_task: asyncio.Task[tuple[GenerationFence | None, str | None]] | None = None
-    reply_task: asyncio.Task[Any] | None = None
-    output_owner: OutputOwnerLease | None = None
-    output_work: dict[str, OutputWork] = field(default_factory=dict)
-    output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
-    output_retry_task: asyncio.Task[bool] | None = None
-    output_results: list[OutputDispatchResult] = field(default_factory=list)
-    delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
-        default_factory=dict
-    )
-    committed_asr_keys: OrderedDict[tuple[int, str, int, int], None] = field(
-        default_factory=OrderedDict
-    )
-    turn_start_sample: int | None = None
-    turn_input_fence: GenerationFence | None = None
-    turn_end_sample: int | None = None
-    turn_endpoint_sample: int | None = None
-    turn_retire_sample: int | None = None
     turn_endpoint_task: asyncio.Task[None] | None = None
-    turn_endpoint_grace_deadline: float | None = None
-    turn_endpoint_tail_deadline: float | None = None
-    turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
-    # A turn that already has text, reopened by a later vad.start: the
-    # text-covered endpoint to fall back to, the transcript end it had, and
-    # the bounded window for the new speech to produce any text of its own.
-    reopen_evidence_endpoint: int | None = None
-    reopen_evidence_turn_end: int | None = None
-    reopen_evidence_turn_start: int | None = None
-    reopen_evidence_handle: asyncio.TimerHandle | None = None
-    # When admitted output first waited behind the floor; bounds how long a
-    # pending turn with no text evidence (room-noise VAD) may keep holding it.
-    evidence_less_hold_since: float | None = None
-    evidence_less_hold_handle: asyncio.TimerHandle | None = None
-    # Observed while a reply owned output; not proof of acoustic echo.
-    pending_turn_playback_overlap: bool = False
-    # Closed candidate input may not re-enter through ASR, rescue, or VAD.
-    pending_turn_onset_floor: int | None = None
     # Uplink-capture boundary of the last completed/failed playback window,
     # including an echo-tail margin: finals that start before it may still be
     # the reply's tail on the uplink and must not endpoint or own a turn.
@@ -96,34 +77,7 @@ class MediaVoiceSessionState:
     # Highest accepted ASR evidence end (finals and non-empty partials); feeds
     # the playback boundary snapshot taken when playback completes.
     last_asr_evidence_end_sample: int = 0
-    # Endpoint pinned by the playback-followup path; a later guarded final may
-    # advance it while the utterance keeps producing post-boundary finals.
-    playback_followup_endpoint_sample: int | None = None
-    turn_commit_retry_task: asyncio.Task[None] | None = None
-    turn_commit_retry_attempt: int = 0
-    turn_commit_retry_stream_epoch: int | None = None
-    turn_commit_retry_endpoint_sample: int | None = None
     observed_within_turn_pause_s: float | None = None
-    pending_partial: ASRResult | None = None
-    clock_fact_partial_text: str | None = None
-    clock_fact_partial_stable_since: float | None = None
-    # When set, a clock/date final already chose the turn endpoint; later VAD
-    # tails must not extend the range or cancel the pending commit task.
-    clock_fact_endpoint_pinned: int | None = None
-    conversation_close_partial_text: str | None = None
-    conversation_close_partial_stable_since: float | None = None
-    conversation_close_endpoint_pinned: int | None = None
-    conversation_close_semantic_text: str | None = None
-    conversation_close_semantic_task: asyncio.Task[None] | None = None
-    clock_fact_forced_text: str | None = None
-    live_query_forced_text: str | None = None
-    live_query_partial_text: str | None = None
-    live_query_partial_stable_since: float | None = None
-    live_query_endpoint_pinned: int | None = None
-    # Set when the forced live-query text was recovered from a
-    # CROSS_SENTENCE_OVERLAP rejection: in-range timeline text then belongs
-    # to the blocking interval and the forced text must win unconditionally.
-    live_query_forced_authoritative: bool = False
     # Normalised text of the last media turn that actually committed.  A
     # duplicate ASR final of one question commits a contiguous extension of the
     # same range while its reply is still synthesizing; opening a second turn
@@ -146,21 +100,11 @@ class MediaVoiceSessionState:
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
     owner_silence_grace_deadline: float | None = None
-    admitted_input_stream_epoch: int | None = None
-    # Only accepted VAD owns this latch; ASR admission/turn ranges do not prove
-    # that speech is still in progress. The revision fences an expired timer
-    # waiting for standby_lock and never resets within the session.
-    active_vad_stream_epoch: int | None = None
-    active_vad_start_sample: int | None = None
-    #: Incremented by accepted owner-activity evidence (an admitted VAD
+    #: Fences an expired timer waiting for standby_lock; never resets within
+    #: the session. Incremented by accepted owner-activity evidence (an admitted VAD
     #: edge or an accepted transcript). A close that snapshotted an
     #: older revision is stale and must not fire.
     owner_silence_activity_revision: int = 0
-    # Independent wall-clock bound for one accepted user utterance.  This is
-    # deliberately separate from owner-silence timing: a stuck VAD stream
-    # must eventually fail closed even while the owner is still speaking.
-    max_user_speech_task: asyncio.Task[None] | None = None
-    max_user_speech_deadline: float | None = None
     standby_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     standby_requested: bool = False
     standby_reason: str | None = None
@@ -177,18 +121,3 @@ class MediaVoiceSessionState:
     missed_hearing_nudge_count: int = 0
     last_missed_hearing_nudge_at: float | None = None
     closed: bool = False
-
-    def restart_endpoint_bounds(self, grace_s: float) -> None:
-        """Start a moved endpoint's grace and absolute tail bound over.
-
-        A playback follow-up extends its pinned endpoint while the user keeps
-        talking. Kept from the first pin, the absolute bound expired
-        mid-sentence and put the device on standby with the question
-        unanswered (turn_prepare_timeout, 2026-09-28).
-        """
-
-        self.turn_endpoint_grace_deadline = time.monotonic() + grace_s
-        if self.turn_endpoint_timeout_handle is not None:
-            self.turn_endpoint_timeout_handle.cancel()
-        self.turn_endpoint_timeout_handle = None
-        self.turn_endpoint_tail_deadline = None

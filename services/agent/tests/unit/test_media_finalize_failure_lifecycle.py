@@ -44,11 +44,11 @@ async def test_finalize_fault_resumes_only_the_remaining_silence_budget(
         context.owner_silence_remaining_s = 7.5
         registry._arm_owner_silence_timer(context, reset=False)
         if with_grace:
-            context.admitted_input_stream_epoch = identity.stream_epoch
+            context.pending.admitted_input_stream_epoch = identity.stream_epoch
             await _expire_owner_timer(registry, context)
         await registry.on_speech_segment(session, _vad(identity))
         remaining = context.owner_silence_remaining_s
-        assert context.max_user_speech_task is not None
+        assert context.pending.max_user_speech_task is not None
         assert context.owner_silence_task is None
         if owner_classified:
             # Even a classification already attached to this failed input
@@ -59,10 +59,10 @@ async def test_finalize_fault_resumes_only_the_remaining_silence_budget(
         await registry.on_speech_segment(session, _vad(identity, start=960, final=True))
 
         assert context.ingress.provider_failed
-        assert context.turn_start_sample is None
-        assert context.active_vad_start_sample is None
-        assert context.max_user_speech_task is None
-        assert context.turn_endpoint_timeout_handle is None
+        assert context.pending.turn_start_sample is None
+        assert context.pending.active_vad_start_sample is None
+        assert context.pending.max_user_speech_task is None
+        assert context.pending.turn_endpoint_timeout_handle is None
         # No later listening event is injected: the fault path itself must
         # restore the existing budget instead of waiting for another callback.
         assert context.owner_silence_task is not None
@@ -110,16 +110,16 @@ async def test_finalize_fault_publication_cannot_clear_a_new_vad(
         )
         await asyncio.wait_for(entered.wait(), 1)
         await registry.on_speech_segment(session, _vad(identity, start=1280))
-        watchdog = context.max_user_speech_task
-        deadline = context.max_user_speech_deadline
+        watchdog = context.pending.max_user_speech_task
+        deadline = context.pending.max_user_speech_deadline
         provisional = context.projection.provisional
         assert watchdog is not None
-        assert context.active_vad_start_sample == 1280
+        assert context.pending.active_vad_start_sample == 1280
         release.set()
         await asyncio.wait_for(task, 1)
-        assert context.active_vad_start_sample == 1280
-        assert context.max_user_speech_task is watchdog
-        assert context.max_user_speech_deadline == deadline
+        assert context.pending.active_vad_start_sample == 1280
+        assert context.pending.max_user_speech_task is watchdog
+        assert context.pending.max_user_speech_deadline == deadline
         assert context.projection.provisional is provisional
         assert context.owner_silence_task is None
         assert _user_turns(runtime) == []
@@ -165,15 +165,15 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
             # the provider's finalize lock. Release that old callback first.
         else:
             await registry.on_speech_segment(session, _vad(identity, start=1280))
-        watchdog = context.max_user_speech_task
-        deadline = context.max_user_speech_deadline
+        watchdog = context.pending.max_user_speech_task
+        deadline = context.pending.max_user_speech_deadline
         provisional = context.projection.provisional
-        active_start = context.active_vad_start_sample
+        active_start = context.pending.active_vad_start_sample
         release.set()
         await asyncio.wait_for(task, 1)
-        assert context.max_user_speech_task is watchdog
-        assert context.max_user_speech_deadline == deadline
-        assert context.active_vad_start_sample == active_start
+        assert context.pending.max_user_speech_task is watchdog
+        assert context.pending.max_user_speech_deadline == deadline
+        assert context.pending.active_vad_start_sample == active_start
         assert context.projection.provisional is provisional
         assert _user_turns(runtime) == []
         if superseded_by == "terminal":
@@ -185,8 +185,8 @@ async def test_late_finalize_fault_cannot_clear_replacement_input(
                 assert not context.ingress.provider_failed
                 await registry._reuse_session(context, new_identity)
                 await registry.on_speech_segment(session, _vad(new_identity, start=1280))
-                watchdog = context.max_user_speech_task
-                active_start = context.active_vad_start_sample
+                watchdog = context.pending.max_user_speech_task
+                active_start = context.pending.active_vad_start_sample
             assert watchdog is not None
             assert not context.closed
             assert active_start == 1280
@@ -237,7 +237,7 @@ async def test_finalize_recovery_frame_keeps_a_live_input_or_silence_watch(
         await registry.on_speech_segment(session, _vad(identity, start=960, final=True))
         assert context.ingress.provider_failed
         await registry.on_speech_segment(session, _vad(identity, start=1280))
-        assert context.max_user_speech_task is not None
+        assert context.pending.max_user_speech_task is not None
         assert context.owner_silence_task is None
         remaining = context.owner_silence_remaining_s
         runtime._speaker_class = "owner"
@@ -248,8 +248,8 @@ async def test_finalize_recovery_frame_keeps_a_live_input_or_silence_watch(
         if new_vad_during_publication:
             await asyncio.wait_for(entered.wait(), 1)
             await registry.on_speech_segment(session, _vad(identity, start=1920))
-            watchdog = context.max_user_speech_task
-            deadline = context.max_user_speech_deadline
+            watchdog = context.pending.max_user_speech_task
+            deadline = context.pending.max_user_speech_deadline
             provisional = context.projection.provisional
             assert watchdog is not None
             release.set()
@@ -261,18 +261,18 @@ async def test_finalize_recovery_frame_keeps_a_live_input_or_silence_watch(
         assert _user_turns(runtime) == []
         assert 0 <= context.owner_silence_remaining_s <= remaining
         if new_vad_during_publication:
-            assert context.active_vad_start_sample == 1920
-            assert context.max_user_speech_task is watchdog
+            assert context.pending.active_vad_start_sample == 1920
+            assert context.pending.max_user_speech_task is watchdog
             assert not watchdog.done()
-            assert context.max_user_speech_deadline == deadline
+            assert context.pending.max_user_speech_deadline == deadline
             assert context.projection.provisional is provisional
             assert context.owner_silence_task is None
             await _expire_speech_watchdog(registry, context)
         else:
             # The restart deliberately discards the discontinuous input, but
             # must resume the remaining budget without another listening event.
-            assert context.active_vad_start_sample is None
-            assert context.max_user_speech_task is None
+            assert context.pending.active_vad_start_sample is None
+            assert context.pending.max_user_speech_task is None
             assert context.owner_silence_task is not None
             assert not context.owner_silence_task.done()
             await _expire_owner_timer(registry, context)

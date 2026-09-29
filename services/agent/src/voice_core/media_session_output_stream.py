@@ -192,7 +192,7 @@ class MediaOutputStreamMixin:
             )
             await self._cancel_reply_task(context, fence, reason="session_closed")
             return
-        owner = context.output_owner
+        owner = context.output.output_owner
         owner_intent_active = False
         if owner is not None and owner.fence.matches(fence):
             coordinator = context.runtime.orchestrator.delegation
@@ -219,15 +219,15 @@ class MediaOutputStreamMixin:
                     fence,
                     reason=reason,
                 )
-                context.playback.discard(fence)
-                context.assistant_text = ""
-                context.output_sequence = 0
-                context.output_text_offset = 0
-                context.provider_complete = False
-                context.output_complete_emitted = False
-                for intent_id, pending in tuple(context.output_work.items()):
+                context.output.playback.discard(fence)
+                context.output.assistant_text = ""
+                context.output.output_sequence = 0
+                context.output.output_text_offset = 0
+                context.output.provider_complete = False
+                context.output.output_complete_emitted = False
+                for intent_id, pending in tuple(context.output.output_work.items()):
                     if pending.fence.matches(fence):
-                        context.output_work.pop(intent_id, None)
+                        context.output.output_work.pop(intent_id, None)
                 context.runtime.orchestrator.delegation.reset_output_intent_state(fence.session_id)
                 if cancelled is None:
                     await context.runtime.on_assistant_reply_aborted(
@@ -262,7 +262,7 @@ class MediaOutputStreamMixin:
         if context.runtime.barge_in_enabled:
             return self._output_owner_is_current(context, lease)
         if (
-            context.output_owner is not lease
+            context.output.output_owner is not lease
             or lease.task is not asyncio.current_task()
             or not context.runtime.fence.matches(lease.fence)
         ):
@@ -299,7 +299,7 @@ class MediaOutputStreamMixin:
             if self._output_owner_can_start_first_frame(context, lease):
                 return True
             if (
-                context.output_owner is not lease
+                context.output.output_owner is not lease
                 or lease.task is not asyncio.current_task()
                 or not context.runtime.fence.matches(lease.fence)
             ):
@@ -326,9 +326,9 @@ class MediaOutputStreamMixin:
             tool_epoch=progress.tool_epoch,
             session_epoch=progress.session_epoch,
         )
-        previously_rendered = context.playback.rendered_sample_end(fence)
-        stale_ack_count = context.playback.stale_ack_count
-        acknowledged = context.playback.acknowledge(
+        previously_rendered = context.output.playback.rendered_sample_end(fence)
+        stale_ack_count = context.output.playback.stale_ack_count
+        acknowledged = context.output.playback.acknowledge(
             fence,
             progress.rendered_sample_end,
             received_sequence=progress.received_sequence,
@@ -336,9 +336,9 @@ class MediaOutputStreamMixin:
             heard_eligible=not (session.identity.client_type == "device" and progress.approximate),
             terminal=_playback_terminal(progress.event_type),
         )
-        if context.playback.stale_ack_count != stale_ack_count:
+        if context.output.playback.stale_ack_count != stale_ack_count:
             return
-        rendered = context.playback.rendered_sample_end(fence)
+        rendered = context.output.playback.rendered_sample_end(fence)
         if rendered > previously_rendered:
             self.metrics.add_conversation_participation_ms(
                 "assistant",
@@ -348,9 +348,9 @@ class MediaOutputStreamMixin:
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
-        heard = context.playback.actual_heard_text(fence)
-        delivery = context.reply_delivery.get(fence)
-        if context.playback.received_sequence(fence) >= 0 and (
+        heard = context.output.playback.actual_heard_text(fence)
+        delivery = context.output.reply_delivery.get(fence)
+        if context.output.playback.received_sequence(fence) >= 0 and (
             delivery is None or not delivery.first_frame_sent
         ):
             # Keep direct playback-ledger fixtures and legacy callers honest:
@@ -362,7 +362,7 @@ class MediaOutputStreamMixin:
                 ReplyDeliveryEvent.FIRST_FRAME_SENT,
                 "playback_ledger_backfill",
             )
-        if context.playback.is_fully_acknowledged(fence):
+        if context.output.playback.is_fully_acknowledged(fence):
             self._record_reply_delivery_event(
                 context,
                 fence,
@@ -383,8 +383,8 @@ class MediaOutputStreamMixin:
             return
         if (
             progress.event_type is PlaybackEventType.ENDED
-            and context.provider_complete
-            and not context.playback.is_transport_watermarked(fence)
+            and context.output.provider_complete
+            and not context.output.playback.is_transport_watermarked(fence)
         ):
             await self._fail_playback_output(
                 context,
@@ -393,8 +393,8 @@ class MediaOutputStreamMixin:
             )
             return
         if (
-            context.provider_complete
-            and context.playback.is_playback_complete(fence)
+            context.output.provider_complete
+            and context.output.playback.is_playback_complete(fence)
             and context.runtime.fence.matches(fence)
         ):
             await self._finish_completed_output(context, fence)
@@ -464,7 +464,7 @@ class MediaOutputStreamMixin:
         # This clock starts when the selected provider/output iterator is first
         # consumed.  It deliberately ends at the Edge-accepted PCM boundary;
         # device DAC/Actual Heard remain separate playback evidence.
-        context.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
+        context.output.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
 
         async def abort_for_session_close() -> OutputDispatchResult:
             await self._abort_unheard_stream(
@@ -553,7 +553,7 @@ class MediaOutputStreamMixin:
                     chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
                 if announcement:
-                    context.assistant_text += announcement
+                    context.output.assistant_text += announcement
                 # PCM-only intents still own the audible lifecycle even when
                 # they have no transcript metadata.  This is especially
                 # important after a completed segment is promoted to a fresh
@@ -564,7 +564,7 @@ class MediaOutputStreamMixin:
                     # complete provider text, while the ledger still decides
                     # whether that text was actually rendered.
                     speaking_started = await context.runtime.on_assistant_speaking(
-                        context.assistant_text,
+                        context.output.assistant_text,
                         expected_fence=fence,
                         precondition=lambda: self._output_owner_can_start_first_frame(
                             context,
@@ -599,7 +599,7 @@ class MediaOutputStreamMixin:
                     if announcement:
                         context.runtime.publish_transcript(
                             speaker="assistant",
-                            text=context.assistant_text,
+                            text=context.output.assistant_text,
                             final=False,
                             text_delivered=True,
                             fence=fence,
@@ -628,7 +628,7 @@ class MediaOutputStreamMixin:
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
                     session_epoch=fence.session_epoch,
-                    sequence=context.output_sequence,
+                    sequence=context.output.output_sequence,
                     source_start_sample=chunk.source_start_sample,
                     frame_samples=len(gated) // 2,
                     pcm_s16le=gated,
@@ -657,7 +657,7 @@ class MediaOutputStreamMixin:
                     )
                 if context.closed or context.standby_requested:
                     return await abort_for_session_close()
-                if not context.playback.register_audio(
+                if not context.output.playback.register_audio(
                     fence,
                     frame.sequence,
                     frame.source_start_sample,
@@ -671,7 +671,7 @@ class MediaOutputStreamMixin:
                         "playback_rejected",
                         emitted_audio,
                     )
-                delivery_before = context.reply_delivery.get(fence)
+                delivery_before = context.output.reply_delivery.get(fence)
                 self._record_reply_delivery_event(
                     context,
                     fence,
@@ -680,29 +680,29 @@ class MediaOutputStreamMixin:
                 )
                 if (
                     delivery_before is None or not delivery_before.first_frame_sent
-                ) and context.tts_started_ns is not None:
+                ) and context.output.tts_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
-                        (time.monotonic_ns() - context.tts_started_ns) / 1_000_000_000,
+                        (time.monotonic_ns() - context.output.tts_started_ns) / 1_000_000_000,
                     )
-                    context.tts_started_ns = None
+                    context.output.tts_started_ns = None
                 emitted_audio = True
                 _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
-                if not context.first_audio_observed and context.turn_started_ns is not None:
+                if not context.output.first_audio_observed and context.turn_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "first_audio",
                         (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,
                     )
-                    context.first_audio_observed = True
-                context.output_sequence += 1
+                    context.output.first_audio_observed = True
+                context.output.output_sequence += 1
                 if chunk.text:
-                    text_start = context.output_text_offset
-                    context.output_text_offset += len(chunk.text)
-                    context.playback.add_span(
+                    text_start = context.output.output_text_offset
+                    context.output.output_text_offset += len(chunk.text)
+                    context.output.playback.add_span(
                         PlaybackSpan(
                             fence=fence,
                             text_start=text_start,
-                            text_end=context.output_text_offset,
+                            text_end=context.output.output_text_offset,
                             audio_start_sample=(
                                 chunk.text_audio_start_sample
                                 if chunk.text_audio_start_sample is not None
@@ -717,13 +717,13 @@ class MediaOutputStreamMixin:
                         )
                     )
                 for span in chunk.text_spans:
-                    text_start = context.output_text_offset
-                    context.output_text_offset += len(span.text)
-                    context.playback.add_span(
+                    text_start = context.output.output_text_offset
+                    context.output.output_text_offset += len(span.text)
+                    context.output.playback.add_span(
                         PlaybackSpan(
                             fence=fence,
                             text_start=text_start,
-                            text_end=context.output_text_offset,
+                            text_end=context.output.output_text_offset,
                             audio_start_sample=span.audio_start_sample,
                             audio_end_sample=span.audio_end_sample,
                             text=span.text,
@@ -748,16 +748,16 @@ class MediaOutputStreamMixin:
         if emitted_audio and context.runtime.fence.matches(fence):
             # Provider completion is not playback completion. Keep the runtime
             # speaking until the client watermark covers all emitted audio.
-            context.provider_complete = True
+            context.output.provider_complete = True
             self._record_reply_delivery_event(
                 context,
                 fence,
                 ReplyDeliveryEvent.PROVIDER_COMPLETED,
                 "provider_stream_complete",
             )
-            if not context.output_complete_emitted:
+            if not context.output.output_complete_emitted:
                 task_epoch, context_version = self._event_versions(context, fence)
-                context.output_complete_emitted = await self.bridge.emit_generation(
+                context.output.output_complete_emitted = await self.bridge.emit_generation(
                     fence.session_id,
                     fence,
                     action=media_pb2.GENERATION_ACTION_COMPLETE,
@@ -767,9 +767,9 @@ class MediaOutputStreamMixin:
                 )
             # A very fast client may acknowledge the last frame before the
             # provider iterator yields completion.
-            if context.playback.is_playback_complete(fence):
+            if context.output.playback.is_playback_complete(fence):
                 await self._finish_completed_output(context, fence)
-            elif context.playback.terminal_received(fence):
+            elif context.output.playback.terminal_received(fence):
                 await self._fail_playback_output(
                     context,
                     fence,
@@ -877,7 +877,8 @@ class MediaOutputStreamMixin:
         ):
             return
         assistant_text = (
-            context.assistant_text.strip() or context.playback.actual_heard_text(fence).strip()
+            context.output.assistant_text.strip()
+            or context.output.playback.actual_heard_text(fence).strip()
         )
         if not is_short_assistant_farewell_reply(assistant_text):
             return
@@ -909,7 +910,7 @@ class MediaOutputStreamMixin:
         )
         from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 
-        assistant_text = context.assistant_text.strip()
+        assistant_text = context.output.assistant_text.strip()
         if assistant_text == CRISIS_SUPPORT_REPLY:
             context.crisis_reply_heard = True
         max_seconds, _quiet_hours = minor_limits(context.runtime.mode_policy.runtime_profile)
@@ -955,16 +956,16 @@ class MediaOutputStreamMixin:
         fence: GenerationFence,
     ) -> None:
         if (
-            not context.provider_complete
-            or not context.playback.is_playback_complete(fence)
+            not context.output.provider_complete
+            or not context.output.playback.is_playback_complete(fence)
             or not context.runtime.fence.matches(fence)
         ):
             return
-        owner = context.output_owner
+        owner = context.output.output_owner
         if owner is not None and not owner.fence.matches(fence):
             return
         self._record_playback_boundary(context)
-        context.provider_complete = False
+        context.output.provider_complete = False
         self._record_reply_delivery_event(
             context,
             fence,
@@ -973,9 +974,9 @@ class MediaOutputStreamMixin:
         )
         if owner is not None:
             self._release_output_owner(context, fence, reason="playback_completed")
-        if not context.output_complete_emitted:
+        if not context.output.output_complete_emitted:
             task_epoch, context_version = self._event_versions(context, fence)
-            context.output_complete_emitted = await self.bridge.emit_generation(
+            context.output.output_complete_emitted = await self.bridge.emit_generation(
                 fence.session_id,
                 fence,
                 action=media_pb2.GENERATION_ACTION_COMPLETE,
@@ -985,10 +986,10 @@ class MediaOutputStreamMixin:
             )
         await context.runtime.on_media_playback_done(
             fence,
-            context.playback.actual_heard_text(fence),
+            context.output.playback.actual_heard_text(fence),
             tools_active=same_turn_followup_output_pending(
-                context.delegation_output_claims,
-                context.output_work,
+                context.output.delegation_output_claims,
+                context.output.output_work,
                 fence,
             ),
         )
@@ -997,9 +998,9 @@ class MediaOutputStreamMixin:
         self.clear_device_wake_ack_fence(context, fence)
         if not context.standby_requested:
             self.flush_pending_missed_hearing_nudge(context)
-        context.playback.discard(fence)
-        context.output_sequence = 0
-        context.output_text_offset = 0
+        context.output.playback.discard(fence)
+        context.output.output_sequence = 0
+        context.output.output_text_offset = 0
         # A playback terminal permanently closes this generation on the
         # hardware and Edge ledgers.  Finish the runtime lifecycle before
         # selecting a queued acknowledgement/deep/tool result so the existing
@@ -1033,12 +1034,12 @@ class MediaOutputStreamMixin:
             fence,
             reason=reason,
         )
-        context.playback.discard(fence)
-        context.assistant_text = ""
-        context.output_sequence = 0
-        context.output_text_offset = 0
-        context.provider_complete = False
-        context.output_complete_emitted = False
+        context.output.playback.discard(fence)
+        context.output.assistant_text = ""
+        context.output.output_sequence = 0
+        context.output.output_text_offset = 0
+        context.output.provider_complete = False
+        context.output.output_complete_emitted = False
         if cancelled is None:
             await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
             return

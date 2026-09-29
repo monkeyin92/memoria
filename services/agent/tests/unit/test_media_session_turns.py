@@ -486,9 +486,9 @@ async def test_media_asr_dedup_retains_the_most_recent_128_keys() -> None:
             ),
         )
 
-    assert len(context.committed_asr_keys) == 128
-    assert next(iter(context.committed_asr_keys))[1] == "sentence-2"
-    assert next(reversed(context.committed_asr_keys))[1] == "sentence-129"
+    assert len(context.pending.committed_asr_keys) == 128
+    assert next(iter(context.pending.committed_asr_keys))[1] == "sentence-2"
+    assert next(reversed(context.pending.committed_asr_keys))[1] == "sentence-129"
     await context.runtime.close()
     await context.provider.close(identity)
 
@@ -660,10 +660,10 @@ async def test_endpoint_timeout_waits_for_inflight_turn_prepare() -> None:
     )
     assert context.runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
-    context.turn_start_sample = 0
-    context.turn_end_sample = 320
-    context.turn_endpoint_sample = 320
-    context.turn_retire_sample = 320
+    context.pending.turn_start_sample = 0
+    context.pending.turn_end_sample = 320
+    context.pending.turn_endpoint_sample = 320
+    context.pending.turn_retire_sample = 320
 
     committing = asyncio.create_task(registry._commit_pending_turn(context))
     await asyncio.wait_for(prepare_started.wait(), timeout=1)
@@ -731,10 +731,10 @@ async def test_audio_discontinuity_waits_for_inflight_turn_prepare() -> None:
     )
     assert context.runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
-    context.turn_start_sample = 0
-    context.turn_end_sample = 320
-    context.turn_endpoint_sample = 320
-    context.turn_retire_sample = 320
+    context.pending.turn_start_sample = 0
+    context.pending.turn_end_sample = 320
+    context.pending.turn_endpoint_sample = 320
+    context.pending.turn_retire_sample = 320
 
     committing = asyncio.create_task(registry._commit_pending_turn(context))
     await asyncio.wait_for(prepare_started.wait(), timeout=1)
@@ -804,10 +804,10 @@ async def test_finalize_failure_waits_for_inflight_turn_prepare() -> None:
     )
     assert context.runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
-    context.turn_start_sample = 0
-    context.turn_end_sample = 320
-    context.turn_endpoint_sample = 320
-    context.turn_retire_sample = 320
+    context.pending.turn_start_sample = 0
+    context.pending.turn_end_sample = 320
+    context.pending.turn_endpoint_sample = 320
+    context.pending.turn_retire_sample = 320
 
     committing = asyncio.create_task(registry._commit_pending_turn(context))
     await asyncio.wait_for(prepare_started.wait(), timeout=1)
@@ -1001,7 +1001,7 @@ async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
     )
 
     assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
-    retry_task = context.turn_commit_retry_task
+    retry_task = context.pending.turn_commit_retry_task
     assert retry_task is not None
 
     await asyncio.wait_for(provider.reply_started.wait(), timeout=1)
@@ -1015,10 +1015,10 @@ async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
     assert context.projection.provisional is None
     assert context.runtime.speech_timeline.committed_sample == 640
     assert context.asr.last_committed_sample == 640
-    assert context.turn_commit_retry_task is None
-    assert context.turn_commit_retry_attempt == 0
-    assert context.turn_commit_retry_stream_epoch is None
-    assert context.turn_commit_retry_endpoint_sample is None
+    assert context.pending.turn_commit_retry_task is None
+    assert context.pending.turn_commit_retry_attempt == 0
+    assert context.pending.turn_commit_retry_stream_epoch is None
+    assert context.pending.turn_commit_retry_endpoint_sample is None
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "scheduled"}) == 1
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 1
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "succeeded"}) == 1
@@ -1064,7 +1064,7 @@ async def test_endpoint_tail_waits_for_matching_prepare_retry() -> None:
     )
 
     assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
-    retry_task = context.turn_commit_retry_task
+    retry_task = context.pending.turn_commit_retry_task
     assert retry_task is not None
     await asyncio.wait_for(provider.retry_started.wait(), timeout=1)
 
@@ -1164,10 +1164,10 @@ async def test_new_vad_supersedes_retry_without_merging_turns() -> None:
     assert [item.segment_id for item in context.runtime.speech_timeline.pending] == [
         "next-valid-vad"
     ]
-    assert context.turn_commit_retry_task is None
-    assert context.turn_commit_retry_attempt == 0
-    assert context.turn_commit_retry_stream_epoch is None
-    assert context.turn_commit_retry_endpoint_sample is None
+    assert context.pending.turn_commit_retry_task is None
+    assert context.pending.turn_commit_retry_attempt == 0
+    assert context.pending.turn_commit_retry_stream_epoch is None
+    assert context.pending.turn_commit_retry_endpoint_sample is None
     assert provider.prepare_calls == 1
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "superseded"}) == 1
     assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 0
@@ -1234,7 +1234,7 @@ async def test_stale_or_duplicate_vad_does_not_supersede_matching_prepare_retry(
     assert context.runtime.ingest_media_speech_segment(replayed_vad)
 
     assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
-    retry_task = context.turn_commit_retry_task
+    retry_task = context.pending.turn_commit_retry_task
     assert retry_task is not None
     provisional = context.projection.provisional
     assert provisional is not None
@@ -1254,7 +1254,7 @@ async def test_stale_or_duplicate_vad_does_not_supersede_matching_prepare_retry(
         ),
     )
 
-    assert context.turn_commit_retry_task is retry_task
+    assert context.pending.turn_commit_retry_task is retry_task
     assert context.projection.provisional is provisional
     assert not [
         payload
@@ -1267,7 +1267,7 @@ async def test_stale_or_duplicate_vad_does_not_supersede_matching_prepare_retry(
     assert provider.prepare_calls == 2
     assert context.projection.provisional is None
     assert context.asr.last_committed_sample == 640
-    assert context.turn_commit_retry_task is None
+    assert context.pending.turn_commit_retry_task is None
     session.close()
     await registry.on_session_closed(session)
 
@@ -1527,7 +1527,7 @@ async def test_commit_pauses_provider_asr_when_playback_starts() -> None:
     )
 
     assert fence is not None, f"turn did not commit: {reason}"
-    assert context.playback.current_fence == fence
+    assert context.output.playback.current_fence == fence
     assert provider.pause_asr_calls == [identity.stream_epoch]
     await context.runtime.close()
 
@@ -1709,9 +1709,9 @@ async def test_finalize_publishes_watermark_before_rechecking_pending_endpoint()
     assert context.runtime.ingest_media_speech_segment(vad_end)
     await registry._apply_projection_segment(context, vad_end)
     context.asr.last_sent_sample = 640
-    context.turn_start_sample = 0
-    context.turn_endpoint_sample = 640
-    context.turn_retire_sample = 640
+    context.pending.turn_start_sample = 0
+    context.pending.turn_endpoint_sample = 640
+    context.pending.turn_retire_sample = 640
 
     assert await registry._audio_ingress.finalize_speech_segment(context)
     await asyncio.sleep(0.05)
@@ -1774,7 +1774,7 @@ async def test_vad_finalize_failure_does_not_escape_media_callback(
 
     assert context.ingress.provider_failed is True
     assert context.ingress.discontinuity_pending is True
-    assert context.turn_endpoint_sample is None
+    assert context.pending.turn_endpoint_sample is None
     assert registry.metrics.get("media_sessions_failed_total") >= 1
     boundary_logs = [
         json.loads(record.message.removeprefix("media_asr_boundary "))
@@ -1876,9 +1876,9 @@ async def test_pending_turn_records_skipped_reply_dispatch_reason() -> None:
     registry._dispatch_reply = skipped_dispatch  # type: ignore[method-assign]
 
     assert await registry._commit_pending_turn(context) is None
-    await _wait_until(lambda: bool(context.output_results))
+    await _wait_until(lambda: bool(context.output.output_results))
 
-    terminal = context.output_results[-1]
+    terminal = context.output.output_results[-1]
     assert terminal.status is OutputDispatchStatus.SKIPPED
     assert terminal.reason == "output_intent_inactive"
     assert terminal.emitted_audio is False
@@ -1932,12 +1932,12 @@ async def test_empty_provider_reply_returns_the_current_session_to_listening() -
     identity = SessionIdentity("empty-provider-reply")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, "你好", fence)
     await asyncio.sleep(0)
 
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     assert context.runtime.interaction_phase.value == "listening"
     assert "listening" in bridge.states
@@ -2010,26 +2010,26 @@ async def test_stalled_output_generation_times_out_and_discards_partial_playback
     session = bridge.bridge.open(identity)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     reply = asyncio.create_task(
         registry.generate_reply(identity.session_id, "你好", fence),
         name="test-stalled-output-generation",
     )
     await asyncio.wait_for(second_read_started.wait(), timeout=1)
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
     result = await asyncio.wait_for(reply, timeout=1)
 
     assert result is False
     assert cancellation_started.is_set()
     await asyncio.wait_for(cancellation_finished.wait(), timeout=1)
     assert provider.cancelled == [fence]
-    assert context.output_owner is None
-    assert context.reply_task is None
-    assert context.output_dispatch_task is None
-    assert context.output_work == {}
-    assert context.playback.current_fence is None
-    assert context.playback.actual_heard_text(fence) == ""
+    assert context.output.output_owner is None
+    assert context.output.reply_task is None
+    assert context.output.output_dispatch_task is None
+    assert context.output.output_work == {}
+    assert context.output.playback.current_fence is None
+    assert context.output.playback.actual_heard_text(fence) == ""
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     cancelled = context.runtime.fence
     assert cancelled.generation_id == fence.generation_id + 1
@@ -2058,7 +2058,7 @@ async def test_stalled_output_generation_times_out_and_discards_partial_playback
             tool_epoch=fence.tool_epoch,
         ),
     )
-    assert context.playback.actual_heard_text(fence) == ""
+    assert context.output.playback.actual_heard_text(fence) == ""
     assert not [
         task
         for task in asyncio.all_tasks()
@@ -2249,8 +2249,8 @@ async def test_device_vad_end_during_wake_playback_is_ignored() -> None:
                 voiced_end_sample=1_280,
             ),
         )
-        assert context.turn_endpoint_sample is None
-        assert context.pending_partial is None
+        assert context.pending.turn_endpoint_sample is None
+        assert context.pending.pending_partial is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -2299,7 +2299,7 @@ async def test_device_clock_fact_final_commits_before_vad_end() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.turn_endpoint_sample == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
         assert context.turn_endpoint_task is not None
     finally:
         await registry.finalize_session(identity.session_id)
@@ -2349,8 +2349,8 @@ async def test_device_conversation_close_final_commits_before_vad_end() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.turn_endpoint_sample == 16_000
-        assert context.conversation_close_endpoint_pinned == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
+        assert context.pending.conversation_close_endpoint_pinned == 16_000
         assert context.turn_endpoint_task is not None
     finally:
         await registry.finalize_session(identity.session_id)
@@ -2400,8 +2400,8 @@ async def test_device_conversation_close_immediate_partial_commits_without_vad_e
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, partial)
-        assert context.conversation_close_endpoint_pinned == 16_000
-        assert context.turn_endpoint_sample == 16_000
+        assert context.pending.conversation_close_endpoint_pinned == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
         assert context.turn_endpoint_task is not None
     finally:
         await registry.finalize_session(identity.session_id)
@@ -2451,9 +2451,9 @@ async def test_device_conversation_close_pin_blocks_late_vad_end_extension() -> 
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        pinned = context.conversation_close_endpoint_pinned
+        pinned = context.pending.conversation_close_endpoint_pinned
         assert pinned == 16_000
-        assert context.turn_endpoint_sample == pinned
+        assert context.pending.turn_endpoint_sample == pinned
 
         await registry.on_speech_segment(
             session,
@@ -2470,7 +2470,7 @@ async def test_device_conversation_close_pin_blocks_late_vad_end_extension() -> 
                 voiced_end_sample=200_000,
             ),
         )
-        assert context.turn_endpoint_sample != 200_000
+        assert context.pending.turn_endpoint_sample != 200_000
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -2526,13 +2526,13 @@ async def test_device_conversation_close_semantic_final_commits_before_vad_end()
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        task = context.conversation_close_semantic_task
+        task = context.pending.conversation_close_semantic_task
         if task is not None:
             await task
         assert calls == ["那先不聊了"]
         assert (
-            context.conversation_close_endpoint_pinned == 16_000
-            or context.turn_endpoint_sample == 16_000
+            context.pending.conversation_close_endpoint_pinned == 16_000
+            or context.pending.turn_endpoint_sample == 16_000
             or context.standby_requested
         )
     finally:
@@ -2588,9 +2588,9 @@ async def test_device_clock_fact_pin_blocks_late_vad_end_extension() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.clock_fact_endpoint_pinned == 16_000
-        assert context.turn_endpoint_sample == 16_000
-        assert context.turn_retire_sample == 16_000
+        assert context.pending.clock_fact_endpoint_pinned == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
+        assert context.pending.turn_retire_sample == 16_000
 
         await registry.on_speech_segment(
             session,
@@ -2607,7 +2607,7 @@ async def test_device_clock_fact_pin_blocks_late_vad_end_extension() -> None:
                 voiced_end_sample=200_000,
             ),
         )
-        assert context.turn_endpoint_sample != 200_000
+        assert context.pending.turn_endpoint_sample != 200_000
         await asyncio.sleep(0.2)
         user_turns = [
             turn.content
@@ -2680,7 +2680,7 @@ async def test_device_clock_fact_concatenated_timeline_commits_canonical_segment
         )
         assert await registry.accept_asr_result(identity.session_id, partial)
         assert await registry.accept_asr_result(identity.session_id, final)
-        assert context.turn_endpoint_sample == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
 
         fence, reason = await registry.commit_user_turn(
             identity.session_id,
@@ -2775,7 +2775,7 @@ async def test_device_clock_fact_prepare_provisional_drift_still_commits() -> No
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.turn_endpoint_sample == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
 
         fence, reason = await registry.commit_user_turn(
             identity.session_id,
@@ -2845,9 +2845,9 @@ async def test_device_clock_fact_pin_survives_replayed_vad_start() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        pinned = context.clock_fact_endpoint_pinned
+        pinned = context.pending.clock_fact_endpoint_pinned
         assert pinned == 16_000
-        assert context.turn_endpoint_sample == pinned
+        assert context.pending.turn_endpoint_sample == pinned
 
         await registry.on_speech_segment(
             session,
@@ -2862,8 +2862,8 @@ async def test_device_clock_fact_pin_survives_replayed_vad_start() -> None:
                 capture_end_sample=20_001,
             ),
         )
-        assert context.clock_fact_endpoint_pinned == pinned
-        assert context.turn_endpoint_sample == pinned
+        assert context.pending.clock_fact_endpoint_pinned == pinned
+        assert context.pending.turn_endpoint_sample == pinned
         assert context.turn_endpoint_task is not None
     finally:
         await registry.finalize_session(identity.session_id)
@@ -2918,7 +2918,7 @@ async def test_device_pinned_clock_fact_commits_without_asr_endpoint_coverage() 
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        context.turn_end_sample = 8_000
+        context.pending.turn_end_sample = 8_000
         await asyncio.sleep(0.2)
         user_turns = [
             turn.content
@@ -3003,7 +3003,7 @@ async def test_device_clock_fact_commit_survives_recovery_reschedule() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.clock_fact_endpoint_pinned == 16_000
+        assert context.pending.clock_fact_endpoint_pinned == 16_000
         first_task = context.turn_endpoint_task
         assert first_task is not None
 
@@ -3021,7 +3021,7 @@ async def test_device_clock_fact_commit_survives_recovery_reschedule() -> None:
                 for turn in context.runtime.orchestrator.context.turns
                 if turn.role == "user" and turn.content
             ]
-            if user_turns == ["今天星期几"] and context.turn_endpoint_sample is None:
+            if user_turns == ["今天星期几"] and context.pending.turn_endpoint_sample is None:
                 break
             await asyncio.sleep(0.05)
         else:
@@ -3032,7 +3032,7 @@ async def test_device_clock_fact_commit_survives_recovery_reschedule() -> None:
             ]
             raise AssertionError(
                 f"clock-fact turn did not commit after recovery reschedule: "
-                f"user_turns={user_turns!r} endpoint={context.turn_endpoint_sample}"
+                f"user_turns={user_turns!r} endpoint={context.pending.turn_endpoint_sample}"
             )
     finally:
         allow_commit.set()
@@ -3095,7 +3095,7 @@ async def test_mostly_committed_straddling_final_is_dropped_not_readopted() -> N
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
-        assert context.live_query_forced_text is None
+        assert context.pending.live_query_forced_text is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -3161,12 +3161,12 @@ async def test_device_clock_fact_commits_when_provisional_lags_asr_end() -> None
             capture_end_sample=84_161,
             text="今天星期几",
         )
-        context.turn_start_sample = 84_160
-        context.turn_end_sample = 154_880
-        context.turn_endpoint_sample = 154_880
-        context.turn_retire_sample = 154_880
-        context.clock_fact_endpoint_pinned = 154_880
-        context.turn_endpoint_grace_deadline = time.monotonic()
+        context.pending.turn_start_sample = 84_160
+        context.pending.turn_end_sample = 154_880
+        context.pending.turn_endpoint_sample = 154_880
+        context.pending.turn_retire_sample = 154_880
+        context.pending.clock_fact_endpoint_pinned = 154_880
+        context.pending.turn_endpoint_grace_deadline = time.monotonic()
         registry._schedule_turn_commit(context)
         await asyncio.sleep(0.2)
         user_turns = [
@@ -3245,8 +3245,8 @@ async def test_device_clock_fact_recovered_after_overlap_without_vad() -> None:
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.turn_start_sample is not None
-        assert context.turn_endpoint_sample == 205_760
+        assert context.pending.turn_start_sample is not None
+        assert context.pending.turn_endpoint_sample == 205_760
         await asyncio.sleep(0.2)
         user_turns = [
             turn.content
@@ -3331,8 +3331,8 @@ async def test_device_low_energy_rescue_close_rejection_does_not_request_standby
 
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.conversation_close_endpoint_pinned is None
-        assert context.turn_endpoint_sample is None
+        assert context.pending.conversation_close_endpoint_pinned is None
+        assert context.pending.turn_endpoint_sample is None
         assert context.standby_requested is False
     finally:
         await registry.finalize_session(identity.session_id)
@@ -3407,10 +3407,10 @@ async def test_device_straddling_rescue_farewell_needs_speech_energy(
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
         if expect_close:
-            assert context.conversation_close_endpoint_pinned == 160_000
+            assert context.pending.conversation_close_endpoint_pinned == 160_000
         else:
-            assert context.conversation_close_endpoint_pinned is None
-            assert context.turn_endpoint_sample is None
+            assert context.pending.conversation_close_endpoint_pinned is None
+            assert context.pending.turn_endpoint_sample is None
             assert context.standby_requested is False
     finally:
         await registry.finalize_session(identity.session_id)
@@ -3474,16 +3474,16 @@ async def test_device_empty_asr_asks_user_to_repeat() -> None:
                 voiced_end_sample=16_000,
             ),
         )
-        endpoint_sample = context.turn_endpoint_sample
+        endpoint_sample = context.pending.turn_endpoint_sample
         assert endpoint_sample == 16_000
         endpoint_task = context.turn_endpoint_task
         assert endpoint_task is not None
         endpoint_task.cancel()
         await asyncio.gather(endpoint_task, return_exceptions=True)
-        timeout_handle = context.turn_endpoint_timeout_handle
+        timeout_handle = context.pending.turn_endpoint_timeout_handle
         if timeout_handle is not None:
             timeout_handle.cancel()
-            context.turn_endpoint_timeout_handle = None
+            context.pending.turn_endpoint_timeout_handle = None
 
         decision = _verified_owner_decision()
         context.runtime._speaker_decision = decision
@@ -3627,10 +3627,10 @@ async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() ->
         )
         assert context.runtime.ingest_media_speech_segment(duplicate_segment)
         await registry._apply_projection_segment(context, duplicate_segment)
-        context.turn_start_sample = 600
-        context.turn_end_sample = 1200
-        context.turn_endpoint_sample = 1200
-        context.turn_retire_sample = 1240
+        context.pending.turn_start_sample = 600
+        context.pending.turn_end_sample = 1200
+        context.pending.turn_endpoint_sample = 1200
+        context.pending.turn_retire_sample = 1240
         repeat_fence, repeat_reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -3667,7 +3667,7 @@ async def test_scheduled_empty_output_returns_to_listening() -> None:
     context = await registry.open_session(identity)
     try:
         fence = await context.runtime.on_turn_committed("你好")
-        context.playback.start(fence)
+        context.output.playback.start(fence)
         coordinator = context.runtime.orchestrator.delegation
         now_ms = int(time.time() * 1_000)
         intent = coordinator.bridge_acknowledgement(
@@ -3681,11 +3681,11 @@ async def test_scheduled_empty_output_returns_to_listening() -> None:
             floor_allows_output=True, now_ms=now_ms,
         )
         assert await registry._enqueue_output_work(context, _OutputWork(intent, fence))
-        await _wait_until(lambda: bool(context.output_results))
-        assert context.output_results[-1].reason == "provider_completed_without_audio"
+        await _wait_until(lambda: bool(context.output.output_results))
+        assert context.output.output_results[-1].reason == "provider_completed_without_audio"
         assert context.runtime.orchestrator.state is ConversationState.LISTENING
-        assert context.output_owner is None
-        assert context.output_dispatch_task is None
+        assert context.output.output_owner is None
+        assert context.output.output_dispatch_task is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -3756,7 +3756,7 @@ async def test_answer_still_delivered_after_same_turn_generation_bump() -> None:
         assert bumped.turn_id == fence.turn_id
         provider.release.set()
         await asyncio.sleep(0.3)
-        if context.output_owner is not None and not provider.deep_started.is_set():
+        if context.output.output_owner is not None and not provider.deep_started.is_set():
             await _finish_output_owner_playback(registry, identity, bridge, session)
         await asyncio.wait_for(provider.deep_started.wait(), timeout=4)
         assert provider.output_kinds == [
@@ -3765,7 +3765,7 @@ async def test_answer_still_delivered_after_same_turn_generation_bump() -> None:
         ]
         assert LIVE_LOOKUP_FILLER in provider.output_texts
         assert BRIDGE_PHRASES[4] not in provider.output_texts
-        claim = context.delegation_output_claims.get(fence)
+        claim = context.output.delegation_output_claims.get(fence)
         assert claim is not None
         assert claim.state is DelegationOutputState.COMPLETED
     finally:
@@ -3994,7 +3994,7 @@ async def test_vad_boundary_drains_audio_before_rotating_provider_task(
 
     context = registry.session_state(identity.session_id)
     assert provider.finalize_called is True
-    assert context.turn_end_sample == 320
+    assert context.pending.turn_end_sample == 320
     assert context.asr.latest_authoritative_task_epoch == 2
     assert any(segment.text == "今天星期几" for segment in context.runtime.speech_timeline.pending)
     boundary_logs = [
@@ -4282,8 +4282,8 @@ async def test_absolute_endpoint_tail_discards_turn_when_provider_final_never_ar
     await asyncio.sleep(0.04)
 
     context = registry.session_state(identity.session_id)
-    assert context.turn_endpoint_sample is None
-    assert context.turn_start_sample is None
+    assert context.pending.turn_endpoint_sample is None
+    assert context.pending.turn_start_sample is None
     assert context.projection.provisional is None
     assert context.asr.last_committed_sample == 640
     assert context.runtime.speech_timeline.committed_sample == 640
@@ -4352,10 +4352,10 @@ async def test_tail_timeout_fences_late_final_and_rotates_projection_identity() 
     assert endpoint_task is not None
     endpoint_task.cancel()
     await asyncio.gather(endpoint_task, return_exceptions=True)
-    timeout_handle = context.turn_endpoint_timeout_handle
+    timeout_handle = context.pending.turn_endpoint_timeout_handle
     assert timeout_handle is not None
     timeout_handle.cancel()
-    context.turn_endpoint_timeout_handle = None
+    context.pending.turn_endpoint_timeout_handle = None
     first_started = [
         payload for event_type, payload in bridge.events if event_type == "turn.provisional.started"
     ]
@@ -4498,7 +4498,7 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
         payload for event_type, payload in bridge.client_events if event_type == "turn.committed"
     ]
     assert committed and committed[-1]["provider_final_missing"] is True
-    assert context.pending_partial is None
+    assert context.pending.pending_partial is None
 
 
 @pytest.mark.asyncio
@@ -4562,9 +4562,9 @@ async def test_endpoint_tail_keeps_farther_partial_when_final_timing_shrinks() -
     assert await registry.accept_asr_result(identity.session_id, partial)
     assert await registry.accept_asr_result(identity.session_id, final)
     context = registry.session_state(identity.session_id)
-    assert context.pending_partial is not None
-    assert context.pending_partial.capture_end_sample == 40_000
-    assert context.pending_partial.revision == 2
+    assert context.pending.pending_partial is not None
+    assert context.pending.pending_partial.capture_end_sample == 40_000
+    assert context.pending.pending_partial.revision == 2
 
     await registry.on_speech_segment(
         session,
@@ -4590,7 +4590,7 @@ async def test_endpoint_tail_keeps_farther_partial_when_final_timing_shrinks() -
         payload for event_type, payload in bridge.client_events if event_type == "turn.committed"
     ]
     assert committed and committed[-1]["provider_final_missing"] is True
-    assert context.pending_partial is None
+    assert context.pending.pending_partial is None
     await context.runtime.close()
 
 
@@ -4728,7 +4728,7 @@ async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
     assert [
         turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == []
-    assert context.turn_endpoint_sample is None
+    assert context.pending.turn_endpoint_sample is None
     assert context.asr.last_committed_sample == 40_001
     await context.runtime.close()
 
@@ -5007,7 +5007,7 @@ async def test_media_playback_overlap_finals_stay_out_of_the_next_commit(
     window = await device_media_session("playback-overlap-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _feed_playback_window_finals(window)
-    assert context.pending_turn_playback_overlap is True
+    assert context.pending.pending_turn_playback_overlap is True
 
     # Before the real question arrives the pending candidate window already
     # resolves those five finals as one 29-character transcript: that is the
@@ -5038,14 +5038,14 @@ async def test_media_playback_overlap_finals_stay_out_of_the_next_commit(
 
     # 350080 -> 484480 is 8.4 s, far beyond the conservative candidate gap: the
     # window closes and the question owns the turn on its own samples.
-    assert context.turn_start_sample == 484_480
-    assert context.turn_end_sample == 508_800
+    assert context.pending.turn_start_sample == 484_480
+    assert context.pending.turn_end_sample == 508_800
 
     text = _resolve_media_turn_text(
         context,
         stream_epoch=1,
-        start_sample=context.turn_start_sample,
-        end_sample=context.turn_end_sample,
+        start_sample=context.pending.turn_start_sample,
+        end_sample=context.pending.turn_end_sample,
     )
     assert text == question
 
@@ -5130,11 +5130,11 @@ async def test_media_out_of_order_final_cannot_rejoin_a_split_pending_turn(
     text = _resolve_media_turn_text(
         context,
         stream_epoch=1,
-        start_sample=context.turn_start_sample,
-        end_sample=context.turn_end_sample,
+        start_sample=context.pending.turn_start_sample,
+        end_sample=context.pending.turn_end_sample,
     )
     assert text == question
-    assert context.turn_start_sample == 484_480
+    assert context.pending.turn_start_sample == 484_480
 
 
 @pytest.mark.asyncio
@@ -5164,8 +5164,8 @@ async def test_media_long_pause_without_playback_overlap_still_merges(
         revision=2,
     )
 
-    assert context.turn_start_sample == 0
-    assert context.turn_end_sample == 100_000
+    assert context.pending.turn_start_sample == 0
+    assert context.pending.turn_end_sample == 100_000
     text = _resolve_media_turn_text(
         context, stream_epoch=1, start_sample=0, end_sample=100_000
     )
@@ -5224,12 +5224,12 @@ async def test_media_out_of_order_final_inside_the_retained_window_still_merges(
         revision=3,
     )
 
-    assert context.turn_start_sample == 484_480
+    assert context.pending.turn_start_sample == 484_480
     text = _resolve_media_turn_text(
         context,
         stream_epoch=1,
-        start_sample=context.turn_start_sample,
-        end_sample=context.turn_end_sample,
+        start_sample=context.pending.turn_start_sample,
+        end_sample=context.pending.turn_end_sample,
     )
     assert text is not None
     assert "AAA" not in text
@@ -5258,7 +5258,7 @@ async def test_media_playback_followup_endpoints_without_vad_edge(
 
     # The echo-holdover VAD stays active across the boundary; it must not
     # keep suppressing the split or the follow-up endpoint.
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
     await _accept_media_asr_final(
         registry,
         identity,
@@ -5268,8 +5268,8 @@ async def test_media_playback_followup_endpoints_without_vad_edge(
         text="后天呢",
     )
 
-    assert context.turn_start_sample == 215_000
-    assert context.turn_endpoint_sample == 230_000
+    assert context.pending.turn_start_sample == 215_000
+    assert context.pending.turn_endpoint_sample == 230_000
     await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
     assert "后天呢" in _user_turn_texts(context)
     # The abandoned echo transcript is evicted, not merely out of range.
@@ -5295,7 +5295,7 @@ async def test_media_playback_followup_echo_tail_cannot_endpoint(
     window = await device_media_session("followup-echo-guard-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _complete_previous_device_playback(window)
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
 
     tail = await _accept_media_asr_decision(
         registry,
@@ -5306,7 +5306,7 @@ async def test_media_playback_followup_echo_tail_cannot_endpoint(
         text="多云转晴",
     )
     assert tail.accepted is not None, tail.reason
-    assert context.turn_endpoint_sample is None
+    assert context.pending.turn_endpoint_sample is None
     assert window.provider.prepared == []
 
     await _accept_media_asr_final(
@@ -5317,7 +5317,7 @@ async def test_media_playback_followup_echo_tail_cannot_endpoint(
         end_sample=230_000,
         text="后天呢",
     )
-    assert context.turn_start_sample == 215_000
+    assert context.pending.turn_start_sample == 215_000
     await _wait_until(lambda: window.provider.prepared == ["后天呢"], timeout=3.0)
     assert "多云转晴" not in window.provider.prepared[0]
 
@@ -5337,7 +5337,7 @@ async def test_media_playback_followup_survives_late_rejected_result(
     window = await device_media_session("followup-rejection-tolerant-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _complete_previous_device_playback(window)
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
     await _accept_media_asr_final(
         registry,
         identity,
@@ -5346,7 +5346,7 @@ async def test_media_playback_followup_survives_late_rejected_result(
         end_sample=230_000,
         text="后天呢",
     )
-    assert context.turn_endpoint_sample == 230_000
+    assert context.pending.turn_endpoint_sample == 230_000
 
     # Interior cross-sentence overlap: rejected by the supervisor, the same
     # class of rejection the offline paragraphs died from in the field run.
@@ -5378,7 +5378,7 @@ async def test_media_playback_followup_advances_with_continued_speech(
     window = await device_media_session("followup-continued-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _complete_previous_device_playback(window)
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
     await _accept_media_asr_final(
         registry,
         identity,
@@ -5387,7 +5387,7 @@ async def test_media_playback_followup_advances_with_continued_speech(
         end_sample=225_000,
         text="那后天呢",
     )
-    assert context.turn_endpoint_sample == 225_000
+    assert context.pending.turn_endpoint_sample == 225_000
     await _accept_media_asr_final(
         registry,
         identity,
@@ -5397,7 +5397,7 @@ async def test_media_playback_followup_advances_with_continued_speech(
         text="天气怎么样",
         revision=2,
     )
-    assert context.turn_endpoint_sample == 240_000
+    assert context.pending.turn_endpoint_sample == 240_000
 
     await _wait_until(lambda: len(window.provider.prepared) == 1, timeout=3.0)
     prepared = window.provider.prepared[0]
@@ -5417,7 +5417,7 @@ async def test_media_playback_followup_empty_final_does_not_pin_the_endpoint(
     window = await device_media_session("followup-empty-final-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _complete_previous_device_playback(window)
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
     await _accept_media_asr_decision(
         registry,
         identity,
@@ -5426,8 +5426,8 @@ async def test_media_playback_followup_empty_final_does_not_pin_the_endpoint(
         end_sample=225_000,
         text="",
     )
-    assert context.turn_endpoint_sample is None
-    assert context.turn_endpoint_tail_deadline is None
+    assert context.pending.turn_endpoint_sample is None
+    assert context.pending.turn_endpoint_tail_deadline is None
 
     await _accept_media_asr_final(
         registry,
@@ -5437,7 +5437,7 @@ async def test_media_playback_followup_empty_final_does_not_pin_the_endpoint(
         end_sample=236_000,
         text="今天天气怎么样",
     )
-    assert context.turn_endpoint_sample == 236_000
+    assert context.pending.turn_endpoint_sample == 236_000
     await _wait_until(lambda: window.provider.prepared == ["今天天气怎么样"], timeout=3.0)
 
 
@@ -5454,7 +5454,7 @@ async def test_media_playback_followup_advance_restarts_the_absolute_tail_bound(
     window = await device_media_session("followup-tail-bound-session")
     registry, identity, context = window.registry, window.identity, window.context
     await _complete_previous_device_playback(window)
-    context.active_vad_start_sample = 195_000
+    context.pending.active_vad_start_sample = 195_000
     await _accept_media_asr_final(
         registry,
         identity,
@@ -5463,8 +5463,8 @@ async def test_media_playback_followup_advance_restarts_the_absolute_tail_bound(
         end_sample=225_000,
         text="今天",
     )
-    first_deadline = context.turn_endpoint_tail_deadline
-    first_handle = context.turn_endpoint_timeout_handle
+    first_deadline = context.pending.turn_endpoint_tail_deadline
+    first_handle = context.pending.turn_endpoint_timeout_handle
     assert first_deadline is not None and first_handle is not None
 
     await asyncio.sleep(0.05)
@@ -5477,11 +5477,11 @@ async def test_media_playback_followup_advance_restarts_the_absolute_tail_bound(
         text="天气怎么样",
         revision=2,
     )
-    assert context.turn_endpoint_sample == 240_000
-    assert context.turn_endpoint_tail_deadline is not None
-    assert context.turn_endpoint_tail_deadline > first_deadline
+    assert context.pending.turn_endpoint_sample == 240_000
+    assert context.pending.turn_endpoint_tail_deadline is not None
+    assert context.pending.turn_endpoint_tail_deadline > first_deadline
     assert first_handle.cancelled()
-    assert context.turn_endpoint_timeout_handle is not None
+    assert context.pending.turn_endpoint_timeout_handle is not None
     assert not context.standby_requested
 
 
@@ -5511,10 +5511,10 @@ async def test_textless_vad_cannot_hold_an_answered_question_open(
         end_sample=230_000,
         text="给我讲个小故事吧",
     )
-    assert context.turn_endpoint_sample == 230_000
+    assert context.pending.turn_endpoint_sample == 230_000
     # Background sound: starts and ends that never bring text.
     await _device_vad(window, "noise-1", 235_000, final=False)
-    assert context.turn_endpoint_sample is None
+    assert context.pending.turn_endpoint_sample is None
     await _device_vad(window, "noise-1-end", 250_000, final=True)
     await asyncio.sleep(0.05)
     await _device_vad(window, "noise-2", 252_000, final=False)
@@ -5557,7 +5557,7 @@ async def test_reopened_turn_keeps_waiting_when_the_new_speech_has_text(
     # Past the window, the still-open speech that did bring text has not
     # been cut at the first endpoint.
     assert window.provider.prepared == []
-    assert context.turn_end_sample == 240_000
+    assert context.pending.turn_end_sample == 240_000
     await _device_vad(window, "continued-end", 240_000, final=True)
     await _wait_until(lambda: len(window.provider.prepared) == 1, timeout=3.0)
     prepared = window.provider.prepared[0]
@@ -5582,16 +5582,16 @@ async def test_reopen_window_never_commits_a_newer_turn_at_the_old_endpoint(
         text="给我讲个小故事吧",
     )
     await _device_vad(window, "noise", 235_000, final=False)
-    handle = context.reopen_evidence_handle
-    assert handle is not None and context.reopen_evidence_endpoint == 230_000
+    handle = context.pending.reopen_evidence_handle
+    assert handle is not None and context.pending.reopen_evidence_endpoint == 230_000
     handle.cancel()
     # The logical turn changed meanwhile (committed, then a new one opened).
-    context.turn_start_sample = 300_000
+    context.pending.turn_start_sample = 300_000
     window.registry._expire_reopen_evidence_window(
         window.identity.session_id, window.identity.stream_epoch, 230_000
     )
-    assert context.turn_endpoint_sample is None
-    assert context.reopen_evidence_endpoint is None
+    assert context.pending.turn_endpoint_sample is None
+    assert context.pending.reopen_evidence_endpoint is None
     await asyncio.sleep(0.05)
     assert window.provider.prepared == []
 
@@ -5611,11 +5611,11 @@ async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
     await _feed_playback_window_finals(window)
     _start_retained_utterance(window)
     context = window.context
-    assert context.pending_turn_playback_overlap is True
-    assert context.turn_start_sample == 158_560
-    assert context.turn_end_sample == _ABANDONED_WINDOW_END
+    assert context.pending.pending_turn_playback_overlap is True
+    assert context.pending.turn_start_sample == 158_560
+    assert context.pending.turn_end_sample == _ABANDONED_WINDOW_END
 
-    context.active_vad_start_sample = _ABANDONED_WINDOW_END
+    context.pending.active_vad_start_sample = _ABANDONED_WINDOW_END
     anchored = await _accept_media_asr_decision(
         window.registry,
         window.identity,
@@ -5625,9 +5625,9 @@ async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
         text="下午一起出发吗",
     )
     assert anchored.accepted is not None
-    assert context.turn_start_sample == 158_560
+    assert context.pending.turn_start_sample == 158_560
 
-    context.active_vad_start_sample = None
+    context.pending.active_vad_start_sample = None
     split = await _accept_media_asr_decision(
         window.registry,
         window.identity,
@@ -5638,7 +5638,7 @@ async def test_media_playback_overlap_split_is_blocked_by_a_vad_anchored_turn(
         revision=2,
     )
     assert split.accepted is not None
-    assert context.turn_start_sample == 470_000
+    assert context.pending.turn_start_sample == 470_000
 
 
 @pytest.mark.parametrize(
@@ -5673,7 +5673,7 @@ async def test_device_abandoned_window_final_cannot_pin_pollute_or_close(
     )
     assert late.accepted is None
     assert late.reason is ASRDecisionReason.INTERVAL_CONFLICT
-    assert getattr(window.context, pin_attribute) is None
+    assert getattr(window.context.pending, pin_attribute) is None
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
     assert window.provider.prepared == ["下午一起出发吗"]
@@ -5698,8 +5698,8 @@ async def test_device_abandoned_window_partial_cannot_pin_or_pollute(
         is_final=False,
     )
     assert late.accepted is None
-    assert window.context.conversation_close_partial_text is None
-    assert window.context.conversation_close_endpoint_pinned is None
+    assert window.context.pending.conversation_close_partial_text is None
+    assert window.context.pending.conversation_close_endpoint_pinned is None
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
     assert window.provider.prepared == ["下午一起出发吗"]
@@ -5733,9 +5733,9 @@ async def test_device_old_vad_edge_cannot_pull_the_retained_onset_back(
             ),
         )
 
-    assert context.active_vad_start_sample is None
-    assert context.turn_start_sample == 484_480
-    assert context.turn_endpoint_sample is None
+    assert context.pending.active_vad_start_sample is None
+    assert context.pending.turn_start_sample == 484_480
+    assert context.pending.turn_endpoint_sample is None
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
     assert window.provider.prepared == ["下午一起出发吗"]
@@ -5766,7 +5766,7 @@ async def test_device_current_vad_still_extends_the_retained_window(
             capture_end_sample=500_001,
         ),
     )
-    assert context.active_vad_start_sample == 500_000
+    assert context.pending.active_vad_start_sample == 500_000
     await _accept_media_asr_final(
        window.registry,
        window.identity,
@@ -5776,7 +5776,7 @@ async def test_device_current_vad_still_extends_the_retained_window(
        text="还有明天呢",
        revision=2,
     )
-    assert context.turn_start_sample == 484_480
+    assert context.pending.turn_start_sample == 484_480
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_000)
     text = window.provider.prepared[-1]
@@ -5793,10 +5793,10 @@ async def test_device_pinned_endpoint_is_never_split(device_media_session: Any) 
         retained_end=490_000,
     )
     context = window.context
-    context.pending_turn_playback_overlap = True
-    context.turn_endpoint_sample = 490_000
-    context.turn_retire_sample = 490_000
-    context.turn_endpoint_grace_deadline = time.monotonic() + 60.0
+    context.pending.pending_turn_playback_overlap = True
+    context.pending.turn_endpoint_sample = 490_000
+    context.pending.turn_retire_sample = 490_000
+    context.pending.turn_endpoint_grace_deadline = time.monotonic() + 60.0
 
     far = await _accept_media_asr_decision(
         window.registry,
@@ -5808,14 +5808,14 @@ async def test_device_pinned_endpoint_is_never_split(device_media_session: Any) 
         revision=2,
     )
     assert far.accepted is not None
-    assert context.turn_start_sample == 484_480
-    assert context.turn_endpoint_sample == 490_000
+    assert context.pending.turn_start_sample == 484_480
+    assert context.pending.turn_endpoint_sample == 490_000
 
     # Positive control: the accepted final and its 42 000-sample gap above the
     # candidate tail do split once the endpoint is gone, so the endpoint, not an
     # unrelated gate, was what blocked the earlier final.
-    context.turn_endpoint_sample = None
-    context.turn_retire_sample = None
+    context.pending.turn_endpoint_sample = None
+    context.pending.turn_retire_sample = None
     split = await _accept_media_asr_decision(
         window.registry,
         window.identity,
@@ -5826,7 +5826,7 @@ async def test_device_pinned_endpoint_is_never_split(device_media_session: Any) 
         revision=3,
     )
     assert split.accepted is not None
-    assert context.turn_start_sample == 600_000
+    assert context.pending.turn_start_sample == 600_000
 
 
 @pytest.mark.asyncio
@@ -5857,8 +5857,8 @@ async def test_device_final_crossing_the_retained_onset_fails_closed(
     text = _resolve_media_turn_text(
         window.context,
         stream_epoch=1,
-        start_sample=window.context.turn_start_sample,
-        end_sample=window.context.turn_end_sample,
+        start_sample=window.context.pending.turn_start_sample,
+        end_sample=window.context.pending.turn_end_sample,
     )
     assert text == "下午一起出发吗"
 
@@ -5892,7 +5892,7 @@ async def test_device_partial_only_overlap_window_cannot_pollute_the_next_commit
         end_sample=508_800,
         text="下午一起出发吗",
     )
-    assert window.context.turn_start_sample == 484_480
+    assert window.context.pending.turn_start_sample == 484_480
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=508_800)
     assert window.provider.prepared == ["下午一起出发吗"]
@@ -5996,8 +5996,8 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         completed = await _next_event(call, "generation")
         assert completed.generation.action == media_pb2.GENERATION_ACTION_COMPLETE
         context = registry.session_state(session_identity.session_id)
-        assert context.playback.current_fence == fence
-        assert context.playback._spans[fence]
+        assert context.output.playback.current_fence == fence
+        assert context.output.playback._spans[fence]
         assert context.runtime.orchestrator.state is ConversationState.SPEAKING
 
         await requests.put(
@@ -6241,8 +6241,8 @@ async def test_registry_chain_normalizes_tail_and_keeps_rejected_replay_out_of_n
 
     await audio(2, 640)
     assert [segment.text for segment in bridge.transcripts] == ["你好", "世界"]
-    assert context.turn_start_sample is None
-    assert context.turn_end_sample is None
+    assert context.pending.turn_start_sample is None
+    assert context.pending.turn_end_sample is None
 
     await vad("start-3", 960, final=False)
     context.runtime.feed_speaker_pcm(b"\x00\x00" * 8_000)

@@ -474,11 +474,7 @@ async def test_guest_interrupt_is_not_muted_by_legacy_voice_mismatch() -> None:
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("你叫什么名字")
     await runtime.on_assistant_speaking("我叫记忆助手")
-    set_floor(
-        runtime,
-        assistant_speaking=True,
-        playback_started_ns=__import__("time").monotonic_ns(),
-    )
+    set_floor(runtime, assistant_speaking=True)
     # Nearby talker audio in rolling window → guest interruption, not silence.
     runtime.feed_speaker_pcm(_signal_pcm(kind="bystander", seconds=4.0, seed=32))
     fence_before = runtime.fence

@@ -227,7 +227,7 @@ class TestPlaybackEndedChain:
     def test_playback_ended_not_triggered_without_provider_complete(self):
         """Playback complete alone should not trigger delivery ended."""
         # This tests the condition in _finish_completed_output:
-        # if not context.provider_complete or not context.playback.is_playback_complete(fence):
+        # if not context.output.provider_complete or not context.output.playback.is_playback_complete(fence):
         #     return
 
         ledger = PlaybackLedger()

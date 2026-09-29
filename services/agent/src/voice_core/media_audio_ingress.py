@@ -234,9 +234,9 @@ class MediaAudioIngress:
             endpoint_task = context.turn_endpoint_task
             if endpoint_task is not None and not endpoint_task.done():
                 endpoint_task.cancel()
-            if context.turn_endpoint_timeout_handle is not None:
-                context.turn_endpoint_timeout_handle.cancel()
-                context.turn_endpoint_timeout_handle = None
+            if context.pending.turn_endpoint_timeout_handle is not None:
+                context.pending.turn_endpoint_timeout_handle.cancel()
+                context.pending.turn_endpoint_timeout_handle = None
             context.asr.mark_committed(frame.capture_start_sample)
             # Restarting the provider retires the discontinuous input too.
             # Restore its remaining silence budget before publication yields;
@@ -272,9 +272,9 @@ class MediaAudioIngress:
         async with context.ingress.finalize_lock:
             callback_stream_epoch = context.stream_epoch
             input_token = (
-                context.turn_input_fence,
-                context.turn_start_sample,
-                context.active_vad_start_sample,
+                context.pending.turn_input_fence,
+                context.pending.turn_start_sample,
+                context.pending.active_vad_start_sample,
             )
             await self._wait_until_idle(context)
             audio_watermark = context.asr.last_sent_sample
@@ -345,9 +345,9 @@ class MediaAudioIngress:
                     context.ingress.discontinuity_pending = True
                     self._drain(context.ingress.queue)
                     if input_token == (
-                        context.turn_input_fence,
-                        context.turn_start_sample,
-                        context.active_vad_start_sample,
+                        context.pending.turn_input_fence,
+                        context.pending.turn_start_sample,
+                        context.pending.active_vad_start_sample,
                     ):
                         # Complete state cleanup before projection publication
                         # yields: a new VAD admitted during that await owns its
@@ -407,7 +407,7 @@ class MediaAudioIngress:
             # after publishing the watermark, otherwise a zero/short grace
             # task can fail closed once and the valid final is later discarded
             # by the absolute tail timeout.
-            if context.turn_endpoint_sample is not None:
+            if context.pending.turn_endpoint_sample is not None:
                 self._host._schedule_turn_commit(context)
             self._log_asr_boundary(
                 context,

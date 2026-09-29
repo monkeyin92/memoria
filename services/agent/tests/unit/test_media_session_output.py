@@ -567,14 +567,14 @@ async def test_reconnect_preserves_current_output_intent_owner() -> None:
         == ""
     )
     lease = SimpleNamespace(intent=intent, fence=fence, task=asyncio.current_task())
-    context.output_owner = lease  # type: ignore[assignment]
+    context.output.output_owner = lease  # type: ignore[assignment]
 
     await registry._reuse_session(
         context,
         SessionIdentity(identity.session_id, stream_epoch=2),
     )
 
-    assert context.output_owner is lease
+    assert context.output.output_owner is lease
     assert coordinator.output_intent_is_selected(
         intent,
         current_fence=fence,
@@ -653,7 +653,7 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
             fence=fence,
             task=asyncio.current_task(),
         )
-        context.output_owner = lease  # type: ignore[assignment]
+        context.output.output_owner = lease  # type: ignore[assignment]
         lease_holder.append(lease)
         set_floor(context.runtime, fresh_user_speech=True)  # simulate floor flip
         selected = False
@@ -668,11 +668,11 @@ async def test_unheard_output_waits_through_transient_half_duplex_floor_flip(
     await asyncio.wait_for(ready.wait(), timeout=1)
     await asyncio.sleep(0.05)
     assert not wait_task.done()
-    assert context.output_owner is lease_holder[0]
+    assert context.output.output_owner is lease_holder[0]
 
     selected = True
     assert await asyncio.wait_for(wait_task, timeout=1)
-    assert context.output_owner is lease_holder[0]
+    assert context.output.output_owner is lease_holder[0]
     set_floor(context.runtime, fresh_user_speech=False)
     registry._release_output_owner(context, fence, reason="test_complete")
     await registry.finalize_session(identity.session_id)
@@ -725,7 +725,7 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
     )
     fence = await context.runtime.on_turn_committed("你好")
     assert fence.session_epoch == 7
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, "你好", fence)
 
@@ -734,7 +734,7 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
     assert bridge.output_admissions[0].selected is True
     assert provider.reply_fences == [fence]
     assert len(bridge.frames) == 1
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.delivery_id == (
         "nonzero-session-epoch-output/epoch-7/turn-1/generation-1/tool-0"
@@ -744,7 +744,7 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
         ReplyDeliveryEvent.PROVIDER_COMPLETED,
     )
     assert delivery.terminal is False
-    assert context.output_results == [
+    assert context.output.output_results == [
         OutputDispatchResult(
             fence,
             OutputDispatchStatus.COMPLETED,
@@ -803,7 +803,7 @@ async def test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary
     )
 
     assert not await registry._enqueue_output_work(context, _OutputWork(reserved, fence))
-    assert str(reserved.intent_id) not in context.output_work
+    assert str(reserved.intent_id) not in context.output.output_work
     assert not coordinator.output_intent_is_active(
         reserved,
         current_fence=fence,
@@ -811,7 +811,7 @@ async def test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary
         floor_allows_output=True,
         now_ms=now_ms + 1,
     )
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     await registry.finalize_session(identity.session_id)
 
 
@@ -860,10 +860,10 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
     identity = SessionIdentity("superseded-output-owner")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("帮我查一下")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "帮我查一下", fence))
     await asyncio.wait_for(started.wait(), timeout=1)
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
 
     coordinator = context.runtime.orchestrator.delegation
     now_ms = int(time.time() * 1_000)
@@ -889,8 +889,8 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
     assert not await asyncio.wait_for(reply, timeout=1)
     assert bridge.frames == []
     assert provider.cancelled == [fence]
-    assert context.output_owner is None
-    delivery = context.reply_delivery.get(fence)
+    assert context.output.output_owner is None
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PREEMPTED
     assert delivery.first_frame_sent is False
@@ -975,7 +975,7 @@ async def test_higher_priority_pcm_preempts_after_audio_and_restarts_from_zero()
     session = bridge.bridge.open(identity)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
     await asyncio.wait_for(started.wait(), timeout=1)
     await asyncio.sleep(0)
@@ -1049,7 +1049,7 @@ async def test_higher_priority_pcm_preempts_after_audio_and_restarts_from_zero()
             tool_epoch=replacement_fence.tool_epoch,
         ),
     )
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     await registry.finalize_session(identity.session_id)
 
 
@@ -1132,10 +1132,10 @@ async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
     session = bridge.bridge.open(identity)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
     await asyncio.wait_for(started.wait(), timeout=1)
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
     assert bridge.frames == []
 
     coordinator = context.runtime.orchestrator.delegation
@@ -1189,7 +1189,7 @@ async def test_device_unheard_preempt_does_not_emit_playback_flush() -> None:
             tool_epoch=replacement.tool_epoch,
         ),
     )
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     await registry.finalize_session(identity.session_id)
 
 
@@ -1267,7 +1267,7 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
     bridge.bridge.open(identity)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("查一下")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     reply = asyncio.create_task(registry.generate_reply(identity.session_id, "查一下", fence))
     await asyncio.wait_for(first_frame_sent.wait(), timeout=1)
 
@@ -1284,10 +1284,10 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
 
     assert await asyncio.wait_for(reply, timeout=1) is False
     assert provider.cancelled == [fence]
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     assert context.runtime.interaction_phase is InteractionPhase.LISTENING
-    assert context.playback.current_fence is None
+    assert context.output.playback.current_fence is None
     assert any(
         effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
         and cancelled.generation_id == fence.generation_id + 1
@@ -1295,7 +1295,7 @@ async def test_expired_emitted_output_restores_listen_and_flushes_device() -> No
         and payload == {"reason": "superseded"}
         for effect_kind, cancelled, source_event_id, payload in bridge.effects
     )
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.first_frame_sent is True
     assert delivery.terminal_event is ReplyDeliveryEvent.PREEMPTED
@@ -1337,7 +1337,7 @@ async def test_owner_is_rechecked_after_speaking_transition_before_output() -> N
     identity = SessionIdentity("owner-recheck-after-await")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("帮我查一下")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     original = context.runtime.on_assistant_speaking
 
     async def blocked_speaking(text: str, **kwargs: object) -> bool:
@@ -1376,7 +1376,7 @@ async def test_owner_is_rechecked_after_speaking_transition_before_output() -> N
     assert "assistant_expression" not in bridge.event_types
     assert bridge.frames == []
     assert provider.cancelled == [fence]
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.THINKING
     assert context.runtime._voice_floor.pending_assistant_text == ""
     assert context.runtime.assistant_speaking is False
@@ -1427,7 +1427,7 @@ async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout
     identity = SessionIdentity("progressing-output-generation")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("今天天气怎么样")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     result = await asyncio.wait_for(
         registry.generate_reply(identity.session_id, "今天天气怎么样", fence),
@@ -1435,7 +1435,7 @@ async def test_progressing_output_generation_is_not_killed_by_wall_clock_timeout
     )
 
     assert result is True
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert provider.cancelled == []
     await registry.finalize_session(identity.session_id)
 
@@ -1466,13 +1466,13 @@ async def test_provider_timeout_error_is_not_reclassified_as_generation_deadline
     identity = SessionIdentity("provider-timeout-error")
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     with pytest.raises(TimeoutError, match="provider timeout"):
         await registry.generate_reply(identity.session_id, "你好", fence)
 
-    assert context.output_owner is None
-    assert context.playback.current_fence is fence
+    assert context.output.output_owner is None
+    assert context.output.playback.current_fence is fence
     assert context.runtime.orchestrator.state is ConversationState.THINKING
     await registry.finalize_session(identity.session_id)
 
@@ -1504,7 +1504,7 @@ async def test_unheard_wake_pcm_restores_half_duplex_listen() -> None:
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await _wait_until(
             lambda: (
-                context.output_owner is None
+                context.output.output_owner is None
                 and context.runtime.assistant_speaking is False
                 and context.runtime.orchestrator.state is ConversationState.LISTENING
                 and bool(provider.texts)
@@ -1578,7 +1578,7 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
 
         async def _reply_owns_session() -> bool:
             return bool(
-                context.output_owner is not None
+                context.output.output_owner is not None
                 and any(
                     turn.role == "user" and turn.content == "今天星期几"
                     for turn in context.runtime.orchestrator.context.turns
@@ -1591,8 +1591,8 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
             await asyncio.sleep(0.05)
         assert await _reply_owns_session()
         assert MediaVoiceCoreRegistry._reply_in_flight(context)
-        in_flight_fence = context.output_owner.fence
-        in_flight_task = context.reply_task
+        in_flight_fence = context.output.output_owner.fence
+        in_flight_task = context.output.reply_task
         generation_count_before = len(bridge.generation_starts)
         user_turns_before = [
             turn.content
@@ -1638,11 +1638,11 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
             )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.turn_endpoint_sample is None
-        assert context.output_owner is not None
-        assert context.output_owner.fence == in_flight_fence
+        assert context.pending.turn_endpoint_sample is None
+        assert context.output.output_owner is not None
+        assert context.output.output_owner.fence == in_flight_fence
         if in_flight_task is not None:
-            assert context.reply_task is in_flight_task
+            assert context.output.reply_task is in_flight_task
             assert not in_flight_task.cancelled()
         assert len(bridge.generation_starts) == generation_count_before
         user_turns_after = [
@@ -1690,7 +1690,7 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
             provider,
             bridge,
         )
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         set_floor(context.runtime, fresh_user_speech=True)
         context.runtime.set_interaction_phase(
             InteractionPhase.USER_SPEAKING,
@@ -1706,9 +1706,9 @@ async def test_half_duplex_owned_result_respects_a_closed_output_floor(
         assert context.runtime._voice_floor.fresh_user_speech is True
         assert any(
             work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
-            for work in context.output_work.values()
+            for work in context.output.output_work.values()
         )
-        assert context.output_retry_task is None
+        assert context.output.output_retry_task is None
         assert any(
             "media output deferred" in record.getMessage()
             for record in caplog.records
@@ -1756,7 +1756,7 @@ async def test_inactive_output_intent_drops_deep_result_with_warning(
             await _wait_until(
                 lambda: any(
                     claim.state is DelegationOutputState.RELEASED
-                    for claim in context.delegation_output_claims.values()
+                    for claim in context.output.delegation_output_claims.values()
                 ),
                 timeout=2.0,
             )
@@ -1793,13 +1793,13 @@ async def test_blocked_output_work_is_bounded_with_its_admission_queue() -> None
                 floor_allows_output=False, now_ms=now,
             )
             assert await registry._enqueue_output_work(context, _OutputWork(intent, fence))
-            assert len(context.output_work) <= 4
-            assert context.output_retry_task is None
+            assert len(context.output.output_work) <= 4
+            assert context.output.output_retry_task is None
         assert not bridge.frames
         await context.runtime.accept_media_generation(fence.bump_turn(), cause="new_turn")
         registry._schedule_output_retry(context)
-        assert not context.output_work
-        assert context.output_retry_task is None
+        assert not context.output.output_work
+        assert context.output.output_retry_task is None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -1814,9 +1814,9 @@ async def test_media_playback_overlap_split_is_blocked_by_forced_text(
     await _feed_playback_window_finals(window)
     _start_retained_utterance(window)
     context = window.context
-    assert context.pending_turn_playback_overlap is True
+    assert context.pending.pending_turn_playback_overlap is True
 
-    context.live_query_forced_text = "明天南京天气"
+    context.pending.live_query_forced_text = "明天南京天气"
     forced = await _accept_media_asr_decision(
         window.registry,
         window.identity,
@@ -1826,9 +1826,9 @@ async def test_media_playback_overlap_split_is_blocked_by_forced_text(
         text="下午一起出发吗",
     )
     assert forced.accepted is not None
-    assert context.turn_start_sample == 158_560
+    assert context.pending.turn_start_sample == 158_560
 
-    context.live_query_forced_text = None
+    context.pending.live_query_forced_text = None
     split = await _accept_media_asr_decision(
         window.registry,
         window.identity,
@@ -1839,7 +1839,7 @@ async def test_media_playback_overlap_split_is_blocked_by_forced_text(
         revision=2,
     )
     assert split.accepted is not None
-    assert context.turn_start_sample == 470_000
+    assert context.pending.turn_start_sample == 470_000
 
 
 @pytest.mark.asyncio
@@ -1854,8 +1854,8 @@ async def test_device_retained_window_drops_playback_overlap_after_the_split(
         retained_end=490_000,
     )
     context = window.context
-    assert context.pending_turn_playback_overlap is False
-    assert context.pending_turn_onset_floor == 484_480
+    assert context.pending.pending_turn_playback_overlap is False
+    assert context.pending.pending_turn_onset_floor == 484_480
     await _accept_media_asr_final(
         window.registry,
         window.identity,
@@ -1865,7 +1865,7 @@ async def test_device_retained_window_drops_playback_overlap_after_the_split(
         text="还有明天呢",
         revision=2,
     )
-    assert context.turn_start_sample == 484_480
+    assert context.pending.turn_start_sample == 484_480
 
     await _commit_pending_turn_from_device_endpoint(window, voiced_end_sample=540_000)
     text = window.provider.prepared[-1]
@@ -1901,9 +1901,9 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")
     context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
-    context.playback.start(fence)
-    assert context.playback.register_audio(fence, 0, 0, 320)
-    assert context.playback.add_span(
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(fence, 0, 0, 320)
+    assert context.output.playback.add_span(
         PlaybackSpan(
             fence=fence,
             text_start=0,
@@ -1914,7 +1914,7 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
             sequence=0,
         )
     )
-    context.provider_complete = True
+    context.output.provider_complete = True
 
     await registry.on_playback_progress(
         session,
@@ -1931,10 +1931,10 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
         ),
     )
 
-    assert context.playback.actual_heard_text(fence) == ""
+    assert context.output.playback.actual_heard_text(fence) == ""
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     assert all(turn.content != "你好" for turn in context.runtime.orchestrator.context.turns)
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is False
@@ -1986,9 +1986,9 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好")
     context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
-    context.playback.start(fence)
-    assert context.playback.register_audio(fence, 0, 0, 320)
-    context.provider_complete = True
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(fence, 0, 0, 320)
+    context.output.provider_complete = True
 
     await registry.on_playback_progress(
         session,
@@ -2005,7 +2005,7 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
         ),
     )
 
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.ERROR
     assert delivery.playback_ended is False

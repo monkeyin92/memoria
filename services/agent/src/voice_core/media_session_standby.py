@@ -55,11 +55,11 @@ class MediaSessionStandbyMixin:
     def _cancel_max_user_speech_watchdog(self, context: _MediaVoiceSession) -> None:
         """Cancel the one-utterance watchdog and clear its deadline."""
 
-        context.active_vad_stream_epoch = None
-        context.active_vad_start_sample = None
-        task = context.max_user_speech_task
-        context.max_user_speech_task = None
-        context.max_user_speech_deadline = None
+        context.pending.active_vad_stream_epoch = None
+        context.pending.active_vad_start_sample = None
+        task = context.pending.max_user_speech_task
+        context.pending.max_user_speech_task = None
+        context.pending.max_user_speech_deadline = None
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
@@ -70,21 +70,21 @@ class MediaSessionStandbyMixin:
             not self._max_user_speech_enabled(context)
             or context.closed
             or context.standby_requested
-            or context.turn_start_sample is None
+            or context.pending.turn_start_sample is None
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
-        task = context.max_user_speech_task
+        task = context.pending.max_user_speech_task
         if task is not None and not task.done():
             # The deadline is intentionally absolute for this turn. Repeated
             # VAD observations must not extend a stuck stream indefinitely.
             return
         if task is not None:
-            context.max_user_speech_task = None
+            context.pending.max_user_speech_task = None
         delay = float(self.max_user_speech_duration_s)
         loop = asyncio.get_running_loop()
-        context.max_user_speech_deadline = loop.time() + delay
-        context.max_user_speech_task = asyncio.create_task(
+        context.pending.max_user_speech_deadline = loop.time() + delay
+        context.pending.max_user_speech_task = asyncio.create_task(
             self._max_user_speech_watch(context, delay),
             name=f"media-max-user-speech-{context.identity.session_id}",
         )
@@ -92,10 +92,12 @@ class MediaSessionStandbyMixin:
     def _admit_owner_silence_vad(self, context: _MediaVoiceSession, start_sample: int) -> None:
         """Transfer accepted speech from silence timing to the absolute watchdog."""
 
-        context.active_vad_stream_epoch = context.stream_epoch
-        context.active_vad_start_sample = max(context.active_vad_start_sample or 0, start_sample)
+        context.pending.active_vad_stream_epoch = context.stream_epoch
+        context.pending.active_vad_start_sample = max(
+            context.pending.active_vad_start_sample or 0, start_sample
+        )
         self._arm_max_user_speech_watchdog(context)
-        watchdog_armed = context.max_user_speech_task is not None
+        watchdog_armed = context.pending.max_user_speech_task is not None
         if context.owner_silence_grace_deadline is not None:
             if not watchdog_armed:
                 # Explicitly disabling the speech watchdog retains the old
@@ -139,7 +141,7 @@ class MediaSessionStandbyMixin:
         """
 
         if (
-            context.max_user_speech_task is None
+            context.pending.max_user_speech_task is None
             and context.owner_silence_grace_deadline is None
         ):
             return
@@ -155,15 +157,15 @@ class MediaSessionStandbyMixin:
         except asyncio.CancelledError:
             return
         if (
-            context.max_user_speech_task is not asyncio.current_task()
+            context.pending.max_user_speech_task is not asyncio.current_task()
             or context.closed
             or context.standby_requested
-            or context.turn_start_sample is None
+            or context.pending.turn_start_sample is None
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
-        context.max_user_speech_task = None
-        context.max_user_speech_deadline = None
+        context.pending.max_user_speech_task = None
+        context.pending.max_user_speech_deadline = None
         logger.warning(
             "media user speech watchdog expired session=%s duration_s=%.3f",
             context.identity.session_id,
@@ -226,7 +228,7 @@ class MediaSessionStandbyMixin:
             # Processing grace is an absolute close deadline, not a listening
             # budget. Phase churn cannot cancel it or mint another interval.
             return
-        if context.active_vad_stream_epoch == context.stream_epoch:
+        if context.pending.active_vad_stream_epoch == context.stream_epoch:
             # A delayed listening projection must not re-arm a spent budget
             # while an accepted utterance is still open.
             return
@@ -284,7 +286,7 @@ class MediaSessionStandbyMixin:
         """Resume a paused window after endpointing without trusting bare VAD."""
 
         self._cancel_max_user_speech_watchdog(context)
-        context.admitted_input_stream_epoch = None
+        context.pending.admitted_input_stream_epoch = None
         if not self._owner_silence_enabled(context) or context.standby_requested:
             return
         if context.owner_silence_grace_deadline is not None:
@@ -340,8 +342,8 @@ class MediaSessionStandbyMixin:
             or self._sessions.get(context.identity.session_id) is not context
         ):
             return
-        if context.active_vad_stream_epoch == context.stream_epoch:
-            if context.max_user_speech_task is not None:
+        if context.pending.active_vad_stream_epoch == context.stream_epoch:
+            if context.pending.max_user_speech_task is not None:
                 self._cancel_owner_silence_timer(context, preserve_remaining=False)
                 context.owner_silence_grace_deadline = None
                 return
@@ -349,8 +351,8 @@ class MediaSessionStandbyMixin:
                 self._pause_owner_silence_timer(context)
                 return
         input_pending = (
-            context.turn_start_sample is not None
-            or context.admitted_input_stream_epoch == context.stream_epoch
+            context.pending.turn_start_sample is not None
+            or context.pending.admitted_input_stream_epoch == context.stream_epoch
             or context.turn_commit_task is not None
         )
         if input_pending and not context.owner_silence_grace_used:
@@ -397,10 +399,13 @@ class MediaSessionStandbyMixin:
                 stream_epoch, endpoint_sample = expected_endpoint
                 if (
                     not self._stream_epoch_is_current(context, stream_epoch)
-                    or context.turn_endpoint_sample != endpoint_sample
+                    or context.pending.turn_endpoint_sample != endpoint_sample
                     or not any(
                         task is not None and not task.done()
-                        for task in (context.turn_commit_task, context.turn_commit_retry_task)
+                        for task in (
+                            context.turn_commit_task,
+                            context.pending.turn_commit_retry_task,
+                        )
                     )
                 ):
                     # Tail expiry may have waited behind another close while
@@ -435,7 +440,7 @@ class MediaSessionStandbyMixin:
             ):
                 commit_task.cancel()
             context.owner_silence_grace_deadline = None
-            context.admitted_input_stream_epoch = None
+            context.pending.admitted_input_stream_epoch = None
             self._cancel_owner_silence_timer(context, preserve_remaining=False)
             self._cancel_max_user_speech_watchdog(context)
             fence = context.runtime.fence

@@ -1,4 +1,4 @@
-"""Speaker-authority runtime mixin: classification, KWS trust, enrollment.
+"""Speaker-authority runtime mixin: classification and enrollment.
 
 ``DuplexSpeakerMixin`` is composed into ``DuplexRuntime``; shared state stays
 owned by the runtime dataclass and is only declared here for type checking.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -67,23 +67,13 @@ POST_PLAYBACK_FORMAL_GUEST_MIN_QUALITY = 0.85
 POST_PLAYBACK_CLOSE_ECHO_GUARD_MS = 3_000
 
 
-@dataclass(frozen=True, slots=True)
-class KeywordSpotterBinding:
-    """Playback and speech epochs frozen when KWS starts decoding."""
-
-    speaker_epoch: int
-    playback_epoch: int
-    fence: GenerationFence
-
-
 class DuplexSpeakerMixin:
-    """Speaker classification, keyword-spotter trust, and formal enrollment."""
+    """Speaker classification and formal enrollment."""
 
     if TYPE_CHECKING:
         # Shared state owned by the DuplexRuntime dataclass.
         session_id: str
         barge_in_enabled: bool
-        trusted_aec_playback_control: bool
         input_guard: PlaybackInputGuard
         orchestrator: Orchestrator
         speaker_verifier: SpeakerVerifier
@@ -100,7 +90,6 @@ class DuplexSpeakerMixin:
         _speaker_pcm_gate_epoch: int | None
         _speaker_pcm_skip_bytes: int
         _speaker_post_playback_untrusted: bool
-        _pending_keyword_interrupt_binding: KeywordSpotterBinding | None
         _reject_non_owner_voice: bool
         _target_speaker_focus_enabled: bool
         _target_focus_epoch: int | None
@@ -112,8 +101,6 @@ class DuplexSpeakerMixin:
         _interaction_decision_epoch: int | None
         _interaction_decision: InteractionDecision | None
         _interaction_decision_text: str
-        _trusted_unanchored_control_epoch: int | None
-        _trusted_unanchored_playback_epoch: int | None
         _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None
         _speech_epoch_assembler: SpeechEpochAssembler
         _enroll_fence: GenerationFence | None
@@ -200,7 +187,7 @@ class DuplexSpeakerMixin:
                 self._speaker_post_playback_untrusted = untrusted
                 self._speaker_pcm_skip_bytes = (
                     self._speaker_sample_rate * 2 * POST_PLAYBACK_SPEAKER_PREROLL_MS // 1_000
-                    if untrusted and not self.trusted_aec_playback_control
+                    if untrusted
                     else 0
                 )
             skip = getattr(self, "_speaker_pcm_skip_bytes", 0)
@@ -314,8 +301,6 @@ class DuplexSpeakerMixin:
         return 0 <= elapsed_ms <= POST_PLAYBACK_SPEAKER_UNTRUSTED_MS
 
     def _should_keep_post_playback_guest_unconfirmed(self, decision: SpeakerDecision) -> bool:
-        if self.trusted_aec_playback_control:
-            return False
         if not getattr(self, "_speaker_post_playback_untrusted", False):
             return False
         if decision.classification != "guest" and decision.reason_code != "owner_mismatch":

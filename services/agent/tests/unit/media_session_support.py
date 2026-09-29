@@ -181,8 +181,8 @@ async def _seed_pending_media_turn(
             stream_epoch=identity.stream_epoch,
         ),
     )
-    context.turn_endpoint_sample = endpoint_sample
-    context.turn_retire_sample = retire_sample
+    context.pending.turn_endpoint_sample = endpoint_sample
+    context.pending.turn_retire_sample = retire_sample
     return context
 
 
@@ -368,7 +368,7 @@ async def _finish_output_owner_playback(
     session: Any,
 ) -> None:
     context = registry.session_state(identity.session_id)
-    owner = context.output_owner
+    owner = context.output.output_owner
     assert owner is not None
     ack_frame = bridge.frames[-1]
     await registry.on_playback_progress(
@@ -402,10 +402,10 @@ async def _finish_device_wake_ack_if_any(
     await asyncio.wait_for(provider.ack_completed.wait(), timeout=1)
     context = registry.session_state(identity.session_id)
     for _ in range(40):
-        if context.output_owner is not None or bridge.frames:
+        if context.output.output_owner is not None or bridge.frames:
             break
         await asyncio.sleep(0)
-    if context.output_owner is not None:
+    if context.output.output_owner is not None:
         await _finish_output_owner_playback(registry, identity, bridge, session)
     elif bridge.frames:
         ack_frame = bridge.frames[-1]
@@ -437,10 +437,10 @@ async def _ack_owned_filler_then_wait(
     await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
     committed = await context.runtime.on_turn_committed("今天南京天气怎么样")
     await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
-    ack_owner = context.output_owner
+    ack_owner = context.output.output_owner
     assert ack_owner is not None
     ack_fence = ack_owner.fence
-    claim = context.delegation_output_claims[committed]
+    claim = context.output.delegation_output_claims[committed]
     assert ack_fence.turn_id == committed.turn_id
     assert ack_fence.generation_id == committed.generation_id
     assert claim.state is DelegationOutputState.OWNED
@@ -623,7 +623,7 @@ async def _qa_commit_question_then_finish_ack_playback(
     assert fence is not None, reason
     await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
     await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-    ack_owner = context.output_owner
+    ack_owner = context.output.output_owner
     assert ack_owner is not None
     ack_fence = ack_owner.fence
     ack_frame = bridge.frames[-1]
@@ -669,10 +669,10 @@ async def _qa_commit_repeat_question(
     )
     assert context.runtime.ingest_media_speech_segment(segment)
     await registry._apply_projection_segment(context, segment)
-    context.turn_start_sample = start_sample
-    context.turn_end_sample = end_sample
-    context.turn_endpoint_sample = end_sample
-    context.turn_retire_sample = retire_sample
+    context.pending.turn_start_sample = start_sample
+    context.pending.turn_end_sample = end_sample
+    context.pending.turn_endpoint_sample = end_sample
+    context.pending.turn_retire_sample = retire_sample
     return await registry.commit_user_turn(
         identity.session_id,
         stream_epoch=identity.stream_epoch,
@@ -706,7 +706,7 @@ async def _qa_open_empty_vad_tail(
     assert task is not None
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
-    assert context.turn_endpoint_sample == 1200
+    assert context.pending.turn_endpoint_sample == 1200
     assert not context.runtime.output_floor_allows_assistant
     return 1200
 
@@ -967,13 +967,13 @@ async def device_media_session() -> AsyncIterator[Any]:
             # for it: no task may outlive the test.
             window.close_semantic.gate.set()
             window.close_semantic.late_gate.set()
-            semantic_task = context.conversation_close_semantic_task
+            semantic_task = context.pending.conversation_close_semantic_task
             if semantic_task is not None and not semantic_task.done():
                 try:
                     await asyncio.wait_for(asyncio.shield(semantic_task), timeout=1.0)
                 except (TimeoutError, asyncio.CancelledError):
                     semantic_task.cancel()
-            handle = context.turn_endpoint_timeout_handle
+            handle = context.pending.turn_endpoint_timeout_handle
             if handle is not None:
                 handle.cancel()
             task = context.turn_endpoint_task
@@ -1008,10 +1008,10 @@ async def _complete_previous_device_playback(
         end_sample=190_000,
         text="上海明天晴转多云",
     )
-    assert context.pending_turn_playback_overlap is True
-    context.playback.start(fence)
-    assert context.playback.register_audio(fence, 0, 0, frame_samples)
-    context.provider_complete = True
+    assert context.pending.pending_turn_playback_overlap is True
+    context.output.playback.start(fence)
+    assert context.output.playback.register_audio(fence, 0, 0, frame_samples)
+    context.output.provider_complete = True
     await window.registry.on_playback_progress(
         window.session,
         PlaybackProgress(
@@ -1111,8 +1111,8 @@ async def _start_speaking_reply(
     await vad("end", 320, final=True)
     await asyncio.sleep(0.03)
     fence = context.runtime.fence
-    if context.reply_task is not None:
-        assert await asyncio.wait_for(context.reply_task, timeout=1)
+    if context.output.reply_task is not None:
+        assert await asyncio.wait_for(context.output.reply_task, timeout=1)
     assert context.runtime.orchestrator.state is ConversationState.SPEAKING
     # Keep the bridge-side authoritative gate in sync with the runtime fence
     # so a subsequent client stop/KWS cancel derives the expected fence.

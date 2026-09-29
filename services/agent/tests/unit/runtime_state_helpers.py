@@ -33,11 +33,7 @@ def bind_owner_speaker(runtime: DuplexRuntime) -> SpeakerDecision:
 def set_pending_assistant_text(runtime: DuplexRuntime, text: str) -> None:
     """Stage assistant text as if a reply were being synthesized."""
 
-    floor = runtime._voice_floor
-    floor.update(
-        pending_assistant_text=text,
-        pending_assistant_text_epoch=floor.pending_assistant_text_epoch + 1,
-    )
+    runtime._voice_floor.update(pending_assistant_text=text)
     runtime.orchestrator.heard_tracker.set_full_text(text)
 
 

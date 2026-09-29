@@ -77,7 +77,7 @@ class MediaOutputOwnerMixin:
 
         if not context.runtime.fence.matches(fence):
             return None
-        heard = context.playback.actual_heard_text(fence)
+        heard = context.output.playback.actual_heard_text(fence)
         cancelled = await context.runtime.preempt_media_output(
             cause=reason,
             synchronized_transcript=heard,
@@ -97,12 +97,12 @@ class MediaOutputOwnerMixin:
         *,
         reason: str,
     ) -> bool:
-        lease = context.output_owner
+        lease = context.output.output_owner
         if lease is None or not lease.fence.matches(fence):
             return False
-        context.output_owner = None
-        context.provider_complete = False
-        context.output_work.pop(str(lease.intent.intent_id), None)
+        context.output.output_owner = None
+        context.output.provider_complete = False
+        context.output.output_work.pop(str(lease.intent.intent_id), None)
         coordinator = context.runtime.orchestrator.delegation
         coordinator.complete_output_intent(
             lease.intent,
@@ -119,12 +119,12 @@ class MediaOutputOwnerMixin:
         lease: _OutputOwnerLease,
     ) -> bool:
         fence = lease.fence
-        delivery = context.reply_delivery.get(fence)
+        delivery = context.output.reply_delivery.get(fence)
         if delivery is not None and delivery.first_frame_sent:
             return True
-        if context.playback.rendered_sample_end(fence) > 0:
+        if context.output.playback.rendered_sample_end(fence) > 0:
             return True
-        return bool(context.playback.actual_heard_text(fence))
+        return bool(context.output.playback.actual_heard_text(fence))
 
     @staticmethod
     def _fast_ack_has_started_playback(
@@ -147,7 +147,7 @@ class MediaOutputOwnerMixin:
         if context.closed or context.standby_requested:
             return False
         if (
-            context.output_owner is not lease
+            context.output.output_owner is not lease
             or lease.task is not asyncio.current_task()
             or not context.runtime.fence.matches(lease.fence)
         ):
@@ -170,7 +170,7 @@ class MediaOutputOwnerMixin:
         fence: GenerationFence,
         intent: Any | None = None,
     ) -> _OutputOwnerLease | None:
-        if context.output_owner is not None:
+        if context.output.output_owner is not None:
             return None
         task = asyncio.current_task()
         if task is None:  # pragma: no cover - every async call has a task
@@ -201,7 +201,7 @@ class MediaOutputOwnerMixin:
         ):
             return None
         lease = _OutputOwnerLease(intent=intent, fence=fence, task=task)
-        context.output_owner = lease
+        context.output.output_owner = lease
         return lease
 
     @staticmethod
@@ -230,13 +230,13 @@ class MediaOutputOwnerMixin:
                 or not isinstance(end, int)
             ):
                 return
-            text_start = context.output_text_offset
-            context.output_text_offset += len(text)
-            context.playback.add_span(
+            text_start = context.output.output_text_offset
+            context.output.output_text_offset += len(text)
+            context.output.playback.add_span(
                 PlaybackSpan(
                     fence=fence,
                     text_start=text_start,
-                    text_end=context.output_text_offset,
+                    text_end=context.output.output_text_offset,
                     audio_start_sample=start,
                     audio_end_sample=end,
                     text=text,
@@ -254,7 +254,7 @@ class MediaOutputOwnerMixin:
     ) -> None:
         """Cancel provider work and drain the old reply task before reuse."""
 
-        task = context.reply_task
+        task = context.output.reply_task
         cls._release_output_owner(context, fence, reason=reason)
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()

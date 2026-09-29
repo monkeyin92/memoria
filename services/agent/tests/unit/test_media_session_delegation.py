@@ -150,7 +150,7 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
         bridge.output_admissions.append
     )
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, "你好", fence)
     await asyncio.sleep(0)
@@ -159,7 +159,7 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
         event_type == "assistant_state" and payload.get("state") == "speaking"
         for event_type, payload in bridge.runtime_events
     )
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
     admitted = bridge.output_admissions[0]
     assert admitted.intent.kind == media_pb2.OUTPUT_INTENT_KIND_CONVERSATION_REPLY
     assert admitted.intent.WhichOneof("source") is None
@@ -180,14 +180,14 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
         ),
     )
 
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert bridge.output_admissions[-1].consumed is True
     assert bridge.output_admissions[-1].reason == "playback_completed"
     assert bridge.output_admissions[-1].authoritative_candidates == ()
     assert metrics.get(
         "voice_conversation_participation_proxy_ms_total", {"kind": "assistant"}
     ) == pytest.approx(2 * 1_000 / 24_000)
-    delivery = context.reply_delivery.get(fence)
+    delivery = context.output.reply_delivery.get(fence)
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is True
@@ -228,11 +228,11 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
     session = bridge.bridge.open(identity)
     context = await registry.open_session(identity)
     fence = await context.runtime.on_turn_committed("你好")
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, "你好", fence)
     await asyncio.sleep(0)
-    assert context.output_owner is not None
+    assert context.output.output_owner is not None
     assert len(bridge.frames) == 1
 
     coordinator = context.runtime.orchestrator.delegation
@@ -269,8 +269,8 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
         now_ms=now_ms + 1,
     )
     assert await registry._enqueue_output_work(context, _OutputWork(queued_intent, fence))
-    assert str(queued_intent.intent_id) in context.output_work
-    assert context.output_owner is not None
+    assert str(queued_intent.intent_id) in context.output.output_work
+    assert context.output.output_owner is not None
 
     await registry.on_playback_progress(
         session,
@@ -292,8 +292,8 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
     assert second.generation_id == fence.generation_id + 1
     assert second.sequence == 0
     assert second.source_start_sample == 0
-    assert context.output_owner is not None
-    second_fence = context.output_owner.fence
+    assert context.output.output_owner is not None
+    second_fence = context.output.output_owner.fence
     assert (
         media_pb2.GENERATION_ACTION_START,
         second_fence,
@@ -312,7 +312,7 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
             event_type=PlaybackEventType.ENDED,
         ),
     )
-    assert context.output_owner is None
+    assert context.output.output_owner is None
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     await registry.finalize_session(identity.session_id)
 
@@ -621,7 +621,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
     await context.runtime.on_turn_committed("今天南京天气怎么样")
     try:
         await asyncio.wait_for(ack_started.wait(), timeout=1)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         assert provider.output_kinds == [
@@ -633,7 +633,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
         for _ in range(20):
             if any(
                 work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
-                for work in context.output_work.values()
+                for work in context.output.output_work.values()
             ):
                 break
             await asyncio.sleep(0)
@@ -663,7 +663,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
 
         await asyncio.wait_for(deep_completed.wait(), timeout=1)
         deep_frame = bridge.frames[-1]
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         assert deep_owner.fence.turn_id == ack_fence.turn_id
         assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
@@ -682,7 +682,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 event_type=PlaybackEventType.ENDED,
             ),
         )
-        assert context.output_owner is None
+        assert context.output.output_owner is None
     finally:
         release.set()
         for _ in range(5):
@@ -748,7 +748,7 @@ async def test_energy_connect_vad_after_sample_zero_skips_device_wake_ack() -> N
         await asyncio.sleep(0.05)
         assert provider.texts == []
         assert not provider.started.is_set()
-        assert context.turn_start_sample == 3200
+        assert context.pending.turn_start_sample == 3200
         assert context.device_wake_ack_pending is False
     finally:
         await registry.finalize_session(identity.session_id)
@@ -798,8 +798,8 @@ async def test_device_live_lookup_final_commits_before_vad_end() -> None:
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, accepted)
-        assert context.turn_endpoint_sample == 16_000
-        assert context.live_query_endpoint_pinned == 16_000
+        assert context.pending.turn_endpoint_sample == 16_000
+        assert context.pending.live_query_endpoint_pinned == 16_000
         assert context.turn_endpoint_task is not None
     finally:
         await registry.finalize_session(identity.session_id)
@@ -853,7 +853,7 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
-        assert context.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.pending.live_query_forced_text == "今天南京的天气怎么样"
         await registry.on_speech_segment(
             session,
             SpeechSegment(
@@ -882,10 +882,10 @@ async def test_device_weather_final_recovered_after_straddling_committed_range()
                 voiced_end_sample=173_120,
             ),
         )
-        context.turn_start_sample = 113_280
-        context.turn_end_sample = 173_120
-        context.turn_endpoint_sample = 173_120
-        context.turn_retire_sample = 187_520
+        context.pending.turn_start_sample = 113_280
+        context.pending.turn_end_sample = 173_120
+        context.pending.turn_endpoint_sample = 173_120
+        context.pending.turn_retire_sample = 187_520
         fence, reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -973,13 +973,13 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.live_query_forced_text == "今天南京的天气怎么样"
-        assert context.live_query_forced_authoritative
+        assert context.pending.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.pending.live_query_forced_authoritative
         # Recovery must arm turn bounds itself; do not depend on a later
         # timeline inject or a test harness manually setting samples.
-        assert context.turn_start_sample is not None
-        assert context.turn_end_sample == 148_160
-        assert context.turn_endpoint_sample == 148_160
+        assert context.pending.turn_start_sample is not None
+        assert context.pending.turn_end_sample == 148_160
+        assert context.pending.turn_endpoint_sample == 148_160
         await registry.on_speech_segment(
             session,
             SpeechSegment(
@@ -1009,7 +1009,7 @@ async def test_device_weather_final_recovered_after_cross_sentence_overlap() -> 
             ),
         )
         # Authoritative recovery ignores later VAD and keeps the armed endpoint.
-        assert context.turn_endpoint_sample == 148_160
+        assert context.pending.turn_endpoint_sample == 148_160
         await asyncio.sleep(0.05)
         user_turns = [
             turn.content
@@ -1109,10 +1109,10 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
         )
         assert decision.accepted is None
         assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
-        assert context.live_query_forced_text == "今天南京的天气怎么样"
-        assert context.live_query_forced_authoritative
-        assert context.turn_end_sample == 85_120
-        assert context.turn_endpoint_sample == 85_120
+        assert context.pending.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.pending.live_query_forced_authoritative
+        assert context.pending.turn_end_sample == 85_120
+        assert context.pending.turn_endpoint_sample == 85_120
 
         # Field order: rejection arrived before vad_end was processed. The
         # late vad_end and later jitter must not clear the forced window.
@@ -1131,7 +1131,7 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
                 voiced_end_sample=70_720,
             ),
         )
-        assert context.turn_endpoint_sample == 85_120
+        assert context.pending.turn_endpoint_sample == 85_120
 
         await registry.on_speech_segment(
             session,
@@ -1161,8 +1161,8 @@ async def test_device_weather_recovery_commits_despite_post_reject_vad_jitter() 
                 voiced_end_sample=116_480,
             ),
         )
-        assert context.turn_endpoint_sample == 85_120
-        assert context.live_query_forced_text == "今天南京的天气怎么样"
+        assert context.pending.turn_endpoint_sample == 85_120
+        assert context.pending.live_query_forced_text == "今天南京的天气怎么样"
 
         await asyncio.sleep(0.05)
         user_turns = [
@@ -1213,11 +1213,11 @@ async def test_owned_delegation_filler_playback_is_not_turn_terminal() -> None:
             provider,
             bridge,
         )
-        claim = context.delegation_output_claims[ack_fence]
+        claim = context.output.delegation_output_claims[ack_fence]
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
         assert media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT in provider.output_kinds
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         assert deep_owner.fence.turn_id == ack_fence.turn_id
         assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
@@ -1255,12 +1255,12 @@ async def test_half_duplex_owned_wait_ignores_user_speech_and_keeps_weather() ->
         assert decision is PlaybackInputDecision.IGNORE
         assert context.runtime.output_floor_allows_assistant
         assert context.runtime.orchestrator.state is ConversationState.TOOL_WAITING
-        claim = context.delegation_output_claims[ack_fence]
+        claim = context.output.delegation_output_claims[ack_fence]
         assert claim.state is DelegationOutputState.OWNED
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
         assert claim.state is not DelegationOutputState.RELEASED
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         assert deep_owner.fence.turn_id == ack_fence.turn_id
         assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
@@ -1318,13 +1318,13 @@ async def test_half_duplex_media_vad_does_not_preempt_owned_weather_successor() 
                 final=False,
             ),
         )
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         assert context.runtime.orchestrator.state is ConversationState.TOOL_WAITING
-        claim = context.delegation_output_claims[ack_fence]
+        claim = context.output.delegation_output_claims[ack_fence]
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=1)
         assert claim.state is not DelegationOutputState.RELEASED
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         assert deep_owner.fence.turn_id == ack_fence.turn_id
         assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
@@ -1384,12 +1384,12 @@ async def test_media_registry_replaces_factory_legacy_delegation_starter() -> No
     assert context.runtime._delegation_starter is not legacy_starter
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     await _wait_until(lambda: provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT])
 
     assert legacy_calls == []
     assert provider.delegations == [(query, fence)]
-    assert context.delegation_output_claims[fence].state is DelegationOutputState.COMPLETED
+    assert context.output.delegation_output_claims[fence].state is DelegationOutputState.COMPLETED
     await registry.finalize_session(identity.session_id)
 
 
@@ -1412,9 +1412,9 @@ async def test_media_delegation_claim_is_not_created_for_non_realtime_or_unstart
     # A realtime-shaped chat turn that resolves locally must never create a
     # claim: the starter guard rejects it before any claim is registered.
     fence = await context.runtime.on_turn_committed("现在几点开会")
-    assert context.delegation_output_claims == {}
+    assert context.output.delegation_output_claims == {}
     assert provider.delegations == []
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     # The provider audio path does not complete end-to-end in this harness;
     # the claim contract is that exactly one local reply is produced.
     await registry.generate_reply(identity.session_id, "现在几点开会", fence)
@@ -1423,7 +1423,7 @@ async def test_media_delegation_claim_is_not_created_for_non_realtime_or_unstart
     # A control utterance whose interaction decision never starts delegation
     # must likewise leave no claim behind.
     await context.runtime.on_turn_committed("停一下")
-    assert context.delegation_output_claims == {}
+    assert context.output.delegation_output_claims == {}
     assert provider.delegations == []
     await registry.finalize_session(identity.session_id)
 
@@ -1444,12 +1444,12 @@ async def test_media_delegation_provider_failure_falls_back_to_one_local_reply()
     context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, query, fence)
     await _wait_until(lambda: provider.reply_calls == 1)
 
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
@@ -1479,12 +1479,12 @@ async def test_media_delegation_coordinator_rejection_falls_back_to_one_local_re
     context.runtime.orchestrator.task_manager.specs.pop("media_deep_response", None)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, query, fence)
     await _wait_until(lambda: provider.reply_calls == 1)
 
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.delegations == []
     assert provider.reply_calls == 1
@@ -1511,12 +1511,12 @@ async def test_media_delegation_none_result_falls_back_to_one_local_reply() -> N
     context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, query, fence)
     await _wait_until(lambda: provider.reply_calls == 1)
 
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
@@ -1542,12 +1542,12 @@ async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> 
     context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     assert await registry.generate_reply(identity.session_id, query, fence)
     await _wait_until(lambda: provider.reply_calls == 1)
 
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
@@ -1600,12 +1600,12 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     await _wait_until(
         lambda: provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT],
     )
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.COMPLETED
     assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT not in provider.output_kinds
     assert provider.output_texts == [f"{LIVE_LOOKUP_FILLER}南京今天多云。"]
@@ -1632,7 +1632,7 @@ async def test_live_lookup_ack_starts_lagging_transport_generation_before_pcm() 
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.accepted_pcm), timeout=2.0)
-        owner = context.output_owner
+        owner = context.output.output_owner
         assert owner is not None
         ack_frame = bridge.accepted_pcm[-1]
         assert ack_frame.turn_id == owner.fence.turn_id
@@ -1702,7 +1702,7 @@ async def test_unheard_live_lookup_ack_prefixes_deep_result() -> None:
         context = await registry.open_session(identity)
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
-        await _wait_until(lambda: context.output_owner is None, timeout=2.0)
+        await _wait_until(lambda: context.output.output_owner is None, timeout=2.0)
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
         assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT in provider.output_kinds
@@ -1785,14 +1785,14 @@ async def test_started_live_lookup_ack_is_not_preempted_by_deep_result() -> None
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         context.runtime.orchestrator.delegation.reset_output_intent_state(identity.session_id)
         provider.release.set()
         await asyncio.sleep(0.05)
         assert not provider.deep_started.is_set()
-        assert context.output_owner is ack_owner
+        assert context.output.output_owner is ack_owner
         provider.ack_hold.set()
         await asyncio.wait_for(provider.ack_completed.wait(), timeout=2)
         ack_frame = bridge.frames[-1]
@@ -1880,7 +1880,7 @@ async def test_heard_ack_then_duplicate_turn_commit_does_not_repeat_filler() -> 
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         ack_frame = bridge.frames[-1]
@@ -1967,7 +1967,7 @@ async def test_duplicate_turn_commit_does_not_emit_a_second_lookup_ack() -> None
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         ack_frame = bridge.frames[-1]
@@ -2057,7 +2057,7 @@ async def test_later_live_lookup_still_announces_itself() -> None:
         await context.runtime.on_turn_committed("今天南京天气怎么样")
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         ack_frame = bridge.frames[-1]
@@ -2159,7 +2159,7 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
         assert fence is not None, reason
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
-        ack_owner = context.output_owner
+        ack_owner = context.output.output_owner
         assert ack_owner is not None
         ack_fence = ack_owner.fence
         ack_frame = bridge.frames[-1]
@@ -2181,7 +2181,7 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
         assert not registry._reply_in_flight(context)
         assert any(
             claim.state is DelegationOutputState.OWNED
-            for claim in context.delegation_output_claims.values()
+            for claim in context.output.delegation_output_claims.values()
         )
         # The board re-transcribes the same question over the contiguous range.
         duplicate_segment = SpeechSegment(
@@ -2198,10 +2198,10 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
         )
         assert context.runtime.ingest_media_speech_segment(duplicate_segment)
         await registry._apply_projection_segment(context, duplicate_segment)
-        context.turn_start_sample = 600
-        context.turn_end_sample = 1200
-        context.turn_endpoint_sample = 1200
-        context.turn_retire_sample = 1240
+        context.pending.turn_start_sample = 600
+        context.pending.turn_end_sample = 1200
+        context.pending.turn_endpoint_sample = 1200
+        context.pending.turn_retire_sample = 1240
         repeat_fence, repeat_reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -2276,7 +2276,7 @@ async def test_qa_blocked_duplicate_still_delivers_the_first_answer() -> None:
             session,
             question,
         )
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         assert claim.state is DelegationOutputState.OWNED
         assert not registry._reply_in_flight(context)
         frames_before = len(bridge.frames)
@@ -2299,11 +2299,11 @@ async def test_qa_blocked_duplicate_still_delivers_the_first_answer() -> None:
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
         await _wait_until(
-            lambda: context.output_owner is not None
-            and context.output_owner.fence.generation_id != fence.generation_id,
+            lambda: context.output.output_owner is not None
+            and context.output.output_owner.fence.generation_id != fence.generation_id,
             timeout=2.0,
         )
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         deep_generation = deep_owner.fence.generation_id
         assert deep_generation != fence.generation_id
@@ -2342,7 +2342,7 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
         context, fence = await _qa_commit_question_then_finish_ack_playback(
             registry, identity, bridge, provider, session, "今天南京天气怎么样"
         )
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
         assert context.runtime.fence.matches(fence)
         assert await registry.generate_reply(identity.session_id, "今天南京天气怎么样", fence)
@@ -2355,11 +2355,11 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
             assert claim.state is DelegationOutputState.COMPLETED
             assert any(
                 work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
-                for work in context.output_work.values()
+                for work in context.output.output_work.values()
             )
             assert not provider.deep_started.is_set()
             assert len(bridge.frames) == frame_count
-            assert context.output_retry_task is None
+            assert context.output.output_retry_task is None
         await registry._expire_endpoint_tail(
             identity.session_id, identity.stream_epoch, endpoint
         )
@@ -2368,18 +2368,18 @@ async def test_qa_weather_result_survives_empty_vad_tail(result_before_tail: boo
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
         await _wait_until(lambda: len(bridge.frames) > frame_count)
-        deep_fence = context.output_owner.fence
+        deep_fence = context.output.output_owner.fence
         await _finish_output_owner_playback(registry, identity, bridge, session)
-        delivery = context.reply_delivery.get(deep_fence)
+        delivery = context.output.reply_delivery.get(deep_fence)
         assert delivery.actual_heard and delivery.playback_ended
-        await _wait_until(lambda: context.output_dispatch_task is None)
-        assert not context.output_work
-        assert context.output_retry_task is None
+        await _wait_until(lambda: context.output.output_dispatch_task is None)
+        assert not context.output.output_work
+        assert context.output.output_retry_task is None
         assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
         assert provider.output_kinds.count(
             media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
         ) == 1
-        assert context.turn_start_sample is None
+        assert context.pending.turn_start_sample is None
         assert context.runtime.fence.turn_id == fence.turn_id
     finally:
         provider.release.set()
@@ -2440,12 +2440,12 @@ async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
         context, fence = await _qa_commit_question_then_finish_ack_playback(
             registry, identity, bridge, provider, session, "今天南京天气怎么样"
         )
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         registry._clear_pending_turn_state(context)
         await vad("start-1", 640, final=False)
         assert not context.runtime.output_floor_allows_assistant
         if text_evidence:
-            context.pending_partial = ASRResult(
+            context.pending.pending_partial = ASRResult(
                 stream_epoch=identity.stream_epoch,
                 task_epoch=1,
                 sentence_id="owner-partial",
@@ -2459,7 +2459,7 @@ async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
         frame_count = len(bridge.frames)
         provider.release.set()
         await _wait_until(lambda: claim.state is not DelegationOutputState.OWNED)
-        assert context.evidence_less_hold_since is not None
+        assert context.pending.evidence_less_hold_since is not None
         # Noise keeps re-opening the same empty turn faster than any tail.
         for index, sample in enumerate((1_280, 1_920, 2_560, 3_200, 3_840), start=1):
             await asyncio.sleep(0.1)
@@ -2470,14 +2470,14 @@ async def test_qa_evidence_less_vad_cannot_hold_weather_result_past_cap(
         if text_evidence:
             await asyncio.sleep(0.5)
             assert not context.runtime.output_floor_allows_assistant
-            assert context.turn_start_sample is not None
+            assert context.pending.turn_start_sample is not None
             assert not provider.deep_started.is_set()
             assert len(bridge.frames) == frame_count
-            assert context.evidence_less_hold_since is None
+            assert context.pending.evidence_less_hold_since is None
         else:
             await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
             await _wait_until(lambda: len(bridge.frames) > frame_count)
-            assert context.evidence_less_hold_since is None
+            assert context.pending.evidence_less_hold_since is None
             assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
             assert context.runtime.fence.turn_id == fence.turn_id
     finally:
@@ -2509,7 +2509,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
         )
         endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
         provider.release.set()
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
         coordinator = context.runtime.orchestrator.delegation
         if invalidator == "new_vad":
@@ -2521,7 +2521,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
                     kind=SegmentKind.VAD, capture_start_sample=1280, capture_end_sample=1281,
                 ),
             )
-            assert context.turn_endpoint_sample is None
+            assert context.pending.turn_endpoint_sample is None
         elif invalidator == "stop":
             await context.runtime.accept_media_generation(fence.bump_generation(), cause="stop")
         elif invalidator == "new_turn":
@@ -2544,7 +2544,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
                 identity.session_id, coordinator.current_context_version(identity.session_id) + 1
             )
         elif invalidator == "partial":
-            context.pending_partial = ASRResult(
+            context.pending.pending_partial = ASRResult(
                 task_epoch=1, sentence_id="real-speech", revision=1,
                 capture_start_sample=640, capture_end_sample=650, text="等等",
                 is_final=False, stream_epoch=identity.stream_epoch,
@@ -2553,7 +2553,7 @@ async def test_qa_empty_tail_does_not_revive_invalid_weather_output(invalidator:
         assert not await registry._start_selected_output(context)
         assert not provider.deep_started.is_set()
         assert len(bridge.frames) == 1
-        assert context.output_retry_task is None
+        assert context.output.output_retry_task is None
     finally:
         provider.release.set()
         await registry.finalize_session(identity.session_id)
@@ -2586,7 +2586,7 @@ async def test_qa_conversation_or_failed_lookup_queues_during_empty_vad(
         else:
             context = await registry.open_session(identity)
             fence = await context.runtime.on_turn_committed("给我讲个故事")
-            context.playback.start(fence)
+            context.output.playback.start(fence)
         endpoint = await _qa_open_empty_vad_tail(registry, context, session, identity)
         frame_count = len(bridge.frames)
         assert await registry.generate_reply(identity.session_id, "给我讲个故事", fence)
@@ -2594,10 +2594,10 @@ async def test_qa_conversation_or_failed_lookup_queues_during_empty_vad(
             provider.release.set()
         await _wait_until(lambda: any(
             work.intent.kind == media_pb2.OUTPUT_INTENT_KIND_CONVERSATION_REPLY
-            for work in context.output_work.values()
+            for work in context.output.output_work.values()
         ))
         assert len(bridge.frames) == frame_count
-        assert context.output_retry_task is None
+        assert context.output.output_retry_task is None
         await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)
         await _wait_until(lambda: len(bridge.frames) > frame_count)
         assert len(bridge.frames) == frame_count + 1
@@ -2625,12 +2625,12 @@ async def test_queued_ack_and_deep_result_survive_internal_output_handoffs(
     context = await registry.open_session(identity)
     try:
         fence = await context.runtime.on_turn_committed("你好")
-        context.playback.start(fence)
+        context.output.playback.start(fence)
         assert await registry.generate_reply(identity.session_id, "你好", fence)
         assert len(bridge.frames) == 1
         if not preempt_owner:
             await _finish_output_owner_playback(registry, identity, bridge, session)
-            assert context.output_owner is None
+            assert context.output.output_owner is None
         coordinator = context.runtime.orchestrator.delegation
         context.runtime.on_user_voice_started()
         now = int(time.time() * 1_000)
@@ -2662,17 +2662,17 @@ async def test_queued_ack_and_deep_result_survive_internal_output_handoffs(
         else:
             registry._schedule_output_retry(context)
         await _wait_until(lambda: len(bridge.frames) == 2)
-        assert len(context.output_work) == 2
-        assert all(work.fence.matches(context.runtime.fence) for work in context.output_work.values())
-        assert not {"answer", "ack"}.intersection(context.output_work)
-        assert context.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
+        assert len(context.output.output_work) == 2
+        assert all(work.fence.matches(context.runtime.fence) for work in context.output.output_work.values())
+        assert not {"answer", "ack"}.intersection(context.output.output_work)
+        assert context.output.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT
         await _finish_output_owner_playback(registry, identity, bridge, session)
         await _wait_until(lambda: len(bridge.frames) == 3)
-        assert context.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
-        deep_fence = context.output_owner.fence
+        assert context.output.output_owner.intent.kind == media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT
+        deep_fence = context.output.output_owner.fence
         await _finish_output_owner_playback(registry, identity, bridge, session)
-        assert context.reply_delivery.get(deep_fence).playback_ended
-        assert not context.output_work
+        assert context.output.reply_delivery.get(deep_fence).playback_ended
+        assert not context.output.output_work
         assert len(bridge.frames) == 3
         assert context.runtime.fence.turn_id == fence.turn_id
     finally:
@@ -2706,11 +2706,11 @@ async def test_qa_same_question_after_delivered_answer_is_not_blocked() -> None:
             session,
             question,
         )
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         provider.release.set()
         await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
         await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED, timeout=2.0)
-        deep_owner = context.output_owner
+        deep_owner = context.output.output_owner
         assert deep_owner is not None
         deep_fence = deep_owner.fence
         await _wait_until(lambda: len(bridge.frames) >= 2, timeout=2.0)
@@ -2728,7 +2728,7 @@ async def test_qa_same_question_after_delivered_answer_is_not_blocked() -> None:
                 event_type=PlaybackEventType.ENDED,
             ),
         )
-        await _wait_until(lambda: context.output_owner is None, timeout=2.0)
+        await _wait_until(lambda: context.output.output_owner is None, timeout=2.0)
         assert not registry._reply_or_delegation_pending(context)
         repeat_fence, repeat_reason = await _qa_commit_repeat_question(
             registry,
@@ -2769,7 +2769,7 @@ async def test_qa_different_question_in_delegation_window_is_not_blocked() -> No
             session,
             question,
         )
-        assert context.delegation_output_claims[fence].state is DelegationOutputState.OWNED
+        assert context.output.delegation_output_claims[fence].state is DelegationOutputState.OWNED
         repeat_fence, repeat_reason = await _qa_commit_repeat_question(
             registry,
             context,
@@ -2847,7 +2847,7 @@ async def test_qa_different_question_delivers_after_superseding_old_delegation()
             provider.delegation_started[first_question].wait(),
             timeout=2,
         )
-        first_claim = context.delegation_output_claims[first_fence]
+        first_claim = context.output.delegation_output_claims[first_fence]
         assert first_claim.state is DelegationOutputState.OWNED
 
         second_fence, reason = await _qa_commit_repeat_question(
@@ -2862,7 +2862,7 @@ async def test_qa_different_question_delivers_after_superseding_old_delegation()
         assert second_fence is not None, reason
         assert second_fence.turn_id > first_fence.turn_id
         await _wait_until(
-            lambda: second_fence in context.delegation_output_claims,
+            lambda: second_fence in context.output.delegation_output_claims,
             timeout=2,
         )
         await _wait_until(
@@ -2890,7 +2890,7 @@ async def test_qa_different_question_delivers_after_superseding_old_delegation()
         assert first_claim.state is DelegationOutputState.RELEASED
         assert not any(
             result.reason == "output_intent_inactive"
-            for result in context.output_results
+            for result in context.output.output_results
         )
         await _wait_until(
             lambda: not context.runtime.orchestrator.task_manager.tasks,
@@ -2923,14 +2923,14 @@ async def test_qa_released_delegation_local_fallback_emits_audio() -> None:
         context = await registry.open_session(identity)
         query = "今天南京天气怎么样"
         fence = await context.runtime.on_turn_committed(query)
-        context.playback.start(fence)
+        context.output.playback.start(fence)
         assert await registry.generate_reply(identity.session_id, query, fence)
         await _wait_until(lambda: provider.reply_calls == 1, timeout=2.0)
-        claim = context.delegation_output_claims[fence]
+        claim = context.output.delegation_output_claims[fence]
         assert claim.state is DelegationOutputState.RELEASED
         await _wait_until(lambda: bool(bridge.frames), timeout=2.0)
         assert bridge.frames, "local fallback emitted no audio frame"
-        assert context.output_owner is not None
+        assert context.output.output_owner is not None
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -3026,7 +3026,7 @@ async def test_stale_generation_media_delegation_produces_no_output() -> None:
     identity = SessionIdentity("stale-delegation")
     context = await registry.open_session(identity)
     first_fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
-    claim = context.delegation_output_claims[first_fence]
+    claim = context.output.delegation_output_claims[first_fence]
 
     # Wait until the deep provider is actually working so the supersede
     # happens mid-flight rather than before the delegation started.
@@ -3066,7 +3066,7 @@ async def test_concurrent_media_normal_replies_produce_only_one_local_output_aft
     context = await registry.open_session(identity)
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
-    context.playback.start(fence)
+    context.output.playback.start(fence)
 
     first = asyncio.create_task(registry.generate_reply(identity.session_id, query, fence))
     second = asyncio.create_task(registry.generate_reply(identity.session_id, query, fence))
@@ -3075,7 +3075,7 @@ async def test_concurrent_media_normal_replies_produce_only_one_local_output_aft
     await _wait_until(lambda: provider.reply_calls == 1)
 
     await asyncio.sleep(0.02)
-    claim = context.delegation_output_claims[fence]
+    claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.RELEASED
     assert provider.reply_calls == 1
     assert provider.output_kinds == []
@@ -3099,11 +3099,11 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
     assert await context.runtime.accept_media_generation(fence, cause="test")
     await context.runtime.on_assistant_speaking("你好。")
     context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
-    context.playback.start(fence)
+    context.output.playback.start(fence)
     # Audio is delivered and fully rendered, but the provider never supplied a
     # timed text span: the ledger has a received watermark without any span.
-    assert context.playback.register_audio(fence, 0, 0, 2)
-    context.provider_complete = True
+    assert context.output.playback.register_audio(fence, 0, 0, 2)
+    context.output.provider_complete = True
     completed: list[tuple[GenerationFence, str]] = []
     original = context.runtime.on_media_playback_done
 
