@@ -1,9 +1,11 @@
 name: ci
 
+# Runs for pull requests, and on demand for a branch (Actions > ci > Run workflow).
+# It no longer runs on every push to main: the merged tree was just tested in the
+# pull request, and a second 10-minute run per merge only added waiting.
 on:
-  push:
-    branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   changes:
@@ -12,16 +14,17 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      agent: ${{ steps.filter.outputs.agent }}
-      python: ${{ steps.filter.outputs.python }}
-      media_edge: ${{ steps.filter.outputs.media_edge }}
-      miniprogram: ${{ steps.filter.outputs.miniprogram }}
-      firmware: ${{ steps.filter.outputs.firmware }}
-      firmware_build: ${{ steps.filter.outputs.firmware_build }}
+      agent: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.agent }}
+      python: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.python }}
+      media_edge: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.media_edge }}
+      miniprogram: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.miniprogram }}
+      firmware: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware }}
+      firmware_build: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware_build }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event_name != 'workflow_dispatch'
         with:
           predicate-quantifier: some-with-excludes
           filters: |
@@ -160,8 +163,8 @@ jobs:
       - name: Agent source-overlay script syntax
         run: bash -n scripts/deploy_agent_component.sh
 
-  python:
-    needs: [changes, control-api-image]
+  python-gates:
+    needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     services:
@@ -236,23 +239,99 @@ jobs:
         run: uv run python scripts/media_runtime_smoke.py
       - name: Media replay, chaos and load contract
         run: uv run python scripts/media_runtime_replay.py
-      - name: Pytest
-        run: uv run pytest --import-mode=importlib --cov=services --cov-report=term-missing
-        env:
-          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
       - name: Wake matrix tool regression (self-contained, no device)
         run: uv run pytest --import-mode=importlib --no-cov scripts/tests/test_wake_word_matrix.py
-      - name: Coverage gates
-        run: |
-          uv run coverage report --fail-under=85
-          uv run coverage report --include='services/agent/src/orchestration/*' --fail-under=90
-          uv run coverage report --include='services/agent/src/providers/*_protocol.py' --fail-under=90
       - name: Offline E2E
         run: uv run python scripts/run_e2e.py --profile offline
       - name: Provider smoke (skip without keys)
         run: uv run python scripts/provider_smoke_test.py
         env:
           OFFLINE_MOCK: "true"
+
+  # The Pytest step alone took 16 minutes in one process. The suite's PostgreSQL
+  # tests share roles in one cluster and cannot run in parallel against it, so
+  # the files are split across runners, each with its own PostgreSQL service
+  # (scripts/ci_test_shards.py). `python` below folds the coverage back together.
+  python-shards:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg17-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --frozen --all-extras
+      - name: Pytest (shard ${{ matrix.shard }} of 4)
+        env:
+          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          COVERAGE_FILE: coverage-shard-${{ matrix.shard }}.data
+        run: |
+          mapfile -t files < <(uv run python scripts/ci_test_shards.py --shards 4 --index ${{ matrix.shard }})
+          echo "${#files[@]} test files"
+          # Coverage is checked on the combined data; a shard alone is far below it.
+          uv run pytest --import-mode=importlib --cov=services --cov-report= --cov-fail-under=0 "${files[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage-shard-${{ matrix.shard }}.data
+          if-no-files-found: error
+          retention-days: 1
+
+  # The required `python` check: it fails when any shard, the gates or the image
+  # build failed (a skipped job would otherwise count as passing), then combines
+  # the shards' coverage and applies the coverage gates.
+  python:
+    needs: [changes, control-api-image, python-gates, python-shards]
+    if: ${{ always() && needs.changes.outputs.python == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every python job passed
+        run: |
+          echo "control-api-image=${{ needs.control-api-image.result }}"
+          echo "python-gates=${{ needs.python-gates.result }}"
+          echo "python-shards=${{ needs.python-shards.result }}"
+          [[ "${{ needs.control-api-image.result }}" == success ]]
+          [[ "${{ needs.python-gates.result }}" == success ]]
+          [[ "${{ needs.python-shards.result }}" == success ]]
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --frozen --all-extras
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          merge-multiple: true
+      - name: Coverage gates
+        run: |
+          uv run coverage combine coverage-shard-*.data
+          uv run coverage report --show-missing
+          uv run coverage report --fail-under=85
+          uv run coverage report --include='services/agent/src/orchestration/*' --fail-under=90
+          uv run coverage report --include='services/agent/src/providers/*_protocol.py' --fail-under=90
 
   media-edge:
     needs: changes
