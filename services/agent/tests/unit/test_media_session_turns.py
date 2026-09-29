@@ -87,6 +87,7 @@ from services.agent.tests.unit.media_session_support import (
     open_bridge_connection,
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -156,7 +157,7 @@ async def test_playback_farewell_with_shadow_score_returns_device_to_standby() -
     )
     context = await _seed_pending_media_turn(registry, identity, text="好的，再见")
     context.runtime.set_device_conversation_controls(True)
-    context.runtime._was_speaking = True
+    set_floor(context.runtime, assistant_speaking=True)
 
     async def classify_shadow_guest(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
         return SpeakerDecision(
@@ -2203,7 +2204,7 @@ async def test_tts_failure_before_first_frame_returns_device_session_to_listenin
         await _wait_until(
             lambda: (
                 context.runtime.orchestrator.state is ConversationState.LISTENING
-                and context.runtime._was_speaking is False
+                and context.runtime.assistant_speaking is False
             )
         )
         # Without an open input gate the next endpoint is discarded as echo.
@@ -2232,7 +2233,7 @@ async def test_device_vad_end_during_wake_playback_is_ignored() -> None:
     try:
         context = await registry.open_session(identity)
         await asyncio.wait_for(provider.started.wait(), timeout=1)
-        context.runtime._was_speaking = True
+        set_floor(context.runtime, assistant_speaking=True)
         await registry.on_speech_segment(
             session,
             SpeechSegment(

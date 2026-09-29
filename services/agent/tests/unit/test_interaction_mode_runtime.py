@@ -68,7 +68,7 @@ async def test_policy_provenance_is_frozen_per_fence_and_owner_evidence_is_serve
         "speaker_model_version": "campplus-test",
         "speaker_template_version": 1,
     }
-    assert runtime._history_eligible(fence) is True
+    assert runtime._generation_records.history_eligible(fence) is True
     await runtime.close()
 
 
@@ -92,7 +92,7 @@ async def test_guest_uncertain_and_shadow_cannot_become_owner_projection(
     assert accepted
     fence = await runtime.on_turn_committed("这是当前说话人的一句完整表达。")
 
-    assert runtime._history_eligible(fence) is False
+    assert runtime._generation_records.history_eligible(fence) is False
     policy = runtime.mode_policy_for_fence(fence)
     assert policy.allows_private_context(classification) is False
     assert policy.allows_tools(classification) is False
@@ -113,7 +113,7 @@ async def test_shadow_owner_candidate_keeps_only_low_sensitivity_persona_without
     assert accepted
     fence = await runtime.on_turn_committed("这是主人在本轮留下的完整表达。")
 
-    assert runtime._history_eligible(fence) is False
+    assert runtime._generation_records.history_eligible(fence) is False
     policy = runtime.mode_policy_for_fence(fence)
     assert policy.history_eligible(
         "uncertain", reason_code="shadow_owner_candidate"

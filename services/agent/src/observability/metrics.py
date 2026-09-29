@@ -146,6 +146,22 @@ class MetricsRegistry:
             },
         )
 
+    def inc_voice_floor_divergence(
+        self,
+        conversation_state: str,
+        phase: str,
+        assistant_speaking: bool,
+    ) -> None:
+        """A phase write left state machine, phase and playback latch disagreeing."""
+        self._inc(
+            "voice_floor_divergence_total",
+            {
+                "conversation_state": conversation_state,
+                "phase": phase,
+                "assistant_speaking": "true" if assistant_speaking else "false",
+            },
+        )
+
     def inc_conversation_turn_initiation(self, entry: str, state: str) -> None:
         """Count one turn onset relative to the assistant floor."""
 

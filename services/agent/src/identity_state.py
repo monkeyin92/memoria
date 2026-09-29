@@ -16,26 +16,25 @@ from typing import Any
 def clear_identity_private_state(runtime: Any) -> None:
     """Drop every old-subject field/cache of one DuplexRuntime instance.
 
-    Covers by-fence maps (plans/provenance/voice/eligibility/modality),
-    speaker PCM/acoustic evidence, pending playback/expression state and the
-    in-flight personal voice refresh.  Transcript revisions and the event
+    Covers the per-generation records (plans, TTS references, provenance,
+    voice, eligibility, modality -- interaction policies are not subject data
+    and are epoch-filtered only when the rotation installs a policy), speaker
+    PCM/acoustic evidence, pending playback/expression state and the in-flight
+    personal voice refresh.  Transcript revisions and the event
     sequence are session-level UI audit and deliberately survive.
     """
 
-    runtime._speech_plans_by_fence.clear()
-    runtime._response_provenance_by_fence.clear()
-    runtime._voice_snapshot_by_fence.clear()
-    runtime._history_eligible_by_fence.clear()
-    runtime._owner_projection_eligible_by_fence.clear()
-    runtime._input_modality_by_fence.clear()
+    runtime._generation_records.clear()
     runtime._emotion_segments_by_turn.clear()
     runtime._speaker_pcm.clear()
     runtime._speaker_decision = None
     runtime._speaker_class = "uncertain"
-    runtime._pending_assistant_text = ""
-    runtime._played_assistant_text = ""
-    runtime._pending_assistant_text_epoch = 0
-    runtime._playback_fence = None
+    runtime._voice_floor.update(
+        pending_assistant_text="",
+        played_assistant_text="",
+        pending_assistant_text_epoch=0,
+        playback_fence=None,
+    )
     runtime._assistant_expression_fence = None
     runtime._pending_tool_results = 0
     # Never call a possibly-awaitable cue stop() synchronously here; the

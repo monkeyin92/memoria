@@ -7,6 +7,7 @@ from services.agent.src.duplex_runtime import (
     DuplexRuntime,
 )
 from services.agent.tests.unit.runtime_state_helpers import (
+    set_floor,
     speaker_permissions,
 )
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -248,7 +249,7 @@ async def test_permissive_policy_allows_formal_guest_to_interrupt() -> None:
         await runtime.orchestrator.ready()
         await runtime.on_turn_committed("开始播放")
         await runtime.on_assistant_speaking("机器人正在播放回复")
-        runtime._was_speaking = True
+        set_floor(runtime, assistant_speaking=True)
         await _classify_turn(runtime, _decision("guest", reason_code="owner_mismatch"))
         runtime.set_reject_non_owner_voice(False)
         runtime.input_guard.candidate_text = "停一下"

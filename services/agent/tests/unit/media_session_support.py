@@ -43,6 +43,7 @@ from services.agent.src.voice_core.speech_timeline import (
     SpeechSegment,
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -869,7 +870,7 @@ async def _open_device_overlap_session(
         # to ``_start_retained_utterance`` after the reply is over.  Ownership is
         # installed directly so the test stays on the ASR/turn seam instead of
         # simulating a full generator lifecycle.
-        context.runtime._was_speaking = True
+        set_floor(context.runtime, assistant_speaking=True)
     return SimpleNamespace(
         registry=registry,
         identity=identity,
@@ -932,7 +933,7 @@ def _user_turn_texts(context: Any) -> list[str]:
 def _finish_previous_reply(context: Any) -> None:
     """The reply that owned output is over; later finals are no longer overlap."""
 
-    context.runtime._was_speaking = False
+    set_floor(context.runtime, assistant_speaking=False)
 
 
 def _start_retained_utterance(window: SimpleNamespace) -> None:

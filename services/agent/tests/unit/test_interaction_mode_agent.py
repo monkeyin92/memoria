@@ -1041,7 +1041,7 @@ def test_unknown_safe_clock_fact_survives_non_public_capabilities(
     runtime.set_mode_policy(policy)
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     fence = runtime.fence.bump_turn()
-    runtime._bind_mode_policy(fence)
+    runtime._generation_records.bind_mode_policy(fence, runtime.mode_policy)
     plan = agent._local_safe_plan(
         fence=fence,
         speaker=SpeakerDecision(

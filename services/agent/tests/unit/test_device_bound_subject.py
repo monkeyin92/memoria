@@ -11,6 +11,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,
 )
+from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import (
     DEVICE_BOUND_SUBJECT_REASON,
     SpeakerDecision,
@@ -115,8 +116,11 @@ async def test_a_running_voiceprint_keeps_its_own_decision() -> None:
 
 def _just_played(runtime: DuplexRuntime, text: str, *, ago_ms: int) -> int:
     now_ns = time.monotonic_ns()
-    runtime._played_assistant_text = text  # noqa: SLF001 - playback tail seam
-    runtime._last_playback_completed_ns = now_ns - ago_ms * 1_000_000  # noqa: SLF001
+    set_floor(  # playback tail seam
+        runtime,
+        played_assistant_text=text,
+        last_playback_completed_ns=now_ns - ago_ms * 1_000_000,
+    )
     return now_ns
 
 

@@ -21,6 +21,7 @@ from services.agent.src.orchestration.emotion import (
 from services.agent.src.orchestration.prosody import SpeechPlan, speech_plan_for_turn
 
 if TYPE_CHECKING:
+    from services.agent.src.generation_records import GenerationRecords
     from services.agent.src.mode_policy_client import ModePolicy
     from services.agent.src.orchestration.orchestrator import Orchestrator
 
@@ -40,8 +41,7 @@ class DuplexRuntimeEmotionMixin:
         use_paralinguistic_tags: bool
         _speaker_class: str
         _emotion_segments_by_turn: dict[int, list[tuple[str, str]]]
-        _speech_plans_by_fence: dict[GenerationFence, SpeechPlan]
-        _tts_references_by_fence: dict[GenerationFence, tuple[str, ...]]
+        _generation_records: GenerationRecords
 
         # Core runtime members consumed by this mixin.
         @property
@@ -120,9 +120,7 @@ class DuplexRuntimeEmotionMixin:
             use_markup_tags=self.use_paralinguistic_tags,
             companion_id=self.mode_policy.companion_style_id,
         )
-        self._speech_plans_by_fence[fence] = self.speech_plan
-        while len(self._speech_plans_by_fence) > 16:
-            self._speech_plans_by_fence.pop(next(iter(self._speech_plans_by_fence)))
+        self._generation_records.bind_speech_plan(fence, self.speech_plan)
         apply_plan = getattr(self.tts, "apply_speech_plan", None)
         if callable(apply_plan):
             speaker_scope: Literal["owner", "public"] = (
@@ -132,9 +130,7 @@ class DuplexRuntimeEmotionMixin:
                 current_user_final=user_text,
                 speaker_scope=speaker_scope,
             )
-            self._tts_references_by_fence[fence] = reference_contexts
-            while len(self._tts_references_by_fence) > 16:
-                self._tts_references_by_fence.pop(next(iter(self._tts_references_by_fence)))
+            self._generation_records.bind_tts_references(fence, reference_contexts)
             self.apply_speech_plan_to_tts(fence)
         logger.info(
             "speech_plan_selected emotion=%s dialect=%s tone=%s rate=%.2f pitch=%s "

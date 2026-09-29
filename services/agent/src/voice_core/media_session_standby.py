@@ -315,18 +315,13 @@ class MediaSessionStandbyMixin:
             # the floor to the owner.
             self._pause_owner_silence_timer(context)
             return
-        if context.runtime.assistant_speaking or context.runtime.interaction_phase.value in {
-            "thinking_silent",
-            "speaking",
-            "backchannel",
-            "interrupted",
-        }:
+        if context.runtime.floor.assistant_holds_floor:
             self._pause_owner_silence_timer(context)
             return
         self._arm_owner_silence_timer(context, reset=owner_verified)
 
     def _resume_owner_silence_after_reconnect(self, context: _MediaVoiceSession) -> None:
-        if context.runtime.interaction_phase.value in {"connecting", "listening"}:
+        if context.runtime.floor.listening_or_connecting:
             self._arm_owner_silence_timer(context, reset=False)
 
     async def _owner_silence_watch(

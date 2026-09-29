@@ -18,10 +18,10 @@ from services.agent.src.generation_output_policy import (
 )
 
 if TYPE_CHECKING:
+    from services.agent.src.generation_records import GenerationRecords
     from services.agent.src.mode_policy_client import ModePolicy
 
 RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
-RESPONSE_PROVENANCE_MAX_FENCES = 32
 _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
     {
         "query",
@@ -55,8 +55,7 @@ class DuplexRuntimeProvenanceMixin:
     if TYPE_CHECKING:
         # Shared state owned by the DuplexRuntime dataclass.
         session_id: str
-        _response_provenance_by_fence: dict[GenerationFence, dict[str, Any]]
-        _voice_snapshot_by_fence: dict[GenerationFence, GenerationVoiceSnapshot]
+        _generation_records: GenerationRecords
 
         # Core runtime members consumed by this mixin.
         @property
@@ -96,9 +95,7 @@ class DuplexRuntimeProvenanceMixin:
             or self._contains_forbidden_provenance_key(provenance)
         ):
             return False
-        self._response_provenance_by_fence[fence] = json.loads(encoded)
-        while len(self._response_provenance_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
-            self._response_provenance_by_fence.pop(next(iter(self._response_provenance_by_fence)))
+        self._generation_records.bind_response_provenance(fence, json.loads(encoded))
         return True
 
     def bind_generation_voice(
@@ -129,21 +126,22 @@ class DuplexRuntimeProvenanceMixin:
             )
         ):
             return False
-        self._voice_snapshot_by_fence[fence] = GenerationVoiceSnapshot(
-            profile_id=profile_id,
-            resource_id=resource_id,
-            speaker_sha256=speaker_sha256,
-            voice_kind=voice_kind,
+        self._generation_records.bind_voice_snapshot(
+            fence,
+            GenerationVoiceSnapshot(
+                profile_id=profile_id,
+                resource_id=resource_id,
+                speaker_sha256=speaker_sha256,
+                voice_kind=voice_kind,
+            ),
         )
-        while len(self._voice_snapshot_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
-            self._voice_snapshot_by_fence.pop(next(iter(self._voice_snapshot_by_fence)))
         return True
 
     def generation_voice_for(
         self,
         fence: GenerationFence,
     ) -> GenerationVoiceSnapshot | None:
-        return self._voice_snapshot_by_fence.get(fence)
+        return self._generation_records.voice_snapshot_for(fence)
 
     @classmethod
     def _contains_forbidden_provenance_key(cls, value: object) -> bool:
@@ -161,7 +159,7 @@ class DuplexRuntimeProvenanceMixin:
         self,
         fence: GenerationFence,
     ) -> dict[str, Any] | None:
-        stored = self._response_provenance_by_fence.get(fence)
+        stored = self._generation_records.response_provenance_for(fence)
         if stored is None:
             return None
         provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))

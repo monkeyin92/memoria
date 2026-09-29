@@ -27,6 +27,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
 )
 from services.agent.tests.unit.runtime_state_helpers import (
     commit_media_turn,
+    set_floor,
     set_pending_assistant_text,
 )
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -131,8 +132,8 @@ async def test_media_playback_done_arms_post_playback_weekday_echo_guard() -> No
     set_pending_assistant_text(runtime, answer)
     await runtime.orchestrator.begin_speaking([], answer)
     assert await runtime.on_media_playback_done(fence, answer)
-    assert runtime._last_playback_completed_ns is not None
-    assert "星期四" in runtime._played_assistant_text
+    assert runtime._voice_floor.last_playback_completed_ns is not None
+    assert "星期四" in runtime._voice_floor.played_assistant_text
 
     accepted, reason = runtime.accept_user_turn(
         "星期四",
@@ -159,8 +160,8 @@ async def test_media_playback_done_falls_back_to_pending_text_for_echo_guard() -
     await runtime.orchestrator.begin_speaking([], answer)
     # Empty exact heard text (e.g. ledger gap) still arms weekday echo match.
     assert await runtime.on_media_playback_done(fence, "")
-    assert runtime._played_assistant_text == answer
-    assert runtime._last_playback_completed_ns is not None
+    assert runtime._voice_floor.played_assistant_text == answer
+    assert runtime._voice_floor.last_playback_completed_ns is not None
 
     accepted, reason = runtime.accept_user_turn(
         "星期四",
@@ -192,7 +193,7 @@ async def test_different_owner_profile_cannot_resume_the_interrupted_reply() -> 
     await _classify_speaker(runtime, _speaker_decision(profile_id="profile-owner-a"))
     await runtime.on_turn_committed("说说我的私人安排")
     await runtime.on_assistant_speaking("你的私人安排是周末回家。")
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.input_guard.candidate_text = "等一下"
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
 
@@ -216,7 +217,7 @@ async def test_different_shadow_profile_cannot_resume_the_interrupted_reply() ->
     )
     await runtime.on_turn_committed("介绍一下南京")
     await runtime.on_assistant_speaking("南京是江苏省省会。")
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.input_guard.candidate_text = "等一下"
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
 
@@ -241,7 +242,7 @@ async def test_device_farewell_interrupt_does_not_restore_listen_before_close() 
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("今天天气怎么样")
     await runtime.on_assistant_speaking("南宁今天多云。")
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.input_guard.candidate_text = "好的，再见"
 
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
@@ -375,7 +376,7 @@ async def test_after_control_chat_fail_opens_missing_speech_epoch() -> None:
     await runtime.orchestrator.ready()
     runtime._restore_listen_after_control(cause="test_yield")
     # Orphan FINAL: metrics present but empty anchors, fresh speech cleared.
-    runtime._fresh_user_speech = False
+    set_floor(runtime, fresh_user_speech=False)
     accepted, reason = runtime.accept_user_turn(
         "你叫什么名字",
         speech_anchored=False,
@@ -473,8 +474,11 @@ async def test_guest_interrupt_is_not_muted_by_legacy_voice_mismatch() -> None:
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("你叫什么名字")
     await runtime.on_assistant_speaking("我叫记忆助手")
-    runtime._was_speaking = True
-    runtime._playback_started_ns = __import__("time").monotonic_ns()
+    set_floor(
+        runtime,
+        assistant_speaking=True,
+        playback_started_ns=__import__("time").monotonic_ns(),
+    )
     # Nearby talker audio in rolling window → guest interruption, not silence.
     runtime.feed_speaker_pcm(_signal_pcm(kind="bystander", seconds=4.0, seed=32))
     fence_before = runtime.fence
@@ -504,7 +508,7 @@ async def test_enrolled_barge_in_allows_a_real_guest_to_take_the_floor() -> None
         input_guard_enabled=True,
     )
     await runtime.orchestrator.ready()
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     # Overwrite rolling window with nearby talker only (4s rolling).
     other = _signal_pcm(kind="bystander", seconds=4.0, seed=22)
     runtime.feed_speaker_pcm(other)
@@ -537,7 +541,7 @@ async def test_enrolled_playback_vad_start_waits_when_utterance_is_empty() -> No
     )
     runtime.set_device_conversation_controls(True)
     await runtime.orchestrator.ready()
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     # Enrollment PCM would otherwise remain in the 4s rolling window and look
     # like an immediate owner match. Playback barge-in starts with a cleared
     # utterance and, after a long reply, no scorable uplink yet.
@@ -630,9 +634,9 @@ async def test_enroll_collects_pcm_even_if_was_speaking_stuck() -> None:
     verifier = SpeakerVerifier(enabled=True, enroll_speech_ms=800, enroll_timeout_ms=5000)
     runtime = DuplexRuntime.create(session_id="enroll-pcm", speaker_verifier=verifier)
     await runtime.orchestrator.ready()
-    runtime._was_speaking = True
+    set_floor(runtime, assistant_speaking=True)
     runtime.begin_speaker_enrollment()
-    assert runtime._was_speaking is False
+    assert runtime.assistant_speaking is False
     assert runtime._enroll_collecting is True
     # 1s of voiced-like tone @16k
     n = 16000
@@ -901,8 +905,8 @@ async def test_stale_generation_cannot_commit_speaking_state_or_expression() -> 
     assert runtime.fence.matches(replacement)
     assert runtime.orchestrator.state is state
     assert runtime.orchestrator.state is not ConversationState.SPEAKING
-    assert runtime._pending_assistant_text == ""
-    assert runtime._was_speaking is False
+    assert runtime._voice_floor.pending_assistant_text == ""
+    assert runtime.assistant_speaking is False
     assert runtime._assistant_expression_fence is None
     assert not any(
         event.get("type") == "assistant_expression"
@@ -921,12 +925,12 @@ async def test_unheard_output_restores_half_duplex_listen() -> None:
     await runtime.orchestrator.ready()
     fence = await runtime.on_turn_committed("今天天气怎么样")
     assert await runtime.on_assistant_speaking("南京今天晴。", expected_fence=fence)
-    assert runtime._was_speaking is True
+    assert runtime.assistant_speaking is True
     assert runtime.on_user_voice_started() is PlaybackInputDecision.IGNORE
 
     await runtime.restore_listen_after_unheard_output(fence, cause="stale_generation")
 
-    assert runtime._was_speaking is False
+    assert runtime.assistant_speaking is False
     assert runtime.orchestrator.state is ConversationState.LISTENING
     assert runtime.on_user_voice_started() is PlaybackInputDecision.ACCEPT
     await runtime.close()
