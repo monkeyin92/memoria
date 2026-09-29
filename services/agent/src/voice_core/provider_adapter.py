@@ -887,12 +887,12 @@ class ExistingVoiceProviderAdapter:
         Doubao's bidirectional protocol is generation-scoped: reopening it for
         every phrase adds avoidable first-audio latency and can change the
         voice between adjacent phrases.  Text-to-audio boundaries are not
-        exposed until the provider's final subtitle alignment, so this seam
-        deliberately records one conservative whole-generation ledger span;
-        an interruption can never over-claim a partly rendered phrase.
+        exposed until the provider's final subtitle alignment; without that
+        alignment this seam records one conservative whole-generation ledger
+        span, so an interruption can never over-claim a partly rendered phrase.
         """
 
-        from services.agent.src.voice_core.media_session import MediaReplyChunk
+        from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaTextSpan
 
         bind_fence = getattr(self.speech_synthesis, "bind_fence", None)
         if callable(bind_fence):
@@ -1033,6 +1033,23 @@ class ExistingVoiceProviderAdapter:
                 stream,
                 max_audio_end_sample=audio_end,
             )
+            if not timed_text_spans:
+                # No usable provider timing (none exposed, a degraded
+                # alignment or a malformed timeline): the whole reply is one
+                # ledger span over all of its audio.  Only an exact watermark
+                # at the last sample promotes it, so a fully played reply
+                # still becomes heard history while a stopped or
+                # approximately acknowledged one claims nothing.
+                alignment = getattr(stream, "timed_transcript_alignment", None)
+                logger.info(
+                    "media reply without provider text timing; one whole-reply "
+                    "ledger span session=%s turn_id=%s generation_id=%s alignment=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                    fence.generation_id,
+                    alignment() if callable(alignment) else "unavailable",
+                )
+                timed_text_spans = (MediaTextSpan(complete_text, 0, audio_end),)
             self._record_tts_frame_age(held_frame_received_at)
             yield MediaReplyChunk(
                 pcm_s16le=held_frame,
