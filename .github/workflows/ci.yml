@@ -1,9 +1,11 @@
 name: ci
 
+# Runs for pull requests, and on demand for a branch (Actions > ci > Run workflow).
+# It no longer runs on every push to main: the merged tree was just tested in the
+# pull request, and a second 10-minute run per merge only added waiting.
 on:
-  push:
-    branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   changes:
@@ -12,16 +14,17 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      agent: ${{ steps.filter.outputs.agent }}
-      python: ${{ steps.filter.outputs.python }}
-      media_edge: ${{ steps.filter.outputs.media_edge }}
-      miniprogram: ${{ steps.filter.outputs.miniprogram }}
-      firmware: ${{ steps.filter.outputs.firmware }}
-      firmware_build: ${{ steps.filter.outputs.firmware_build }}
+      agent: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.agent }}
+      python: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.python }}
+      media_edge: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.media_edge }}
+      miniprogram: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.miniprogram }}
+      firmware: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware }}
+      firmware_build: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.firmware_build }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event_name != 'workflow_dispatch'
         with:
           predicate-quantifier: some-with-excludes
           filters: |
