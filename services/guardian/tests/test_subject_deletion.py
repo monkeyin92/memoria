@@ -182,11 +182,11 @@ def _ids(rows: object, column: str) -> set[str]:
 
 @pytest.mark.asyncio
 async def test_subject_deletion_removes_only_the_subjects_guardian_rows(
-    guardian_postgres_database: TestDatabase,
+    postgres_database: TestDatabase,
     guardian_postgres_store: PostgresGuardianStore,
 ) -> None:
     store = guardian_postgres_store
-    await _seed(store, guardian_postgres_database)
+    await _seed(store, postgres_database)
     port: SubjectGuardianPort = store
 
     # The ids come back before the rows go: afterwards nothing can find them.

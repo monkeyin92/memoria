@@ -38,7 +38,7 @@ from services.legacy.domain import (
     RegisteredGranteeSnapshot,
 )
 from services.legacy.postgres_schema import read_postgres_schema
-from services.legacy.registry import (
+from services.legacy.rules import (
     _DEFAULT_PREFERENCES,
     _canonical_items,
     _digest,

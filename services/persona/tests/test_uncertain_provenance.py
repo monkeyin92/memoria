@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.persona.domain import PersonaEvidence
-from services.persona.engine import PersonaEngine
+from services.persona.postgres_engine import PostgresPersonaEngine
+
+EngineFactory = Callable[..., Awaitable[PostgresPersonaEngine]]
 
 
 async def _record_uncertain(
-    archive: LifeArchive,
+    archive: PostgresLifeArchive,
     *,
     event_id: str,
     session_id: str,
@@ -45,10 +47,9 @@ async def _record_uncertain(
 
 @pytest.mark.asyncio
 async def test_ambiguous_uncertain_speaker_cannot_create_persona_candidate(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record_uncertain(
         archive,
         event_id="ambiguous-speaker",
@@ -56,7 +57,7 @@ async def test_ambiguous_uncertain_speaker_cannot_create_persona_candidate(
         profile_id="profile-1",
         reason_code="shadow_ambiguous_candidate",
     )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -77,10 +78,9 @@ async def test_ambiguous_uncertain_speaker_cannot_create_persona_candidate(
 
 @pytest.mark.asyncio
 async def test_uncertain_evidence_from_multiple_shadow_profiles_does_not_auto_promote(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     for index in range(6):
         await _record_uncertain(
             archive,
@@ -89,7 +89,7 @@ async def test_uncertain_evidence_from_multiple_shadow_profiles_does_not_auto_pr
             profile_id="profile-1" if index < 4 else "profile-2",
             minute=index,
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -118,10 +118,9 @@ async def test_uncertain_evidence_from_multiple_shadow_profiles_does_not_auto_pr
 
 @pytest.mark.asyncio
 async def test_new_shadow_profile_can_build_a_fresh_auto_promotion_lane(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record_uncertain(
         archive,
         event_id="retired-profile-evidence",
@@ -136,7 +135,7 @@ async def test_new_shadow_profile_can_build_a_fresh_auto_promotion_lane(
             profile_id="current-profile",
             minute=index + 1,
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",

@@ -1,17 +1,18 @@
+"""Memory catalog compile/search/review contract on PostgreSQL."""
+
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import Any
 
+import asyncpg
 import pytest
 from services.archive.domain import ContextQuery, EvidenceEvent, MemoryReview
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog, SubjectCategoryUnresolved
+from services.archive.memory_catalog import SubjectCategoryUnresolved
 from services.archive.memory_domain import (
     AccountWriteRejectedError,
     ExtractedClaim,
@@ -23,6 +24,11 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+
+MakeCatalog = Callable[..., Awaitable[PostgresMemoryCatalog]]
+OwnerSql = Callable[..., list[tuple[Any, ...]]]
 
 
 class FlakyExtractor:
@@ -135,13 +141,15 @@ async def _reject_account_write(_: str) -> AsyncIterator[None]:
 
 
 async def _record(
-    archive: LifeArchive,
+    archive: PostgresLifeArchive,
     *,
     event_id: str,
     text: str,
     speaker_class: str = "owner",
     minute: int = 0,
     explicit_memory: bool = False,
+    account_id: str = "account-memory",
+    subject_id: str | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "text": text,
@@ -158,7 +166,8 @@ async def _record(
     await archive.record(
         EvidenceEvent(
             event_id=event_id,
-            account_id="account-memory",
+            account_id=account_id,
+            subject_id=subject_id,
             session_id="session-memory",
             turn_id=minute + 1,
             generation_id=minute + 1,
@@ -173,14 +182,12 @@ async def _record(
 
 @pytest.mark.asyncio
 async def test_compiler_rejects_a_pending_event_after_the_account_deletion_fence(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="fenced-memory", text="这条记忆来得太晚。")
     extractor = CountingExtractor()
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=extractor,
         account_guard=_reject_account_write,
     )
@@ -196,10 +203,9 @@ async def test_compiler_rejects_a_pending_event_after_the_account_deletion_fence
 
 @pytest.mark.asyncio
 async def test_owner_evidence_builds_traceable_timeline_and_knowledge_while_guest_isolated(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="memory-family-001",
@@ -218,7 +224,7 @@ async def test_owner_evidence_builds_traceable_timeline_and_knowledge_while_gues
         speaker_class="guest",
         minute=2,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     report = await catalog.compile_pending()
     owner_search = await catalog.search(
@@ -260,10 +266,9 @@ async def test_owner_evidence_builds_traceable_timeline_and_knowledge_while_gues
 
 @pytest.mark.asyncio
 async def test_people_aliases_do_not_merge_same_name_across_different_relationships(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="person-mother-001",
@@ -281,7 +286,7 @@ async def test_people_aliases_do_not_merge_same_name_across_different_relationsh
         text="我的同事李梅负责财务。",
         minute=2,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
     people = await catalog.people(account_id="account-memory")
@@ -301,16 +306,15 @@ async def test_people_aliases_do_not_merge_same_name_across_different_relationsh
 
 @pytest.mark.asyncio
 async def test_claim_review_controls_context_and_retraction_propagates_to_search(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="wisdom-001",
         text="我认为做重大决定前应该睡一晚再答复。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
     queue = await catalog.review_queue(account_id="account-memory")
     claim = next(item for item in queue if item.kind == "claim")
@@ -356,13 +360,12 @@ async def test_claim_review_controls_context_and_retraction_propagates_to_search
 
 @pytest.mark.asyncio
 async def test_search_defaults_to_confirmed_non_conflicting_claims(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "candidate-search.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="search-age-60", text="请记住我今年60岁。")
     await _record(archive, event_id="search-age-61", text="请记住我今年61岁。", minute=1)
-    catalog = MemoryCatalog.sqlite(path, extractor=SingleValueClaimExtractor())
+    catalog = await make_catalog(extractor=SingleValueClaimExtractor())
     await catalog.compile_pending()
 
     default_search = await catalog.search(
@@ -475,16 +478,15 @@ async def test_search_defaults_to_confirmed_non_conflicting_claims(
 
 @pytest.mark.asyncio
 async def test_contextual_source_text_supports_a_natural_cross_day_recall_query(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="contextual-source-001",
         text="前几天聊到旅行，我说下次想去南京。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=ContextualClaimExtractor())
+    catalog = await make_catalog(extractor=ContextualClaimExtractor())
     await catalog.compile_pending()
     claim = (await catalog.review_queue(account_id="account-memory"))[0]
     await catalog.review(
@@ -513,16 +515,15 @@ async def test_contextual_source_text_supports_a_natural_cross_day_recall_query(
 
 @pytest.mark.asyncio
 async def test_episode_and_knowledge_context_improve_recall_without_leaking_the_prefix(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="contextual-projections-001",
         text="前几天聊到旅行，最后还是想去南京散散心。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=ContextualClaimExtractor())
+    catalog = await make_catalog(extractor=ContextualClaimExtractor())
     await catalog.compile_pending()
     claim = (await catalog.review_queue(account_id="account-memory"))[0]
     await catalog.review(
@@ -552,17 +553,16 @@ async def test_episode_and_knowledge_context_improve_recall_without_leaking_the_
 
 @pytest.mark.asyncio
 async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="explicit-memory-low-risk",
         text="请记住我喜欢雨天散步。",
         explicit_memory=True,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
     audit_events = tuple(
@@ -602,17 +602,15 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
 
 @pytest.mark.asyncio
 async def test_minor_projection_uses_authoritative_category_and_drops_sensitive_candidates(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "minor-memory.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="minor-family-conflict",
         text="我和爸爸最近总吵架。",
     )
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         subject_category_resolver=lambda _: "minor",
     )
@@ -632,16 +630,16 @@ async def test_minor_projection_uses_authoritative_category_and_drops_sensitive_
 
 
 @pytest.mark.asyncio
-async def test_minor_projection_keeps_safe_study_progress(tmp_path: Path) -> None:
-    path = tmp_path / "minor-study.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_minor_projection_keeps_safe_study_progress(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
     await _record(
         archive,
         event_id="minor-study-progress",
         text="我今天练习了英语口语，过去式还是薄弱点。",
     )
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         subject_category_resolver=lambda _: "minor",
     )
@@ -666,17 +664,15 @@ async def test_minor_projection_keeps_safe_study_progress(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_minor_projection_drops_study_sentence_with_teacher_scolding(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "minor-scolded.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="minor-scolded-math",
         text="我今天练习了数学，被老师骂了。",
     )
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         subject_category_resolver=lambda _: "minor",
     )
@@ -697,10 +693,9 @@ async def test_minor_projection_drops_study_sentence_with_teacher_scolding(
 
 @pytest.mark.asyncio
 async def test_minor_explicit_daily_preference_confirms_without_sensitive_capture(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "minor-demo.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="minor-reading",
@@ -719,8 +714,7 @@ async def test_minor_explicit_daily_preference_confirms_without_sensitive_captur
         text="我和爸爸最近总吵架。",
         minute=2,
     )
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         subject_category_resolver=lambda _: "minor",
     )
@@ -752,10 +746,9 @@ async def test_minor_explicit_daily_preference_confirms_without_sensitive_captur
 
 @pytest.mark.asyncio
 async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="explicit-memory-sensitive",
@@ -769,7 +762,7 @@ async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
         explicit_memory=True,
         minute=1,
     )
-    sensitive_catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    sensitive_catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await sensitive_catalog.compile_pending()
 
     sensitive_context = await sensitive_catalog.context(
@@ -789,29 +782,26 @@ async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
         "explicit-memory-relationship",
     ]
 
-    conflict_path = tmp_path / "conflict.sqlite3"
-    conflict_archive = LifeArchive.sqlite(conflict_path)
     await _record(
-        conflict_archive,
+        archive,
         event_id="explicit-age-60",
         text="请记住我今年60岁。",
         explicit_memory=True,
+        account_id="account-conflict",
     )
-    conflict_catalog = MemoryCatalog.sqlite(
-        conflict_path,
-        extractor=SingleValueClaimExtractor(),
-    )
+    conflict_catalog = await make_catalog(extractor=SingleValueClaimExtractor())
     await conflict_catalog.compile_pending()
     await _record(
-        conflict_archive,
+        archive,
         event_id="explicit-age-61",
         text="请记住我今年61岁。",
         minute=1,
         explicit_memory=True,
+        account_id="account-conflict",
     )
     await conflict_catalog.compile_pending()
 
-    queue = await conflict_catalog.review_queue(account_id="account-memory")
+    queue = await conflict_catalog.review_queue(account_id="account-conflict")
     assert [(item.value, item.status) for item in queue] == [
         ("60", "candidate"),
         ("61", "candidate"),
@@ -819,7 +809,12 @@ async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
 
 
 @pytest.mark.asyncio
-async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Path) -> None:
+async def test_single_value_claims_do_not_conflict_across_subjects(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+    archive_dsn: str,
+) -> None:
     """Two self-claims that name different speakers are not one fact.
 
     Both rows stay under subject_key="self" inside the login account.  The
@@ -827,8 +822,6 @@ async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Pat
     an existing value that blocks the owner's own confirmation.
     """
 
-    path = tmp_path / "subject-claims.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await archive.record(
         EvidenceEvent(
             event_id="explicit-age-60",
@@ -879,8 +872,7 @@ async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Pat
             },
         )
     )
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=SingleValueClaimExtractor(),
         # Both speakers are adults here.  The point of the test is the fold,
         # not the minor allowlist; a missing identity must not be what hides
@@ -889,13 +881,14 @@ async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Pat
     )
     await catalog.compile_pending()
 
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute(
-            "SELECT source_event_id, value, conflict_state, status FROM memory_claims"
-            " WHERE predicate = 'age' ORDER BY source_event_id"
-        ).fetchall()
-    by_event = {str(row["source_event_id"]): row for row in rows}
+    rows = owner_sql(
+        "SELECT source_event_id, value, conflict_state, status FROM memory_claims"
+        " WHERE predicate = 'age' ORDER BY source_event_id"
+    )
+    by_event = {
+        str(event_id): {"value": value, "conflict_state": conflict, "status": status}
+        for event_id, value, conflict, status in rows
+    }
     assert set(by_event) == {"explicit-age-60", "explicit-age-61"}
     assert str(by_event["explicit-age-60"]["conflict_state"]) == "none"
     assert str(by_event["explicit-age-61"]["conflict_state"]) == "none"
@@ -922,24 +915,34 @@ async def test_single_value_claims_do_not_conflict_across_subjects(tmp_path: Pat
         ),
         extractor_version="single-value-claim-v1",
     )
-    with catalog._connect() as connection:
-        owner_existing = catalog._existing_single_value_claims(
-            connection, event=owner_event, extraction=extraction
-        )
-        child_existing = catalog._existing_single_value_claims(
-            connection,
-            event=child_event,
-            extraction=replace(
-                extraction,
-                claims=(replace(extraction.claims[0], value="61"),),
-            ),
-        )
+    connection = await asyncpg.connect(archive_dsn)
+    try:
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT set_config('app.account_id', $1, true)", "account-memory"
+            )
+            owner_existing = await PostgresMemoryCatalog._existing_single_value_claims(
+                connection, event=owner_event, extraction=extraction
+            )
+            child_existing = await PostgresMemoryCatalog._existing_single_value_claims(
+                connection,
+                event=child_event,
+                extraction=replace(
+                    extraction,
+                    claims=(replace(extraction.claims[0], value="61"),),
+                ),
+            )
+    finally:
+        await connection.close()
     assert owner_existing == ("60",)
     assert child_existing == ("61",)
 
 
 @pytest.mark.asyncio
-async def test_default_resolver_still_compiles_a_named_other_subject(tmp_path: Path) -> None:
+async def test_default_resolver_still_compiles_a_named_other_subject(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
     """None from the default resolver is unknown, not "do not project".
 
     A catalog with no evidence resolver used to compile every accepted event.
@@ -947,15 +950,13 @@ async def test_default_resolver_still_compiles_a_named_other_subject(tmp_path: P
     signal skips the projection.
     """
 
-    path = tmp_path / "default-resolver.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    await _record(archive, event_id="other-subject-fact", text="我习惯先找事实，再讨论责任。")
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
-            ("person-other", "other-subject-fact"),
-        )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    await _record(
+        archive,
+        event_id="other-subject-fact",
+        text="我习惯先找事实，再讨论责任。",
+        subject_id="person-other",
+    )
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     report = await catalog.compile_pending()
 
@@ -967,36 +968,32 @@ async def test_default_resolver_still_compiles_a_named_other_subject(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_unresolved_other_subject_is_ignored_without_a_projection(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
     """The sentinel, not None, is what withholds a long-term projection."""
 
-    path = tmp_path / "unresolved-subject.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    await _record(archive, event_id="owner-fact", text="我习惯先找事实，再讨论责任。")
+    await _record(
+        archive,
+        event_id="owner-fact",
+        text="我习惯先找事实，再讨论责任。",
+        subject_id="account-memory",
+    )
     await _record(
         archive,
         event_id="missing-person-fact",
         text="我习惯先核对范围，再开始动手。",
         minute=1,
+        subject_id="person-missing",
     )
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
-            ("account-memory", "owner-fact"),
-        )
-        connection.execute(
-            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
-            ("person-missing", "missing-person-fact"),
-        )
 
     def resolve(event: EvidenceEvent) -> str | None:
         if event.subject_id == "person-missing":
             raise SubjectCategoryUnresolved(event.subject_id)
         return None
 
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         evidence_subject_category_resolver=resolve,
     )
@@ -1008,31 +1005,30 @@ async def test_unresolved_other_subject_is_ignored_without_a_projection(
     assert [item.source_event_id for item in queue] == ["owner-fact"]
     stored = await archive.event(account_id="account-memory", event_id="missing-person-fact")
     assert stored is not None
-    with sqlite3.connect(path) as connection:
-        receipt = connection.execute(
-            "SELECT outcome FROM memory_compile_receipts WHERE event_id = ?",
-            ("missing-person-fact",),
-        ).fetchone()
-    assert receipt is not None
-    assert receipt[0] == "ignored"
+    receipts = owner_sql(
+        "SELECT outcome FROM memory_compile_receipts WHERE event_id = %s",
+        "missing-person-fact",
+    )
+    assert receipts == [("ignored",)]
 
 
 @pytest.mark.asyncio
-async def test_async_category_resolver_runs_on_the_compiler_loop(tmp_path: Path) -> None:
+async def test_async_category_resolver_runs_on_the_compiler_loop(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
     """An awaitable resolver is awaited in place, not dispatched to another loop.
 
     Production identity pools are bound to the loop that created them.  A
     resolver that sees a different loop would skip every non-account subject.
     """
 
-    path = tmp_path / "async-category.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    await _record(archive, event_id="child-fact", text="我习惯先核对范围，再开始动手。")
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE evidence_events SET subject_id = ? WHERE event_id = ?",
-            ("person-child", "child-fact"),
-        )
+    await _record(
+        archive,
+        event_id="child-fact",
+        text="我习惯先核对范围，再开始动手。",
+        subject_id="person-child",
+    )
     compiler_loop = asyncio.get_running_loop()
     seen_loops: list[asyncio.AbstractEventLoop] = []
 
@@ -1041,8 +1037,7 @@ async def test_async_category_resolver_runs_on_the_compiler_loop(tmp_path: Path)
         assert event.subject_id == "person-child"
         return "adult"
 
-    catalog = MemoryCatalog.sqlite(
-        path,
+    catalog = await make_catalog(
         extractor=RuleBasedMemoryExtractor(),
         evidence_subject_category_resolver=resolve,
     )
@@ -1057,10 +1052,9 @@ async def test_async_category_resolver_runs_on_the_compiler_loop(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_explicit_auto_confirmation_uses_a_closed_low_risk_allowlist(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     cases = (
         ("explicit-birth-date", "请记住我出生于1990年1月1日。"),
         ("explicit-marriage", "请记住我结婚了。"),
@@ -1078,7 +1072,7 @@ async def test_explicit_auto_confirmation_uses_a_closed_low_risk_allowlist(
             minute=minute,
             explicit_memory=True,
         )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
     queue = await catalog.review_queue(account_id="account-memory")
@@ -1097,10 +1091,9 @@ async def test_explicit_auto_confirmation_uses_a_closed_low_risk_allowlist(
 
 @pytest.mark.asyncio
 async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await archive.record(
         EvidenceEvent(
             event_id="legacy-v1-source",
@@ -1125,7 +1118,7 @@ async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
             },
         )
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
     claim = (await catalog.review_queue(account_id="account-memory"))[0]
     await archive.record(
@@ -1160,16 +1153,15 @@ async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
 
 @pytest.mark.asyncio
 async def test_archive_evidence_review_is_not_replayed_as_a_memory_claim_review(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="archive-review-target",
         text="我在杭州读过书。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
     await archive.review(
         MemoryReview(
@@ -1188,10 +1180,9 @@ async def test_archive_evidence_review_is_not_replayed_as_a_memory_claim_review(
 
 @pytest.mark.asyncio
 async def test_claim_review_moves_same_event_life_projections_without_promoting_other_events(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="reviewed-family-001",
@@ -1203,7 +1194,7 @@ async def test_claim_review_moves_same_event_life_projections_without_promoting_
         text="我在杭州读过书。",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
     claim = next(
         item
@@ -1269,10 +1260,9 @@ async def test_claim_review_moves_same_event_life_projections_without_promoting_
 
 @pytest.mark.asyncio
 async def test_retracting_one_source_hides_only_its_alias_from_a_confirmed_person(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="alias-source-001", text="我妈妈叫李梅。")
     await _record(
         archive,
@@ -1280,7 +1270,7 @@ async def test_retracting_one_source_hides_only_its_alias_from_a_confirmed_perso
         text="我也会叫妈妈阿梅。",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=AliasExtractor())
+    catalog = await make_catalog(extractor=AliasExtractor())
     await catalog.compile_pending()
     claims = {
         item.source_event_id: item
@@ -1326,19 +1316,24 @@ async def test_retracting_one_source_hides_only_its_alias_from_a_confirmed_perso
 
 @pytest.mark.asyncio
 async def test_failed_compilation_retries_idempotently_without_duplicate_projection(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="retry-001",
         text="我们家的家训是先听完别人说话。",
     )
     extractor = FlakyExtractor()
-    catalog = MemoryCatalog.sqlite(path, extractor=extractor)
+    # The outbox backs a failed task off before it may be claimed again; keep
+    # that delay short so the retry is observable here.
+    catalog = await make_catalog(
+        extractor=extractor, outbox_retry_base_s=0.1, outbox_retry_max_s=0.1
+    )
 
     first = await catalog.compile_pending()
+    backed_off = await catalog.compile_pending()
+    await asyncio.sleep(0.2)
     second = await catalog.compile_pending()
     third = await catalog.compile_pending()
     claims = await catalog.search(
@@ -1352,23 +1347,22 @@ async def test_failed_compilation_retries_idempotently_without_duplicate_project
     )
 
     assert (first.failed_events, second.compiled_events) == (1, 1)
-    assert third == type(third)()
+    assert backed_off == third == type(third)()
     assert extractor.attempts == 2
     assert len(claims.items) == 1
 
 
 @pytest.mark.asyncio
 async def test_correction_is_confirmed_searchable_and_written_as_audit_evidence(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="correction-001",
         text="我认为做决定前应该等一天。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
     claim = (await catalog.review_queue(account_id="account-memory"))[0]
 
@@ -1415,10 +1409,9 @@ async def test_correction_is_confirmed_searchable_and_written_as_audit_evidence(
 
 @pytest.mark.asyncio
 async def test_related_turns_share_an_episode_but_keep_individual_evidence(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="episode-work-001",
@@ -1430,7 +1423,7 @@ async def test_related_turns_share_an_episode_but_keep_individual_evidence(
         text="项目复盘时，我再记录偏差。",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
     timeline = await catalog.timeline(account_id="account-memory")
@@ -1457,7 +1450,10 @@ async def test_related_turns_share_an_episode_but_keep_individual_evidence(
 
 
 @pytest.mark.asyncio
-async def test_person_alias_is_recallable_and_stays_gated_by_status(tmp_path: Path) -> None:
+async def test_person_alias_is_recallable_and_stays_gated_by_status(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+) -> None:
     """A confirmed nickname must be able to answer "who is that?".
 
     The alias lives in ``person_aliases``, which no read path searches, so the
@@ -1466,14 +1462,12 @@ async def test_person_alias_is_recallable_and_stays_gated_by_status(tmp_path: Pa
     people stay out of the confirmed-only context.
     """
 
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="alias-person-001",
         text="我妈妈叫李梅，家里人也叫她阿梅。",
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
     people = await catalog.people(account_id="account-memory")

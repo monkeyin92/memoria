@@ -14,7 +14,6 @@ from services.legacy.domain import (
     RegisteredGranteeSnapshot,
 )
 from services.legacy.postgres_registry import PostgresLegacyRegistry
-from services.legacy.registry import LegacyRegistry
 
 __all__ = [
     "LegacyAccessSnapshot",
@@ -24,7 +23,6 @@ __all__ = [
     "LegacyFence",
     "LegacyGrant",
     "LegacyManifestItemRef",
-    "LegacyRegistry",
     "LegacyRelationshipShell",
     "LegacyRelationshipSnapshot",
     "LegacyShellTurn",

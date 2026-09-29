@@ -1,13 +1,21 @@
+"""The read-only legacy SQLite message import into the PostgreSQL archive.
+
+The legacy source is a SQLite file by nature; the target is PostgreSQL only.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+import asyncpg
 import pytest
 from services.archive.domain import ContextQuery
-from services.archive.life_archive import LifeArchive
-from services.archive.migration import migrate_legacy_sqlite
+from services.archive.migration import migrate_legacy_sqlite_to_postgres
+from services.archive.postgres_archive import PostgresLifeArchive
 
 
 def _legacy_database(path: Path) -> None:
@@ -44,15 +52,16 @@ def _legacy_database(path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_migration_is_read_only_deterministic_and_idempotent(tmp_path: Path) -> None:
+async def test_legacy_migration_is_read_only_deterministic_and_idempotent(
+    tmp_path: Path, archive: PostgresLifeArchive
+) -> None:
     source = tmp_path / "legacy.sqlite3"
-    target = tmp_path / "archive.sqlite3"
     _legacy_database(source)
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 
-    dry_run = migrate_legacy_sqlite(source, target, dry_run=True)
-    first = migrate_legacy_sqlite(source, target)
-    second = migrate_legacy_sqlite(source, target)
+    dry_run = await migrate_legacy_sqlite_to_postgres(source, archive, dry_run=True)
+    first = await migrate_legacy_sqlite_to_postgres(source, archive)
+    second = await migrate_legacy_sqlite_to_postgres(source, archive)
 
     assert dry_run.eligible_messages == 2
     assert dry_run.inserted == 0
@@ -63,7 +72,6 @@ async def test_legacy_migration_is_read_only_deterministic_and_idempotent(tmp_pa
     assert first.event_set_sha256 == second.event_set_sha256 == dry_run.event_set_sha256
     assert first.legacy_projection_count == 1
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
-    archive = LifeArchive.sqlite(target)
     context = await archive.context(
         ContextQuery(account_id="account-001", speaker_class="owner")
     )
@@ -75,28 +83,38 @@ async def test_legacy_migration_is_read_only_deterministic_and_idempotent(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_failed_legacy_migration_rolls_back_the_whole_batch(tmp_path: Path) -> None:
+async def test_failed_legacy_migration_rolls_back_the_whole_batch(
+    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    owner_sql: Callable[..., list[tuple[Any, ...]]],
+) -> None:
     source = tmp_path / "legacy.sqlite3"
-    target = tmp_path / "archive.sqlite3"
     _legacy_database(source)
-    archive = LifeArchive.sqlite(target)
-    archive.initialize()
-    with sqlite3.connect(target) as connection:
-        connection.execute(
-            """
-            CREATE TRIGGER reject_legacy_assistant
-            BEFORE INSERT ON evidence_events
-            WHEN NEW.speaker_class = 'assistant'
-            BEGIN
-                SELECT RAISE(ABORT, 'simulated migration failure');
-            END
-            """
-        )
+    owner_sql(
+        """
+        CREATE FUNCTION reject_legacy_assistant() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'simulated migration failure';
+        END
+        $$
+        """
+    )
+    owner_sql(
+        """
+        CREATE TRIGGER reject_legacy_assistant
+        BEFORE INSERT ON archive_evidence_events
+        FOR EACH ROW WHEN (NEW.speaker_class = 'assistant')
+        EXECUTE FUNCTION reject_legacy_assistant()
+        """
+    )
 
-    with pytest.raises(sqlite3.IntegrityError, match="simulated migration failure"):
-        migrate_legacy_sqlite(source, target)
+    with pytest.raises(asyncpg.RaiseError, match="simulated migration failure"):
+        await migrate_legacy_sqlite_to_postgres(source, archive)
 
     context = await archive.context(
         ContextQuery(account_id="account-001", speaker_class="owner")
     )
     assert context.evidence == ()
+    assert owner_sql(
+        "SELECT count(*) FROM archive_evidence_events WHERE account_id = 'account-001'"
+    ) == [(0,)]

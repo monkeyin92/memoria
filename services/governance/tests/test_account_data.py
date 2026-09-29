@@ -1,21 +1,27 @@
+"""Account export and deletion across every store (archive family on PostgreSQL).
+
+The archive-family stores (archive, skills, self model, digital self, Legacy,
+voice profiles) run on ``postgres_database``, a production-shaped clone, as the
+archive role ``memoria_app`` on one shared pool, as production wires them. The
+Control store, speaker and evolution stores stay on their SQLite files.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
-from collections.abc import Mapping
-from dataclasses import replace
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import asyncpg
 import pytest
 from cryptography.fernet import Fernet
 from services.archive.domain import ContextQuery, EvidenceEvent
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
-from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore
-from services.archive.skill_catalog import SkillCatalog
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.skill_domain import (
     SkillApproval,
     SkillProposal,
@@ -32,12 +38,12 @@ from services.digital_self.domain import (
     MemoryClaimManifestEntry,
     RelationshipProfileManifestEntry,
 )
+from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.digital_self.preview import (
     FIDELITY_CATEGORIES,
     FidelityTrialSpec,
     SelfPreviewRegistry,
 )
-from services.digital_self.registry import DigitalSelfRegistry
 from services.evolution.account_fence import AccountWriteBlockedError
 from services.evolution.account_repository import SqliteEvolutionAccountRepository
 from services.evolution.curation import EvolutionControlPlane
@@ -47,6 +53,7 @@ from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
     AccountDeletionWorker,
+    PostgresAccountRepository,
     SqliteAccountRepository,
 )
 from services.legacy.domain import (
@@ -56,16 +63,62 @@ from services.legacy.domain import (
     LegacyManifestItemRef,
     RegisteredGranteeSnapshot,
 )
-from services.legacy.registry import LegacyRegistry
+from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.self_model.domain import RelationshipProfile
-from services.self_model.registry import SelfModelRegistry
+from services.self_model.postgres_registry import PostgresSelfModelRegistry
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult, EnrollmentRequest, EnrollmentSample
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest
-from services.voice_profile.manager import VoiceProfileManager
+from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.testing_audio import voice_sample_wav
+from testing.postgres_harness import TestDatabase
 
 _LEGACY_NOW = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
+# person_entities / relationships key on UUIDs in PostgreSQL.
+_PERSON_ID = "44444444-4444-4444-8444-444444444444"
+_RELATIONSHIP_ID = "55555555-5555-4555-8555-555555555555"
+_SKILL_TABLES = (
+    "skill_definitions",
+    "skill_versions",
+    "skill_version_evidence",
+    "skill_runs",
+    "skill_run_steps",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveDatabase:
+    """The archive DSN (``memoria_app``), its shared pool, and the clone owner."""
+
+    dsn: str
+    owner_dsn: str
+    pool: asyncpg.Pool
+
+    def repository(self) -> PostgresAccountRepository:
+        return PostgresAccountRepository.archive(self.dsn)
+
+    async def count(self, table: str, account_id: str) -> int:
+        """Rows for ``account_id`` in ``table``, read as the owner (RLS does not apply)."""
+
+        connection = await asyncpg.connect(self.owner_dsn)
+        try:
+            return int(
+                await connection.fetchval(
+                    f"SELECT count(*) FROM {table} WHERE account_id = $1", account_id
+                )
+            )
+        finally:
+            await connection.close()
+
+
+@pytest.fixture
+async def archive_db(postgres_database: TestDatabase) -> AsyncIterator[ArchiveDatabase]:
+    dsn = postgres_database.role_dsn("memoria_app")
+    pool = await asyncpg.create_pool(dsn, min_size=1, max_size=10, command_timeout=15)
+    try:
+        yield ArchiveDatabase(dsn=dsn, owner_dsn=postgres_database.owner_dsn(), pool=pool)
+    finally:
+        await pool.close()
 
 
 class EmbeddingStub:
@@ -137,7 +190,9 @@ class SkillToolStub:
         return {"ok": True}
 
 
-async def _seed_skill(path: Path, archive: LifeArchive, account_id: str) -> None:
+async def _seed_skill(
+    db: ArchiveDatabase, archive: PostgresLifeArchive, account_id: str
+) -> None:
     instruction_id = "governance-skill-instruction"
     await archive.record(
         EvidenceEvent(
@@ -150,7 +205,7 @@ async def _seed_skill(path: Path, archive: LifeArchive, account_id: str) -> None
             payload={"text": "以后我说晚安，就执行睡前流程。"},
         )
     )
-    catalog = SkillCatalog.sqlite(path)
+    catalog = PostgresSkillCatalog(db.dsn, pool=db.pool)
     candidate = await catalog.propose(
         SkillProposal(
             account_id=account_id,
@@ -230,7 +285,9 @@ async def _seed_skill(path: Path, archive: LifeArchive, account_id: str) -> None
 
 
 class LateArchiveWriteRepository:
-    def __init__(self, delegate: SqliteAccountRepository, archive: LifeArchive) -> None:
+    def __init__(
+        self, delegate: PostgresAccountRepository, archive: PostgresLifeArchive
+    ) -> None:
         self._delegate = delegate
         self._archive = archive
         self.delete_calls = 0
@@ -320,7 +377,7 @@ def _seed_evolution_signal(path: Path, account_id: str) -> None:
 class LegacyDeleteRetryProbe:
     """Fail once, then leave rows once so both retry and final verification are exercised."""
 
-    def __init__(self, delegate: LegacyRegistry) -> None:
+    def __init__(self, delegate: PostgresLegacyRegistry) -> None:
         self._delegate = delegate
         self.delete_calls = 0
 
@@ -337,11 +394,11 @@ class LegacyDeleteRetryProbe:
 
 
 async def _seed_legacy(
-    path: Path,
+    db: ArchiveDatabase,
     *,
     owner_account_id: str = "account-governance",
     grantee_account_id: str = "legacy-grantee",
-) -> tuple[LegacyRegistry, LegacyGrant, str, DigitalSelfVersion]:
+) -> tuple[PostgresLegacyRegistry, LegacyGrant, str, DigitalSelfVersion]:
     relationship_entry = RelationshipProfileManifestEntry(
         profile_id="11111111-1111-4111-8111-111111111111",
         version_number=3,
@@ -383,27 +440,27 @@ async def _seed_legacy(
         manifest_sha256=manifest_sha256,
         created_at=_LEGACY_NOW,
     )
-    digital_self = DigitalSelfRegistry.sqlite(path)
-    digital_self.initialize()
-    with sqlite3.connect(path) as connection:
-        connection.execute(
+    # No store API writes a hand-built frozen version: seed it as the owner.
+    connection = await asyncpg.connect(db.owner_dsn)
+    try:
+        await connection.execute(
             """
             INSERT INTO digital_self_versions (
                 version_id, account_id, version_number, status, manifest_json,
                 manifest_sha256, source_summary_sha256, parent_version_id,
                 rollback_target_version_id, created_at
-            ) VALUES (?, ?, ?, 'frozen', ?, ?, ?, NULL, NULL, ?)
+            ) VALUES ($1, $2, $3, 'frozen', $4, $5, $6, NULL, NULL, $7)
             """,
-            (
-                version.version_id,
-                owner_account_id,
-                version.version_number,
-                manifest_bytes.decode("utf-8"),
-                manifest_sha256,
-                manifest.source_summary.source_summary_sha256,
-                _LEGACY_NOW.isoformat(),
-            ),
+            version.version_id,
+            owner_account_id,
+            version.version_number,
+            manifest_bytes.decode("utf-8"),
+            manifest_sha256,
+            manifest.source_summary.source_summary_sha256,
+            _LEGACY_NOW,
         )
+    finally:
+        await connection.close()
     relationship = RelationshipProfile(
         profile_id=relationship_entry.profile_id,
         account_id=owner_account_id,
@@ -422,7 +479,7 @@ async def _seed_legacy(
         step_up_verified=True,
         created_at=_LEGACY_NOW,
     )
-    registry = LegacyRegistry.sqlite(path)
+    registry = PostgresLegacyRegistry(db.dsn, pool=db.pool)
     grant = await registry.issue(
         owner_account_id=owner_account_id,
         grantee=RegisteredGranteeSnapshot(grantee_account_id, _LEGACY_NOW),
@@ -463,12 +520,13 @@ async def _seed_legacy(
 
 async def _fixture(
     tmp_path: Path,
+    db: ArchiveDatabase,
 ) -> tuple[
     AccountDataGovernance,
     MemoryStore,
-    LifeArchive,
+    PostgresLifeArchive,
     SpeakerAuthority,
-    VoiceProfileManager,
+    PostgresVoiceProfileManager,
     VoiceProviderStub,
     SessionTerminatorStub,
     EncryptedLocalObjectStore,
@@ -485,7 +543,25 @@ async def _fixture(
         password_hash=hash_password("safe-passphrase"),
         now=datetime.now(UTC).isoformat(),
     )
-    archive = LifeArchive.sqlite(database_path)
+    archive = PostgresLifeArchive(db.dsn, pool=db.pool)
+    archive_objects = EncryptedLocalObjectStore(
+        root=tmp_path / "archive-objects",
+        key=Fernet.generate_key().decode("ascii"),
+        key_version="archive-key-v1",
+    )
+    archive_reference = await archive_objects.put(
+        account_id=account_id,
+        purpose="source-audio",
+        data=b"archive-audio",
+        media_type="audio/wav",
+    )
+    # A retained source-audio blob needs the raw voice consent it cites.
+    raw_voice = await archive.grant_raw_voice_consent(
+        account_id=account_id,
+        policy_version="raw-voice-v1",
+        retention_policy="account_lifetime",
+        granted_at=datetime.now(UTC),
+    )
     event = EvidenceEvent(
         event_id="governance-evidence",
         account_id=account_id,
@@ -493,6 +569,7 @@ async def _fixture(
         occurred_at=datetime.now(UTC),
         speaker_class="owner",
         source="test",
+        consent_grant_id=raw_voice.consent_grant_id,
         payload={
             "text": "删除传播测试。",
             "interaction_mode": "companion",
@@ -500,12 +577,10 @@ async def _fixture(
             "owner_projection_eligible": True,
         },
     )
-    await archive.record(event)
-    MemoryCatalog.sqlite(
-        database_path,
-        extractor=RuleBasedMemoryExtractor(),
-    ).initialize()
-    self_model = SelfModelRegistry.sqlite(database_path)
+    await archive.record_with_blob(
+        event, archive_reference, retention_policy="account_lifetime"
+    )
+    self_model = PostgresSelfModelRegistry(db.dsn, pool=db.pool)
     claim = await self_model.create_cognitive_claim(
         account_id=account_id,
         claim_type="belief",
@@ -548,45 +623,40 @@ async def _fixture(
         expected_version=decision.version,
         idempotency_key="governance-decision-source",
     )
-    with sqlite3.connect(database_path) as connection:
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(
+    # A confirmed person and relationship for the profile below; only the
+    # memory compiler writes these, so seed them as the owner.
+    connection = await asyncpg.connect(db.owner_dsn)
+    try:
+        await connection.execute(
             """
             INSERT INTO person_entities (
                 person_id, account_id, canonical_key, display_name,
                 relationship_to_owner, status, source_event_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?)
+            ) VALUES ($1, $2, $3, '家人', 'family', 'confirmed', $4, now())
             """,
-            (
-                "governance-person",
-                account_id,
-                "family:governance-person",
-                "家人",
-                "family",
-                event.event_id,
-                datetime.now(UTC).isoformat(),
-            ),
+            _PERSON_ID,
+            account_id,
+            f"family:{_PERSON_ID}",
+            event.event_id,
         )
-        connection.execute(
+        await connection.execute(
             """
             INSERT INTO relationships (
                 relationship_id, account_id, person_id, relationship_type,
                 status, source_event_id, valid_at
-            ) VALUES (?, ?, ?, ?, 'confirmed', ?, ?)
+            ) VALUES ($1, $2, $3, 'family', 'confirmed', $4, now())
             """,
-            (
-                "governance-relationship",
-                account_id,
-                "governance-person",
-                "family",
-                event.event_id,
-                datetime.now(UTC).isoformat(),
-            ),
+            _RELATIONSHIP_ID,
+            account_id,
+            _PERSON_ID,
+            event.event_id,
         )
+    finally:
+        await connection.close()
     relationship_profile = await self_model.create_relationship_profile(
         account_id=account_id,
-        person_id="governance-person",
-        relationship_id="governance-relationship",
+        person_id=_PERSON_ID,
+        relationship_id=_RELATIONSHIP_ID,
         salutation="家人",
         tone="温和坦诚",
         advice_style="先听完再建议",
@@ -604,41 +674,6 @@ async def _fixture(
         expected_version=relationship_profile.version_number,
         idempotency_key="governance-relationship-profile-source",
     )
-
-    archive_objects = EncryptedLocalObjectStore(
-        root=tmp_path / "archive-objects",
-        key=Fernet.generate_key().decode("ascii"),
-        key_version="archive-key-v1",
-    )
-    archive_reference = await archive_objects.put(
-        account_id=account_id,
-        purpose="source-audio",
-        data=b"archive-audio",
-        media_type="audio/wav",
-    )
-    with sqlite3.connect(database_path) as connection:
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute(
-            """
-            INSERT INTO evidence_blobs (
-                blob_id, account_id, evidence_event_id, object_key, media_type,
-                byte_count, content_sha256, encryption_key_version,
-                retention_policy, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "governance-blob",
-                account_id,
-                event.event_id,
-                archive_reference.object_key,
-                archive_reference.media_type,
-                archive_reference.byte_count,
-                archive_reference.content_sha256,
-                archive_reference.encryption_key_version,
-                "account-lifetime",
-                datetime.now(UTC).isoformat(),
-            ),
-        )
 
     speaker = SpeakerAuthority.sqlite(
         speaker_path,
@@ -663,13 +698,14 @@ async def _fixture(
     )
     provider = VoiceProviderStub()
     session_terminator = SessionTerminatorStub()
-    voice = VoiceProfileManager.sqlite(
-        database_path,
+    voice = PostgresVoiceProfileManager(
+        db.dsn,
         object_store=voice_objects,
         provider=provider,
         sample_url_factory=lambda sample_id: f"https://control.test/samples/{sample_id}",
         provider_region="cn-beijing",
         target_model="cosyvoice-v3.5-flash",
+        pool=db.pool,
     )
     await voice.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
     await voice.enroll(
@@ -746,7 +782,7 @@ async def _fixture(
     assert evaluation.evaluation_id
     governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(database_path),
+        archive_repository=db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(speaker_path),
         evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
@@ -769,8 +805,9 @@ async def _fixture(
 @pytest.mark.asyncio
 async def test_export_fails_closed_when_deletion_has_begun(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
-    governance, *_ = await _fixture(tmp_path)
+    governance, *_ = await _fixture(tmp_path, archive_db)
     evolution_path = tmp_path / "evolution.sqlite3"
     EvolutionStore(evolution_path).mark_account_deleting("account-governance")
 
@@ -781,6 +818,7 @@ async def test_export_fails_closed_when_deletion_has_begun(
 @pytest.mark.asyncio
 async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     (
         governance,
@@ -792,8 +830,8 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
         _session_terminator,
         archive_objects,
         archive_reference,
-    ) = await _fixture(tmp_path)
-    await _seed_skill(store.path, archive, "account-governance")
+    ) = await _fixture(tmp_path, archive_db)
+    await _seed_skill(archive_db, archive, "account-governance")
 
     exported = await governance.export_account("account-governance")
     serialized = str(exported)
@@ -805,13 +843,7 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     assert "encryption_key_version" not in serialized
     assert "object_backend" not in serialized
     assert "episode_evidence" in exported["sections"]["archive"]
-    for table in (
-        "skill_definitions",
-        "skill_versions",
-        "skill_version_evidence",
-        "skill_runs",
-        "skill_run_steps",
-    ):
+    for table in _SKILL_TABLES:
         assert exported["sections"]["archive"][table]
     assert "删除账户时，认知模型也必须完整清除。" in serialized
     assert "是否完整删除数字自我数据" in serialized
@@ -833,21 +865,8 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     ).evidence == ()
     assert store.get_account(user_id="account-governance") is None
     assert store.is_account_deleted(user_id="account-governance") is True
-    with sqlite3.connect(store.path) as connection:
-        for table in (
-            "skill_definitions",
-            "skill_versions",
-            "skill_version_evidence",
-            "skill_runs",
-            "skill_run_steps",
-        ):
-            assert (
-                connection.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE account_id = ?",
-                    ("account-governance",),
-                ).fetchone()[0]
-                == 0
-            )
+    for table in _SKILL_TABLES:
+        assert await archive_db.count(table, "account-governance") == 0
     # The preview tables live with the control store (see main.py).
     with store.connection() as connection:
         for table in (
@@ -868,6 +887,7 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
 @pytest.mark.asyncio
 async def test_account_export_and_owner_deletion_cover_complete_legacy_lifecycle(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     (
         _governance,
@@ -879,11 +899,11 @@ async def test_account_export_and_owner_deletion_cover_complete_legacy_lifecycle
         terminator,
         archive_objects,
         _archive_reference,
-    ) = await _fixture(tmp_path)
-    legacy, grant, shell_id, _version = await _seed_legacy(store.path)
+    ) = await _fixture(tmp_path, archive_db)
+    legacy, grant, shell_id, _version = await _seed_legacy(archive_db)
     governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(store.path),
+        archive_repository=archive_db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
@@ -924,6 +944,7 @@ async def test_account_export_and_owner_deletion_cover_complete_legacy_lifecycle
 @pytest.mark.asyncio
 async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     (
         _governance,
@@ -935,7 +956,7 @@ async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
         terminator,
         archive_objects,
         _archive_reference,
-    ) = await _fixture(tmp_path)
+    ) = await _fixture(tmp_path, archive_db)
     store.register_account(
         user_id="legacy-grantee",
         username="legacy-grantee",
@@ -943,13 +964,13 @@ async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
         password_hash=hash_password("safe-passphrase"),
         now=_LEGACY_NOW.isoformat(),
     )
-    legacy, _grant, _shell_id, version = await _seed_legacy(store.path)
-    digital_self = DigitalSelfRegistry.sqlite(store.path)
-    self_model = SelfModelRegistry.sqlite(store.path)
+    legacy, _grant, _shell_id, version = await _seed_legacy(archive_db)
+    digital_self = PostgresDigitalSelfRegistry(archive_db.dsn, pool=archive_db.pool)
+    self_model = PostgresSelfModelRegistry(archive_db.dsn, pool=archive_db.pool)
     owner_claims = await self_model.cognitive_claims(account_id="account-governance")
     governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(store.path),
+        archive_repository=archive_db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
@@ -979,6 +1000,7 @@ async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
 @pytest.mark.asyncio
 async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     (
         _governance,
@@ -990,7 +1012,7 @@ async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
         terminator,
         archive_objects,
         _archive_reference,
-    ) = await _fixture(tmp_path)
+    ) = await _fixture(tmp_path, archive_db)
     store.register_account(
         user_id="legacy-grantee",
         username="legacy-grantee",
@@ -998,11 +1020,11 @@ async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
         password_hash=hash_password("safe-passphrase"),
         now=_LEGACY_NOW.isoformat(),
     )
-    legacy, _grant, _shell_id, _version = await _seed_legacy(store.path)
+    legacy, _grant, _shell_id, _version = await _seed_legacy(archive_db)
     probe = LegacyDeleteRetryProbe(legacy)
     governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(store.path),
+        archive_repository=archive_db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
@@ -1030,10 +1052,9 @@ async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
 @pytest.mark.asyncio
 async def test_provider_failure_keeps_account_retryable_until_external_asset_is_deleted(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
-    governance, store, archive, _speaker, _voice, provider, terminator, *_ = await _fixture(
-        tmp_path
-    )
+    governance, store, archive, _speaker, _voice, provider, terminator, *_ = await _fixture(tmp_path, archive_db)
     evolution_path = tmp_path / "evolution.sqlite3"
     _seed_evolution_signal(evolution_path, "account-governance")
     provider.delete_fails = True
@@ -1090,9 +1111,10 @@ async def test_provider_failure_keeps_account_retryable_until_external_asset_is_
 @pytest.mark.asyncio
 async def test_concurrent_deletion_requests_share_one_persisted_saga(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     governance, _store, _archive, _speaker, _voice, provider, terminator, *_ = (
-        await _fixture(tmp_path)
+        await _fixture(tmp_path, archive_db)
     )
     terminator.entered = asyncio.Event()
     terminator.release = asyncio.Event()
@@ -1113,9 +1135,10 @@ async def test_concurrent_deletion_requests_share_one_persisted_saga(
 @pytest.mark.asyncio
 async def test_pending_deletion_resumes_after_process_restart(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     governance, store, _archive, _speaker, voice, provider, terminator, objects, _ = (
-        await _fixture(tmp_path)
+        await _fixture(tmp_path, archive_db)
     )
     provider.delete_fails = True
     with pytest.raises(AccountDeletionIncompleteError):
@@ -1124,7 +1147,7 @@ async def test_pending_deletion_resumes_after_process_restart(
     provider.delete_fails = False
     restarted = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(store.path),
+        archive_repository=archive_db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
@@ -1141,6 +1164,7 @@ async def test_pending_deletion_resumes_after_process_restart(
 @pytest.mark.asyncio
 async def test_evolution_backend_failure_is_checkpointed_and_retried(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
     (
         _governance,
@@ -1152,13 +1176,13 @@ async def test_evolution_backend_failure_is_checkpointed_and_retried(
         terminator,
         objects,
         _archive_reference,
-    ) = await _fixture(tmp_path)
+    ) = await _fixture(tmp_path, archive_db)
     evolution_path = tmp_path / "evolution.sqlite3"
     _seed_evolution_signal(evolution_path, "account-governance")
     evolution = FailingEvolutionDeleteRepository(SqliteEvolutionAccountRepository(evolution_path))
     governance = AccountDataGovernance(
         memory_store=store,
-        archive_repository=SqliteAccountRepository.archive(store.path),
+        archive_repository=archive_db.repository(),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
         evolution_repository=evolution,  # type: ignore[arg-type]
         voice_profiles=voice,
@@ -1184,11 +1208,10 @@ async def test_evolution_backend_failure_is_checkpointed_and_retried(
 @pytest.mark.asyncio
 async def test_deletion_rechecks_every_projection_and_removes_a_late_archive_write(
     tmp_path: Path,
+    archive_db: ArchiveDatabase,
 ) -> None:
-    _, store, archive, _speaker, voice, _provider, terminator, objects, _ = await _fixture(
-        tmp_path
-    )
-    delegate = SqliteAccountRepository.archive(store.path)
+    _, store, archive, _speaker, voice, _provider, terminator, objects, _ = await _fixture(tmp_path, archive_db)
+    delegate = archive_db.repository()
     late_archive = LateArchiveWriteRepository(delegate, archive)
     governance = AccountDataGovernance(
         memory_store=store,
@@ -1225,11 +1248,14 @@ async def test_deletion_worker_retries_pending_sagas_without_an_api_request() ->
 
 
 @pytest.mark.asyncio
-async def test_export_makes_postgres_guardian_rows_portable(tmp_path: Path) -> None:
+async def test_export_makes_postgres_guardian_rows_portable(
+    tmp_path: Path,
+    archive_db: ArchiveDatabase,
+) -> None:
     """PostgreSQL guardian rows carry UUID and datetime values; the export is JSON."""
     import uuid as uuid_module
 
-    governance, *_ = await _fixture(tmp_path)
+    governance, *_ = await _fixture(tmp_path, archive_db)
     consent_id = uuid_module.uuid4()
     granted_at = datetime(2026, 9, 28, 8, 0, tzinfo=UTC)
 

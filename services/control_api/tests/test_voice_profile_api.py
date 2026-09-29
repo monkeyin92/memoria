@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from services.archive.object_store import EncryptedLocalObjectStore
@@ -27,7 +29,6 @@ from services.voice_profile.domain import (
     VoiceProfile,
     VoiceResolution,
 )
-from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
 from services.voice_profile.testing_audio import (
@@ -37,6 +38,47 @@ from services.voice_profile.testing_audio import (
     voice_sample_wav,
     wav_bytes,
 )
+
+PostgresVoiceFactory = Callable[..., PostgresVoiceProfileManager]
+
+
+@pytest_asyncio.fixture
+async def postgres_voice(tmp_path: Path) -> AsyncIterator[PostgresVoiceFactory]:
+    """Voice managers with a stub provider on the app's archive database.
+
+    The app's own manager uses the configured (offline) provider; these tests
+    need a provider they control, so they build one on the same archive DSN
+    and the same production role the app connects as.
+    """
+
+    managers: list[PostgresVoiceProfileManager] = []
+
+    def build(
+        app: Any,
+        *,
+        provider: Any,
+        sample_url_factory: Callable[[str], str],
+    ) -> PostgresVoiceProfileManager:
+        manager = PostgresVoiceProfileManager(
+            app.state.settings.archive_database_url.get_secret_value(),
+            object_store=EncryptedLocalObjectStore(
+                root=tmp_path / "voice-objects",
+                key=Fernet.generate_key().decode("ascii"),
+                key_version="voice-key-v1",
+            ),
+            provider=provider,
+            sample_url_factory=sample_url_factory,
+            provider_region="cn-beijing",
+            target_model="cosyvoice-v3.5-flash",
+        )
+        managers.append(manager)
+        return manager
+
+    try:
+        yield build
+    finally:
+        for manager in managers:
+            await manager.close()
 
 
 def _voice_sample(duration_ms: int = 12_000) -> bytes:
@@ -818,6 +860,7 @@ async def test_doubao_runtime_allows_seed_icl_personal_clone_activation(
 async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -830,17 +873,10 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     )
     app.state.voice_sample_signer = signer
     app.state.voice_preview_renderer = preview_renderer
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=provider,
         sample_url_factory=signer.url,
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1019,23 +1055,17 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
 async def test_voice_profile_revocation_returns_503_until_provider_cleanup_completes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
     provider = ProviderStub()
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=provider,
         sample_url_factory=lambda sample_id: (
             f"https://control.test/v1/voices/provider-samples/{sample_id}"
         ),
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1087,23 +1117,17 @@ async def test_voice_profile_revocation_returns_503_until_provider_cleanup_compl
 async def test_voice_consent_revocation_returns_503_until_provider_cleanup_completes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
     provider = ProviderStub()
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=provider,
         sample_url_factory=lambda sample_id: (
             f"https://control.test/v1/voices/provider-samples/{sample_id}"
         ),
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1176,6 +1200,7 @@ async def test_voice_profile_is_account_isolated_and_internal_resolution_rejects
 async def test_blind_voice_trial_requires_server_quality_evidence_before_activation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -1187,17 +1212,10 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
     )
     app.state.voice_sample_signer = signer
     app.state.voice_preview_renderer = preview_renderer
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=ProviderStub(),
         sample_url_factory=signer.url,
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1345,6 +1363,7 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
 async def test_ready_for_device_enrollment_activates_without_in_app_ab(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -1354,17 +1373,10 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
         ttl_s=300,
     )
     app.state.voice_sample_signer = signer
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=ProviderStub(),
         sample_url_factory=signer.url,
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1426,6 +1438,7 @@ async def test_ready_for_device_enrollment_activates_without_in_app_ab(
 async def test_a_recording_that_cannot_be_cloned_is_refused_with_actionable_copy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     """The sample is measured in the upload request, before any provider work."""
     _configure(monkeypatch, tmp_path)
@@ -1436,17 +1449,10 @@ async def test_a_recording_that_cannot_be_cloned_is_refused_with_actionable_copy
         ttl_s=300,
     )
     app.state.voice_sample_signer = signer
-    app.state.voice_profile_manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    app.state.voice_profile_manager = postgres_voice(
+        app,
         provider=ProviderStub(),
         sample_url_factory=signer.url,
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
     silent = wav_bytes(silent_audio(duration_ms=15_000))
     undecodable = b"RIFF" + b"\x01\x02" * 16_000
@@ -1500,6 +1506,7 @@ async def test_a_recording_that_cannot_be_cloned_is_refused_with_actionable_copy
 async def test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_voice: PostgresVoiceFactory,
 ) -> None:
     """A failed verdict is terminal: a later read must not flip it to passed.
 
@@ -1508,19 +1515,12 @@ async def test_a_rejected_sample_cannot_be_put_on_a_device_by_a_later_read(
     """
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
+    manager = postgres_voice(
+        app,
         provider=ProviderStub(),
         sample_url_factory=lambda sample_id: (
             f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
         ),
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
     )
     app.state.voice_profile_manager = manager
 

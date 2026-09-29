@@ -1,15 +1,25 @@
+"""Voice profile lifecycle on PostgreSQL, as the production archive role.
+
+Cases that ``test_postgres_manager.py`` already runs unchanged (consent
+revocation retry, candidate-persistence retry, orphan-sample revocation,
+one active clone per persona) live only there.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import sqlite3
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
+import asyncpg
 import pytest
+import pytest_asyncio
 from cryptography.fernet import Fernet
-from services.archive.domain import ContextQuery
-from services.archive.life_archive import LifeArchive
-from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
+from services.archive.domain import ContextQuery, EvidenceEvent
+from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef, ObjectStore
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderVoice,
@@ -18,12 +28,11 @@ from services.voice_profile.domain import (
     VoiceEnrollmentReconciliationRequiredError,
     VoiceEnrollmentRequest,
     VoiceEvaluationRequest,
-    VoiceProfile,
     VoiceQualityMeasurementRequest,
     objective_voice_quality_passes,
     subjective_voice_evaluation_passes,
 )
-from services.voice_profile.manager import VoiceProfileManager
+from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.testing_audio import voice_sample_wav
 
 
@@ -156,54 +165,100 @@ class AmbiguousPutStore:
         await self.inner.delete(reference)
 
 
-def _manager(tmp_path: Path) -> tuple[VoiceProfileManager, ProviderStub, Path]:
-    provider = ProviderStub()
-    object_root = tmp_path / "voice-objects"
-    store = EncryptedLocalObjectStore(
-        root=object_root,
+def _signed_sample_url(sample_id: str) -> str:
+    return f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
+
+
+def _local_store(root: Path) -> EncryptedLocalObjectStore:
+    return EncryptedLocalObjectStore(
+        root=root,
         key=Fernet.generate_key().decode("ascii"),
         key_version="voice-key-v1",
     )
-    manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=store,
-        provider=provider,
-        sample_url_factory=lambda sample_id: (
-            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
-        ),
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
-    )
-    return manager, provider, object_root
 
 
-def _doubao_manager(
-    tmp_path: Path,
-) -> tuple[VoiceProfileManager, UnsupportedDeleteProvider]:
-    provider = UnsupportedDeleteProvider()
-    manager = VoiceProfileManager.sqlite(
-        tmp_path / "doubao.sqlite3",
-        object_store=EncryptedLocalObjectStore(
-            root=tmp_path / "doubao-voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        ),
-        provider=provider,
-        sample_url_factory=lambda sample_id: (
-            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
-        ),
-        provider_region="cn-beijing",
-        target_model="seed-icl-2.0",
-        provider_name="volcengine_doubao",
-    )
-    return manager, provider
+class VoiceHarness:
+    """Voice managers on one ``postgres_database`` clone, closed at teardown."""
+
+    def __init__(self, database: Any, tmp_path: Path) -> None:
+        self.database = database
+        self.tmp_path = tmp_path
+        self._managers: list[PostgresVoiceProfileManager] = []
+
+    def build(
+        self,
+        *,
+        object_store: ObjectStore,
+        provider: ProviderStub,
+        target_model: str = "cosyvoice-v3.5-flash",
+        provider_name: str = "alibaba_model_studio",
+        sample_url_factory: Callable[[str], str] = _signed_sample_url,
+    ) -> PostgresVoiceProfileManager:
+        manager = PostgresVoiceProfileManager(
+            self.database.role_dsn("memoria_app"),
+            object_store=object_store,
+            provider=provider,
+            sample_url_factory=sample_url_factory,
+            provider_region="cn-beijing",
+            target_model=target_model,
+            provider_name=provider_name,
+        )
+        self._managers.append(manager)
+        return manager
+
+    def manager(self) -> tuple[PostgresVoiceProfileManager, ProviderStub, Path]:
+        provider = ProviderStub()
+        object_root = self.tmp_path / "voice-objects"
+        return self.build(object_store=_local_store(object_root), provider=provider), provider, object_root
+
+    def doubao_manager(self) -> tuple[PostgresVoiceProfileManager, UnsupportedDeleteProvider]:
+        provider = UnsupportedDeleteProvider()
+        manager = self.build(
+            object_store=_local_store(self.tmp_path / "doubao-voice-objects"),
+            provider=provider,
+            target_model="seed-icl-2.0",
+            provider_name="volcengine_doubao",
+        )
+        return manager, provider
+
+    async def execute(self, sql: str, *args: object) -> None:
+        """Change rows no manager API writes, as the clone admin."""
+
+        connection = await asyncpg.connect(self.database.owner_dsn())
+        try:
+            await connection.execute(sql, *args)
+        finally:
+            await connection.close()
+
+    async def owner_evidence(self, account_id: str) -> tuple[EvidenceEvent, ...]:
+        archive = PostgresLifeArchive(self.database.role_dsn("memoria_app"))
+        try:
+            bundle = await archive.context(
+                ContextQuery(account_id=account_id, speaker_class="owner", limit=20)
+            )
+        finally:
+            await archive.close()
+        return bundle.evidence
+
+    async def aclose(self) -> None:
+        for manager in self._managers:
+            await manager.close()
+
+
+@pytest_asyncio.fixture
+async def voice(postgres_database: Any, tmp_path: Path) -> AsyncIterator[VoiceHarness]:
+    harness = VoiceHarness(postgres_database, tmp_path)
+    try:
+        yield harness
+    finally:
+        await harness.aclose()
 
 
 @pytest.mark.asyncio
 async def test_separate_consent_encrypts_sample_and_creates_candidate(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, provider, object_root = _manager(tmp_path)
+    manager, provider, object_root = voice.manager()
 
     with pytest.raises(VoiceConsentRequiredError):
         await manager.enroll(
@@ -247,11 +302,8 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
     assert len(ciphertexts) == 1
     assert ciphertexts[0] != _sample()
 
-    archive = LifeArchive.sqlite(tmp_path / "memoria.sqlite3")
-    evidence = await archive.context(
-        ContextQuery(account_id="voice-account", speaker_class="owner", limit=20)
-    )
-    assert [item.event_type for item in evidence.evidence][:2] == [
+    evidence = await voice.owner_evidence("voice-account")
+    assert [item.event_type for item in evidence][:2] == [
         "voice_profile.enrolled",
         "voice_clone.consent_granted",
     ]
@@ -259,9 +311,9 @@ async def test_separate_consent_encrypts_sample_and_creates_candidate(
 
 @pytest.mark.asyncio
 async def test_blind_trial_keeps_mapping_server_side_and_requires_both_previews(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, _provider, _object_root = _manager(tmp_path)
+    manager, _provider, _object_root = voice.manager()
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -328,9 +380,9 @@ async def test_blind_trial_keeps_mapping_server_side_and_requires_both_previews(
 
 @pytest.mark.asyncio
 async def test_activation_requires_passed_ab_evaluation_and_is_versioned(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, _provider, _object_root = _manager(tmp_path)
+    manager, _provider, _object_root = voice.manager()
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -467,9 +519,9 @@ async def test_activation_requires_passed_ab_evaluation_and_is_versioned(
 
 @pytest.mark.asyncio
 async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pending(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, provider = _doubao_manager(tmp_path)
+    manager, provider = voice.doubao_manager()
     await manager.grant_consent(account_id="voice-account", policy_version="voice-clone-v1")
     candidate = await manager.enroll(
         VoiceEnrollmentRequest(
@@ -508,18 +560,17 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
     await manager.activate(account_id="voice-account", profile_id=candidate.profile_id)
 
     resolution = await manager.resolve(account_id="voice-account")
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
-        connection.execute(
-            "UPDATE voice_profiles SET provider_expires_at = NULL WHERE profile_id = ?",
-            (candidate.profile_id,),
-        )
+    await voice.execute(
+        "UPDATE voice_profiles SET provider_expires_at = NULL WHERE profile_id = $1::uuid",
+        candidate.profile_id,
+    )
     assert (await manager.resolve(account_id="voice-account")).mode == "fallback"
     assert candidate.provider_expires_at is not None
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
-        connection.execute(
-            "UPDATE voice_profiles SET provider_expires_at = ? WHERE profile_id = ?",
-            (candidate.provider_expires_at.isoformat(), candidate.profile_id),
-        )
+    await voice.execute(
+        "UPDATE voice_profiles SET provider_expires_at = $1 WHERE profile_id = $2::uuid",
+        candidate.provider_expires_at,
+        candidate.profile_id,
+    )
     revoked = await manager.revoke_profile(
         account_id="voice-account",
         profile_id=candidate.profile_id,
@@ -541,12 +592,9 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
         evidence_reference="doubao-console-ticket/cleanup-001",
     )
     assert confirmed.deletion_status == "completed"
-    evidence = await LifeArchive.sqlite(tmp_path / "doubao.sqlite3").context(
-        ContextQuery(account_id="voice-account", speaker_class="owner", limit=20)
-    )
     confirmation = next(
         event
-        for event in evidence.evidence
+        for event in await voice.owner_evidence("voice-account")
         if event.event_type == "voice_profile.provider_deletion_confirmed"
     )
     assert confirmation.payload["evidence_reference"] == "doubao-console-ticket/cleanup-001"
@@ -555,9 +603,9 @@ async def test_doubao_profile_resolves_personal_resource_and_keeps_cleanup_pendi
 
 @pytest.mark.asyncio
 async def test_doubao_activation_requires_a_known_future_provider_expiry(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, _provider = _doubao_manager(tmp_path)
+    manager, _provider = voice.doubao_manager()
     await manager.grant_consent(
         account_id="voice-expiry-account",
         policy_version="voice-clone-v1",
@@ -571,80 +619,38 @@ async def test_doubao_activation_requires_a_known_future_provider_expiry(
             sample_rate=24_000,
         )
     )
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
-        connection.execute(
-            """
-            UPDATE voice_profiles
-            SET evaluation_status = 'passed', quality_status = 'passed',
-                provider_expires_at = NULL
-            WHERE profile_id = ?
-            """,
-            (candidate.profile_id,),
-        )
+    await voice.execute(
+        """
+        UPDATE voice_profiles
+        SET evaluation_status = 'passed', quality_status = 'passed',
+            provider_expires_at = NULL
+        WHERE profile_id = $1::uuid
+        """,
+        candidate.profile_id,
+    )
     with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
         await manager.activate(
             account_id="voice-expiry-account",
             profile_id=candidate.profile_id,
         )
 
-    with sqlite3.connect(tmp_path / "doubao.sqlite3") as connection:
-        connection.execute(
-            "UPDATE voice_profiles SET provider_expires_at = ? WHERE profile_id = ?",
-            (datetime(2000, 1, 1, tzinfo=UTC).isoformat(), candidate.profile_id),
-        )
+    await voice.execute(
+        "UPDATE voice_profiles SET provider_expires_at = $1 WHERE profile_id = $2::uuid",
+        datetime(2000, 1, 1, tzinfo=UTC),
+        candidate.profile_id,
+    )
     with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
         await manager.activate(
             account_id="voice-expiry-account",
             profile_id=candidate.profile_id,
         )
-
-
-@pytest.mark.asyncio
-async def test_consent_revocation_reports_incomplete_deletion_and_retries(
-    tmp_path: Path,
-) -> None:
-    manager, provider, _object_root = _manager(tmp_path)
-    await manager.grant_consent(
-        account_id="voice-account",
-        policy_version="voice-clone-v1",
-    )
-    candidate = await manager.enroll(
-        VoiceEnrollmentRequest(
-            account_id="voice-account",
-            audio=_sample(),
-            media_type="audio/wav",
-            duration_ms=12_000,
-            sample_rate=24_000,
-        )
-    )
-    provider.delete_fails = True
-
-    with pytest.raises(
-        VoiceEnrollmentReconciliationRequiredError,
-        match="voice profile deletion incomplete",
-    ):
-        await manager.revoke_consent(account_id="voice-account")
-
-    revoked_consent = await manager.consent(account_id="voice-account")
-    failed_profile = (await manager.profiles(account_id="voice-account"))[0]
-    assert revoked_consent is not None
-    assert revoked_consent.revoked_at is not None
-    assert failed_profile.deletion_status == "failed"
-
-    provider.delete_fails = False
-    retried = await manager.revoke_consent(account_id="voice-account")
-    completed_profile = (await manager.profiles(account_id="voice-account"))[0]
-
-    assert retried.revoked_at == revoked_consent.revoked_at
-    assert completed_profile.deletion_status == "completed"
-    assert provider.deleted == [candidate.provider_voice_id, candidate.provider_voice_id]
 
 
 @pytest.mark.asyncio
 async def test_revoke_falls_back_before_provider_delete_and_keeps_retry_state(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, provider, _object_root = _manager(tmp_path)
+    manager, provider, _object_root = voice.manager()
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -705,9 +711,9 @@ async def test_revoke_falls_back_before_provider_delete_and_keeps_retry_state(
 
 @pytest.mark.asyncio
 async def test_revocation_during_enrollment_deletes_the_late_provider_asset(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, provider, _object_root = _manager(tmp_path)
+    manager, provider, _object_root = voice.manager()
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -725,7 +731,7 @@ async def test_revocation_during_enrollment_deletes_the_late_provider_asset(
             )
         )
     )
-    await provider.create_entered.wait()
+    await asyncio.wait_for(provider.create_entered.wait(), timeout=30)
     enrolling = (await manager.profiles(account_id="voice-account"))[0]
     await manager.revoke_profile(
         account_id="voice-account",
@@ -742,51 +748,10 @@ async def test_revocation_during_enrollment_deletes_the_late_provider_asset(
 
 
 @pytest.mark.asyncio
-async def test_retry_after_candidate_persistence_failure_reuses_provider_result(
-    tmp_path: Path,
-) -> None:
-    manager, provider, _object_root = _manager(tmp_path)
-    await manager.grant_consent(
-        account_id="voice-account",
-        policy_version="voice-clone-v1",
-    )
-    request = VoiceEnrollmentRequest(
-        account_id="voice-account",
-        audio=voice_sample_wav(12_400),
-        media_type="audio/wav",
-        duration_ms=12_000,
-        sample_rate=24_000,
-        enrollment_key="stable-enrollment-001",
-    )
-    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
-        connection.executescript(
-            """
-            CREATE TRIGGER fail_candidate_persistence
-            BEFORE UPDATE OF provider_voice_id ON voice_profiles
-            WHEN NEW.provider_voice_id IS NOT NULL
-            BEGIN
-                SELECT RAISE(FAIL, 'simulated candidate persistence failure');
-            END;
-            """
-        )
-
-    with pytest.raises(sqlite3.IntegrityError, match="candidate persistence"):
-        await manager.enroll(request)
-
-    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
-        connection.execute("DROP TRIGGER fail_candidate_persistence")
-    candidate = await manager.enroll(request)
-
-    assert candidate.status == "candidate"
-    assert len(provider.created) == 1
-    assert len(await manager.profiles(account_id="voice-account")) == 1
-
-
-@pytest.mark.asyncio
 async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
-    manager, provider, _object_root = _manager(tmp_path)
+    manager, provider, _object_root = voice.manager()
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -799,22 +764,26 @@ async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
         sample_rate=24_000,
         enrollment_key="stable-enrollment-ambiguous",
     )
-    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
-        connection.executescript(
-            """
-            CREATE TRIGGER fail_provider_result_persistence
-            BEFORE UPDATE OF provider_voice_id ON voice_enrollment_operations
-            WHEN NEW.provider_voice_id IS NOT NULL
-            BEGIN
-                SELECT RAISE(FAIL, 'simulated provider result persistence failure');
-            END;
-            """
-        )
+    await voice.execute(
+        """
+        CREATE FUNCTION memoria_test_fail_voice_provider_result()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'simulated provider result persistence failure';
+        END;
+        $$;
+        CREATE TRIGGER fail_provider_result_persistence
+        BEFORE UPDATE OF provider_voice_id ON voice_enrollment_operations
+        FOR EACH ROW WHEN (NEW.provider_voice_id IS NOT NULL)
+        EXECUTE FUNCTION memoria_test_fail_voice_provider_result();
+        """
+    )
 
-    with pytest.raises(sqlite3.IntegrityError, match="provider result persistence"):
+    with pytest.raises(asyncpg.PostgresError, match="provider result persistence"):
         await manager.enroll(request)
-    with sqlite3.connect(tmp_path / "memoria.sqlite3") as connection:
-        connection.execute("DROP TRIGGER fail_provider_result_persistence")
+    await voice.execute(
+        "DROP TRIGGER fail_provider_result_persistence ON voice_enrollment_operations"
+    )
 
     with pytest.raises(VoiceEnrollmentReconciliationRequiredError):
         await manager.enroll(request)
@@ -844,27 +813,11 @@ async def test_ambiguous_provider_creation_is_enumerable_and_never_reissued(
 
 @pytest.mark.asyncio
 async def test_ambiguous_sample_upload_is_enumerable_and_blocks_false_deletion(
-    tmp_path: Path,
+    voice: VoiceHarness,
 ) -> None:
     provider = ProviderStub()
-    object_root = tmp_path / "voice-objects"
-    store = AmbiguousPutStore(
-        EncryptedLocalObjectStore(
-            root=object_root,
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        )
-    )
-    manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=store,
-        provider=provider,
-        sample_url_factory=lambda sample_id: (
-            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
-        ),
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
-    )
+    store = AmbiguousPutStore(_local_store(voice.tmp_path / "voice-objects"))
+    manager = voice.build(object_store=store, provider=provider)
     await manager.grant_consent(
         account_id="voice-account",
         policy_version="voice-clone-v1",
@@ -904,156 +857,3 @@ async def test_ambiguous_sample_upload_is_enumerable_and_blocks_false_deletion(
 
     assert candidate.status == "candidate"
     assert len(provider.created) == 1
-
-
-@pytest.mark.asyncio
-async def test_consent_revocation_waits_for_orphan_sample_reconciliation(
-    tmp_path: Path,
-) -> None:
-    provider = ProviderStub()
-    store = AmbiguousPutStore(
-        EncryptedLocalObjectStore(
-            root=tmp_path / "voice-objects",
-            key=Fernet.generate_key().decode("ascii"),
-            key_version="voice-key-v1",
-        )
-    )
-    manager = VoiceProfileManager.sqlite(
-        tmp_path / "memoria.sqlite3",
-        object_store=store,
-        provider=provider,
-        sample_url_factory=lambda sample_id: f"https://control.test/{sample_id}",
-        provider_region="cn-beijing",
-        target_model="cosyvoice-v3.5-flash",
-    )
-    await manager.grant_consent(
-        account_id="voice-account",
-        policy_version="voice-clone-v1",
-    )
-    request = VoiceEnrollmentRequest(
-        account_id="voice-account",
-        audio=voice_sample_wav(13_600),
-        media_type="audio/wav",
-        duration_ms=12_000,
-        sample_rate=24_000,
-        enrollment_key="orphan-upload-consent-revoke",
-    )
-    with pytest.raises(RuntimeError, match="acknowledgement lost"):
-        await manager.enroll(request)
-
-    with pytest.raises(
-        VoiceEnrollmentReconciliationRequiredError,
-        match="voice profile deletion incomplete",
-    ):
-        await manager.revoke_consent(account_id="voice-account")
-
-    revoked_consent = await manager.consent(account_id="voice-account")
-    assert revoked_consent is not None
-    assert revoked_consent.revoked_at is not None
-    assert (await manager.profiles(account_id="voice-account"))[0].deletion_status == "failed"
-
-    assert store.reference is not None
-    await store.delete(store.reference)
-    await manager.reconcile_enrollment(
-        account_id="voice-account",
-        enrollment_key=request.enrollment_key or "",
-        sample_asset_absent=True,
-    )
-    retried = await manager.revoke_consent(account_id="voice-account")
-
-    assert retried.revoked_at == revoked_consent.revoked_at
-    assert await manager.pending_enrollments(account_id="voice-account") == ()
-    assert await manager.profiles(account_id="voice-account") == ()
-
-
-async def _activated_clone(
-    manager: VoiceProfileManager,
-    *,
-    account_id: str,
-    custom_persona_id: str,
-) -> VoiceProfile:
-    """Take one enrollment all the way to an active clone for that persona."""
-    candidate = await manager.enroll(
-        VoiceEnrollmentRequest(
-            account_id=account_id,
-            audio=_sample(),
-            media_type="audio/wav",
-            duration_ms=12_000,
-            sample_rate=24_000,
-            # Without an explicit key the enrollment key is derived from the
-            # audio, so identical samples in one account would collapse into a
-            # single profile and this test would silently pass with one row.
-            enrollment_key=f"persona-clone-{custom_persona_id}",
-            custom_persona_id=custom_persona_id,
-        )
-    )
-    await manager.evaluate(
-        VoiceEvaluationRequest(
-            account_id=account_id,
-            profile_id=candidate.profile_id,
-            similarity=4.0,
-            naturalness=4.0,
-            accent_similarity=4.0,
-            emotion_adherence=4.0,
-            instruction_adherence=4.0,
-            uncanny=2.0,
-            candidate_preferred=True,
-        )
-    )
-    await manager.record_quality_measurement(
-        VoiceQualityMeasurementRequest(
-            account_id=account_id,
-            profile_id=candidate.profile_id,
-            source_run_id=f"probe-run-{custom_persona_id}",
-            first_audio_ms=700,
-            cancel_tail_ms=100,
-            timestamp_error_ms=100,
-            long_sentence_chars=240,
-            long_sentence_completion_ratio=0.99,
-        )
-    )
-    return await manager.activate(
-        account_id=account_id, profile_id=candidate.profile_id
-    )
-
-
-@pytest.mark.asyncio
-async def test_each_custom_persona_keeps_its_own_active_clone(tmp_path: Path) -> None:
-    """Two personas hold one active clone each and neither evicts the other.
-
-    The "one active" rule is per persona: activating a second persona's clone
-    used to demote the whole account's active row to a candidate.
-    """
-    manager, _provider, _root = _manager(tmp_path)
-    account_id = "voice-account"
-    persona_a = "cu_aaaaaaaaaaaaaaaa"
-    persona_b = "cu_bbbbbbbbbbbbbbbb"
-    await manager.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
-
-    first = await _activated_clone(
-        manager, account_id=account_id, custom_persona_id=persona_a
-    )
-    second = await _activated_clone(
-        manager, account_id=account_id, custom_persona_id=persona_b
-    )
-
-    active = {
-        profile.profile_id: profile
-        for profile in await manager.profiles(account_id=account_id)
-        if profile.status == "active"
-    }
-    assert set(active) == {first.profile_id, second.profile_id}
-    assert active[first.profile_id].custom_persona_id == persona_a
-    assert active[second.profile_id].custom_persona_id == persona_b
-
-    # Each dimension resolves to its own clone; the unbound one resolves to none.
-    resolution_a = await manager.resolve(
-        account_id=account_id, custom_persona_id=persona_a
-    )
-    resolution_b = await manager.resolve(
-        account_id=account_id, custom_persona_id=persona_b
-    )
-    assert resolution_a.voice_kind == "personal"
-    assert resolution_b.voice_kind == "personal"
-    assert resolution_a.profile_id != resolution_b.profile_id
-    assert (await manager.resolve(account_id=account_id)).mode == "fallback"

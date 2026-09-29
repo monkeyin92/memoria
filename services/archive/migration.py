@@ -1,4 +1,7 @@
-"""Read-only, deterministic migration from the legacy SQLite message projection."""
+"""Read-only, deterministic migration from the legacy SQLite message projection.
+
+The legacy source is a SQLite file; the target is the PostgreSQL archive.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from services.archive.domain import EvidenceEvent, IdempotencyConflictError, canonical_payload
-from services.archive.life_archive import _SCHEMA
+from services.archive.domain import EvidenceEvent
 from services.archive.postgres_archive import PostgresLifeArchive
 
 
@@ -98,114 +100,6 @@ def _event_set_sha256(events: list[EvidenceEvent]) -> str:
         f"{event.event_id}:{event.content_sha256}" for event in sorted(events, key=lambda e: e.event_id)
     )
     return hashlib.sha256(rows.encode("utf-8")).hexdigest()
-
-
-def migrate_legacy_sqlite(
-    source_path: str | Path,
-    target_path: str | Path,
-    *,
-    dry_run: bool = False,
-) -> MigrationReport:
-    source = Path(source_path).expanduser().resolve()
-    target = Path(target_path).expanduser().resolve()
-    if not source.is_file():
-        raise ValueError("legacy source must be an existing SQLite file")
-    if source == target:
-        raise ValueError("legacy source and archive target must be different files")
-    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    events, projection_count = _read_source(source)
-    event_hash = _event_set_sha256(events)
-    if dry_run:
-        return MigrationReport(
-            source_sha256=source_hash,
-            event_set_sha256=event_hash,
-            eligible_messages=len(events),
-            legacy_projection_count=projection_count,
-            inserted=0,
-            duplicates=0,
-            dry_run=True,
-        )
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    inserted = 0
-    duplicates = 0
-    with sqlite3.connect(target, timeout=5, isolation_level=None) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA busy_timeout=5000")
-        connection.executescript(_SCHEMA)
-        connection.execute("BEGIN IMMEDIATE")
-        try:
-            for event in events:
-                existing = connection.execute(
-                    "SELECT content_sha256 FROM evidence_events WHERE event_id = ?",
-                    (event.event_id,),
-                ).fetchone()
-                if existing is not None:
-                    if str(existing["content_sha256"]) != event.content_sha256:
-                        raise IdempotencyConflictError(
-                            f"legacy event {event.event_id!r} conflicts with target"
-                        )
-                    duplicates += 1
-                    continue
-                recorded_at = datetime.now(UTC).isoformat()
-                connection.execute(
-                    """
-                    INSERT INTO evidence_events (
-                        event_id, account_id, session_id, turn_id, generation_id,
-                        event_type, schema_version, occurred_at, recorded_at,
-                        speaker_identity_id, speaker_class, source, consent_grant_id,
-                        payload_json, content_sha256, supersedes_event_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event.event_id,
-                        event.account_id,
-                        event.session_id,
-                        event.turn_id,
-                        event.generation_id,
-                        event.event_type,
-                        event.schema_version,
-                        event.occurred_at.isoformat(),
-                        recorded_at,
-                        event.speaker_identity_id,
-                        event.speaker_class,
-                        event.source,
-                        event.consent_grant_id,
-                        canonical_payload(event.payload),
-                        event.content_sha256,
-                        event.supersedes_event_id,
-                    ),
-                )
-                outbox_id = str(
-                    uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:outbox:{event.event_id}")
-                )
-                connection.execute(
-                    """
-                    INSERT INTO processing_outbox (
-                        outbox_id, account_id, event_id, task_type,
-                        available_at, created_at
-                    ) VALUES (?, ?, ?, 'compile_evidence', ?, ?)
-                    """,
-                    (outbox_id, event.account_id, event.event_id, recorded_at, recorded_at),
-                )
-                inserted += 1
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-
-    if hashlib.sha256(source.read_bytes()).hexdigest() != source_hash:
-        raise RuntimeError("legacy source changed during migration")
-    return MigrationReport(
-        source_sha256=source_hash,
-        event_set_sha256=event_hash,
-        eligible_messages=len(events),
-        legacy_projection_count=projection_count,
-        inserted=inserted,
-        duplicates=duplicates,
-        dry_run=False,
-    )
 
 
 async def migrate_legacy_sqlite_to_postgres(

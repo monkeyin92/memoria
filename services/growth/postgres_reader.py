@@ -1,4 +1,4 @@
-"""PostgreSQL/RLS counterpart to the ledger-derived growth reader."""
+"""Ledger-derived growth reads on PostgreSQL, under RLS."""
 
 from __future__ import annotations
 

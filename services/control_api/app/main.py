@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import quote, unquote, urlsplit
 
 import asyncpg
@@ -25,8 +25,6 @@ from services.agent.src.providers.crisis_semantic_classifier import (
 )
 from services.archive.compiler_worker import MemoryCompilerWorker
 from services.archive.domain import EvidenceEvent, LifeArchivePort
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
@@ -40,7 +38,6 @@ from services.archive.object_store import (
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.postgres_skill_catalog import PostgresSkillCatalog
-from services.archive.skill_catalog import SkillCatalog
 from services.archive.skill_domain import SkillCatalogPort
 from services.consent.binding_snapshot import (
     BindingConsentAuthority,
@@ -106,6 +103,7 @@ from services.control_api.app.session_termination import (
     LiveKitRoomCloser,
     RealtimeConnectionRegistry,
 )
+from services.control_api.app.unconfigured_store import UnconfiguredStore
 from services.control_api.app.wiring import Wiring, run_eagerly
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_service import (
@@ -115,7 +113,6 @@ from services.device_fleet.bootstrap_service import (
 from services.digital_self.domain import RegistryPort
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.digital_self.preview import SelfPreviewRegistry
-from services.digital_self.registry import DigitalSelfRegistry
 from services.evolution.account_fence import AccountWriteGuard as EvolutionAccountWriteGuard
 from services.evolution.account_fence import require_account_evolution_subject
 from services.evolution.account_repository import (
@@ -135,7 +132,6 @@ from services.governance.account_data import (
     AccountDeletionWorker,
 )
 from services.growth.postgres_reader import PostgresGrowthReader
-from services.growth.reader import GrowthReader
 from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
 from services.guardian.corpus import (
     CorpusRetentionService,
@@ -146,7 +142,6 @@ from services.guardian.crisis import CrisisNotificationService, CrisisNotificati
 from services.guardian.domain import ConsentKind, GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import CrisisPushStorePort
-from services.guardian.unconfigured import UnconfiguredGuardianStore
 from services.identity.authority import (
     ConsentSnapshotResolver,
     RejectingTransferEvidenceVerifier,
@@ -157,7 +152,6 @@ from services.identity.repository import IdentityStore
 from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
 from services.legacy.postgres_registry import PostgresLegacyRegistry
-from services.legacy.registry import LegacyRegistry
 from services.memory_scope.capture_policy import (
     build_memory_capture_policy_assembly,
 )
@@ -176,7 +170,6 @@ from services.memory_scope.wiring import (
 )
 from services.persona.custom_persona_structurer import QwenCustomPersonaStructurer
 from services.persona.domain import PersonaEnginePort
-from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
 from services.persona.qwen_extractor import FallbackPersonaExtractor, QwenPersonaExtractor
 from services.persona.rules import PersonaExtractor, RuleBasedPersonaExtractor
@@ -184,7 +177,6 @@ from services.policy.engine import PolicyEngine
 from services.policy.receipt_store import InMemoryPolicyReceiptWriter
 from services.self_model.domain import SelfModelRegistryPort
 from services.self_model.postgres_registry import PostgresSelfModelRegistry
-from services.self_model.registry import SelfModelRegistry
 from services.session_runtime.postgres_store import PostgresSessionRuntimeStore
 from services.session_runtime.service import build_postgres_session_runtime_service
 from services.speaker.authority import SpeakerAuthority
@@ -212,7 +204,6 @@ from services.voice_profile.doubao_voice_clone import (
     DoubaoVoiceCloneClient,
     DoubaoVoiceCloneConfig,
 )
-from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
 
@@ -382,6 +373,11 @@ def _speaker_authority(
     )
 
 
+def _unconfigured(store: str) -> Any:
+    """Eager wiring without an archive DSN: the archive family is PostgreSQL-only."""
+    return UnconfiguredStore(store, "MEMORIA_ARCHIVE_DATABASE_URL")
+
+
 def _persona_extractor(settings: ControlSettings) -> PersonaExtractor:
     fallback = RuleBasedPersonaExtractor()
     api_key = settings.dashscope_api_key.get_secret_value()
@@ -520,15 +516,7 @@ def _voice_profile_services(
             pool=archive_pool,
         )
     else:
-        manager = VoiceProfileManager.sqlite(
-            settings.memoria_db_path,
-            object_store=object_store,
-            provider=provider,
-            sample_url_factory=signer.url,
-            provider_region=settings.voice_provider_region,
-            target_model=settings.voice_target_model,
-            provider_name=settings.voice_clone_provider,
-        )
+        manager = _unconfigured("voice_profile")
     return manager, signer, object_store
 
 
@@ -913,10 +901,12 @@ async def _wire_services(w: Wiring) -> None:
     elif w.live:
         raise RuntimeError("MEMORIA_GUARDIAN_DATABASE_URL is required (guardian is PostgreSQL-only)")
     else:
-        guardian_store = cast(GuardianStorePort, UnconfiguredGuardianStore())
+        guardian_store = cast(GuardianStorePort, UnconfiguredStore("guardian", "MEMORIA_GUARDIAN_DATABASE_URL"))
     app.state.guardian_store = guardian_store
 
     archive_url = w.url(settings.archive_database_url.get_secret_value())
+    if w.live and not archive_url:
+        raise RuntimeError("MEMORIA_ARCHIVE_DATABASE_URL is required (archive is PostgreSQL-only)")
     # The archive-DSN stores borrow one pool; it closes after all of them.
     pools = SharedPostgresPools(w.resources)
     # Borrowing opens a pool, which eager wiring cannot do; stores then open their own.
@@ -986,27 +976,8 @@ async def _wire_services(w: Wiring) -> None:
         await w.open(postgres_persona.initialize, postgres_persona.close)
         persona_engine = postgres_persona
     else:
-        sqlite_archive = LifeArchive.sqlite(settings.memoria_db_path)
-        await w.init_blocking(sqlite_archive.initialize)
-        archive = sqlite_archive
-        sqlite_catalog = MemoryCatalog.sqlite(
-            settings.memoria_db_path,
-            extractor=extractor,
-            account_guard=account_guard,
-            subject_category_resolver=_subject_category_resolver(store),
-            evidence_subject_category_resolver=evidence_category,
-        )
-        await w.init_blocking(sqlite_catalog.initialize)
-        memory_catalog = sqlite_catalog
-        sqlite_skills = SkillCatalog.sqlite(settings.memoria_db_path)
-        await w.init_blocking(sqlite_skills.initialize)
-        skill_catalog = sqlite_skills
-        sqlite_persona = PersonaEngine.sqlite(
-            settings.memoria_db_path,
-            extractor=persona_extractor,
-        )
-        await w.init_blocking(sqlite_persona.initialize)
-        persona_engine = sqlite_persona
+        archive, memory_catalog = _unconfigured("archive"), _unconfigured("memory_catalog")
+        skill_catalog, persona_engine = _unconfigured("skills"), _unconfigured("persona")
     app.state.life_archive = archive
     app.state.crisis_notification_service = CrisisNotificationService(
         cast(CrisisNotificationStorePort, guardian_store),
@@ -1075,9 +1046,7 @@ async def _wire_services(w: Wiring) -> None:
         await w.open(postgres_digital_self.initialize, postgres_digital_self.close)
         digital_self_registry = postgres_digital_self
     else:
-        sqlite_digital_self = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
-        await w.init_blocking(sqlite_digital_self.initialize)
-        digital_self_registry = sqlite_digital_self
+        digital_self_registry = _unconfigured("digital_self")
     app.state.digital_self_registry = digital_self_registry
     self_preview_registry = SelfPreviewRegistry.beside(store, settings.memoria_db_path)
     await w.init_blocking(self_preview_registry.initialize)
@@ -1087,18 +1056,14 @@ async def _wire_services(w: Wiring) -> None:
         await w.open(postgres_self_model.initialize, postgres_self_model.close)
         self_model_registry = postgres_self_model
     else:
-        sqlite_self_model = SelfModelRegistry.sqlite(settings.memoria_db_path)
-        await w.init_blocking(sqlite_self_model.initialize)
-        self_model_registry = sqlite_self_model
+        self_model_registry = _unconfigured("self_model")
     app.state.self_model_registry = self_model_registry
     if archive_url:
         postgres_legacy = PostgresLegacyRegistry(archive_url, pool=archive_pool)
         await w.open(postgres_legacy.initialize, postgres_legacy.close)
         legacy_registry = postgres_legacy
     else:
-        sqlite_legacy = LegacyRegistry.sqlite(settings.memoria_db_path)
-        await w.init_blocking(sqlite_legacy.initialize)
-        legacy_registry = sqlite_legacy
+        legacy_registry = _unconfigured("legacy")
     app.state.legacy_registry = legacy_registry
     # S4 is intentionally read-only over the same ledger; no coverage cache exists.
     if archive_url:
@@ -1110,19 +1075,13 @@ async def _wire_services(w: Wiring) -> None:
         await w.open(postgres_growth.initialize, postgres_growth.close)
         app.state.growth_reader = postgres_growth
     else:
-        app.state.growth_reader = GrowthReader.sqlite(
-            settings.memoria_db_path,
-            self_model_registry=self_model_registry,
-        )
+        app.state.growth_reader = _unconfigured("growth")
 
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings, archive_pool=archive_pool
     )
     if isinstance(voice_profile_manager, PostgresVoiceProfileManager):
         await w.open(voice_profile_manager.initialize, voice_profile_manager.close)
-    else:
-        assert isinstance(voice_profile_manager, VoiceProfileManager)
-        await w.init_blocking(voice_profile_manager.initialize)
     app.state.voice_profile_manager = voice_profile_manager
     app.state.voice_sample_signer = voice_sample_signer
     app.state.voice_object_store = voice_object_store

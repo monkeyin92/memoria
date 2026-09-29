@@ -9,17 +9,12 @@ every one of its sources belongs to the requested subject.
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit, urlunsplit
 
-import asyncpg
 import pytest
 from services.archive.domain import (
     ContextQuery,
@@ -27,8 +22,6 @@ from services.archive.domain import (
     EvidenceNotFoundError,
     MemoryReview,
 )
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
     MemoryClaimReview,
     MemoryExtraction,
@@ -37,6 +30,9 @@ from services.archive.memory_domain import (
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+
+MakeCatalog = Callable[..., Awaitable[PostgresMemoryCatalog]]
+OwnerSql = Callable[..., list[tuple[Any, ...]]]
 
 _ACCOUNT = "account-subject-scope"
 _WORK_A = "做项目复盘时，我习惯先找事实，再讨论责任。"
@@ -102,67 +98,55 @@ async def _record(
     )
 
 
-def _claim_row(path: Path, claim_id: str) -> dict[str, Any]:
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            "SELECT * FROM memory_claims WHERE claim_id = ?",
-            (claim_id,),
-        ).fetchone()
-    assert row is not None
-    return dict(row)
+def _claim_row(sql: OwnerSql, claim_id: str) -> dict[str, Any]:
+    rows = sql(
+        "SELECT status, conflict_state FROM memory_claims WHERE claim_id = %s::uuid",
+        claim_id,
+    )
+    assert len(rows) == 1
+    status, conflict_state = rows[0]
+    return {"status": status, "conflict_state": conflict_state}
 
 
-def _episode_evidence_statuses(path: Path) -> dict[str, str]:
-    with sqlite3.connect(path) as connection:
-        rows = connection.execute(
-            "SELECT source_event_id, status FROM episode_evidence"
-        ).fetchall()
+def _episode_evidence_statuses(sql: OwnerSql) -> dict[str, str]:
+    rows = sql("SELECT source_event_id, status FROM episode_evidence")
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def _timeline_statuses(path: Path) -> dict[str, str]:
-    with sqlite3.connect(path) as connection:
-        rows = connection.execute(
-            "SELECT source_event_id, status FROM timeline_entries"
-        ).fetchall()
+def _timeline_statuses(sql: OwnerSql) -> dict[str, str]:
+    rows = sql("SELECT source_event_id, status FROM timeline_entries")
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def _age_claim_ids(path: Path) -> dict[str, str]:
+def _age_claim_ids(sql: OwnerSql) -> dict[str, str]:
     """Age-claim ids keyed by extracted value ("60", "61", ...)."""
 
-    with sqlite3.connect(path) as connection:
-        rows = connection.execute(
-            "SELECT claim_id, value FROM memory_claims WHERE predicate = 'age'"
-        ).fetchall()
+    rows = sql("SELECT claim_id, value FROM memory_claims WHERE predicate = 'age'")
     return {str(row[1]): str(row[0]) for row in rows}
 
 
-def _claim_id_for_event(path: Path, *, account_id: str, source_event_id: str) -> str:
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            "SELECT claim_id FROM memory_claims"
-            " WHERE account_id = ? AND source_event_id = ?",
-            (account_id, source_event_id),
-        ).fetchone()
-    assert row is not None
-    return str(row[0])
+def _claim_id_for_event(sql: OwnerSql, *, account_id: str, source_event_id: str) -> str:
+    rows = sql(
+        "SELECT claim_id FROM memory_claims WHERE account_id = %s AND source_event_id = %s",
+        account_id,
+        source_event_id,
+    )
+    assert len(rows) == 1
+    return str(rows[0][0])
 
 
-def _episode_id_for_event(path: Path, *, account_id: str, source_event_id: str) -> str:
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            "SELECT episode_id FROM episode_evidence"
-            " WHERE account_id = ? AND source_event_id = ?",
-            (account_id, source_event_id),
-        ).fetchone()
-    assert row is not None
-    return str(row[0])
+def _episode_id_for_event(sql: OwnerSql, *, account_id: str, source_event_id: str) -> str:
+    rows = sql(
+        "SELECT episode_id FROM episode_evidence WHERE account_id = %s AND source_event_id = %s",
+        account_id,
+        source_event_id,
+    )
+    assert len(rows) == 1
+    return str(rows[0][0])
 
 
 def _link_event_to_episode(
-    path: Path,
+    sql: OwnerSql,
     *,
     account_id: str,
     episode_id: str,
@@ -170,82 +154,42 @@ def _link_event_to_episode(
 ) -> None:
     """Point an episode at one more evidence row inside the same account."""
 
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "INSERT OR IGNORE INTO episode_evidence"
-            " (episode_id, account_id, source_event_id, status)"
-            " VALUES (?, ?, ?, 'candidate')",
-            (episode_id, account_id, source_event_id),
-        )
+    sql(
+        "INSERT INTO episode_evidence (episode_id, account_id, source_event_id, status)"
+        " VALUES (%s::uuid, %s, %s, 'candidate') ON CONFLICT DO NOTHING",
+        episode_id,
+        account_id,
+        source_event_id,
+    )
 
 
 def _merge_source_into_claim_document(
-    path: Path,
+    sql: OwnerSql,
     *,
     claim_id: str,
     source_event_id: str,
 ) -> None:
     """Simulate a claim projection merged from a second speaker's event."""
 
-    with sqlite3.connect(path) as connection:
-        document = connection.execute(
-            "SELECT document_id FROM memory_search_documents"
-            " WHERE kind = 'claim' AND item_id = ?",
-            (claim_id,),
-        ).fetchone()
-        assert document is not None
-        connection.execute(
-            "INSERT OR IGNORE INTO memory_search_document_sources"
-            " (document_id, account_id, source_event_id) VALUES (?, ?, ?)",
-            (str(document[0]), _ACCOUNT, source_event_id),
-        )
-
-
-def _database_dsn(dsn: str, database: str) -> str:
-    """Point a DSN at a throwaway database without touching the shared one."""
-
-    parsed = urlsplit(dsn)
-    host = parsed.hostname or "localhost"
-    if parsed.port is not None:
-        host = f"{host}:{parsed.port}"
-    credentials = f"{quote(parsed.username or '')}:{quote(parsed.password or '')}@"
-    return urlunsplit((parsed.scheme, f"{credentials}{host}", f"/{database}", parsed.query, ""))
-
-
-async def _drop_database(admin_dsn: str, database: str) -> None:
-    admin = await asyncpg.connect(admin_dsn)
-    try:
-        await admin.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
-            database,
-        )
-        await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
-    finally:
-        await admin.close()
-
-
-@pytest.fixture
-async def scoped_postgres_dsn() -> AsyncIterator[str]:
-    """A throwaway database: the shared test database is never written to."""
-
-    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
-    database = f"memoria_subject_scope_{uuid.uuid4().hex[:10]}"
-    admin = await asyncpg.connect(admin_dsn)
-    try:
-        await admin.execute(f'CREATE DATABASE "{database}"')
-    finally:
-        await admin.close()
-    try:
-        yield _database_dsn(admin_dsn, database)
-    finally:
-        await _drop_database(admin_dsn, database)
+    documents = sql(
+        "SELECT document_id FROM memory_search_documents"
+        " WHERE kind = 'claim' AND item_id = %s::uuid",
+        claim_id,
+    )
+    assert len(documents) == 1
+    sql(
+        "INSERT INTO memory_search_document_sources (document_id, account_id, source_event_id)"
+        " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+        documents[0][0],
+        _ACCOUNT,
+        source_event_id,
+    )
 
 
 @pytest.mark.asyncio
 async def test_context_subject_scope_excludes_unclaimed_and_foreign_turns(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
-    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     await _record(archive, event_id="ctx-a", text="甲说的话。", subject_id="subject-a")
     await _record(
         archive,
@@ -289,9 +233,8 @@ async def test_context_subject_scope_excludes_unclaimed_and_foreign_turns(
 
 @pytest.mark.asyncio
 async def test_context_owner_branch_narrows_session_before_the_limit(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
-    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     await _record(
         archive,
         event_id="session-target-turn",
@@ -323,9 +266,8 @@ async def test_context_owner_branch_narrows_session_before_the_limit(
 
 @pytest.mark.asyncio
 async def test_evidence_window_subject_scope_excludes_unclaimed_speakers(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
 ) -> None:
-    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     await _record(archive, event_id="window-a", text="甲的窗口事件。", subject_id="subject-a")
     await _record(
         archive,
@@ -361,9 +303,11 @@ async def test_evidence_window_subject_scope_excludes_unclaimed_speakers(
 
 
 @pytest.mark.asyncio
-async def test_catalog_hides_an_episode_merged_across_subjects(tmp_path: Path) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_catalog_hides_an_episode_merged_across_subjects(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+) -> None:
     await _record(archive, event_id="merge-a", text=_WORK_A, subject_id="subject-a")
     await _record(
         archive,
@@ -372,7 +316,7 @@ async def test_catalog_hides_an_episode_merged_across_subjects(tmp_path: Path) -
         subject_id="subject-b",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=PinnedEpisodeExtractor())
+    catalog = await make_catalog(extractor=PinnedEpisodeExtractor())
 
     report = await catalog.compile_pending()
     assert report.compiled_events == 2
@@ -409,10 +353,10 @@ async def test_catalog_hides_an_episode_merged_across_subjects(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_people_hide_a_person_when_one_alias_came_from_another_subject(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="person-a", text=_MOTHER_A, subject_id="subject-a")
     await _record(
         archive,
@@ -421,7 +365,7 @@ async def test_people_hide_a_person_when_one_alias_came_from_another_subject(
         subject_id="subject-b",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
 
     await catalog.compile_pending()
 
@@ -436,9 +380,11 @@ async def test_people_hide_a_person_when_one_alias_came_from_another_subject(
 
 
 @pytest.mark.asyncio
-async def test_scoped_review_cannot_reach_another_subjects_claim(tmp_path: Path) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_scoped_review_cannot_reach_another_subjects_claim(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+) -> None:
     await _record(archive, event_id="claim-a", text=_WORK_A, subject_id="subject-a")
     await _record(
         archive,
@@ -447,7 +393,7 @@ async def test_scoped_review_cannot_reach_another_subjects_claim(tmp_path: Path)
         subject_id="subject-b",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
     queue_a = await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-a")
@@ -479,7 +425,7 @@ async def test_scoped_review_cannot_reach_another_subjects_claim(tmp_path: Path)
                 subject_id="subject-a",
             )
         )
-    assert _claim_row(path, claim_b)["status"] == "candidate"
+    assert _claim_row(owner_sql, claim_b)["status"] == "candidate"
 
     reviewed = await catalog.review(
         MemoryClaimReview(
@@ -498,25 +444,14 @@ async def test_scoped_review_cannot_reach_another_subjects_claim(tmp_path: Path)
     assert review_event.subject_id == "subject-b"
     # This claim's episode carries only its own subject, so the ordinary
     # cascade still applies inside the scope.
-    assert _episode_evidence_statuses(path) == {
+    assert _episode_evidence_statuses(owner_sql) == {
         "claim-a": "candidate",
         "claim-b": "confirmed",
     }
 
     # A claim whose projection document also merged another speaker's event can
     # never pass on its own single source.
-    with sqlite3.connect(path) as connection:
-        document_id = connection.execute(
-            "SELECT document_id FROM memory_search_documents"
-            " WHERE kind = 'claim' AND item_id = ?",
-            (claim_a,),
-        ).fetchone()
-        assert document_id is not None
-        connection.execute(
-            "INSERT OR IGNORE INTO memory_search_document_sources"
-            " (document_id, account_id, source_event_id) VALUES (?, ?, ?)",
-            (str(document_id[0]), _ACCOUNT, "claim-b"),
-        )
+    _merge_source_into_claim_document(owner_sql, claim_id=claim_a, source_event_id="claim-b")
 
     assert await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-a") == ()
     with pytest.raises(EvidenceNotFoundError):
@@ -531,9 +466,11 @@ async def test_scoped_review_cannot_reach_another_subjects_claim(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_scoped_review_leaves_a_cross_subject_episode_untouched(tmp_path: Path) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_scoped_review_leaves_a_cross_subject_episode_untouched(
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
+) -> None:
     await _record(archive, event_id="merge-a", text=_WORK_A, subject_id="subject-a")
     await _record(
         archive,
@@ -542,7 +479,7 @@ async def test_scoped_review_leaves_a_cross_subject_episode_untouched(tmp_path: 
         subject_id="subject-b",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=PinnedEpisodeExtractor())
+    catalog = await make_catalog(extractor=PinnedEpisodeExtractor())
     await catalog.compile_pending()
 
     queue_b = await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-b")
@@ -557,14 +494,14 @@ async def test_scoped_review_leaves_a_cross_subject_episode_untouched(tmp_path: 
     )
 
     # The claim itself is the subject's own, so it is confirmed as asked...
-    assert _claim_row(path, claim_b)["status"] == "confirmed"
+    assert _claim_row(owner_sql, claim_b)["status"] == "confirmed"
     # ...but its episode merged both speakers, so the cascade must not rewrite
     # the shared episode evidence or the shared timeline entries.
-    assert _episode_evidence_statuses(path) == {
+    assert _episode_evidence_statuses(owner_sql) == {
         "merge-a": "candidate",
         "merge-b": "candidate",
     }
-    assert _timeline_statuses(path) == {
+    assert _timeline_statuses(owner_sql) == {
         "merge-a": "candidate",
         "merge-b": "candidate",
     }
@@ -572,13 +509,13 @@ async def test_scoped_review_leaves_a_cross_subject_episode_untouched(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_scoped_review_does_not_fold_another_subjects_conflicts(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="age-a", text=_MOTHER_A, subject_id="subject-a")
     await _record(archive, event_id="age-b", text=_MOTHER_B, subject_id="subject-b", minute=1)
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
     queue_a = await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-a")
@@ -590,8 +527,8 @@ async def test_scoped_review_does_not_fold_another_subjects_conflicts(
     assert all(item.reason == "pending_confirmation" for item in queue_a)
     # Compilation no longer folds one subject's self-claim against another's,
     # even though both rows share subject_key="self" inside the same account.
-    assert _claim_row(path, claim_a)["conflict_state"] == "none"
-    assert _claim_row(path, claim_b)["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claim_a)["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claim_b)["conflict_state"] == "none"
 
     await catalog.review(
         MemoryClaimReview(
@@ -602,20 +539,19 @@ async def test_scoped_review_does_not_fold_another_subjects_conflicts(
         )
     )
 
-    assert _claim_row(path, claim_a)["status"] == "retracted"
+    assert _claim_row(owner_sql, claim_a)["status"] == "retracted"
     # Retracting A's only value cannot invent a conflict on B.  B never shared
     # a value with another row of its own subject, so it stays none.
-    assert _claim_row(path, claim_b)["status"] == "candidate"
-    assert _claim_row(path, claim_b)["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claim_b)["status"] == "candidate"
+    assert _claim_row(owner_sql, claim_b)["conflict_state"] == "none"
 
 
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_scoped_conflict_fold_skips_a_claim_merged_with_another_speaker(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="age-a", text=_MOTHER_A, subject_id="subject-a")
     await _record(
         archive,
@@ -631,19 +567,19 @@ async def test_scoped_conflict_fold_skips_a_claim_merged_with_another_speaker(
         subject_id="subject-b",
         minute=2,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
-    claims = _age_claim_ids(path)
+    claims = _age_claim_ids(owner_sql)
     assert set(claims) == {"60", "61", "62"}
     # Same subject, two values: those two conflict.  The other subject's value
     # does not, until a later review asks about its own lineage.
-    assert _claim_row(path, claims["60"])["conflict_state"] == "active"
-    assert _claim_row(path, claims["62"])["conflict_state"] == "active"
-    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claims["60"])["conflict_state"] == "active"
+    assert _claim_row(owner_sql, claims["62"])["conflict_state"] == "active"
+    assert _claim_row(owner_sql, claims["61"])["conflict_state"] == "none"
 
     # Subject A's second age claim also merged subject B's event.
-    _merge_source_into_claim_document(path, claim_id=claims["62"], source_event_id="age-b")
+    _merge_source_into_claim_document(owner_sql, claim_id=claims["62"], source_event_id="age-b")
 
     await catalog.review(
         MemoryClaimReview(
@@ -654,21 +590,20 @@ async def test_scoped_conflict_fold_skips_a_claim_merged_with_another_speaker(
         )
     )
 
-    assert _claim_row(path, claims["60"])["status"] == "retracted"
-    assert _claim_row(path, claims["60"])["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claims["60"])["status"] == "retracted"
+    assert _claim_row(owner_sql, claims["60"])["conflict_state"] == "none"
     # The merged claim neither decided nor received this subject's fold.  The
     # other speaker never conflicted with its own lineage, so it stays none.
-    assert _claim_row(path, claims["62"])["conflict_state"] == "active"
-    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
+    assert _claim_row(owner_sql, claims["62"])["conflict_state"] == "active"
+    assert _claim_row(owner_sql, claims["61"])["conflict_state"] == "none"
 
 
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_scoped_conflict_probe_ignores_a_claim_merged_with_another_speaker(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="probe-a", text=_MOTHER_A, subject_id="subject-a")
     await _record(
         archive,
@@ -684,16 +619,16 @@ async def test_scoped_conflict_probe_ignores_a_claim_merged_with_another_speaker
         subject_id="subject-b",
         minute=2,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
-    claims = _age_claim_ids(path)
+    claims = _age_claim_ids(owner_sql)
     assert set(claims) == {"60", "61", "62"}
     # The probe starts from the compile-time fold: the same subject's two values
     # already conflict, and the other subject does not.
-    assert _claim_row(path, claims["60"])["conflict_state"] == "active"
-    assert _claim_row(path, claims["61"])["conflict_state"] == "none"
-    _merge_source_into_claim_document(path, claim_id=claims["62"], source_event_id="probe-b")
+    assert _claim_row(owner_sql, claims["60"])["conflict_state"] == "active"
+    assert _claim_row(owner_sql, claims["61"])["conflict_state"] == "none"
+    _merge_source_into_claim_document(owner_sql, claim_id=claims["62"], source_event_id="probe-b")
 
     scoped = await catalog.review_queue(account_id=_ACCOUNT, subject_id="subject-a")
     age_items = [item for item in scoped if item.value in {"60", "61", "62"}]
@@ -702,7 +637,7 @@ async def test_scoped_conflict_probe_ignores_a_claim_merged_with_another_speaker
     # conflict for this subject nor be listed.  Compilation already left this
     # subject's own two values in conflict with each other.
     assert age_items[0].reason == "pending_confirmation"
-    assert _claim_row(path, claims["60"])["conflict_state"] == "active"
+    assert _claim_row(owner_sql, claims["60"])["conflict_state"] == "active"
 
     unscoped = await catalog.review_queue(account_id=_ACCOUNT)
     assert next(item.reason for item in unscoped if item.item_id == claims["60"]) == (
@@ -712,10 +647,10 @@ async def test_scoped_conflict_probe_ignores_a_claim_merged_with_another_speaker
 
 @pytest.mark.asyncio
 async def test_scoped_review_ignores_an_episode_link_from_another_account(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="link-a", text=_WORK_A, subject_id="subject-a")
     # Another account reuses the same subject string: its evidence must never
     # make this account's episode look like the subject's own evidence.
@@ -727,17 +662,17 @@ async def test_scoped_review_ignores_an_episode_link_from_another_account(
         account_id="account-other",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=PinnedEpisodeExtractor())
+    catalog = await make_catalog(extractor=PinnedEpisodeExtractor())
     await catalog.compile_pending()
 
-    episode_id = _episode_id_for_event(path, account_id=_ACCOUNT, source_event_id="link-a")
+    episode_id = _episode_id_for_event(owner_sql, account_id=_ACCOUNT, source_event_id="link-a")
     _link_event_to_episode(
-        path,
+        owner_sql,
         account_id=_ACCOUNT,
         episode_id=episode_id,
         source_event_id="link-other",
     )
-    claim_id = _claim_id_for_event(path, account_id=_ACCOUNT, source_event_id="link-a")
+    claim_id = _claim_id_for_event(owner_sql, account_id=_ACCOUNT, source_event_id="link-a")
 
     await catalog.review(
         MemoryClaimReview(
@@ -748,18 +683,18 @@ async def test_scoped_review_ignores_an_episode_link_from_another_account(
         )
     )
 
-    assert _claim_row(path, claim_id)["status"] == "confirmed"
+    assert _claim_row(owner_sql, claim_id)["status"] == "confirmed"
     # The linked source resolves in another account, so the episode counts as
     # merged and the review leaves its own evidence row alone.
-    assert _episode_evidence_statuses(path)["link-a"] == "candidate"
+    assert _episode_evidence_statuses(owner_sql)["link-a"] == "candidate"
 
 
 @pytest.mark.asyncio
 async def test_review_does_not_inherit_a_foreign_account_source_subject(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(archive, event_id="src-a", text=_WORK_A, subject_id="subject-a")
     await _record(
         archive,
@@ -769,15 +704,15 @@ async def test_review_does_not_inherit_a_foreign_account_source_subject(
         account_id="account-other",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    catalog = await make_catalog(extractor=RuleBasedMemoryExtractor())
     await catalog.compile_pending()
 
-    claim_id = _claim_id_for_event(path, account_id=_ACCOUNT, source_event_id="src-a")
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE memory_claims SET source_event_id = ? WHERE claim_id = ?",
-            ("src-other", claim_id),
-        )
+    claim_id = _claim_id_for_event(owner_sql, account_id=_ACCOUNT, source_event_id="src-a")
+    owner_sql(
+        "UPDATE memory_claims SET source_event_id = %s WHERE claim_id = %s::uuid",
+        "src-other",
+        claim_id,
+    )
 
     reviewed = await catalog.review(
         MemoryClaimReview(account_id=_ACCOUNT, claim_id=claim_id, action="confirm")
@@ -793,8 +728,9 @@ async def test_review_does_not_inherit_a_foreign_account_source_subject(
 
 
 @pytest.mark.asyncio
-async def test_transcript_revision_inherits_the_source_subject(tmp_path: Path) -> None:
-    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+async def test_transcript_revision_inherits_the_source_subject(
+    archive: PostgresLifeArchive,
+) -> None:
     await _record(
         archive,
         event_id="revise-target",
@@ -825,22 +761,16 @@ async def test_transcript_revision_inherits_the_source_subject(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
-    reason="set MEMORIA_TEST_POSTGRES_DSN for the subject scope contract",
-)
 async def test_postgres_subject_scope_fences_reads_and_review(
-    scoped_postgres_dsn: str,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
+    owner_sql: OwnerSql,
 ) -> None:
-    dsn = scoped_postgres_dsn
     suffix = uuid.uuid4().hex[:10]
     account_id = f"pg-subject-scope-{suffix}"
     subject_a = f"subject-a-{suffix}"
     subject_b = f"subject-b-{suffix}"
-    archive = PostgresLifeArchive(dsn)
-    catalog = PostgresMemoryCatalog(dsn, extractor=PinnedEpisodeExtractor())
-    await archive.initialize()
-    await catalog.initialize()
+    catalog = await make_catalog(extractor=PinnedEpisodeExtractor())
 
     await _record(
         archive,
@@ -925,19 +855,15 @@ async def test_postgres_subject_scope_fences_reads_and_review(
     assert review_event is not None
     assert review_event.subject_id == subject_b
 
-    connection = await asyncpg.connect(dsn)
-    try:
-        foreign = await connection.fetchval(
-            """
-            SELECT count(*) FROM archive_evidence_events evidence
-            JOIN archive_evidence_events reviewed
-              ON reviewed.event_id = $2
-            WHERE evidence.event_id = $1
-              AND evidence.subject_id = reviewed.subject_id
-            """,
-            f"pg-merge-b-{suffix}",
-            reviewed.review_event_id,
-        )
-    finally:
-        await connection.close()
-    assert foreign == 1
+    foreign = owner_sql(
+        """
+        SELECT count(*) FROM archive_evidence_events evidence
+        JOIN archive_evidence_events reviewed
+          ON reviewed.event_id = %s
+        WHERE evidence.event_id = %s
+          AND evidence.subject_id = reviewed.subject_id
+        """,
+        reviewed.review_event_id,
+        f"pg-merge-b-{suffix}",
+    )
+    assert foreign == [(1,)]

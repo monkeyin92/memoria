@@ -397,7 +397,6 @@ async def _context_prefetch(
     )
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_real_runtime_child_profile_reaches_both_policy_seams(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -532,7 +531,6 @@ async def test_real_runtime_child_profile_reaches_both_policy_seams(
         assert _CRISIS_QUERY not in json.dumps(payload, ensure_ascii=False)
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_same_session_reads_account_memory_only_for_the_account_subject(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -619,7 +617,6 @@ async def test_same_session_reads_account_memory_only_for_the_account_subject(
         assert "杭州" in json.dumps(items, ensure_ascii=False)
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_retention_consent_does_not_redirect_the_read_to_the_account_key(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -1005,7 +1002,6 @@ async def test_real_runtime_authority_unavailable_fails_closed_on_both_seams(
         assert len(catalog.queries) == queries_before_dead
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_real_runtime_profile_expiry_fails_closed_but_keeps_session_closable(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -1189,7 +1185,6 @@ async def test_real_runtime_cross_account_manager_cannot_switch_or_replay_stale_
         # this module pins the fail-closed rejections at the HTTP seam.
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_real_runtime_concurrent_switches_serialize_and_supersede_old_epochs(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -1449,7 +1444,6 @@ async def _open_subject_session(
     )
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_real_catalog_withholds_account_memory_from_a_child_subject(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -1700,7 +1694,6 @@ _CATEGORY_MATRIX: tuple[tuple[str, str, str, str, str, tuple[str, ...], bool], .
 )
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distinct(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import
@@ -1973,7 +1966,6 @@ async def test_subject_category_matrix_keeps_minor_adult_and_unknown_safe_distin
         assert unknown_memory.json()["grounded_items"] == []
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_both_policy_seams_reject_a_diverged_runtime_projection(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],  # noqa: F811 - pytest fixture injection shadows import

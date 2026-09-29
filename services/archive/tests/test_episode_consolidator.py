@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from services.archive.domain import EvidenceEvent
@@ -10,8 +10,6 @@ from services.archive.episode_consolidator import (
     EpisodeConsolidator,
     ExistingEpisode,
 )
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
     ExtractedClaim,
     ExtractedTimeline,
@@ -19,6 +17,10 @@ from services.archive.memory_domain import (
     MemoryExtraction,
     MemorySearchQuery,
 )
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+
+MakeCatalog = Callable[..., Awaitable[PostgresMemoryCatalog]]
 
 
 class CanonicalEpisodeExtractor:
@@ -295,7 +297,7 @@ def test_explicit_disjoint_entities_block_an_implicit_same_session_merge() -> No
 
 
 async def _record(
-    archive: LifeArchive,
+    archive: PostgresLifeArchive,
     *,
     event_id: str,
     session_id: str,
@@ -359,7 +361,8 @@ class CanonicalEpisodeExtractorWithDomainDrift:
 
 @pytest.mark.asyncio
 async def test_one_canonical_key_returns_one_episode_with_both_statements(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
     """P1-06 regression: a shared canonical key must survive domain drift.
 
@@ -368,8 +371,6 @@ async def test_one_canonical_key_returns_one_episode_with_both_statements(
     that they are one episode, so the projection must carry both source event
     ids and both texts.
     """
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await archive.record(
         EvidenceEvent(
             event_id="drift-source-start",
@@ -404,9 +405,7 @@ async def test_one_canonical_key_returns_one_episode_with_both_statements(
             },
         )
     )
-    catalog = MemoryCatalog.sqlite(
-        path, extractor=CanonicalEpisodeExtractorWithDomainDrift()
-    )
+    catalog = await make_catalog(extractor=CanonicalEpisodeExtractorWithDomainDrift())
     await catalog.compile_pending()
     queue = await catalog.review_queue(account_id="episode-account")
     items = {item.source_event_id: item for item in queue}
@@ -438,10 +437,9 @@ async def test_one_canonical_key_returns_one_episode_with_both_statements(
 
 @pytest.mark.asyncio
 async def test_cross_session_evidence_consolidates_and_retraction_only_hides_its_content(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_catalog: MakeCatalog,
 ) -> None:
-    path = tmp_path / "archive.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="episode-source-start",
@@ -456,7 +454,7 @@ async def test_cross_session_evidence_consolidates_and_retraction_only_hides_its
         text="那个项目后来失败了，让我以后特别重视现金流。",
         minute=1,
     )
-    catalog = MemoryCatalog.sqlite(path, extractor=CanonicalEpisodeExtractor())
+    catalog = await make_catalog(extractor=CanonicalEpisodeExtractor())
     await catalog.compile_pending()
     queue = await catalog.review_queue(account_id="episode-account")
     claims = {item.source_event_id: item for item in queue}

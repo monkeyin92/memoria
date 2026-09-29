@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from pathlib import Path
 
 import httpx
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.persona.domain import PersonaEvidence
-from services.persona.engine import PersonaEngine
+from services.persona.postgres_engine import PostgresPersonaEngine
 from services.persona.qwen_extractor import (
     FallbackPersonaExtractor,
     QwenPersonaExtractor,
 )
 from services.persona.rules import RuleBasedPersonaExtractor
+
+EngineFactory = Callable[..., Awaitable[PostgresPersonaEngine]]
 
 
 def _response(content: dict[str, object]) -> httpx.Response:
@@ -98,9 +100,9 @@ async def test_qwen_persona_extractor_requires_context_and_counterexamples() -> 
 
 
 @pytest.mark.asyncio
-async def test_qwen_persona_traits_round_trip_through_engine(tmp_path: Path) -> None:
-    path = tmp_path / "persona-qwen.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_qwen_persona_traits_round_trip_through_engine(
+    archive: PostgresLifeArchive, make_engine: EngineFactory
+) -> None:
     await archive.record(
         EvidenceEvent(
             event_id="persona-qwen-001",
@@ -124,8 +126,7 @@ async def test_qwen_persona_traits_round_trip_through_engine(tmp_path: Path) -> 
     def handler(_: httpx.Request) -> httpx.Response:
         return _response(_structured_traits())
 
-    engine = PersonaEngine.sqlite(
-        path,
+    engine = await make_engine(
         extractor=QwenPersonaExtractor(
             api_key="test-key",
             base_url="https://dashscope.test/v1",
@@ -159,10 +160,9 @@ async def test_qwen_persona_traits_round_trip_through_engine(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_evidenced_emphasis_and_emotional_expression_round_trip_through_engine(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona-speech-style.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await archive.record(
         EvidenceEvent(
             event_id="persona-speech-style-001",
@@ -203,8 +203,7 @@ async def test_evidenced_emphasis_and_emotional_expression_round_trip_through_en
             }
         )
 
-    engine = PersonaEngine.sqlite(
-        path,
+    engine = await make_engine(
         extractor=QwenPersonaExtractor(
             api_key="test-key",
             base_url="https://dashscope.test/v1",

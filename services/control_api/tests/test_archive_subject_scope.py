@@ -86,7 +86,6 @@ async def test_missing_subject_is_not_an_adult_account(
         assert event.payload["history_eligible"] is False
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_assistant_inherits_parent_subject_and_rejects_substitution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -174,7 +173,6 @@ async def test_same_account_history_and_timeline_exclude_other_and_unknown_subje
         assert all(x["subject_id"] == owner["user_id"] for x in timeline.json()["items"])
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_revoked_consent_blocks_every_private_read_exit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -644,7 +642,6 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
     del interaction
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_minor_without_retention_reads_nothing_and_names_the_subject(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -1,4 +1,4 @@
-"""Account-wide export and deletion control plane for SQLite development data."""
+"""Account-wide export and deletion control plane (archive on PostgreSQL; speaker on either)."""
 
 from __future__ import annotations
 
@@ -40,136 +40,6 @@ class TableSpec:
     excluded_columns: frozenset[str] = frozenset()
     json_columns: frozenset[str] = frozenset()
 
-
-_ARCHIVE_EXPORT_TABLES = (
-    TableSpec("evidence_events", json_columns=frozenset({"payload_json"})),
-    TableSpec("consent_grants"),
-    TableSpec(
-        "evidence_blobs",
-        excluded_columns=frozenset({"object_key", "encryption_key_version"}),
-    ),
-    TableSpec("transcript_versions"),
-    TableSpec("memory_claims"),
-    TableSpec("person_entities"),
-    TableSpec("person_aliases"),
-    TableSpec("relationships"),
-    TableSpec("life_episodes"),
-    TableSpec("episode_evidence"),
-    TableSpec("timeline_entries"),
-    TableSpec("knowledge_items"),
-    TableSpec("memory_search_documents"),
-    TableSpec("memory_search_document_sources"),
-    TableSpec("skill_definitions"),
-    TableSpec(
-        "skill_versions",
-        json_columns=frozenset(
-            {
-                "trigger_phrases_json",
-                "input_schema_json",
-                "output_schema_json",
-                "output_template_json",
-                "allowed_tools_json",
-                "steps_json",
-            }
-        ),
-    ),
-    TableSpec("skill_version_evidence"),
-    TableSpec(
-        "skill_runs",
-        json_columns=frozenset({"input_json", "output_json"}),
-    ),
-    TableSpec(
-        "skill_run_steps",
-        json_columns=frozenset({"arguments_json", "output_json"}),
-    ),
-    TableSpec("persona_traits"),
-    TableSpec("persona_evidence"),
-    TableSpec("speech_style_stats", json_columns=frozenset({"tic_counts_json"})),
-    TableSpec("persona_learning_consents"),
-    TableSpec("persona_versions", json_columns=frozenset({"snapshot_json"})),
-    TableSpec("digital_self_versions", json_columns=frozenset({"manifest_json"})),
-    TableSpec("digital_self_lifecycle_audit_events"),
-    TableSpec("self_model_cognitive_claims"),
-    TableSpec(
-        "self_model_decision_cases",
-        json_columns=frozenset(
-            {"options_json", "constraints_json", "rejected_options_json"}
-        ),
-    ),
-    TableSpec(
-        "self_model_relationship_profiles",
-        json_columns=frozenset({"boundaries_json"}),
-    ),
-    TableSpec("self_model_sources"),
-    TableSpec("self_model_audit_events", json_columns=frozenset({"payload_json"})),
-    TableSpec("self_model_command_receipts"),
-    TableSpec("voice_clone_consents"),
-    TableSpec(
-        "voice_samples",
-        excluded_columns=frozenset(
-            {"object_key", "encryption_key_version", "object_backend"}
-        ),
-    ),
-    TableSpec("voice_profiles", excluded_columns=frozenset({"provider_voice_id"})),
-    TableSpec(
-        "voice_enrollment_operations",
-        excluded_columns=frozenset({"provider_voice_id"}),
-    ),
-    TableSpec("voice_blind_trials", excluded_columns=frozenset({"candidate_slot"})),
-    TableSpec("voice_evaluations"),
-    TableSpec("voice_quality_measurements"),
-    TableSpec("voice_sample_validations"),
-)
-
-_ARCHIVE_DELETE_ORDER = (
-    "voice_sample_validations",
-    "voice_quality_measurements",
-    "voice_evaluations",
-    "voice_blind_trials",
-    "voice_profiles",
-    "voice_enrollment_operations",
-    "voice_samples",
-    "voice_clone_consents",
-    "persona_evidence",
-    "persona_observation_receipts",
-    "speech_style_stats",
-    "self_model_cognitive_claim_sources",
-    "self_model_decision_case_sources",
-    "self_model_relationship_profile_sources",
-    "self_model_sources",
-    "self_model_command_receipts",
-    "self_model_audit_events",
-    "self_model_relationship_profiles",
-    "self_model_decision_cases",
-    "self_model_cognitive_claims",
-    "digital_self_lifecycle_audit_events",
-    "digital_self_versions",
-    "persona_versions",
-    "persona_traits",
-    "persona_learning_consents",
-    "skill_run_steps",
-    "skill_runs",
-    "skill_version_evidence",
-    "skill_versions",
-    "skill_definitions",
-    "memory_vector_documents",
-    "memory_search_document_sources",
-    "memory_search_documents",
-    "timeline_entries",
-    "episode_evidence",
-    "life_episodes",
-    "relationships",
-    "person_aliases",
-    "person_entities",
-    "knowledge_items",
-    "memory_claims",
-    "memory_compile_receipts",
-    "transcript_versions",
-    "evidence_blobs",
-    "processing_outbox",
-    "evidence_events",
-    "consent_grants",
-)
 
 _SPEAKER_EXPORT_TABLES = (
     TableSpec("speaker_identities"),
@@ -270,17 +140,52 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
 
 _POSTGRES_ARCHIVE_DELETE_ORDER = (
     "archive_outbox_replay_audit",
-    *(
-        {
-            "evidence_events": "archive_evidence_events",
-            "processing_outbox": "archive_processing_outbox",
-            "consent_grants": "archive_consent_grants",
-            "evidence_blobs": "archive_evidence_blobs",
-            "transcript_versions": "archive_transcript_versions",
-        }.get(table, table)
-        for table in _ARCHIVE_DELETE_ORDER
-        if table != "self_model_sources"
-    ),
+    "voice_sample_validations",
+    "voice_quality_measurements",
+    "voice_evaluations",
+    "voice_blind_trials",
+    "voice_profiles",
+    "voice_enrollment_operations",
+    "voice_samples",
+    "voice_clone_consents",
+    "persona_evidence",
+    "persona_observation_receipts",
+    "speech_style_stats",
+    "self_model_cognitive_claim_sources",
+    "self_model_decision_case_sources",
+    "self_model_relationship_profile_sources",
+    "self_model_command_receipts",
+    "self_model_audit_events",
+    "self_model_relationship_profiles",
+    "self_model_decision_cases",
+    "self_model_cognitive_claims",
+    "digital_self_lifecycle_audit_events",
+    "digital_self_versions",
+    "persona_versions",
+    "persona_traits",
+    "persona_learning_consents",
+    "skill_run_steps",
+    "skill_runs",
+    "skill_version_evidence",
+    "skill_versions",
+    "skill_definitions",
+    "memory_vector_documents",
+    "memory_search_document_sources",
+    "memory_search_documents",
+    "timeline_entries",
+    "episode_evidence",
+    "life_episodes",
+    "relationships",
+    "person_aliases",
+    "person_entities",
+    "knowledge_items",
+    "memory_claims",
+    "memory_compile_receipts",
+    "archive_transcript_versions",
+    "archive_evidence_blobs",
+    "archive_processing_outbox",
+    "archive_evidence_events",
+    "archive_consent_grants",
 )
 
 _DELETION_STEP_RANK = {
@@ -381,21 +286,10 @@ class SqliteAccountRepository:
         *,
         export_tables: tuple[TableSpec, ...],
         delete_order: tuple[str, ...],
-        blob_table: str | None = None,
     ) -> None:
         self._path = Path(path).expanduser().resolve()
         self._export_tables = export_tables
         self._delete_order = delete_order
-        self._blob_table = blob_table
-
-    @classmethod
-    def archive(cls, path: str | Path) -> SqliteAccountRepository:
-        return cls(
-            path,
-            export_tables=_ARCHIVE_EXPORT_TABLES,
-            delete_order=_ARCHIVE_DELETE_ORDER,
-            blob_table="evidence_blobs",
-        )
 
     @classmethod
     def speaker(cls, path: str | Path) -> SqliteAccountRepository:
@@ -436,35 +330,8 @@ class SqliteAccountRepository:
         return result
 
     async def object_references(self, account_id: str) -> tuple[ObjectRef, ...]:
-        return await asyncio.to_thread(self._object_references, account_id)
-
-    def _object_references(self, account_id: str) -> tuple[ObjectRef, ...]:
-        if self._blob_table is None or not self._path.is_file():
-            return ()
-        with self._connect() as connection:
-            if not self._table_exists(connection, self._blob_table):
-                return ()
-            rows = connection.execute(
-                f"""
-                SELECT object_key, media_type, byte_count, content_sha256,
-                       encryption_key_version
-                FROM {self._quoted(self._blob_table)}
-                WHERE account_id = ?
-                """,
-                (account_id,),
-            ).fetchall()
-        return tuple(
-            ObjectRef(
-                account_id=account_id,
-                object_key=str(row["object_key"]),
-                media_type=str(row["media_type"]),
-                byte_count=int(row["byte_count"]),
-                content_sha256=str(row["content_sha256"]),
-                encryption_key_version=str(row["encryption_key_version"]),
-                backend="archive",
-            )
-            for row in rows
-        )
+        # The SQLite repository serves only the speaker store, which holds no blobs.
+        return ()
 
     async def delete_account(self, account_id: str) -> dict[str, int]:
         return await asyncio.to_thread(self._delete_account, account_id)

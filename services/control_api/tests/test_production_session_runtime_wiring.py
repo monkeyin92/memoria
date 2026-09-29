@@ -12,6 +12,7 @@ from services.control_api.app.multi_subject_runtime import (
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.tests.test_tutor_config import _production_settings
 from services.session_runtime.service import PostgresSessionRuntimeService
+from testing.postgres_harness import TestDatabase
 
 
 class _ProductionSettingsProxy:
@@ -77,7 +78,9 @@ class _FakeMemoryWiring:
         self._events.append("memory_closed")
 
 
-def _production_test_settings(tmp_path: Path) -> _ProductionSettingsProxy:
+def _production_test_settings(
+    tmp_path: Path, archive_dsn: str, compiler_dsn: str = ""
+) -> _ProductionSettingsProxy:
     settings = _production_settings().model_copy(
         update={
             "memoria_db_path": str(tmp_path / "memoria.sqlite3"),
@@ -86,7 +89,10 @@ def _production_test_settings(tmp_path: Path) -> _ProductionSettingsProxy:
             "identity_db_path": str(tmp_path / "identity.sqlite3"),
             "voice_sample_store_path": str(tmp_path / "voice-samples"),
             "archive_object_store_path": str(tmp_path / "archive-objects"),
-            "archive_database_url": SecretStr(""),
+            # Archive-family data is PostgreSQL-only: a production-shaped clone.
+            "archive_database_url": SecretStr(archive_dsn),
+            "archive_compiler_database_url": SecretStr(compiler_dsn),
+            "archive_compiler_role": "memoria_compiler" if compiler_dsn else "",
             "guardian_database_url": SecretStr("postgresql://memoria_guardian:test@db/memoria"),
             "identity_database_url": SecretStr(""),
             "speaker_database_url": SecretStr(""),
@@ -102,8 +108,11 @@ def _production_test_settings(tmp_path: Path) -> _ProductionSettingsProxy:
 def _patch_production_lifespan_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    database: TestDatabase,
 ) -> tuple[object, object]:
-    settings = _production_test_settings(tmp_path)
+    settings = _production_test_settings(
+        tmp_path, database.role_dsn("memoria_app"), database.role_dsn("memoria_compiler")
+    )
     monkeypatch.setattr(main, "ControlSettings", lambda: settings)
     monkeypatch.setattr(main, "PostgresEvolutionStore", _FakeEvolutionStore)
     monkeypatch.setattr(main, "EvolutionSleepWorker", _NoopWorker)
@@ -186,8 +195,11 @@ def _patch_production_lifespan_dependencies(
 async def test_production_lifespan_wires_authoritative_runtime_without_state_replacement(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_database: TestDatabase,
 ) -> None:
-    app, lifecycle = _patch_production_lifespan_dependencies(monkeypatch, tmp_path)
+    app, lifecycle = _patch_production_lifespan_dependencies(
+        monkeypatch, tmp_path, postgres_database
+    )
 
     assert app.state.session_runtime_store is None
     assert app.state.session_runtime_service is None
@@ -243,8 +255,11 @@ async def test_production_lifespan_wires_authoritative_runtime_without_state_rep
 async def test_production_lifespan_closes_initialized_store_when_startup_body_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    postgres_database: TestDatabase,
 ) -> None:
-    app, lifecycle = _patch_production_lifespan_dependencies(monkeypatch, tmp_path)
+    app, lifecycle = _patch_production_lifespan_dependencies(
+        monkeypatch, tmp_path, postgres_database
+    )
 
     def fail_after_runtime_install(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("startup failed after Session Runtime installation")
@@ -270,7 +285,7 @@ def test_production_create_app_eager_state_has_no_memory_runtime_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    settings = _production_test_settings(tmp_path)
+    settings = _production_test_settings(tmp_path, "")
     monkeypatch.setattr(main, "ControlSettings", lambda: settings)
 
     app = main.create_app()

@@ -1,16 +1,19 @@
+"""Legacy registry behaviour on PostgreSQL, as the production archive role."""
+
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Any
 
+import asyncpg
 import pytest
+import pytest_asyncio
 from services.digital_self.compiler import build_manifest
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
-    DigitalSelfVersion,
     MemoryClaimManifestEntry,
     PersonaTraitManifestEntry,
     RelationshipProfileManifestEntry,
@@ -25,77 +28,25 @@ from services.legacy.domain import (
     LegacyRelationshipSnapshot,
     RegisteredGranteeSnapshot,
 )
-from services.legacy.registry import LegacyRegistry, _grant_digest
-from services.self_model.domain import RelationshipProfile
-
-NOW = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
-
-
-def _snapshots() -> tuple[DigitalSelfVersion, RelationshipProfile]:
-    relationship_entry = RelationshipProfileManifestEntry(
-        profile_id="11111111-1111-4111-8111-111111111111",
-        version_number=3,
-        person_id="person-1",
-        relationship_id="22222222-2222-4222-8222-222222222222",
-        salutation="小梅",
-        tone="warm",
-        advice_style="listen-first",
-        sharing_scope="family",
-        boundaries=("不替代专业意见",),
-        support_source_event_ids=("relationship-source",),
-        counterexample_source_event_ids=(),
-    )
-    memory_entry = MemoryClaimManifestEntry(
-        claim_id="memory-1",
-        category="life_story",
-        subject_key="owner",
-        predicate="lived_in",
-        value="杭州",
-        confidence=0.95,
-        sensitive_domain="family",
-        extractor_version="v1",
-        source_event_id="memory-source",
-        valid_at=NOW.isoformat(),
-    )
-    manifest, _, manifest_sha256 = build_manifest(
-        (memory_entry, relationship_entry),
-        compiler_version="digital-self-compiler-v3",
-        policy_version="digital-self-policy-v3",
-        persona_version_id=None,
-        parent_version_id=None,
-    )
-    version = DigitalSelfVersion(
-        version_id="33333333-3333-4333-8333-333333333333",
-        account_id="owner-a",
-        version_number=7,
-        status="frozen",
-        manifest=manifest,
-        manifest_sha256=manifest_sha256,
-        created_at=NOW,
-    )
-    relationship = RelationshipProfile(
-        profile_id="11111111-1111-4111-8111-111111111111",
-        account_id="owner-a",
-        version_number=3,
-        person_id="person-1",
-        relationship_id="22222222-2222-4222-8222-222222222222",
-        salutation="小梅",
-        tone="warm",
-        advice_style="listen-first",
-        sharing_scope="family",
-        boundaries=("不替代专业意见",),
-        status="approved",
-        unresolved_conflict=False,
-        sources=(),
-        owner_reviewed_at=NOW,
-        step_up_verified=True,
-        created_at=NOW,
-    )
-    return version, relationship
+from services.legacy.postgres_registry import PostgresLegacyRegistry
+from services.legacy.rules import _grant_digest
+from services.legacy.tests.legacy_fixtures import NOW
+from services.legacy.tests.legacy_fixtures import snapshots as _snapshots
 
 
-async def _issue(path: Path, *, expires_at: datetime | None = None) -> tuple[LegacyRegistry, object]:
-    registry = LegacyRegistry.sqlite(path)
+@pytest_asyncio.fixture
+async def registry(postgres_database: Any) -> AsyncIterator[PostgresLegacyRegistry]:
+    store = PostgresLegacyRegistry(postgres_database.role_dsn("memoria_app"))
+    await store.initialize()
+    try:
+        yield store
+    finally:
+        await store.close()
+
+
+async def _issue(
+    registry: PostgresLegacyRegistry, *, expires_at: datetime | None = None
+) -> tuple[PostgresLegacyRegistry, object]:
     version, relationship = _snapshots()
     grant = await registry.issue(
         owner_account_id="owner-a",
@@ -115,10 +66,10 @@ async def _issue(path: Path, *, expires_at: datetime | None = None) -> tuple[Leg
 
 
 @pytest.mark.asyncio
-async def test_sqlite_lifecycle_derives_state_and_preserves_issue_idempotency(
-    tmp_path: Path,
+async def test_lifecycle_derives_state_and_preserves_issue_idempotency(
+    registry: PostgresLegacyRegistry,
 ) -> None:
-    registry, grant = await _issue(tmp_path / "legacy.sqlite3")
+    registry, grant = await _issue(registry)
     version, relationship = _snapshots()
     duplicate = await registry.issue(
         owner_account_id="owner-a",
@@ -164,8 +115,7 @@ async def test_sqlite_lifecycle_derives_state_and_preserves_issue_idempotency(
 
 
 @pytest.mark.asyncio
-async def test_issue_rejects_unfrozen_mismatched_private_and_unknown_scope(tmp_path: Path) -> None:
-    registry = LegacyRegistry.sqlite(tmp_path / "legacy.sqlite3")
+async def test_issue_rejects_unfrozen_mismatched_private_and_unknown_scope(registry: PostgresLegacyRegistry) -> None:
     version, relationship = _snapshots()
     common = dict(
         owner_account_id="owner-a",
@@ -203,9 +153,8 @@ async def test_issue_rejects_unfrozen_mismatched_private_and_unknown_scope(tmp_p
 
 @pytest.mark.asyncio
 async def test_issue_rejects_private_or_unscoped_manifest_items_and_scope_escalation(
-    tmp_path: Path,
+    registry: PostgresLegacyRegistry,
 ) -> None:
-    registry = LegacyRegistry.sqlite(tmp_path / "legacy.sqlite3")
     version, relationship = _snapshots()
     relationship_entry = next(
         entry
@@ -359,8 +308,8 @@ async def test_issue_rejects_private_or_unscoped_manifest_items_and_scope_escala
 
 
 @pytest.mark.asyncio
-async def test_access_shell_turns_and_preferences_are_isolated(tmp_path: Path) -> None:
-    registry, grant = await _issue(tmp_path / "legacy.sqlite3")
+async def test_access_shell_turns_and_preferences_are_isolated(registry: PostgresLegacyRegistry) -> None:
+    registry, grant = await _issue(registry)
     active = await registry.activate(
         actor_account_id="owner-a",
         grant_id=grant.grant_id,  # type: ignore[attr-defined]
@@ -431,11 +380,11 @@ async def test_access_shell_turns_and_preferences_are_isolated(tmp_path: Path) -
 @pytest.mark.parametrize("state", ("revoked", "expired"))
 @pytest.mark.asyncio
 async def test_shell_preferences_require_an_active_grant(
-    tmp_path: Path,
+    registry: PostgresLegacyRegistry,
     state: str,
 ) -> None:
     expires_at = NOW + timedelta(minutes=2) if state == "expired" else None
-    registry, grant = await _issue(tmp_path / f"legacy-{state}.sqlite3", expires_at=expires_at)
+    registry, grant = await _issue(registry, expires_at=expires_at)
     active = await registry.activate(
         actor_account_id="owner-a",
         grant_id=grant.grant_id,  # type: ignore[attr-defined]
@@ -506,8 +455,8 @@ async def test_shell_preferences_require_an_active_grant(
 
 
 @pytest.mark.asyncio
-async def test_audit_contract_contains_no_text_or_free_payload(tmp_path: Path) -> None:
-    registry, grant = await _issue(tmp_path / "legacy.sqlite3")
+async def test_audit_contract_contains_no_text_or_free_payload(registry: PostgresLegacyRegistry) -> None:
+    registry, grant = await _issue(registry)
     await registry.activate(
         actor_account_id="owner-a",
         grant_id=grant.grant_id,  # type: ignore[attr-defined]
@@ -522,8 +471,8 @@ async def test_audit_contract_contains_no_text_or_free_payload(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_runtime_audit_is_bounded_idempotent_and_exactly_scoped(tmp_path: Path) -> None:
-    registry, grant = await _issue(tmp_path / "legacy.sqlite3")
+async def test_runtime_audit_is_bounded_idempotent_and_exactly_scoped(registry: PostgresLegacyRegistry) -> None:
+    registry, grant = await _issue(registry)
     active = await registry.activate(
         actor_account_id="owner-a",
         grant_id=grant.grant_id,  # type: ignore[attr-defined]
@@ -617,9 +566,9 @@ async def test_runtime_audit_is_bounded_idempotent_and_exactly_scoped(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_runtime_audit_rejects_invalid_reason_target_and_inactive_grant(
-    tmp_path: Path,
+    registry: PostgresLegacyRegistry,
 ) -> None:
-    registry, grant = await _issue(tmp_path / "legacy.sqlite3")
+    registry, grant = await _issue(registry)
     fence = LegacyFence("session-1", "turn-1", "generation-1", 0)
     voice = await registry.append_runtime_audit(
         actor_account_id="owner-a",
@@ -670,16 +619,18 @@ async def test_runtime_audit_rejects_invalid_reason_target_and_inactive_grant(
 
 
 @pytest.mark.asyncio
-async def test_account_export_and_delete_cover_owner_and_grantee_links(tmp_path: Path) -> None:
-    path = tmp_path / "legacy.sqlite3"
-    registry, grant = await _issue(path)
+async def test_account_export_and_delete_cover_owner_and_grantee_links(
+    registry: PostgresLegacyRegistry, postgres_database: Any
+) -> None:
+    registry, grant = await _issue(registry)
     assert (await registry.export_for_account(account_id="grantee-a")).grants == (grant,)
     await registry.delete_for_account(account_id="grantee-a")
     assert (await registry.export_for_account(account_id="owner-a")).grants == ()
-    with sqlite3.connect(path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM legacy_command_receipts"
-        ).fetchone()[0] == 0
+    connection = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        assert await connection.fetchval("SELECT COUNT(*) FROM legacy_command_receipts") == 0
+    finally:
+        await connection.close()
 
 
 def test_grant_snapshot_digest_binds_the_exact_scope() -> None:

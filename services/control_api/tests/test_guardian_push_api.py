@@ -16,6 +16,7 @@ from services.control_api.app.guardian_push import (
     fit_keyword_value,
 )
 from services.control_api.app.main import create_app
+from services.control_api.app.unconfigured_store import UnconfiguredStore
 from services.control_api.tests.test_guardian_api import (
     _configure,
     _login,
@@ -29,7 +30,6 @@ from services.guardian.push import (
     PendingCrisisPush,
     crisis_push_content,
 )
-from services.guardian.unconfigured import UnconfiguredGuardianStore
 
 TEMPLATE = "CrisisTemplate_01-x"
 LOGIN_CODE = "dev-guardian-push-login"
@@ -37,7 +37,7 @@ LOGIN_CODE = "dev-guardian-push-login"
 
 def _unused_store() -> CrisisPushStorePort:
     # Building the worker never touches the store; any call would raise.
-    return cast(CrisisPushStorePort, UnconfiguredGuardianStore())
+    return cast(CrisisPushStorePort, UnconfiguredStore("guardian", "MEMORIA_GUARDIAN_DATABASE_URL"))
 
 
 def _push_settings(**overrides: Any) -> ControlSettings:
@@ -330,7 +330,6 @@ async def test_push_endpoints_never_offer_a_prompt_while_disabled(
         assert recorded.json()["detail"] == {"code": "guardian_push_disabled"}
 
 
-@pytest.mark.guardian_postgres
 @pytest.mark.asyncio
 async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -421,8 +420,11 @@ async def test_guardian_records_subscriptions_for_its_own_wechat_identity(
 async def test_lifespan_starts_the_push_worker_only_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    dev_database_url: str,
 ) -> None:
     _configure(monkeypatch, tmp_path)
+    # Archive-family data is PostgreSQL-only: live startup on a local-dev database.
+    monkeypatch.setenv("MEMORIA_ARCHIVE_DATABASE_URL", dev_database_url)
     # Live startup requires a guardian DSN; the store never connects here and
     # has no pending alert, so the worker's batches claim nothing.
     monkeypatch.setenv(

@@ -24,7 +24,8 @@ from services.legacy.domain import (
     RegisteredGranteeSnapshot,
 )
 from services.legacy.postgres_registry import PostgresLegacyRegistry
-from services.legacy.tests.test_legacy_registry import NOW, _snapshots
+from services.legacy.tests.legacy_fixtures import NOW
+from services.legacy.tests.legacy_fixtures import snapshots as _snapshots
 
 
 def _postgres_dsn(dsn: str, *, database: str, user: str | None = None, password: str = "") -> str:

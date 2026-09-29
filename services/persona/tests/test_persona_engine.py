@@ -1,13 +1,16 @@
+"""PersonaEngine behaviour on PostgreSQL, as the production archive role."""
+
 from __future__ import annotations
 
 import asyncio
-import sqlite3
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import asyncpg
 import pytest
 from services.archive.domain import EvidenceEvent
-from services.archive.life_archive import LifeArchive
+from services.archive.postgres_archive import PostgresLifeArchive
 from services.persona.domain import (
     ObservationResult,
     PersonaCounterexampleRequiredError,
@@ -16,12 +19,17 @@ from services.persona.domain import (
     PersonaReview,
     PersonaTraitCategory,
 )
-from services.persona.engine import PersonaEngine
+from services.persona.postgres_engine import PostgresPersonaEngine
 from services.persona.rules import PersonaCandidate, RuleBasedPersonaExtractor
+
+if TYPE_CHECKING:
+    from testing.postgres_harness import TestDatabase
+
+EngineFactory = Callable[..., Awaitable[PostgresPersonaEngine]]
 
 
 async def _record(
-    archive: LifeArchive,
+    archive: PostgresLifeArchive,
     *,
     event_id: str,
     text: str,
@@ -114,8 +122,8 @@ class _ExclusiveBucketExtractor:
 
 
 async def _observe_bucket(
-    archive: LifeArchive,
-    engine: PersonaEngine,
+    archive: PostgresLifeArchive,
+    engine: PostgresPersonaEngine,
     *,
     event_id: str,
     bucket: str,
@@ -153,13 +161,12 @@ async def _observe_bucket(
     ),
 )
 async def test_persona_learning_fails_closed_without_explicit_turn_eligibility(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
     speaker_class: str,
     persona_eligible: bool | None,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -196,13 +203,12 @@ async def test_persona_learning_fails_closed_without_explicit_turn_eligibility(
     ),
 )
 async def test_prompt_kind_weights_owner_persona_promotion(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
     prompt_kind: str,
     expected_status: str,
 ) -> None:
-    path = tmp_path / f"prompt-weight-{prompt_kind}.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -235,11 +241,11 @@ async def test_prompt_kind_weights_owner_persona_promotion(
 
 @pytest.mark.asyncio
 async def test_guided_prompts_do_not_pollute_spontaneous_style_stats(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
+    postgres_database: TestDatabase,
 ) -> None:
-    path = tmp_path / "prompt-style-stats.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -262,15 +268,19 @@ async def test_guided_prompts_do_not_pollute_spontaneous_style_stats(
             )
         )
 
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
+    connection = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        row = await connection.fetchrow(
             """
             SELECT utterance_count, char_count
             FROM speech_style_stats
-            WHERE account_id = ? AND scene = ?
+            WHERE account_id = $1 AND scene = $2
             """,
-            ("persona-account", "conversation"),
-        ).fetchone()
+            "persona-account",
+            "conversation",
+        )
+    finally:
+        await connection.close()
     assert row is not None
     assert row[0] == 1
     assert row[1] == len("我觉得这件事要慢慢说。")
@@ -279,12 +289,11 @@ async def test_guided_prompts_do_not_pollute_spontaneous_style_stats(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("category", ["sentence_length", "speech_rate", "pause_style"])
 async def test_mixed_exclusive_owner_buckets_do_not_auto_promote(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
     category: PersonaTraitCategory,
 ) -> None:
-    path = tmp_path / f"mixed-{category}.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path, extractor=_ExclusiveBucketExtractor(category))
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor(category))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -316,12 +325,11 @@ async def test_mixed_exclusive_owner_buckets_do_not_auto_promote(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("category", ["sentence_length", "speech_rate", "pause_style"])
 async def test_stable_exclusive_owner_bucket_auto_promotes(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
     category: PersonaTraitCategory,
 ) -> None:
-    path = tmp_path / f"stable-{category}.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path, extractor=_ExclusiveBucketExtractor(category))
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor(category))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -353,12 +361,11 @@ async def test_stable_exclusive_owner_bucket_auto_promotes(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("category", ["sentence_length", "speech_rate", "pause_style"])
 async def test_exclusive_owner_dominance_change_never_leaves_two_confirmed(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
     category: PersonaTraitCategory,
 ) -> None:
-    path = tmp_path / f"changed-{category}.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path, extractor=_ExclusiveBucketExtractor(category))
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor(category))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -400,14 +407,10 @@ async def test_exclusive_owner_dominance_change_never_leaves_two_confirmed(
 
 @pytest.mark.asyncio
 async def test_owner_lane_replaces_historical_uncertain_bucket_and_owns_snapshot(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "owner-lane.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(
-        path,
-        extractor=_ExclusiveBucketExtractor("sentence_length"),
-    )
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor("sentence_length"))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -456,14 +459,10 @@ async def test_owner_lane_replaces_historical_uncertain_bucket_and_owns_snapshot
 
 @pytest.mark.asyncio
 async def test_owner_snapshot_excludes_prior_uncertain_evidence_for_same_bucket(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "owner-snapshot.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(
-        path,
-        extractor=_ExclusiveBucketExtractor("sentence_length"),
-    )
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor("sentence_length"))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -502,14 +501,10 @@ async def test_owner_snapshot_excludes_prior_uncertain_evidence_for_same_bucket(
 
 @pytest.mark.asyncio
 async def test_uncertain_exclusive_buckets_require_one_dominant_profile_lane(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "uncertain-lane.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(
-        path,
-        extractor=_ExclusiveBucketExtractor("sentence_length"),
-    )
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor("sentence_length"))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -540,14 +535,10 @@ async def test_uncertain_exclusive_buckets_require_one_dominant_profile_lane(
 
 @pytest.mark.asyncio
 async def test_uncertain_exclusive_bucket_does_not_merge_multiple_profiles(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "uncertain-profiles.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(
-        path,
-        extractor=_ExclusiveBucketExtractor("sentence_length"),
-    )
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor("sentence_length"))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -582,14 +573,10 @@ async def test_uncertain_exclusive_bucket_does_not_merge_multiple_profiles(
 
 @pytest.mark.asyncio
 async def test_manual_confirmation_keeps_exclusive_category_single_winner(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "manual-exclusive.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(
-        path,
-        extractor=_ExclusiveBucketExtractor("sentence_length"),
-    )
+    engine = await make_engine(extractor=_ExclusiveBucketExtractor("sentence_length"))
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -630,17 +617,16 @@ async def test_manual_confirmation_keeps_exclusive_category_single_winner(
 
 @pytest.mark.asyncio
 async def test_observation_rechecks_consent_after_extraction_before_writing(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="consent-race-observation",
         text="我觉得先把事实弄清楚。",
     )
     extractor = _PausedExtractor()
-    engine = PersonaEngine.sqlite(path, extractor=extractor)
+    engine = await make_engine(extractor=extractor)
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -666,10 +652,10 @@ async def test_observation_rechecks_consent_after_extraction_before_writing(
 
 
 @pytest.mark.asyncio
-async def test_engine_capsule_cannot_bypass_revoked_consent(tmp_path: Path) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path)
+async def test_engine_capsule_cannot_bypass_revoked_consent(
+    archive: PostgresLifeArchive, make_engine: EngineFactory
+) -> None:
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -704,10 +690,9 @@ async def test_engine_capsule_cannot_bypass_revoked_consent(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_repeated_owner_style_promotes_with_traceability_but_pollution_is_rejected(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     texts = (
         "我觉得先把事实弄清楚，再讨论责任。",
         "我觉得这件事可以先听听孩子怎么说。",
@@ -730,7 +715,7 @@ async def test_repeated_owner_style_promotes_with_traceability_but_pollution_is_
         event_type="assistant.playout_stopped",
         minute=5,
     )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -799,10 +784,9 @@ async def test_repeated_owner_style_promotes_with_traceability_but_pollution_is_
 
 @pytest.mark.asyncio
 async def test_uncertain_style_auto_promotes_after_repeated_cross_session_evidence(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     for index in range(6):
         await _record(
             archive,
@@ -812,7 +796,7 @@ async def test_uncertain_style_auto_promotes_after_repeated_cross_session_eviden
             minute=index,
             session_id=f"persona-shadow-{index // 2}",
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -889,10 +873,9 @@ async def test_uncertain_style_auto_promotes_after_repeated_cross_session_eviden
 
 @pytest.mark.asyncio
 async def test_uncertain_style_repetition_in_one_session_does_not_auto_promote(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     for index in range(8):
         await _record(
             archive,
@@ -902,7 +885,7 @@ async def test_uncertain_style_repetition_in_one_session_does_not_auto_promote(
             minute=index,
             session_id="one-shadow-session",
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -931,10 +914,9 @@ async def test_uncertain_style_repetition_in_one_session_does_not_auto_promote(
 
 @pytest.mark.asyncio
 async def test_uncertain_style_without_session_identity_does_not_auto_promote(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     for index in range(8):
         await _record(
             archive,
@@ -944,7 +926,7 @@ async def test_uncertain_style_without_session_identity_does_not_auto_promote(
             minute=index,
             session_id=None,
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -972,9 +954,9 @@ async def test_uncertain_style_without_session_identity_does_not_auto_promote(
 
 
 @pytest.mark.asyncio
-async def test_disabled_style_is_not_reactivated_by_later_observations(tmp_path: Path) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_disabled_style_is_not_reactivated_by_later_observations(
+    archive: PostgresLifeArchive, make_engine: EngineFactory
+) -> None:
     for index in range(4):
         await _record(
             archive,
@@ -982,7 +964,7 @@ async def test_disabled_style_is_not_reactivated_by_later_observations(tmp_path:
             text="我觉得先把事实弄清楚。",
             minute=index,
         )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -1032,16 +1014,15 @@ async def test_disabled_style_is_not_reactivated_by_later_observations(tmp_path:
 
 @pytest.mark.asyncio
 async def test_decision_trait_requires_review_and_versions_can_be_corrected_and_rolled_back(
-    tmp_path: Path,
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory,
 ) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
     await _record(
         archive,
         event_id="decision-001",
         text="做重大决定时，我习惯先列事实，再睡一晚。",
     )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -1137,15 +1118,15 @@ async def test_decision_trait_requires_review_and_versions_can_be_corrected_and_
 
 
 @pytest.mark.asyncio
-async def test_capsule_respects_disable_switch_and_character_budget(tmp_path: Path) -> None:
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
+async def test_capsule_respects_disable_switch_and_character_budget(
+    archive: PostgresLifeArchive, make_engine: EngineFactory
+) -> None:
     await _record(
         archive,
         event_id="budget-001",
         text="做重大决定时，我习惯先收集事实，再把不同方案逐项比较。",
     )
-    engine = PersonaEngine.sqlite(path)
+    engine = await make_engine()
     await engine.grant_consent(
         account_id="persona-account",
         policy_version="persona-learning-v1",
@@ -1215,13 +1196,12 @@ class _MixedExtractor:
     (True, {"discourse_style"}),
 ])
 async def test_style_only_evidence_never_learns_decisions_or_values(
-    tmp_path: Path, style_only: bool, expected: set[str]
+    archive: PostgresLifeArchive,
+    make_engine: EngineFactory, style_only: bool, expected: set[str]
 ) -> None:
     """P0-04 D2: a minor's persona learns expression style only."""
 
-    path = tmp_path / "persona.sqlite3"
-    archive = LifeArchive.sqlite(path)
-    engine = PersonaEngine.sqlite(path, extractor=_MixedExtractor())
+    engine = await make_engine(extractor=_MixedExtractor())
     await engine.grant_consent(account_id="persona-account", policy_version="persona-learning-v1")
     await _record(archive, event_id="mixed-turn", text="我觉得先想清楚再决定。")
 

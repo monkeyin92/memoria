@@ -334,7 +334,7 @@ class PostgresVoiceProfileManager:
         self, *, account_id: str, profile_id: str
     ) -> VoiceProfile:
         """Drive an accepted enrollment through the provider and finalize it."""
-        operation = await self._operation_for_profile(profile_id)
+        operation = await self._operation_for_profile(account_id, profile_id)
         if operation is None or str(operation["account_id"]) != account_id:
             raise EvidenceNotFoundError(profile_id)
         state = str(operation["state"])
@@ -375,7 +375,7 @@ class PostgresVoiceProfileManager:
             operation_id=operation["operation_id"],
             voice=provider_voice,
         )
-        operation = await self._operation_for_profile(profile_id)
+        operation = await self._operation_for_profile(account_id, profile_id)
         assert operation is not None, "a submitted enrollment always has an operation"
         return await self._finalize_enrollment(operation)
 
@@ -657,11 +657,12 @@ class PostgresVoiceProfileManager:
         )
         return f"auto-{hashlib.sha256(material.encode()).hexdigest()}"
 
-    async def _operation_for_profile(self, profile_id: str) -> asyncpg.Record | None:
-        """The enrollment operation that produced one profile, if any."""
+    async def _operation_for_profile(self, account_id: str, profile_id: str) -> asyncpg.Record | None:
+        """The enrollment operation that produced one of the account's profiles."""
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
-            row = await connection.fetchrow(
+            await self._scope(connection, account_id)  # FORCE RLS: unscoped reads see no row
+            return await connection.fetchrow(
                 """
                 SELECT * FROM voice_enrollment_operations
                 WHERE profile_id = $1::uuid
@@ -669,7 +670,6 @@ class PostgresVoiceProfileManager:
                 """,
                 profile_id,
             )
-        return row
 
     async def _operation(
         self,

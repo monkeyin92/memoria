@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import json
 import math
-import tempfile
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, Protocol, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import asyncpg
 
 from services.archive.domain import EvidenceEvent, SpeakerClass
-from services.archive.life_archive import LifeArchive
-from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
     ConflictState,
     MemoryClaimReview,
@@ -26,6 +28,8 @@ from services.archive.memory_domain import (
     MemoryStatus,
 )
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.recall_planner import RecallPlanner
 
 EvaluationScenario = Literal[
@@ -513,188 +517,253 @@ def load_memory_evaluation_dataset(path: str | Path) -> MemoryEvaluationDataset:
     return MemoryEvaluationDataset(version=version, cases=cases)
 
 
+def _with_search_path(dsn: str, schema: str) -> str:
+    parts = urlsplit(dsn)
+    query = [(key, value) for key, value in parse_qsl(parts.query) if key != "search_path"]
+    # ``public`` stays on the path only so the pgvector type still resolves.
+    query.append(("search_path", f"{schema},public"))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+@asynccontextmanager
+async def _case_schema(dsn: str) -> AsyncIterator[str]:
+    """A fresh schema for one case's archive tables, dropped afterwards.
+
+    Each case must start from an empty archive, the way the fixed dataset is
+    written.  The stores apply their own schema on first use, so a private
+    ``search_path`` gives every case its own tables without touching rows the
+    target database already holds.
+    """
+
+    schema = f"memoria_memory_eval_{uuid.uuid4().hex[:16]}"
+    connection = await asyncpg.connect(dsn)
+    try:
+        await connection.execute(f'CREATE SCHEMA "{schema}"')
+        yield schema
+    finally:
+        try:
+            await connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        finally:
+            await connection.close()
+
+
 class CatalogMemoryEvaluationAdapter:
-    """Run the fixed dataset against the reconstructable SQLite production contract."""
+    """Run the fixed dataset against the reconstructable PostgreSQL production contract.
 
-    name = "memoria-sqlite-rules"
+    ``dsn`` is the archive role; it needs CREATE on the database because every
+    case runs in its own throwaway schema.  ``compiler_dsn`` is the outbox
+    compiler role, which production uses to claim compile tasks past account
+    RLS; without it the archive role must be able to claim them itself.
+    """
 
-    def __init__(self, extractor: MemoryExtractor | None = None) -> None:
+    name = "memoria-postgres-rules"
+
+    def __init__(
+        self,
+        dsn: str,
+        extractor: MemoryExtractor | None = None,
+        *,
+        compiler_dsn: str | None = None,
+    ) -> None:
+        for value in (dsn, compiler_dsn or dsn):
+            if not value.startswith(("postgresql://", "postgres://")):
+                raise ValueError("memory evaluation DSNs must use PostgreSQL")
+        self._dsn = dsn
+        self._compiler_dsn = compiler_dsn
         self._extractor = extractor or RuleBasedMemoryExtractor()
 
     async def observe(self, case: MemoryEvaluationCase) -> EvaluationObservation:
-        with tempfile.TemporaryDirectory(prefix="memoria-memory-eval-") as directory:
-            path = Path(directory) / "archive.sqlite3"
-            archive = LifeArchive.sqlite(path)
+        async with _case_schema(self._dsn) as schema:
+            case_dsn = _with_search_path(self._dsn, schema)
             extractor = _UsageTrackingExtractor(self._extractor)
 
             def subject_category(_account_id: str) -> str | None:
                 return case.subject_category
 
-            catalog = MemoryCatalog.sqlite(
-                path,
+            archive = PostgresLifeArchive(case_dsn)
+            catalog = PostgresMemoryCatalog(
+                case_dsn,
                 extractor=extractor,
+                compiler_dsn=(
+                    _with_search_path(self._compiler_dsn, schema)
+                    if self._compiler_dsn is not None
+                    else None
+                ),
                 subject_category_resolver=(
                     subject_category if case.subject_category is not None else None
                 ),
             )
-            source_accounts = {evidence.event_id: evidence.account_id for evidence in case.evidence}
-            source_texts = {evidence.event_id: evidence.text for evidence in case.evidence}
-            for evidence in case.evidence:
-                await archive.record(
-                    EvidenceEvent(
-                        event_id=evidence.event_id,
-                        account_id=evidence.account_id,
-                        session_id=evidence.session_id or f"eval-{case.case_id}",
-                        turn_id=1,
-                        generation_id=1,
-                        event_type="speech.utterance_finalized",
-                        occurred_at=evidence.occurred_at,
-                        speaker_class=evidence.speaker_class,
-                        source="memory.evaluation",
-                        payload={
-                            "text": evidence.text,
-                            "interaction_mode": "companion",
-                            "prompt_kind": "spontaneous",
-                            "owner_projection_eligible": evidence.speaker_class == "owner",
-                            "tool_epoch": 0,
-                            **(
-                                {
-                                    "memory_write_intent": {
-                                        "kind": "explicit_remember",
-                                        "policy_version": "explicit-memory-v2",
-                                    }
-                                }
-                                if evidence.explicit_memory
-                                else {}
-                            ),
-                        },
-                    )
-                )
-            await catalog.compile_pending(limit=1000)
-            await self._apply_reviews(catalog, case)
-            accounts = tuple(
-                dict.fromkeys(
-                    [
-                        *(evidence.account_id for evidence in case.evidence),
-                        *(query.account_id for query in case.queries),
-                    ]
-                )
-            )
-            extracted: list[EvaluationItem] = []
-            for account_id in accounts:
-                search = await catalog.search(
-                    MemorySearchQuery(
-                        account_id=account_id,
-                        speaker_class="owner",
-                        include_candidates=True,
-                        limit=100,
-                    )
-                )
-                extracted.extend(
-                    EvaluationItem(
-                        item_id=item.item_id,
-                        account_id=_source_account_for_item(
-                            item.source_event_ids,
-                            source_accounts,
-                            fallback=account_id,
-                        ),
-                        kind=item.kind,
-                        memory_kind=item.memory_kind,
-                        title=item.title,
-                        body=item.snippet,
-                        status=item.status,
-                        source_event_ids=item.source_event_ids,
-                        valid_from=item.valid_from,
-                        valid_to=item.valid_to,
-                        sensitivity=item.sensitivity,
-                        conflict_state=item.conflict_state,
-                        source_texts=_source_texts_for_item(
-                            item.source_event_ids,
-                            source_texts,
-                        ),
-                    )
-                    for item in search.items
-                )
-                extracted.extend(
-                    EvaluationItem(
-                        item_id=person.person_id,
-                        account_id=_source_account_for_item(
-                            (person.source_event_id,),
-                            source_accounts,
-                            fallback=account_id,
-                        ),
-                        kind="person",
-                        memory_kind="relationship",
-                        title=person.display_name,
-                        body=" ".join(
-                            (
-                                person.relationship_to_owner,
-                                *person.aliases,
-                            )
-                        ),
-                        status=person.status,
-                        source_event_ids=(person.source_event_id,),
-                        source_texts=_source_texts_for_item(
-                            (person.source_event_id,),
-                            source_texts,
-                        ),
-                    )
-                    for person in await catalog.people(account_id=account_id)
-                )
+            try:
+                return await self._observe(case, archive, catalog, extractor)
+            finally:
+                await catalog.close()
+                await archive.close()
 
-            results: list[EvaluationQueryResult] = []
-            for query in case.queries:
-                started = perf_counter()
-                request = await self._search_query(catalog, query)
-                response = (
-                    await catalog.context(request)
-                    if query.mode == "context"
-                    else await catalog.search(request)
-                )
-                latency_ms = (perf_counter() - started) * 1000
-                results.append(
-                    EvaluationQueryResult(
-                        query_id=query.query_id,
-                        mode=query.mode,
-                        latency_ms=latency_ms,
-                        items=tuple(
-                            EvaluationItem(
-                                item_id=item.item_id,
-                                account_id=_source_account_for_item(
-                                    item.source_event_ids,
-                                    source_accounts,
-                                    fallback=query.account_id,
-                                ),
-                                kind=item.kind,
-                                memory_kind=item.memory_kind,
-                                title=item.title,
-                                body=item.snippet,
-                                status=item.status,
-                                source_event_ids=item.source_event_ids,
-                                valid_from=item.valid_from,
-                                valid_to=item.valid_to,
-                                sensitivity=item.sensitivity,
-                                conflict_state=item.conflict_state,
-                                source_texts=_source_texts_for_item(
-                                    item.source_event_ids,
-                                    source_texts,
-                                ),
-                            )
-                            for item in response.items
+    async def _observe(
+        self,
+        case: MemoryEvaluationCase,
+        archive: PostgresLifeArchive,
+        catalog: PostgresMemoryCatalog,
+        extractor: _UsageTrackingExtractor,
+    ) -> EvaluationObservation:
+        source_accounts = {evidence.event_id: evidence.account_id for evidence in case.evidence}
+        source_texts = {evidence.event_id: evidence.text for evidence in case.evidence}
+        for evidence in case.evidence:
+            await archive.record(
+                EvidenceEvent(
+                    event_id=evidence.event_id,
+                    account_id=evidence.account_id,
+                    session_id=evidence.session_id or f"eval-{case.case_id}",
+                    turn_id=1,
+                    generation_id=1,
+                    event_type="speech.utterance_finalized",
+                    occurred_at=evidence.occurred_at,
+                    speaker_class=evidence.speaker_class,
+                    source="memory.evaluation",
+                    payload={
+                        "text": evidence.text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": evidence.speaker_class == "owner",
+                        "tool_epoch": 0,
+                        **(
+                            {
+                                "memory_write_intent": {
+                                    "kind": "explicit_remember",
+                                    "policy_version": "explicit-memory-v2",
+                                }
+                            }
+                            if evidence.explicit_memory
+                            else {}
                         ),
-                    )
+                    },
                 )
-            return EvaluationObservation(
-                case_id=case.case_id,
-                extracted_items=tuple(extracted),
-                query_results=tuple(results),
-                input_tokens=extractor.input_tokens,
-                output_tokens=extractor.output_tokens,
             )
+        await catalog.compile_pending(limit=1000)
+        await self._apply_reviews(catalog, case)
+        accounts = tuple(
+            dict.fromkeys(
+                [
+                    *(evidence.account_id for evidence in case.evidence),
+                    *(query.account_id for query in case.queries),
+                ]
+            )
+        )
+        extracted: list[EvaluationItem] = []
+        for account_id in accounts:
+            search = await catalog.search(
+                MemorySearchQuery(
+                    account_id=account_id,
+                    speaker_class="owner",
+                    include_candidates=True,
+                    limit=100,
+                )
+            )
+            extracted.extend(
+                EvaluationItem(
+                    item_id=item.item_id,
+                    account_id=_source_account_for_item(
+                        item.source_event_ids,
+                        source_accounts,
+                        fallback=account_id,
+                    ),
+                    kind=item.kind,
+                    memory_kind=item.memory_kind,
+                    title=item.title,
+                    body=item.snippet,
+                    status=item.status,
+                    source_event_ids=item.source_event_ids,
+                    valid_from=item.valid_from,
+                    valid_to=item.valid_to,
+                    sensitivity=item.sensitivity,
+                    conflict_state=item.conflict_state,
+                    source_texts=_source_texts_for_item(
+                        item.source_event_ids,
+                        source_texts,
+                    ),
+                )
+                for item in search.items
+            )
+            extracted.extend(
+                EvaluationItem(
+                    item_id=person.person_id,
+                    account_id=_source_account_for_item(
+                        (person.source_event_id,),
+                        source_accounts,
+                        fallback=account_id,
+                    ),
+                    kind="person",
+                    memory_kind="relationship",
+                    title=person.display_name,
+                    body=" ".join(
+                        (
+                            person.relationship_to_owner,
+                            *person.aliases,
+                        )
+                    ),
+                    status=person.status,
+                    source_event_ids=(person.source_event_id,),
+                    source_texts=_source_texts_for_item(
+                        (person.source_event_id,),
+                        source_texts,
+                    ),
+                )
+                for person in await catalog.people(account_id=account_id)
+            )
+
+        results: list[EvaluationQueryResult] = []
+        for query in case.queries:
+            started = perf_counter()
+            request = await self._search_query(catalog, query)
+            response = (
+                await catalog.context(request)
+                if query.mode == "context"
+                else await catalog.search(request)
+            )
+            latency_ms = (perf_counter() - started) * 1000
+            results.append(
+                EvaluationQueryResult(
+                    query_id=query.query_id,
+                    mode=query.mode,
+                    latency_ms=latency_ms,
+                    items=tuple(
+                        EvaluationItem(
+                            item_id=item.item_id,
+                            account_id=_source_account_for_item(
+                                item.source_event_ids,
+                                source_accounts,
+                                fallback=query.account_id,
+                            ),
+                            kind=item.kind,
+                            memory_kind=item.memory_kind,
+                            title=item.title,
+                            body=item.snippet,
+                            status=item.status,
+                            source_event_ids=item.source_event_ids,
+                            valid_from=item.valid_from,
+                            valid_to=item.valid_to,
+                            sensitivity=item.sensitivity,
+                            conflict_state=item.conflict_state,
+                            source_texts=_source_texts_for_item(
+                                item.source_event_ids,
+                                source_texts,
+                            ),
+                        )
+                        for item in response.items
+                    ),
+                )
+            )
+        return EvaluationObservation(
+            case_id=case.case_id,
+            extracted_items=tuple(extracted),
+            query_results=tuple(results),
+            input_tokens=extractor.input_tokens,
+            output_tokens=extractor.output_tokens,
+        )
 
     @staticmethod
     async def _search_query(
-        catalog: MemoryCatalog,
+        catalog: PostgresMemoryCatalog,
         query: EvaluationQuery,
     ) -> MemorySearchQuery:
         text = query.text
@@ -733,7 +802,7 @@ class CatalogMemoryEvaluationAdapter:
 
     @staticmethod
     async def _apply_reviews(
-        catalog: MemoryCatalog,
+        catalog: PostgresMemoryCatalog,
         case: MemoryEvaluationCase,
     ) -> None:
         for review in case.reviews:

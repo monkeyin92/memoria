@@ -10,7 +10,8 @@ import asyncpg
 import pytest
 from services.legacy.domain import LegacyManifestItemRef, RegisteredGranteeSnapshot
 from services.legacy.postgres_registry import PostgresLegacyRegistry
-from services.legacy.tests.test_legacy_registry import NOW, _snapshots
+from services.legacy.tests.legacy_fixtures import NOW
+from services.legacy.tests.legacy_fixtures import snapshots as _snapshots
 
 
 def test_postgres_schema_forces_rls_uses_nobypassrls_and_guards_immutable_rows() -> None:
