@@ -7,8 +7,11 @@ clock and a committed range is the only operation that consumes them.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -117,6 +120,30 @@ class SpeechSegment:
         return ASRLogicalVersion(self.provider_task_epoch, self.revision)
 
 
+def _is_revision_of(item: SpeechSegment, segment: SpeechSegment) -> bool:
+    """Whether ``segment`` is a newer provider revision of the pending ``item``.
+
+    Provider sentence ids are task-local: FunASR restarts at 1 in every task.
+    Field 2026-09-29 session 9c8bee20: the task started at the VAD-end
+    rotation reused sentence 1 while the question's final (sentence 1 of the
+    previous task) waited for its endpoint; the id match erased it, the commit
+    found no text and the turn was retired as empty.  Across tasks only a
+    result for the same audio (reconnect replay, expansion) is a revision.
+    """
+
+    return (
+        item.stream_epoch == segment.stream_epoch
+        and item.segment_id == segment.segment_id
+        and (
+            item.provider_task_epoch == segment.provider_task_epoch
+            or (
+                item.capture_start_sample < segment.capture_end_sample
+                and segment.capture_start_sample < item.capture_end_sample
+            )
+        )
+    )
+
+
 @dataclass(slots=True)
 class SpeechTimeline:
     """Interval store with a committed watermark and epoch fence.
@@ -205,13 +232,25 @@ class SpeechTimeline:
 
         # Replace the provider's previous revision rather than concatenating
         # partials.  This is the key difference from callback/FIFO assembly.
-        self._segments = [
-            item
-            for item in self._segments
-            if not (
-                item.stream_epoch == segment.stream_epoch and item.segment_id == segment.segment_id
-            )
-        ]
+        replaced = [item for item in self._segments if _is_revision_of(item, segment)]
+        for item in replaced:
+            if item.provider_task_epoch != segment.provider_task_epoch and item.text.strip():
+                logger.info(
+                    "speech timeline segment replaced across provider tasks "
+                    "stream_epoch=%s segment_id=%s old_task=%s new_task=%s "
+                    "old=%s-%s new=%s-%s old_text_len=%s new_text_len=%s",
+                    segment.stream_epoch,
+                    segment.segment_id,
+                    item.provider_task_epoch,
+                    segment.provider_task_epoch,
+                    item.capture_start_sample,
+                    item.capture_end_sample,
+                    segment.capture_start_sample,
+                    segment.capture_end_sample,
+                    len(item.text.strip()),
+                    len(segment.text.strip()),
+                )
+        self._segments = [item for item in self._segments if item not in replaced]
         self._segments.append(segment)
         self._last_segment_revision[(segment.stream_epoch, segment.segment_id)] = (
             segment.logical_version
@@ -244,6 +283,7 @@ class SpeechTimeline:
                 for item in self._segments
                 if item.stream_epoch == segment.stream_epoch
                 and item.segment_id == segment.segment_id
+                and item.logical_version == previous_version
             ),
             None,
         )
@@ -295,6 +335,26 @@ class SpeechTimeline:
             )
         ]
         return matched
+
+    def evict_before(self, *, stream_epoch: int, sample: int) -> None:
+        """Drop the pending segments of one epoch that start before ``sample``.
+
+        A retired window goes by interval, never by id: sentence ids are
+        task-local, so a later task's segment may reuse one of them.
+        """
+
+        if self._current_stream_epoch != stream_epoch or sample <= 0:
+            return
+        evicted = {item for item in self._segments if item.capture_start_sample < sample}
+        if not evicted:
+            return
+        self._segments = [item for item in self._segments if item not in evicted]
+        # Forget the version history only of ids no pending segment still uses.
+        retired_ids = {item.segment_id for item in evicted} - {
+            item.segment_id for item in self._segments
+        }
+        for key in [key for key in self._last_segment_revision if key[1] in retired_ids]:
+            self._last_segment_revision.pop(key, None)
 
     def evict_segment_ids(self, segment_ids: set[str]) -> None:
         """Drop pending segments whose provider identity was superseded."""

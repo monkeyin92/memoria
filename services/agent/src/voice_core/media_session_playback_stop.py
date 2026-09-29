@@ -311,16 +311,11 @@ class MediaPlaybackStopMixin:
             )
             return
         start = result.capture_start_sample
-        if start > 0:
-            timeline = context.runtime.speech_timeline
-            timeline.evict_segment_ids({
-                segment.segment_id
-                for segment in timeline.segments_in_range(
-                    stream_epoch=result.stream_epoch,
-                    start_sample=0,
-                    end_sample=start,
-                )
-            })
+        # By interval: a stop final from a later provider task may reuse the
+        # sentence id of a candidate it retires.
+        context.runtime.speech_timeline.evict_before(
+            stream_epoch=result.stream_epoch, sample=start
+        )
         pending = context.pending
         pending.clock_fact_partial_text = None
         pending.clock_fact_partial_stable_since = None

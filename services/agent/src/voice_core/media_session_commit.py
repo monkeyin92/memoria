@@ -143,6 +143,41 @@ def _resolve_media_turn_text(
     return text
 
 
+def _log_empty_media_turn(
+    context: _MediaVoiceSession,
+    stream_epoch: int,
+    start_sample: int,
+    end_sample: int,
+    stage: str,
+) -> None:
+    """Say why a turn commits no text: its end is otherwise silent.
+
+    ``_commit_pending_turn`` reports every other reason as "did not start
+    reply"; an empty turn only surfaced later as the tail-timeout discard, so
+    an accepted final that had vanished from the timeline left no trace.
+    """
+
+    text_segments = [
+        segment
+        for segment in context.runtime.speech_timeline.pending
+        if segment.stream_epoch == stream_epoch and segment.text.strip()
+    ]
+    logger.info(
+        "media turn has no text session=%s stream_epoch=%s samples=%s-%s stage=%s "
+        "pending_text_segments=%s pending_text_ranges=%s",
+        context.identity.session_id,
+        stream_epoch,
+        start_sample,
+        end_sample,
+        stage,
+        len(text_segments),
+        [
+            (segment.capture_start_sample, segment.capture_end_sample)
+            for segment in text_segments[:4]
+        ],
+    )
+
+
 class MediaSessionCommitMixin:
     """Commit a single sample range through Projection and Runtime fences."""
 
@@ -886,6 +921,7 @@ class MediaSessionCommitMixin:
             end_sample=end_sample,
         )
         if not text:
+            _log_empty_media_turn(context, stream_epoch, start_sample, end_sample, "endpoint")
             context.runtime.on_user_voice_stopped()
             await self._commit_media_input_range(
                 context,
@@ -923,6 +959,7 @@ class MediaSessionCommitMixin:
             end_sample=end_sample,
         )
         if not text:
+            _log_empty_media_turn(context, stream_epoch, start_sample, end_sample, "classified")
             await self._commit_media_input_range(
                 context,
                 stream_epoch=stream_epoch,

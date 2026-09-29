@@ -605,3 +605,156 @@ async def test_device_utterance_after_stop_and_reconnect_is_one_answered_turn() 
         assert not harness.closed()
 
     await _run_story(_device_identity("stop-then-reconnect"), script, story_call=2)
+
+
+class _TaskScriptProvider(_LongStoryProvider):
+    """Adapter-shaped results: provider task epochs advance, sentence ids restart.
+
+    FunASR numbers sentences from 1 in every task, so after a VAD-end task
+    rotation the next task's first result carries sentence id 1 again.
+    """
+
+    def __init__(self, *, story_call: int = 1) -> None:
+        super().__init__(story_call=story_call)
+        self.by_end: dict[tuple[int, int], ASRResult] = {}
+
+    async def ingest_audio(
+        self,
+        identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> Sequence[ASRResult]:
+        scripted = self.by_end.pop(
+            (frame.identity.stream_epoch, frame.capture_end_sample), None
+        )
+        if scripted is None:
+            return await super().ingest_audio(identity, frame)
+        self.audio_calls.append(frame.sequence)
+        return (scripted,)
+
+
+async def _frames_to(harness: _StoryHarness, end_sample: int) -> None:
+    await harness.audio_frames((end_sample - harness.sample) // 320)
+
+
+@pytest.mark.asyncio
+async def test_device_request_after_reconnect_survives_the_next_task_reusing_its_id() -> None:
+    """Field 2026-09-29 session 9c8bee20: a recognized request retired as empty.
+
+    After a spoken stop the device came back on stream epoch 2051.  The
+    request's final (FunASR sentence 1, samples 80960-109760) arrived before
+    the device VAD end (voiced end 108800).  That VAD end rotated FunASR, and
+    the new task's first result, sentence 1 again, erased the pending final
+    from the timeline; the endpoint commit found no text and the ASR tail
+    timeout discarded the turn as empty.
+    """
+
+    request = "讲一个短一点的故事。"
+    provider = _TaskScriptProvider(story_call=2)
+    harness = _StoryHarness(_device_identity("next-task-sentence-id"), provider)
+    await harness.start()
+    try:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.playback_ended()
+        await harness.utterance("给我讲个故事", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 2)
+        story = harness.runtime.fence
+        await harness.audio_frames(15, final_text="停")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        assert story in harness.story.cancelled
+
+        await harness.reconnect()
+        epoch = harness.identity.stream_epoch
+        # The production endpoint grace, so the next task can answer inside it.
+        harness.registry.turn_endpoint_grace_s = 0.9
+        await _frames_to(harness, 81_280)
+        await harness.vad_start(81_280)
+        provider.by_end[(epoch, 120_960)] = ASRResult(
+            task_epoch=2,
+            sentence_id="1",
+            revision=2,
+            capture_start_sample=80_960,
+            capture_end_sample=109_760,
+            text=request,
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await _frames_to(harness, 123_200)
+        # The final is already in; the device VAD end comes after it.
+        await harness.send(
+            media_pb2.MediaToCore(
+                vad=media_pb2.VadEvent(
+                    identity=harness.wire_identity,
+                    type=media_pb2.VAD_EVENT_SPEECH_END,
+                    sample_position=123_200,
+                    probability=0.99,
+                    rms=0.05,
+                    voiced_end_sample=108_800,
+                )
+            )
+        )
+        provider.by_end[(epoch, 126_400)] = ASRResult(
+            task_epoch=3,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=124_800,
+            capture_end_sample=126_400,
+            text="",
+            is_final=False,
+            stream_epoch=epoch,
+        )
+        await _frames_to(harness, 126_400)
+
+        await harness.wait_for(lambda: len(_user_turn_texts(harness.context)) == 3, timeout=4.0)
+        assert _user_turn_texts(harness.context)[2] == request
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_device_stop_reusing_a_held_candidates_sentence_id_still_stops() -> None:
+    """A stop from a later provider task may reuse a held candidate's id.
+
+    The stop's own interval is committed by evicting the candidates before
+    it; by id, that eviction would take the stop final with them.
+    """
+
+    provider = _TaskScriptProvider()
+    harness = _StoryHarness(_device_identity("stop-reuses-sentence-id"), provider)
+    await harness.start()
+    try:
+        story = await harness.start_story()
+        epoch = harness.identity.stream_epoch
+        candidate_start = harness.sample
+        provider.by_end[(epoch, candidate_start + 20 * 320)] = ASRResult(
+            task_epoch=2,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=candidate_start,
+            capture_end_sample=candidate_start + 20 * 320,
+            text="小猫咪去哪儿了",
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await harness.audio_frames(20)
+        stop_start = harness.sample
+        provider.by_end[(epoch, stop_start + 15 * 320)] = ASRResult(
+            task_epoch=3,
+            sentence_id="1",
+            revision=1,
+            capture_start_sample=stop_start,
+            capture_end_sample=stop_start + 15 * 320,
+            text="停",
+            is_final=True,
+            confidence=0.9,
+            stream_epoch=epoch,
+        )
+        await harness.audio_frames(15)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+    finally:
+        provider.release.set()
+        await harness.close()

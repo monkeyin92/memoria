@@ -330,15 +330,9 @@ class MediaTurnEndpointMixin:
         )
         # Drop even a cached partial crossing the boundary: its text cannot
         # safely be sliced without word timing. Do not advance commit history.
-        timeline = context.runtime.speech_timeline
-        timeline.evict_segment_ids({
-            segment.segment_id
-            for segment in timeline.segments_in_range(
-                stream_epoch=result.stream_epoch,
-                start_sample=0,
-                end_sample=result.capture_start_sample,
-            )
-        })
+        context.runtime.speech_timeline.evict_before(
+            stream_epoch=result.stream_epoch, sample=result.capture_start_sample
+        )
         context.pending.turn_start_sample = None
         context.pending.turn_end_sample = None
         context.pending.pending_partial = None
