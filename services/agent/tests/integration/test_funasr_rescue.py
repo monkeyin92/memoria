@@ -493,3 +493,12 @@ def test_slice_segment_pcm_cuts_inside_chunk_and_skips_covered_chunks() -> None:
     assert (start, pcm) == (15, b"\x02\x00" * 5 + b"\x03\x00" * 10)
     assert slice_segment_pcm(chunks, ranges, 20) == (chunks[2], 30)
     assert slice_segment_pcm(chunks, ranges, 40) == (b"", None)
+
+
+def test_rescue_audio_cap_defaults_inside_the_decode_budget() -> None:
+    # 2026-09-29 device: a 30 s segment with no provider final timed out.
+    # At ~0.1-0.16 s decode per audio second plus transport, 12 s fits 2.5 s.
+    assert SenseVoiceRescueConfig(endpoint="http://sensevoice:8001/transcribe").max_audio_s == 12.0
+    assert SenseVoiceRescueConfig.from_env(
+        {"SENSEVOICE_URL": "http://sensevoice:8001/transcribe"}
+    ).max_audio_s == 12.0

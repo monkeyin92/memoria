@@ -97,3 +97,22 @@ async def test_classifier_timeout_fails_closed_to_unsure() -> None:
         is CloseIntentSemanticVerdict.UNSURE
     )
     await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", ["停", "停一下", "等等", "别说了", "好了"])
+async def test_stop_words_never_end_the_conversation_even_if_the_classifier_says_so(
+    phrase: str,
+) -> None:
+    # 2026-09-29 device: a bare 「停」 during a story was read as a farewell,
+    # routed to END_SESSION behind the speaker gate, held once, then closed
+    # the session instead of just stopping the reply.
+    cache: dict[str, bool] = {}
+
+    async def resolver(_: str) -> bool:
+        raise AssertionError("a lexical stop word must not reach the classifier")
+
+    assert not await resolve_conversation_close_needed(
+        phrase, cache=cache, semantic_resolver=resolver
+    )
+    assert not conversation_close_needed(phrase, cache=cache)
